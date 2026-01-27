@@ -70,6 +70,12 @@ export interface DefectReport {
   versions?: DefectVersion[];
   createdAt: string;
   updatedAt: string;
+  // 软删除相关
+  isDeleted?: boolean;
+  deletedAt?: string;
+  deletedBy?: string;
+  // 文件夹
+  folderId?: string;
 }
 
 /**
@@ -152,6 +158,22 @@ export interface DefectUser {
   displayName?: string;
 }
 
+/**
+ * 缺陷文件夹
+ */
+export interface DefectFolder {
+  id: string;
+  name: string;
+  description?: string;
+  color?: string;
+  icon?: string;
+  sortOrder: number;
+  spaceId?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ========== Contract Types ==========
 
 export type ListDefectTemplatesContract = () => Promise<ApiResponse<{ items: DefectTemplate[] }>>;
@@ -183,6 +205,7 @@ export type ShareDefectTemplateContract = (input: {
 export type ListDefectsContract = (input?: {
   filter?: 'submitted' | 'assigned' | 'all';
   status?: string;
+  folderId?: string;
   limit?: number;
   offset?: number;
 }) => Promise<ApiResponse<{ items: DefectReport[]; total: number }>>;
@@ -256,3 +279,45 @@ export type PolishDefectContract = (input: {
 export type GetDefectStatsContract = () => Promise<ApiResponse<DefectStats>>;
 
 export type GetDefectUsersContract = () => Promise<ApiResponse<{ items: DefectUser[] }>>;
+
+// 回收站相关
+export type ListDeletedDefectsContract = (input?: {
+  limit?: number;
+  offset?: number;
+}) => Promise<ApiResponse<{ items: DefectReport[]; total: number }>>;
+
+export type RestoreDefectContract = (input: { id: string }) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
+export type PermanentDeleteDefectContract = (input: { id: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// 文件夹相关
+export type ListDefectFoldersContract = () => Promise<ApiResponse<{ items: DefectFolder[] }>>;
+
+export type CreateDefectFolderContract = (input: {
+  name: string;
+  description?: string;
+  color?: string;
+  icon?: string;
+  sortOrder?: number;
+}) => Promise<ApiResponse<{ folder: DefectFolder }>>;
+
+export type UpdateDefectFolderContract = (input: {
+  id: string;
+  name?: string;
+  description?: string;
+  color?: string;
+  icon?: string;
+  sortOrder?: number;
+}) => Promise<ApiResponse<{ folder: DefectFolder }>>;
+
+export type DeleteDefectFolderContract = (input: { id: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+export type MoveDefectToFolderContract = (input: {
+  id: string;
+  folderId?: string;
+}) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
+export type BatchMoveDefectsContract = (input: {
+  defectIds: string[];
+  folderId?: string;
+}) => Promise<ApiResponse<{ movedCount: number }>>;

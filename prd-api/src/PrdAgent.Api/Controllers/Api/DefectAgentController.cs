@@ -201,6 +201,7 @@ public class DefectAgentController : ControllerBase
         [FromQuery] string? status,
         [FromQuery] string? severity,
         [FromQuery] string? assigneeId,
+        [FromQuery] string? folderId,
         [FromQuery] bool? mine,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -211,6 +212,9 @@ public class DefectAgentController : ControllerBase
 
         var filterBuilder = Builders<DefectReport>.Filter;
         var filters = new List<FilterDefinition<DefectReport>>();
+
+        // 默认排除已删除的缺陷
+        filters.Add(filterBuilder.Eq(x => x.IsDeleted, false));
 
         // 非管理员只能看到自己提交的或分配给自己的
         if (!isAdmin)
@@ -237,6 +241,15 @@ public class DefectAgentController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(assigneeId))
             filters.Add(filterBuilder.Eq(x => x.AssigneeId, assigneeId));
+
+        // 文件夹筛选：folderId=root 表示只看根目录（未分类），其他值表示特定文件夹
+        if (!string.IsNullOrWhiteSpace(folderId))
+        {
+            if (folderId == "root")
+                filters.Add(filterBuilder.Eq(x => x.FolderId, (string?)null));
+            else
+                filters.Add(filterBuilder.Eq(x => x.FolderId, folderId));
+        }
 
         var filter = filters.Count > 0
             ? filterBuilder.And(filters)
@@ -398,26 +411,140 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 删除缺陷（仅草稿可删除）
+    /// 删除缺陷（软删除，移入回收站）
     /// </summary>
     [HttpDelete("defects/{id}")]
     public async Task<IActionResult> DeleteDefect(string id, CancellationToken ct)
     {
         var userId = GetUserId();
+        var isAdmin = HasManagePermission();
 
         var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         if (defect == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
 
-        if (defect.ReporterId != userId)
+        // 权限检查：提交者、被指派人或管理员可删除
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限删除此缺陷"));
 
-        if (defect.Status != DefectStatus.Draft)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能删除草稿状态的缺陷"));
+        if (defect.IsDeleted)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺陷已在回收站中"));
 
-        // 删除关联的消息
+        // 软删除
+        var update = Builders<DefectReport>.Update
+            .Set(x => x.IsDeleted, true)
+            .Set(x => x.DeletedAt, DateTime.UtcNow)
+            .Set(x => x.DeletedBy, userId);
+
+        await _db.DefectReports.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
+
+        _logger.LogInformation("[{AppKey}] Defect soft deleted: {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>
+    /// 获取回收站列表
+    /// </summary>
+    [HttpGet("defects/trash")]
+    public async Task<IActionResult> ListDeletedDefects(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
+
+        var filterBuilder = Builders<DefectReport>.Filter;
+        var filters = new List<FilterDefinition<DefectReport>>
+        {
+            filterBuilder.Eq(x => x.IsDeleted, true)
+        };
+
+        // 非管理员只能看到自己删除的
+        if (!isAdmin)
+        {
+            filters.Add(filterBuilder.Or(
+                filterBuilder.Eq(x => x.ReporterId, userId),
+                filterBuilder.Eq(x => x.AssigneeId, userId)
+            ));
+        }
+
+        var filter = filterBuilder.And(filters);
+
+        var total = await _db.DefectReports.CountDocumentsAsync(filter, cancellationToken: ct);
+        var items = await _db.DefectReports
+            .Find(filter)
+            .SortByDescending(x => x.DeletedAt)
+            .Skip((page - 1) * pageSize)
+            .Limit(pageSize)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
+    /// <summary>
+    /// 从回收站恢复缺陷
+    /// </summary>
+    [HttpPost("defects/{id}/restore")]
+    public async Task<IActionResult> RestoreDefect(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
+
+        var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+
+        // 权限检查
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限恢复此缺陷"));
+
+        if (!defect.IsDeleted)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺陷不在回收站中"));
+
+        // 恢复
+        var update = Builders<DefectReport>.Update
+            .Set(x => x.IsDeleted, false)
+            .Set(x => x.DeletedAt, (DateTime?)null)
+            .Set(x => x.DeletedBy, (string?)null)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.DefectReports.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
+
+        // 重新获取更新后的缺陷
+        defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+
+        _logger.LogInformation("[{AppKey}] Defect restored: {DefectNo} by {UserId}", AppKey, defect?.DefectNo, userId);
+
+        return Ok(ApiResponse<object>.Ok(new { defect }));
+    }
+
+    /// <summary>
+    /// 永久删除缺陷（从回收站彻底删除）
+    /// </summary>
+    [HttpDelete("defects/{id}/permanent")]
+    public async Task<IActionResult> PermanentDeleteDefect(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
+
+        var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+
+        // 权限检查
+        if (!isAdmin && defect.ReporterId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限永久删除此缺陷"));
+
+        if (!defect.IsDeleted)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能永久删除回收站中的缺陷"));
+
+        // 永久删除关联的消息和缺陷
         await _db.DefectMessages.DeleteManyAsync(x => x.DefectId == id, ct);
         await _db.DefectReports.DeleteOneAsync(x => x.Id == id, ct);
+
+        _logger.LogInformation("[{AppKey}] Defect permanently deleted: {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -1018,6 +1145,211 @@ public class DefectAgentController : ControllerBase
     }
 
     #endregion
+
+    #region 文件夹管理
+
+    /// <summary>
+    /// 获取文件夹列表
+    /// </summary>
+    [HttpGet("folders")]
+    public async Task<IActionResult> ListFolders(CancellationToken ct)
+    {
+        // 所有用户共享同一空间的文件夹
+        var items = await _db.DefectFolders
+            .Find(x => x.SpaceId == null || x.SpaceId == "default")
+            .SortByDescending(x => x.SortOrder)
+            .ThenBy(x => x.Name)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>
+    /// 创建文件夹
+    /// </summary>
+    [HttpPost("folders")]
+    public async Task<IActionResult> CreateFolder([FromBody] CreateFolderRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹名称不能为空"));
+
+        // 检查同名文件夹
+        var exists = await _db.DefectFolders.Find(x =>
+            (x.SpaceId == null || x.SpaceId == "default") &&
+            x.Name == request.Name.Trim()
+        ).AnyAsync(ct);
+
+        if (exists)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DUPLICATE, "已存在同名文件夹"));
+
+        var folder = new DefectFolder
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = request.Name.Trim(),
+            Description = request.Description?.Trim(),
+            Color = request.Color,
+            Icon = request.Icon,
+            SortOrder = request.SortOrder,
+            SpaceId = "default",
+            CreatedBy = userId,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        await _db.DefectFolders.InsertOneAsync(folder, cancellationToken: ct);
+
+        _logger.LogInformation("[{AppKey}] Folder created: {FolderName} by {UserId}", AppKey, folder.Name, userId);
+
+        return Ok(ApiResponse<object>.Ok(new { folder }));
+    }
+
+    /// <summary>
+    /// 更新文件夹
+    /// </summary>
+    [HttpPut("folders/{id}")]
+    public async Task<IActionResult> UpdateFolder(string id, [FromBody] UpdateFolderRequest request, CancellationToken ct)
+    {
+        var folder = await _db.DefectFolders.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (folder == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "文件夹不存在"));
+
+        // 检查同名文件夹（排除自身）
+        if (!string.IsNullOrWhiteSpace(request.Name) && request.Name.Trim() != folder.Name)
+        {
+            var exists = await _db.DefectFolders.Find(x =>
+                x.Id != id &&
+                (x.SpaceId == null || x.SpaceId == "default") &&
+                x.Name == request.Name.Trim()
+            ).AnyAsync(ct);
+
+            if (exists)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DUPLICATE, "已存在同名文件夹"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Name))
+            folder.Name = request.Name.Trim();
+        if (request.Description != null)
+            folder.Description = request.Description.Trim();
+        if (request.Color != null)
+            folder.Color = request.Color;
+        if (request.Icon != null)
+            folder.Icon = request.Icon;
+        if (request.SortOrder.HasValue)
+            folder.SortOrder = request.SortOrder.Value;
+
+        folder.UpdatedAt = DateTime.UtcNow;
+
+        await _db.DefectFolders.ReplaceOneAsync(x => x.Id == id, folder, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { folder }));
+    }
+
+    /// <summary>
+    /// 删除文件夹
+    /// </summary>
+    [HttpDelete("folders/{id}")]
+    public async Task<IActionResult> DeleteFolder(string id, CancellationToken ct)
+    {
+        var folder = await _db.DefectFolders.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (folder == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "文件夹不存在"));
+
+        // 将文件夹内的缺陷移到根目录
+        var update = Builders<DefectReport>.Update
+            .Set(x => x.FolderId, (string?)null)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        await _db.DefectReports.UpdateManyAsync(x => x.FolderId == id, update, cancellationToken: ct);
+
+        // 删除文件夹
+        await _db.DefectFolders.DeleteOneAsync(x => x.Id == id, ct);
+
+        _logger.LogInformation("[{AppKey}] Folder deleted: {FolderId}", AppKey, id);
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>
+    /// 移动缺陷到文件夹
+    /// </summary>
+    [HttpPost("defects/{id}/move")]
+    public async Task<IActionResult> MoveDefectToFolder(string id, [FromBody] MoveDefectRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
+
+        var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+
+        // 权限检查
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限移动此缺陷"));
+
+        // 验证目标文件夹存在（如果指定了文件夹）
+        if (!string.IsNullOrEmpty(request.FolderId))
+        {
+            var folderExists = await _db.DefectFolders.Find(x => x.Id == request.FolderId).AnyAsync(ct);
+            if (!folderExists)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "目标文件夹不存在"));
+        }
+
+        defect.FolderId = string.IsNullOrEmpty(request.FolderId) ? null : request.FolderId;
+        defect.UpdatedAt = DateTime.UtcNow;
+
+        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+
+        _logger.LogInformation("[{AppKey}] Defect {DefectNo} moved to folder {FolderId}", AppKey, defect.DefectNo, request.FolderId ?? "root");
+
+        return Ok(ApiResponse<object>.Ok(new { defect }));
+    }
+
+    /// <summary>
+    /// 批量移动缺陷到文件夹
+    /// </summary>
+    [HttpPost("defects/batch-move")]
+    public async Task<IActionResult> BatchMoveDefects([FromBody] BatchMoveDefectsRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
+
+        if (request.DefectIds == null || request.DefectIds.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择要移动的缺陷"));
+
+        // 验证目标文件夹存在（如果指定了文件夹）
+        if (!string.IsNullOrEmpty(request.FolderId))
+        {
+            var folderExists = await _db.DefectFolders.Find(x => x.Id == request.FolderId).AnyAsync(ct);
+            if (!folderExists)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "目标文件夹不存在"));
+        }
+
+        var filterBuilder = Builders<DefectReport>.Filter;
+        var filter = filterBuilder.In(x => x.Id, request.DefectIds);
+
+        // 非管理员只能移动自己的缺陷
+        if (!isAdmin)
+        {
+            filter = filterBuilder.And(filter, filterBuilder.Or(
+                filterBuilder.Eq(x => x.ReporterId, userId),
+                filterBuilder.Eq(x => x.AssigneeId, userId)
+            ));
+        }
+
+        var update = Builders<DefectReport>.Update
+            .Set(x => x.FolderId, string.IsNullOrEmpty(request.FolderId) ? null : request.FolderId)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        var result = await _db.DefectReports.UpdateManyAsync(filter, update, cancellationToken: ct);
+
+        _logger.LogInformation("[{AppKey}] Batch moved {Count} defects to folder {FolderId}",
+            AppKey, result.ModifiedCount, request.FolderId ?? "root");
+
+        return Ok(ApiResponse<object>.Ok(new { movedCount = result.ModifiedCount }));
+    }
+
+    #endregion
 }
 
 #region Request DTOs
@@ -1092,6 +1424,37 @@ public class AddAttachmentRequest
     public string MimeType { get; set; } = string.Empty;
     public string CosUrl { get; set; } = string.Empty;
     public string? ThumbnailUrl { get; set; }
+}
+
+public class CreateFolderRequest
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public string? Color { get; set; }
+    public string? Icon { get; set; }
+    public int SortOrder { get; set; } = 0;
+}
+
+public class UpdateFolderRequest
+{
+    public string? Name { get; set; }
+    public string? Description { get; set; }
+    public string? Color { get; set; }
+    public string? Icon { get; set; }
+    public int? SortOrder { get; set; }
+}
+
+public class MoveDefectRequest
+{
+    /// <summary>目标文件夹 ID（null 或空字符串表示移到根目录）</summary>
+    public string? FolderId { get; set; }
+}
+
+public class BatchMoveDefectsRequest
+{
+    public List<string> DefectIds { get; set; } = new();
+    /// <summary>目标文件夹 ID（null 或空字符串表示移到根目录）</summary>
+    public string? FolderId { get; set; }
 }
 
 #endregion

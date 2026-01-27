@@ -88,6 +88,18 @@ public class DefectReport
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>是否已删除（软删除）</summary>
+    public bool IsDeleted { get; set; } = false;
+
+    /// <summary>删除时间</summary>
+    public DateTime? DeletedAt { get; set; }
+
+    /// <summary>删除人 UserId</summary>
+    public string? DeletedBy { get; set; }
+
+    /// <summary>所属文件夹 ID（null 表示未分类/根目录）</summary>
+    public string? FolderId { get; set; }
 }
 
 /// <summary>

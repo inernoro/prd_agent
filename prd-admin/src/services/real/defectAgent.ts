@@ -26,12 +26,22 @@ import type {
   GetDefectStatsContract,
   GetDefectUsersContract,
   PolishDefectContract,
+  ListDeletedDefectsContract,
+  RestoreDefectContract,
+  PermanentDeleteDefectContract,
+  ListDefectFoldersContract,
+  CreateDefectFolderContract,
+  UpdateDefectFolderContract,
+  DeleteDefectFolderContract,
+  MoveDefectToFolderContract,
+  BatchMoveDefectsContract,
   DefectTemplate,
   DefectReport,
   DefectMessage,
   DefectAttachment,
   DefectStats,
   DefectUser,
+  DefectFolder,
 } from '../contracts/defectAgent';
 
 // ========== Templates ==========
@@ -83,6 +93,7 @@ export const listDefectsReal: ListDefectsContract = async (input) => {
   const qs = new URLSearchParams();
   if (input?.filter) qs.set('filter', input.filter);
   if (input?.status) qs.set('status', input.status);
+  if (input?.folderId) qs.set('folderId', input.folderId);
   if (input?.limit) qs.set('limit', String(input.limit));
   if (input?.offset) qs.set('offset', String(input.offset));
   const q = qs.toString();
@@ -250,5 +261,83 @@ export const polishDefectReal: PolishDefectContract = async (input) => {
   return await apiRequest<{ content: string }>(api.defectAgent.polish(), {
     method: 'POST',
     body: JSON.stringify(input),
+  });
+};
+
+// ========== Trash (回收站) ==========
+
+export const listDeletedDefectsReal: ListDeletedDefectsContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.limit) qs.set('pageSize', String(input.limit));
+  if (input?.offset) qs.set('page', String(Math.floor((input.offset || 0) / (input.limit || 20)) + 1));
+  const q = qs.toString();
+  return await apiRequest<{ items: DefectReport[]; total: number }>(
+    `${api.defectAgent.trash()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const restoreDefectReal: RestoreDefectContract = async (input) => {
+  return await apiRequest<{ defect: DefectReport }>(
+    api.defectAgent.defects.restore(encodeURIComponent(input.id)),
+    { method: 'POST' }
+  );
+};
+
+export const permanentDeleteDefectReal: PermanentDeleteDefectContract = async (input) => {
+  return await apiRequest<{ deleted: boolean }>(
+    api.defectAgent.defects.permanent(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+// ========== Folders (文件夹) ==========
+
+export const listDefectFoldersReal: ListDefectFoldersContract = async () => {
+  return await apiRequest<{ items: DefectFolder[] }>(api.defectAgent.folders.list(), {
+    method: 'GET',
+  });
+};
+
+export const createDefectFolderReal: CreateDefectFolderContract = async (input) => {
+  return await apiRequest<{ folder: DefectFolder }>(api.defectAgent.folders.list(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const updateDefectFolderReal: UpdateDefectFolderContract = async (input) => {
+  const { id, ...data } = input;
+  return await apiRequest<{ folder: DefectFolder }>(
+    api.defectAgent.folders.byId(encodeURIComponent(id)),
+    {
+      method: 'PUT',
+      body: data,
+    }
+  );
+};
+
+export const deleteDefectFolderReal: DeleteDefectFolderContract = async (input) => {
+  return await apiRequest<{ deleted: boolean }>(
+    api.defectAgent.folders.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+export const moveDefectToFolderReal: MoveDefectToFolderContract = async (input) => {
+  const { id, ...data } = input;
+  return await apiRequest<{ defect: DefectReport }>(
+    api.defectAgent.defects.move(encodeURIComponent(id)),
+    {
+      method: 'POST',
+      body: data,
+    }
+  );
+};
+
+export const batchMoveDefectsReal: BatchMoveDefectsContract = async (input) => {
+  return await apiRequest<{ movedCount: number }>(api.defectAgent.defects.batchMove(), {
+    method: 'POST',
+    body: input,
   });
 };

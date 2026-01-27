@@ -166,6 +166,15 @@ import type {
   GetDefectStatsContract,
   GetDefectUsersContract,
   PolishDefectContract,
+  ListDeletedDefectsContract,
+  RestoreDefectContract,
+  PermanentDeleteDefectContract,
+  ListDefectFoldersContract,
+  CreateDefectFolderContract,
+  UpdateDefectFolderContract,
+  DeleteDefectFolderContract,
+  MoveDefectToFolderContract,
+  BatchMoveDefectsContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IModelGroupsService } from '@/services/contracts/modelGroups';
@@ -367,6 +376,15 @@ import {
   getDefectStatsReal,
   getDefectUsersReal,
   polishDefectReal,
+  listDeletedDefectsReal,
+  restoreDefectReal,
+  permanentDeleteDefectReal,
+  listDefectFoldersReal,
+  createDefectFolderReal,
+  updateDefectFolderReal,
+  deleteDefectFolderReal,
+  moveDefectToFolderReal,
+  batchMoveDefectsReal,
 } from '@/services/real/defectAgent';
 import { OpenPlatformService } from '@/services/real/openPlatform';
 import { ModelGroupsService } from '@/services/real/modelGroups';
@@ -606,6 +624,15 @@ export const deleteDefectAttachment: DeleteDefectAttachmentContract = withAuth(d
 export const getDefectStats: GetDefectStatsContract = withAuth(getDefectStatsReal);
 export const getDefectUsers: GetDefectUsersContract = withAuth(getDefectUsersReal);
 export const polishDefect: PolishDefectContract = withAuth(polishDefectReal);
+export const listDeletedDefects: ListDeletedDefectsContract = withAuth(listDeletedDefectsReal);
+export const restoreDefect: RestoreDefectContract = withAuth(restoreDefectReal);
+export const permanentDeleteDefect: PermanentDeleteDefectContract = withAuth(permanentDeleteDefectReal);
+export const listDefectFolders: ListDefectFoldersContract = withAuth(listDefectFoldersReal);
+export const createDefectFolder: CreateDefectFolderContract = withAuth(createDefectFolderReal);
+export const updateDefectFolder: UpdateDefectFolderContract = withAuth(updateDefectFolderReal);
+export const deleteDefectFolder: DeleteDefectFolderContract = withAuth(deleteDefectFolderReal);
+export const moveDefectToFolder: MoveDefectToFolderContract = withAuth(moveDefectToFolderReal);
+export const batchMoveDefects: BatchMoveDefectsContract = withAuth(batchMoveDefectsReal);
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
 export const modelGroupsService: IModelGroupsService = new ModelGroupsService();
