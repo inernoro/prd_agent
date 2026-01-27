@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/design/Button';
 import { useDefectStore } from '@/stores/defectStore';
 import {
@@ -8,11 +8,12 @@ import {
   rejectDefect,
   closeDefect,
   sendDefectMessage,
+  getDefectMessages,
 } from '@/services';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { DefectStatus, DefectSeverity } from '@/services/contracts/defectAgent';
-import type { DefectAttachment } from '@/services/contracts/defectAgent';
+import type { DefectAttachment, DefectMessage } from '@/services/contracts/defectAgent';
 import {
   X,
   ArrowRight,
@@ -89,11 +90,28 @@ export function DefectDetailPanel() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [comment, setComment] = useState('');
   const [sendingComment, setSendingComment] = useState(false);
+  const [messages, setMessages] = useState<DefectMessage[]>([]);
 
   const defect = useMemo(
     () => defects.find((d) => d.id === selectedDefectId),
     [defects, selectedDefectId]
   );
+
+  const loadMessages = useCallback(async () => {
+    if (!selectedDefectId) return;
+    const res = await getDefectMessages({ id: selectedDefectId });
+    if (res.success && res.data) {
+      setMessages(res.data.items || []);
+    }
+  }, [selectedDefectId]);
+
+  useEffect(() => {
+    if (selectedDefectId) {
+      loadMessages();
+    } else {
+      setMessages([]);
+    }
+  }, [selectedDefectId, loadMessages]);
 
   if (!defect) return null;
 
@@ -127,6 +145,7 @@ export function DefectDetailPanel() {
       const res = await sendDefectMessage({ id: defect.id, content: comment.trim() });
       if (res.success) {
         setComment('');
+        loadMessages(); // 刷新评论列表
         toast.success('评论已发送');
       } else {
         toast.error(res.error?.message || '发送失败');
@@ -492,6 +511,46 @@ export function DefectDetailPanel() {
               </div>
             )}
           </div>
+
+          {/* 评论列表 */}
+          {messages.length > 0 && (
+            <div className="pt-2">
+              <div
+                className="text-[11px] mb-2 font-medium"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                评论 ({messages.length})
+              </div>
+              <div className="space-y-2">
+                {messages.filter(m => m.role === 'user').map((msg) => (
+                  <div
+                    key={msg.id}
+                    className="p-3 rounded-lg text-[12px]"
+                    style={{
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="w-5 h-5 rounded-full flex items-center justify-center"
+                          style={{ background: 'rgba(100,180,255,0.2)' }}
+                        >
+                          <User size={10} style={{ color: 'rgba(100,180,255,0.9)' }} />
+                        </div>
+                        <span style={{ color: 'var(--text-secondary)' }}>评论</span>
+                      </div>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
+                        {formatDateTime(msg.createdAt)}
+                      </span>
+                    </div>
+                    <div style={{ color: 'var(--text-primary)' }}>{msg.content}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Comment Input - 非草稿状态显示 */}
