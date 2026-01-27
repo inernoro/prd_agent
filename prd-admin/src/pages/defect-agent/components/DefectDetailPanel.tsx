@@ -230,6 +230,13 @@ export function DefectDetailPanel() {
             >
               {statusLabel}
             </span>
+            <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} />
+            <span
+              className="text-[12px]"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              {defect.assigneeName || '未指派'}
+            </span>
           </div>
           <button
             onClick={handleClose}
@@ -270,12 +277,9 @@ export function DefectDetailPanel() {
               style={{ background: 'rgba(255,255,255,0.1)' }}
             />
             <div className="flex items-center gap-2">
+              <span style={{ color: 'var(--text-muted)' }}>提交人</span>
               <span style={{ color: 'var(--text-secondary)' }}>
                 {defect.reporterName || '未知'}
-              </span>
-              <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} />
-              <span style={{ color: 'var(--text-primary)' }}>
-                {defect.assigneeName || '未指派'}
               </span>
             </div>
           </div>
@@ -289,19 +293,20 @@ export function DefectDetailPanel() {
               问题描述
             </div>
             <div
-              className="text-[13px] leading-relaxed whitespace-pre-wrap p-4 rounded-xl"
+              className="text-[13px] leading-relaxed whitespace-pre-wrap p-4 rounded-xl overflow-y-auto"
               style={{
                 background: 'rgba(255,255,255,0.03)',
                 color: 'var(--text-secondary)',
                 border: '1px solid rgba(255,255,255,0.06)',
-                minHeight: '80px',
+                minHeight: '120px',
+                maxHeight: '200px',
               }}
             >
               {defect.rawContent || '(无描述)'}
             </div>
           </div>
 
-          {/* 截图/图片附件 */}
+          {/* 截图/图片附件 - 横向滚动列表 */}
           {imageAttachments.length > 0 && (
             <div>
               <div
@@ -311,11 +316,17 @@ export function DefectDetailPanel() {
                 <ImageIcon size={12} />
                 截图 ({imageAttachments.length})
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div
+                className="flex gap-2 overflow-x-auto pb-2"
+                style={{
+                  scrollbarWidth: 'thin',
+                  scrollbarColor: 'rgba(255,255,255,0.2) transparent',
+                }}
+              >
                 {imageAttachments.map((att) => (
                   <div
                     key={att.id}
-                    className="aspect-video rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-white/30 transition-all"
+                    className="flex-shrink-0 w-[120px] h-[80px] rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-white/30 transition-all"
                     style={{
                       background: 'rgba(0,0,0,0.3)',
                       border: '1px solid rgba(255,255,255,0.1)',
