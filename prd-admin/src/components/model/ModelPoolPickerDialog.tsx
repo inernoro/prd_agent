@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
+import { PlatformLabel } from '@/components/design/PlatformLabel';
 import type { Platform } from '@/types/admin';
 import { PlatformAvailableModelsDialog, type AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
 
@@ -106,6 +107,14 @@ export function ModelPoolPickerDialog({
     // 启用平台优先
     list.sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
     return list;
+  }, [platforms]);
+
+  const platformNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    (platforms ?? []).forEach((p) => {
+      if (p?.id) map.set(p.id, p.name || p.id);
+    });
+    return map;
   }, [platforms]);
 
   const bulkAddGroup = (ms: AvailableModel[]) => {
@@ -241,7 +250,14 @@ export function ModelPoolPickerDialog({
               }}
               title="点击移除"
             >
-              {m.name || m.modelName || m.modelId}
+              <span className="inline-flex items-center gap-2">
+                <PlatformLabel
+                  name={platformNameById.get(m.platformId) ?? m.platformId}
+                  size="sm"
+                  className="shrink-0"
+                />
+                <span className="truncate">{m.name || m.modelName || m.modelId}</span>
+              </span>
               <span className="ml-2" style={{ color: 'var(--text-muted)' }}>
                 x
               </span>

@@ -782,14 +782,14 @@ builder.Services.AddScoped<IChatService>(sp =>
 
 builder.Services.AddScoped<IPreviewAskService>(sp =>
 {
-    var llmClient = sp.GetRequiredService<ILLMClient>();
+    var modelScheduler = sp.GetRequiredService<ISmartModelScheduler>();
     var sessionService = sp.GetRequiredService<ISessionService>();
     var documentService = sp.GetRequiredService<IDocumentService>();
     var promptManager = sp.GetRequiredService<IPromptManager>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var settingsService = sp.GetRequiredService<IAppSettingsService>();
     var systemPromptService = sp.GetRequiredService<PrdAgent.Core.Interfaces.ISystemPromptService>();
-    return new PreviewAskService(llmClient, sessionService, documentService, promptManager, llmCtx, settingsService, systemPromptService);
+    return new PreviewAskService(modelScheduler, sessionService, documentService, promptManager, llmCtx, settingsService, systemPromptService);
 });
 
 // 引导讲解体系已删除（去阶段化）

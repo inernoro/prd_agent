@@ -30,6 +30,7 @@ public class PlatformsController : ControllerBase
     private readonly ICacheManager _cache;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IModelDomainService _modelDomainService;
+    private readonly ISmartModelScheduler _modelScheduler;
     private readonly ILLMRequestContextAccessor _ctxAccessor;
     private readonly ILlmRequestLogWriter _logWriter;
     private readonly IIdGenerator _idGenerator;
@@ -46,6 +47,7 @@ public class PlatformsController : ControllerBase
         ICacheManager cache,
         IHttpClientFactory httpClientFactory,
         IModelDomainService modelDomainService,
+        ISmartModelScheduler modelScheduler,
         ILLMRequestContextAccessor ctxAccessor,
         ILlmRequestLogWriter logWriter,
         IIdGenerator idGenerator)
@@ -56,6 +58,7 @@ public class PlatformsController : ControllerBase
         _cache = cache;
         _httpClientFactory = httpClientFactory;
         _modelDomainService = modelDomainService;
+        _modelScheduler = modelScheduler;
         _ctxAccessor = ctxAccessor;
         _logWriter = logWriter;
         _idGenerator = idGenerator;
@@ -379,7 +382,8 @@ public class PlatformsController : ControllerBase
 
         // 2) 调用主模型进行分类（可能需要分片）
         var providerId = (string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId!).Trim().ToLowerInvariant();
-        var client = await _modelDomainService.GetClientAsync(ModelPurpose.MainChat, ct);
+        var appCallerCode = "admin.platforms.reclassify";
+        var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "chat", ct);
 
         var requestId = Guid.NewGuid().ToString("N");
         using var _ = _ctxAccessor.BeginScope(new LlmRequestContext(
@@ -392,7 +396,10 @@ public class PlatformsController : ControllerBase
             DocumentHash: null,
             SystemPromptRedacted: "[MODEL_RECLASSIFY]",
             RequestType: "reasoning",
-            RequestPurpose: "admin.platforms.reclassify"));
+            RequestPurpose: appCallerCode,
+            ModelResolutionType: scheduledResult.ResolutionType,
+            ModelGroupId: scheduledResult.ModelGroupId,
+            ModelGroupName: scheduledResult.ModelGroupName));
 
         var results = new List<ModelClassifyResult>();
         const int chunkSize = 180;
@@ -401,7 +408,7 @@ public class PlatformsController : ControllerBase
             var chunk = available.Skip(i).Take(chunkSize).ToList();
             try
             {
-                var chunkRes = await ClassifyAvailableModelsAsync(client, providerId, platform.PlatformType, chunk, ct);
+                var chunkRes = await ClassifyAvailableModelsAsync(scheduledResult.Client, providerId, platform.PlatformType, chunk, ct);
                 results.AddRange(chunkRes);
             }
             catch (ModelReclassifyParseException ex)

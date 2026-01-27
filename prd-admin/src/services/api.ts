@@ -229,6 +229,7 @@ export const api = {
       get: () => '/api/dashboard/user-preferences',
       navOrder: () => '/api/dashboard/user-preferences/nav-order',
       theme: () => '/api/dashboard/user-preferences/theme',
+      visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',

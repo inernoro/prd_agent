@@ -15,11 +15,13 @@ import {
   getVisualAgentWorkspaceDetail,
   getAdapterInfoByModelName,
   getModels,
+  getUserPreferences,
   getWatermarkByApp,
   modelGroupsService,
   planImageGen,
   refreshVisualAgentWorkspaceCover,
   saveVisualAgentWorkspaceCanvas,
+  updateVisualAgentPreferences,
   uploadVisualAgentWorkspaceAsset,
 } from '@/services';
 import type { ModelGroupForApp } from '@/types/modelGroup';
@@ -57,6 +59,7 @@ import {
   Maximize2,
   MousePointer2,
   Plus,
+  Send,
   Sparkles,
   Square,
   Type,
@@ -740,13 +743,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [poolModels, models]);
 
   const serverDefaultModel = useMemo(() => {
-    const list = allImageGenModels.filter((m) => m.enabled);
-    list.sort(
-      (a, b) =>
-        Number(a.priority ?? 1e9) - Number(b.priority ?? 1e9) ||
-        String(a.name || a.modelName || '').localeCompare(String(b.name || b.modelName || ''), undefined, { numeric: true, sensitivity: 'base' })
-    );
-    return list[0] ?? null;
+    // 后端已按 priority + createdAt 排序，直接取第一个启用的模型
+    return allImageGenModels.find((m) => m.enabled) ?? null;
   }, [allImageGenModels]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
@@ -759,11 +757,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const SPLIT_MIN = 240;
   const SPLIT_MAX = 360;
 
-  // 模型偏好：按账号持久化（不写 DB）
-  const modelPrefKey = userId ? `prdAdmin.visualAgent.modelPref.${userId}` : '';
+  // 模型偏好：按账号持久化到数据库
   const [modelPrefOpen, setModelPrefOpen] = useState(false);
   const [modelPrefAuto, setModelPrefAuto] = useState(true);
   const [modelPrefModelId, setModelPrefModelId] = useState<string>('');
+  const [modelPrefReady, setModelPrefReady] = useState(false);
+  const modelPrefSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sizeSelectorOpen, setSizeSelectorOpen] = useState(false);
   const sizeSelectorRef = useRef<HTMLDivElement>(null);
 
@@ -1673,29 +1672,51 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       .finally(() => setModelsLoading(false));
   }, []);
 
-  // 读取模型偏好（仅在有 userId 时）
+  // 读取模型偏好（从后端）
   useEffect(() => {
-    if (!modelPrefKey) return;
-    try {
-      const raw = localStorage.getItem(modelPrefKey);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { auto?: boolean; modelId?: string };
-      if (typeof parsed.auto === 'boolean') setModelPrefAuto(parsed.auto);
-      if (typeof parsed.modelId === 'string') setModelPrefModelId(parsed.modelId);
-    } catch {
-      // ignore
-    }
-  }, [modelPrefKey]);
+    if (!userId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await getUserPreferences();
+        if (cancelled) return;
+        if (res.success && res.data.visualAgentPreferences) {
+          const prefs = res.data.visualAgentPreferences;
+          setModelPrefAuto(prefs.modelAuto ?? true);
+          setModelPrefModelId(prefs.modelId ?? '');
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (!cancelled) setModelPrefReady(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userId]);
 
-  // 写入模型偏好
+  // 写入模型偏好（防抖保存到后端）
   useEffect(() => {
-    if (!modelPrefKey) return;
-    try {
-      localStorage.setItem(modelPrefKey, JSON.stringify({ auto: modelPrefAuto, modelId: modelPrefModelId }));
-    } catch {
-      // ignore
+    if (!userId) return;
+    // 必须等加载完成后才保存，避免初始值覆盖
+    if (!modelPrefReady) return;
+    // 防抖：避免快速切换导致频繁请求
+    if (modelPrefSaveRef.current) {
+      clearTimeout(modelPrefSaveRef.current);
     }
-  }, [modelPrefAuto, modelPrefKey, modelPrefModelId]);
+    modelPrefSaveRef.current = setTimeout(() => {
+      void updateVisualAgentPreferences({
+        modelAuto: modelPrefAuto,
+        modelId: modelPrefModelId || undefined,
+      }).catch(() => {
+        // 静默失败，不影响用户操作
+      });
+    }, 500);
+    return () => {
+      if (modelPrefSaveRef.current) {
+        clearTimeout(modelPrefSaveRef.current);
+      }
+    };
+  }, [modelPrefAuto, modelPrefModelId, modelPrefReady, userId]);
 
   // 读取直连模式（仅在有 userId 时）
   useEffect(() => {
@@ -6227,10 +6248,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   暂无启用的 isImageGen 模型（可在“模型管理”设置）
                                 </div>
                               ) : (
-                                imageModels
-                                  .slice()
-                                  .sort((a, b) => Number(a.priority ?? 1e9) - Number(b.priority ?? 1e9))
-                                  .map((m) => (
+                                imageModels.map((m) => (
                                     <button
                                       key={m.id}
                                       type="button"
@@ -6450,10 +6468,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           color: 'rgba(129, 140, 248, 0.95)',
                         }}
                         aria-label="模型偏好"
-                        title={effectiveModel ? `${effectiveModel.modelName || effectiveModel.name || ''} - 点击切换模型` : '选择模型'}
+                        title={effectiveModel ? `${effectiveModel.name || effectiveModel.modelName || ''} - 点击切换模型` : '选择模型'}
                       >
                         <Sparkles size={10} className="shrink-0" />
-                        <span className="truncate">{effectiveModel?.modelName || effectiveModel?.name || '选择模型'}</span>
+                        <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
                         <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
                       </button>
                     </DropdownMenu.Trigger>
@@ -6549,10 +6567,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </div>
                           ) : (
                             <div className="space-y-2">
-                              {enabledImageModels
-                                .slice()
-                                .sort((a, b) => Number(a.priority ?? 1e9) - Number(b.priority ?? 1e9))
-                                .map((m) => {
+                              {enabledImageModels.map((m) => {
                                   const picked = (!modelPrefAuto && modelPrefModelId === m.id) || (modelPrefAuto && serverDefaultModel?.id === m.id);
                                   return (
                                     <button
@@ -6573,9 +6588,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                         <div className="min-w-0">
                                           <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                                             {m.name || m.modelName}
-                                          </div>
-                                          <div className="mt-0.5 text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>
-                                            {m.modelName}
                                           </div>
                                         </div>
                                         <div className="shrink-0">
@@ -6633,6 +6645,31 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       {runningCount}/{pendingCount}
                     </div>
                   ) : null}
+
+                  {/* 发送按钮 */}
+                  <button
+                    type="button"
+                    className="h-7 w-7 rounded-full inline-flex items-center justify-center transition-all"
+                    style={{
+                      background: 'rgba(99, 102, 241, 0.85)',
+                      border: '1px solid rgba(99, 102, 241, 0.65)',
+                      color: 'rgba(255, 255, 255, 0.95)',
+                      boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
+                    }}
+                    aria-label="发送"
+                    title="发送（Enter）"
+                    onClick={() => void onSendRich()}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(99, 102, 241, 1)';
+                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(99, 102, 241, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(99, 102, 241, 0.85)';
+                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(99, 102, 241, 0.3)';
+                    }}
+                  >
+                    <Send size={14} />
+                  </button>
                 </div>
               </div>
             </div>

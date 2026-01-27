@@ -18,12 +18,17 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("prompts", AdminPermissionCatalog.PromptsRead, WritePermission = AdminPermissionCatalog.PromptsWrite)]
 public class PromptsOptimizeController : ControllerBase
 {
-    private readonly ILLMClient _llmClient;
+    private readonly ISmartModelScheduler _modelScheduler;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<PromptsOptimizeController> _logger;
 
-    public PromptsOptimizeController(ILLMClient llmClient, ILogger<PromptsOptimizeController> logger)
+    public PromptsOptimizeController(
+        ISmartModelScheduler modelScheduler,
+        ILLMRequestContextAccessor llmRequestContext,
+        ILogger<PromptsOptimizeController> logger)
     {
-        _llmClient = llmClient;
+        _modelScheduler = modelScheduler;
+        _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
 
@@ -92,6 +97,22 @@ public class PromptsOptimizeController : ControllerBase
 
         try
         {
+            var appCallerCode = "admin.prompts.optimize";
+            var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "chat", cancellationToken);
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: Guid.NewGuid().ToString("N"),
+                GroupId: null,
+                SessionId: null,
+                UserId: null,
+                ViewRole: "ADMIN",
+                DocumentChars: null,
+                DocumentHash: null,
+                SystemPromptRedacted: "[PROMPTS_OPTIMIZE]",
+                RequestType: "reasoning",
+                RequestPurpose: appCallerCode,
+                ModelResolutionType: scheduledResult.ResolutionType,
+                ModelGroupId: scheduledResult.ModelGroupId,
+                ModelGroupName: scheduledResult.ModelGroupName));
             // start
             var startData = JsonSerializer.Serialize(
                 new PromptOptimizeStreamEvent { Type = "start" },
@@ -100,7 +121,7 @@ public class PromptsOptimizeController : ControllerBase
             await Response.WriteAsync($"data: {startData}\n\n", cancellationToken);
             await Response.Body.FlushAsync(cancellationToken);
 
-            await foreach (var chunk in _llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken))
+            await foreach (var chunk in scheduledResult.Client.StreamGenerateAsync(systemPrompt, messages, cancellationToken))
             {
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {

@@ -49,6 +49,14 @@ globs: prd-api/**
 - 后端分层: Api -> Core -> Infrastructure
 - Prompt 模板: `Infrastructure/Prompts/Templates/`
 
+## LLM 调度与日志（强制）
+
+- **所有 LLM 请求必须走三级调度**：专属模型池 → 默认模型池 → 直连单模型（`ISmartModelScheduler`）。
+- **唯一例外：模型实验室（ModelLab）**：允许直接选择模型用于测试，不走调度；但仍需写入 `LlmRequestContext`，且 `ModelResolutionType` 固定为 `DirectModel`。
+- **禁止直接 new LLMClient**（ClaudeClient/OpenAIClient）用于业务请求；仅允许在调度器或明确的底层基础设施中创建。
+- **必须写入 LlmRequestContext**：`RequestType`、`RequestPurpose`、`ModelResolutionType`、`ModelGroupId`、`ModelGroupName` 不得为空。
+- **默认策略**：业务调用点先获取 `scheduledResult`，再基于其信息开启 `BeginScope`，确保日志与调度一致。
+
 ## MongoDB 约束（强制）
 
 ### ID 规范（必须遵守）

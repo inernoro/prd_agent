@@ -20,6 +20,7 @@ public class ModelDomainService : IModelDomainService
     private readonly IConfiguration _config;
     private readonly ILlmRequestLogWriter _logWriter;
     private readonly ILLMRequestContextAccessor _ctxAccessor;
+    private readonly ISmartModelScheduler _modelScheduler;
     private readonly ILogger<ClaudeClient> _claudeLogger;
 
     public ModelDomainService(
@@ -28,6 +29,7 @@ public class ModelDomainService : IModelDomainService
         IConfiguration config,
         ILlmRequestLogWriter logWriter,
         ILLMRequestContextAccessor ctxAccessor,
+        ISmartModelScheduler modelScheduler,
         ILogger<ClaudeClient> claudeLogger)
     {
         _db = db;
@@ -35,6 +37,7 @@ public class ModelDomainService : IModelDomainService
         _config = config;
         _logWriter = logWriter;
         _ctxAccessor = ctxAccessor;
+        _modelScheduler = modelScheduler;
         _claudeLogger = claudeLogger;
     }
 
@@ -109,7 +112,8 @@ public class ModelDomainService : IModelDomainService
         var fallbackName = GroupNameHeuristics.Suggest(fileName, safeSnippet, maxLen: 20);
 
         // 使用意图模型（不存在则回退主模型）
-        var client = await GetClientAsync(ModelPurpose.Intent, ct);
+        var appCallerCode = Desktop.GroupName.SuggestIntent;
+        var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "intent", ct);
 
         var requestId = Guid.NewGuid().ToString("N");
         using var _ = _ctxAccessor.BeginScope(new LlmRequestContext(
@@ -123,7 +127,10 @@ public class ModelDomainService : IModelDomainService
             // 展示给管理后台/日志的 system（脱敏版）：不要再用占位符，避免误导排障
             SystemPromptRedacted: "意图：根据文件名与PRD片段输出群组名称（只输出名称，不追问）",
             RequestType: "intent",
-            RequestPurpose: Desktop.GroupName.SuggestIntent));
+            RequestPurpose: appCallerCode,
+            ModelResolutionType: scheduledResult.ResolutionType,
+            ModelGroupId: scheduledResult.ModelGroupId,
+            ModelGroupName: scheduledResult.ModelGroupName));
 
         var systemPrompt =
             "你是PRD Agent的意图模型。\n" +
@@ -147,7 +154,7 @@ public class ModelDomainService : IModelDomainService
         };
 
         // 该意图属于“短文本提取”，禁用 prompt cache 可显著降低“错误复用/误命中”带来的离谱输出风险
-        var text = await CollectToTextAsync(client, systemPrompt, messages, enablePromptCache: false, ct);
+        var text = await CollectToTextAsync(scheduledResult.Client, systemPrompt, messages, enablePromptCache: false, ct);
         var name = NormalizeName(text);
         if (string.IsNullOrWhiteSpace(name) || !LooksLikeAName(name))
         {
@@ -168,7 +175,8 @@ public class ModelDomainService : IModelDomainService
         if (safePrompt.Length > 200)
             safePrompt = safePrompt[..200];
 
-        var client = await GetClientAsync(ModelPurpose.Intent, ct);
+        var appCallerCode = "prd-agent-web::visual-agent.workspace-title";
+        var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "intent", ct);
 
         var requestId = Guid.NewGuid().ToString("N");
         using var _ = _ctxAccessor.BeginScope(new LlmRequestContext(
@@ -181,7 +189,10 @@ public class ModelDomainService : IModelDomainService
             DocumentHash: null,
             SystemPromptRedacted: "意图：根据用户图像生成提示词生成工作区标题（5-20字）",
             RequestType: "intent",
-            RequestPurpose: "prd-agent-web::visual-agent.workspace-title"));
+            RequestPurpose: appCallerCode,
+            ModelResolutionType: scheduledResult.ResolutionType,
+            ModelGroupId: scheduledResult.ModelGroupId,
+            ModelGroupName: scheduledResult.ModelGroupName));
 
         var systemPrompt =
             "你是视觉创作工作区的命名助手。\n" +
@@ -198,7 +209,7 @@ public class ModelDomainService : IModelDomainService
             new() { Role = "user", Content = $"用户提示词：{safePrompt}" }
         };
 
-        var text = await CollectToTextAsync(client, systemPrompt, messages, enablePromptCache: false, ct);
+        var text = await CollectToTextAsync(scheduledResult.Client, systemPrompt, messages, enablePromptCache: false, ct);
         var title = NormalizeName(text);
         if (string.IsNullOrWhiteSpace(title) || !LooksLikeAName(title) || title.Length > 20)
         {

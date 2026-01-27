@@ -96,6 +96,7 @@ public class ModelGroupsController : ControllerBase
                     var dedicatedGroups = await _db.ModelGroups
                         .Find(g => requirement.ModelGroupIds.Contains(g.Id))
                         .SortBy(g => g.Priority)
+                        .ThenBy(g => g.CreatedAt)
                         .ToListAsync();
 
                     if (dedicatedGroups.Count > 0)
@@ -131,6 +132,7 @@ public class ModelGroupsController : ControllerBase
         var defaultGroups = await _db.ModelGroups
             .Find(g => g.ModelType == modelType && g.IsDefaultForType)
             .SortBy(g => g.Priority)
+            .ThenBy(g => g.CreatedAt)
             .ToListAsync();
 
         if (defaultGroups.Count > 0)
