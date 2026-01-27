@@ -3603,12 +3603,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const sorted = [...items].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
 
     const gap = 5; // 紧凑间距
-    const viewW = stageSize.w || 1200;
     const currentCam = cameraRef.current;
     const currentZoom = zoomRef.current;
 
-    // 计算可用宽度（视口宽度的80%）
-    const availableW = (viewW * 0.85) / currentZoom;
+    // 根据图片数量动态计算列数（2-5列），确保网格布局合理
+    const n = sorted.length;
+    const cols = n <= 2 ? n : n <= 4 ? 2 : n <= 9 ? 3 : n <= 16 ? 4 : 5;
+
+    // 计算图片的最大宽度
+    const maxW = Math.max(...sorted.map((it) => it.w ?? 320));
+
+    // 可用宽度 = 列数 × (最大宽度 + 间距)，确保每行能放下指定列数的图片
+    const availableW = cols * (maxW + gap);
 
     // 桌面图标式紧凑布局算法：
     // 1. 按行堆叠，每行高度取该行最高元素
@@ -3682,11 +3688,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return next;
     });
 
-    // 适配视口
+    // 适配视口 - 直接使用计算好的新位置，避免异步状态问题
+    const updatedItems = sorted.map((it) => ({
+      ...it,
+      x: updates[it.key]?.x ?? it.x,
+      y: updates[it.key]?.y ?? it.y,
+    }));
     requestAnimationFrame(() => {
-      fitToAll();
+      fitItemsToViewport(updatedItems);
     });
-  }, [fitToAll, stageSize.w, stageSize.h]);
+  }, [fitItemsToViewport, stageSize.w, stageSize.h]);
 
   // 图层操作回调
   const layerMoveUp = useCallback(() => {
