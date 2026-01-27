@@ -893,16 +893,16 @@ export default function UsersPage() {
                     key={u.userId}
                     className="group relative rounded-[10px] p-2.5 transition-all duration-150"
                     style={{
-                      background: 'rgba(255,255,255,0.02)',
-                      border: '1px solid rgba(255,255,255,0.06)',
+                      background: isBot ? 'rgba(34,197,94,0.03)' : 'rgba(255,255,255,0.02)',
+                      border: isBot ? '1px solid rgba(34,197,94,0.15)' : '1px solid rgba(255,255,255,0.06)',
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.06)' : 'rgba(255,255,255,0.04)';
+                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.1)';
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
-                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
+                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.03)' : 'rgba(255,255,255,0.02)';
+                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.06)';
                     }}
                   >
                     {/* 操作按钮：悬浮显示 */}
@@ -1156,8 +1156,25 @@ export default function UsersPage() {
                               />
                             );
                           })()}
-                          {/* 角色图标（右下角） */}
+                          {/* 角色/机器人图标（右下角） */}
                           {(() => {
+                            // 机器人使用特殊图标
+                            if (isBot) {
+                              return (
+                                <span
+                                  className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full flex items-center justify-center border-2"
+                                  style={{ background: 'rgba(34,197,94,0.9)', borderColor: 'rgba(0,0,0,0.5)', color: '#fff' }}
+                                  title="机器人"
+                                >
+                                  <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m-6 7a6 6 0 0112 0v5a3 3 0 01-3 3H9a3 3 0 01-3-3v-5z" />
+                                    <circle cx="9" cy="13" r="1" fill="currentColor" />
+                                    <circle cx="15" cy="13" r="1" fill="currentColor" />
+                                  </svg>
+                                </span>
+                              );
+                            }
+                            // 人类用户显示角色图标
                             const roleIconConfig: Record<string, { bg: string; color: string; icon: React.ReactNode }> = {
                               PM: {
                                 bg: 'rgba(59,130,246,0.9)',
@@ -1212,19 +1229,6 @@ export default function UsersPage() {
                           >
                             {u.role}
                           </span>
-                          {/* Bot 标记 */}
-                          {isBot && (
-                            <span
-                              className="shrink-0 inline-flex items-center justify-center h-4 w-4 rounded-[4px]"
-                              style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.9)' }}
-                              title="机器人"
-                            >
-                              <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m-6 7a6 6 0 0112 0v5a3 3 0 01-3 3H9a3 3 0 01-3-3v-5z" />
-                                <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 13h.01M16 13h.01" />
-                              </svg>
-                            </span>
-                          )}
                         </div>
                         {/* 用户名 */}
                         <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }} title={`@${u.username}`}>

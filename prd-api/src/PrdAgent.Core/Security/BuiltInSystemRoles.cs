@@ -25,6 +25,8 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.PrdAgentUse,
                 AdminPermissionCatalog.VisualAgentUse,
                 AdminPermissionCatalog.LiteraryAgentUse,
+                AdminPermissionCatalog.DefectAgentUse,
+                AdminPermissionCatalog.DefectAgentManage,
                 AdminPermissionCatalog.ModelsRead,
                 AdminPermissionCatalog.ModelsWrite,
                 AdminPermissionCatalog.GroupsRead,
@@ -49,6 +51,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.PrdAgentUse,
                 AdminPermissionCatalog.VisualAgentUse,
                 AdminPermissionCatalog.LiteraryAgentUse,
+                AdminPermissionCatalog.DefectAgentUse,
                 AdminPermissionCatalog.UsersRead,
                 AdminPermissionCatalog.GroupsRead,
                 AdminPermissionCatalog.ModelsRead,
@@ -68,6 +71,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.PrdAgentUse,
                 AdminPermissionCatalog.VisualAgentUse,
                 AdminPermissionCatalog.LiteraryAgentUse,
+                AdminPermissionCatalog.DefectAgentUse,
                 // PRD Agent 读取提示词需要 settings.read，但不应默认展示"提示词管理"（前端已改为 prompts.write 才可见）
                 AdminPermissionCatalog.SettingsRead,
             }

@@ -401,7 +401,7 @@ export default function AppShell() {
             top: asideGap,
             bottom: asideGap,
             width: focusHideAside ? 0 : asideWidth,
-            zIndex: 20,
+            zIndex: 12,
             borderRadius: 18,
             opacity: focusHideAside ? 0 : 1,
             // 根据主题配置决定是否使用液态玻璃效果
@@ -823,7 +823,7 @@ export default function AppShell() {
         <main
           className="relative h-full w-full overflow-auto flex flex-col transition-[padding-left] duration-220 ease-out"
           // 让递归线条背景可见；前景可读性由 Card 等“实底组件”承担
-          style={{ background: 'transparent', paddingLeft: mainPadLeft, zIndex: 10 }}
+          style={{ background: 'transparent', paddingLeft: mainPadLeft }}
         >
           {/* 主内容区背景：满屏暗角 + 轻微渐变（不随 max-width 截断） */}
           <div

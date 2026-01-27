@@ -22,6 +22,7 @@
    | 文学创作 Agent | `literary-agent` | 文章配图、文学创作场景 |
    | 视觉创作 Agent | `visual-agent` | 高级视觉创作工作区 |
    | PRD Agent | `prd-agent` | PRD 智能解读与问答 |
+   | 缺陷管理 Agent | `defect-agent` | 缺陷提交与跟踪 |
 
 4. **为什么这样设计**
    - 权限控制：未来可以基于 Controller 做细粒度权限管理
@@ -66,7 +67,7 @@ public async Task<IActionResult> CreateImageGenRun([FromBody] Request request)
 
 ## Codebase Skill（代码库快照 — 供 AI 增量维护用）
 
-> **最后更新**：2026-01-23 | **总提交数**：110 | **文档版本**：SRS v3.0, PRD v2.0
+> **最后更新**：2026-01-25 | **总提交数**：111 | **文档版本**：SRS v3.0, PRD v2.0
 >
 > **用途**：AI 在后续会话中读取此段落即可跳过全盘扫描，仅对增量变更进行定点校验。
 > **维护规则**：每次代码结构性变更（新增模块、重命名、废弃功能）后，需同步更新此段落。
@@ -89,8 +90,8 @@ prd_agent/
 │       └── lib/          # themeApplier, themeComputed
 ├── prd-desktop/      # Tauri 2.0 桌面客户端 (Rust + React)
 │   ├── src-tauri/    # Rust: commands/, services/, models/
-│   └── src/          # React: components/, stores/, pages/
-├── doc/              # 编号文档 (0-5) + 专题文档 (design.*, agent.*, rule.*)
+│   └── src/          # React: components/, stores/, pages/  
+├── doc/              # 编号文档 (0-5) + 专题文档 (design.*, agent.*, rule.*) 
 └── scripts/          # 构建/部署脚本
 ```
 
@@ -125,13 +126,14 @@ prd_agent/
 | 会话归档 | ✅ DONE | SessionsController (archive/unarchive) |
 | 数据管理面板 | ✅ DONE | DataManagePage |
 | 管理通知 | ✅ DONE | NotificationsController, admin_notifications |
+| 缺陷管理 Agent | ✅ DONE | DefectAgentController, DefectAgentTests (25 tests) |
 | **附件上传** | ⚠️ PARTIAL | Model 定义 + Message.AttachmentIds 关联，无通用上传 Controller |
 | **知识库** | ⚠️ PARTIAL | KnowledgeBasePage UI 占位，"资料文件"标注开发中 |
 | **i18n** | ❌ NOT_IMPL | 无任何 i18n 基础设施，文案硬编码中文 |
 | **K8s 部署** | ❌ NOT_IMPL | 仅 docker-compose，无 K8s manifests |
 | **告警通知 (邮件/Webhook)** | ❌ NOT_IMPL | 仅 AdminNotification 面板内通知 |
 
-### MongoDB 集合清单 (52 个)
+### MongoDB 集合清单 (55 个)
 
 核心业务：`users`, `groups`, `group_members`, `sessions`, `messages`, `parsed_prds`, `attachments`, `contentgaps`, `prdcomments`
 
@@ -148,6 +150,8 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 提示词：`prompt_stages`, `literary_prompts`
 
 开放平台：`openplatformapps`, `openplatformrequestlogs`
+
+缺陷管理：`defect_templates`, `defect_reports`, `defect_messages`
 
 其他：`api_request_logs`, `user_preferences`
 

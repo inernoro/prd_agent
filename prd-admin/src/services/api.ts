@@ -297,6 +297,40 @@ export const api = {
     },
   },
 
+  // ============ Defect Agent 缺陷管理 ============
+  defectAgent: {
+    templates: {
+      list: () => '/api/defect-agent/templates',
+      byId: (id: string) => `/api/defect-agent/templates/${id}`,
+      share: (id: string) => `/api/defect-agent/templates/${id}/share`,
+    },
+    defects: {
+      list: () => '/api/defect-agent/defects',
+      byId: (id: string) => `/api/defect-agent/defects/${id}`,
+      submit: (id: string) => `/api/defect-agent/defects/${id}/submit`,
+      process: (id: string) => `/api/defect-agent/defects/${id}/process`,
+      resolve: (id: string) => `/api/defect-agent/defects/${id}/resolve`,
+      reject: (id: string) => `/api/defect-agent/defects/${id}/reject`,
+      close: (id: string) => `/api/defect-agent/defects/${id}/close`,
+      reopen: (id: string) => `/api/defect-agent/defects/${id}/reopen`,
+      messages: (id: string) => `/api/defect-agent/defects/${id}/messages`,
+      attachments: (id: string) => `/api/defect-agent/defects/${id}/attachments`,
+      attachment: (id: string, attachmentId: string) => `/api/defect-agent/defects/${id}/attachments/${attachmentId}`,
+      restore: (id: string) => `/api/defect-agent/defects/${id}/restore`,
+      permanent: (id: string) => `/api/defect-agent/defects/${id}/permanent`,
+      move: (id: string) => `/api/defect-agent/defects/${id}/move`,
+      batchMove: () => '/api/defect-agent/defects/batch-move',
+    },
+    folders: {
+      list: () => '/api/defect-agent/folders',
+      byId: (id: string) => `/api/defect-agent/folders/${id}`,
+    },
+    trash: () => '/api/defect-agent/defects/trash',
+    stats: () => '/api/defect-agent/stats',
+    users: () => '/api/defect-agent/users',
+    polish: () => '/api/defect-agent/defects/polish',
+  },
+
   // ============ Open Platform 开放平台 ============
   openPlatform: {
     apps: {
