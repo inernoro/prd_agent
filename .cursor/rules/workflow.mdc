@@ -7,7 +7,7 @@ alwaysApply: true
 ## Global Constraints (MUST follow)
 
 - **No emoji**: Do not use emoji in any content
-- Year is 2025
+- Year is 2026
 - Fast dev phase: no backward compatibility; ok to delete the database
 - Multi-agent parallel work: keep git isolation, avoid touching other agent areas
 - Do not revert any code without explicit permission

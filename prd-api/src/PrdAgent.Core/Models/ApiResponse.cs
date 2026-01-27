@@ -82,4 +82,7 @@ public static class ErrorCodes
 
     // 生图相关
     public const string IMAGE_GEN_RUN_NOT_FOUND = "IMAGE_GEN_RUN_NOT_FOUND";
+
+    // 通用业务
+    public const string DUPLICATE = "DUPLICATE";
 }
