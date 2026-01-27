@@ -156,51 +156,42 @@ export function DefectCard({ defect }: DefectCardProps) {
 
           {/* 主内容区 */}
           <div className="flex-1 min-w-0 flex flex-col">
-            {/* Header: 严重性 + 状态 + 编号 */}
+            {/* Header: 严重性 + 状态 + 标题 + 编号 */}
             <div className="px-3 pt-3 pb-2 flex items-center gap-2">
               {/* 严重性标签 */}
               <div
-                className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium"
+                className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium flex-shrink-0"
                 style={{ background: severity.bgColor, color: severity.color }}
               >
                 <SeverityIcon size={12} />
                 {severity.label}
               </div>
 
-              {/* 状态标签 */}
+              {/* 标题 - 在状态后面，超出省略 */}
               <span
-                className="text-[10px] px-2 py-0.5 rounded"
-                style={{ background: `${statusColor}20`, color: statusColor }}
+                className="text-[13px] font-medium truncate flex-1 min-w-0"
+                style={{ color: 'var(--text-primary)' }}
+                title={title}
               >
-                {statusLabel}
+                {title}
               </span>
 
               {/* 缺陷编号 */}
               <span
-                className="text-[10px] font-mono ml-auto"
+                className="text-[10px] font-mono flex-shrink-0"
                 style={{ color: 'var(--text-muted)' }}
               >
                 {defect.defectNo}
               </span>
             </div>
 
-            {/* 标题 */}
-            <div className="px-3 pb-2">
-              <div
-                className="font-medium text-[14px] leading-snug line-clamp-2"
-                style={{ color: 'var(--text-primary)' }}
-              >
-                {title}
-              </div>
-            </div>
-
             {/* 描述预览 */}
             <div className="px-3 pb-2 flex-1 min-h-0">
               <div
-                className="text-[12px] line-clamp-2"
+                className="text-[12px] line-clamp-3"
                 style={{ color: 'var(--text-secondary)' }}
               >
-                {getPreviewText(defect.rawContent)}
+                {getPreviewText(defect.rawContent, 120)}
               </div>
             </div>
 
@@ -282,6 +273,14 @@ export function DefectCard({ defect }: DefectCardProps) {
                   <Trash2 size={10} />
                 </Button>
               </div>
+
+              {/* 状态标签 */}
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded mr-2 flex-shrink-0"
+                style={{ background: `${statusColor}20`, color: statusColor }}
+              >
+                {statusLabel}
+              </span>
 
               {/* 人员信息 */}
               <div className="flex items-center gap-1 flex-1 min-w-0">

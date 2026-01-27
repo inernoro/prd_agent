@@ -222,70 +222,72 @@ export function DefectSubmitPanel() {
           </button>
         </div>
 
-        {/* Selectors */}
+        {/* Selectors - 一排显示 */}
         <div className="px-5 py-4 space-y-3">
-          {/* Assignee */}
-          <div className="flex items-center gap-3">
-            <label
-              className="text-[12px] w-16 flex-shrink-0"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              提交给
-            </label>
-            <select
-              value={assigneeUserId}
-              onChange={(e) => setAssigneeUserId(e.target.value)}
-              className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
-              style={{
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                color: 'var(--text-primary)',
-              }}
-            >
-              <option value="">选择用户</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.displayName || u.username}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Template */}
-          <div className="flex items-center gap-3">
-            <label
-              className="text-[12px] w-16 flex-shrink-0"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              模板
-            </label>
-            <select
-              value={selectedTemplateId}
-              onChange={(e) => setSelectedTemplateId(e.target.value)}
-              className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
-              style={{
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                color: 'var(--text-primary)',
-              }}
-            >
-              <option value="">
-                {defaultTemplate ? `${defaultTemplate.name} (默认)` : '无模板'}
-              </option>
-              {templates
-                .filter((t) => !t.isDefault)
-                .map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
+          <div className="flex items-center gap-4">
+            {/* Assignee */}
+            <div className="flex items-center gap-2 flex-1">
+              <label
+                className="text-[12px] flex-shrink-0"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                提交给
+              </label>
+              <select
+                value={assigneeUserId}
+                onChange={(e) => setAssigneeUserId(e.target.value)}
+                className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                <option value="">选择用户</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.displayName || u.username}
                   </option>
                 ))}
-            </select>
+              </select>
+            </div>
+
+            {/* Template */}
+            <div className="flex items-center gap-2 flex-1">
+              <label
+                className="text-[12px] flex-shrink-0"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                模板
+              </label>
+              <select
+                value={selectedTemplateId}
+                onChange={(e) => setSelectedTemplateId(e.target.value)}
+                className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                <option value="">
+                  {defaultTemplate ? `${defaultTemplate.name} (默认)` : '无模板'}
+                </option>
+                {templates
+                  .filter((t) => !t.isDefault)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
           </div>
 
           {/* Template Hint */}
           {selectedTemplate && selectedTemplate.description && (
             <div
-              className="ml-[76px] px-3 py-2 rounded-lg text-[11px]"
+              className="px-3 py-2 rounded-lg text-[11px]"
               style={{
                 background: 'rgba(100,200,255,0.08)',
                 color: 'var(--text-secondary)',

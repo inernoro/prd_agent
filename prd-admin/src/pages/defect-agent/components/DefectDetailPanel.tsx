@@ -7,6 +7,7 @@ import {
   resolveDefect,
   rejectDefect,
   closeDefect,
+  sendDefectMessage,
 } from '@/services';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
@@ -26,6 +27,8 @@ import {
   Bug,
   Image as ImageIcon,
   FileText,
+  Send,
+  User,
 } from 'lucide-react';
 
 const statusLabels: Record<string, string> = {
@@ -84,6 +87,8 @@ export function DefectDetailPanel() {
 
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [comment, setComment] = useState('');
+  const [sendingComment, setSendingComment] = useState(false);
 
   const defect = useMemo(
     () => defects.find((d) => d.id === selectedDefectId),
@@ -113,6 +118,24 @@ export function DefectDetailPanel() {
 
   const handleDeleteCancel = () => {
     setConfirmingDelete(false);
+  };
+
+  const handleSendComment = async () => {
+    if (!comment.trim()) return;
+    setSendingComment(true);
+    try {
+      const res = await sendDefectMessage({ id: defect.id, content: comment.trim() });
+      if (res.success) {
+        setComment('');
+        toast.success('评论已发送');
+      } else {
+        toast.error(res.error?.message || '发送失败');
+      }
+    } catch {
+      toast.error('发送失败');
+    } finally {
+      setSendingComment(false);
+    }
   };
 
   const handleProcess = async () => {
@@ -233,13 +256,32 @@ export function DefectDetailPanel() {
             >
               {statusLabel}
             </span>
-            <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} />
-            <span
-              className="text-[12px]"
-              style={{ color: 'var(--text-primary)' }}
-            >
-              {defect.assigneeName || '未指派'}
-            </span>
+            <div
+              className="w-px h-4 mx-1"
+              style={{ background: 'rgba(255,255,255,0.1)' }}
+            />
+            {/* 提交人 → 被指派人 */}
+            <div className="flex items-center gap-2">
+              <div
+                className="w-5 h-5 rounded-full flex items-center justify-center"
+                style={{ background: 'rgba(100,180,255,0.2)' }}
+              >
+                <User size={12} style={{ color: 'rgba(100,180,255,0.9)' }} />
+              </div>
+              <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                {defect.reporterName || '未知'}
+              </span>
+              <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} />
+              <div
+                className="w-5 h-5 rounded-full flex items-center justify-center"
+                style={{ background: 'rgba(255,180,70,0.2)' }}
+              >
+                <User size={12} style={{ color: 'rgba(255,180,70,0.9)' }} />
+              </div>
+              <span className="text-[12px]" style={{ color: 'var(--text-primary)' }}>
+                {defect.assigneeName || '未指派'}
+              </span>
+            </div>
           </div>
           <button
             onClick={handleClose}
@@ -451,6 +493,45 @@ export function DefectDetailPanel() {
             )}
           </div>
         </div>
+
+        {/* Comment Input - 非草稿状态显示 */}
+        {defect.status !== DefectStatus.Draft && (
+          <div
+            className="px-5 py-3 flex-shrink-0"
+            style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
+          >
+            <div
+              className="flex items-center gap-2 rounded-lg px-3 py-2"
+              style={{
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.08)',
+              }}
+            >
+              <input
+                type="text"
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && comment.trim()) {
+                    e.preventDefault();
+                    handleSendComment();
+                  }
+                }}
+                placeholder="添加评论..."
+                className="flex-1 bg-transparent outline-none text-[13px]"
+                style={{ color: 'var(--text-primary)' }}
+                disabled={sendingComment}
+              />
+              <button
+                onClick={handleSendComment}
+                disabled={!comment.trim() || sendingComment}
+                className="p-1.5 rounded-lg hover:bg-white/10 transition-colors disabled:opacity-40"
+              >
+                <Send size={14} style={{ color: 'var(--accent-primary)' }} />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Actions */}
         <div
