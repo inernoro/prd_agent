@@ -101,6 +101,9 @@ export interface DefectMessage {
   defectId: string;
   seq: number;
   role: 'user' | 'assistant' | 'system';
+  userId?: string;
+  userName?: string;
+  avatarUrl?: string;
   content: string;
   attachmentIds?: string[];
   extractedFields?: Record<string, string>;

@@ -32,7 +32,9 @@ import {
   Send,
   User,
   MessageCircle,
+  Bot,
 } from 'lucide-react';
+import { resolveAvatarUrl } from '@/lib/avatar';
 
 const statusLabels: Record<string, string> = {
   [DefectStatus.Draft]: '草稿',
@@ -265,14 +267,14 @@ export function DefectDetailPanel() {
     <>
       {/* 遮罩层 */}
       <div
-        className="fixed inset-0 z-40"
+        className="fixed inset-0 z-[200]"
         style={{ background: 'rgba(0, 0, 0, 0.5)' }}
         onClick={handleClose}
       />
 
       {/* 弹窗内容 - 液态玻璃样式 */}
       <div
-        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 overflow-hidden rounded-2xl flex"
+        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[201] overflow-hidden rounded-2xl flex"
         style={{
           width: showChat ? '900px' : '600px',
           maxWidth: '95vw',
@@ -693,10 +695,38 @@ export function DefectDetailPanel() {
               ) : (
                 messages.map((msg) => {
                   const isUser = msg.role === 'user';
+                  const isAssistant = msg.role === 'assistant';
                   const msgSegments = parseContentToSegments(msg.content);
+                  const avatarSrc = msg.avatarUrl ? resolveAvatarUrl({ avatarUrl: msg.avatarUrl }) : null;
+                  const displayName = msg.userName || (isAssistant ? 'AI 助手' : '用户');
 
                   return (
-                    <div key={msg.id} className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'}`}>
+                    <div key={msg.id} className={`flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}>
+                      {/* 发送者信息：头像 + 名字 */}
+                      <div className={`flex items-center gap-1.5 px-1 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+                        {/* 头像 */}
+                        <div
+                          className="w-5 h-5 rounded-full flex-shrink-0 overflow-hidden flex items-center justify-center"
+                          style={{
+                            background: isAssistant ? 'rgba(100,180,255,0.2)' : 'rgba(255,180,70,0.15)',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                          }}
+                        >
+                          {avatarSrc ? (
+                            <img src={avatarSrc} alt={displayName} className="w-full h-full object-cover" />
+                          ) : isAssistant ? (
+                            <Bot size={12} style={{ color: 'rgba(100,180,255,0.9)' }} />
+                          ) : (
+                            <User size={12} style={{ color: 'rgba(255,180,70,0.9)' }} />
+                          )}
+                        </div>
+                        {/* 名字 */}
+                        <span className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
+                          {displayName}
+                        </span>
+                      </div>
+
+                      {/* 消息气泡 */}
                       <div
                         className="group relative max-w-[90%] rounded-[10px] px-3 py-2 text-[12px] leading-relaxed"
                         style={{
@@ -732,6 +762,8 @@ export function DefectDetailPanel() {
                           )
                         )}
                       </div>
+
+                      {/* 时间戳 */}
                       <span
                         className="text-[9px] tabular-nums select-none px-1"
                         style={{ color: 'var(--text-muted)' }}

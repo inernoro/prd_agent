@@ -17,6 +17,15 @@ public class DefectMessage
     /// <summary>角色：user, assistant</summary>
     public string Role { get; set; } = "user";
 
+    /// <summary>发送者用户 ID（user 角色时有值）</summary>
+    public string? UserId { get; set; }
+
+    /// <summary>发送者用户名</summary>
+    public string? UserName { get; set; }
+
+    /// <summary>发送者头像 URL</summary>
+    public string? AvatarUrl { get; set; }
+
     /// <summary>消息内容</summary>
     public string Content { get; set; } = string.Empty;
 

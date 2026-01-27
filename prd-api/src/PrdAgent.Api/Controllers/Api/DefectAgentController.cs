@@ -821,6 +821,11 @@ public class DefectAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Content))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "消息内容不能为空"));
 
+        // 获取发送者信息
+        var sender = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+        var senderName = sender?.DisplayName ?? sender?.Username ?? GetUsername() ?? "未知用户";
+        var avatarUrl = sender?.AvatarUrl;
+
         // 获取当前最大 seq
         var maxSeq = await _db.DefectMessages
             .Find(x => x.DefectId == id)
@@ -834,6 +839,9 @@ public class DefectAgentController : ControllerBase
             DefectId = id,
             Seq = maxSeq + 1,
             Role = DefectMessageRole.User,
+            UserId = userId,
+            UserName = senderName,
+            AvatarUrl = avatarUrl,
             Content = request.Content.Trim(),
             AttachmentIds = request.AttachmentIds,
             CreatedAt = DateTime.UtcNow
@@ -890,7 +898,7 @@ public class DefectAgentController : ControllerBase
 
         // 上传到存储
         var mime = file.ContentType ?? "application/octet-stream";
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "defect", type: "attachments");
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainDefectAgent, type: "img");
 
         var attachment = new DefectAttachment
         {
