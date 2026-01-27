@@ -107,41 +107,32 @@ body {
   background-size: 50px 50px;
 }
 
+/* Simplified orbs - no blur, no animation for performance */
 .glow-orb {
   position: absolute;
   border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.5;
+  opacity: 0.15;
 }
 
 .orb-1 {
   width: 300px;
   height: 300px;
-  background: var(--primary);
+  background: radial-gradient(circle, var(--primary) 0%, transparent 70%);
   top: -150px;
   right: -100px;
-  animation: float 8s ease-in-out infinite;
 }
 
 .orb-2 {
   width: 200px;
   height: 200px;
-  background: #8b5cf6;
+  background: radial-gradient(circle, #8b5cf6 0%, transparent 70%);
   bottom: -100px;
   left: -50px;
-  animation: float 10s ease-in-out infinite reverse;
 }
 
-@keyframes float {
-  0%, 100% { transform: translate(0, 0); }
-  50% { transform: translate(30px, 30px); }
-}
-
-/* Glass Card */
+/* Glass Card - simplified for performance */
 .glass-card {
-  background: var(--bg-card);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: rgba(18, 18, 26, 0.95);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
 }
@@ -166,9 +157,8 @@ body {
   font-size: 12px;
   line-height: 1.1;
   color: var(--primary);
-  text-shadow: 0 0 20px var(--primary-glow), 0 0 40px var(--primary-glow);
+  text-shadow: 0 0 10px var(--primary-glow);
   margin: 0 0 var(--spacing-xs) 0;
-  animation: glow 3s ease-in-out infinite;
   white-space: pre;
   letter-spacing: -1px;
 }
@@ -178,29 +168,14 @@ body {
   font-size: 8px;
   line-height: 1.1;
   color: var(--primary);
-  text-shadow: 0 0 10px var(--primary-glow);
+  text-shadow: 0 0 5px var(--primary-glow);
   margin: 0 0 var(--spacing-md) 0;
-  animation: glow 3s ease-in-out infinite 0.5s;
   white-space: pre;
   letter-spacing: -0.5px;
   opacity: 0.9;
 }
 
-@keyframes glow {
-  0%, 100% {
-    opacity: 1;
-    text-shadow: 0 0 20px var(--primary-glow), 0 0 40px var(--primary-glow);
-  }
-  50% {
-    opacity: 0.8;
-    text-shadow: 0 0 30px var(--primary-glow), 0 0 60px var(--primary-glow), 0 0 80px var(--primary-glow);
-  }
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
-}
+/* Removed heavy glow and pulse animations for performance */
 
 .logo h1 {
   font-size: 28px;
@@ -679,8 +654,7 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.85);
 }
 
 .modal-content {
@@ -787,13 +761,9 @@ body {
 }
 
 .progress-icon {
-  font-size: 20px;
-  animation: bounce 1s ease infinite;
-}
-
-@keyframes bounce {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-5px); }
+  font-size: 16px;
+  font-family: monospace;
+  color: var(--primary);
 }
 
 .progress-retry {

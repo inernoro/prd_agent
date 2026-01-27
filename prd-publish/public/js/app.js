@@ -172,7 +172,7 @@ async function loadStatus() {
     const historyData = await api('/history?limit=1');
     if (historyData.data.length > 0) {
       const last = historyData.data[0];
-      const statusIcon = last.status === 'success' ? '✓' : last.status === 'failed' ? '✗' : '○';
+      const statusIcon = last.status === 'success' ? '[OK]' : last.status === 'failed' ? '[X]' : '[-]';
       const statusClass = last.status === 'success' ? 'success' : last.status === 'failed' ? 'error' : '';
       elements.lastDeploy.innerHTML = `${formatRelativeTime(last.endTime)} <span class="${statusClass}">${statusIcon}</span>`;
     }
@@ -217,7 +217,7 @@ async function loadCommits(reset = true) {
       elements.loadMoreBtn.classList.add('hidden');
     }
   } catch (error) {
-    elements.commitsList.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div>${error.message}</div>`;
+    elements.commitsList.innerHTML = `<div class="empty-state"><div class="empty-state-icon">[!]</div>${error.message}</div>`;
   }
 }
 
@@ -228,7 +228,7 @@ async function loadTags() {
     state.tags = data;
     renderTags(data);
   } catch (error) {
-    elements.tagsList.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div>${error.message}</div>`;
+    elements.tagsList.innerHTML = `<div class="empty-state"><div class="empty-state-icon">[!]</div>${error.message}</div>`;
   }
 }
 
@@ -240,14 +240,14 @@ async function loadHistory() {
     renderHistory(data);
     renderHistoryStats(stats);
   } catch (error) {
-    elements.historyList.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div>${error.message}</div>`;
+    elements.historyList.innerHTML = `<div class="empty-state"><div class="empty-state-icon">[!]</div>${error.message}</div>`;
   }
 }
 
 // Rendering
 function renderCommits(commits, append = false) {
   if (!append && commits.length === 0) {
-    elements.commitsList.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📭</div>没有找到提交</div>';
+    elements.commitsList.innerHTML = '<div class="empty-state"><div class="empty-state-icon">[~]</div>没有找到提交</div>';
     return;
   }
 
@@ -294,7 +294,7 @@ function renderCommits(commits, append = false) {
 
 function renderTags(tags) {
   if (tags.length === 0) {
-    elements.tagsList.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🏷️</div>没有标签</div>';
+    elements.tagsList.innerHTML = '<div class="empty-state"><div class="empty-state-icon">[#]</div>没有标签</div>';
     return;
   }
 
@@ -327,14 +327,14 @@ function renderTags(tags) {
 
 function renderHistory(history) {
   if (history.length === 0) {
-    elements.historyList.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📋</div>没有发布历史</div>';
+    elements.historyList.innerHTML = '<div class="empty-state"><div class="empty-state-icon">[~]</div>没有发布历史</div>';
     return;
   }
 
   elements.historyList.innerHTML = history.map(record => {
     const statusClass = record.status === 'success' ? 'success' : record.status === 'failed' ? 'failed' : 'cancelled';
     const statusText = record.status === 'success' ? '成功' : record.status === 'failed' ? '失败' : '已取消';
-    const statusIcon = record.status === 'success' ? '✓' : record.status === 'failed' ? '✗' : '○';
+    const statusIcon = record.status === 'success' ? '[OK]' : record.status === 'failed' ? '[X]' : '[-]';
 
     return `
       <div class="list-item">
@@ -409,7 +409,7 @@ async function startDeploy() {
   elements.deployProgress.classList.remove('hidden');
   elements.deployLogs.innerHTML = '';
   elements.progressText.textContent = '正在发布...';
-  elements.progressIcon.textContent = '🚀';
+  elements.progressIcon.textContent = '[>]';
   elements.progressRetry.classList.add('hidden');
 
   try {
@@ -466,14 +466,14 @@ function showDeployResult(result) {
   elements.deployResult.classList.remove('hidden');
 
   if (result.success) {
-    elements.resultIcon.textContent = '✓';
+    elements.resultIcon.textContent = '[OK]';
     elements.resultIcon.className = 'result-icon success';
     elements.resultTitle.textContent = '发布成功';
     elements.resultMessage.textContent = `版本 ${result.shortHash || state.selectedCommit?.shortHash} 已部署`;
     elements.retryBtn.classList.add('hidden');
     elements.resultLogs.classList.add('hidden');
   } else {
-    elements.resultIcon.textContent = '✗';
+    elements.resultIcon.textContent = '[X]';
     elements.resultIcon.className = 'result-icon error';
     elements.resultTitle.textContent = '发布失败';
     elements.resultMessage.textContent = result.message || '未知错误';
