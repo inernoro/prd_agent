@@ -1,3 +1,4 @@
+using PrdAgent.Core.Attributes;
 using PrdAgent.Core.Interfaces;
 
 namespace PrdAgent.Core.Models;
@@ -5,6 +6,7 @@ namespace PrdAgent.Core.Models;
 /// <summary>
 /// 大模型请求日志（用于调试与监控；注意：不得存储 PRD 原文与敏感信息）
 /// </summary>
+[AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
 public class LlmRequestLog
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();

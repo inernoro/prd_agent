@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 模型调度器系统配置 - 单例配置
 /// </summary>
+[AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
 public class ModelSchedulerConfig
 {
     /// <summary>配置ID（固定为singleton）</summary>

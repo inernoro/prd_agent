@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 群组实体
 /// </summary>
+[AppOwnership(AppNames.PrdAgent, AppNames.PrdAgentDisplay, IsPrimary = true)]
 public class Group
 {
     /// <summary>群组唯一标识（通过 IIdGenerator 生成）</summary>
@@ -47,6 +50,7 @@ public class Group
 /// <summary>
 /// 群组成员
 /// </summary>
+[AppOwnership(AppNames.PrdAgent, AppNames.PrdAgentDisplay, IsPrimary = true)]
 public class GroupMember
 {
     /// <summary>成员记录ID</summary>

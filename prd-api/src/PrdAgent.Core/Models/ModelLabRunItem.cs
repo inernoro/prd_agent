@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 大模型实验室 - 某次运行中单个模型的结果
 /// </summary>
+[AppOwnership(AppNames.ModelLab, AppNames.ModelLabDisplay, IsPrimary = true)]
 public class ModelLabRunItem
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();

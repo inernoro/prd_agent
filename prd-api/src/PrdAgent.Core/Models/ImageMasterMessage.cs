@@ -1,5 +1,8 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
+[AppOwnership(AppNames.VisualAgent, AppNames.VisualAgentDisplay, IsPrimary = true)]
 public class ImageMasterMessage
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

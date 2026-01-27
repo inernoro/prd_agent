@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 内容缺失记录
 /// </summary>
+[AppOwnership(AppNames.PrdAgent, AppNames.PrdAgentDisplay, IsPrimary = true)]
 public class ContentGap
 {
     /// <summary>缺失记录唯一标识（通过 IIdGenerator 生成）</summary>
