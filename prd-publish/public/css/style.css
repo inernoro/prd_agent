@@ -96,12 +96,38 @@ body {
 }
 
 .grid-overlay {
-  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image:
+    linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px;
 }
 
-/* Disabled for performance */
+/* Simplified orbs - no blur, no animation for performance */
 .glow-orb {
-  display: none;
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0.15;
+}
+
+.orb-1 {
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, var(--primary) 0%, transparent 70%);
+  top: -150px;
+  right: -100px;
+}
+
+.orb-2 {
+  width: 200px;
+  height: 200px;
+  background: radial-gradient(circle, #8b5cf6 0%, transparent 70%);
+  bottom: -100px;
+  left: -50px;
 }
 
 /* Glass Card - simplified for performance */
@@ -131,6 +157,7 @@ body {
   font-size: 12px;
   line-height: 1.1;
   color: var(--primary);
+  text-shadow: 0 0 10px var(--primary-glow);
   margin: 0 0 var(--spacing-xs) 0;
   white-space: pre;
   letter-spacing: -1px;
@@ -141,6 +168,7 @@ body {
   font-size: 8px;
   line-height: 1.1;
   color: var(--primary);
+  text-shadow: 0 0 5px var(--primary-glow);
   margin: 0 0 var(--spacing-md) 0;
   white-space: pre;
   letter-spacing: -0.5px;
@@ -199,6 +227,7 @@ body {
 .form-group input:focus {
   outline: none;
   border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
 .form-group input::placeholder {
@@ -227,7 +256,8 @@ body {
 }
 
 .btn-primary:hover {
-  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px var(--primary-glow);
 }
 
 .btn-primary:active {
@@ -252,7 +282,7 @@ body {
 }
 
 .btn-danger:hover {
-  opacity: 0.9;
+  box-shadow: 0 4px 20px rgba(var(--error-rgb), 0.3);
 }
 
 .btn-icon {
@@ -314,7 +344,8 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: var(--spacing-md) var(--spacing-lg);
-  background: var(--bg-primary);
+  background: rgba(10, 10, 15, 0.8);
+  backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -480,6 +511,7 @@ body {
 
 .list-item.current {
   border-color: var(--success);
+  box-shadow: 0 0 0 1px rgba(var(--success-rgb), 0.2);
 }
 
 .commit-indicator {
@@ -492,6 +524,7 @@ body {
 
 .commit-indicator.current {
   background: var(--success);
+  box-shadow: 0 0 10px rgba(var(--success-rgb), 0.5);
 }
 
 .commit-indicator.other {
@@ -778,10 +811,12 @@ body {
 
 .result-icon.success {
   color: var(--success);
+  text-shadow: 0 0 30px rgba(var(--success-rgb), 0.5);
 }
 
 .result-icon.error {
   color: var(--error);
+  text-shadow: 0 0 30px rgba(var(--error-rgb), 0.5);
 }
 
 .deploy-result h3 {

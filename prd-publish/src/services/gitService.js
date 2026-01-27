@@ -15,6 +15,7 @@ export async function execGit(command, repoPath = config.git.repoPath) {
     const { stdout } = await execAsync(`git ${command}`, {
       cwd: repoPath,
       maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+      shell: true,
     });
     return stdout.trim();
   } catch (error) {
