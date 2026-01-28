@@ -901,9 +901,18 @@ public class SmartModelScheduler : ISmartModelScheduler
 
     /// <summary>
     /// 解析应用实际会调用的模型（不创建客户端，仅返回模型信息）
-    /// 按优先级查找：1.专属模型池 2.默认模型池 3.传统配置模型
+    /// 按优先级查找：1.期望的模型池(按code匹配) 2.专属模型池 3.默认模型池 4.传统配置模型
     /// </summary>
-    public async Task<ResolvedModelInfo?> ResolveModelAsync(string appCallerCode, string modelType, CancellationToken ct = default)
+    public Task<ResolvedModelInfo?> ResolveModelAsync(string appCallerCode, string modelType, CancellationToken ct = default)
+    {
+        return ResolveModelAsync(appCallerCode, modelType, expectedModelCode: null, ct);
+    }
+
+    /// <summary>
+    /// 解析应用实际会调用的模型（支持期望的模型池 Code）
+    /// 按优先级查找：1.期望的模型池(按code匹配) 2.专属模型池 3.默认模型池 4.传统配置模型
+    /// </summary>
+    public async Task<ResolvedModelInfo?> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModelCode, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(appCallerCode) || string.IsNullOrWhiteSpace(modelType))
         {
@@ -921,19 +930,20 @@ public class SmartModelScheduler : ISmartModelScheduler
             
             // 查找该应用对该类型模型的需求
             var requirement = app?.ModelRequirements.FirstOrDefault(r => r.ModelType == modelType);
-            _logger.LogInformation("[ResolveModel] Requirement lookup: modelType={ModelType}, found={Found}, modelGroupIds={Ids}", 
+            _logger.LogInformation("[ResolveModel] Requirement lookup: modelType={ModelType}, found={Found}, modelGroupIds={Ids}, expectedModelCode={ExpectedCode}", 
                 modelType, requirement != null, 
-                requirement?.ModelGroupIds != null ? string.Join(",", requirement.ModelGroupIds) : "null");
+                requirement?.ModelGroupIds != null ? string.Join(",", requirement.ModelGroupIds) : "null",
+                expectedModelCode ?? "(null)");
 
-            // Step 1 & 2: 从模型池中查找（专属模型池或默认模型池）
+            // Step 1 & 2: 从模型池中查找（优先期望的模型池，然后专属模型池或默认模型池）
             var group = await GetModelGroupFromRequirementAsync(
                 requirement ?? new AppModelRequirement { ModelType = modelType, ModelGroupIds = new List<string>() },
                 modelType,
-                expectedModelCode: null,
+                expectedModelCode,
                 ct);
             
-            _logger.LogInformation("[ResolveModel] ModelGroup lookup: found={Found}, groupId={GroupId}, groupName={GroupName}, modelsCount={Count}",
-                group != null, group?.Id, group?.Name, group?.Models?.Count ?? 0);
+            _logger.LogInformation("[ResolveModel] ModelGroup lookup: found={Found}, groupId={GroupId}, groupName={GroupName}, groupCode={GroupCode}, modelsCount={Count}",
+                group != null, group?.Id, group?.Name, group?.Code, group?.Models?.Count ?? 0);
 
             if (group != null && group.Models.Count > 0)
             {
@@ -969,7 +979,8 @@ public class SmartModelScheduler : ISmartModelScheduler
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "解析模型失败: appCallerCode={AppCallerCode}, modelType={ModelType}", appCallerCode, modelType);
+            _logger.LogWarning(ex, "解析模型失败: appCallerCode={AppCallerCode}, modelType={ModelType}, expectedModelCode={ExpectedCode}", 
+                appCallerCode, modelType, expectedModelCode);
             return null;
         }
     }

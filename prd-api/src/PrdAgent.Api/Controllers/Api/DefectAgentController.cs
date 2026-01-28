@@ -1083,9 +1083,10 @@ public class DefectAgentController : ControllerBase
     {
         var userId = GetUserId();
 
-        // 查询用户近20条请求日志
+        // 查询用户最近 10 分钟内的请求日志（最多 20 条）
+        var tenMinutesAgo = DateTime.UtcNow.AddMinutes(-10);
         var recentLogs = await _db.ApiRequestLogs
-            .Find(x => x.UserId == userId)
+            .Find(x => x.UserId == userId && x.StartedAt >= tenMinutesAgo)
             .SortByDescending(x => x.StartedAt)
             .Limit(20)
             .ToListAsync(ct);
@@ -1241,16 +1242,17 @@ public class DefectAgentController : ControllerBase
     {
         try
         {
-            // 1. 查询用户近20条请求日志
+            // 1. 查询用户最近 10 分钟内的请求日志（最多 20 条）
+            var tenMinutesAgo = DateTime.UtcNow.AddMinutes(-10);
             var recentLogs = await _db.ApiRequestLogs
-                .Find(x => x.UserId == userId)
+                .Find(x => x.UserId == userId && x.StartedAt >= tenMinutesAgo)
                 .SortByDescending(x => x.StartedAt)
                 .Limit(20)
                 .ToListAsync(ct);
 
             if (!recentLogs.Any())
             {
-                _logger.LogDebug("[{AppKey}] No API logs found for user {UserId}", AppKey, userId);
+                _logger.LogDebug("[{AppKey}] No API logs found for user {UserId} in last 10 minutes", AppKey, userId);
                 return;
             }
 

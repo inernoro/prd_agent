@@ -124,11 +124,22 @@ public interface ISmartModelScheduler
 
     /// <summary>
     /// 解析应用实际会调用的模型（不创建客户端，仅返回模型信息）
-    /// 按优先级查找：1.专属模型池 2.默认模型池 3.传统配置模型
+    /// 按优先级查找：1.期望的模型池(按code匹配) 2.专属模型池 3.默认模型池 4.传统配置模型
     /// </summary>
     /// <param name="appCallerCode">应用标识</param>
     /// <param name="modelType">模型类型</param>
     /// <param name="ct">取消令牌</param>
     /// <returns>解析后的模型信息，如果未找到则返回 null</returns>
     Task<ResolvedModelInfo?> ResolveModelAsync(string appCallerCode, string modelType, CancellationToken ct = default);
+
+    /// <summary>
+    /// 解析应用实际会调用的模型（支持期望的模型池 Code）
+    /// 按优先级查找：1.期望的模型池(按code匹配) 2.专属模型池 3.默认模型池 4.传统配置模型
+    /// </summary>
+    /// <param name="appCallerCode">应用标识</param>
+    /// <param name="modelType">模型类型</param>
+    /// <param name="expectedModelCode">用户期望的模型池 Code（如 doubao、nano-banana-pro）</param>
+    /// <param name="ct">取消令牌</param>
+    /// <returns>解析后的模型信息，如果未找到则返回 null</returns>
+    Task<ResolvedModelInfo?> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModelCode, CancellationToken ct = default);
 }

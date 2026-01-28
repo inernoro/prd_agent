@@ -95,12 +95,25 @@ public class RequestResponseLoggingMiddleware
                && path.Contains("/chat/completions", StringComparison.OrdinalIgnoreCase);
         var startedAt = DateTime.UtcNow;
 
-        // 记录所有 /api/v1/ 开头的请求（包括 admin、open-platform 等）
-        var shouldPersistApiLog = path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase);
-        // heartbeat 属于系统噪音：不落 Mongo（但会更新 Redis presence）
-        if (path.StartsWith("/api/v1/desktop/presence/heartbeat", StringComparison.OrdinalIgnoreCase))
+        // 记录所有 /api/ 开头的请求（包括 /api/v1/、/api/visual-agent、/api/defect-agent 等）
+        var shouldPersistApiLog = path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
+        
+        // 排除系统噪音接口（高频轮询、心跳等）
+        if (shouldPersistApiLog)
         {
-            shouldPersistApiLog = false;
+            // heartbeat 属于系统噪音
+            if (path.Contains("/desktop/presence/heartbeat", StringComparison.OrdinalIgnoreCase))
+                shouldPersistApiLog = false;
+            // 通知轮询
+            else if (path.Contains("/notifications", StringComparison.OrdinalIgnoreCase) && 
+                     !path.Contains("/notifications/", StringComparison.OrdinalIgnoreCase))
+                shouldPersistApiLog = false;
+            // 日志预览接口自身不记录（避免自引用）
+            else if (path.Contains("/logs/preview", StringComparison.OrdinalIgnoreCase))
+                shouldPersistApiLog = false;
+            // 桌面在线状态相关
+            else if (path.Contains("/desktop-presence", StringComparison.OrdinalIgnoreCase))
+                shouldPersistApiLog = false;
         }
 
         var requestBodyCapture = await TryCaptureRequestBodyAsync(context);

@@ -451,8 +451,8 @@ type UiMsg = {
 // 图片生成结果/错误的富消息编码 —— 持久化在 content 字符串中
 const GEN_ERROR_PREFIX = '[GEN_ERROR]';
 const GEN_DONE_PREFIX = '[GEN_DONE]';
-type GenErrorMeta = { msg: string; refSrc?: string; prompt?: string };
-type GenDoneMeta = { src: string; refSrc?: string; prompt?: string };
+type GenErrorMeta = { msg: string; refSrc?: string; prompt?: string; runId?: string; modelPool?: string };
+type GenDoneMeta = { src: string; refSrc?: string; prompt?: string; runId?: string; modelPool?: string };
 function buildGenErrorContent(meta: GenErrorMeta): string {
   return `${GEN_ERROR_PREFIX}${JSON.stringify(meta)}`;
 }
@@ -466,6 +466,14 @@ function parseGenError(content: string): GenErrorMeta | null {
 function parseGenDone(content: string): GenDoneMeta | null {
   if (!content.startsWith(GEN_DONE_PREFIX)) return null;
   try { return JSON.parse(content.slice(GEN_DONE_PREFIX.length)) as GenDoneMeta; } catch { return null; }
+}
+
+// 提取用户消息中的模型池标记 (@model:xxx)
+function extractModelToken(text: string): { model: string | null; cleanText: string } {
+  const re = /\(@model:([^)]+)\)\s*/i;
+  const match = re.exec(text);
+  if (!match) return { model: null, cleanText: text };
+  return { model: match[1].trim(), cleanText: text.replace(re, '').trim() };
 }
 
 type CanvasTool = 'select' | 'hand' | 'mark';
@@ -736,6 +744,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     isDedicated?: boolean;
     isDefault?: boolean;
     isLegacy?: boolean;
+    /** 模型池中第一个模型的实际 modelId（用于查询适配器信息） */
+    actualModelId?: string;
   };
   const poolModels = useMemo<ModelWithSource[]>(() => {
     if (imageGenPools.length === 0) return [];
@@ -746,7 +756,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         return {
           id: `pool_${g.id}`,
           name: g.name,
-          modelName: first.modelId,
+          // 发送给后台的模型池 code（用于匹配模型池）
+          modelName: g.code,
+          // 用于查询适配器信息的实际模型 ID
+          actualModelId: first.modelId,
           platformId: first.platformId,
           enabled: g.models.some((m) => m.healthStatus === 'Healthy' || m.healthStatus === 'Degraded'),
           isMain: false,
@@ -829,13 +842,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   type SizeOption = { size: string; aspectRatio: string | null; resolution: string | null };
   const [sizeOptions, setSizeOptions] = useState<SizeOption[]>([]);
   useEffect(() => {
-    const modelName = effectiveModel?.modelName;
-    if (!modelName) {
+    // 优先使用 actualModelId（模型池中实际模型的 ID），否则使用 modelName
+    const modelNameForAdapter = (effectiveModel as ModelWithSource | undefined)?.actualModelId || effectiveModel?.modelName;
+    if (!modelNameForAdapter) {
       setSizeOptions([]);
       return;
     }
 
-    getAdapterInfoByModelName(modelName)
+    getAdapterInfoByModelName(modelNameForAdapter)
       .then((res) => {
         if (res.success && res.data?.matched) {
           const options = Array.isArray(res.data.sizeOptions) ? res.data.sizeOptions : [];
@@ -849,7 +863,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }
       })
       .catch(() => setSizeOptions([]));
-  }, [effectiveModel?.modelName]);
+  }, [effectiveModel]);
 
   // 按分辨率分组的 sizeOptions
   const sizeOptionsByResolution = useMemo(() => {
@@ -1613,7 +1627,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     input.click();
   }, []);
 
-  const [preview, setPreview] = useState<{ open: boolean; src: string; prompt: string }>({ open: false, src: '', prompt: '' });
+  const [preview, setPreview] = useState<{ open: boolean; src: string; prompt: string; runId?: string }>({ open: false, src: '', prompt: '' });
 
   // 图片右键菜单状态
   const [imgContextMenu, setImgContextMenu] = useState<{
@@ -2665,7 +2679,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return parsed ? `${parsed.w}x${parsed.h}` : s;
     })();
     const uiSizeToken = forcedSize ? `(@size:${forcedSize}) ` : '';
-    pushMsg('User', `${inlineRefToken}${uiSizeToken}${display || reqText}`);
+    const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
+    const uiModelToken = modelPoolName ? `(@model:${modelPoolName}) ` : '';
+    pushMsg('User', `${inlineRefToken}${uiSizeToken}${uiModelToken}${display || reqText}`);
 
     let items: Array<{ prompt: string }> = [];
     let firstPrompt = '';
@@ -3036,11 +3052,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   : x
               )
             );
-            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
+            const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
+            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName }));
           } else if (t === 'imageError' || t === 'error') {
             const msg = String(o.errorMessage ?? '生成失败');
             setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
+            const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
+            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName }));
             triggerDefectFlash();
           }
         },
@@ -5964,7 +5982,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <button
                           type="button"
                           className="block w-full"
-                          onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '' })}
+                          onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '', runId: genDone.runId })}
                           title="点击放大"
                         >
                           <img
@@ -6017,7 +6035,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 const contentText = parsed ? parsed.clean : m.content;
                 const sizedMsg = isUser ? extractSizeToken(contentText) : { size: null as string | null, cleanText: String(contentText ?? '') };
                 const msgSize = String(sizedMsg.size ?? '').trim();
-                const msgBody = String(sizedMsg.cleanText ?? '');
+                // 解析模型池标记
+                const modeledMsg = isUser ? extractModelToken(sizedMsg.cleanText) : { model: null as string | null, cleanText: String(sizedMsg.cleanText ?? '') };
+                const msgModel = String(modeledMsg.model ?? '').trim();
+                const msgBody = String(modeledMsg.cleanText ?? '');
                 const MSG_COLLAPSE_THRESHOLD = 100;
                 const isLongMsg = msgBody.length > MSG_COLLAPSE_THRESHOLD;
                 const isExpanded = expandedMsgIds.has(m.id);
@@ -6036,7 +6057,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       }}
                     >
                       <div style={{ maxHeight: isLongMsg && !isExpanded ? 64 : undefined, overflow: isLongMsg && !isExpanded ? 'hidden' : undefined }}>
-                        {isUser && (refSrc || msgSize) ? (
+                        {isUser && (refSrc || msgSize || msgModel) ? (
                           <div className="flex flex-wrap items-center gap-1.5">
                             {refSrc ? (
                               <button
@@ -6114,6 +6135,34 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   }}
                                 >
                                   {msgSize}
+                                </span>
+                              </span>
+                            ) : null}
+
+                            {/* 模型池标签 */}
+                            {msgModel ? (
+                              <span
+                                className="inline-flex items-center gap-1"
+                                style={{
+                                  height: 18,
+                                  paddingLeft: 4,
+                                  paddingRight: 6,
+                                  borderRadius: 4,
+                                  border: '1px solid rgba(99, 102, 241, 0.35)',
+                                  background: 'rgba(99, 102, 241, 0.12)',
+                                }}
+                                title={`模型池：${msgModel}`}
+                              >
+                                <Sparkles size={10} style={{ color: 'rgba(129, 140, 248, 0.85)' }} />
+                                <span
+                                  style={{
+                                    fontSize: 10,
+                                    lineHeight: '14px',
+                                    color: 'rgba(129, 140, 248, 0.85)',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {msgModel}
                                 </span>
                               </span>
                             ) : null}
@@ -6917,6 +6966,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <Copy size={16} />
                 复制链接
               </Button>
+              {preview.runId ? (
+                <Button variant="secondary" size="sm" onClick={() => void copyToClipboard(preview.runId || '')} title="复制请求ID（用于后台日志排查）">
+                  <Copy size={16} />
+                  复制请求ID
+                </Button>
+              ) : null}
             </div>
 
             <div className="flex-1 min-h-0 overflow-auto rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)' }}>
