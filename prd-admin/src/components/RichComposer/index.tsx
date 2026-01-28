@@ -169,22 +169,21 @@ function EditorInner({
       confirmPendingChips: () => {
         editor.update(() => {
           const root = $getRoot();
-          const descendants = root.getAllTextNodes();
-          // 遍历所有节点，找到 ImageChipNode 并确认
-          root.getChildren().forEach((child) => {
-            child.getChildren?.()?.forEach((node) => {
-              if ($isImageChipNode(node) && node.getPending()) {
-                node.setPending(false);
-              }
-            });
-          });
-          // 直接遍历所有 decorator nodes
+          // 遍历所有节点，找到 pending 的 ImageChipNode 并替换为非 pending 版本
           const allNodes = root.getChildren();
           for (const para of allNodes) {
             const children = para.getChildren?.() || [];
             for (const node of children) {
               if ($isImageChipNode(node) && node.getPending()) {
-                node.setPending(false);
+                // 创建新节点替换旧节点，确保 DOM 和 React 组件都更新
+                const newNode = $createImageChipNode({
+                  canvasKey: node.getCanvasKey(),
+                  refId: node.getRefId(),
+                  src: node.getSrc(),
+                  label: node.getLabel(),
+                  pending: false,
+                });
+                node.replace(newNode);
               }
             }
           }

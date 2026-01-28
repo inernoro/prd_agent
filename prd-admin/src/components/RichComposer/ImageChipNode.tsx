@@ -102,7 +102,21 @@ export class ImageChipNode extends DecoratorNode<JSX.Element> {
     return span;
   }
 
-  updateDOM(): false {
+  updateDOM(prevNode: ImageChipNode, dom: HTMLElement): boolean {
+    // 如果 pending 状态改变，需要更新 DOM 样式
+    if (prevNode.__pending !== this.__pending) {
+      const bgColor = this.__pending ? 'rgba(156, 163, 175, 0.18)' : 'rgba(96, 165, 250, 0.18)';
+      const borderColor = this.__pending ? 'rgba(156, 163, 175, 0.35)' : 'rgba(96, 165, 250, 0.35)';
+      dom.style.background = bgColor;
+      dom.style.borderColor = borderColor;
+      if (this.__pending) {
+        dom.setAttribute('data-pending', 'true');
+      } else {
+        dom.removeAttribute('data-pending');
+      }
+      // 返回 false 因为我们已经手动更新了 DOM，不需要重新创建
+      return false;
+    }
     return false;
   }
 
