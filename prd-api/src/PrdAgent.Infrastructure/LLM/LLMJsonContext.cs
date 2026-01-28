@@ -18,6 +18,7 @@ namespace PrdAgent.Infrastructure.LLM;
 [JsonSerializable(typeof(ClaudeCacheControl))]
 [JsonSerializable(typeof(ClaudeSystemBlock))]
 [JsonSerializable(typeof(List<ClaudeSystemBlock>))]
+[JsonSerializable(typeof(ClaudeCachedTextContent))]
 // OpenAI API
 [JsonSerializable(typeof(OpenAIRequest))]
 [JsonSerializable(typeof(OpenAIStreamEvent))]
@@ -91,6 +92,16 @@ internal class ClaudeTextContent
 {
     public string Type { get; set; } = "text";
     public string Text { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Claude 文本内容（带 cache_control）
+/// </summary>
+internal class ClaudeCachedTextContent
+{
+    public string Type { get; set; } = "text";
+    public string Text { get; set; } = string.Empty;
+    public ClaudeCacheControl CacheControl { get; set; } = new();
 }
 
 /// <summary>

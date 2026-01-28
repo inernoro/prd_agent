@@ -121,7 +121,7 @@ public class ClaudeClient : ILLMClient
                 Messages = messages.Select(m => new ClaudeRequestMessage
                 {
                     Role = m.Role,
-                    Content = BuildMessageContent(m)
+                    Content = BuildMessageContent(m, enableCache: true)  // 启用消息级缓存
                 }).ToList(),
                 Stream = true
             };
@@ -135,11 +135,15 @@ public class ClaudeClient : ILLMClient
             {
                 Content = content
             };
-            
+
             // 添加 prompt caching beta header
             request.Headers.Add("anthropic-beta", "prompt-caching-2024-07-31");
-            
-            _logger?.LogDebug("Using Claude Prompt Caching for system prompt ({Length} chars)", systemPrompt.Length);
+
+            // 统计标记为可缓存的消息
+            var cachableMessages = messages.Count(m => m.ShouldCache);
+            _logger?.LogDebug(
+                "Using Claude Prompt Caching: system prompt ({SysLen} chars), {CachableCount} cachable messages",
+                systemPrompt.Length, cachableMessages);
         }
         else
         {
@@ -398,15 +402,37 @@ public class ClaudeClient : ILLMClient
         }
     }
 
-    private static object BuildMessageContent(LLMMessage message)
+    /// <summary>
+    /// 构建消息内容，支持 cache_control
+    /// </summary>
+    /// <param name="message">LLM 消息</param>
+    /// <param name="enableCache">是否启用缓存（仅当消息的 ShouldCache=true 时生效）</param>
+    private static object BuildMessageContent(LLMMessage message, bool enableCache = false)
     {
+        // 判断是否需要为这条消息添加 cache_control
+        var shouldAddCacheControl = enableCache && message.ShouldCache;
+
         if (message.Attachments == null || message.Attachments.Count == 0)
         {
+            // 无附件：简单文本或带缓存的文本
+            if (shouldAddCacheControl)
+            {
+                // 返回数组格式以支持 cache_control
+                return new List<object>
+                {
+                    new ClaudeCachedTextContent
+                    {
+                        Type = "text",
+                        Text = message.Content,
+                        CacheControl = new ClaudeCacheControl { Type = "ephemeral" }
+                    }
+                };
+            }
             return message.Content;
         }
 
         var content = new List<object>();
-        
+
         // 添加图片附件
         foreach (var attachment in message.Attachments.Where(a => a.Type == "image"))
         {
@@ -425,12 +451,24 @@ public class ClaudeClient : ILLMClient
             }
         }
 
-        // 添加文本
-        content.Add(new ClaudeTextContent
+        // 添加文本（带或不带 cache_control）
+        if (shouldAddCacheControl)
         {
-            Type = "text",
-            Text = message.Content
-        });
+            content.Add(new ClaudeCachedTextContent
+            {
+                Type = "text",
+                Text = message.Content,
+                CacheControl = new ClaudeCacheControl { Type = "ephemeral" }
+            });
+        }
+        else
+        {
+            content.Add(new ClaudeTextContent
+            {
+                Type = "text",
+                Text = message.Content
+            });
+        }
 
         return content;
     }

@@ -185,7 +185,8 @@ public class PreviewAskService : IPreviewAskService
 
         var messages = new List<LLMMessage>
         {
-            new() { Role = "user", Content = context },
+            // PRD 上下文消息标记为可缓存，节省 token 费用
+            new() { Role = "user", Content = context, ShouldCache = true },
             new() { Role = "user", Content = userPrompt }
         };
 

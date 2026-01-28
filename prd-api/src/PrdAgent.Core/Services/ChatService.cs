@@ -198,7 +198,14 @@ public class ChatService : IChatService
         var messages = new List<LLMMessage>
         {
             // 首条 user message：PRD 资料（日志侧会按标记脱敏，不落库 PRD 原文）
-            new() { Role = "user", Content = _promptManager.BuildPrdContextMessage(document.RawContent) }
+            // ShouldCache=true: 标记此消息可被 Claude Prompt Caching 缓存
+            // PRD 文档通常是最大的 token 消耗来源，缓存后可节省 ~90% 的 input token 费用
+            new()
+            {
+                Role = "user",
+                Content = _promptManager.BuildPrdContextMessage(document.RawContent),
+                ShouldCache = true  // 🔑 关键：启用 PRD 文档缓存
+            }
         };
         if (!disableGroupContext)
         {

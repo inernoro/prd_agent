@@ -30,6 +30,13 @@ public class LLMMessage
     public string Role { get; set; } = string.Empty; // user, assistant
     public string Content { get; set; } = string.Empty;
     public List<LLMAttachment>? Attachments { get; set; }
+
+    /// <summary>
+    /// 标记此消息是否应该被缓存（用于 Claude Prompt Caching）
+    /// 设置为 true 时，Claude 会对该消息添加 cache_control: { type: "ephemeral" }
+    /// 注意：Claude 最多支持 4 个 cache_control 标记点
+    /// </summary>
+    public bool ShouldCache { get; set; } = false;
 }
 
 /// <summary>
