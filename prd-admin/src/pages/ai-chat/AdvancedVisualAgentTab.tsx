@@ -39,6 +39,8 @@ import {
   readImageSizeFromSrc,
   tryParseWxH,
 } from '@/lib/visualAgentPromptUtils';
+import { resolveImageRefs, debugResolveResult } from '@/lib/imageRefResolver';
+import type { CanvasImageItem as ContractCanvasItem } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, VisualAgentCanvas, VisualAgentMessage, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
@@ -3275,18 +3277,63 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const onSendRich = async () => {
     const composer = richComposerRef.current;
     if (!composer) return;
-    
-    const { text } = composer.getStructuredContent();
+
+    // Step 3: 获取结构化内容（包含 imageRefs）
+    const { text, imageRefs } = composer.getStructuredContent();
     if (!text.trim()) return;
-    
+
     // 只有 (@size:...) 而没有实际内容时，不应发送
     const clean = String(extractSizeToken(text).cleanText ?? '').trim();
     if (!clean) return;
-    
+
+    // Step 3: 并行调用新解析器，对比结果（仅日志，不切换逻辑）
+    // 转换 canvas 为契约格式
+    const contractCanvas: ContractCanvasItem[] = canvas
+      .filter((it) => (it.kind ?? 'image') === 'image' && it.src)
+      .map((it) => ({
+        key: it.key,
+        refId: it.refId ?? 0,
+        src: it.src!,
+        label: it.prompt || '',
+      }));
+
+    // 调用新解析器
+    const newResult = resolveImageRefs({
+      rawText: text,
+      chipRefs: imageRefs,
+      selectedKeys,
+      canvas: contractCanvas,
+    });
+
+    // 旧逻辑结果（用于对比）
+    const oldResult = buildRequestTextWithRefs(clean);
+
+    // 对比日志
+    console.group('[Step 3 对比] ImageRefResolver vs buildRequestTextWithRefs');
+    console.log('输入:', { text, imageRefs, selectedKeys: [...selectedKeys] });
+    console.log('新解析器结果:');
+    debugResolveResult(newResult);
+    console.log('旧逻辑结果:', {
+      primaryRef: oldResult.primaryRef ? {
+        key: oldResult.primaryRef.key,
+        refId: oldResult.primaryRef.refId,
+        prompt: oldResult.primaryRef.prompt,
+      } : null,
+      requestText: oldResult.requestText.slice(0, 200) + (oldResult.requestText.length > 200 ? '...' : ''),
+    });
+    // 简单对比：主引用是否一致
+    const newPrimary = newResult.refs[0];
+    const oldPrimary = oldResult.primaryRef;
+    const primaryMatch = (!newPrimary && !oldPrimary) ||
+      (newPrimary && oldPrimary && newPrimary.canvasKey === oldPrimary.key);
+    console.log('主引用是否一致:', primaryMatch ? '✅ 一致' : '❌ 不一致');
+    console.groupEnd();
+
     composer.clear();
     setInput('');
     composerSizeAutoRef.current = true;
     if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
+    // 继续使用旧逻辑发送
     await sendText(text);
   };
 

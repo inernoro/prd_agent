@@ -171,13 +171,13 @@ ImageChipNode 的保护措施:
   - ⏳ 新增测试文件（可选）
 
 ### Step 3: 并行运行新旧逻辑
-- **状态**: ⏳ 待开始
+- **状态**: ✅ 已完成
 - **风险**: 零
 - **回滚**: 删除代码
 - **内容**:
-  - 在 `onSendRich` 中并行调用 `resolveImageRefs`
-  - 仅 `console.log` 对比结果，不实际切换
-  - 收集对比数据
+  - ✅ 在 `onSendRich` 中并行调用 `resolveImageRefs`
+  - ✅ 仅 `console.log` 对比结果，不实际切换
+  - ⏳ 收集对比数据（待用户测试）
 
 ### Step 4: 确认结果一致后切换
 - **状态**: ⏳ 待开始
