@@ -3,21 +3,11 @@
 # PRD-Publish Deploy Script Template
 # ============================================================================
 #
-# IMPORTANT: This script is responsible for version switching!
-# prd-publish does NOT checkout the target version automatically.
-# Your script should handle: fetch -> checkout -> build -> deploy
-#
 # Usage: ./deploy-xxx.sh <commit_hash> <short_hash> <branch> <project_id>
-#
-# Arguments:
-#   $1 / $COMMIT_HASH   - Full commit hash (40 chars)
-#   $2 / $SHORT_HASH    - Short hash (7 chars)
-#   $3 / $BRANCH        - Branch name
-#   $4 / $PROJECT_ID    - Project ID
 #
 # Environment Variables (auto-injected):
 #   COMMIT_HASH   - Full commit hash
-#   SHORT_HASH    - Short hash
+#   SHORT_HASH    - Short hash (7 chars)
 #   BRANCH        - Branch name
 #   PROJECT_ID    - Project ID
 #   PROJECT_NAME  - Project display name
@@ -43,55 +33,72 @@ echo "Repo:     $REPO_PATH"
 echo "Time:     $(date '+%Y-%m-%d %H:%M:%S')"
 echo "========================================"
 
-# Navigate to repository
+# ============================================================================
+# STEP 1: 准备部署目录（使用 git archive，不影响原仓库）
+# ============================================================================
+#
+# 为什么不直接 checkout？
+#   - 直接 checkout 会改变原仓库的工作目录
+#   - 如果仓库里有 data/ 等运行时数据，会被覆盖或删除
+#   - 多人同时部署时会冲突
+#
+# 推荐方案：git archive 导出到临时目录
+#   - 不影响原仓库
+#   - 干净的代码副本
+#   - 部署完可以删除
+
+DEPLOY_DIR="/tmp/prd-deploy-${PROJECT_ID}-${SHORT_HASH}-$$"
+
+echo "[准备] 导出代码到临时目录: $DEPLOY_DIR"
+mkdir -p "$DEPLOY_DIR"
+
 cd "$REPO_PATH"
+git archive "$COMMIT_HASH" | tar -x -C "$DEPLOY_DIR"
+
+cd "$DEPLOY_DIR"
+echo "[准备] 代码导出完成"
 
 # ============================================================================
-# STEP 1: Git Operations (YOUR CHOICE - pick one approach)
+# STEP 2: 构建（根据你的项目类型修改）
 # ============================================================================
 
-# Approach A: Direct checkout (if repo is dedicated for deployment)
-# git fetch origin
-# git checkout $COMMIT_HASH
-
-# Approach B: Use git worktree (safer, doesn't affect main working dir)
-# DEPLOY_DIR="/tmp/deploy-$PROJECT_ID-$SHORT_HASH"
-# git worktree add "$DEPLOY_DIR" $COMMIT_HASH
-# cd "$DEPLOY_DIR"
-# # ... do build and deploy ...
-# git worktree remove "$DEPLOY_DIR"
-
-# Approach C: Git archive (extract without checkout)
-# DEPLOY_DIR="/tmp/deploy-$PROJECT_ID-$SHORT_HASH"
-# mkdir -p "$DEPLOY_DIR"
-# git archive $COMMIT_HASH | tar -x -C "$DEPLOY_DIR"
-# cd "$DEPLOY_DIR"
-
-# Approach D: Don't switch version (use current HEAD, just build and deploy)
-# This is useful if you manage versions externally
-
-# ============================================================================
-# STEP 2: Build & Deploy (customize for your project)
-# ============================================================================
-
-# Example: Node.js project
-# echo "[1/3] Installing dependencies..."
+# --- Node.js 项目示例 ---
+# echo "[构建] 安装依赖..."
 # pnpm install --frozen-lockfile
 #
-# echo "[2/3] Building..."
+# echo "[构建] 编译..."
 # pnpm build
-#
-# echo "[3/3] Restarting service..."
-# pm2 restart my-app || pm2 start dist/main.js --name my-app
 
-# Example: Docker project
-# echo "[1/2] Building image..."
-# docker build -t my-app:$SHORT_HASH .
-#
-# echo "[2/2] Deploying..."
-# docker compose up -d
+# --- .NET 项目示例 ---
+# echo "[构建] 编译..."
+# dotnet publish -c Release -o ./publish
+
+# --- Docker 项目示例 ---
+# echo "[构建] 构建镜像..."
+# docker build -t myapp:$SHORT_HASH .
 
 # ============================================================================
+# STEP 3: 部署（根据你的部署方式修改）
+# ============================================================================
+
+# --- PM2 部署示例 ---
+# echo "[部署] 重启服务..."
+# pm2 restart myapp || pm2 start dist/main.js --name myapp
+
+# --- Docker Compose 示例 ---
+# echo "[部署] 启动容器..."
+# docker compose up -d
+
+# --- 复制到目标目录示例 ---
+# echo "[部署] 复制到部署目录..."
+# rsync -av --delete ./dist/ /var/www/myapp/
+
+# ============================================================================
+# STEP 4: 清理临时目录
+# ============================================================================
+
+echo "[清理] 删除临时目录..."
+rm -rf "$DEPLOY_DIR"
 
 echo "========================================"
 echo "  Deploy completed successfully!"
