@@ -508,9 +508,158 @@ Prompt 会变成：
 
 ---
 
-## 十一、参考资料
+## 十一、意图分析 Agent 规划
 
-### 9.1 竞品分析
+> **状态**: ⏳ 待实现
+> **优先级**: P2
+> **依赖**: Step 3 完成后
+
+### 11.1 设计原则
+
+**不在前端代码中做意图切词/分析**，而是：
+- **单图场景**：沿用原有逻辑，直接发送，不额外调用 Agent
+- **多图场景**：交给后端 Agent 分析意图，前端只负责收集数据
+
+### 11.2 流程设计
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        前端处理流程                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   用户输入: "把 @img1 和 @img2 融合成新图"                        │
+│                    ↓                                            │
+│   ┌────────────────────────────────────────┐                    │
+│   │  ImageRefResolver 解析                  │                    │
+│   │  → refs: [{refId:1}, {refId:2}]        │                    │
+│   │  → cleanText: "把 和 融合成新图"        │                    │
+│   └────────────────────────────────────────┘                    │
+│                    ↓                                            │
+│   ┌────────────────────────────────────────┐                    │
+│   │  判断: refs.length > 1 ?               │                    │
+│   └────────────────────────────────────────┘                    │
+│          ↓ NO (单图)          ↓ YES (多图)                      │
+│   ┌──────────────────┐  ┌──────────────────────────┐            │
+│   │  原有逻辑         │  │  调用 visual-intent Agent │            │
+│   │  直接生成图片     │  │                          │            │
+│   │                  │  │  POST /api/visual-agent/ │            │
+│   │                  │  │       analyze-intent     │            │
+│   └──────────────────┘  └──────────────────────────┘            │
+│                                   ↓                             │
+│                    ┌──────────────────────────────┐             │
+│                    │  Agent 返回结构化意图         │             │
+│                    │  {                           │             │
+│                    │    action: "blend",          │             │
+│                    │    target: {refId: 1},       │             │
+│                    │    references: [{refId: 2}], │             │
+│                    │    enhancedPrompt: "..."     │             │
+│                    │  }                           │             │
+│                    └──────────────────────────────┘             │
+│                                   ↓                             │
+│                    ┌──────────────────────────────┐             │
+│                    │  使用增强后的 prompt 生成图片  │             │
+│                    └──────────────────────────────┘             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 11.3 后端 Agent 设计
+
+**位置**: `VisualAgentController.cs`
+
+**新增端点**: `POST /api/visual-agent/analyze-intent`
+
+```csharp
+// 请求
+{
+  "text": "把这两张图融合",
+  "imageRefs": [
+    { "refId": 1, "url": "...", "label": "风景图" },
+    { "refId": 2, "url": "...", "label": "人物图" }
+  ]
+}
+
+// 响应
+{
+  "action": "blend",           // blend/replace/style_transfer/composite
+  "target": { "refId": 1 },    // 要修改的图
+  "references": [{ "refId": 2 }],  // 参考图
+  "styleRef": null,            // 风格参考（如有）
+  "enhancedPrompt": "将风景图与人物图融合，保留人物主体，背景替换为风景",
+  "confidence": 0.85
+}
+```
+
+**Agent 注册**: 在 `PromptStages` 中注册 `visual-intent-analyzer`
+
+### 11.4 前端调用时机
+
+```typescript
+// AdvancedVisualAgentTab.tsx
+const sendText = async (rawText: string) => {
+  const result = resolveImageRefs({ rawText, chipRefs, selectedKeys, canvas });
+
+  // 单图：原有逻辑
+  if (result.refs.length <= 1) {
+    await runFromText(rawText, ...);
+    return;
+  }
+
+  // 多图：调用意图分析 Agent
+  const intent = await api.post('/api/visual-agent/analyze-intent', {
+    text: result.cleanText,
+    imageRefs: result.refs.map(r => ({
+      refId: r.refId,
+      url: r.src,
+      label: r.label,
+    })),
+  });
+
+  // 使用增强后的 prompt
+  await runFromText(intent.enhancedPrompt, ...);
+};
+```
+
+### 11.5 实施步骤
+
+| 步骤 | 内容 | 状态 |
+|------|------|------|
+| 1 | 完成 Step 3（并行对比新旧解析器） | ⏳ 待开始 |
+| 2 | 后端新增 `analyze-intent` 端点 | ⏳ 待开始 |
+| 3 | 注册 `visual-intent-analyzer` Agent | ⏳ 待开始 |
+| 4 | 前端判断 refs.length，条件调用 | ⏳ 待开始 |
+| 5 | 测试：单图/双图/多图场景 | ⏳ 待开始 |
+
+### 11.6 Agent Prompt 模板（草案）
+
+```
+你是一个视觉创作意图分析助手。
+
+用户输入: "{text}"
+引用的图片:
+{imageRefs.map(r => `- @img${r.refId}: ${r.label}`).join('\n')}
+
+请分析用户的意图，返回 JSON 格式：
+{
+  "action": "blend|replace|style_transfer|composite|generate",
+  "target": { "refId": N } 或 null,
+  "references": [{ "refId": N }, ...],
+  "styleRef": { "refId": N } 或 null,
+  "enhancedPrompt": "更清晰的指令描述",
+  "confidence": 0.0-1.0
+}
+
+规则：
+1. 如果用户说"把A换成B"，A是target，B是reference
+2. 如果用户说"A的风格+B的内容"，A是styleRef，B是target
+3. 如果只是"融合/合成"，第一张是target，其余是reference
+4. enhancedPrompt 要比原文更清晰，明确指出每张图的作用
+```
+
+---
+
+## 十二、参考资料
+
+### 12.1 竞品分析
 
 | 功能 | Midjourney | Leonardo | 我们当前 | 改进后 |
 |------|------------|----------|----------|--------|
@@ -518,7 +667,7 @@ Prompt 会变成：
 | 多图混合 | ✅ | ✅ | ⚠️ 支持但体验差 | ✅ 清晰顺序 |
 | 区域选择 | ✅ | ✅ | ❌ | ❌ (未来) |
 
-### 9.2 相关文档
+### 12.2 相关文档
 
 - `agent.literary-agent.md` - 文学创作 Agent 设计
 - `rule.app-feature-definition.md` - 应用功能定义规范
@@ -526,10 +675,12 @@ Prompt 会变成：
 
 ---
 
-## 十二、变更记录
+## 十三、变更记录
 
 | 日期 | 变更内容 | 作者 |
 |------|----------|------|
+| 2026-01-28 | 添加意图分析 Agent 规划（第十一章） | AI Assistant |
+| 2026-01-28 | 实现两阶段选择功能（预选→确认） | AI Assistant |
 | 2026-01-28 | 完成 Step 2：创建契约和解析器 | AI Assistant |
 | 2026-01-28 | 修复试验场测试用例（@img 解析为 chip） | AI Assistant |
 | 2026-01-28 | 添加业务逻辑规范：两阶段选择、后端请求规范 | AI Assistant |
