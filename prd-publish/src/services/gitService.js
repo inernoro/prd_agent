@@ -247,3 +247,45 @@ export async function getCommitInfo(commitHash, repoPath = config.git.repoPath) 
     return null;
   }
 }
+
+/**
+ * Get list of branches (local and remote)
+ * @param {string} [repoPath] - Repository path
+ * @returns {Promise<object>} Branches info
+ */
+export async function getBranches(repoPath = config.git.repoPath) {
+  try {
+    // Get current branch
+    const currentBranch = await execGit('branch --show-current', repoPath).catch(() => 'main');
+
+    // Get local branches
+    const localOutput = await execGit('branch --format="%(refname:short)"', repoPath);
+    const localBranches = localOutput ? localOutput.split('\n').filter(Boolean) : [];
+
+    // Get remote branches
+    const remoteOutput = await execGit('branch -r --format="%(refname:short)"', repoPath).catch(() => '');
+    const remoteBranches = remoteOutput
+      ? remoteOutput.split('\n')
+          .filter(Boolean)
+          .filter(b => !b.includes('HEAD'))
+          .map(b => b.replace('origin/', ''))
+      : [];
+
+    // Merge and dedupe
+    const allBranches = [...new Set([...localBranches, ...remoteBranches])];
+
+    return {
+      current: currentBranch,
+      local: localBranches,
+      remote: remoteBranches,
+      all: allBranches,
+    };
+  } catch {
+    return {
+      current: 'main',
+      local: ['main'],
+      remote: [],
+      all: ['main'],
+    };
+  }
+}

@@ -1003,6 +1003,72 @@ body {
   color: var(--primary);
 }
 
+/* Branch Selector */
+.branch-selector {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.branch-selector:hover {
+  border-color: var(--primary);
+}
+
+.branch-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--primary);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-arrow {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.branch-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: var(--spacing-xs);
+  min-width: 200px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 200;
+}
+
+.branch-option {
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.branch-option:hover {
+  background: rgba(var(--primary-rgb), 0.1);
+  color: var(--text-primary);
+}
+
+.branch-option.active {
+  background: rgba(var(--primary-rgb), 0.15);
+  color: var(--primary);
+}
+
 @media (max-width: 640px) {
   .project-selector {
     padding: var(--spacing-xs);
@@ -1010,6 +1076,11 @@ body {
 
   .project-name {
     max-width: 80px;
+    font-size: 12px;
+  }
+
+  .branch-name {
+    max-width: 100px;
     font-size: 12px;
   }
 }

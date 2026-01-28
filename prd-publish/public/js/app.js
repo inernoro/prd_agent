@@ -18,6 +18,9 @@ const state = {
   projects: [],
   currentProject: null,
   currentProjectId: localStorage.getItem('prd-publish-project') || 'default',
+  // Branch support
+  branches: [],
+  currentBranch: null,
 };
 
 // DOM Elements
@@ -236,9 +239,65 @@ function toggleProjectDropdown() {
 async function loadData() {
   await Promise.all([
     loadStatus(),
+    loadBranches(),
     loadCommits(),
     loadHistory(),
   ]);
+}
+
+// Branch Management
+async function loadBranches() {
+  try {
+    const { data } = await api(`/branches?${getProjectParam()}`);
+    state.branches = data.all;
+    state.currentBranch = data.current;
+    renderBranchSelector();
+  } catch (error) {
+    console.error('Failed to load branches:', error);
+    state.branches = ['main'];
+    state.currentBranch = 'main';
+  }
+}
+
+function renderBranchSelector() {
+  const container = document.getElementById('branch-selector');
+  if (!container) return;
+
+  const dropdown = container.querySelector('.branch-dropdown');
+  const branchName = container.querySelector('.branch-name');
+
+  if (branchName) {
+    branchName.textContent = state.currentBranch || 'main';
+  }
+
+  if (dropdown) {
+    dropdown.innerHTML = state.branches.map(branch => `
+      <div class="branch-option ${branch === state.currentBranch ? 'active' : ''}" data-branch="${branch}">
+        ${escapeHtml(branch)}
+      </div>
+    `).join('');
+
+    dropdown.querySelectorAll('.branch-option').forEach(opt => {
+      opt.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectBranch(opt.dataset.branch);
+        dropdown.classList.add('hidden');
+      });
+    });
+  }
+}
+
+function selectBranch(branch) {
+  state.currentBranch = branch;
+  renderBranchSelector();
+  loadCommits();
+}
+
+function toggleBranchDropdown() {
+  const dropdown = document.querySelector('#branch-selector .branch-dropdown');
+  if (dropdown) {
+    dropdown.classList.toggle('hidden');
+  }
 }
 
 async function loadStatus() {
@@ -283,7 +342,8 @@ async function loadCommits(reset = true) {
     }
 
     const search = elements.searchInput.value;
-    const { data, pagination } = await api(`/commits?limit=20&offset=${state.commitsOffset}&search=${encodeURIComponent(search)}&${getProjectParam()}`);
+    const branchParam = state.currentBranch ? `&branch=${encodeURIComponent(state.currentBranch)}` : '';
+    const { data, pagination } = await api(`/commits?limit=20&offset=${state.commitsOffset}&search=${encodeURIComponent(search)}&${getProjectParam()}${branchParam}`);
 
     if (reset) {
       state.commits = data;
@@ -706,11 +766,23 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.projectSelector.addEventListener('click', toggleProjectDropdown);
   }
 
+  // Branch selector
+  const branchSelector = document.getElementById('branch-selector');
+  if (branchSelector) {
+    branchSelector.addEventListener('click', toggleBranchDropdown);
+  }
+
   // Close dropdown on outside click
   document.addEventListener('click', (e) => {
     if (!elements.projectSelector?.contains(e.target)) {
       const dropdown = elements.projectSelector?.querySelector('.project-dropdown');
       if (dropdown) dropdown.classList.add('hidden');
+    }
+    // Also close branch dropdown
+    const branchSelector = document.getElementById('branch-selector');
+    if (!branchSelector?.contains(e.target)) {
+      const branchDropdown = branchSelector?.querySelector('.branch-dropdown');
+      if (branchDropdown) branchDropdown.classList.add('hidden');
     }
   });
 

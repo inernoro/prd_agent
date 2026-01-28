@@ -168,4 +168,27 @@ router.post('/fetch', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/branches
+ * Get list of branches
+ */
+router.get('/branches', async (req, res) => {
+  try {
+    const { projectId } = req.query;
+    const project = await getProjectConfig(projectId);
+
+    const branches = await gitService.getBranches(project.repoPath);
+
+    res.json({
+      success: true,
+      data: branches,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 export default router;
