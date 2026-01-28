@@ -291,21 +291,17 @@ export async function deploy(options) {
   if (onStatus) onStatus(DeployStatus.RUNNING, currentDeploy);
 
   try {
-    // Fetch latest (optional, may fail if no remote)
-    const fetched = await gitService.fetchRemote(project.repoPath);
-    if (fetched) {
-      if (onOutput) onOutput({ stream: 'system', text: '已获取最新代码\n' });
-    } else {
-      if (onOutput) onOutput({ stream: 'system', text: '跳过远程获取（无远程仓库）\n' });
-    }
-
-    // Get branch info
+    // Get branch info (for script parameter)
     const repoStatus = await gitService.getRepoStatus(project.repoPath);
     const branch = repoStatus.branch || project.branch;
 
-    // Checkout the commit
-    if (onOutput) onOutput({ stream: 'system', text: `切换到版本 ${commitInfo.shortHash}...\n` });
-    await gitService.checkout(commitInfo.hash, project.repoPath);
+    // NOTE: We do NOT checkout here. The deploy script is responsible for:
+    // 1. Fetching latest code (if needed)
+    // 2. Checking out the target version (if needed)
+    // 3. Building and deploying
+    // This avoids disrupting the working directory and data files.
+    if (onOutput) onOutput({ stream: 'system', text: `开始部署版本 ${commitInfo.shortHash}...\n` });
+    if (onOutput) onOutput({ stream: 'system', text: `部署脚本将收到 commit hash，由脚本决定如何切换版本\n` });
 
     // Execute deployment with retry
     let result;

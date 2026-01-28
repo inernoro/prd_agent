@@ -200,7 +200,8 @@ export async function fetchRemote(repoPath = config.git.repoPath) {
 }
 
 /**
- * Checkout to specific commit
+ * Checkout to specific commit (DEPRECATED - not recommended for deploy)
+ * Use for reference only, deploy scripts should handle checkout themselves
  * @param {string} commitHash - Commit hash to checkout
  * @param {string} [repoPath] - Repository path
  * @returns {Promise<void>}
@@ -211,23 +212,7 @@ export async function checkout(commitHash, repoPath = config.git.repoPath) {
     throw new Error('Invalid commit hash format');
   }
 
-  // Stash local changes if any
-  const status = await execGit('status --porcelain', repoPath).catch(() => '');
-  const hasChanges = status.length > 0;
-
-  if (hasChanges) {
-    await execGit('stash push -m "prd-publish-auto-stash"', repoPath);
-  }
-
-  try {
-    await execGit(`checkout ${commitHash}`, repoPath);
-  } catch (error) {
-    // Restore stash if checkout failed
-    if (hasChanges) {
-      await execGit('stash pop', repoPath).catch(() => {});
-    }
-    throw error;
-  }
+  await execGit(`checkout ${commitHash}`, repoPath);
 }
 
 /**
