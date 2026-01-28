@@ -92,15 +92,15 @@ function getSpawnConfig(scriptPath, args, cwd, env) {
       return {
         command: scriptPath,
         args,
-        options: { cwd, env, shell: 'cmd.exe', windowsHide: true },
+        options: { cwd, env, shell: true, windowsHide: true },
       };
     }
   } else {
-    // Unix: execute directly with shell
+    // Unix (macOS/Linux): use system default shell (zsh/bash)
     return {
       command: scriptPath,
       args,
-      options: { cwd, env, shell: '/bin/sh' },
+      options: { cwd, env, shell: true },
     };
   }
 }

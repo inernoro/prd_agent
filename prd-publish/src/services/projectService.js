@@ -1,7 +1,8 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, basename } from 'path';
 import { config } from '../config.js';
+import { getRemoteUrl, execGit } from './gitService.js';
 
 const PROJECTS_FILE = join(config.paths.dataDir, 'projects.json');
 
@@ -12,6 +13,7 @@ const DEFAULT_PROJECT = {
   id: '',
   name: '',
   repoPath: '',
+  remoteUrl: '',
   script: '',
   branch: 'main',
   enabled: true,
@@ -20,7 +22,24 @@ const DEFAULT_PROJECT = {
 };
 
 /**
- * Initialize projects file with default project from env
+ * Auto-detect parent repo (prd-publish is inside prd_agent)
+ * @returns {string} Parent repo path
+ */
+function getParentRepoPath() {
+  // prd-publish/src/services -> prd-publish -> prd_agent (parent)
+  const parentPath = dirname(config.paths.baseDir);
+
+  // Check if parent is a git repo
+  if (existsSync(join(parentPath, '.git'))) {
+    return parentPath;
+  }
+
+  // Fallback to config or current directory
+  return config.git.repoPath || process.cwd();
+}
+
+/**
+ * Initialize projects file with default project (auto-detected)
  */
 async function initProjectsFile() {
   const dir = dirname(PROJECTS_FILE);
@@ -28,14 +47,30 @@ async function initProjectsFile() {
     await mkdir(dir, { recursive: true });
   }
 
-  // Create default project from environment variables
+  // Auto-detect parent repo path
+  const repoPath = getParentRepoPath();
+  const projectName = basename(repoPath);
+
+  // Try to get remote URL and current branch
+  let remoteUrl = '';
+  let branch = 'main';
+
+  try {
+    remoteUrl = await getRemoteUrl(repoPath) || '';
+    branch = await execGit('branch --show-current', repoPath) || 'main';
+  } catch {
+    // Ignore errors, use defaults
+  }
+
+  // Create default project from auto-detected values
   const defaultProject = {
     ...DEFAULT_PROJECT,
     id: 'default',
-    name: 'Default Project',
-    repoPath: config.git.repoPath,
+    name: projectName || 'Default Project',
+    repoPath,
+    remoteUrl,
     script: config.exec.script,
-    branch: config.git.branch,
+    branch,
     enabled: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

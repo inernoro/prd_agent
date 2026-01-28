@@ -89,15 +89,20 @@ router.get('/status', async (req, res) => {
     const { projectId } = req.query;
     const project = await getProjectConfig(projectId);
 
-    const repoStatus = await gitService.getRepoStatus(project.repoPath);
+    const [repoStatus, remoteUrl] = await Promise.all([
+      gitService.getRepoStatus(project.repoPath),
+      gitService.getRemoteUrl(project.repoPath).catch(() => null),
+    ]);
 
     res.json({
       success: true,
       data: {
         ...repoStatus,
+        remoteUrl,
         project: {
           id: project.id,
           name: project.name,
+          repoPath: project.repoPath,
         },
       },
     });

@@ -5,9 +5,6 @@ import { config } from '../config.js';
 
 const execAsync = promisify(exec);
 
-// Detect platform for shell configuration
-const isWindows = process.platform === 'win32';
-
 /**
  * Execute git command in repo directory
  * @param {string} command - Git command (without 'git' prefix)
@@ -29,12 +26,26 @@ export async function execGit(command, repoPath = config.git.repoPath) {
     const { stdout } = await execAsync(`git ${command}`, {
       cwd: repoPath,
       maxBuffer: 10 * 1024 * 1024, // 10MB buffer
-      shell: isWindows ? 'cmd.exe' : '/bin/sh',
-      windowsHide: true,
+      shell: true, // Use system default shell (zsh on macOS, bash on Linux, cmd on Windows)
     });
     return stdout.trim();
   } catch (error) {
     throw new Error(`Git command failed: ${error.message}`);
+  }
+}
+
+/**
+ * Get remote URL (GitHub/GitLab URL) from local repo
+ * @param {string} [repoPath] - Repository path
+ * @param {string} [remoteName='origin'] - Remote name
+ * @returns {Promise<string|null>} Remote URL or null
+ */
+export async function getRemoteUrl(repoPath = config.git.repoPath, remoteName = 'origin') {
+  try {
+    const url = await execGit(`remote get-url ${remoteName}`, repoPath);
+    return url || null;
+  } catch {
+    return null;
   }
 }
 
