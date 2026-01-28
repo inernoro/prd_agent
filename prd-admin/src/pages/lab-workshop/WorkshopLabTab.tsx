@@ -525,15 +525,10 @@ export default function WorkshopLabTab() {
               padding: 12,
               border: '1px solid var(--border-default)',
             }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
-                <span>主输入框</span>
-                {preSelectedKeys.size > 0 && (
-                  <span style={{ color: 'rgba(99, 102, 241, 0.8)', fontSize: 10 }}>
-                    点击此处确认 {preSelectedKeys.size} 张预选图片
-                  </span>
-                )}
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+                主输入框
               </div>
-              {/* 点击聚焦时确认预选 */}
+              {/* 输入框容器 - 包含待确认 chip 和编辑器 */}
               <div
                 style={{
                   background: 'var(--bg-base)',
@@ -543,16 +538,101 @@ export default function WorkshopLabTab() {
                     ? '1px solid rgba(99, 102, 241, 0.5)'
                     : '1px solid var(--border-default)',
                   transition: 'border-color 0.15s',
+                  cursor: 'text',
                 }}
+                onClick={() => composerRef.current?.focus()}
                 onFocus={handleComposerFocus}
               >
+                {/* 待确认的灰色 chip（显示在输入框内） */}
+                {preSelectedKeys.size > 0 && (
+                  <div style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 4,
+                    marginBottom: 8,
+                  }}>
+                    {MOCK_IMAGES.filter(img => preSelectedKeys.has(img.key))
+                      .sort((a, b) => a.refId - b.refId)
+                      .map(img => (
+                        <div
+                          key={img.key}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            padding: '2px 6px',
+                            background: 'rgba(156, 163, 175, 0.2)',
+                            border: '1px solid rgba(156, 163, 175, 0.4)',
+                            borderRadius: 4,
+                            fontSize: 11,
+                            color: 'rgba(156, 163, 175, 1)',
+                          }}
+                          title="点击输入框确认"
+                        >
+                          <span style={{
+                            background: 'rgba(156, 163, 175, 0.3)',
+                            borderRadius: 2,
+                            padding: '0 3px',
+                            fontSize: 10,
+                            fontWeight: 600,
+                          }}>
+                            {img.refId}
+                          </span>
+                          <img
+                            src={img.src}
+                            alt=""
+                            style={{
+                              width: 14,
+                              height: 14,
+                              borderRadius: 2,
+                              objectFit: 'cover',
+                              opacity: 0.7,
+                            }}
+                          />
+                          <span style={{
+                            maxWidth: 60,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {img.label.length > 6 ? img.label.slice(0, 6) + '...' : img.label}
+                          </span>
+                          <span
+                            style={{
+                              cursor: 'pointer',
+                              opacity: 0.6,
+                              marginLeft: 2,
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPreSelectedKeys(prev => {
+                                const next = new Set(prev);
+                                next.delete(img.key);
+                                return next;
+                              });
+                            }}
+                          >
+                            ×
+                          </span>
+                        </div>
+                      ))}
+                    <span style={{
+                      fontSize: 9,
+                      color: 'rgba(99, 102, 241, 0.6)',
+                      alignSelf: 'center',
+                      marginLeft: 4,
+                    }}>
+                      ← 点击确认
+                    </span>
+                  </div>
+                )}
                 <RichComposer
                   ref={composerRef}
-                  placeholder="输入文字，输入 @ 引用图片..."
+                  placeholder={preSelectedKeys.size > 0 ? "点击此处确认预选图片..." : "输入文字，输入 @ 引用图片..."}
                   imageOptions={MOCK_IMAGES}
                   onChange={setCurrentText}
                   onSubmit={handleSubmit}
-                  minHeight={60}
+                  minHeight={preSelectedKeys.size > 0 ? 40 : 60}
                   maxHeight={150}
                 />
               </div>
