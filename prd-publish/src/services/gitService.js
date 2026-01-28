@@ -200,7 +200,8 @@ export async function fetchRemote(repoPath = config.git.repoPath) {
 }
 
 /**
- * Checkout to specific commit
+ * Checkout to specific commit (DEPRECATED - not recommended for deploy)
+ * Use for reference only, deploy scripts should handle checkout themselves
  * @param {string} commitHash - Commit hash to checkout
  * @param {string} [repoPath] - Repository path
  * @returns {Promise<void>}

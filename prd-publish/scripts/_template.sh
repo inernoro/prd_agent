@@ -3,6 +3,10 @@
 # PRD-Publish Deploy Script Template
 # ============================================================================
 #
+# IMPORTANT: This script is responsible for version switching!
+# prd-publish does NOT checkout the target version automatically.
+# Your script should handle: fetch -> checkout -> build -> deploy
+#
 # Usage: ./deploy-xxx.sh <commit_hash> <short_hash> <branch> <project_id>
 #
 # Arguments:
@@ -43,7 +47,31 @@ echo "========================================"
 cd "$REPO_PATH"
 
 # ============================================================================
-# YOUR DEPLOY LOGIC HERE
+# STEP 1: Git Operations (YOUR CHOICE - pick one approach)
+# ============================================================================
+
+# Approach A: Direct checkout (if repo is dedicated for deployment)
+# git fetch origin
+# git checkout $COMMIT_HASH
+
+# Approach B: Use git worktree (safer, doesn't affect main working dir)
+# DEPLOY_DIR="/tmp/deploy-$PROJECT_ID-$SHORT_HASH"
+# git worktree add "$DEPLOY_DIR" $COMMIT_HASH
+# cd "$DEPLOY_DIR"
+# # ... do build and deploy ...
+# git worktree remove "$DEPLOY_DIR"
+
+# Approach C: Git archive (extract without checkout)
+# DEPLOY_DIR="/tmp/deploy-$PROJECT_ID-$SHORT_HASH"
+# mkdir -p "$DEPLOY_DIR"
+# git archive $COMMIT_HASH | tar -x -C "$DEPLOY_DIR"
+# cd "$DEPLOY_DIR"
+
+# Approach D: Don't switch version (use current HEAD, just build and deploy)
+# This is useful if you manage versions externally
+
+# ============================================================================
+# STEP 2: Build & Deploy (customize for your project)
 # ============================================================================
 
 # Example: Node.js project
@@ -62,13 +90,6 @@ cd "$REPO_PATH"
 #
 # echo "[2/2] Deploying..."
 # docker compose up -d
-
-# Example: Static site
-# echo "[1/2] Building..."
-# pnpm build
-#
-# echo "[2/2] Syncing to server..."
-# rsync -avz --delete dist/ user@server:/var/www/html/
 
 # ============================================================================
 
