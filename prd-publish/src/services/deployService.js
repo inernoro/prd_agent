@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import { join } from 'path';
+import { existsSync } from 'fs';
 import { config } from '../config.js';
 import * as gitService from './gitService.js';
 import * as historyService from './historyService.js';
@@ -9,6 +10,9 @@ import { getTimestamp } from '../utils/timeUtils.js';
 // Current deployment state
 let currentDeploy = null;
 let deployLock = false;
+
+// Detect platform
+const isWindows = process.platform === 'win32';
 
 // Event emitter for deployment events
 export const deployEvents = new EventEmitter();
@@ -57,10 +61,48 @@ export function getCurrentDeploy() {
  * @returns {string} Resolved absolute path
  */
 function resolveScriptPath(scriptPath) {
-  if (scriptPath.startsWith('/')) {
+  // Absolute path (Unix or Windows)
+  if (scriptPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(scriptPath)) {
     return scriptPath;
   }
   return join(config.paths.baseDir, scriptPath);
+}
+
+/**
+ * Get spawn options based on script type and platform
+ * @param {string} scriptPath - Script path
+ * @param {string[]} args - Script arguments
+ * @param {string} cwd - Working directory
+ * @param {object} env - Environment variables
+ * @returns {object} Spawn command and options
+ */
+function getSpawnConfig(scriptPath, args, cwd, env) {
+  const isPowerShell = scriptPath.endsWith('.ps1');
+
+  if (isWindows) {
+    if (isPowerShell) {
+      // Execute PowerShell script
+      return {
+        command: 'powershell',
+        args: ['-ExecutionPolicy', 'Bypass', '-File', scriptPath, ...args],
+        options: { cwd, env, windowsHide: true },
+      };
+    } else {
+      // Execute batch/shell script via cmd
+      return {
+        command: scriptPath,
+        args,
+        options: { cwd, env, shell: 'cmd.exe', windowsHide: true },
+      };
+    }
+  } else {
+    // Unix: execute directly with shell
+    return {
+      command: scriptPath,
+      args,
+      options: { cwd, env, shell: '/bin/sh' },
+    };
+  }
 }
 
 /**
@@ -83,20 +125,36 @@ export async function executeScript(options) {
     const startTime = Date.now();
     const logs = [];
 
+    // Check script exists
+    if (!existsSync(scriptPath)) {
+      resolve({
+        success: false,
+        errorType: ErrorType.SCRIPT,
+        code: -1,
+        duration: 0,
+        logs: [],
+        message: `Script not found: ${scriptPath}`,
+      });
+      return;
+    }
+
+    // Build environment
+    const env = {
+      ...global.process.env,
+      COMMIT_HASH: commitHash,
+      SHORT_HASH: shortHash,
+      BRANCH: branch,
+      PROJECT_ID: project.id,
+      PROJECT_NAME: project.name,
+      REPO_PATH: repoPath,
+    };
+
+    // Get platform-specific spawn configuration
+    const spawnArgs = [commitHash, shortHash, branch, project.id];
+    const spawnConfig = getSpawnConfig(scriptPath, spawnArgs, repoPath, env);
+
     // Spawn process
-    const process = spawn(scriptPath, [commitHash, shortHash, branch, project.id], {
-      cwd: repoPath,
-      shell: true,
-      env: {
-        ...global.process.env,
-        COMMIT_HASH: commitHash,
-        SHORT_HASH: shortHash,
-        BRANCH: branch,
-        PROJECT_ID: project.id,
-        PROJECT_NAME: project.name,
-        REPO_PATH: repoPath,
-      },
-    });
+    const process = spawn(spawnConfig.command, spawnConfig.args, spawnConfig.options);
 
     let killed = false;
 

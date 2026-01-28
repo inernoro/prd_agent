@@ -1,8 +1,12 @@
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
+import { existsSync } from 'fs';
 import { config } from '../config.js';
 
 const execAsync = promisify(exec);
+
+// Detect platform for shell configuration
+const isWindows = process.platform === 'win32';
 
 /**
  * Execute git command in repo directory
@@ -11,11 +15,22 @@ const execAsync = promisify(exec);
  * @returns {Promise<string>} Command output
  */
 export async function execGit(command, repoPath = config.git.repoPath) {
+  // Validate repoPath is a local path, not a URL
+  if (repoPath.startsWith('http://') || repoPath.startsWith('https://') || repoPath.startsWith('git@')) {
+    throw new Error(`repoPath must be a local file path, not a URL: ${repoPath}`);
+  }
+
+  // Check if path exists
+  if (!existsSync(repoPath)) {
+    throw new Error(`Repository path does not exist: ${repoPath}`);
+  }
+
   try {
     const { stdout } = await execAsync(`git ${command}`, {
       cwd: repoPath,
       maxBuffer: 10 * 1024 * 1024, // 10MB buffer
-      shell: true,
+      shell: isWindows ? 'cmd.exe' : '/bin/sh',
+      windowsHide: true,
     });
     return stdout.trim();
   } catch (error) {

@@ -107,6 +107,32 @@ export async function getProject(id) {
 }
 
 /**
+ * Validate repoPath is a local path and exists
+ * @param {string} repoPath - Repository path
+ * @returns {object} Validation result
+ */
+function validateRepoPath(repoPath) {
+  const errors = [];
+
+  // Check it's not a URL
+  if (repoPath.startsWith('http://') || repoPath.startsWith('https://') || repoPath.startsWith('git@')) {
+    errors.push('repoPath must be a local file path, not a URL. Example: /var/www/myproject or C:\\Projects\\myproject');
+  }
+
+  // Check path exists
+  if (errors.length === 0 && !existsSync(repoPath)) {
+    errors.push(`Repository path does not exist: ${repoPath}`);
+  }
+
+  // Check if it's a git repo
+  if (errors.length === 0 && !existsSync(join(repoPath, '.git'))) {
+    errors.push(`Not a git repository (no .git directory found): ${repoPath}`);
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+/**
  * Create a new project
  * @param {object} projectData - Project data
  * @returns {Promise<object>} Created project
@@ -127,6 +153,12 @@ export async function createProject(projectData) {
   // Validate ID format (alphanumeric, dash, underscore)
   if (!/^[a-zA-Z0-9_-]+$/.test(projectData.id)) {
     throw new Error('Project ID can only contain letters, numbers, dashes, and underscores');
+  }
+
+  // Validate repoPath
+  const repoValidation = validateRepoPath(projectData.repoPath);
+  if (!repoValidation.valid) {
+    throw new Error(repoValidation.errors.join('; '));
   }
 
   const project = {
@@ -238,7 +270,7 @@ export async function getAvailableScripts() {
     const { readdir } = await import('fs/promises');
     const files = await readdir(scriptsDir);
     return files
-      .filter(f => f.endsWith('.sh') && !f.startsWith('_'))
+      .filter(f => (f.endsWith('.sh') || f.endsWith('.ps1')) && !f.startsWith('_'))
       .map(f => ({
         name: f,
         path: `./scripts/${f}`,
