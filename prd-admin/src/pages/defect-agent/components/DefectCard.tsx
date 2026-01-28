@@ -401,6 +401,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   alt={reporterDisplayName}
                   className="h-3 w-3 rounded-full object-cover"
                   onError={(e) => {
+                    e.currentTarget.onerror = null; // 防止 nohead.png 也 404 时死循环
                     e.currentTarget.src = resolveNoHeadAvatarUrl();
                   }}
                 />
@@ -427,6 +428,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   alt={assigneeDisplayName}
                   className="h-3 w-3 rounded-full object-cover"
                   onError={(e) => {
+                    e.currentTarget.onerror = null; // 防止 nohead.png 也 404 时死循环
                     e.currentTarget.src = resolveNoHeadAvatarUrl();
                   }}
                 />

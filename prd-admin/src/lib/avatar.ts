@@ -15,9 +15,12 @@ function joinUrl(base: string, path: string) {
   return `${b}/${p}`;
 }
 
+const DEFAULT_COS_BASE_URL = 'https://i.pa.759800.com';
+
 export function getAvatarBaseUrl(): string {
   const raw = (import.meta.env.TENCENT_COS_PUBLIC_BASE_URL as string | undefined) ?? '';
-  return raw.trim().replace(/\/+$/, '');
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  return trimmed || DEFAULT_COS_BASE_URL;
 }
 
 export function resolveAvatarUrl(args: {
