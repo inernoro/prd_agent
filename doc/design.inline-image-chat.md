@@ -140,9 +140,9 @@ ImageChipNode 的保护措施:
 
 | 文件 | 用途 | 状态 |
 |------|------|------|
-| `prd-admin/src/lib/imageRefContract.ts` | 类型定义（契约） | 待创建 |
-| `prd-admin/src/lib/imageRefResolver.ts` | 统一解析器 | 待创建 |
-| `prd-admin/src/lib/imageRefResolver.test.ts` | 单元测试 | 待创建 |
+| `prd-admin/src/lib/imageRefContract.ts` | 类型定义（契约） | ✅ 已创建 |
+| `prd-admin/src/lib/imageRefResolver.ts` | 统一解析器 | ✅ 已创建 |
+| `prd-admin/src/lib/imageRefResolver.test.ts` | 单元测试 | ⏳ 待创建 |
 | `prd-admin/src/pages/_dev/RichComposerLab.tsx` | 试验场页面（独立） | ✅ 已创建 |
 | `prd-admin/src/pages/lab-workshop/WorkshopLabTab.tsx` | 试验车间（Lab 内嵌） | ✅ 已创建 |
 
@@ -162,13 +162,13 @@ ImageChipNode 的保护措施:
   - ✅ 验收检查清单
 
 ### Step 2: 创建契约和解析器（不碰 UI）
-- **状态**: ⏳ 待开始
+- **状态**: ✅ 已完成
 - **风险**: 零
 - **回滚**: 删除文件
 - **内容**:
-  - 新增 `imageRefContract.ts`
-  - 新增 `imageRefResolver.ts`
-  - 新增测试文件
+  - ✅ 新增 `imageRefContract.ts` - 类型定义
+  - ✅ 新增 `imageRefResolver.ts` - 统一解析器
+  - ⏳ 新增测试文件（可选）
 
 ### Step 3: 并行运行新旧逻辑
 - **状态**: ⏳ 待开始
@@ -530,6 +530,8 @@ Prompt 会变成：
 
 | 日期 | 变更内容 | 作者 |
 |------|----------|------|
+| 2026-01-28 | 完成 Step 2：创建契约和解析器 | AI Assistant |
+| 2026-01-28 | 修复试验场测试用例（@img 解析为 chip） | AI Assistant |
 | 2026-01-28 | 添加业务逻辑规范：两阶段选择、后端请求规范 | AI Assistant |
 | 2026-01-28 | 完成 Step 1：创建试验车间 | AI Assistant |
 | 2026-01-27 | 创建文档 | AI Assistant |

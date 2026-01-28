@@ -81,12 +81,52 @@ export default function WorkshopLabTab() {
     addOutput('clear()', null);
   }, [addOutput]);
 
+  /**
+   * 插入测试用例文本，解析 @imgN 并转换为实际的 chip
+   */
   const handleInsertTestCase = useCallback((text: string) => {
     const composer = composerRef.current;
     if (!composer) return;
     composer.clear();
-    composer.insertText(text);
-    addOutput('insertText()', text);
+    composer.focus();
+
+    // 解析 @imgN 模式，拆分为文本和引用段
+    const pattern = /@img(\d+)/g;
+    let lastIndex = 0;
+    let match;
+    const segments: Array<{ type: 'text' | 'ref'; value: string; refId?: number }> = [];
+
+    while ((match = pattern.exec(text)) !== null) {
+      // 添加 @img 之前的文本
+      if (match.index > lastIndex) {
+        segments.push({ type: 'text', value: text.slice(lastIndex, match.index) });
+      }
+      // 添加引用
+      segments.push({ type: 'ref', value: match[0], refId: parseInt(match[1], 10) });
+      lastIndex = pattern.lastIndex;
+    }
+    // 添加剩余文本
+    if (lastIndex < text.length) {
+      segments.push({ type: 'text', value: text.slice(lastIndex) });
+    }
+
+    // 逐段插入
+    for (const seg of segments) {
+      if (seg.type === 'text') {
+        composer.insertText(seg.value);
+      } else {
+        // 查找对应的图片
+        const img = MOCK_IMAGES.find((i) => i.refId === seg.refId);
+        if (img) {
+          composer.insertImageChip(img);
+        } else {
+          // 找不到对应图片，插入原文
+          composer.insertText(seg.value);
+        }
+      }
+    }
+
+    addOutput('insertTestCase()', { text, segments });
   }, [addOutput]);
 
   return (
