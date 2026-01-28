@@ -528,7 +528,7 @@ export default function WorkshopLabTab() {
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
                 主输入框
               </div>
-              {/* 输入框容器 - 包含待确认 chip 和编辑器 */}
+              {/* 输入框容器 - 编辑器 + 待确认 chip 追加在末尾 */}
               <div
                 style={{
                   background: 'var(--bg-base)',
@@ -539,102 +539,93 @@ export default function WorkshopLabTab() {
                     : '1px solid var(--border-default)',
                   transition: 'border-color 0.15s',
                   cursor: 'text',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'flex-end',
+                  gap: 4,
                 }}
                 onClick={() => composerRef.current?.focus()}
                 onFocus={handleComposerFocus}
               >
-                {/* 待确认的灰色 chip（显示在输入框内） */}
-                {preSelectedKeys.size > 0 && (
-                  <div style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: 4,
-                    marginBottom: 8,
-                  }}>
-                    {MOCK_IMAGES.filter(img => preSelectedKeys.has(img.key))
-                      .sort((a, b) => a.refId - b.refId)
-                      .map(img => (
-                        <div
-                          key={img.key}
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 4,
-                            padding: '2px 6px',
-                            background: 'rgba(156, 163, 175, 0.2)',
-                            border: '1px solid rgba(156, 163, 175, 0.4)',
-                            borderRadius: 4,
-                            fontSize: 11,
-                            color: 'rgba(156, 163, 175, 1)',
-                          }}
-                          title="点击输入框确认"
-                        >
-                          <span style={{
-                            background: 'rgba(156, 163, 175, 0.3)',
-                            borderRadius: 2,
-                            padding: '0 3px',
-                            fontSize: 10,
-                            fontWeight: 600,
-                          }}>
-                            {img.refId}
-                          </span>
-                          <img
-                            src={img.src}
-                            alt=""
-                            style={{
-                              width: 14,
-                              height: 14,
-                              borderRadius: 2,
-                              objectFit: 'cover',
-                              opacity: 0.7,
-                            }}
-                          />
-                          <span style={{
-                            maxWidth: 60,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}>
-                            {img.label.length > 6 ? img.label.slice(0, 6) + '...' : img.label}
-                          </span>
-                          <span
-                            style={{
-                              cursor: 'pointer',
-                              opacity: 0.6,
-                              marginLeft: 2,
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setPreSelectedKeys(prev => {
-                                const next = new Set(prev);
-                                next.delete(img.key);
-                                return next;
-                              });
-                            }}
-                          >
-                            ×
-                          </span>
-                        </div>
-                      ))}
-                    <span style={{
-                      fontSize: 9,
-                      color: 'rgba(99, 102, 241, 0.6)',
-                      alignSelf: 'center',
-                      marginLeft: 4,
-                    }}>
-                      ← 点击确认
-                    </span>
-                  </div>
-                )}
-                <RichComposer
-                  ref={composerRef}
-                  placeholder={preSelectedKeys.size > 0 ? "点击此处确认预选图片..." : "输入文字，输入 @ 引用图片..."}
-                  imageOptions={MOCK_IMAGES}
-                  onChange={setCurrentText}
-                  onSubmit={handleSubmit}
-                  minHeight={preSelectedKeys.size > 0 ? 40 : 60}
-                  maxHeight={150}
-                />
+                {/* 编辑器（flex-grow 占据主要空间） */}
+                <div style={{ flex: '1 1 auto', minWidth: 100 }}>
+                  <RichComposer
+                    ref={composerRef}
+                    placeholder="输入文字，输入 @ 引用图片..."
+                    imageOptions={MOCK_IMAGES}
+                    onChange={setCurrentText}
+                    onSubmit={handleSubmit}
+                    minHeight={40}
+                    maxHeight={150}
+                  />
+                </div>
+                {/* 待确认的灰色 chip（追加在内容末尾，同一行） */}
+                {preSelectedKeys.size > 0 && MOCK_IMAGES
+                  .filter(img => preSelectedKeys.has(img.key))
+                  .sort((a, b) => a.refId - b.refId)
+                  .map(img => (
+                    <div
+                      key={img.key}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 3,
+                        padding: '2px 5px',
+                        background: 'rgba(156, 163, 175, 0.2)',
+                        border: '1px solid rgba(156, 163, 175, 0.4)',
+                        borderRadius: 4,
+                        fontSize: 11,
+                        color: 'rgba(156, 163, 175, 1)',
+                        flexShrink: 0,
+                      }}
+                      title="点击输入框确认"
+                    >
+                      <span style={{
+                        background: 'rgba(156, 163, 175, 0.3)',
+                        borderRadius: 2,
+                        padding: '0 3px',
+                        fontSize: 10,
+                        fontWeight: 600,
+                      }}>
+                        {img.refId}
+                      </span>
+                      <img
+                        src={img.src}
+                        alt=""
+                        style={{
+                          width: 14,
+                          height: 14,
+                          borderRadius: 2,
+                          objectFit: 'cover',
+                          opacity: 0.7,
+                        }}
+                      />
+                      <span style={{
+                        maxWidth: 50,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {img.label.length > 5 ? img.label.slice(0, 5) + '..' : img.label}
+                      </span>
+                      <span
+                        style={{
+                          cursor: 'pointer',
+                          opacity: 0.6,
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPreSelectedKeys(prev => {
+                            const next = new Set(prev);
+                            next.delete(img.key);
+                            return next;
+                          });
+                        }}
+                      >
+                        ×
+                      </span>
+                    </div>
+                  ))}
               </div>
               <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
                 <Btn onClick={handleGetStructuredContent}>getStructuredContent()</Btn>
