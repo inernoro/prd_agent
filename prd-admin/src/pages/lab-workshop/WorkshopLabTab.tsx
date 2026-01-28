@@ -46,6 +46,9 @@ export default function WorkshopLabTab() {
   const [currentText, setCurrentText] = useState('');
   const [containerWidth, setContainerWidth] = useState(300);
 
+  // 两阶段选择：预选状态
+  const [preSelectedKeys, setPreSelectedKeys] = useState<Set<string>>(new Set());
+
   // 自动测试状态
   const [testResults, setTestResults] = useState<TestResult[]>([]);
   const [isAutoTesting, setIsAutoTesting] = useState(false);
@@ -74,6 +77,40 @@ export default function WorkshopLabTab() {
     addOutput('getPlainText()', result);
   }, [addOutput]);
 
+  // 两阶段选择 - 阶段1：点击图片切换预选状态
+  const handleImageClick = useCallback((option: ImageOption) => {
+    setPreSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(option.key)) {
+        next.delete(option.key);
+        addOutput('preSelect.remove()', { key: option.key, label: option.label });
+      } else {
+        next.add(option.key);
+        addOutput('preSelect.add()', { key: option.key, label: option.label });
+      }
+      return next;
+    });
+  }, [addOutput]);
+
+  // 两阶段选择 - 阶段2：聚焦输入框时确认预选，转换为 chip
+  const handleComposerFocus = useCallback(() => {
+    if (preSelectedKeys.size === 0) return;
+    const composer = composerRef.current;
+    if (!composer) return;
+
+    // 按 refId 顺序插入
+    const toInsert = MOCK_IMAGES.filter((img) => preSelectedKeys.has(img.key));
+    toInsert.sort((a, b) => a.refId - b.refId);
+
+    for (const img of toInsert) {
+      composer.insertImageChip(img);
+    }
+
+    addOutput('confirmPreSelect()', toInsert.map((i) => ({ key: i.key, label: i.label })));
+    setPreSelectedKeys(new Set());
+  }, [preSelectedKeys, addOutput]);
+
+  // 直接插入 chip（用于自动测试等场景）
   const handleInsertChip = useCallback((option: ImageOption) => {
     const composer = composerRef.current;
     if (!composer) return;
@@ -382,61 +419,102 @@ export default function WorkshopLabTab() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           {/* 左侧：测试区 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {/* 模拟画布 */}
+            {/* 模拟画布 - 两阶段选择 */}
             <div style={{
               background: 'var(--bg-elevated)',
               borderRadius: 8,
               padding: 12,
               border: '1px solid var(--border-default)',
             }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-                模拟画布（点击插入 chip）
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>模拟画布（点击预选 → 聚焦输入框确认）</span>
+                {preSelectedKeys.size > 0 && (
+                  <span style={{ color: 'rgba(156, 163, 175, 1)', fontSize: 10 }}>
+                    已预选 {preSelectedKeys.size} 张
+                    <button
+                      onClick={() => setPreSelectedKeys(new Set())}
+                      style={{
+                        marginLeft: 6,
+                        padding: '1px 4px',
+                        fontSize: 9,
+                        background: 'rgba(156, 163, 175, 0.2)',
+                        border: '1px solid rgba(156, 163, 175, 0.3)',
+                        borderRadius: 3,
+                        color: 'rgba(156, 163, 175, 1)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      清除
+                    </button>
+                  </span>
+                )}
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {MOCK_IMAGES.map(img => (
-                  <div
-                    key={img.key}
-                    onClick={() => handleInsertChip(img)}
-                    style={{
-                      cursor: 'pointer',
-                      padding: 6,
-                      background: 'var(--bg-base)',
-                      borderRadius: 6,
-                      border: '1px solid var(--border-default)',
-                      transition: 'all 0.15s',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.5)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = 'var(--border-default)';
-                    }}
-                  >
-                    <img
-                      src={img.src}
-                      alt={img.label}
+                {MOCK_IMAGES.map(img => {
+                  const isPreSelected = preSelectedKeys.has(img.key);
+                  return (
+                    <div
+                      key={img.key}
+                      onClick={() => handleImageClick(img)}
                       style={{
-                        width: 48,
-                        height: 48,
-                        borderRadius: 4,
-                        objectFit: 'cover',
-                        display: 'block',
+                        cursor: 'pointer',
+                        padding: 6,
+                        background: isPreSelected ? 'rgba(156, 163, 175, 0.15)' : 'var(--bg-base)',
+                        borderRadius: 6,
+                        border: `2px solid ${isPreSelected ? 'rgba(156, 163, 175, 0.6)' : 'transparent'}`,
+                        outline: '1px solid var(--border-default)',
+                        transition: 'all 0.15s',
+                        position: 'relative',
                       }}
-                    />
-                    <div style={{
-                      fontSize: 9,
-                      marginTop: 4,
-                      color: 'var(--text-muted)',
-                      maxWidth: 48,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      textAlign: 'center',
-                    }}>
-                      #{img.refId}
+                    >
+                      {/* 预选遮罩 */}
+                      {isPreSelected && (
+                        <div style={{
+                          position: 'absolute',
+                          top: 6,
+                          left: 6,
+                          right: 6,
+                          bottom: 22,
+                          background: 'rgba(156, 163, 175, 0.3)',
+                          borderRadius: 4,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: 'white',
+                          fontSize: 16,
+                          fontWeight: 600,
+                        }}>
+                          ✓
+                        </div>
+                      )}
+                      <img
+                        src={img.src}
+                        alt={img.label}
+                        style={{
+                          width: 48,
+                          height: 48,
+                          borderRadius: 4,
+                          objectFit: 'cover',
+                          display: 'block',
+                          opacity: isPreSelected ? 0.7 : 1,
+                        }}
+                      />
+                      <div style={{
+                        fontSize: 9,
+                        marginTop: 4,
+                        color: isPreSelected ? 'rgba(156, 163, 175, 1)' : 'var(--text-muted)',
+                        maxWidth: 48,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        textAlign: 'center',
+                        fontWeight: isPreSelected ? 600 : 400,
+                      }}>
+                        #{img.refId}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -447,15 +525,27 @@ export default function WorkshopLabTab() {
               padding: 12,
               border: '1px solid var(--border-default)',
             }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-                主输入框
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
+                <span>主输入框</span>
+                {preSelectedKeys.size > 0 && (
+                  <span style={{ color: 'rgba(99, 102, 241, 0.8)', fontSize: 10 }}>
+                    点击此处确认 {preSelectedKeys.size} 张预选图片
+                  </span>
+                )}
               </div>
-              <div style={{
-                background: 'var(--bg-base)',
-                borderRadius: 6,
-                padding: 10,
-                border: '1px solid var(--border-default)',
-              }}>
+              {/* 点击聚焦时确认预选 */}
+              <div
+                style={{
+                  background: 'var(--bg-base)',
+                  borderRadius: 6,
+                  padding: 10,
+                  border: preSelectedKeys.size > 0
+                    ? '1px solid rgba(99, 102, 241, 0.5)'
+                    : '1px solid var(--border-default)',
+                  transition: 'border-color 0.15s',
+                }}
+                onFocus={handleComposerFocus}
+              >
                 <RichComposer
                   ref={composerRef}
                   placeholder="输入文字，输入 @ 引用图片..."
