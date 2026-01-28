@@ -211,7 +211,23 @@ export async function checkout(commitHash, repoPath = config.git.repoPath) {
     throw new Error('Invalid commit hash format');
   }
 
-  await execGit(`checkout ${commitHash}`, repoPath);
+  // Stash local changes if any
+  const status = await execGit('status --porcelain', repoPath).catch(() => '');
+  const hasChanges = status.length > 0;
+
+  if (hasChanges) {
+    await execGit('stash push -m "prd-publish-auto-stash"', repoPath);
+  }
+
+  try {
+    await execGit(`checkout ${commitHash}`, repoPath);
+  } catch (error) {
+    // Restore stash if checkout failed
+    if (hasChanges) {
+      await execGit('stash pop', repoPath).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 /**
