@@ -59,8 +59,10 @@ export interface DefectReport {
   priority: string;
   // 后端返回 reporterId/assigneeId (非 reporterUserId/assigneeUserId)
   reporterId: string;
+  reporterUsername?: string;
   reporterName?: string;
   assigneeId?: string;
+  assigneeUsername?: string;
   assigneeName?: string;
   reporterUnread?: boolean;
   assigneeUnread?: boolean;

@@ -84,9 +84,9 @@ export function DefectCard({ defect }: DefectCardProps) {
   const severity = severityConfig[defect.severity] || severityConfig[DefectSeverity.Minor];
   const SeverityIcon = severity.icon;
   const reporterDisplayName = defect.reporterName || '未知';
-  const reporterAvatarUrl = resolveAvatarUrl({ username: defect.reporterName ?? undefined });
+  const reporterAvatarUrl = resolveAvatarUrl({ username: defect.reporterUsername ?? undefined });
   const assigneeDisplayName = defect.assigneeName || '未指派';
-  const assigneeAvatarUrl = resolveAvatarUrl({ username: defect.assigneeName ?? undefined });
+  const assigneeAvatarUrl = resolveAvatarUrl({ username: defect.assigneeUsername ?? undefined });
   const isReporterMe = Boolean(userId && defect.reporterId === userId);
   const isAssigneeMe = Boolean(userId && defect.assigneeId === userId);
   const currentRole =

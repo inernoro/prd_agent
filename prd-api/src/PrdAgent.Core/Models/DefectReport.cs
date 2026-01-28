@@ -52,13 +52,19 @@ public class DefectReport
     /// <summary>报告人 UserId</summary>
     public string ReporterId { get; set; } = string.Empty;
 
-    /// <summary>报告人用户名（冗余，便于展示）</summary>
+    /// <summary>报告人登录名（用于头像拼接）</summary>
+    public string? ReporterUsername { get; set; }
+
+    /// <summary>报告人显示名称（冗余，便于展示）</summary>
     public string? ReporterName { get; set; }
 
     /// <summary>被指派人 UserId</summary>
     public string? AssigneeId { get; set; }
 
-    /// <summary>被指派人用户名（冗余，便于展示）</summary>
+    /// <summary>被指派人登录名（用于头像拼接）</summary>
+    public string? AssigneeUsername { get; set; }
+
+    /// <summary>被指派人显示名称（冗余，便于展示）</summary>
     public string? AssigneeName { get; set; }
 
     /// <summary>报告人未读</summary>

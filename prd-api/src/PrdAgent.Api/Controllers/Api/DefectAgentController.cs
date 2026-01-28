@@ -321,6 +321,7 @@ public class DefectAgentController : ControllerBase
 
         // 查询报告人信息
         var reporter = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+        var reporterUsername = reporter?.Username;
         var reporterName = reporter?.DisplayName ?? reporter?.Username ?? GetUsername() ?? "未知用户";
 
         // 生成缺陷编号
@@ -337,6 +338,7 @@ public class DefectAgentController : ControllerBase
 
         // 查询指派用户信息
         string? assigneeId = null;
+        string? assigneeUsername = null;
         string? assigneeName = null;
         if (!string.IsNullOrEmpty(request.AssigneeUserId))
         {
@@ -344,6 +346,7 @@ public class DefectAgentController : ControllerBase
             if (assignee != null)
             {
                 assigneeId = assignee.UserId;
+                assigneeUsername = assignee.Username;
                 assigneeName = assignee.DisplayName ?? assignee.Username;
             }
         }
@@ -359,8 +362,10 @@ public class DefectAgentController : ControllerBase
             Severity = request.Severity ?? DefectSeverity.Major,
             Priority = request.Priority ?? DefectPriority.Medium,
             ReporterId = userId,
+            ReporterUsername = reporterUsername,
             ReporterName = reporterName,
             AssigneeId = assigneeId,
+            AssigneeUsername = assigneeUsername,
             AssigneeName = assigneeName,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
@@ -629,6 +634,7 @@ public class DefectAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "被指派人不存在"));
 
         defect.AssigneeId = request.AssigneeId;
+        defect.AssigneeUsername = assignee.Username;
         defect.AssigneeName = assignee.DisplayName ?? assignee.Username;
         defect.Status = DefectStatus.Assigned;
         defect.AssignedAt = DateTime.UtcNow;

@@ -70,6 +70,8 @@ public class RequestResponseLoggingMiddleware
         var query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : "";
         var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var userId = context.User?.FindFirst("sub")?.Value ?? "anonymous";
+        var userName = context.User?.FindFirst("name")?.Value
+                       ?? context.User?.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
         var protocol = context.Request.Protocol;
         var absoluteUrl = BuildAbsoluteUrl(context, path, query);
 
@@ -128,6 +130,7 @@ public class RequestResponseLoggingMiddleware
                     context.Response.ContentType,
                     clientIp,
                     userId,
+                    userName,
                     apiSummary: "stream=text/event-stream",
                     responseBytes: null);
             }
@@ -193,6 +196,7 @@ public class RequestResponseLoggingMiddleware
                 context.Response.ContentType,
                 clientIp,
                 userId,
+                userName,
                 apiSummary,
                 responseBytes: responseBodyStream.Length);
 
@@ -213,6 +217,7 @@ public class RequestResponseLoggingMiddleware
         string? responseContentType,
         string clientIp,
         string userId,
+        string? userName,
         string? apiSummary,
         long? responseBytes)
     {
@@ -223,13 +228,31 @@ public class RequestResponseLoggingMiddleware
                 : LogLevel.Information;
 
         // 单行输出（控制台更清爽）
-        // 示例：GET http://localhost:*/api/v1/config/models?page=1 - 200 3ms
-        _logger.Log(level,
-            "{Method} {Url} - {StatusCode} {DurationMs}ms",
-            method,
-            absoluteUrl,
-            statusCode,
-            $"{durationMs:0.####}");
+        // 示例：[管理员] GET http://localhost:*/api/v1/config/models?page=1 - 200 3ms
+        // 或：[u_abc123] GET http://localhost:*/api/v1/config/models?page=1 - 200 3ms
+        var userDisplay = !string.IsNullOrEmpty(userName) ? userName
+            : userId != "anonymous" ? userId
+            : null;
+
+        if (userDisplay != null)
+        {
+            _logger.Log(level,
+                "[{User}] {Method} {Url} - {StatusCode} {DurationMs}ms",
+                userDisplay,
+                method,
+                absoluteUrl,
+                statusCode,
+                $"{durationMs:0.####}");
+        }
+        else
+        {
+            _logger.Log(level,
+                "{Method} {Url} - {StatusCode} {DurationMs}ms",
+                method,
+                absoluteUrl,
+                statusCode,
+                $"{durationMs:0.####}");
+        }
     }
 
     private static string BuildAbsoluteUrl(HttpContext context, string path, string? query)
