@@ -219,64 +219,37 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
     throw new InvalidOperationException($"AssetStorage provider 选择异常：providerRaw={providerRaw} provider={provider}");
 });
 
-// 配置Redis（自动检测可用性，不可用时使用内存 fallback）
+// 配置Redis
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
 var sessionTimeout = builder.Configuration.GetValue<int>("Session:TimeoutMinutes", 30);
-var useReadableIds = builder.Environment.IsDevelopment() ||
+builder.Services.AddSingleton<ICacheManager>(new RedisCacheManager(redisConnectionString, sessionTimeout));
+
+// 注册 Redis ConnectionMultiplexer（用于 ID 生成器等服务）
+builder.Services.AddSingleton<StackExchange.Redis.ConnectionMultiplexer>(sp =>
+    StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString));
+
+// 注册 ID 生成器
+var useReadableIds = builder.Environment.IsDevelopment() || 
                      builder.Environment.IsEnvironment("Testing");
+builder.Services.AddSingleton<IIdGenerator>(sp =>
+{
+    var redis = sp.GetRequiredService<StackExchange.Redis.ConnectionMultiplexer>();
+    return new IdGenerator(redis, useReadableIds);
+});
 
-// 尝试连接 Redis
-StackExchange.Redis.ConnectionMultiplexer? redisConnection = null;
-var redisAvailable = false;
+// Run 事件存储（断线续传/观测）：生产用 Redis（高频写，避免 Mongo 写放大）
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunEventStore>(sp =>
+    new PrdAgent.Infrastructure.Services.RedisRunEventStore(redisConnectionString, defaultTtl: TimeSpan.FromHours(24)));
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunQueue>(sp =>
+    new PrdAgent.Infrastructure.Services.RedisRunQueue(redisConnectionString));
 
-try
+// 注册分布式限流服务（基于 Redis）
+builder.Services.AddSingleton<IRateLimitService>(sp =>
 {
-    var options = StackExchange.Redis.ConfigurationOptions.Parse(redisConnectionString);
-    options.AbortOnConnectFail = true;
-    options.ConnectTimeout = 3000; // 3秒超时
-    redisConnection = StackExchange.Redis.ConnectionMultiplexer.Connect(options);
-    redisAvailable = redisConnection.IsConnected;
-    if (redisAvailable)
-    {
-        Console.WriteLine($"[INFO] Redis 连接成功: {redisConnectionString}");
-    }
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"[WARN] Redis 不可用 ({ex.Message})，将使用内存缓存（仅适用于开发环境）");
-}
-
-if (redisAvailable && redisConnection != null)
-{
-    // 使用 Redis 实现
-    builder.Services.AddSingleton<ICacheManager>(new RedisCacheManager(redisConnectionString, sessionTimeout));
-    builder.Services.AddSingleton(redisConnection);
-    builder.Services.AddSingleton<IIdGenerator>(sp =>
-    {
-        var redis = sp.GetRequiredService<StackExchange.Redis.ConnectionMultiplexer>();
-        return new IdGenerator(redis, useReadableIds);
-    });
-    builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunEventStore>(sp =>
-        new PrdAgent.Infrastructure.Services.RedisRunEventStore(redisConnectionString, defaultTtl: TimeSpan.FromHours(24)));
-    builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunQueue>(sp =>
-        new PrdAgent.Infrastructure.Services.RedisRunQueue(redisConnectionString));
-    builder.Services.AddSingleton<IRateLimitService>(sp =>
-    {
-        var redis = sp.GetRequiredService<StackExchange.Redis.ConnectionMultiplexer>();
-        var logger = sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.Services.RedisRateLimitService>>();
-        return new PrdAgent.Infrastructure.Services.RedisRateLimitService(redis, logger);
-    });
-}
-else
-{
-    // 使用内存 fallback（仅开发环境）
-    Console.WriteLine("[INFO] 使用内存缓存模式（数据不持久化，重启后丢失）");
-    builder.Services.AddSingleton<ICacheManager>(new PrdAgent.Infrastructure.Cache.MemoryCacheManager(sessionTimeout));
-    builder.Services.AddSingleton<IIdGenerator>(new PrdAgent.Infrastructure.Services.MemoryIdGenerator(useReadableIds));
-    builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunEventStore>(new PrdAgent.Infrastructure.Services.MemoryRunEventStore());
-    builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunQueue>(new PrdAgent.Infrastructure.Services.MemoryRunQueue());
-    builder.Services.AddSingleton<IRateLimitService>(new PrdAgent.Infrastructure.Services.MemoryRateLimitService());
-}
+    var redis = sp.GetRequiredService<StackExchange.Redis.ConnectionMultiplexer>();
+    var logger = sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.Services.RedisRateLimitService>>();
+    return new PrdAgent.Infrastructure.Services.RedisRateLimitService(redis, logger);
+});
 
 // 配置JWT认证
 var jwtSecret = builder.Configuration["Jwt:Secret"];
