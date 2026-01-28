@@ -58,16 +58,6 @@ function formatDate(iso: string | null | undefined) {
   return d.toLocaleDateString();
 }
 
-function formatStampDate(iso: string | null | undefined) {
-  const s = String(iso ?? '').trim();
-  if (!s) return '';
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return '';
-  const month = d.getMonth() + 1;
-  const day = d.getDate();
-  return `${month}月${day}日`;
-}
-
 function getPreviewText(content: string | undefined | null, maxChars = 80) {
   const raw = String(content ?? '').trim();
   if (!raw) return '(暂无描述)';
@@ -94,9 +84,9 @@ export function DefectCard({ defect }: DefectCardProps) {
   const severity = severityConfig[defect.severity] || severityConfig[DefectSeverity.Minor];
   const SeverityIcon = severity.icon;
   const reporterDisplayName = defect.reporterName || '未知';
-  const reporterAvatarUrl = resolveAvatarUrl({ username: defect.reporterUsername ?? undefined });
+  const reporterAvatarUrl = resolveAvatarUrl({ avatarFileName: defect.reporterAvatarFileName ?? undefined });
   const assigneeDisplayName = defect.assigneeName || '未指派';
-  const assigneeAvatarUrl = resolveAvatarUrl({ username: defect.assigneeUsername ?? undefined });
+  const assigneeAvatarUrl = resolveAvatarUrl({ avatarFileName: defect.assigneeAvatarFileName ?? undefined });
   const isReporterMe = Boolean(userId && defect.reporterId === userId);
   const isAssigneeMe = Boolean(userId && defect.assigneeId === userId);
   const currentRole =
@@ -112,11 +102,15 @@ export function DefectCard({ defect }: DefectCardProps) {
     : oppositeRole === 'assignee'
     ? defect.assigneeUnread
     : undefined;
-  const showPeerCommented = hasPeerCommented;
-  const showPeerUnread = !hasPeerCommented && peerUnread === true;
-  const showPeerRead = !hasPeerCommented && peerUnread === false;
+  // 完成/驳回状态不显示已读/未读/评论标签
+  const isArchived = defect.status === DefectStatus.Resolved || defect.status === DefectStatus.Rejected;
+  const showPeerCommented = !isArchived && hasPeerCommented;
+  const showPeerUnread = !isArchived && !hasPeerCommented && peerUnread === true;
+  const showPeerRead = !isArchived && !hasPeerCommented && peerUnread === false;
   const resolvedByName = defect.resolvedByName || '';
+  const resolvedByAvatarUrl = resolveAvatarUrl({ avatarFileName: defect.resolvedByAvatarFileName ?? undefined });
   const rejectedByName = defect.rejectedByName || '';
+  const rejectedByAvatarUrl = resolveAvatarUrl({ avatarFileName: defect.rejectedByAvatarFileName ?? undefined });
 
   // Get image attachments for thumbnails
   const imageAttachments = (defect.attachments || []).filter(isImageAttachment);
@@ -199,31 +193,89 @@ export function DefectCard({ defect }: DefectCardProps) {
 
           {/* 主内容区 */}
           <div className="flex-1 min-w-0 flex flex-col relative">
-            {/* 完成印章 */}
+            {/* 完成印章 - 右下角，毛玻璃背景 */}
             {defect.status === DefectStatus.Resolved && (
               <div
-                className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none select-none z-10"
-                style={{ transform: 'translateY(-50%) rotate(-15deg)' }}
+                className="absolute right-3 bottom-10 select-none z-10"
+                style={{ transform: 'rotate(-12deg)' }}
+                title={defect.resolution || ''}
               >
                 <div
-                  className="flex flex-col items-center px-3 py-2 rounded-lg"
+                  className="flex flex-col items-center px-4 py-2.5 rounded-xl"
                   style={{
                     border: '3px solid rgba(120, 220, 180, 0.7)',
-                    background: 'rgba(120, 220, 180, 0.08)',
+                    background: 'rgba(30, 40, 35, 0.75)',
+                    backdropFilter: 'blur(8px)',
+                    boxShadow: '0 6px 20px rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(120, 220, 180, 0.15)',
                   }}
                 >
                   <span
-                    className="text-[24px] font-bold tracking-wider"
-                    style={{ color: 'rgba(120, 220, 180, 0.85)' }}
+                    className="text-[26px] font-bold tracking-[0.18em] leading-none"
+                    style={{ color: 'rgba(120, 220, 180, 0.95)' }}
                   >
                     完成
                   </span>
-                  <span
-                    className="text-[10px] mt-0.5"
-                    style={{ color: 'rgba(120, 220, 180, 0.7)' }}
+                  <div
+                    className="flex items-center gap-1 mt-1 max-w-[100px]"
+                    style={{ color: 'rgba(120, 220, 180, 0.75)' }}
                   >
-                    {resolvedByName} : {formatStampDate(defect.resolvedAt)}
+                    <img
+                      src={resolvedByAvatarUrl}
+                      alt={resolvedByName}
+                      className="w-3.5 h-3.5 rounded-full object-cover flex-shrink-0"
+                      style={{ border: '1px solid rgba(120, 220, 180, 0.4)' }}
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = resolveNoHeadAvatarUrl();
+                      }}
+                    />
+                    <span className="text-[9px] truncate">
+                      {resolvedByName}{defect.resolution ? `: ${defect.resolution}` : ''}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* 驳回印章 - 右下角，红色毛玻璃背景 */}
+            {defect.status === DefectStatus.Rejected && (
+              <div
+                className="absolute right-3 bottom-10 select-none z-10"
+                style={{ transform: 'rotate(-12deg)' }}
+                title={defect.rejectReason || ''}
+              >
+                <div
+                  className="flex flex-col items-center px-4 py-2.5 rounded-xl"
+                  style={{
+                    border: '3px solid rgba(255, 120, 120, 0.7)',
+                    background: 'rgba(45, 30, 30, 0.75)',
+                    backdropFilter: 'blur(8px)',
+                    boxShadow: '0 6px 20px rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(255, 120, 120, 0.15)',
+                  }}
+                >
+                  <span
+                    className="text-[26px] font-bold tracking-[0.18em] leading-none"
+                    style={{ color: 'rgba(255, 120, 120, 0.95)' }}
+                  >
+                    驳回
                   </span>
+                  <div
+                    className="flex items-center gap-1 mt-1 max-w-[100px]"
+                    style={{ color: 'rgba(255, 120, 120, 0.75)' }}
+                  >
+                    <img
+                      src={rejectedByAvatarUrl}
+                      alt={rejectedByName}
+                      className="w-3.5 h-3.5 rounded-full object-cover flex-shrink-0"
+                      style={{ border: '1px solid rgba(255, 120, 120, 0.4)' }}
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = resolveNoHeadAvatarUrl();
+                      }}
+                    />
+                    <span className="text-[9px] truncate">
+                      {rejectedByName}{defect.rejectReason ? `: ${defect.rejectReason}` : ''}
+                    </span>
+                  </div>
                 </div>
               </div>
             )}
@@ -268,19 +320,6 @@ export function DefectCard({ defect }: DefectCardProps) {
                 >
                   <CheckCircle size={10} />
                   对方已读
-                </span>
-              )}
-              {defect.status === DefectStatus.Rejected && rejectedByName && (
-                <span
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
-                  style={{
-                    background: 'rgba(255, 120, 120, 0.14)',
-                    color: 'rgba(255, 120, 120, 0.95)',
-                    border: '1px solid rgba(255, 120, 120, 0.45)',
-                  }}
-                  title={`拒绝：${rejectedByName}`}
-                >
-                  拒绝：{rejectedByName}
                 </span>
               )}
               {/* 标题 */}
@@ -425,9 +464,8 @@ export function DefectCard({ defect }: DefectCardProps) {
                   background: 'rgba(255,255,255,0.06)',
                   color: 'var(--text-muted)',
                   border: isReporterMe
-                    ? '1px solid rgba(255, 200, 80, 0.85)'
+                    ? '1px solid rgba(255, 255, 255, 0.5)'
                     : '1px solid rgba(255,255,255,0.08)',
-                  boxShadow: isReporterMe ? '0 0 0 1px rgba(255, 200, 80, 0.25) inset' : undefined,
                 }}
                 title={reporterDisplayName}
               >
@@ -452,9 +490,8 @@ export function DefectCard({ defect }: DefectCardProps) {
                   background: 'rgba(255,255,255,0.06)',
                   color: 'var(--text-muted)',
                   border: isAssigneeMe
-                    ? '1px solid rgba(255, 200, 80, 0.85)'
+                    ? '1px solid rgba(255, 255, 255, 0.5)'
                     : '1px solid rgba(255,255,255,0.08)',
-                  boxShadow: isAssigneeMe ? '0 0 0 1px rgba(255, 200, 80, 0.25) inset' : undefined,
                 }}
                 title={assigneeDisplayName}
               >

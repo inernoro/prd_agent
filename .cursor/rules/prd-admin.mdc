@@ -36,6 +36,41 @@ globs: prd-admin/**
 - **历史兼容**: 老接口 `/api/v1/xxx` 暂时保留，新接口必须使用 `/api/{module}` 格式
 - API 路径定义统一在 `src/services/api.ts` 维护
 
+## 用户头像获取规范
+
+**【重要】获取用户头像必须使用 `avatarFileName`，禁止使用 `username`！**
+
+原因：
+- `username` 会被 `resolveAvatarUrl` 拼接成 `{username}.png`
+- 用户头像可能是 `.gif`、`.jpg` 等其他格式，使用 `username` 会导致 404
+
+正确做法：
+
+```typescript
+// ✓ 正确：使用 avatarFileName
+resolveAvatarUrl({ avatarFileName: user.avatarFileName })
+
+// ✗ 错误：使用 username（会强制拼接 .png）
+resolveAvatarUrl({ username: user.username })
+```
+
+后端模型存储用户信息时：
+
+```csharp
+// ✓ 正确：存储 AvatarFileName
+public string? ReporterAvatarFileName { get; set; }
+
+// ✗ 错误：存储 Username 用于头像
+public string? ReporterUsername { get; set; }
+```
+
+推荐使用 `getUserAvatarUrl` 辅助函数：
+
+```typescript
+import { getUserAvatarUrl } from '@/lib/avatar';
+const avatarUrl = getUserAvatarUrl({ avatarFileName: user.avatarFileName });
+```
+
 ## 局部前置自检（避免 CI 才爆）
 
 当你改动了 `prd-admin/src/**`、依赖、Vite 配置时，必须执行：

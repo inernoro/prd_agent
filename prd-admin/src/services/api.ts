@@ -329,6 +329,9 @@ export const api = {
     stats: () => '/api/defect-agent/stats',
     users: () => '/api/defect-agent/users',
     polish: () => '/api/defect-agent/defects/polish',
+    logs: {
+      preview: () => '/api/defect-agent/logs/preview',
+    },
   },
 
   // ============ Open Platform 开放平台 ============

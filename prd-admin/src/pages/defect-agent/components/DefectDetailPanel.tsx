@@ -13,7 +13,7 @@ import {
 } from '@/services';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
-import { DefectStatus, DefectSeverity } from '@/services/contracts/defectAgent';
+import { DefectStatus, DefectSeverity, DefectAttachmentType } from '@/services/contracts/defectAgent';
 import type { DefectAttachment, DefectMessage } from '@/services/contracts/defectAgent';
 import { parseContentToSegments, stripImgTags } from '@/lib/defectContentUtils';
 import {
@@ -92,6 +92,10 @@ function formatMsgTimestamp(ts: string | null | undefined) {
 
 function isImageAttachment(att: DefectAttachment): boolean {
   return att.mimeType?.startsWith('image/') || false;
+}
+
+function isLogAttachment(att: DefectAttachment): boolean {
+  return att.type === DefectAttachmentType.LogRequest || att.type === DefectAttachmentType.LogError;
 }
 
 export function DefectDetailPanel() {
@@ -262,17 +266,20 @@ export function DefectDetailPanel() {
   // Determine available actions based on status
   const canDelete = defect.status === DefectStatus.Draft;
   const canProcess = defect.status === DefectStatus.Pending;
-  const statusLabel = statusLabels[defect.status] || defect.status;
-  const statusColor = statusColors[defect.status] || 'var(--text-muted)';
+  const _statusLabel = statusLabels[defect.status] || defect.status;
+  const _statusColor = statusColors[defect.status] || 'var(--text-muted)';
+  void _statusLabel; void _statusColor; // 预留给未来使用
   const severityLabel = severityLabels[defect.severity] || defect.severity;
   const severityColor = severityColors[defect.severity] || 'var(--text-muted)';
 
-  // 分离图片和其他附件
+  // 分离图片、日志和其他附件
   const imageAttachments = (defect.attachments || []).filter(isImageAttachment);
-  const otherAttachments = (defect.attachments || []).filter((att) => !isImageAttachment(att));
+  const logAttachments = (defect.attachments || []).filter(isLogAttachment);
+  const otherAttachments = (defect.attachments || []).filter((att) => !isImageAttachment(att) && !isLogAttachment(att));
   const hasScreenshots = imageAttachments.length > 0;
   const hasExtraSections =
     imageAttachments.length > 0 ||
+    logAttachments.length > 0 ||
     otherAttachments.length > 0 ||
     Boolean(defect.resolution) ||
     Boolean(defect.rejectReason);
@@ -389,28 +396,28 @@ export function DefectDetailPanel() {
       >
         {/* 左侧：缺陷信息 */}
         <div className={`flex flex-col ${showChat ? 'w-[55%]' : 'w-full'}`}>
-          {/* Header */}
+          {/* Header - 固定高度 52px */}
           <div
-            className="flex items-center justify-between px-5 py-4 flex-shrink-0"
+            className="flex items-center justify-between px-5 h-[52px] flex-shrink-0"
             style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
           >
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              {/* Bug icon + 缺陷编号 */}
-              <div
-                className="flex items-center gap-1.5 px-2 py-1 rounded flex-shrink-0"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                }}
+            {/* 左侧：Bug icon + 缺陷编号 */}
+            <div
+              className="flex items-center gap-1.5 px-2 py-1 rounded flex-shrink-0"
+              style={{
+                background: 'rgba(255,255,255,0.06)',
+              }}
+            >
+              <Bug size={14} style={{ color: 'var(--accent-primary)' }} />
+              <span
+                className="text-[12px] font-mono"
+                style={{ color: 'var(--text-muted)' }}
               >
-                <Bug size={14} style={{ color: 'var(--accent-primary)' }} />
-                <span
-                  className="text-[12px] font-mono"
-                  style={{ color: 'var(--text-muted)' }}
-                >
-                  {defect.defectNo}
-                </span>
-              </div>
-              {/* 时间 */}
+                {defect.defectNo}
+              </span>
+            </div>
+            {/* 右侧：时间 + 关闭按钮 */}
+            <div className="flex items-center gap-3">
               <div
                 className="flex items-center gap-1.5 text-[11px]"
                 style={{ color: 'var(--text-muted)' }}
@@ -418,13 +425,13 @@ export function DefectDetailPanel() {
                 <Clock size={12} />
                 <span>{formatDateTime(defect.createdAt)}</span>
               </div>
+              <button
+                onClick={handleClose}
+                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors flex-shrink-0"
+              >
+                <X size={16} style={{ color: 'var(--text-muted)' }} />
+              </button>
             </div>
-            <button
-              onClick={handleClose}
-              className="p-1.5 rounded-lg hover:bg-white/5 transition-colors flex-shrink-0"
-            >
-              <X size={16} style={{ color: 'var(--text-muted)' }} />
-            </button>
           </div>
 
           {/* Content */}
@@ -502,6 +509,44 @@ export function DefectDetailPanel() {
                       <span className="max-w-[150px] truncate">{att.fileName}</span>
                       <ExternalLink size={12} style={{ opacity: 0.6 }} />
                     </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 系统日志附件 - 不可点击下载 */}
+            {logAttachments.length > 0 && (
+              <div>
+                <div
+                  className="text-[11px] mb-2 font-medium flex items-center gap-1.5"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  <FileText size={12} />
+                  系统日志 ({logAttachments.length})
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {logAttachments.map((att) => (
+                    <div
+                      key={att.id}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] cursor-default"
+                      style={{
+                        background: att.type === DefectAttachmentType.LogError
+                          ? 'rgba(255, 100, 100, 0.08)'
+                          : 'rgba(100, 200, 255, 0.08)',
+                        color: 'var(--text-muted)',
+                        border: att.type === DefectAttachmentType.LogError
+                          ? '1px solid rgba(255, 100, 100, 0.15)'
+                          : '1px solid rgba(100, 200, 255, 0.15)',
+                      }}
+                      title="系统自动采集的日志，仅开发人员可查看原文件"
+                    >
+                      <FileText size={12} style={{
+                        color: att.type === DefectAttachmentType.LogError
+                          ? 'rgba(255, 120, 120, 0.8)'
+                          : 'rgba(100, 200, 255, 0.8)',
+                      }} />
+                      <span className="max-w-[180px] truncate">{att.fileName}</span>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -625,84 +670,84 @@ export function DefectDetailPanel() {
             </div>
           </div>
 
-          {/* Actions */}
+          {/* Actions - 最小高度 60px，与右侧对齐 */}
           <div
-            className="px-5 py-4 flex items-center justify-between flex-shrink-0"
+            className="px-5 min-h-[60px] flex items-center justify-between flex-shrink-0"
             style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
           >
-            {/* Left: Delete */}
-            <div className="flex flex-col items-start gap-2">
+            {/* Left: 严重程度 + 人员信息 + 删除按钮 */}
+            <div className="flex items-center gap-3">
+              {/* 严重程度 */}
               <div
-                className="flex flex-wrap items-center gap-2 text-[11px]"
+                className="flex items-center gap-2 text-[12px]"
                 style={{ color: 'var(--text-muted)' }}
               >
                 <span>严重程度</span>
                 <span
-                  className="px-2 py-0.5 rounded"
+                  className="px-2.5 py-1 rounded text-[12px]"
                   style={{ background: `${severityColor}20`, color: severityColor }}
                 >
                   {severityLabel}
                 </span>
-                <span
-                  className="mx-1 h-3 w-px"
-                  style={{ background: 'rgba(255,255,255,0.1)' }}
-                />
-                {/* 提交人 */}
-                <div
-                  className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded flex-shrink-0 text-[10px]"
-                  style={{
-                    background: 'rgba(255,255,255,0.06)',
-                    color: 'var(--text-muted)',
-                    border: userId && defect.reporterId === userId
-                      ? '1px solid rgba(255, 200, 80, 0.85)'
-                      : '1px solid rgba(255,255,255,0.08)',
-                    boxShadow: userId && defect.reporterId === userId
-                      ? '0 0 0 1px rgba(255, 200, 80, 0.25) inset'
-                      : undefined,
-                  }}
-                  title={defect.reporterName || '未知'}
-                >
-                  <img
-                    src={resolveAvatarUrl({ username: defect.reporterUsername ?? undefined })}
-                    alt={defect.reporterName || '未知'}
-                    className="h-3 w-3 rounded-full object-cover"
-                    onError={(e) => {
-                      e.currentTarget.onerror = null;
-                      e.currentTarget.src = resolveNoHeadAvatarUrl();
-                    }}
-                  />
-                  <span className="truncate max-w-[60px]">{defect.reporterName || '未知'}</span>
-                </div>
-                <ArrowRight size={10} style={{ color: 'var(--text-muted)' }} className="flex-shrink-0" />
-                {/* 被指派人 */}
-                <div
-                  className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded flex-shrink-0 text-[10px]"
-                  style={{
-                    background: 'rgba(255,255,255,0.06)',
-                    color: 'var(--text-muted)',
-                    border: userId && defect.assigneeId === userId
-                      ? '1px solid rgba(255, 200, 80, 0.85)'
-                      : '1px solid rgba(255,255,255,0.08)',
-                    boxShadow: userId && defect.assigneeId === userId
-                      ? '0 0 0 1px rgba(255, 200, 80, 0.25) inset'
-                      : undefined,
-                  }}
-                  title={defect.assigneeName || '未指派'}
-                >
-                  <img
-                    src={resolveAvatarUrl({ username: defect.assigneeUsername ?? undefined })}
-                    alt={defect.assigneeName || '未指派'}
-                    className="h-3 w-3 rounded-full object-cover"
-                    onError={(e) => {
-                      e.currentTarget.onerror = null;
-                      e.currentTarget.src = resolveNoHeadAvatarUrl();
-                    }}
-                  />
-                  <span className="truncate max-w-[60px]">{defect.assigneeName || '未指派'}</span>
-                </div>
               </div>
-              <div className="flex items-center gap-2">
-                {canDelete && !confirmingDelete && (
+              <span
+                className="h-5 w-px"
+                style={{ background: 'rgba(255,255,255,0.1)' }}
+              />
+              {/* 提交人 */}
+              <div
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded flex-shrink-0 text-[11px]"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  color: 'var(--text-muted)',
+                  border: userId && defect.reporterId === userId
+                    ? '1px solid rgba(255, 255, 255, 0.5)'
+                    : '1px solid rgba(255,255,255,0.08)',
+                }}
+                title={defect.reporterName || '未知'}
+              >
+                <img
+                  src={resolveAvatarUrl({ avatarFileName: defect.reporterAvatarFileName ?? undefined })}
+                  alt={defect.reporterName || '未知'}
+                  className="h-4 w-4 rounded-full object-cover"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = resolveNoHeadAvatarUrl();
+                  }}
+                />
+                <span className="truncate max-w-[60px]">{defect.reporterName || '未知'}</span>
+              </div>
+              <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} className="flex-shrink-0" />
+              {/* 被指派人 */}
+              <div
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded flex-shrink-0 text-[11px]"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  color: 'var(--text-muted)',
+                  border: userId && defect.assigneeId === userId
+                    ? '1px solid rgba(255, 255, 255, 0.5)'
+                    : '1px solid rgba(255,255,255,0.08)',
+                }}
+                title={defect.assigneeName || '未指派'}
+              >
+                <img
+                  src={resolveAvatarUrl({ avatarFileName: defect.assigneeAvatarFileName ?? undefined })}
+                  alt={defect.assigneeName || '未指派'}
+                  className="h-4 w-4 rounded-full object-cover"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = resolveNoHeadAvatarUrl();
+                  }}
+                />
+                <span className="truncate max-w-[60px]">{defect.assigneeName || '未指派'}</span>
+              </div>
+              {/* 删除按钮 */}
+              {canDelete && !confirmingDelete && (
+                <>
+                  <span
+                    className="h-5 w-px"
+                    style={{ background: 'rgba(255,255,255,0.1)' }}
+                  />
                   <Button
                     variant="secondary"
                     size="sm"
@@ -712,27 +757,31 @@ export function DefectDetailPanel() {
                     <Trash2 size={14} />
                     删除
                   </Button>
-                )}
-                {canDelete && confirmingDelete && (
-                  <>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={handleDeleteCancel}
-                    >
-                      取消
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={handleDeleteConfirm}
-                      className="text-red-400 hover:text-red-300 border-red-500/30"
-                    >
-                      确认删除
-                    </Button>
-                  </>
-                )}
-              </div>
+                </>
+              )}
+              {canDelete && confirmingDelete && (
+                <>
+                  <span
+                    className="h-5 w-px"
+                    style={{ background: 'rgba(255,255,255,0.1)' }}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleDeleteCancel}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleDeleteConfirm}
+                    className="text-red-400 hover:text-red-300 border-red-500/30"
+                  >
+                    确认删除
+                  </Button>
+                </>
+              )}
             </div>
 
             {/* Right: Status Actions */}
@@ -777,9 +826,9 @@ export function DefectDetailPanel() {
             className="w-[45%] flex flex-col"
             style={{ borderLeft: '1px solid rgba(255, 255, 255, 0.06)' }}
           >
-            {/* Chat Header */}
+            {/* Chat Header - 与左侧 Header 高度对齐 (52px) */}
             <div
-              className="px-4 py-3 flex items-center gap-2 flex-shrink-0"
+              className="px-4 h-[52px] flex items-center gap-2 flex-shrink-0"
               style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
             >
               <MessageCircle size={14} style={{ color: 'var(--text-muted)' }} />
@@ -949,12 +998,12 @@ export function DefectDetailPanel() {
               )}
             </div>
 
-            {/* Chat Input */}
+            {/* Chat Input - 与左侧 Footer 高度对齐 (min 60px) */}
             <div
-              className="px-4 py-3 flex-shrink-0"
+              className="px-4 min-h-[60px] flex items-center flex-shrink-0"
               style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
             >
-              <div className="space-y-2">
+              <div className="w-full space-y-2">
                 {pendingAttachments.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {pendingAttachments.map((att) => (

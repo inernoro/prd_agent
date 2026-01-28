@@ -35,6 +35,8 @@ import type {
   DeleteDefectFolderContract,
   MoveDefectToFolderContract,
   BatchMoveDefectsContract,
+  PreviewApiLogsContract,
+  ApiLogPreviewItem,
   DefectTemplate,
   DefectReport,
   DefectMessage,
@@ -340,4 +342,13 @@ export const batchMoveDefectsReal: BatchMoveDefectsContract = async (input) => {
     method: 'POST',
     body: input,
   });
+};
+
+// ========== 日志预览 ==========
+
+export const previewApiLogsReal: PreviewApiLogsContract = async () => {
+  return await apiRequest<{ totalCount: number; errorCount: number; items: ApiLogPreviewItem[] }>(
+    api.defectAgent.logs.preview(),
+    { method: 'GET' }
+  );
 };

@@ -1,3 +1,13 @@
+/**
+ * SuccessConfettiButton - 完结撒花按钮
+ *
+ * 带有三阶段动效的提交按钮：
+ * 1. ready: 待提交状态，带呼吸动画
+ * 2. loading: 加载中，显示点点动画
+ * 3. complete: 完成状态，触发撒花动效
+ *
+ * 使用场景：任何需要提交操作的地方，如表单提交、缺陷提交等
+ */
 import { cn } from '@/lib/cn';
 import { Check, Play, TimerOff } from 'lucide-react';
 import * as React from 'react';

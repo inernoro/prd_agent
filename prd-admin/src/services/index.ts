@@ -175,6 +175,7 @@ import type {
   DeleteDefectFolderContract,
   MoveDefectToFolderContract,
   BatchMoveDefectsContract,
+  PreviewApiLogsContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IModelGroupsService } from '@/services/contracts/modelGroups';
@@ -385,6 +386,7 @@ import {
   deleteDefectFolderReal,
   moveDefectToFolderReal,
   batchMoveDefectsReal,
+  previewApiLogsReal,
 } from '@/services/real/defectAgent';
 import { OpenPlatformService } from '@/services/real/openPlatform';
 import { ModelGroupsService } from '@/services/real/modelGroups';
@@ -633,6 +635,7 @@ export const updateDefectFolder: UpdateDefectFolderContract = withAuth(updateDef
 export const deleteDefectFolder: DeleteDefectFolderContract = withAuth(deleteDefectFolderReal);
 export const moveDefectToFolder: MoveDefectToFolderContract = withAuth(moveDefectToFolderReal);
 export const batchMoveDefects: BatchMoveDefectsContract = withAuth(batchMoveDefectsReal);
+export const previewApiLogs: PreviewApiLogsContract = withAuth(previewApiLogsReal);
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
 export const modelGroupsService: IModelGroupsService = new ModelGroupsService();

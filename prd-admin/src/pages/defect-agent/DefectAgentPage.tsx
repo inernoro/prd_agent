@@ -70,8 +70,6 @@ export default function DefectAgentPage() {
     () => [
       { key: 'assigned', label: '收到的' },
       { key: 'submitted', label: '我提交的' },
-      { key: 'completed', label: '完成' },
-      { key: 'rejected', label: '拒绝/作废' },
     ],
     []
   );
@@ -84,7 +82,7 @@ export default function DefectAgentPage() {
         icon={<Bug size={16} />}
         items={tabItems}
         activeKey={filter}
-        onChange={(key) => setFilter(key as 'submitted' | 'assigned' | 'completed' | 'rejected')}
+        onChange={(key) => setFilter(key as 'submitted' | 'assigned')}
         actions={
           <>
             <Button

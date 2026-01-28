@@ -30,7 +30,9 @@ import {
   Sparkles,
   FolderPlus,
   FilePlus,
+  Bug,
 } from 'lucide-react';
+import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -609,6 +611,7 @@ function QuickInputBox(props: {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isFocused, setIsFocused] = useState(false);
+  const openDefectDialog = useGlobalDefectStore((s) => s.openDialog);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1024,30 +1027,45 @@ function QuickInputBox(props: {
               <span>图片</span>
             </button>
           </div>
-          {/* 右侧：发送按钮 - 增强视觉权重 */}
-          <button
-            type="button"
-            onClick={onSubmit}
-            disabled={!canSubmit}
-            className="h-9 px-5 rounded-xl flex items-center gap-2 text-[13px] font-semibold transition-all duration-200"
-            style={{
-              background: canSubmit
-                ? 'linear-gradient(135deg, rgba(218,175,75,0.95) 0%, rgba(195,155,65,0.95) 100%)'
-                : 'rgba(255,255,255,0.08)',
-              color: canSubmit ? 'rgba(15,12,5,0.95)' : 'rgba(255,255,255,0.35)',
-              cursor: canSubmit ? 'pointer' : 'not-allowed',
-              boxShadow: canSubmit ? '0 4px 20px rgba(195,155,65,0.3)' : 'none',
-            }}
-          >
-            {loading ? (
-              <span>生成中...</span>
-            ) : (
-              <>
-                <Sparkles size={14} />
-                <span>开始创作</span>
-              </>
-            )}
-          </button>
+          {/* 右侧：Bug 按钮 + 发送按钮 */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={openDefectDialog}
+              className="h-9 w-9 rounded-xl flex items-center justify-center transition-all duration-200 hover:bg-white/10"
+              style={{
+                background: 'rgba(255,255,255,0.06)',
+                color: 'rgba(255,255,255,0.5)',
+                border: '1px solid rgba(255,255,255,0.08)',
+              }}
+              title="提交缺陷 (Cmd/Ctrl+B)"
+            >
+              <Bug size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={onSubmit}
+              disabled={!canSubmit}
+              className="h-9 px-5 rounded-xl flex items-center gap-2 text-[13px] font-semibold transition-all duration-200"
+              style={{
+                background: canSubmit
+                  ? 'linear-gradient(135deg, rgba(218,175,75,0.95) 0%, rgba(195,155,65,0.95) 100%)'
+                  : 'rgba(255,255,255,0.08)',
+                color: canSubmit ? 'rgba(15,12,5,0.95)' : 'rgba(255,255,255,0.35)',
+                cursor: canSubmit ? 'pointer' : 'not-allowed',
+                boxShadow: canSubmit ? '0 4px 20px rgba(195,155,65,0.3)' : 'none',
+              }}
+            >
+              {loading ? (
+                <span>生成中...</span>
+              ) : (
+                <>
+                  <Sparkles size={14} />
+                  <span>开始创作</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>

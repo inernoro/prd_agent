@@ -1046,6 +1046,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (composerSizeAutoRef.current) setComposerSize(autoSize);
   }, [autoSizeForSelectedImage, selectedSingleImageForComposer?.key]);
 
+  // 当 sizeOptions 变化时，如果当前尺寸不在支持列表中，自动选择一个有效尺寸
+  useEffect(() => {
+    if (sizeOptions.length === 0) return;
+    const currentSize = composerSize ?? '1024x1024';
+    const isCurrentValid = sizeOptions.some((opt) => opt.size?.toLowerCase() === currentSize.toLowerCase());
+    if (!isCurrentValid) {
+      // 按优先级选择：2K > 1K > 4K
+      const priorities = ['2k', '1k', '4k'] as const;
+      for (const tier of priorities) {
+        const firstOpt = ratiosByResolution[tier].values().next().value;
+        if (firstOpt?.size) {
+          composerSizeAutoRef.current = false;
+          setComposerSize(firstOpt.size);
+          return;
+        }
+      }
+    }
+  }, [sizeOptions, ratiosByResolution, composerSize]);
+
   // chip 作为内联元素，需要根据选中数量计算高度
   // 每个 chip 约 140px 宽，每行可容纳 2-3 个
   // 行高 20px + gap 6px = 26px，加上尺寸选择器
