@@ -9,12 +9,9 @@ const __dirname = dirname(__filename);
 dotenvConfig({ path: resolve(__dirname, '../.env') });
 
 export const config = {
-  // Authentication
+  // Authentication (optional - if no password, auth is disabled)
   auth: {
-    username: process.env.PUBLISH_USERNAME || 'admin',
     password: process.env.PUBLISH_PASSWORD || '',
-    jwtSecret: process.env.PUBLISH_JWT_SECRET || 'default-secret-change-me',
-    tokenExpiry: '7d',
   },
 
   // Server
@@ -52,24 +49,11 @@ export const config = {
 };
 
 /**
- * Validate required configuration
- * @returns {{ valid: boolean, errors: string[] }}
+ * Check if auth is enabled
+ * @returns {boolean}
  */
-export function validateConfig() {
-  const errors = [];
-
-  if (!config.auth.password) {
-    errors.push('PUBLISH_PASSWORD is required');
-  }
-
-  if (config.auth.jwtSecret === 'default-secret-change-me') {
-    errors.push('PUBLISH_JWT_SECRET should be changed from default');
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
-  };
+export function isAuthEnabled() {
+  return Boolean(config.auth.password);
 }
 
 export default config;

@@ -58,10 +58,7 @@ exit 0
 jest.unstable_mockModule('../../src/config.js', () => ({
   config: {
     auth: {
-      username: 'admin',
       password: 'testpass',
-      jwtSecret: 'test-jwt-secret',
-      tokenExpiry: '1h',
     },
     server: {
       port: 0,
@@ -105,12 +102,12 @@ describe('API Integration Tests', () => {
     // Get auth token for all tests
     const res = await request(app)
       .post('/api/login')
-      .send({ username: 'admin', password: 'testpass' });
+      .send({ password: 'testpass' });
     authToken = res.body.token;
   });
 
   beforeEach(() => {
-    authInternal.resetAttempts();
+    authInternal.resetSessions();
     deployInternal.resetState();
   });
 
@@ -140,11 +137,21 @@ describe('API Integration Tests', () => {
   });
 
   describe('Authentication', () => {
+    describe('GET /api/auth/status', () => {
+      it('should return auth status', async () => {
+        const res = await request(app).get('/api/auth/status');
+
+        expect(res.status).toBe(200);
+        expect(res.body.success).toBe(true);
+        expect(typeof res.body.authRequired).toBe('boolean');
+      });
+    });
+
     describe('POST /api/login', () => {
-      it('should login with valid credentials', async () => {
+      it('should login with valid password', async () => {
         const res = await request(app)
           .post('/api/login')
-          .send({ username: 'admin', password: 'testpass' });
+          .send({ password: 'testpass' });
 
         expect(res.status).toBe(200);
         expect(res.body.success).toBe(true);
@@ -153,16 +160,16 @@ describe('API Integration Tests', () => {
         authToken = res.body.token;
       });
 
-      it('should reject invalid credentials', async () => {
+      it('should reject invalid password', async () => {
         const res = await request(app)
           .post('/api/login')
-          .send({ username: 'admin', password: 'wrongpass' });
+          .send({ password: 'wrongpass' });
 
         expect(res.status).toBe(401);
         expect(res.body.success).toBe(false);
       });
 
-      it('should require username and password', async () => {
+      it('should require password', async () => {
         const res = await request(app)
           .post('/api/login')
           .send({});
@@ -174,12 +181,17 @@ describe('API Integration Tests', () => {
 
     describe('GET /api/verify', () => {
       it('should verify valid token', async () => {
+        // First login to get a valid token
+        const loginRes = await request(app)
+          .post('/api/login')
+          .send({ password: 'testpass' });
+        const token = loginRes.body.token;
+
         const res = await request(app)
           .get('/api/verify')
-          .set('Authorization', `Bearer ${authToken}`);
+          .set('Authorization', `Bearer ${token}`);
 
         expect(res.body.valid).toBe(true);
-        expect(res.body.user).toBe('admin');
       });
 
       it('should reject invalid token', async () => {
@@ -200,9 +212,15 @@ describe('API Integration Tests', () => {
       });
 
       it('should return commits list or error gracefully', async () => {
+        // Get fresh token
+        const loginRes = await request(app)
+          .post('/api/login')
+          .send({ password: 'testpass' });
+        const token = loginRes.body.token;
+
         const res = await request(app)
           .get('/api/commits')
-          .set('Authorization', `Bearer ${authToken}`);
+          .set('Authorization', `Bearer ${token}`);
 
         // May succeed or fail depending on branch config
         expect([200, 500]).toContain(res.status);
@@ -215,9 +233,14 @@ describe('API Integration Tests', () => {
 
     describe('GET /api/tags', () => {
       it('should return tags list', async () => {
+        const loginRes = await request(app)
+          .post('/api/login')
+          .send({ password: 'testpass' });
+        const token = loginRes.body.token;
+
         const res = await request(app)
           .get('/api/tags')
-          .set('Authorization', `Bearer ${authToken}`);
+          .set('Authorization', `Bearer ${token}`);
 
         expect(res.status).toBe(200);
         expect(res.body.success).toBe(true);
@@ -227,9 +250,14 @@ describe('API Integration Tests', () => {
 
     describe('GET /api/status', () => {
       it('should return repo status', async () => {
+        const loginRes = await request(app)
+          .post('/api/login')
+          .send({ password: 'testpass' });
+        const token = loginRes.body.token;
+
         const res = await request(app)
           .get('/api/status')
-          .set('Authorization', `Bearer ${authToken}`);
+          .set('Authorization', `Bearer ${token}`);
 
         expect(res.status).toBe(200);
         expect(res.body.success).toBe(true);
@@ -250,9 +278,14 @@ describe('API Integration Tests', () => {
       });
 
       it('should reject missing commitHash', async () => {
+        const loginRes = await request(app)
+          .post('/api/login')
+          .send({ password: 'testpass' });
+        const token = loginRes.body.token;
+
         const res = await request(app)
           .post('/api/deploy')
-          .set('Authorization', `Bearer ${authToken}`)
+          .set('Authorization', `Bearer ${token}`)
           .send({});
 
         expect(res.status).toBe(400);
@@ -260,9 +293,14 @@ describe('API Integration Tests', () => {
       });
 
       it('should reject invalid commitHash format', async () => {
+        const loginRes = await request(app)
+          .post('/api/login')
+          .send({ password: 'testpass' });
+        const token = loginRes.body.token;
+
         const res = await request(app)
           .post('/api/deploy')
-          .set('Authorization', `Bearer ${authToken}`)
+          .set('Authorization', `Bearer ${token}`)
           .send({ commitHash: 'invalid!hash' });
 
         expect(res.status).toBe(400);
@@ -270,9 +308,14 @@ describe('API Integration Tests', () => {
       });
 
       it('should deploy successfully', async () => {
+        const loginRes = await request(app)
+          .post('/api/login')
+          .send({ password: 'testpass' });
+        const token = loginRes.body.token;
+
         const res = await request(app)
           .post('/api/deploy')
-          .set('Authorization', `Bearer ${authToken}`)
+          .set('Authorization', `Bearer ${token}`)
           .send({ commitHash: testCommitHash });
 
         expect(res.status).toBe(200);
@@ -282,9 +325,14 @@ describe('API Integration Tests', () => {
 
     describe('GET /api/deploy/current', () => {
       it('should return current deploy status', async () => {
+        const loginRes = await request(app)
+          .post('/api/login')
+          .send({ password: 'testpass' });
+        const token = loginRes.body.token;
+
         const res = await request(app)
           .get('/api/deploy/current')
-          .set('Authorization', `Bearer ${authToken}`);
+          .set('Authorization', `Bearer ${token}`);
 
         expect(res.status).toBe(200);
         expect(res.body.success).toBe(true);
@@ -296,9 +344,14 @@ describe('API Integration Tests', () => {
   describe('History Operations', () => {
     describe('GET /api/history', () => {
       it('should return history list', async () => {
+        const loginRes = await request(app)
+          .post('/api/login')
+          .send({ password: 'testpass' });
+        const token = loginRes.body.token;
+
         const res = await request(app)
           .get('/api/history')
-          .set('Authorization', `Bearer ${authToken}`);
+          .set('Authorization', `Bearer ${token}`);
 
         expect(res.status).toBe(200);
         expect(res.body.success).toBe(true);
@@ -306,9 +359,14 @@ describe('API Integration Tests', () => {
       });
 
       it('should include stats', async () => {
+        const loginRes = await request(app)
+          .post('/api/login')
+          .send({ password: 'testpass' });
+        const token = loginRes.body.token;
+
         const res = await request(app)
           .get('/api/history')
-          .set('Authorization', `Bearer ${authToken}`);
+          .set('Authorization', `Bearer ${token}`);
 
         expect(res.body.stats).toBeTruthy();
         expect(typeof res.body.stats.total).toBe('number');
@@ -324,9 +382,14 @@ describe('API Integration Tests', () => {
     });
 
     it('should return 404 for unknown API routes when authenticated', async () => {
+      const loginRes = await request(app)
+        .post('/api/login')
+        .send({ password: 'testpass' });
+      const token = loginRes.body.token;
+
       const res = await request(app)
         .get('/api/unknown-endpoint')
-        .set('Authorization', `Bearer ${authToken}`);
+        .set('Authorization', `Bearer ${token}`);
       expect(res.status).toBe(404);
     });
   });

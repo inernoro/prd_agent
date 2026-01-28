@@ -1,142 +1,126 @@
-import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { config } from '../config.js';
 
-// Track login attempts for rate limiting
-const loginAttempts = new Map();
-const LOCKOUT_THRESHOLD = 5;
-const LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutes
+// Simple session store (in-memory)
+const sessions = new Map();
+const SESSION_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
- * Check if account is locked due to too many failed attempts
- * @param {string} username - The username to check
- * @returns {{ locked: boolean, remainingTime?: number }}
+ * Check if authentication is required
+ * @returns {boolean}
  */
-export function checkLockout(username) {
-  const attempts = loginAttempts.get(username);
-  if (!attempts) {
-    return { locked: false };
-  }
-
-  if (attempts.count >= LOCKOUT_THRESHOLD) {
-    const elapsed = Date.now() - attempts.lastAttempt;
-    if (elapsed < LOCKOUT_DURATION) {
-      return {
-        locked: true,
-        remainingTime: Math.ceil((LOCKOUT_DURATION - elapsed) / 1000),
-      };
-    }
-    // Reset after lockout duration
-    loginAttempts.delete(username);
-  }
-
-  return { locked: false };
+export function isAuthRequired() {
+  return Boolean(config.auth.password);
 }
 
 /**
- * Record a failed login attempt
- * @param {string} username - The username
+ * Generate a session token
+ * @returns {string}
  */
-export function recordFailedAttempt(username) {
-  const attempts = loginAttempts.get(username) || { count: 0, lastAttempt: 0 };
-  attempts.count += 1;
-  attempts.lastAttempt = Date.now();
-  loginAttempts.set(username, attempts);
+function generateSessionToken() {
+  return crypto.randomBytes(32).toString('hex');
 }
 
 /**
- * Clear login attempts after successful login
- * @param {string} username - The username
+ * Validate password
+ * @param {string} password - The password to check
+ * @returns {boolean}
  */
-export function clearAttempts(username) {
-  loginAttempts.delete(username);
+export function validatePassword(password) {
+  return password === config.auth.password;
 }
 
 /**
- * Validate credentials against config
- * @param {string} username - The username
- * @param {string} password - The password
- * @returns {boolean} Whether credentials are valid
+ * Create a new session
+ * @param {string} username - The username (display name)
+ * @returns {string} Session token
  */
-export function validateCredentials(username, password) {
-  return username === config.auth.username && password === config.auth.password;
+export function createSession(username) {
+  const token = generateSessionToken();
+  sessions.set(token, {
+    username,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + SESSION_EXPIRY,
+  });
+  return token;
 }
 
 /**
- * Generate JWT token
- * @param {string} username - The username
- * @returns {string} JWT token
- */
-export function generateToken(username) {
-  return jwt.sign(
-    {
-      username,
-      iat: Math.floor(Date.now() / 1000),
-    },
-    config.auth.jwtSecret,
-    { expiresIn: config.auth.tokenExpiry }
-  );
-}
-
-/**
- * Verify JWT token
- * @param {string} token - The JWT token
- * @returns {{ valid: boolean, payload?: object, error?: string }}
+ * Verify session token
+ * @param {string} token - The session token
+ * @returns {{ valid: boolean, username?: string }}
  */
 export function verifyToken(token) {
-  try {
-    const payload = jwt.verify(token, config.auth.jwtSecret);
-    return { valid: true, payload };
-  } catch (error) {
-    return { valid: false, error: error.message };
+  // If auth is not required, always valid
+  if (!isAuthRequired()) {
+    return { valid: true, username: 'anonymous' };
   }
+
+  if (!token) {
+    return { valid: false };
+  }
+
+  const session = sessions.get(token);
+  if (!session) {
+    return { valid: false };
+  }
+
+  // Check expiry
+  if (Date.now() > session.expiresAt) {
+    sessions.delete(token);
+    return { valid: false };
+  }
+
+  return { valid: true, username: session.username };
 }
 
 /**
- * Login user
- * @param {string} username - The username
+ * Login with password
  * @param {string} password - The password
- * @returns {{ success: boolean, token?: string, error?: string, remainingTime?: number }}
+ * @param {string} username - Display name (optional)
+ * @returns {{ success: boolean, token?: string, error?: string }}
  */
-export function login(username, password) {
-  // Check lockout
-  const lockout = checkLockout(username);
-  if (lockout.locked) {
-    return {
-      success: false,
-      error: `账号已锁定，请在 ${lockout.remainingTime} 秒后重试`,
-      remainingTime: lockout.remainingTime,
-    };
+export function login(password, username = 'admin') {
+  // If auth not required, just create session
+  if (!isAuthRequired()) {
+    const token = createSession(username);
+    return { success: true, token };
   }
 
-  // Validate credentials
-  if (!validateCredentials(username, password)) {
-    recordFailedAttempt(username);
-    const attempts = loginAttempts.get(username);
-    const remaining = LOCKOUT_THRESHOLD - attempts.count;
-
-    if (remaining > 0) {
-      return {
-        success: false,
-        error: `用户名或密码错误，还剩 ${remaining} 次尝试机会`,
-      };
-    } else {
-      return {
-        success: false,
-        error: `登录失败次数过多，账号已锁定 15 分钟`,
-      };
-    }
+  if (!validatePassword(password)) {
+    return { success: false, error: '密码错误' };
   }
 
-  // Success
-  clearAttempts(username);
-  const token = generateToken(username);
+  const token = createSession(username);
   return { success: true, token };
 }
 
+/**
+ * Destroy session
+ * @param {string} token - Session token
+ */
+export function logout(token) {
+  sessions.delete(token);
+}
+
+/**
+ * Clean expired sessions
+ */
+export function cleanExpiredSessions() {
+  const now = Date.now();
+  for (const [token, session] of sessions.entries()) {
+    if (now > session.expiresAt) {
+      sessions.delete(token);
+    }
+  }
+}
+
+// Clean up every hour
+setInterval(cleanExpiredSessions, 60 * 60 * 1000);
+
 // Export for testing
 export const _internal = {
-  loginAttempts,
-  LOCKOUT_THRESHOLD,
-  LOCKOUT_DURATION,
-  resetAttempts: () => loginAttempts.clear(),
+  sessions,
+  SESSION_EXPIRY,
+  resetSessions: () => sessions.clear(),
 };

@@ -1,23 +1,43 @@
 import { Router } from 'express';
-import { login, verifyToken } from '../services/authService.js';
+import { login, logout, verifyToken, isAuthRequired } from '../services/authService.js';
 
 const router = Router();
 
 /**
+ * GET /api/auth/status
+ * Check if authentication is required
+ */
+router.get('/auth/status', (req, res) => {
+  res.json({
+    success: true,
+    authRequired: isAuthRequired(),
+  });
+});
+
+/**
  * POST /api/login
- * Login with username and password
+ * Login with password (username is optional display name)
  */
 router.post('/login', (req, res) => {
-  const { username, password } = req.body;
+  const { password, username } = req.body;
 
-  if (!username || !password) {
-    return res.status(400).json({
-      success: false,
-      error: '用户名和密码不能为空',
+  // If auth not required, just return a token
+  if (!isAuthRequired()) {
+    const result = login('', username || 'admin');
+    return res.json({
+      success: true,
+      token: result.token,
     });
   }
 
-  const result = login(username, password);
+  if (!password) {
+    return res.status(400).json({
+      success: false,
+      error: '密码不能为空',
+    });
+  }
+
+  const result = login(password, username || 'admin');
 
   if (result.success) {
     return res.json({
@@ -28,16 +48,23 @@ router.post('/login', (req, res) => {
     return res.status(401).json({
       success: false,
       error: result.error,
-      remainingTime: result.remainingTime,
     });
   }
 });
 
 /**
  * POST /api/logout
- * Logout (client should clear token)
+ * Logout (destroy session)
  */
 router.post('/logout', (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader) {
+    const parts = authHeader.split(' ');
+    if (parts.length === 2 && parts[0] === 'Bearer') {
+      logout(parts[1]);
+    }
+  }
+
   res.json({
     success: true,
     message: '已登出',
@@ -52,6 +79,10 @@ router.get('/verify', (req, res) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
+    // If auth not required, still valid
+    if (!isAuthRequired()) {
+      return res.json({ valid: true, user: 'anonymous' });
+    }
     return res.json({ valid: false });
   }
 
@@ -63,7 +94,7 @@ router.get('/verify', (req, res) => {
   const result = verifyToken(parts[1]);
   return res.json({
     valid: result.valid,
-    user: result.payload?.username,
+    user: result.username,
   });
 });
 

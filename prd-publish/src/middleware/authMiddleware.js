@@ -1,29 +1,48 @@
-import { verifyToken } from '../services/authService.js';
+import { verifyToken, isAuthRequired } from '../services/authService.js';
+
+/**
+ * Extract token from request
+ * Supports: Header (Bearer token), Query param (?token=xxx)
+ */
+function extractToken(req) {
+  // Try Authorization header first
+  const authHeader = req.headers.authorization;
+  if (authHeader) {
+    const parts = authHeader.split(' ');
+    if (parts.length === 2 && parts[0] === 'Bearer') {
+      return parts[1];
+    }
+  }
+
+  // Try query param (for SSE and other cases)
+  if (req.query.token) {
+    return req.query.token;
+  }
+
+  return null;
+}
 
 /**
  * Authentication middleware
- * Validates JWT token from Authorization header
+ * If PUBLISH_PASSWORD is not set, allows all requests
+ * If set, validates session token from header or query param
  */
 export function authMiddleware(req, res, next) {
-  const authHeader = req.headers.authorization;
+  // If auth not required, allow all
+  if (!isAuthRequired()) {
+    req.user = { username: 'anonymous' };
+    return next();
+  }
 
-  if (!authHeader) {
+  const token = extractToken(req);
+
+  if (!token) {
     return res.status(401).json({
       success: false,
       error: '未提供认证令牌',
     });
   }
 
-  // Extract token from "Bearer <token>"
-  const parts = authHeader.split(' ');
-  if (parts.length !== 2 || parts[0] !== 'Bearer') {
-    return res.status(401).json({
-      success: false,
-      error: '认证令牌格式无效',
-    });
-  }
-
-  const token = parts[1];
   const result = verifyToken(token);
 
   if (!result.valid) {
@@ -33,8 +52,7 @@ export function authMiddleware(req, res, next) {
     });
   }
 
-  // Attach user info to request
-  req.user = result.payload;
+  req.user = { username: result.username };
   next();
 }
 
@@ -43,17 +61,17 @@ export function authMiddleware(req, res, next) {
  * Allows unauthenticated requests but attaches user if token is valid
  */
 export function optionalAuthMiddleware(req, res, next) {
-  const authHeader = req.headers.authorization;
+  const token = extractToken(req);
 
-  if (authHeader) {
-    const parts = authHeader.split(' ');
-    if (parts.length === 2 && parts[0] === 'Bearer') {
-      const token = parts[1];
-      const result = verifyToken(token);
-      if (result.valid) {
-        req.user = result.payload;
-      }
+  if (token) {
+    const result = verifyToken(token);
+    if (result.valid) {
+      req.user = { username: result.username };
     }
+  }
+
+  if (!req.user) {
+    req.user = { username: 'anonymous' };
   }
 
   next();

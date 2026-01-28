@@ -1,12 +1,13 @@
 /**
  * PRD-Publish Frontend Application
- * Multi-project support version
+ * Simplified authentication version
  */
 
 // State
 const state = {
   token: localStorage.getItem('prd-publish-token'),
-  user: localStorage.getItem('prd-publish-user'),
+  user: localStorage.getItem('prd-publish-user') || 'admin',
+  authRequired: true, // Will be checked on init
   currentCommit: null,
   commits: [],
   tags: [],
@@ -91,7 +92,7 @@ async function api(endpoint, options = {}) {
 
   const data = await response.json();
 
-  if (response.status === 401) {
+  if (response.status === 401 && state.authRequired) {
     logout();
     throw new Error('认证已过期，请重新登录');
   }
@@ -132,26 +133,53 @@ function formatDuration(ms) {
 }
 
 // Auth Functions
-async function login(username, password) {
+async function checkAuthStatus() {
+  try {
+    const response = await fetch('/api/auth/status');
+    const data = await response.json();
+    state.authRequired = data.authRequired;
+    return data.authRequired;
+  } catch {
+    // Default to requiring auth
+    return true;
+  }
+}
+
+async function login(password) {
   const data = await api('/login', {
     method: 'POST',
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ password, username: state.user }),
   });
 
   state.token = data.token;
-  state.user = username;
   localStorage.setItem('prd-publish-token', data.token);
-  localStorage.setItem('prd-publish-user', username);
+  localStorage.setItem('prd-publish-user', state.user);
+
+  showMainPage();
+}
+
+async function autoLogin() {
+  // If no auth required, auto-login
+  const data = await api('/login', {
+    method: 'POST',
+    body: JSON.stringify({ username: 'admin' }),
+  });
+
+  state.token = data.token;
+  state.user = 'admin';
+  localStorage.setItem('prd-publish-token', data.token);
+  localStorage.setItem('prd-publish-user', 'admin');
 
   showMainPage();
 }
 
 function logout() {
   state.token = null;
-  state.user = null;
   localStorage.removeItem('prd-publish-token');
-  localStorage.removeItem('prd-publish-user');
-  showLoginPage();
+
+  if (state.authRequired) {
+    showLoginPage();
+  }
 }
 
 // Page Navigation
@@ -159,12 +187,24 @@ function showLoginPage() {
   elements.loginPage.classList.remove('hidden');
   elements.mainPage.classList.add('hidden');
   elements.loginError.textContent = '';
+
+  // Update login form for password-only
+  const usernameField = document.getElementById('username');
+  if (usernameField) {
+    usernameField.parentElement.style.display = 'none';
+  }
 }
 
 function showMainPage() {
   elements.loginPage.classList.add('hidden');
   elements.mainPage.classList.remove('hidden');
   elements.currentUser.textContent = state.user;
+
+  // Hide logout if no auth required
+  if (!state.authRequired) {
+    elements.logoutBtn.style.display = 'none';
+  }
+
   loadProjects().then(() => loadData());
 }
 
@@ -559,8 +599,9 @@ async function startDeploy() {
   elements.progressRetry.classList.add('hidden');
 
   try {
-    // Start SSE connection
-    const eventSource = new EventSource(`/api/deploy/stream?token=${state.token}`);
+    // Start SSE connection with token in query param
+    const sseUrl = `/api/deploy/stream?token=${encodeURIComponent(state.token || '')}`;
+    const eventSource = new EventSource(sseUrl);
 
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -729,18 +770,35 @@ function switchTab(tabName) {
 }
 
 // Event Listeners
-document.addEventListener('DOMContentLoaded', () => {
-  // Check auth
-  if (state.token) {
-    showMainPage();
+document.addEventListener('DOMContentLoaded', async () => {
+  // Check if auth is required
+  const authRequired = await checkAuthStatus();
+
+  if (!authRequired) {
+    // No auth required, auto-login
+    await autoLogin();
+  } else if (state.token) {
+    // Has token, verify and show main
+    try {
+      const verifyResult = await fetch('/api/verify', {
+        headers: { 'Authorization': `Bearer ${state.token}` }
+      }).then(r => r.json());
+
+      if (verifyResult.valid) {
+        showMainPage();
+      } else {
+        showLoginPage();
+      }
+    } catch {
+      showLoginPage();
+    }
   } else {
     showLoginPage();
   }
 
-  // Login form
+  // Login form (password only)
   elements.loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const username = document.getElementById('username').value;
     const password = document.getElementById('password').value;
     const btn = elements.loginForm.querySelector('button');
 
@@ -749,7 +807,7 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.loginError.textContent = '';
 
     try {
-      await login(username, password);
+      await login(password);
     } catch (error) {
       elements.loginError.textContent = error.message;
     } finally {
@@ -828,13 +886,3 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
-
-// Handle token in SSE (workaround)
-const originalFetch = window.fetch;
-window.fetch = function(url, options = {}) {
-  if (url.includes('/api/deploy/stream')) {
-    // SSE doesn't support headers, use query param
-    return originalFetch(url, options);
-  }
-  return originalFetch(url, options);
-};
