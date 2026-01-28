@@ -2,8 +2,16 @@
  * 试验车间 - RichComposer 组件测试
  * 用于独立测试 RichComposer 组件的各种功能和边界情况
  */
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import { RichComposer, type RichComposerRef, type ImageOption } from '@/components/RichComposer';
+
+// 自动测试结果类型
+type TestResult = {
+  name: string;
+  status: 'pending' | 'running' | 'pass' | 'fail' | 'skip';
+  message?: string;
+  duration?: number;
+};
 
 // 模拟画布图片数据
 const MOCK_IMAGES: ImageOption[] = [
@@ -37,6 +45,12 @@ export default function WorkshopLabTab() {
 
   const [currentText, setCurrentText] = useState('');
   const [containerWidth, setContainerWidth] = useState(300);
+
+  // 自动测试状态
+  const [testResults, setTestResults] = useState<TestResult[]>([]);
+  const [isAutoTesting, setIsAutoTesting] = useState(false);
+  const [testInterval, setTestInterval] = useState(800); // 毫秒
+  const abortRef = useRef(false);
 
   const addOutput = useCallback((action: string, data: any) => {
     setOutputs(prev => [{
@@ -128,6 +142,229 @@ export default function WorkshopLabTab() {
 
     addOutput('insertTestCase()', { text, segments });
   }, [addOutput]);
+
+  /**
+   * 自动测试定义
+   * 每个测试返回 { pass: boolean, message?: string }
+   */
+  const runAutoTests = useCallback(async () => {
+    if (isAutoTesting) return;
+    abortRef.current = false;
+    setIsAutoTesting(true);
+
+    const tests: Array<{
+      name: string;
+      run: () => Promise<{ pass: boolean; message?: string }>;
+    }> = [
+      {
+        name: '插入单个 chip',
+        run: async () => {
+          const composer = composerRef.current;
+          if (!composer) return { pass: false, message: 'composerRef 不存在' };
+          composer.clear();
+          composer.focus();
+          composer.insertImageChip(MOCK_IMAGES[0]);
+          await new Promise((r) => setTimeout(r, 100));
+          const { imageRefs } = composer.getStructuredContent();
+          if (imageRefs.length !== 1) {
+            return { pass: false, message: `期望 1 个 imageRef，实际 ${imageRefs.length}` };
+          }
+          if (imageRefs[0].refId !== 1) {
+            return { pass: false, message: `期望 refId=1，实际 ${imageRefs[0].refId}` };
+          }
+          return { pass: true };
+        },
+      },
+      {
+        name: '插入多个 chip',
+        run: async () => {
+          const composer = composerRef.current;
+          if (!composer) return { pass: false, message: 'composerRef 不存在' };
+          composer.clear();
+          composer.focus();
+          composer.insertImageChip(MOCK_IMAGES[0]);
+          composer.insertImageChip(MOCK_IMAGES[1]);
+          composer.insertImageChip(MOCK_IMAGES[2]);
+          await new Promise((r) => setTimeout(r, 100));
+          const { imageRefs } = composer.getStructuredContent();
+          if (imageRefs.length !== 3) {
+            return { pass: false, message: `期望 3 个 imageRef，实际 ${imageRefs.length}` };
+          }
+          return { pass: true };
+        },
+      },
+      {
+        name: 'imageRefs 返回正确',
+        run: async () => {
+          const composer = composerRef.current;
+          if (!composer) return { pass: false, message: 'composerRef 不存在' };
+          composer.clear();
+          composer.focus();
+          composer.insertText('测试文本 ');
+          composer.insertImageChip(MOCK_IMAGES[1]);
+          composer.insertText(' 更多文本');
+          await new Promise((r) => setTimeout(r, 100));
+          const { text, imageRefs } = composer.getStructuredContent();
+          if (!text.includes('测试文本')) {
+            return { pass: false, message: `文本内容不正确: ${text}` };
+          }
+          if (imageRefs.length !== 1 || imageRefs[0].refId !== 2) {
+            return { pass: false, message: `imageRefs 不正确: ${JSON.stringify(imageRefs)}` };
+          }
+          return { pass: true };
+        },
+      },
+      {
+        name: '超长标签不溢出',
+        run: async () => {
+          const composer = composerRef.current;
+          if (!composer) return { pass: false, message: 'composerRef 不存在' };
+          composer.clear();
+          composer.focus();
+          // 使用带超长标签的图片
+          composer.insertImageChip(MOCK_IMAGES[3]); // 超长标签
+          await new Promise((r) => setTimeout(r, 100));
+          const { imageRefs } = composer.getStructuredContent();
+          if (imageRefs.length !== 1) {
+            return { pass: false, message: `期望 1 个 imageRef，实际 ${imageRefs.length}` };
+          }
+          // 检查 chip 是否正常渲染（通过 DOM 检查宽度）
+          const chips = document.querySelectorAll('[data-lexical-decorator="true"]');
+          if (chips.length === 0) {
+            return { pass: false, message: '未找到 chip DOM 元素' };
+          }
+          const chip = chips[chips.length - 1] as HTMLElement;
+          if (chip.offsetWidth > 150) {
+            return { pass: false, message: `chip 宽度过大: ${chip.offsetWidth}px` };
+          }
+          return { pass: true };
+        },
+      },
+      {
+        name: '窄容器 chip 正常',
+        run: async () => {
+          const composer = narrowComposerRef.current;
+          if (!composer) return { pass: false, message: 'narrowComposerRef 不存在' };
+          composer.clear();
+          composer.focus();
+          composer.insertImageChip(MOCK_IMAGES[0]);
+          composer.insertImageChip(MOCK_IMAGES[1]);
+          await new Promise((r) => setTimeout(r, 100));
+          const { imageRefs } = composer.getStructuredContent();
+          if (imageRefs.length !== 2) {
+            return { pass: false, message: `期望 2 个 imageRef，实际 ${imageRefs.length}` };
+          }
+          return { pass: true };
+        },
+      },
+      {
+        name: 'clear() 清空内容',
+        run: async () => {
+          const composer = composerRef.current;
+          if (!composer) return { pass: false, message: 'composerRef 不存在' };
+          composer.insertText('一些内容');
+          composer.insertImageChip(MOCK_IMAGES[0]);
+          await new Promise((r) => setTimeout(r, 50));
+          composer.clear();
+          await new Promise((r) => setTimeout(r, 50));
+          const { text, imageRefs } = composer.getStructuredContent();
+          if (text.trim() !== '' || imageRefs.length !== 0) {
+            return { pass: false, message: `clear 后内容不为空: text="${text}", refs=${imageRefs.length}` };
+          }
+          return { pass: true };
+        },
+      },
+      {
+        name: 'getPlainText() 返回文本',
+        run: async () => {
+          const composer = composerRef.current;
+          if (!composer) return { pass: false, message: 'composerRef 不存在' };
+          composer.clear();
+          composer.focus();
+          composer.insertText('Hello ');
+          composer.insertImageChip(MOCK_IMAGES[0]);
+          composer.insertText(' World');
+          await new Promise((r) => setTimeout(r, 100));
+          const plainText = composer.getPlainText();
+          // chip 会被渲染为某种文本表示
+          if (!plainText.includes('Hello') || !plainText.includes('World')) {
+            return { pass: false, message: `plainText 不包含预期内容: ${plainText}` };
+          }
+          return { pass: true };
+        },
+      },
+      {
+        name: '重复引用处理',
+        run: async () => {
+          const composer = composerRef.current;
+          if (!composer) return { pass: false, message: 'composerRef 不存在' };
+          composer.clear();
+          composer.focus();
+          composer.insertImageChip(MOCK_IMAGES[0]);
+          composer.insertText(' 和 ');
+          composer.insertImageChip(MOCK_IMAGES[0]); // 同一张图片
+          await new Promise((r) => setTimeout(r, 100));
+          const { imageRefs } = composer.getStructuredContent();
+          // 重复的 chip 应该都被记录
+          if (imageRefs.length !== 2) {
+            return { pass: false, message: `期望 2 个重复引用，实际 ${imageRefs.length}` };
+          }
+          return { pass: true };
+        },
+      },
+    ];
+
+    // 初始化测试结果
+    setTestResults(tests.map((t) => ({ name: t.name, status: 'pending' })));
+
+    // 逐个运行测试
+    for (let i = 0; i < tests.length; i++) {
+      if (abortRef.current) break;
+
+      // 标记当前测试为 running
+      setTestResults((prev) =>
+        prev.map((r, idx) => (idx === i ? { ...r, status: 'running' } : r))
+      );
+
+      const start = Date.now();
+      try {
+        const result = await tests[i].run();
+        const duration = Date.now() - start;
+        setTestResults((prev) =>
+          prev.map((r, idx) =>
+            idx === i
+              ? { ...r, status: result.pass ? 'pass' : 'fail', message: result.message, duration }
+              : r
+          )
+        );
+      } catch (err) {
+        const duration = Date.now() - start;
+        setTestResults((prev) =>
+          prev.map((r, idx) =>
+            idx === i
+              ? { ...r, status: 'fail', message: `异常: ${String(err)}`, duration }
+              : r
+          )
+        );
+      }
+
+      // 等待间隔
+      if (i < tests.length - 1 && !abortRef.current) {
+        await new Promise((r) => setTimeout(r, testInterval));
+      }
+    }
+
+    // 清理
+    composerRef.current?.clear();
+    narrowComposerRef.current?.clear();
+    setIsAutoTesting(false);
+  }, [isAutoTesting, testInterval]);
+
+  // 停止测试
+  const stopAutoTests = useCallback(() => {
+    abortRef.current = true;
+    setIsAutoTesting(false);
+  }, []);
 
   return (
     <div className="h-full overflow-auto" style={{ padding: 16 }}>
@@ -410,7 +647,7 @@ export default function WorkshopLabTab() {
           </div>
         </div>
 
-        {/* 验收清单 */}
+        {/* 验收清单 + 自动测试 */}
         <div style={{
           marginTop: 16,
           background: 'var(--bg-elevated)',
@@ -418,19 +655,133 @@ export default function WorkshopLabTab() {
           padding: 12,
           border: '1px solid var(--border-default)',
         }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>
-            验收检查清单
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 12,
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+              验收检查清单
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>间隔</span>
+              <input
+                type="range"
+                min={200}
+                max={2000}
+                step={100}
+                value={testInterval}
+                onChange={(e) => setTestInterval(Number(e.target.value))}
+                style={{ width: 60 }}
+                disabled={isAutoTesting}
+              />
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 40 }}>{testInterval}ms</span>
+              {isAutoTesting ? (
+                <Btn onClick={stopAutoTests} variant="danger" size="sm">停止</Btn>
+              ) : (
+                <Btn onClick={runAutoTests} size="sm">自动测试</Btn>
+              )}
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11 }}>
-            <CheckItem label="@ 弹出下拉" />
-            <CheckItem label="选择插入 chip" />
-            <CheckItem label="chip 显示正确" />
-            <CheckItem label="超长标签截断" />
-            <CheckItem label="窄容器正常" />
-            <CheckItem label="imageRefs 返回" />
-            <CheckItem label="Enter 发送" />
-            <CheckItem label="Shift+Enter 换行" />
+
+          {/* 手动检查项 */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 6 }}>手动检查（需人工验证）</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11 }}>
+              <CheckItem label="@ 弹出下拉" />
+              <CheckItem label="Enter 发送" />
+              <CheckItem label="Shift+Enter 换行" />
+            </div>
           </div>
+
+          {/* 自动测试结果 */}
+          {testResults.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 6 }}>
+                自动测试结果
+                {' '}
+                <span style={{ color: 'rgba(34, 197, 94, 1)' }}>
+                  {testResults.filter((t) => t.status === 'pass').length} 通过
+                </span>
+                {' / '}
+                <span style={{ color: 'rgba(239, 68, 68, 1)' }}>
+                  {testResults.filter((t) => t.status === 'fail').length} 失败
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {testResults.map((result, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 8,
+                      padding: '6px 8px',
+                      borderRadius: 4,
+                      fontSize: 11,
+                      background:
+                        result.status === 'pass'
+                          ? 'rgba(34, 197, 94, 0.1)'
+                          : result.status === 'fail'
+                          ? 'rgba(239, 68, 68, 0.1)'
+                          : result.status === 'running'
+                          ? 'rgba(99, 102, 241, 0.1)'
+                          : 'var(--bg-base)',
+                      border: `1px solid ${
+                        result.status === 'pass'
+                          ? 'rgba(34, 197, 94, 0.3)'
+                          : result.status === 'fail'
+                          ? 'rgba(239, 68, 68, 0.3)'
+                          : result.status === 'running'
+                          ? 'rgba(99, 102, 241, 0.3)'
+                          : 'var(--border-default)'
+                      }`,
+                    }}
+                  >
+                    <span style={{ width: 16, textAlign: 'center' }}>
+                      {result.status === 'pass' && '✓'}
+                      {result.status === 'fail' && '✗'}
+                      {result.status === 'running' && '⋯'}
+                      {result.status === 'pending' && '○'}
+                    </span>
+                    <span style={{
+                      flex: 1,
+                      color:
+                        result.status === 'pass'
+                          ? 'rgba(34, 197, 94, 1)'
+                          : result.status === 'fail'
+                          ? 'rgba(239, 68, 68, 1)'
+                          : result.status === 'running'
+                          ? 'rgba(99, 102, 241, 1)'
+                          : 'var(--text-secondary)',
+                    }}>
+                      {result.name}
+                    </span>
+                    {result.duration !== undefined && (
+                      <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+                        {result.duration}ms
+                      </span>
+                    )}
+                    {result.message && result.status === 'fail' && (
+                      <span style={{
+                        fontSize: 9,
+                        color: 'rgba(239, 68, 68, 0.8)',
+                        maxWidth: 300,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={result.message}
+                      >
+                        {result.message}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
