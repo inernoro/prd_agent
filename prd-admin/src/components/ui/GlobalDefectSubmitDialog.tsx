@@ -1,23 +1,30 @@
+/**
+ * GlobalDefectSubmitDialog - 全局缺陷提交对话框
+ * 支持全局快捷键 Command+B (Mac) / Control+B (Windows)
+ */
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
-import { useDefectStore } from '@/stores/defectStore';
+import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import {
   createDefect,
   submitDefect,
   addDefectAttachment,
   polishDefect,
+  listDefectTemplates,
+  getDefectUsers,
 } from '@/services';
 import { toast } from '@/lib/toast';
 import { DefectSeverity } from '@/services/contracts/defectAgent';
+import type { DefectTemplate, DefectUser } from '@/services/contracts/defectAgent';
 import {
   X,
   Send,
   Paperclip,
   FileText,
-  Upload,
   Sparkles,
   Loader2,
+  Bug,
 } from 'lucide-react';
 
 const STORAGE_KEY_TEMPLATE = 'defect-agent-last-template';
@@ -41,16 +48,15 @@ function extractTitleFromContent(content: string): string {
   return '';
 }
 
-export function DefectSubmitPanel() {
-  const {
-    templates,
-    users,
-    setShowSubmitPanel,
-    addDefectToList,
-    loadStats,
-  } = useDefectStore();
+export function GlobalDefectSubmitDialog() {
+  const { showDialog, closeDialog } = useGlobalDefectStore();
 
-  // 从 localStorage 读取上次选择
+  // 数据状态
+  const [templates, setTemplates] = useState<DefectTemplate[]>([]);
+  const [users, setUsers] = useState<DefectUser[]>([]);
+  const [dataLoaded, setDataLoaded] = useState(false);
+
+  // 表单状态
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(() => {
     return localStorage.getItem(STORAGE_KEY_TEMPLATE) || '';
   });
@@ -58,13 +64,41 @@ export function DefectSubmitPanel() {
     return localStorage.getItem(STORAGE_KEY_ASSIGNEE) || '';
   });
   const [content, setContent] = useState('');
-  const [focused, setFocused] = useState(false);
   const [severity, setSeverity] = useState<DefectSeverityValue>(DefectSeverity.Trivial);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [polishing, setPolishing] = useState(false);
+  const [focused, setFocused] = useState(false);
 
-  // 当用户/模板选择变化时保存到 localStorage
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // 加载模板和用户数据
+  useEffect(() => {
+    if (!showDialog || dataLoaded) return;
+
+    const loadData = async () => {
+      try {
+        const [templatesRes, usersRes] = await Promise.all([
+          listDefectTemplates(),
+          getDefectUsers(),
+        ]);
+        if (templatesRes.success && templatesRes.data) {
+          setTemplates(templatesRes.data.items);
+        }
+        if (usersRes.success && usersRes.data) {
+          setUsers(usersRes.data.items);
+        }
+        setDataLoaded(true);
+      } catch {
+        // Silent fail
+      }
+    };
+
+    void loadData();
+  }, [showDialog, dataLoaded]);
+
+  // 保存选择到 localStorage
   useEffect(() => {
     if (assigneeUserId) {
       localStorage.setItem(STORAGE_KEY_ASSIGNEE, assigneeUserId);
@@ -77,8 +111,38 @@ export function DefectSubmitPanel() {
     }
   }, [selectedTemplateId]);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // 注册全局快捷键
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Command+B (Mac) 或 Control+B (Windows)
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+        // 检查是否在输入框中（排除某些场景）
+        const active = document.activeElement;
+        const isInInput = active instanceof HTMLInputElement ||
+                          active instanceof HTMLTextAreaElement ||
+                          (active instanceof HTMLElement && active.isContentEditable);
+
+        // 如果在输入框中且对话框未打开，不阻止默认行为（允许加粗等操作）
+        if (isInInput && !showDialog) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        useGlobalDefectStore.getState().toggleDialog();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [showDialog]);
+
+  // 自动聚焦
+  useEffect(() => {
+    if (showDialog && textareaRef.current) {
+      setTimeout(() => textareaRef.current?.focus(), 100);
+    }
+  }, [showDialog]);
 
   // Handle paste for images
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
@@ -157,9 +221,9 @@ export function DefectSubmitPanel() {
 
     setSubmitting(true);
     try {
-      // 从内容中提取标题（第一行有内容的文本）
+      // 从内容中提取标题
       const title = extractTitleFromContent(content);
-      
+
       // Create defect
       const createRes = await createDefect({
         templateId: selectedTemplateId || undefined,
@@ -185,15 +249,15 @@ export function DefectSubmitPanel() {
       // Submit defect
       const submitRes = await submitDefect({ id: defect.id });
       if (submitRes.success && submitRes.data) {
-        addDefectToList(submitRes.data.defect);
         toast.success('缺陷已提交');
-        setShowSubmitPanel(false);
-        loadStats();
+        // 重置表单
+        setContent('');
+        setAttachments([]);
+        setSeverity(DefectSeverity.Trivial);
+        closeDialog();
       } else {
-        // Still add to list even if submit fails
-        addDefectToList(defect);
         toast.warning('缺陷已保存为草稿');
-        setShowSubmitPanel(false);
+        closeDialog();
       }
     } catch (e) {
       toast.error(String(e));
@@ -211,13 +275,15 @@ export function DefectSubmitPanel() {
     { value: DefectSeverity.Trivial, label: '轻微' },
   ];
 
+  if (!showDialog) return null;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{
         background: 'rgba(0,0,0,0.5)',
       }}
-      onClick={() => setShowSubmitPanel(false)}
+      onClick={closeDialog}
     >
       <GlassCard
         glow
@@ -237,7 +303,7 @@ export function DefectSubmitPanel() {
               className="w-8 h-8 rounded-lg flex items-center justify-center"
               style={{ background: 'rgba(100,200,255,0.15)' }}
             >
-              <Send size={16} style={{ color: 'rgba(100,200,255,0.9)' }} />
+              <Bug size={16} style={{ color: 'rgba(100,200,255,0.9)' }} />
             </div>
             <span
               className="text-[15px] font-medium"
@@ -245,16 +311,22 @@ export function DefectSubmitPanel() {
             >
               提交缺陷
             </span>
+            <span
+              className="text-[11px] px-2 py-0.5 rounded-full"
+              style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+            >
+              {navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+B
+            </span>
           </div>
           <button
-            onClick={() => setShowSubmitPanel(false)}
+            onClick={closeDialog}
             className="p-2 rounded-lg hover:bg-white/10 transition-colors"
           >
             <X size={18} style={{ color: 'var(--text-muted)' }} />
           </button>
         </div>
 
-        {/* Selectors - 一排显示 */}
+        {/* Selectors */}
         <div className="px-5 py-4 space-y-3">
           <div className="flex items-center gap-4">
             {/* Assignee */}
@@ -350,7 +422,7 @@ export function DefectSubmitPanel() {
                 : 'none',
             }}
           >
-            {/* Textarea - 无内部边框，第一行即为标题 */}
+            {/* Textarea - 无内部边框，直接使用外层容器的边框 */}
             <textarea
               ref={textareaRef}
               value={content}
@@ -494,7 +566,7 @@ export function DefectSubmitPanel() {
                 disabled={submitting || !content.trim() || !assigneeUserId}
               >
                 {submitting ? (
-                  <Upload size={14} className="animate-spin" />
+                  <Loader2 size={14} className="animate-spin" />
                 ) : (
                   <Send size={14} />
                 )}
@@ -505,5 +577,26 @@ export function DefectSubmitPanel() {
         </div>
       </GlassCard>
     </div>
+  );
+}
+
+/**
+ * DefectSubmitButton - 侧边栏提交缺陷按钮
+ * 带呼吸动画效果
+ */
+export function DefectSubmitButton({ collapsed }: { collapsed: boolean }) {
+  const openDialog = useGlobalDefectStore((s) => s.openDialog);
+
+  return (
+    <button
+      type="button"
+      onClick={openDialog}
+      className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
+      style={{ color: 'var(--text-muted)' }}
+      aria-label="提交缺陷"
+      title={collapsed ? '提交缺陷 (Cmd/Ctrl+B)' : '提交缺陷'}
+    >
+      <Bug size={14} className="defect-submit-breath" />
+    </button>
   );
 }

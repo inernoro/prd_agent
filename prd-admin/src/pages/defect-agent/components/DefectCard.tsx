@@ -7,7 +7,7 @@ import { deleteDefect, closeDefect } from '@/services';
 import { toast } from '@/lib/toast';
 import type { DefectReport, DefectAttachment } from '@/services/contracts/defectAgent';
 import { DefectStatus, DefectSeverity } from '@/services/contracts/defectAgent';
-import { ArrowRight, Clock, Trash2, Check, CheckCircle, MessageCircle, Image as ImageIcon, X, AlertTriangle, AlertCircle, Info, MinusCircle, Paperclip } from 'lucide-react';
+import { ArrowRight, Clock, Trash2, Check, CheckCircle, MessageCircle, Image as ImageIcon, X, AlertTriangle, AlertCircle, Info, MinusCircle, Paperclip, Bug } from 'lucide-react';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 
 interface DefectCardProps {
@@ -56,6 +56,16 @@ function formatDate(iso: string | null | undefined) {
   const diffDay = Math.floor(diffHr / 24);
   if (diffDay < 7) return `${diffDay}天前`;
   return d.toLocaleDateString();
+}
+
+function formatStampDate(iso: string | null | undefined) {
+  const s = String(iso ?? '').trim();
+  if (!s) return '';
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return '';
+  const month = d.getMonth() + 1;
+  const day = d.getDate();
+  return `${month}月${day}日`;
 }
 
 function getPreviewText(content: string | undefined | null, maxChars = 80) {
@@ -188,7 +198,35 @@ export function DefectCard({ defect }: DefectCardProps) {
           />
 
           {/* 主内容区 */}
-          <div className="flex-1 min-w-0 flex flex-col">
+          <div className="flex-1 min-w-0 flex flex-col relative">
+            {/* 完成印章 */}
+            {defect.status === DefectStatus.Resolved && (
+              <div
+                className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none select-none z-10"
+                style={{ transform: 'translateY(-50%) rotate(-15deg)' }}
+              >
+                <div
+                  className="flex flex-col items-center px-3 py-2 rounded-lg"
+                  style={{
+                    border: '3px solid rgba(120, 220, 180, 0.7)',
+                    background: 'rgba(120, 220, 180, 0.08)',
+                  }}
+                >
+                  <span
+                    className="text-[24px] font-bold tracking-wider"
+                    style={{ color: 'rgba(120, 220, 180, 0.85)' }}
+                  >
+                    完成
+                  </span>
+                  <span
+                    className="text-[10px] mt-0.5"
+                    style={{ color: 'rgba(120, 220, 180, 0.7)' }}
+                  >
+                    {resolvedByName} : {formatStampDate(defect.resolvedAt)}
+                  </span>
+                </div>
+              </div>
+            )}
             {/* Header: 标题 + 编号 */}
             <div className="px-3 pt-3 pb-2 flex items-center gap-2">
               {showPeerUnread && (
@@ -232,19 +270,6 @@ export function DefectCard({ defect }: DefectCardProps) {
                   对方已读
                 </span>
               )}
-              {defect.status === DefectStatus.Resolved && resolvedByName && (
-                <span
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
-                  style={{
-                    background: 'rgba(120, 220, 180, 0.14)',
-                    color: 'rgba(120, 220, 180, 0.9)',
-                    border: '1px solid rgba(120, 220, 180, 0.4)',
-                  }}
-                  title={`完成：${resolvedByName}`}
-                >
-                  完成：{resolvedByName}
-                </span>
-              )}
               {defect.status === DefectStatus.Rejected && rejectedByName && (
                 <span
                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
@@ -267,13 +292,23 @@ export function DefectCard({ defect }: DefectCardProps) {
                 {title}
               </span>
 
-              {/* 缺陷编号 */}
-              <span
-                className="text-[10px] font-mono flex-shrink-0"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                {defect.defectNo}
-              </span>
+              {/* 时间 + 缺陷编号 - 垂直布局 */}
+              <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                <span
+                  className="text-[10px] font-mono flex items-center gap-1"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  <Bug size={10} />
+                  {defect.defectNo}
+                </span>
+                <span
+                  className="text-[10px] flex items-center gap-1"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  <Clock size={10} />
+                  {formatDate(defect.createdAt)}
+                </span>
+              </div>
             </div>
 
             {/* 描述预览 */}
@@ -434,12 +469,6 @@ export function DefectCard({ defect }: DefectCardProps) {
                 />
                 <span className="truncate max-w-[60px]">{assigneeDisplayName}</span>
               </div>
-              </div>
-
-              {/* 时间 */}
-              <div className="flex items-center gap-1 flex-shrink-0 mr-2">
-                <Clock size={10} />
-                {formatDate(defect.createdAt)}
               </div>
 
               {/* 操作按钮（悬浮显示） */}

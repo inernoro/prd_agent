@@ -681,8 +681,19 @@ public class ImageGenRunWorker : BackgroundService
     /// </summary>
     private async Task ResolveModelGroupAsync(ImageGenRun run, CancellationToken ct)
     {
-        _logger.LogInformation("[ImageGenRunWorker] ResolveModelGroupAsync called: runId={RunId}, appKey={AppKey}, appCallerCode={AppCallerCode}, platformId={PlatformId}, modelId={ModelId}, existingModelGroupId={ModelGroupId}",
-            run.Id, run.AppKey, run.AppCallerCode, run.PlatformId, run.ModelId, run.ModelGroupId);
+        // ========== 关键日志：前端期望的模型 ==========
+        _logger.LogInformation(
+            "[ImageGenRunWorker] ===== 模型调度开始 =====\n" +
+            "  RunId: {RunId}\n" +
+            "  前端期望模型:\n" +
+            "    - ConfigModelId: {ConfigModelId}\n" +
+            "    - PlatformId: {PlatformId}\n" +
+            "    - ModelId: {ModelId}\n" +
+            "  AppKey: {AppKey}\n" +
+            "  AppCallerCode: {AppCallerCode}\n" +
+            "  已有 ModelGroupId: {ModelGroupId}",
+            run.Id, run.ConfigModelId ?? "(null)", run.PlatformId ?? "(null)", run.ModelId ?? "(null)", 
+            run.AppKey ?? "(null)", run.AppCallerCode ?? "(null)", run.ModelGroupId ?? "(null)");
 
         // 如果已经有模型解析类型信息，跳过
         if (run.ModelResolutionType.HasValue)
@@ -703,6 +714,8 @@ public class ImageGenRunWorker : BackgroundService
         {
             appCallerCode = $"{run.AppKey}.image::generation";
         }
+        
+        _logger.LogInformation("[ImageGenRunWorker] 计算后的 AppCallerCode: {AppCallerCode}", appCallerCode ?? "(null)");
 
         if (!string.IsNullOrWhiteSpace(appCallerCode))
         {
@@ -710,10 +723,61 @@ public class ImageGenRunWorker : BackgroundService
             {
                 using var scope = _scopeFactory.CreateScope();
                 var scheduler = scope.ServiceProvider.GetRequiredService<ISmartModelScheduler>();
+                
+                // 查询 AppCaller 绑定的模型池
+                var appCaller = await _db.LLMAppCallers.Find(a => a.AppCode == appCallerCode).FirstOrDefaultAsync(ct);
+                if (appCaller != null)
+                {
+                    var requirement = appCaller.ModelRequirements.FirstOrDefault(r => r.ModelType == "generation");
+                    _logger.LogInformation(
+                        "[ImageGenRunWorker] AppCaller 查询结果:\n" +
+                        "  AppCode: {AppCode}\n" +
+                        "  DisplayName: {DisplayName}\n" +
+                        "  generation 类型需求: {HasRequirement}\n" +
+                        "  绑定的模型池IDs: [{ModelGroupIds}]",
+                        appCaller.AppCode, appCaller.DisplayName, requirement != null,
+                        requirement?.ModelGroupIds != null ? string.Join(", ", requirement.ModelGroupIds) : "(无)");
+                    
+                    // 查询绑定的模型池详情
+                    if (requirement?.ModelGroupIds != null && requirement.ModelGroupIds.Count > 0)
+                    {
+                        foreach (var gid in requirement.ModelGroupIds)
+                        {
+                            var grp = await _db.ModelGroups.Find(g => g.Id == gid).FirstOrDefaultAsync(ct);
+                            if (grp != null)
+                            {
+                                var modelList = grp.Models.Select(m => $"{m.PlatformId}:{m.ModelId}(优先级:{m.Priority},状态:{m.HealthStatus})").ToList();
+                                _logger.LogInformation(
+                                    "[ImageGenRunWorker] 模型池详情:\n" +
+                                    "  Id: {Id}\n" +
+                                    "  Name: {Name}\n" +
+                                    "  Code: {Code}\n" +
+                                    "  ModelType: {ModelType}\n" +
+                                    "  IsDefaultForType: {IsDefault}\n" +
+                                    "  包含模型: [{Models}]",
+                                    grp.Id, grp.Name, grp.Code ?? "(null)", grp.ModelType, grp.IsDefaultForType,
+                                    string.Join("; ", modelList));
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation("[ImageGenRunWorker] 未找到 AppCaller: {AppCallerCode}，将自动注册并使用默认模型池", appCallerCode);
+                }
+                
                 var resolved = await scheduler.ResolveModelAsync(appCallerCode, "generation", ct);
 
-                _logger.LogInformation("[ImageGenRunWorker] ResolveModelAsync: appCallerCode={AppCallerCode}, resolved={Resolved}, resolutionType={ResolutionType}, modelGroupId={ModelGroupId}",
-                    appCallerCode, resolved != null, resolved?.ResolutionType, resolved?.ModelGroupId);
+                _logger.LogInformation(
+                    "[ImageGenRunWorker] SmartModelScheduler.ResolveModelAsync 结果:\n" +
+                    "  有结果: {HasResolved}\n" +
+                    "  ResolutionType: {ResolutionType}\n" +
+                    "  ModelGroupId: {ModelGroupId}\n" +
+                    "  ModelGroupName: {ModelGroupName}\n" +
+                    "  PlatformId: {PlatformId}\n" +
+                    "  ModelId: {ModelId}",
+                    resolved != null, resolved?.ResolutionType, resolved?.ModelGroupId ?? "(null)", 
+                    resolved?.ModelGroupName ?? "(null)", resolved?.PlatformId ?? "(null)", resolved?.ModelId ?? "(null)");
 
                 if (resolved != null)
                 {
@@ -722,16 +786,27 @@ public class ImageGenRunWorker : BackgroundService
                     modelGroupName = resolved.ModelGroupName;
                     resolvedPlatformId = resolved.PlatformId;
                     resolvedModelId = resolved.ModelId;
-
-                    _logger.LogInformation("生图使用模型池调度: appCallerCode={AppCallerCode}, resolutionType={ResolutionType}, modelGroup={ModelGroup}, platformId={PlatformId}, modelId={ModelId}",
-                        appCallerCode, resolutionType, modelGroupName, resolvedPlatformId, resolvedModelId);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "通过 AppCaller 获取模型池失败: appCallerCode={AppCallerCode}，将使用直连单模型", appCallerCode);
+                _logger.LogWarning(ex, "[ImageGenRunWorker] 通过 AppCaller 获取模型池失败: appCallerCode={AppCallerCode}，将使用直连单模型", appCallerCode);
             }
         }
+
+        // ========== 关键日志：最终决定 ==========
+        var willOverride = !string.IsNullOrWhiteSpace(resolvedPlatformId) && !string.IsNullOrWhiteSpace(resolvedModelId);
+        _logger.LogInformation(
+            "[ImageGenRunWorker] ===== 模型调度结果 =====\n" +
+            "  是否覆盖前端选择: {WillOverride}\n" +
+            "  ResolutionType: {ResolutionType}\n" +
+            "  ModelGroupId: {ModelGroupId}\n" +
+            "  ModelGroupName: {ModelGroupName}\n" +
+            "  最终 PlatformId: {FinalPlatformId} (前端期望: {OriginalPlatformId})\n" +
+            "  最终 ModelId: {FinalModelId} (前端期望: {OriginalModelId})",
+            willOverride, resolutionType, modelGroupId ?? "(null)", modelGroupName ?? "(null)",
+            willOverride ? resolvedPlatformId : run.PlatformId, run.PlatformId ?? "(null)",
+            willOverride ? resolvedModelId : run.ModelId, run.ModelId ?? "(null)");
 
         // 更新 Run 对象和数据库
         var updateDef = Builders<ImageGenRun>.Update
@@ -740,8 +815,17 @@ public class ImageGenRunWorker : BackgroundService
             .Set(x => x.ModelGroupName, modelGroupName);
 
         // 如果通过模型池调度获取了新的 platformId 和 modelId，也一并更新
-        if (!string.IsNullOrWhiteSpace(resolvedPlatformId) && !string.IsNullOrWhiteSpace(resolvedModelId))
+        if (willOverride)
         {
+            _logger.LogWarning(
+                "[ImageGenRunWorker] !!! 注意：模型池调度覆盖了前端选择 !!!\n" +
+                "  原 PlatformId: {OriginalPlatformId} -> 新: {NewPlatformId}\n" +
+                "  原 ModelId: {OriginalModelId} -> 新: {NewModelId}\n" +
+                "  原因: AppCallerCode '{AppCallerCode}' 绑定了模型池 '{ModelGroupName}'",
+                run.PlatformId ?? "(null)", resolvedPlatformId,
+                run.ModelId ?? "(null)", resolvedModelId,
+                appCallerCode, modelGroupName ?? "(unknown)");
+                
             updateDef = updateDef
                 .Set(x => x.PlatformId, resolvedPlatformId)
                 .Set(x => x.ModelId, resolvedModelId)
@@ -756,6 +840,8 @@ public class ImageGenRunWorker : BackgroundService
         run.ModelGroupName = modelGroupName;
 
         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, updateDef, cancellationToken: ct);
+        
+        _logger.LogInformation("[ImageGenRunWorker] ===== 模型调度完成 =====");
     }
 }
 

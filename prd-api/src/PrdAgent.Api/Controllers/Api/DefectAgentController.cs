@@ -609,6 +609,41 @@ public class DefectAgentController : ControllerBase
 
         _logger.LogInformation("[{AppKey}] Defect submitted: {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
 
+        // 给 assignee 发送通知
+        if (!string.IsNullOrEmpty(defect.AssigneeId))
+        {
+            var notificationKey = $"defect-submitted:{defect.Id}";
+            var existingNotification = await _db.AdminNotifications
+                .Find(x => x.Key == notificationKey)
+                .FirstOrDefaultAsync(ct);
+
+            if (existingNotification == null)
+            {
+                var reporterName = defect.ReporterName ?? defect.ReporterUsername ?? "某用户";
+                var titlePreview = !string.IsNullOrWhiteSpace(defect.Title)
+                    ? (defect.Title.Length > 30 ? defect.Title[..30] + "..." : defect.Title)
+                    : "无标题";
+
+                var notification = new AdminNotification
+                {
+                    Key = notificationKey,
+                    TargetUserId = defect.AssigneeId,
+                    Title = $"收到新缺陷：{defect.DefectNo}",
+                    Message = $"{reporterName} 给你提交了一个缺陷：{titlePreview}",
+                    Level = defect.Severity == DefectSeverity.Critical ? "error" :
+                            defect.Severity == DefectSeverity.Major ? "warning" : "info",
+                    ActionLabel = "查看详情",
+                    ActionUrl = $"/defect-agent?id={defect.Id}",
+                    Source = "defect-agent",
+                    ExpiresAt = DateTime.UtcNow.AddDays(7)
+                };
+
+                await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: ct);
+                _logger.LogInformation("[{AppKey}] Notification sent to assignee {AssigneeId} for defect {DefectNo}",
+                    AppKey, defect.AssigneeId, defect.DefectNo);
+            }
+        }
+
         return Ok(ApiResponse<object>.Ok(new { defect }));
     }
 

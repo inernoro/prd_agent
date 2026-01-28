@@ -35,7 +35,7 @@ import {
   MessageCircle,
   Bot,
 } from 'lucide-react';
-import { resolveAvatarUrl } from '@/lib/avatar';
+import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 
 const statusLabels: Record<string, string> = {
   [DefectStatus.Draft]: '草稿',
@@ -109,6 +109,7 @@ export function DefectDetailPanel() {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [comment, setComment] = useState('');
+  const [commentFocused, setCommentFocused] = useState(false);
   const [sendingComment, setSendingComment] = useState(false);
   const [messages, setMessages] = useState<DefectMessage[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<DefectAttachment[]>([]);
@@ -394,47 +395,28 @@ export function DefectDetailPanel() {
             style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
           >
             <div className="flex items-center gap-3 min-w-0 flex-1">
-              <Bug size={18} style={{ color: 'var(--accent-primary)' }} className="flex-shrink-0" />
-              <span
-                className="text-[12px] font-mono px-2 py-1 rounded flex-shrink-0"
+              {/* Bug icon + 缺陷编号 */}
+              <div
+                className="flex items-center gap-1.5 px-2 py-1 rounded flex-shrink-0"
                 style={{
                   background: 'rgba(255,255,255,0.06)',
-                  color: 'var(--text-muted)',
                 }}
               >
-                {defect.defectNo}
-              </span>
-              <span
-                className="text-[11px] px-2 py-1 rounded flex-shrink-0"
-                style={{ background: `${statusColor}20`, color: statusColor }}
-              >
-                {statusLabel}
-              </span>
+                <Bug size={14} style={{ color: 'var(--accent-primary)' }} />
+                <span
+                  className="text-[12px] font-mono"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  {defect.defectNo}
+                </span>
+              </div>
+              {/* 时间 */}
               <div
-                className="w-px h-4 mx-1 flex-shrink-0"
-                style={{ background: 'rgba(255,255,255,0.1)' }}
-              />
-              {/* 提交人 → 被指派人 */}
-              <div className="flex items-center gap-2 min-w-0">
-                <div
-                  className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{ background: 'rgba(100,180,255,0.2)' }}
-                >
-                  <User size={12} style={{ color: 'rgba(100,180,255,0.9)' }} />
-                </div>
-                <span className="text-[12px] truncate" style={{ color: 'var(--text-secondary)' }}>
-                  {defect.reporterName || '未知'}
-                </span>
-                <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} className="flex-shrink-0" />
-                <div
-                  className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{ background: 'rgba(255,180,70,0.2)' }}
-                >
-                  <User size={12} style={{ color: 'rgba(255,180,70,0.9)' }} />
-                </div>
-                <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
-                  {defect.assigneeName || '未指派'}
-                </span>
+                className="flex items-center gap-1.5 text-[11px]"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <Clock size={12} />
+                <span>{formatDateTime(defect.createdAt)}</span>
               </div>
             </div>
             <button
@@ -665,8 +647,59 @@ export function DefectDetailPanel() {
                   className="mx-1 h-3 w-px"
                   style={{ background: 'rgba(255,255,255,0.1)' }}
                 />
-                <Clock size={12} style={{ color: 'var(--text-muted)' }} />
-                <span>{formatDateTime(defect.createdAt)}</span>
+                {/* 提交人 */}
+                <div
+                  className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded flex-shrink-0 text-[10px]"
+                  style={{
+                    background: 'rgba(255,255,255,0.06)',
+                    color: 'var(--text-muted)',
+                    border: userId && defect.reporterId === userId
+                      ? '1px solid rgba(255, 200, 80, 0.85)'
+                      : '1px solid rgba(255,255,255,0.08)',
+                    boxShadow: userId && defect.reporterId === userId
+                      ? '0 0 0 1px rgba(255, 200, 80, 0.25) inset'
+                      : undefined,
+                  }}
+                  title={defect.reporterName || '未知'}
+                >
+                  <img
+                    src={resolveAvatarUrl({ username: defect.reporterUsername ?? undefined })}
+                    alt={defect.reporterName || '未知'}
+                    className="h-3 w-3 rounded-full object-cover"
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = resolveNoHeadAvatarUrl();
+                    }}
+                  />
+                  <span className="truncate max-w-[60px]">{defect.reporterName || '未知'}</span>
+                </div>
+                <ArrowRight size={10} style={{ color: 'var(--text-muted)' }} className="flex-shrink-0" />
+                {/* 被指派人 */}
+                <div
+                  className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded flex-shrink-0 text-[10px]"
+                  style={{
+                    background: 'rgba(255,255,255,0.06)',
+                    color: 'var(--text-muted)',
+                    border: userId && defect.assigneeId === userId
+                      ? '1px solid rgba(255, 200, 80, 0.85)'
+                      : '1px solid rgba(255,255,255,0.08)',
+                    boxShadow: userId && defect.assigneeId === userId
+                      ? '0 0 0 1px rgba(255, 200, 80, 0.25) inset'
+                      : undefined,
+                  }}
+                  title={defect.assigneeName || '未指派'}
+                >
+                  <img
+                    src={resolveAvatarUrl({ username: defect.assigneeUsername ?? undefined })}
+                    alt={defect.assigneeName || '未指派'}
+                    className="h-3 w-3 rounded-full object-cover"
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = resolveNoHeadAvatarUrl();
+                    }}
+                  />
+                  <span className="truncate max-w-[60px]">{defect.assigneeName || '未指派'}</span>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 {canDelete && !confirmingDelete && (
@@ -957,10 +990,15 @@ export function DefectDetailPanel() {
                   </div>
                 )}
                 <div
-                  className="flex items-center gap-2 rounded-lg px-3 py-2"
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 transition-all duration-200"
                   style={{
                     background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    border: commentFocused 
+                      ? '1px solid rgba(214, 178, 106, 0.55)' 
+                      : '1px solid rgba(255,255,255,0.08)',
+                    boxShadow: commentFocused 
+                      ? '0 0 0 2px rgba(214, 178, 106, 0.15)' 
+                      : 'none',
                   }}
                   onDrop={handleCommentDrop}
                   onDragOver={handleCommentDragOver}
@@ -985,8 +1023,10 @@ export function DefectDetailPanel() {
                       }
                     }}
                     onPaste={handleCommentPaste}
+                    onFocus={() => setCommentFocused(true)}
+                    onBlur={() => setCommentFocused(false)}
                     placeholder="添加评论..."
-                    className="flex-1 bg-transparent outline-none text-[13px]"
+                    className="flex-1 bg-transparent outline-none text-[13px] no-focus-ring"
                     style={{ color: 'var(--text-primary)' }}
                     disabled={sendingComment}
                   />
