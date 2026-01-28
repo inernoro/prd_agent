@@ -47,6 +47,7 @@ public sealed class AdminPermissionMiddleware
         return false;
     }
 
+
     public async Task Invoke(HttpContext context, IAdminPermissionService permissionService)
     {
         var path = context.Request.Path.Value ?? string.Empty;
