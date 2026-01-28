@@ -77,31 +77,39 @@ export default function WorkshopLabTab() {
     addOutput('getPlainText()', result);
   }, [addOutput]);
 
-  // 两阶段选择：点击图片 → 在编辑器中插入/移除 pending chip
+  // 两阶段选择：点击图片 → 替换当前 pending chip（不是切换）
   const handleImageClick = useCallback((option: ImageOption) => {
     const composer = composerRef.current;
     if (!composer) return;
 
+    // 如果点击的是同一张图片（已经是 pending），不做任何操作
     if (pendingChipKeys.has(option.key)) {
-      // 已有 pending chip，移除它
-      composer.removeChipByKey(option.key);
-      setPendingChipKeys((prev) => {
-        const next = new Set(prev);
-        next.delete(option.key);
-        return next;
-      });
-      addOutput('pendingChip.remove()', { key: option.key, label: option.label });
-    } else {
-      // 插入 pending chip（灰色）
-      composer.focus();
-      composer.insertImageChip(option, { pending: true });
-      setPendingChipKeys((prev) => {
-        const next = new Set(prev);
-        next.add(option.key);
-        return next;
-      });
-      addOutput('pendingChip.insert()', { key: option.key, label: option.label });
+      addOutput('pendingChip.same()', { key: option.key, label: option.label });
+      return;
     }
+
+    // 移除所有现有的 pending chips（替换逻辑）
+    pendingChipKeys.forEach((key) => {
+      composer.removeChipByKey(key);
+    });
+
+    // 插入新的 pending chip（灰色）
+    composer.insertImageChip(option, { pending: true });
+    setPendingChipKeys(new Set([option.key]));
+    addOutput('pendingChip.replace()', { key: option.key, label: option.label });
+  }, [pendingChipKeys, addOutput]);
+
+  // 点击文本框时确认 pending chips（灰→蓝）
+  const handleInputContainerClick = useCallback(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+
+    if (pendingChipKeys.size > 0) {
+      composer.confirmPendingChips();
+      addOutput('confirmPendingChips()', { keys: [...pendingChipKeys] });
+      setPendingChipKeys(new Set());
+    }
+    composer.focus();
   }, [pendingChipKeys, addOutput]);
 
   // 直接插入 chip（用于自动测试等场景）
@@ -425,7 +433,7 @@ export default function WorkshopLabTab() {
               border: '1px solid var(--border-default)',
             }}>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>模拟画布（点击图片 → 插入/移除灰色 chip）</span>
+                <span>模拟画布（点击图片预选 → 点击文本框确认）</span>
                 {pendingChipKeys.size > 0 && (
                   <span style={{ color: 'rgba(156, 163, 175, 1)', fontSize: 10 }}>
                     待确认 {pendingChipKeys.size} 张
@@ -530,9 +538,9 @@ export default function WorkshopLabTab() {
               border: '1px solid var(--border-default)',
             }}>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-                主输入框（灰色 chip = 待确认，发送时自动变蓝）
+                主输入框（点击文本框确认灰色 chip → 变蓝）
               </div>
-              {/* 输入框容器 - pending chips 直接插入在编辑器中 */}
+              {/* 输入框容器 - 点击时确认 pending chips */}
               <div
                 style={{
                   background: 'var(--bg-base)',
@@ -544,7 +552,7 @@ export default function WorkshopLabTab() {
                   transition: 'border-color 0.15s',
                   cursor: 'text',
                 }}
-                onClick={() => composerRef.current?.focus()}
+                onClick={handleInputContainerClick}
               >
                 <RichComposer
                   ref={composerRef}
