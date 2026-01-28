@@ -9,6 +9,11 @@ public class AdminNotification
     /// </summary>
     public string? Key { get; set; }
 
+    /// <summary>
+    /// 目标用户 ID。为空表示全局通知（所有人可见）。
+    /// </summary>
+    public string? TargetUserId { get; set; }
+
     public string Title { get; set; } = string.Empty;
     public string? Message { get; set; }
     public string Level { get; set; } = "info";

@@ -681,13 +681,24 @@ public class ImageGenRunWorker : BackgroundService
     /// </summary>
     private async Task ResolveModelGroupAsync(ImageGenRun run, CancellationToken ct)
     {
-        _logger.LogInformation("[ImageGenRunWorker] ResolveModelGroupAsync called: runId={RunId}, appKey={AppKey}, appCallerCode={AppCallerCode}, platformId={PlatformId}, modelId={ModelId}, existingModelGroupId={ModelGroupId}",
-            run.Id, run.AppKey, run.AppCallerCode, run.PlatformId, run.ModelId, run.ModelGroupId);
+        // 保存前端期望的模型信息（用于日志对比）
+        var frontendExpectedPlatformId = run.PlatformId;
+        var frontendExpectedModelId = run.ModelId;
+        var frontendExpectedConfigModelId = run.ConfigModelId;
+        
+        // 简洁日志：记录输入参数（包含用户 prompt）
+        var firstPrompt = run.Items?.FirstOrDefault()?.Prompt ?? "";
+        var promptPreview = firstPrompt.Length > 30 ? firstPrompt.Substring(0, 30) + "..." : firstPrompt;
+        _logger.LogInformation(
+            "[生图模型匹配] 开始 | RunId={RunId} | 期望={ExpectedCode} | Prompt=\"{Prompt}\"",
+            run.Id, frontendExpectedModelId ?? "(随机)", promptPreview);
 
         // 如果已经有模型解析类型信息，跳过
         if (run.ModelResolutionType.HasValue)
         {
-            _logger.LogInformation("[ImageGenRunWorker] 已有模型解析类型信息，跳过: resolutionType={ResolutionType}", run.ModelResolutionType);
+            _logger.LogInformation(
+                "[视觉创作-专属模型匹配] 跳过匹配（已有解析信息）: resolutionType={ResolutionType}, 使用模型={ModelId}", 
+                run.ModelResolutionType, run.ModelId ?? "(null)");
             return;
         }
 
@@ -703,6 +714,8 @@ public class ImageGenRunWorker : BackgroundService
         {
             appCallerCode = $"{run.AppKey}.image::generation";
         }
+        
+        // 简洁：不再单独打印 AppCallerCode
 
         if (!string.IsNullOrWhiteSpace(appCallerCode))
         {
@@ -710,10 +723,29 @@ public class ImageGenRunWorker : BackgroundService
             {
                 using var scope = _scopeFactory.CreateScope();
                 var scheduler = scope.ServiceProvider.GetRequiredService<ISmartModelScheduler>();
-                var resolved = await scheduler.ResolveModelAsync(appCallerCode, "generation", ct);
-
-                _logger.LogInformation("[ImageGenRunWorker] ResolveModelAsync: appCallerCode={AppCallerCode}, resolved={Resolved}, resolutionType={ResolutionType}, modelGroupId={ModelGroupId}",
-                    appCallerCode, resolved != null, resolved?.ResolutionType, resolved?.ModelGroupId);
+                
+                // 查询 AppCaller 绑定的模型池（简化日志）
+                var appCaller = await _db.LLMAppCallers.Find(a => a.AppCode == appCallerCode).FirstOrDefaultAsync(ct);
+                var requirement = appCaller?.ModelRequirements.FirstOrDefault(r => r.ModelType == "generation");
+                
+                // 获取所有绑定的模型池 code 列表
+                var boundPoolCodes = new List<string>();
+                if (requirement?.ModelGroupIds != null && requirement.ModelGroupIds.Count > 0)
+                {
+                    foreach (var gid in requirement.ModelGroupIds)
+                    {
+                        var grp = await _db.ModelGroups.Find(g => g.Id == gid).FirstOrDefaultAsync(ct);
+                        if (grp != null) boundPoolCodes.Add(grp.Code ?? grp.Name);
+                    }
+                }
+                
+                _logger.LogInformation(
+                    "[生图模型匹配] 可选模型池({Count}个): [{PoolCodes}]",
+                    boundPoolCodes.Count, string.Join(", ", boundPoolCodes));
+                
+                // 传递用户期望的模型池 code
+                var expectedModelCode = frontendExpectedModelId;
+                var resolved = await scheduler.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct);
 
                 if (resolved != null)
                 {
@@ -722,15 +754,36 @@ public class ImageGenRunWorker : BackgroundService
                     modelGroupName = resolved.ModelGroupName;
                     resolvedPlatformId = resolved.PlatformId;
                     resolvedModelId = resolved.ModelId;
-
-                    _logger.LogInformation("生图使用模型池调度: appCallerCode={AppCallerCode}, resolutionType={ResolutionType}, modelGroup={ModelGroup}, platformId={PlatformId}, modelId={ModelId}",
-                        appCallerCode, resolutionType, modelGroupName, resolvedPlatformId, resolvedModelId);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "通过 AppCaller 获取模型池失败: appCallerCode={AppCallerCode}，将使用直连单模型", appCallerCode);
+                _logger.LogWarning(ex, "[视觉创作-专属模型匹配] 通过 AppCaller 获取模型池失败: appCallerCode={AppCallerCode}，将使用前端指定的模型", appCallerCode);
             }
+        }
+
+        // 最终结果
+        var hasSchedulerResult = !string.IsNullOrWhiteSpace(resolvedPlatformId) && !string.IsNullOrWhiteSpace(resolvedModelId);
+        var finalPlatformId = hasSchedulerResult ? resolvedPlatformId : run.PlatformId;
+        var finalModelId = hasSchedulerResult ? resolvedModelId : run.ModelId;
+        
+        // 检查模型池是否匹配成功
+        var isPoolMatched = !string.IsNullOrWhiteSpace(frontendExpectedModelId) 
+            && (string.Equals(frontendExpectedModelId, modelGroupName, StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(modelGroupName));
+        
+        // 一行简洁日志：用户期望 -> 匹配模型池 -> 实际模型
+        _logger.LogInformation(
+            "[生图模型匹配] 完成 | 期望={Expected} | 匹配池={MatchedPool} | 实际模型={ActualModel} | 匹配{MatchResult}",
+            frontendExpectedModelId ?? "(随机)",
+            modelGroupName ?? "(无)",
+            finalModelId ?? "(未知)",
+            isPoolMatched || string.IsNullOrWhiteSpace(frontendExpectedModelId) ? "成功" : "失败");
+        
+        // 匹配失败时打印警告
+        if (!string.IsNullOrWhiteSpace(frontendExpectedModelId) && !isPoolMatched && !string.IsNullOrWhiteSpace(modelGroupName))
+        {
+            _logger.LogWarning("[生图模型匹配] 匹配失败: 期望={Expected}, 实际={Actual}", frontendExpectedModelId, modelGroupName);
         }
 
         // 更新 Run 对象和数据库
@@ -739,8 +792,8 @@ public class ImageGenRunWorker : BackgroundService
             .Set(x => x.ModelGroupId, modelGroupId)
             .Set(x => x.ModelGroupName, modelGroupName);
 
-        // 如果通过模型池调度获取了新的 platformId 和 modelId，也一并更新
-        if (!string.IsNullOrWhiteSpace(resolvedPlatformId) && !string.IsNullOrWhiteSpace(resolvedModelId))
+        // 如果通过模型池调度获取了结果，使用调度结果更新 Run
+        if (hasSchedulerResult)
         {
             updateDef = updateDef
                 .Set(x => x.PlatformId, resolvedPlatformId)

@@ -22,6 +22,7 @@ import {
   Bell,
   CheckCircle2,
   X,
+  Bug,
   type LucideIcon,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -39,6 +40,8 @@ import { Dialog } from '@/components/ui/Dialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateUserAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
+import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
+import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 
 type NavItem = { key: string; label: string; icon: React.ReactNode; description?: string };
 
@@ -291,6 +294,7 @@ export default function AppShell() {
   return (
     <div className="h-full w-full relative overflow-hidden" style={{ background: 'var(--bg-base)' }}>
       <SystemDialogHost />
+      <GlobalDefectSubmitDialog />
       {toastNotification && (
         <div
           className="fixed bottom-5 right-5 z-[120] w-[360px] rounded-[18px] p-4 shadow-xl"
@@ -592,6 +596,21 @@ export default function AppShell() {
                   )}
                 </DropdownMenu.Item>
 
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => useGlobalDefectStore.getState().openDialog()}
+                >
+                  <Bug size={16} className="shrink-0" />
+                  <span className="text-[13px]">提交缺陷</span>
+                  <span
+                    className="ml-auto text-[10px]"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    {navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+B
+                  </span>
+                </DropdownMenu.Item>
+
                 <DropdownMenu.Separator
                   className="h-px mx-2 my-1"
                   style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 20%, rgba(255, 255, 255, 0.08) 80%, transparent 100%)' }}
@@ -609,17 +628,20 @@ export default function AppShell() {
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
           
-          {/* 折叠按钮（仅展开时显示，在 DropdownMenu 外部） */}
+          {/* 提交缺陷按钮 + 折叠按钮（仅展开时显示，在 DropdownMenu 外部） */}
           {!collapsed && (
-            <button
-              type="button"
-              onClick={toggleNavCollapsed}
-              className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 opacity-40 hover:opacity-100 shrink-0"
-              style={{ color: 'var(--text-muted)' }}
-              aria-label="折叠侧边栏"
-            >
-              <PanelLeftClose size={14} />
-            </button>
+            <>
+              <DefectSubmitButton collapsed={collapsed} />
+              <button
+                type="button"
+                onClick={toggleNavCollapsed}
+                className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 opacity-40 hover:opacity-100 shrink-0"
+                style={{ color: 'var(--text-muted)' }}
+                aria-label="折叠侧边栏"
+              >
+                <PanelLeftClose size={14} />
+              </button>
+            </>
           )}
             </div>
           </div>

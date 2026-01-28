@@ -41,7 +41,27 @@ export interface DefectAttachment {
   url: string;
   thumbnailUrl?: string;
   uploadedAt: string;
+  /**
+   * 附件类型：
+   * - file: 用户上传的普通文件（默认）
+   * - screenshot: 自动截图
+   * - log-request: 请求日志
+   * - log-error: 错误日志
+   */
+  type?: string;
+  /** 是否系统自动生成（日志类附件不可删除、不可下载） */
+  isSystemGenerated?: boolean;
 }
+
+/**
+ * 缺陷附件类型常量
+ */
+export const DefectAttachmentType = {
+  File: 'file',
+  Screenshot: 'screenshot',
+  LogRequest: 'log-request',
+  LogError: 'log-error',
+} as const;
 
 /**
  * 缺陷报告
@@ -59,8 +79,10 @@ export interface DefectReport {
   priority: string;
   // 后端返回 reporterId/assigneeId (非 reporterUserId/assigneeUserId)
   reporterId: string;
+  reporterAvatarFileName?: string;
   reporterName?: string;
   assigneeId?: string;
+  assigneeAvatarFileName?: string;
   assigneeName?: string;
   reporterUnread?: boolean;
   assigneeUnread?: boolean;
@@ -68,9 +90,11 @@ export interface DefectReport {
   missingFields?: string[];
   resolution?: string;
   resolvedById?: string;
+  resolvedByAvatarFileName?: string;
   resolvedByName?: string;
   rejectReason?: string;
   rejectedById?: string;
+  rejectedByAvatarFileName?: string;
   rejectedByName?: string;
   resolvedAt?: string;
   closedAt?: string;
@@ -333,3 +357,26 @@ export type BatchMoveDefectsContract = (input: {
   defectIds: string[];
   folderId?: string;
 }) => Promise<ApiResponse<{ movedCount: number }>>;
+
+/**
+ * 日志预览项
+ */
+export interface ApiLogPreviewItem {
+  time: string;
+  method: string;
+  path: string;
+  statusCode: number;
+  durationMs: number;
+  hasError: boolean;
+  errorCode?: string;
+  apiSummary?: string;
+}
+
+/**
+ * 预览将要采集的 API 日志
+ */
+export type PreviewApiLogsContract = () => Promise<ApiResponse<{
+  totalCount: number;
+  errorCount: number;
+  items: ApiLogPreviewItem[];
+}>>;

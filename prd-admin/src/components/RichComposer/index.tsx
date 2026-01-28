@@ -48,6 +48,8 @@ interface RichComposerProps {
   onChange?: (text: string) => void;
   /** Enter 发送回调（返回 true 阻止默认换行） */
   onSubmit?: () => boolean | void;
+  /** 粘贴图片回调（返回 true 表示已处理，阻止默认行为） */
+  onPasteImage?: (file: File) => boolean | void;
   /** 样式 */
   style?: React.CSSProperties;
   /** 类名 */
@@ -64,6 +66,7 @@ function EditorInner({
   imageOptions,
   onChange,
   onSubmit,
+  onPasteImage,
   style,
   className,
   minHeight = 40,
@@ -72,6 +75,22 @@ function EditorInner({
 }: RichComposerProps & { composerRef: React.Ref<RichComposerRef> }) {
   const [editor] = useLexicalComposerContext();
   const contentEditableRef = useRef<HTMLDivElement>(null);
+
+  // 处理粘贴图片
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      if (!onPasteImage) return;
+      const items = Array.from(e.clipboardData?.items ?? []);
+      const imageItem = items.find((it) => it.type.startsWith('image/'));
+      if (imageItem) {
+        const file = imageItem.getAsFile();
+        if (file && onPasteImage(file)) {
+          e.preventDefault();
+        }
+      }
+    },
+    [onPasteImage]
+  );
 
   // 暴露 ref 方法
   useImperativeHandle(
@@ -184,6 +203,7 @@ function EditorInner({
           <ContentEditable
             ref={contentEditableRef}
             className={className}
+            onPaste={handlePaste}
             style={{
               outline: 'none',
               minHeight,

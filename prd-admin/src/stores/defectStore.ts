@@ -12,7 +12,7 @@ import type {
   DefectStats,
 } from '@/services/contracts/defectAgent';
 
-type FilterType = 'submitted' | 'assigned' | 'completed' | 'rejected' | 'all';
+type FilterType = 'submitted' | 'assigned' | 'all';
 
 interface DefectState {
   // Data

@@ -777,6 +777,82 @@ select optgroup {
   }
 }
 
+/* 缺陷提交按钮呼吸动画（侧边栏常驻按钮用） */
+@keyframes defectSubmitBreath {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.08);
+  }
+}
+
+.defect-submit-breath {
+  animation: defectSubmitBreath 2.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .defect-submit-breath {
+    animation: none !important;
+    opacity: 0.6 !important;
+  }
+}
+
+/* 缺陷提交按钮爆闪动画（生图失败时触发） */
+@keyframes defectSubmitFlash {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+    color: var(--text-muted);
+  }
+  15% {
+    opacity: 1;
+    transform: scale(1.3);
+    color: rgba(239, 68, 68, 1);
+    filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.8));
+  }
+  30% {
+    opacity: 1;
+    transform: scale(0.95);
+    color: rgba(239, 68, 68, 0.9);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(1.2);
+    color: rgba(239, 68, 68, 1);
+    filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.9));
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1);
+    color: rgba(239, 68, 68, 0.8);
+  }
+  75% {
+    opacity: 1;
+    transform: scale(1.1);
+    color: rgba(239, 68, 68, 0.6);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    color: var(--text-muted);
+    filter: none;
+  }
+}
+
+.defect-submit-flash {
+  animation: defectSubmitFlash 1.5s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .defect-submit-flash {
+    animation: none !important;
+    color: rgba(239, 68, 68, 0.8) !important;
+  }
+}
+
 /* success.html 参考：三态按钮 + confetti（局部复用组件） */
 @keyframes saLoading {
   0% { cy: 10; }

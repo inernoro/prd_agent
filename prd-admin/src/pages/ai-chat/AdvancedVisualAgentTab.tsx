@@ -46,6 +46,7 @@ import type { Model } from '@/types/admin';
 import {
   ArrowUpToLine,
   ArrowDownToLine,
+  Bug,
   Check,
   ChevronUp,
   ChevronDown,
@@ -71,6 +72,7 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
+import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 
 type CanvasImageItem = {
   key: string;
@@ -449,8 +451,8 @@ type UiMsg = {
 // 图片生成结果/错误的富消息编码 —— 持久化在 content 字符串中
 const GEN_ERROR_PREFIX = '[GEN_ERROR]';
 const GEN_DONE_PREFIX = '[GEN_DONE]';
-type GenErrorMeta = { msg: string; refSrc?: string; prompt?: string };
-type GenDoneMeta = { src: string; refSrc?: string; prompt?: string };
+type GenErrorMeta = { msg: string; refSrc?: string; prompt?: string; runId?: string; modelPool?: string };
+type GenDoneMeta = { src: string; refSrc?: string; prompt?: string; runId?: string; modelPool?: string };
 function buildGenErrorContent(meta: GenErrorMeta): string {
   return `${GEN_ERROR_PREFIX}${JSON.stringify(meta)}`;
 }
@@ -464,6 +466,14 @@ function parseGenError(content: string): GenErrorMeta | null {
 function parseGenDone(content: string): GenDoneMeta | null {
   if (!content.startsWith(GEN_DONE_PREFIX)) return null;
   try { return JSON.parse(content.slice(GEN_DONE_PREFIX.length)) as GenDoneMeta; } catch { return null; }
+}
+
+// 提取用户消息中的模型池标记 (@model:xxx)
+function extractModelToken(text: string): { model: string | null; cleanText: string } {
+  const re = /\(@model:([^)]+)\)\s*/i;
+  const match = re.exec(text);
+  if (!match) return { model: null, cleanText: text };
+  return { model: match[1].trim(), cleanText: text.replace(re, '').trim() };
 }
 
 type CanvasTool = 'select' | 'hand' | 'mark';
@@ -614,13 +624,37 @@ async function downloadImage(src: string, filename: string) {
     .replaceAll('>', '-')
     .replaceAll('|', '-')
     .slice(0, 80);
-  const a = document.createElement('a');
-  a.href = src;
-  a.download = safe ? `${safe}.png` : 'image.png';
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  
+  const finalName = safe ? `${safe}.png` : 'image.png';
+  
+  try {
+    // 使用 fetch + blob 方式下载，解决跨域图片无法直接下载的问题
+    const response = await fetch(src, { mode: 'cors' });
+    if (!response.ok) throw new Error('Fetch failed');
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = finalName;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    
+    // 延迟释放 blob URL
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  } catch {
+    // 如果 fetch 失败（如 CORS 问题），回退到直接下载方式
+    const a = document.createElement('a');
+    a.href = src;
+    a.download = finalName;
+    a.rel = 'noopener';
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
 }
 
 
@@ -710,6 +744,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     isDedicated?: boolean;
     isDefault?: boolean;
     isLegacy?: boolean;
+    /** 模型池中第一个模型的实际 modelId（用于查询适配器信息） */
+    actualModelId?: string;
   };
   const poolModels = useMemo<ModelWithSource[]>(() => {
     if (imageGenPools.length === 0) return [];
@@ -720,7 +756,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         return {
           id: `pool_${g.id}`,
           name: g.name,
-          modelName: first.modelId,
+          // 发送给后台的模型池 code（用于匹配模型池）
+          modelName: g.code,
+          // 用于查询适配器信息的实际模型 ID
+          actualModelId: first.modelId,
           platformId: first.platformId,
           enabled: g.models.some((m) => m.healthStatus === 'Healthy' || m.healthStatus === 'Degraded'),
           isMain: false,
@@ -803,13 +842,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   type SizeOption = { size: string; aspectRatio: string | null; resolution: string | null };
   const [sizeOptions, setSizeOptions] = useState<SizeOption[]>([]);
   useEffect(() => {
-    const modelName = effectiveModel?.modelName;
-    if (!modelName) {
+    // 优先使用 actualModelId（模型池中实际模型的 ID），否则使用 modelName
+    const modelNameForAdapter = (effectiveModel as ModelWithSource | undefined)?.actualModelId || effectiveModel?.modelName;
+    if (!modelNameForAdapter) {
       setSizeOptions([]);
       return;
     }
 
-    getAdapterInfoByModelName(modelName)
+    getAdapterInfoByModelName(modelNameForAdapter)
       .then((res) => {
         if (res.success && res.data?.matched) {
           const options = Array.isArray(res.data.sizeOptions) ? res.data.sizeOptions : [];
@@ -823,7 +863,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }
       })
       .catch(() => setSizeOptions([]));
-  }, [effectiveModel?.modelName]);
+  }, [effectiveModel]);
 
   // 按分辨率分组的 sizeOptions
   const sizeOptionsByResolution = useMemo(() => {
@@ -850,6 +890,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
     return result;
   }, [sizeOptionsByResolution]);
+
+  // 尺寸到比例的映射（使用后端返回的 aspectRatio，避免 GCD 计算偏差）
+  const sizeToAspectMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const opt of sizeOptions) {
+      if (opt.size && opt.aspectRatio) {
+        map.set(opt.size.toLowerCase(), opt.aspectRatio);
+      }
+    }
+    return map;
+  }, [sizeOptions]);
 
   // 初始化水印配置
   useEffect(() => {
@@ -1008,6 +1059,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 同一张图：仅在“自动模式”下跟随像素尺寸变化（例如图片 onLoad 后 naturalW/H 刚补齐）
     if (composerSizeAutoRef.current) setComposerSize(autoSize);
   }, [autoSizeForSelectedImage, selectedSingleImageForComposer?.key]);
+
+  // 当 sizeOptions 变化时，如果当前尺寸不在支持列表中，自动选择一个有效尺寸
+  useEffect(() => {
+    if (sizeOptions.length === 0) return;
+    const currentSize = composerSize ?? '1024x1024';
+    const isCurrentValid = sizeOptions.some((opt) => opt.size?.toLowerCase() === currentSize.toLowerCase());
+    if (!isCurrentValid) {
+      // 按优先级选择：2K > 1K > 4K
+      const priorities = ['2k', '1k', '4k'] as const;
+      for (const tier of priorities) {
+        const firstOpt = ratiosByResolution[tier].values().next().value;
+        if (firstOpt?.size) {
+          composerSizeAutoRef.current = false;
+          setComposerSize(firstOpt.size);
+          return;
+        }
+      }
+    }
+  }, [sizeOptions, ratiosByResolution, composerSize]);
 
   // chip 作为内联元素，需要根据选中数量计算高度
   // 每个 chip 约 140px 宽，每行可容纳 2-3 个
@@ -1472,9 +1542,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
+  const [defectFlash, setDefectFlash] = useState(false);
   const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
   const [, setBooting] = useState(false);
   const initWorkspaceRef = useRef<{ workspaceId: string; started: boolean }>({ workspaceId: '', started: false });
+
+  // 触发缺陷提交按钮闪烁（生图失败时调用）
+  const triggerDefectFlash = useCallback(() => {
+    setDefectFlash(true);
+    setTimeout(() => setDefectFlash(false), 1500);
+  }, []);
   // debug logs removed
 
   // 重要：pushMsg 需要稳定引用（供多个 useEffect 依赖），并且不能直接依赖 workspace state（否则每次 render 变更都触发 effect）
@@ -1550,7 +1627,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     input.click();
   }, []);
 
-  const [preview, setPreview] = useState<{ open: boolean; src: string; prompt: string }>({ open: false, src: '', prompt: '' });
+  const [preview, setPreview] = useState<{ open: boolean; src: string; prompt: string; runId?: string }>({ open: false, src: '', prompt: '' });
 
   // 图片右键菜单状态
   const [imgContextMenu, setImgContextMenu] = useState<{
@@ -2602,7 +2679,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return parsed ? `${parsed.w}x${parsed.h}` : s;
     })();
     const uiSizeToken = forcedSize ? `(@size:${forcedSize}) ` : '';
-    pushMsg('User', `${inlineRefToken}${uiSizeToken}${display || reqText}`);
+    const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
+    const uiModelToken = modelPoolName ? `(@model:${modelPoolName}) ` : '';
+    pushMsg('User', `${inlineRefToken}${uiSizeToken}${uiModelToken}${display || reqText}`);
 
     let items: Array<{ prompt: string }> = [];
     let firstPrompt = '';
@@ -2910,6 +2989,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         const msg = runRes.error?.message || '生成失败';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
         pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
+        triggerDefectFlash();
         return;
       }
 
@@ -2918,6 +2998,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         const msg = '未返回 runId';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
         pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
+        triggerDefectFlash();
         return;
       }
 
@@ -2971,11 +3052,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   : x
               )
             );
-            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
+            const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
+            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName }));
           } else if (t === 'imageError' || t === 'error') {
             const msg = String(o.errorMessage ?? '生成失败');
             setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
+            const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
+            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName }));
+            triggerDefectFlash();
           }
         },
       }).then(() => {
@@ -2993,6 +3077,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const msg = e instanceof Error ? e.message : '生成失败';
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
       pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
+      triggerDefectFlash();
     }
   };
 
@@ -5750,13 +5835,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 WebkitBackdropFilter: 'blur(40px) saturate(180%)',
               }}
             >
-            <div className="min-w-0">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
                 <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                Hi，我是你的 AI 设计师
-              </div>
+                  Hi，我是你的 AI 设计师
+                </div>
                 <div className="mt-0.5 text-[9px] leading-tight" style={{ color: 'var(--text-muted)' }}>
-                点画板图片即可选中，未来可作为图生图首帧。
+                  点画板图片即可选中，未来可作为图生图首帧。
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => useGlobalDefectStore.getState().openDialog()}
+                className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
+                style={{ color: 'var(--text-muted)' }}
+                aria-label="提交缺陷"
+                title="提交缺陷"
+              >
+                <Bug size={14} className={defectFlash ? 'defect-submit-flash' : ''} />
+              </button>
             </div>
 
             {(!input.trim() && messages.length === 0) ? (
@@ -5885,7 +5982,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <button
                           type="button"
                           className="block w-full"
-                          onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '' })}
+                          onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '', runId: genDone.runId })}
                           title="点击放大"
                         >
                           <img
@@ -5938,7 +6035,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 const contentText = parsed ? parsed.clean : m.content;
                 const sizedMsg = isUser ? extractSizeToken(contentText) : { size: null as string | null, cleanText: String(contentText ?? '') };
                 const msgSize = String(sizedMsg.size ?? '').trim();
-                const msgBody = String(sizedMsg.cleanText ?? '');
+                // 解析模型池标记
+                const modeledMsg = isUser ? extractModelToken(sizedMsg.cleanText) : { model: null as string | null, cleanText: String(sizedMsg.cleanText ?? '') };
+                const msgModel = String(modeledMsg.model ?? '').trim();
+                const msgBody = String(modeledMsg.cleanText ?? '');
                 const MSG_COLLAPSE_THRESHOLD = 100;
                 const isLongMsg = msgBody.length > MSG_COLLAPSE_THRESHOLD;
                 const isExpanded = expandedMsgIds.has(m.id);
@@ -5957,7 +6057,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       }}
                     >
                       <div style={{ maxHeight: isLongMsg && !isExpanded ? 64 : undefined, overflow: isLongMsg && !isExpanded ? 'hidden' : undefined }}>
-                        {isUser && (refSrc || msgSize) ? (
+                        {isUser && (refSrc || msgSize || msgModel) ? (
                           <div className="flex flex-wrap items-center gap-1.5">
                             {refSrc ? (
                               <button
@@ -6035,6 +6135,34 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   }}
                                 >
                                   {msgSize}
+                                </span>
+                              </span>
+                            ) : null}
+
+                            {/* 模型池标签 */}
+                            {msgModel ? (
+                              <span
+                                className="inline-flex items-center gap-1"
+                                style={{
+                                  height: 18,
+                                  paddingLeft: 4,
+                                  paddingRight: 6,
+                                  borderRadius: 4,
+                                  border: '1px solid rgba(99, 102, 241, 0.35)',
+                                  background: 'rgba(99, 102, 241, 0.12)',
+                                }}
+                                title={`模型池：${msgModel}`}
+                              >
+                                <Sparkles size={10} style={{ color: 'rgba(129, 140, 248, 0.85)' }} />
+                                <span
+                                  style={{
+                                    fontSize: 10,
+                                    lineHeight: '14px',
+                                    color: 'rgba(129, 140, 248, 0.85)',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {msgModel}
                                 </span>
                               </span>
                             ) : null}
@@ -6206,6 +6334,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   void onSendRich();
                   return true;
                 }}
+                onPasteImage={(file) => {
+                  // 粘贴图片到文本框时，上传到画板（与画板粘贴行为一致）
+                  const now = Date.now();
+                  const type = (file.type || 'image/png').toLowerCase();
+                  const ext = type.includes('png') ? 'png' : type.includes('jpeg') || type.includes('jpg') ? 'jpg' : type.includes('webp') ? 'webp' : 'png';
+                  const name = (file.name && file.name.trim()) ? file.name : `clipboard_${now}.${ext}`;
+                  const normalizedFile = new File([file], name, { type });
+                  void onUploadImages([normalizedFile], { mode: 'add' });
+                  return true;
+                }}
                 style={{
                   paddingTop: composerMetaPadTop,
                 }}
@@ -6347,7 +6485,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     {(() => {
                       const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
                       const tier = detectTierFromSize(size);
-                      const aspect = detectAspectFromSize(size);
+                      // 优先使用后端返回的 aspectRatio，避免 GCD 计算偏差（如 1344x768 应该是 16:9 而不是 7:4）
+                      const aspect = sizeToAspectMap.get(size.toLowerCase()) || detectAspectFromSize(size);
                       const tierLabel = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
                       return (
                         <span style={{ whiteSpace: 'nowrap' }}>{tierLabel} · {aspect || '1:1'}</span>
@@ -6369,48 +6508,54 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           WebkitBackdropFilter: 'blur(24px)',
                         }}
                       >
-                        {/* 分辨率（档位） */}
-                        <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>分辨率</div>
-                        <div className="grid grid-cols-3 gap-1.5 mb-3">
-                          {(['1k', '2k', '4k'] as const).map((tier) => {
-                            const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
-                            const currentTier = detectTierFromSize(currentSize);
-                            const isSelected = currentTier === tier;
-                            const tierHasOptions = ratiosByResolution[tier].size > 0;
-                            const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
-                            return (
-                              <button
-                                key={tier}
-                                type="button"
-                                className="h-7 rounded-[8px] text-[12px] font-semibold transition-colors"
-                                style={{
-                                  background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
-                                  border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                                  color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                  opacity: tierHasOptions ? 1 : 0.4,
-                                }}
-                                onClick={() => {
-                                  if (!tierHasOptions) return;
-                                  const currentAspect = detectAspectFromSize(currentSize);
-                                  const targetOpt = ratiosByResolution[tier].get(currentAspect);
-                                  if (targetOpt) {
-                                    composerSizeAutoRef.current = false;
-                                    setComposerSize(targetOpt.size);
-                                  } else {
-                                    // 当前比例在目标分辨率不存在，选第一个
-                                    const first = ratiosByResolution[tier].values().next().value;
-                                    if (first) {
-                                      composerSizeAutoRef.current = false;
-                                      setComposerSize(first.size);
-                                    }
-                                  }
-                                }}
-                              >
-                                {label}
-                              </button>
-                            );
-                          })}
-                        </div>
+                        {/* 分辨率（档位）- 只显示模型支持的分辨率 */}
+                        {(() => {
+                          const availableTiers = (['1k', '2k', '4k'] as const).filter((t) => ratiosByResolution[t].size > 0);
+                          if (availableTiers.length === 0) return null;
+                          return (
+                            <>
+                              <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>分辨率</div>
+                              <div className="flex gap-1.5 mb-3">
+                                {availableTiers.map((tier) => {
+                                  const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                                  const currentTier = detectTierFromSize(currentSize);
+                                  const isSelected = currentTier === tier;
+                                  const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
+                                  return (
+                                    <button
+                                      key={tier}
+                                      type="button"
+                                      className="h-7 flex-1 rounded-[8px] text-[12px] font-semibold transition-colors"
+                                      style={{
+                                        background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
+                                        border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
+                                        color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
+                                      }}
+                                      onClick={() => {
+                                        // 优先使用后端返回的 aspectRatio
+                                        const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
+                                        const targetOpt = ratiosByResolution[tier].get(currentAspect);
+                                        if (targetOpt) {
+                                          composerSizeAutoRef.current = false;
+                                          setComposerSize(targetOpt.size);
+                                        } else {
+                                          // 当前比例在目标分辨率不存在，选第一个
+                                          const first = ratiosByResolution[tier].values().next().value;
+                                          if (first) {
+                                            composerSizeAutoRef.current = false;
+                                            setComposerSize(first.size);
+                                          }
+                                        }
+                                      }}
+                                    >
+                                      {label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          );
+                        })()}
 
                         {/* 比例 */}
                         <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>Size</div>
@@ -6418,7 +6563,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           {(() => {
                             const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
                             const currentTier = detectTierFromSize(currentSize);
-                            const currentAspect = detectAspectFromSize(currentSize);
+                            // 优先使用后端返回的 aspectRatio
+                            const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
                             const ratios = ratiosByResolution[currentTier];
 
                             return Array.from(ratios.entries()).map(([ratio, opt]) => {
@@ -6820,6 +6966,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <Copy size={16} />
                 复制链接
               </Button>
+              {preview.runId ? (
+                <Button variant="secondary" size="sm" onClick={() => void copyToClipboard(preview.runId || '')} title="复制请求ID（用于后台日志排查）">
+                  <Copy size={16} />
+                  复制请求ID
+                </Button>
+              ) : null}
             </div>
 
             <div className="flex-1 min-h-0 overflow-auto rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)' }}>

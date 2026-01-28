@@ -52,13 +52,19 @@ public class DefectReport
     /// <summary>报告人 UserId</summary>
     public string ReporterId { get; set; } = string.Empty;
 
-    /// <summary>报告人用户名（冗余，便于展示）</summary>
+    /// <summary>报告人头像文件名</summary>
+    public string? ReporterAvatarFileName { get; set; }
+
+    /// <summary>报告人显示名称（冗余，便于展示）</summary>
     public string? ReporterName { get; set; }
 
     /// <summary>被指派人 UserId</summary>
     public string? AssigneeId { get; set; }
 
-    /// <summary>被指派人用户名（冗余，便于展示）</summary>
+    /// <summary>被指派人头像文件名</summary>
+    public string? AssigneeAvatarFileName { get; set; }
+
+    /// <summary>被指派人显示名称（冗余，便于展示）</summary>
     public string? AssigneeName { get; set; }
 
     /// <summary>报告人未读</summary>
@@ -82,6 +88,9 @@ public class DefectReport
     /// <summary>解决人 UserId</summary>
     public string? ResolvedById { get; set; }
 
+    /// <summary>解决人头像文件名</summary>
+    public string? ResolvedByAvatarFileName { get; set; }
+
     /// <summary>解决人名称</summary>
     public string? ResolvedByName { get; set; }
 
@@ -90,6 +99,9 @@ public class DefectReport
 
     /// <summary>拒绝人 UserId</summary>
     public string? RejectedById { get; set; }
+
+    /// <summary>拒绝人头像文件名</summary>
+    public string? RejectedByAvatarFileName { get; set; }
 
     /// <summary>拒绝人名称</summary>
     public string? RejectedByName { get; set; }
@@ -181,6 +193,35 @@ public class DefectAttachment
 
     /// <summary>上传时间</summary>
     public DateTime UploadedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 附件类型：
+    /// - file: 用户上传的普通文件（默认）
+    /// - screenshot: 自动截图
+    /// - log-request: 请求日志
+    /// - log-error: 错误日志
+    /// </summary>
+    public string Type { get; set; } = DefectAttachmentType.File;
+
+    /// <summary>
+    /// 是否系统自动生成（日志类附件不可删除、前端不可下载）
+    /// </summary>
+    public bool IsSystemGenerated { get; set; } = false;
+}
+
+/// <summary>
+/// 缺陷附件类型常量
+/// </summary>
+public static class DefectAttachmentType
+{
+    /// <summary>用户上传的普通文件</summary>
+    public const string File = "file";
+    /// <summary>自动截图</summary>
+    public const string Screenshot = "screenshot";
+    /// <summary>请求日志</summary>
+    public const string LogRequest = "log-request";
+    /// <summary>错误日志</summary>
+    public const string LogError = "log-error";
 }
 
 /// <summary>

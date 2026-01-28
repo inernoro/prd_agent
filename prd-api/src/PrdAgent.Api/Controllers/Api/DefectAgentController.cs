@@ -321,6 +321,7 @@ public class DefectAgentController : ControllerBase
 
         // 查询报告人信息
         var reporter = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+        var reporterAvatarFileName = reporter?.AvatarFileName;
         var reporterName = reporter?.DisplayName ?? reporter?.Username ?? GetUsername() ?? "未知用户";
 
         // 生成缺陷编号
@@ -337,6 +338,7 @@ public class DefectAgentController : ControllerBase
 
         // 查询指派用户信息
         string? assigneeId = null;
+        string? assigneeAvatarFileName = null;
         string? assigneeName = null;
         if (!string.IsNullOrEmpty(request.AssigneeUserId))
         {
@@ -344,6 +346,7 @@ public class DefectAgentController : ControllerBase
             if (assignee != null)
             {
                 assigneeId = assignee.UserId;
+                assigneeAvatarFileName = assignee.AvatarFileName;
                 assigneeName = assignee.DisplayName ?? assignee.Username;
             }
         }
@@ -359,8 +362,10 @@ public class DefectAgentController : ControllerBase
             Severity = request.Severity ?? DefectSeverity.Major,
             Priority = request.Priority ?? DefectPriority.Medium,
             ReporterId = userId,
+            ReporterAvatarFileName = reporterAvatarFileName,
             ReporterName = reporterName,
             AssigneeId = assigneeId,
+            AssigneeAvatarFileName = assigneeAvatarFileName,
             AssigneeName = assigneeName,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
@@ -600,9 +605,47 @@ public class DefectAgentController : ControllerBase
         defect.AssigneeUnread = !string.IsNullOrEmpty(defect.AssigneeId);
         defect.UpdatedAt = DateTime.UtcNow;
 
+        // 自动采集用户 API 日志作为附件
+        await CollectUserApiLogsAsync(defect, userId, ct);
+
         await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
 
         _logger.LogInformation("[{AppKey}] Defect submitted: {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
+
+        // 给 assignee 发送通知
+        if (!string.IsNullOrEmpty(defect.AssigneeId))
+        {
+            var notificationKey = $"defect-submitted:{defect.Id}";
+            var existingNotification = await _db.AdminNotifications
+                .Find(x => x.Key == notificationKey)
+                .FirstOrDefaultAsync(ct);
+
+            if (existingNotification == null)
+            {
+                var reporterName = defect.ReporterName ?? "某用户";
+                var titlePreview = !string.IsNullOrWhiteSpace(defect.Title)
+                    ? (defect.Title.Length > 30 ? defect.Title[..30] + "..." : defect.Title)
+                    : "无标题";
+
+                var notification = new AdminNotification
+                {
+                    Key = notificationKey,
+                    TargetUserId = defect.AssigneeId,
+                    Title = $"收到新缺陷：{defect.DefectNo}",
+                    Message = $"{reporterName} 给你提交了一个缺陷：{titlePreview}",
+                    Level = defect.Severity == DefectSeverity.Critical ? "error" :
+                            defect.Severity == DefectSeverity.Major ? "warning" : "info",
+                    ActionLabel = "查看详情",
+                    ActionUrl = $"/defect-agent?id={defect.Id}",
+                    Source = "defect-agent",
+                    ExpiresAt = DateTime.UtcNow.AddDays(7)
+                };
+
+                await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: ct);
+                _logger.LogInformation("[{AppKey}] Notification sent to assignee {AssigneeId} for defect {DefectNo}",
+                    AppKey, defect.AssigneeId, defect.DefectNo);
+            }
+        }
 
         return Ok(ApiResponse<object>.Ok(new { defect }));
     }
@@ -629,6 +672,7 @@ public class DefectAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "被指派人不存在"));
 
         defect.AssigneeId = request.AssigneeId;
+        defect.AssigneeAvatarFileName = assignee.AvatarFileName;
         defect.AssigneeName = assignee.DisplayName ?? assignee.Username;
         defect.Status = DefectStatus.Assigned;
         defect.AssignedAt = DateTime.UtcNow;
@@ -694,6 +738,7 @@ public class DefectAgentController : ControllerBase
         defect.Status = DefectStatus.Resolved;
         defect.Resolution = request.Resolution?.Trim();
         defect.ResolvedById = userId;
+        defect.ResolvedByAvatarFileName = resolver?.AvatarFileName;
         defect.ResolvedByName = resolverName;
         defect.ResolvedAt = DateTime.UtcNow;
         defect.UpdatedAt = DateTime.UtcNow;
@@ -731,6 +776,7 @@ public class DefectAgentController : ControllerBase
         defect.Status = DefectStatus.Rejected;
         defect.RejectReason = request.Reason.Trim();
         defect.RejectedById = userId;
+        defect.RejectedByAvatarFileName = rejector?.AvatarFileName;
         defect.RejectedByName = rejectorName;
         defect.UpdatedAt = DateTime.UtcNow;
 
@@ -763,6 +809,7 @@ public class DefectAgentController : ControllerBase
             var resolverName = resolver?.DisplayName ?? resolver?.Username ?? GetUsername() ?? "未知用户";
             defect.Status = DefectStatus.Resolved;
             defect.ResolvedById = userId;
+            defect.ResolvedByAvatarFileName = resolver?.AvatarFileName;
             defect.ResolvedByName = resolverName;
             defect.ResolvedAt = DateTime.UtcNow;
         }
@@ -800,8 +847,10 @@ public class DefectAgentController : ControllerBase
         defect.RejectReason = null;
         defect.ResolvedAt = null;
         defect.ResolvedById = null;
+        defect.ResolvedByAvatarFileName = null;
         defect.ResolvedByName = null;
         defect.RejectedById = null;
+        defect.RejectedByAvatarFileName = null;
         defect.RejectedByName = null;
         defect.UpdatedAt = DateTime.UtcNow;
 
@@ -910,14 +959,7 @@ public class DefectAgentController : ControllerBase
 
         var shouldUpdateDefect = false;
 
-        // 更新缺陷的 rawContent（追加）
-        if (!string.IsNullOrWhiteSpace(content))
-        {
-            defect.RawContent = string.IsNullOrEmpty(defect.RawContent)
-                ? content
-                : defect.RawContent + "\n\n" + content;
-            shouldUpdateDefect = true;
-        }
+        // 注意：不要把评论追加到 RawContent，评论单独存储在 DefectMessages 表中
 
         if (defect.ReporterId == userId)
         {
@@ -1027,6 +1069,52 @@ public class DefectAgentController : ControllerBase
         await _db.DefectReports.ReplaceOneAsync(x => x.Id == defectId, defect, cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    #endregion
+
+    #region 日志预览
+
+    /// <summary>
+    /// 预览将要采集的 API 日志（供用户提交前查看）
+    /// </summary>
+    [HttpGet("logs/preview")]
+    public async Task<IActionResult> PreviewApiLogs(CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        // 查询用户最近 10 分钟内的请求日志（最多 20 条）
+        var tenMinutesAgo = DateTime.UtcNow.AddMinutes(-10);
+        var recentLogs = await _db.ApiRequestLogs
+            .Find(x => x.UserId == userId && x.StartedAt >= tenMinutesAgo)
+            .SortByDescending(x => x.StartedAt)
+            .Limit(20)
+            .ToListAsync(ct);
+
+        // 过滤错误日志
+        var errorLogs = recentLogs.Where(x => x.StatusCode >= 400).ToList();
+
+        // 简化返回的日志信息（不暴露敏感数据）
+        // 转换为本地时间显示（UTC+8 北京时间）
+        var localTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
+        var requestLogItems = recentLogs.Select(log => new
+        {
+            time = TimeZoneInfo.ConvertTimeFromUtc(log.StartedAt, localTimeZone).ToString("MM-dd HH:mm:ss"),
+            method = log.Method,
+            path = log.Path,
+            statusCode = log.StatusCode,
+            durationMs = log.DurationMs ?? 0,
+            hasError = log.StatusCode >= 400,
+            errorCode = log.ErrorCode,
+            apiSummary = log.ApiSummary
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            totalCount = recentLogs.Count,
+            errorCount = errorLogs.Count,
+            items = requestLogItems
+        }));
     }
 
     #endregion
@@ -1145,6 +1233,127 @@ public class DefectAgentController : ControllerBase
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
+    }
+
+    /// <summary>
+    /// 自动采集用户 API 日志作为缺陷附件
+    /// </summary>
+    private async Task CollectUserApiLogsAsync(DefectReport defect, string userId, CancellationToken ct)
+    {
+        try
+        {
+            // 1. 查询用户最近 10 分钟内的请求日志（最多 20 条）
+            var tenMinutesAgo = DateTime.UtcNow.AddMinutes(-10);
+            var recentLogs = await _db.ApiRequestLogs
+                .Find(x => x.UserId == userId && x.StartedAt >= tenMinutesAgo)
+                .SortByDescending(x => x.StartedAt)
+                .Limit(20)
+                .ToListAsync(ct);
+
+            if (!recentLogs.Any())
+            {
+                _logger.LogDebug("[{AppKey}] No API logs found for user {UserId} in last 10 minutes", AppKey, userId);
+                return;
+            }
+
+            // 2. 过滤错误日志 (statusCode >= 400)
+            var errorLogs = recentLogs.Where(x => x.StatusCode >= 400).ToList();
+
+            // 3. 格式化并上传请求日志
+            // domain: defect-agent (与 appKey 一致), type: log
+            var requestLogContent = FormatApiLogs(recentLogs, "请求日志");
+            var requestLogBytes = Encoding.UTF8.GetBytes(requestLogContent);
+            var requestLogAsset = await _assetStorage.SaveAsync(requestLogBytes, "text/plain", ct, "defect-agent", "log");
+
+            defect.Attachments.Add(new DefectAttachment
+            {
+                FileName = $"近{recentLogs.Count}条请求日志.txt",
+                FileSize = requestLogBytes.Length,
+                MimeType = "text/plain",
+                Type = DefectAttachmentType.LogRequest,
+                IsSystemGenerated = true,
+                Url = requestLogAsset.Url,
+                UploadedAt = DateTime.UtcNow
+            });
+
+            _logger.LogInformation("[{AppKey}] Collected {Count} request logs for defect {DefectNo}",
+                AppKey, recentLogs.Count, defect.DefectNo);
+
+            // 4. 如果有错误日志，单独上传
+            if (errorLogs.Any())
+            {
+                var errorLogContent = FormatApiLogs(errorLogs, "错误日志");
+                var errorLogBytes = Encoding.UTF8.GetBytes(errorLogContent);
+                var errorLogAsset = await _assetStorage.SaveAsync(errorLogBytes, "text/plain", ct, "defect-agent", "log");
+
+                defect.Attachments.Add(new DefectAttachment
+                {
+                    FileName = $"错误日志({errorLogs.Count}条).txt",
+                    FileSize = errorLogBytes.Length,
+                    MimeType = "text/plain",
+                    Type = DefectAttachmentType.LogError,
+                    IsSystemGenerated = true,
+                    Url = errorLogAsset.Url,
+                    UploadedAt = DateTime.UtcNow
+                });
+
+                _logger.LogInformation("[{AppKey}] Collected {Count} error logs for defect {DefectNo}",
+                    AppKey, errorLogs.Count, defect.DefectNo);
+            }
+        }
+        catch (Exception ex)
+        {
+            // 日志采集失败不影响缺陷提交
+            _logger.LogWarning(ex, "[{AppKey}] Failed to collect API logs for defect {DefectId}", AppKey, defect.Id);
+        }
+    }
+
+    /// <summary>
+    /// 格式化 API 日志为可读文本
+    /// </summary>
+    private static string FormatApiLogs(List<ApiRequestLog> logs, string title)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"# {title} (共 {logs.Count} 条)");
+        sb.AppendLine($"# 生成时间: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+        sb.AppendLine();
+
+        foreach (var log in logs)
+        {
+            sb.AppendLine($"=== [{log.StartedAt:yyyy-MM-dd HH:mm:ss}] {log.Method} {log.Path} | HTTP {log.StatusCode} | {log.DurationMs ?? 0}ms ===");
+
+            if (!string.IsNullOrEmpty(log.Query))
+            {
+                sb.AppendLine($"Query: {log.Query}");
+            }
+
+            if (!string.IsNullOrEmpty(log.Curl))
+            {
+                sb.AppendLine($"Curl: {log.Curl}");
+            }
+
+            if (!string.IsNullOrEmpty(log.RequestBody))
+            {
+                var bodyPreview = log.RequestBody.Length > 500
+                    ? log.RequestBody[..500] + "... (truncated)"
+                    : log.RequestBody;
+                sb.AppendLine($"Request Body: {bodyPreview}");
+            }
+
+            if (!string.IsNullOrEmpty(log.ApiSummary))
+            {
+                sb.AppendLine($"Response: {log.ApiSummary}");
+            }
+
+            if (!string.IsNullOrEmpty(log.ErrorCode))
+            {
+                sb.AppendLine($"Error Code: {log.ErrorCode}");
+            }
+
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
     }
 
     #endregion

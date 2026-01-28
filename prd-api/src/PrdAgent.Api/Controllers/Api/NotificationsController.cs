@@ -21,12 +21,21 @@ public sealed class NotificationsController : ControllerBase
         _db = db;
     }
 
+    private string? GetUserId() => User.FindFirst("userId")?.Value ?? User.FindFirst("sub")?.Value;
+
     [HttpGet]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> List([FromQuery] bool includeHandled = false, CancellationToken ct = default)
     {
+        var userId = GetUserId();
         var now = DateTime.UtcNow;
         var filter = Builders<AdminNotification>.Filter.Empty;
+
+        // 过滤：全局通知（TargetUserId 为空）或针对当前用户的通知
+        filter &= Builders<AdminNotification>.Filter.Or(
+            Builders<AdminNotification>.Filter.Eq(x => x.TargetUserId, null),
+            Builders<AdminNotification>.Filter.Eq(x => x.TargetUserId, userId));
+
         filter &= Builders<AdminNotification>.Filter.Or(
             Builders<AdminNotification>.Filter.Eq(x => x.ExpiresAt, null),
             Builders<AdminNotification>.Filter.Gt(x => x.ExpiresAt, now));

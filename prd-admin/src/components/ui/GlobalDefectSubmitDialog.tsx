@@ -1,24 +1,35 @@
+/**
+ * GlobalDefectSubmitDialog - 全局缺陷提交对话框
+ * 支持全局快捷键 Command+B (Mac) / Control+B (Windows)
+ */
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
-import { Button } from '@/components/design/Button';
-import { useDefectStore } from '@/stores/defectStore';
+import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import {
   createDefect,
   submitDefect,
   addDefectAttachment,
   polishDefect,
+  listDefectTemplates,
+  getDefectUsers,
+  previewApiLogs,
 } from '@/services';
 import { toast } from '@/lib/toast';
 import { DefectSeverity } from '@/services/contracts/defectAgent';
+import type { DefectTemplate, DefectUser, ApiLogPreviewItem } from '@/services/contracts/defectAgent';
 import {
   X,
-  Send,
   Paperclip,
   FileText,
-  Upload,
   Sparkles,
   Loader2,
+  Bug,
+  Terminal,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
+import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 
 const STORAGE_KEY_TEMPLATE = 'defect-agent-last-template';
 const STORAGE_KEY_ASSIGNEE = 'defect-agent-last-assignee';
@@ -41,16 +52,24 @@ function extractTitleFromContent(content: string): string {
   return '';
 }
 
-export function DefectSubmitPanel() {
-  const {
-    templates,
-    users,
-    setShowSubmitPanel,
-    addDefectToList,
-    loadStats,
-  } = useDefectStore();
+export function GlobalDefectSubmitDialog() {
+  const { showDialog, closeDialog } = useGlobalDefectStore();
 
-  // 从 localStorage 读取上次选择
+  // 数据状态
+  const [templates, setTemplates] = useState<DefectTemplate[]>([]);
+  const [users, setUsers] = useState<DefectUser[]>([]);
+  const [dataLoaded, setDataLoaded] = useState(false);
+
+  // 日志预览状态
+  const [logPreview, setLogPreview] = useState<{
+    totalCount: number;
+    errorCount: number;
+    items: ApiLogPreviewItem[];
+  } | null>(null);
+  const [logPreviewExpanded, setLogPreviewExpanded] = useState(false);
+  const [logPreviewLoading, setLogPreviewLoading] = useState(false);
+
+  // 表单状态
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(() => {
     return localStorage.getItem(STORAGE_KEY_TEMPLATE) || '';
   });
@@ -58,13 +77,66 @@ export function DefectSubmitPanel() {
     return localStorage.getItem(STORAGE_KEY_ASSIGNEE) || '';
   });
   const [content, setContent] = useState('');
-  const [focused, setFocused] = useState(false);
   const [severity, setSeverity] = useState<DefectSeverityValue>(DefectSeverity.Trivial);
   const [attachments, setAttachments] = useState<File[]>([]);
-  const [submitting, setSubmitting] = useState(false);
   const [polishing, setPolishing] = useState(false);
+  const [focused, setFocused] = useState(false);
 
-  // 当用户/模板选择变化时保存到 localStorage
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // 加载模板和用户数据
+  useEffect(() => {
+    if (!showDialog || dataLoaded) return;
+
+    const loadData = async () => {
+      try {
+        const [templatesRes, usersRes] = await Promise.all([
+          listDefectTemplates(),
+          getDefectUsers(),
+        ]);
+        if (templatesRes.success && templatesRes.data) {
+          setTemplates(templatesRes.data.items);
+        }
+        if (usersRes.success && usersRes.data) {
+          setUsers(usersRes.data.items);
+        }
+        setDataLoaded(true);
+      } catch {
+        // Silent fail
+      }
+    };
+
+    void loadData();
+  }, [showDialog, dataLoaded]);
+
+  // 加载日志预览
+  useEffect(() => {
+    if (!showDialog) {
+      // 关闭时重置
+      setLogPreview(null);
+      setLogPreviewExpanded(false);
+      return;
+    }
+
+    const loadLogPreview = async () => {
+      setLogPreviewLoading(true);
+      try {
+        const res = await previewApiLogs();
+        if (res.success && res.data) {
+          setLogPreview(res.data);
+        }
+      } catch {
+        // Silent fail
+      } finally {
+        setLogPreviewLoading(false);
+      }
+    };
+
+    void loadLogPreview();
+  }, [showDialog]);
+
+  // 保存选择到 localStorage
   useEffect(() => {
     if (assigneeUserId) {
       localStorage.setItem(STORAGE_KEY_ASSIGNEE, assigneeUserId);
@@ -77,8 +149,38 @@ export function DefectSubmitPanel() {
     }
   }, [selectedTemplateId]);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // 注册全局快捷键
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Command+B (Mac) 或 Control+B (Windows)
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+        // 检查是否在输入框中（排除某些场景）
+        const active = document.activeElement;
+        const isInInput = active instanceof HTMLInputElement ||
+                          active instanceof HTMLTextAreaElement ||
+                          (active instanceof HTMLElement && active.isContentEditable);
+
+        // 如果在输入框中且对话框未打开，不阻止默认行为（允许加粗等操作）
+        if (isInInput && !showDialog) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        useGlobalDefectStore.getState().toggleDialog();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [showDialog]);
+
+  // 自动聚焦
+  useEffect(() => {
+    if (showDialog && textareaRef.current) {
+      setTimeout(() => textareaRef.current?.focus(), 100);
+    }
+  }, [showDialog]);
 
   // Handle paste for images
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
@@ -144,22 +246,21 @@ export function DefectSubmitPanel() {
     }
   };
 
-  // Submit defect
-  const handleSubmit = async () => {
+  // Submit defect - 返回 boolean 供 SuccessConfettiButton 使用
+  const handleSubmit = async (): Promise<boolean> => {
     if (!content.trim()) {
       toast.warning('请输入问题描述');
-      return;
+      return false;
     }
     if (!assigneeUserId) {
       toast.warning('请选择提交给谁');
-      return;
+      return false;
     }
 
-    setSubmitting(true);
     try {
-      // 从内容中提取标题（第一行有内容的文本）
+      // 从内容中提取标题
       const title = extractTitleFromContent(content);
-      
+
       // Create defect
       const createRes = await createDefect({
         templateId: selectedTemplateId || undefined,
@@ -171,8 +272,7 @@ export function DefectSubmitPanel() {
 
       if (!createRes.success || !createRes.data) {
         toast.error(createRes.error?.message || '创建失败');
-        setSubmitting(false);
-        return;
+        return false;
       }
 
       const defect = createRes.data.defect;
@@ -185,20 +285,23 @@ export function DefectSubmitPanel() {
       // Submit defect
       const submitRes = await submitDefect({ id: defect.id });
       if (submitRes.success && submitRes.data) {
-        addDefectToList(submitRes.data.defect);
         toast.success('缺陷已提交');
-        setShowSubmitPanel(false);
-        loadStats();
+        // 重置表单（延迟执行，等撒花动画结束后关闭）
+        setTimeout(() => {
+          setContent('');
+          setAttachments([]);
+          setSeverity(DefectSeverity.Trivial);
+          closeDialog();
+        }, 1500);
+        return true;
       } else {
-        // Still add to list even if submit fails
-        addDefectToList(defect);
         toast.warning('缺陷已保存为草稿');
-        setShowSubmitPanel(false);
+        closeDialog();
+        return false;
       }
     } catch (e) {
       toast.error(String(e));
-    } finally {
-      setSubmitting(false);
+      return false;
     }
   };
 
@@ -211,13 +314,15 @@ export function DefectSubmitPanel() {
     { value: DefectSeverity.Trivial, label: '轻微' },
   ];
 
+  if (!showDialog) return null;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{
         background: 'rgba(0,0,0,0.5)',
       }}
-      onClick={() => setShowSubmitPanel(false)}
+      onClick={closeDialog}
     >
       <GlassCard
         glow
@@ -237,7 +342,7 @@ export function DefectSubmitPanel() {
               className="w-8 h-8 rounded-lg flex items-center justify-center"
               style={{ background: 'rgba(100,200,255,0.15)' }}
             >
-              <Send size={16} style={{ color: 'rgba(100,200,255,0.9)' }} />
+              <Bug size={16} style={{ color: 'rgba(100,200,255,0.9)' }} />
             </div>
             <span
               className="text-[15px] font-medium"
@@ -245,16 +350,22 @@ export function DefectSubmitPanel() {
             >
               提交缺陷
             </span>
+            <span
+              className="text-[11px] px-2 py-0.5 rounded-full"
+              style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+            >
+              {navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+B
+            </span>
           </div>
           <button
-            onClick={() => setShowSubmitPanel(false)}
+            onClick={closeDialog}
             className="p-2 rounded-lg hover:bg-white/10 transition-colors"
           >
             <X size={18} style={{ color: 'var(--text-muted)' }} />
           </button>
         </div>
 
-        {/* Selectors - 一排显示 */}
+        {/* Selectors */}
         <div className="px-5 py-4 space-y-3">
           <div className="flex items-center gap-4">
             {/* Assignee */}
@@ -350,7 +461,7 @@ export function DefectSubmitPanel() {
                 : 'none',
             }}
           >
-            {/* Textarea - 无内部边框，第一行即为标题 */}
+            {/* Textarea - 无内部边框，直接使用外层容器的边框 */}
             <textarea
               ref={textareaRef}
               value={content}
@@ -416,6 +527,126 @@ export function DefectSubmitPanel() {
                 ))}
               </div>
             )}
+
+            {/* 日志预览提示 - 始终显示 */}
+            <div
+              className="px-4 py-3 border-t"
+              style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+            >
+              <div
+                className="rounded-lg overflow-hidden"
+                style={{
+                  background: 'rgba(100, 200, 255, 0.06)',
+                  border: '1px solid rgba(100, 200, 255, 0.12)',
+                }}
+              >
+                {/* 日志摘要头部 */}
+                <button
+                  type="button"
+                  onClick={() => logPreview && logPreview.totalCount > 0 && setLogPreviewExpanded(!logPreviewExpanded)}
+                  className="w-full px-3 py-2 flex items-center gap-2 hover:bg-white/5 transition-colors"
+                  style={{ cursor: logPreview && logPreview.totalCount > 0 ? 'pointer' : 'default' }}
+                >
+                  {logPreviewLoading ? (
+                    <Loader2 size={14} className="animate-spin" style={{ color: 'rgba(100, 200, 255, 0.8)' }} />
+                  ) : (
+                    <Terminal size={14} style={{ color: 'rgba(100, 200, 255, 0.8)' }} />
+                  )}
+                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {logPreviewLoading ? (
+                      '正在加载 API 日志...'
+                    ) : logPreview && logPreview.totalCount > 0 ? (
+                      <>
+                        提交时将自动采集 <span style={{ color: 'rgba(100, 200, 255, 0.9)' }}>{logPreview.totalCount}</span> 条请求日志
+                        {logPreview.errorCount > 0 && (
+                          <>
+                            {' '}(含 <span style={{ color: 'rgba(255, 120, 120, 0.9)' }}>{logPreview.errorCount}</span> 条错误)
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      '提交时将自动采集 API 日志（当前无日志记录）'
+                    )}
+                  </span>
+                  <div className="flex-1" />
+                  {logPreview && logPreview.totalCount > 0 && (
+                    logPreviewExpanded ? (
+                      <ChevronUp size={14} style={{ color: 'var(--text-muted)' }} />
+                    ) : (
+                      <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
+                    )
+                  )}
+                </button>
+
+                {/* 日志详情列表 */}
+                {logPreviewExpanded && logPreview && logPreview.items.length > 0 && (
+                  <div
+                    className="max-h-[200px] overflow-y-auto border-t"
+                    style={{
+                      borderColor: 'rgba(255,255,255,0.06)',
+                      scrollbarWidth: 'thin',
+                      scrollbarColor: 'rgba(255,255,255,0.2) transparent',
+                    }}
+                  >
+                    {logPreview.items.map((item, index) => (
+                      <div
+                        key={index}
+                        className="px-3 py-1.5 flex items-center gap-2 text-[10px] font-mono hover:bg-white/5"
+                        style={{
+                          borderBottom: index < logPreview.items.length - 1 ? '1px solid rgba(255,255,255,0.04)' : undefined,
+                        }}
+                      >
+                        {item.hasError && (
+                          <AlertTriangle size={10} style={{ color: 'rgba(255, 120, 120, 0.8)', flexShrink: 0 }} />
+                        )}
+                        <span style={{ color: 'var(--text-muted)', width: '105px', flexShrink: 0 }}>
+                          {item.time}
+                        </span>
+                        <span
+                          style={{
+                            color: item.method === 'GET' ? 'rgba(100, 200, 255, 0.8)' :
+                                   item.method === 'POST' ? 'rgba(100, 255, 150, 0.8)' :
+                                   item.method === 'PUT' ? 'rgba(255, 200, 100, 0.8)' :
+                                   item.method === 'DELETE' ? 'rgba(255, 120, 120, 0.8)' : 'var(--text-muted)',
+                            width: '45px',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {item.method}
+                        </span>
+                        <span
+                          className="truncate flex-1"
+                          style={{ color: 'var(--text-secondary)' }}
+                          title={item.path}
+                        >
+                          {item.path}
+                        </span>
+                        <span
+                          style={{
+                            color: item.statusCode >= 400 ? 'rgba(255, 120, 120, 0.9)' :
+                                   item.statusCode >= 300 ? 'rgba(255, 200, 100, 0.9)' : 'rgba(100, 255, 150, 0.9)',
+                            width: '30px',
+                            textAlign: 'right',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {item.statusCode}
+                        </span>
+                        <span style={{
+                          color: item.durationMs >= 1000 ? 'rgba(255, 120, 120, 0.9)' :
+                                 item.durationMs >= 200 ? 'rgba(255, 200, 100, 0.9)' : 'var(--text-muted)',
+                          width: '50px',
+                          textAlign: 'right',
+                          flexShrink: 0,
+                        }}>
+                          {item.durationMs}ms
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
 
             {/* Input Actions */}
             <div
@@ -487,23 +718,41 @@ export function DefectSubmitPanel() {
                 {polishing ? 'AI 润色中...' : 'AI 润色'}
               </button>
 
-              <Button
-                variant="primary"
+              <SuccessConfettiButton
                 size="sm"
-                onClick={handleSubmit}
-                disabled={submitting || !content.trim() || !assigneeUserId}
-              >
-                {submitting ? (
-                  <Upload size={14} className="animate-spin" />
-                ) : (
-                  <Send size={14} />
-                )}
-                {submitting ? '提交中...' : '提交缺陷'}
-              </Button>
+                readyText="提交缺陷"
+                loadingText="提交中"
+                successText="已提交"
+                showLoadingText
+                disabled={!content.trim() || !assigneeUserId}
+                onAction={handleSubmit}
+                successHoldMs={1200}
+              />
             </div>
           </div>
         </div>
       </GlassCard>
     </div>
+  );
+}
+
+/**
+ * DefectSubmitButton - 侧边栏提交缺陷按钮
+ * 带呼吸动画效果
+ */
+export function DefectSubmitButton({ collapsed }: { collapsed: boolean }) {
+  const openDialog = useGlobalDefectStore((s) => s.openDialog);
+
+  return (
+    <button
+      type="button"
+      onClick={openDialog}
+      className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
+      style={{ color: 'var(--text-muted)' }}
+      aria-label="提交缺陷"
+      title={collapsed ? '提交缺陷 (Cmd/Ctrl+B)' : '提交缺陷'}
+    >
+      <Bug size={14} className="defect-submit-breath" />
+    </button>
   );
 }

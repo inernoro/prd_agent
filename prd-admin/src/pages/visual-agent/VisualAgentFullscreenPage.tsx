@@ -5,6 +5,7 @@
 import { ArrowLeft } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
+import { GlobalDefectSubmitDialog } from '@/components/ui/GlobalDefectSubmitDialog';
 import VisualAgentWorkspaceListPage from './VisualAgentWorkspaceListPage';
 import VisualAgentWorkspaceEditorPage from './VisualAgentWorkspaceEditorPage';
 
@@ -34,6 +35,8 @@ export default function VisualAgentFullscreenPage() {
     >
       {/* SystemDialogHost - 独立页面需要自己渲染对话框 */}
       <SystemDialogHost />
+      {/* GlobalDefectSubmitDialog - 全局缺陷提交对话框 */}
+      <GlobalDefectSubmitDialog />
 
       {/* 返回按钮 - 固定在左上角 */}
       <button

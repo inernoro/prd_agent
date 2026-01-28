@@ -3,6 +3,10 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using MongoDB.Driver;
+using Serilog.Context;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
@@ -29,6 +33,7 @@ public class RequestResponseLoggingMiddleware
     // 只为“摘要提取”读取响应体，避免大响应占用内存
     private const int MaxInspectResponseBytes = 64 * 1024; // 64KB
     private const int MaxInspectRequestBytes = 256 * 1024; // 256KB（用于系统日志 request body）
+    private static readonly TimeSpan UserDisplayCacheTtl = TimeSpan.FromMinutes(10);
 
     // 不记录日志的路径（避免噪音）
     private static readonly HashSet<string> SkipLogPathPrefixes = new(StringComparer.OrdinalIgnoreCase)
@@ -70,6 +75,14 @@ public class RequestResponseLoggingMiddleware
         var query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : "";
         var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var userId = context.User?.FindFirst("sub")?.Value ?? "anonymous";
+        var tokenInfo = TryReadTokenInfo(context);
+        var resolvedUserId = userId != "anonymous" ? userId : tokenInfo.UserId ?? "anonymous";
+        var userDisplay = await ResolveUserDisplayNameAsync(
+            context.User,
+            resolvedUserId,
+            tokenInfo.DisplayName,
+            tokenInfo.Username);
+        var userPrefix = BuildUserLogPrefix(userDisplay, resolvedUserId);
         var protocol = context.Request.Protocol;
         var absoluteUrl = BuildAbsoluteUrl(context, path, query);
 
@@ -82,21 +95,79 @@ public class RequestResponseLoggingMiddleware
                && path.Contains("/chat/completions", StringComparison.OrdinalIgnoreCase);
         var startedAt = DateTime.UtcNow;
 
-        // 记录所有 /api/v1/ 开头的请求（包括 admin、open-platform 等）
-        var shouldPersistApiLog = path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase);
-        // heartbeat 属于系统噪音：不落 Mongo（但会更新 Redis presence）
-        if (path.StartsWith("/api/v1/desktop/presence/heartbeat", StringComparison.OrdinalIgnoreCase))
+        // 记录所有 /api/ 开头的请求（包括 /api/v1/、/api/visual-agent、/api/defect-agent 等）
+        var shouldPersistApiLog = path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
+        
+        // 排除系统噪音接口（高频轮询、心跳等）
+        if (shouldPersistApiLog)
         {
-            shouldPersistApiLog = false;
+            // heartbeat 属于系统噪音
+            if (path.Contains("/desktop/presence/heartbeat", StringComparison.OrdinalIgnoreCase))
+                shouldPersistApiLog = false;
+            // 通知轮询
+            else if (path.Contains("/notifications", StringComparison.OrdinalIgnoreCase) && 
+                     !path.Contains("/notifications/", StringComparison.OrdinalIgnoreCase))
+                shouldPersistApiLog = false;
+            // 日志预览接口自身不记录（避免自引用）
+            else if (path.Contains("/logs/preview", StringComparison.OrdinalIgnoreCase))
+                shouldPersistApiLog = false;
+            // 桌面在线状态相关
+            else if (path.Contains("/desktop-presence", StringComparison.OrdinalIgnoreCase))
+                shouldPersistApiLog = false;
         }
 
         var requestBodyCapture = await TryCaptureRequestBodyAsync(context);
 
-        var sw = Stopwatch.StartNew();
-
-        // SSE 流式响应不能缓存整个 body，否则会阻塞/卡住
-        if (isEventStream)
+        // 统一前缀通过 Serilog LogContext 注入，避免各处重复拼接前缀
+        // 回滚方案：移除 PushProperty("User", ...) 并恢复日志模板即可
+        using (LogContext.PushProperty("User", userPrefix))
         {
+            var sw = Stopwatch.StartNew();
+
+            // SSE 流式响应不能缓存整个 body，否则会阻塞/卡住
+            if (isEventStream)
+            {
+                try
+                {
+                    await _next(context);
+                }
+                finally
+                {
+                    sw.Stop();
+                    if (shouldPersistApiLog)
+                    {
+                        await TryPersistApiRequestLogAsync(
+                            context,
+                            requestId,
+                            startedAt,
+                            endedAt: DateTime.UtcNow,
+                            durationMs: sw.ElapsedMilliseconds,
+                            isEventStream: true,
+                            apiSummary: "stream=text/event-stream",
+                            requestBodyCapture: requestBodyCapture);
+                    }
+
+                    await TryUpdateDesktopPresenceAsync(context, requestId, sw.ElapsedMilliseconds);
+                    WriteSummaryLog(
+                        context.Response.StatusCode,
+                        sw.ElapsedMilliseconds,
+                        requestId,
+                        method,
+                        protocol,
+                        absoluteUrl,
+                        context.Response.ContentType,
+                        clientIp,
+                        apiSummary: "stream=text/event-stream",
+                        responseBytes: null);
+                }
+                return;
+            }
+
+            // 包装响应流用于“摘要提取”
+            var originalBodyStream = context.Response.Body;
+            await using var responseBodyStream = new MemoryStream();
+            context.Response.Body = responseBodyStream;
+
             try
             {
                 await _next(context);
@@ -104,6 +175,28 @@ public class RequestResponseLoggingMiddleware
             finally
             {
                 sw.Stop();
+
+                var statusCode = context.Response.StatusCode;
+                string? responseBody = null;
+                string apiSummary = "";
+
+                try
+                {
+                    if (responseBodyStream.Length > 0 && responseBodyStream.Length <= MaxInspectResponseBytes)
+                    {
+                        responseBodyStream.Seek(0, SeekOrigin.Begin);
+                        using var reader = new StreamReader(responseBodyStream, leaveOpen: true);
+                        responseBody = await reader.ReadToEndAsync();
+                    }
+
+                    apiSummary = SummarizeApiResponse(responseBody);
+                }
+                catch
+                {
+                    // 摘要提取失败不影响请求，只输出最小信息
+                    apiSummary = "";
+                }
+
                 if (shouldPersistApiLog)
                 {
                     await TryPersistApiRequestLogAsync(
@@ -112,14 +205,15 @@ public class RequestResponseLoggingMiddleware
                         startedAt,
                         endedAt: DateTime.UtcNow,
                         durationMs: sw.ElapsedMilliseconds,
-                        isEventStream: true,
-                        apiSummary: "stream=text/event-stream",
+                        isEventStream: false,
+                        apiSummary: apiSummary,
                         requestBodyCapture: requestBodyCapture);
                 }
 
                 await TryUpdateDesktopPresenceAsync(context, requestId, sw.ElapsedMilliseconds);
+
                 WriteSummaryLog(
-                    context.Response.StatusCode,
+                    statusCode,
                     sw.ElapsedMilliseconds,
                     requestId,
                     method,
@@ -127,79 +221,14 @@ public class RequestResponseLoggingMiddleware
                     absoluteUrl,
                     context.Response.ContentType,
                     clientIp,
-                    userId,
-                    apiSummary: "stream=text/event-stream",
-                    responseBytes: null);
+                    apiSummary,
+                    responseBytes: responseBodyStream.Length);
+
+                // 写回原始响应流
+                responseBodyStream.Seek(0, SeekOrigin.Begin);
+                await responseBodyStream.CopyToAsync(originalBodyStream);
+                context.Response.Body = originalBodyStream;
             }
-            return;
-        }
-
-        // 包装响应流用于“摘要提取”
-        var originalBodyStream = context.Response.Body;
-        await using var responseBodyStream = new MemoryStream();
-        context.Response.Body = responseBodyStream;
-
-        try
-        {
-            await _next(context);
-        }
-        finally
-        {
-            sw.Stop();
-
-            var statusCode = context.Response.StatusCode;
-            string? responseBody = null;
-            string apiSummary = "";
-
-            try
-            {
-                if (responseBodyStream.Length > 0 && responseBodyStream.Length <= MaxInspectResponseBytes)
-                {
-                    responseBodyStream.Seek(0, SeekOrigin.Begin);
-                    using var reader = new StreamReader(responseBodyStream, leaveOpen: true);
-                    responseBody = await reader.ReadToEndAsync();
-                }
-
-                apiSummary = SummarizeApiResponse(responseBody);
-            }
-            catch
-            {
-                // 摘要提取失败不影响请求，只输出最小信息
-                apiSummary = "";
-            }
-
-            if (shouldPersistApiLog)
-            {
-                await TryPersistApiRequestLogAsync(
-                    context,
-                    requestId,
-                    startedAt,
-                    endedAt: DateTime.UtcNow,
-                    durationMs: sw.ElapsedMilliseconds,
-                    isEventStream: false,
-                    apiSummary: apiSummary,
-                    requestBodyCapture: requestBodyCapture);
-            }
-
-            await TryUpdateDesktopPresenceAsync(context, requestId, sw.ElapsedMilliseconds);
-
-            WriteSummaryLog(
-                statusCode,
-                sw.ElapsedMilliseconds,
-                requestId,
-                method,
-                protocol,
-                absoluteUrl,
-                context.Response.ContentType,
-                clientIp,
-                userId,
-                apiSummary,
-                responseBytes: responseBodyStream.Length);
-
-            // 写回原始响应流
-            responseBodyStream.Seek(0, SeekOrigin.Begin);
-            await responseBodyStream.CopyToAsync(originalBodyStream);
-            context.Response.Body = originalBodyStream;
         }
     }
 
@@ -212,7 +241,6 @@ public class RequestResponseLoggingMiddleware
         string absoluteUrl,
         string? responseContentType,
         string clientIp,
-        string userId,
         string? apiSummary,
         long? responseBytes)
     {
@@ -223,13 +251,117 @@ public class RequestResponseLoggingMiddleware
                 : LogLevel.Information;
 
         // 单行输出（控制台更清爽）
-        // 示例：GET http://localhost:*/api/v1/config/models?page=1 - 200 3ms
+        // 示例：[管理员] GET http://localhost:*/api/v1/config/models?page=1 - 200 3ms
+        // 或：[u_abc123] GET http://localhost:*/api/v1/config/models?page=1 - 200 3ms
         _logger.Log(level,
             "{Method} {Url} - {StatusCode} {DurationMs}ms",
             method,
             absoluteUrl,
             statusCode,
             $"{durationMs:0.####}");
+    }
+
+    private static string BuildUserLogPrefix(string? userDisplay, string userId)
+    {
+        var hasUserId = !string.IsNullOrWhiteSpace(userId) && userId != "anonymous";
+        if (!hasUserId) return string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(userDisplay))
+        {
+            return $"[{userDisplay}|{userId}] ";
+        }
+
+        return $"[{userId}] ";
+    }
+
+    // 历史前缀拼接逻辑（已迁移到 LogContext + 输出模板）
+    // private static string BuildUserPrefix(string? userDisplay, string userId)
+    // {
+    //     var hasUserId = !string.IsNullOrWhiteSpace(userId) && userId != "anonymous";
+    //     var hasUserDisplay = !string.IsNullOrWhiteSpace(userDisplay);
+    //     if (hasUserDisplay && hasUserId) return $"[{userDisplay}|{userId}] ";
+    //     if (hasUserDisplay) return $"[{userDisplay}] ";
+    //     if (hasUserId) return $"[{userId}] ";
+    //     return string.Empty;
+    // }
+
+    private async Task<string?> ResolveUserDisplayNameAsync(
+        ClaimsPrincipal? user,
+        string userId,
+        string? tokenDisplayName,
+        string? tokenUsername)
+    {
+        if (user == null)
+        {
+            if (!string.IsNullOrWhiteSpace(tokenDisplayName)) return tokenDisplayName.Trim();
+            if (!string.IsNullOrWhiteSpace(tokenUsername)) return tokenUsername.Trim();
+            return userId != "anonymous" ? userId : null;
+        }
+
+        var claimDisplay = user.FindFirst("displayName")?.Value;
+        if (!string.IsNullOrWhiteSpace(claimDisplay)) return claimDisplay.Trim();
+
+        if (!string.IsNullOrWhiteSpace(tokenDisplayName)) return tokenDisplayName.Trim();
+
+        var claimUserName = user.FindFirst(JwtRegisteredClaimNames.UniqueName)?.Value
+                            ?? user.FindFirst(ClaimTypes.Name)?.Value;
+        if (!string.IsNullOrWhiteSpace(claimUserName)) return claimUserName.Trim();
+
+        if (!string.IsNullOrWhiteSpace(tokenUsername)) return tokenUsername.Trim();
+
+        if (string.IsNullOrWhiteSpace(userId) || userId == "anonymous") return null;
+
+        var cacheKey = $"user:display-name:{userId}";
+        try
+        {
+            var cached = await _cache.GetAsync<string>(cacheKey);
+            if (!string.IsNullOrWhiteSpace(cached)) return cached;
+        }
+        catch
+        {
+            // 缓存异常时忽略，继续查库
+        }
+
+        var userDoc = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync();
+        string? display = userDoc?.DisplayName;
+        if (string.IsNullOrWhiteSpace(display)) display = userDoc?.Username;
+        if (string.IsNullOrWhiteSpace(display)) display = userId;
+        if (!string.IsNullOrWhiteSpace(display))
+        {
+            try
+            {
+                await _cache.SetAsync(cacheKey, display, UserDisplayCacheTtl);
+            }
+            catch
+            {
+                // 缓存写入失败不影响日志输出
+            }
+        }
+
+        return display;
+    }
+
+    private static (string? UserId, string? DisplayName, string? Username) TryReadTokenInfo(HttpContext context)
+    {
+        var auth = context.Request.Headers.Authorization.ToString();
+        if (string.IsNullOrWhiteSpace(auth) || !auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            return (null, null, null);
+
+        var token = auth["Bearer ".Length..].Trim();
+        if (string.IsNullOrWhiteSpace(token)) return (null, null, null);
+
+        try
+        {
+            var jwt = new JwtSecurityTokenHandler().ReadJwtToken(token);
+            var userId = jwt.Claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Sub)?.Value;
+            var displayName = jwt.Claims.FirstOrDefault(c => c.Type == "displayName")?.Value;
+            var username = jwt.Claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.UniqueName)?.Value;
+            return (userId, displayName, username);
+        }
+        catch
+        {
+            return (null, null, null);
+        }
     }
 
     private static string BuildAbsoluteUrl(HttpContext context, string path, string? query)

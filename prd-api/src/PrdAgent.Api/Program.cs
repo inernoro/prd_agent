@@ -49,9 +49,11 @@ var serilogCfg = new LoggerConfiguration()
     .Filter.ByExcluding(e => e.MessageTemplate.Text.Contains("was not authenticated"))
     .Enrich.FromLogContext()
     .WriteTo.File(
-        "logs/prdagent-.log", 
+        "logs/prdagent-.log",
         rollingInterval: RollingInterval.Day,
-        outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff} {Level:u3}] {SourceContext}{NewLine}{Message:lj}{NewLine}{Exception}");
+        // 历史模板（无用户前缀）：
+        // "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff} {Level:u3}] {SourceContext}{NewLine}{Message:lj}{NewLine}{Exception}"
+        outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff} {Level:u3}] {User}{SourceContext}{NewLine}{Message:lj}{NewLine}{Exception}");
 
 // 避免控制台重复输出：如果配置里已经有 Serilog:WriteTo=Console，就不再在代码里额外加 Console sink
 var hasConsoleSinkInConfig = builder.Configuration
@@ -62,7 +64,8 @@ var hasConsoleSinkInConfig = builder.Configuration
 if (!hasConsoleSinkInConfig)
 {
     serilogCfg.WriteTo.Console(
-        outputTemplate: "[{Timestamp:HH:mm:ss}] {Message:lj}{NewLine}{Exception}",
+        // 历史模板（无用户前缀）： "[{Timestamp:HH:mm:ss}] {Message:lj}{NewLine}{Exception}"
+        outputTemplate: "[{Timestamp:HH:mm:ss}] {User}{Message:lj}{NewLine}{Exception}",
         theme: Serilog.Sinks.SystemConsole.Themes.AnsiConsoleTheme.Code);
 }
 

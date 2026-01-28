@@ -110,6 +110,9 @@ public class LlmSchedulingPolicyTests
         public Task<ResolvedModelInfo?> ResolveModelAsync(string appCallerCode, string modelType, CancellationToken ct = default)
             => Task.FromResult<ResolvedModelInfo?>(null);
 
+        public Task<ResolvedModelInfo?> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModelCode, CancellationToken ct = default)
+            => Task.FromResult<ResolvedModelInfo?>(null);
+
         private ILLMClient CreateClient(string appCallerCode, string modelType)
         {
             LastAppCallerCode = appCallerCode;
