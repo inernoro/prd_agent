@@ -46,8 +46,8 @@ export default function WorkshopLabTab() {
   const [currentText, setCurrentText] = useState('');
   const [containerWidth, setContainerWidth] = useState(300);
 
-  // 两阶段选择：预选状态
-  const [preSelectedKeys, setPreSelectedKeys] = useState<Set<string>>(new Set());
+  // 两阶段选择：跟踪当前有 pending chip 的图片 key
+  const [pendingChipKeys, setPendingChipKeys] = useState<Set<string>>(new Set());
 
   // 自动测试状态
   const [testResults, setTestResults] = useState<TestResult[]>([]);
@@ -77,38 +77,32 @@ export default function WorkshopLabTab() {
     addOutput('getPlainText()', result);
   }, [addOutput]);
 
-  // 两阶段选择 - 阶段1：点击图片切换预选状态
+  // 两阶段选择：点击图片 → 在编辑器中插入/移除 pending chip
   const handleImageClick = useCallback((option: ImageOption) => {
-    setPreSelectedKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(option.key)) {
-        next.delete(option.key);
-        addOutput('preSelect.remove()', { key: option.key, label: option.label });
-      } else {
-        next.add(option.key);
-        addOutput('preSelect.add()', { key: option.key, label: option.label });
-      }
-      return next;
-    });
-  }, [addOutput]);
-
-  // 两阶段选择 - 阶段2：聚焦输入框时确认预选，转换为 chip
-  const handleComposerFocus = useCallback(() => {
-    if (preSelectedKeys.size === 0) return;
     const composer = composerRef.current;
     if (!composer) return;
 
-    // 按 refId 顺序插入
-    const toInsert = MOCK_IMAGES.filter((img) => preSelectedKeys.has(img.key));
-    toInsert.sort((a, b) => a.refId - b.refId);
-
-    for (const img of toInsert) {
-      composer.insertImageChip(img);
+    if (pendingChipKeys.has(option.key)) {
+      // 已有 pending chip，移除它
+      composer.removeChipByKey(option.key);
+      setPendingChipKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(option.key);
+        return next;
+      });
+      addOutput('pendingChip.remove()', { key: option.key, label: option.label });
+    } else {
+      // 插入 pending chip（灰色）
+      composer.focus();
+      composer.insertImageChip(option, { pending: true });
+      setPendingChipKeys((prev) => {
+        const next = new Set(prev);
+        next.add(option.key);
+        return next;
+      });
+      addOutput('pendingChip.insert()', { key: option.key, label: option.label });
     }
-
-    addOutput('confirmPreSelect()', toInsert.map((i) => ({ key: i.key, label: i.label })));
-    setPreSelectedKeys(new Set());
-  }, [preSelectedKeys, addOutput]);
+  }, [pendingChipKeys, addOutput]);
 
   // 直接插入 chip（用于自动测试等场景）
   const handleInsertChip = useCallback((option: ImageOption) => {
@@ -121,6 +115,9 @@ export default function WorkshopLabTab() {
   const handleSubmit = useCallback(() => {
     const composer = composerRef.current;
     if (!composer) return true;
+    // 先确认所有 pending chip（灰→蓝）
+    composer.confirmPendingChips();
+    setPendingChipKeys(new Set());
     const result = composer.getStructuredContent();
     addOutput('onSubmit()', result);
     composer.clear();
@@ -129,6 +126,7 @@ export default function WorkshopLabTab() {
 
   const handleClear = useCallback(() => {
     composerRef.current?.clear();
+    setPendingChipKeys(new Set());
     addOutput('clear()', null);
   }, [addOutput]);
 
@@ -427,12 +425,18 @@ export default function WorkshopLabTab() {
               border: '1px solid var(--border-default)',
             }}>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>模拟画布（点击预选 → 聚焦输入框确认）</span>
-                {preSelectedKeys.size > 0 && (
+                <span>模拟画布（点击图片 → 插入/移除灰色 chip）</span>
+                {pendingChipKeys.size > 0 && (
                   <span style={{ color: 'rgba(156, 163, 175, 1)', fontSize: 10 }}>
-                    已预选 {preSelectedKeys.size} 张
+                    待确认 {pendingChipKeys.size} 张
                     <button
-                      onClick={() => setPreSelectedKeys(new Set())}
+                      onClick={() => {
+                        // 清除所有 pending chips
+                        pendingChipKeys.forEach((key) => {
+                          composerRef.current?.removeChipByKey(key);
+                        });
+                        setPendingChipKeys(new Set());
+                      }}
                       style={{
                         marginLeft: 6,
                         padding: '1px 4px',
@@ -451,7 +455,7 @@ export default function WorkshopLabTab() {
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {MOCK_IMAGES.map(img => {
-                  const isPreSelected = preSelectedKeys.has(img.key);
+                  const hasPendingChip = pendingChipKeys.has(img.key);
                   return (
                     <div
                       key={img.key}
@@ -459,16 +463,16 @@ export default function WorkshopLabTab() {
                       style={{
                         cursor: 'pointer',
                         padding: 6,
-                        background: isPreSelected ? 'rgba(156, 163, 175, 0.15)' : 'var(--bg-base)',
+                        background: hasPendingChip ? 'rgba(156, 163, 175, 0.15)' : 'var(--bg-base)',
                         borderRadius: 6,
-                        border: `2px solid ${isPreSelected ? 'rgba(156, 163, 175, 0.6)' : 'transparent'}`,
+                        border: `2px solid ${hasPendingChip ? 'rgba(156, 163, 175, 0.6)' : 'transparent'}`,
                         outline: '1px solid var(--border-default)',
                         transition: 'all 0.15s',
                         position: 'relative',
                       }}
                     >
-                      {/* 预选遮罩 */}
-                      {isPreSelected && (
+                      {/* 已插入 pending chip 的遮罩 */}
+                      {hasPendingChip && (
                         <div style={{
                           position: 'absolute',
                           top: 6,
@@ -496,19 +500,19 @@ export default function WorkshopLabTab() {
                           borderRadius: 4,
                           objectFit: 'cover',
                           display: 'block',
-                          opacity: isPreSelected ? 0.7 : 1,
+                          opacity: hasPendingChip ? 0.7 : 1,
                         }}
                       />
                       <div style={{
                         fontSize: 9,
                         marginTop: 4,
-                        color: isPreSelected ? 'rgba(156, 163, 175, 1)' : 'var(--text-muted)',
+                        color: hasPendingChip ? 'rgba(156, 163, 175, 1)' : 'var(--text-muted)',
                         maxWidth: 48,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
                         textAlign: 'center',
-                        fontWeight: isPreSelected ? 600 : 400,
+                        fontWeight: hasPendingChip ? 600 : 400,
                       }}>
                         #{img.refId}
                       </div>
@@ -526,106 +530,31 @@ export default function WorkshopLabTab() {
               border: '1px solid var(--border-default)',
             }}>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-                主输入框
+                主输入框（灰色 chip = 待确认，发送时自动变蓝）
               </div>
-              {/* 输入框容器 - 编辑器 + 待确认 chip 追加在末尾 */}
+              {/* 输入框容器 - pending chips 直接插入在编辑器中 */}
               <div
                 style={{
                   background: 'var(--bg-base)',
                   borderRadius: 6,
                   padding: 10,
-                  border: preSelectedKeys.size > 0
-                    ? '1px solid rgba(99, 102, 241, 0.5)'
+                  border: pendingChipKeys.size > 0
+                    ? '1px solid rgba(156, 163, 175, 0.5)'
                     : '1px solid var(--border-default)',
                   transition: 'border-color 0.15s',
                   cursor: 'text',
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  alignItems: 'flex-end',
-                  gap: 4,
                 }}
                 onClick={() => composerRef.current?.focus()}
-                onFocus={handleComposerFocus}
               >
-                {/* 编辑器（flex-grow 占据主要空间） */}
-                <div style={{ flex: '1 1 auto', minWidth: 100 }}>
-                  <RichComposer
-                    ref={composerRef}
-                    placeholder="输入文字，输入 @ 引用图片..."
-                    imageOptions={MOCK_IMAGES}
-                    onChange={setCurrentText}
-                    onSubmit={handleSubmit}
-                    minHeight={40}
-                    maxHeight={150}
-                  />
-                </div>
-                {/* 待确认的灰色 chip（追加在内容末尾，同一行） */}
-                {preSelectedKeys.size > 0 && MOCK_IMAGES
-                  .filter(img => preSelectedKeys.has(img.key))
-                  .sort((a, b) => a.refId - b.refId)
-                  .map(img => (
-                    <div
-                      key={img.key}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 3,
-                        padding: '2px 5px',
-                        background: 'rgba(156, 163, 175, 0.2)',
-                        border: '1px solid rgba(156, 163, 175, 0.4)',
-                        borderRadius: 4,
-                        fontSize: 11,
-                        color: 'rgba(156, 163, 175, 1)',
-                        flexShrink: 0,
-                      }}
-                      title="点击输入框确认"
-                    >
-                      <span style={{
-                        background: 'rgba(156, 163, 175, 0.3)',
-                        borderRadius: 2,
-                        padding: '0 3px',
-                        fontSize: 10,
-                        fontWeight: 600,
-                      }}>
-                        {img.refId}
-                      </span>
-                      <img
-                        src={img.src}
-                        alt=""
-                        style={{
-                          width: 14,
-                          height: 14,
-                          borderRadius: 2,
-                          objectFit: 'cover',
-                          opacity: 0.7,
-                        }}
-                      />
-                      <span style={{
-                        maxWidth: 50,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}>
-                        {img.label.length > 5 ? img.label.slice(0, 5) + '..' : img.label}
-                      </span>
-                      <span
-                        style={{
-                          cursor: 'pointer',
-                          opacity: 0.6,
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPreSelectedKeys(prev => {
-                            const next = new Set(prev);
-                            next.delete(img.key);
-                            return next;
-                          });
-                        }}
-                      >
-                        ×
-                      </span>
-                    </div>
-                  ))}
+                <RichComposer
+                  ref={composerRef}
+                  placeholder="输入文字，点击上方图片插入引用..."
+                  imageOptions={MOCK_IMAGES}
+                  onChange={setCurrentText}
+                  onSubmit={handleSubmit}
+                  minHeight={40}
+                  maxHeight={150}
+                />
               </div>
               <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
                 <Btn onClick={handleGetStructuredContent}>getStructuredContent()</Btn>

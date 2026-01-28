@@ -33,10 +33,14 @@ export interface RichComposerRef {
   clear: () => void;
   /** 聚焦编辑器 */
   focus: () => void;
-  /** 插入图片 chip */
-  insertImageChip: (option: ImageOption) => void;
+  /** 插入图片 chip（可选 pending 状态） */
+  insertImageChip: (option: ImageOption, opts?: { pending?: boolean }) => void;
   /** 插入文本 */
   insertText: (text: string) => void;
+  /** 确认所有 pending 状态的 chip（变为正常蓝色） */
+  confirmPendingChips: () => void;
+  /** 移除指定 key 的 chip */
+  removeChipByKey: (canvasKey: string) => void;
 }
 
 interface RichComposerProps {
@@ -139,7 +143,7 @@ function EditorInner({
       focus: () => {
         editor.focus();
       },
-      insertImageChip: (option: ImageOption) => {
+      insertImageChip: (option: ImageOption, opts?: { pending?: boolean }) => {
         editor.update(() => {
           const selection = $getSelection();
           if (!$isRangeSelection(selection)) return;
@@ -148,6 +152,7 @@ function EditorInner({
             refId: option.refId,
             src: option.src,
             label: option.label,
+            pending: opts?.pending,
           });
           selection.insertNodes([chipNode]);
           selection.insertText(' ');
@@ -158,6 +163,44 @@ function EditorInner({
           const selection = $getSelection();
           if ($isRangeSelection(selection)) {
             selection.insertText(text);
+          }
+        });
+      },
+      confirmPendingChips: () => {
+        editor.update(() => {
+          const root = $getRoot();
+          const descendants = root.getAllTextNodes();
+          // 遍历所有节点，找到 ImageChipNode 并确认
+          root.getChildren().forEach((child) => {
+            child.getChildren?.()?.forEach((node) => {
+              if ($isImageChipNode(node) && node.getPending()) {
+                node.setPending(false);
+              }
+            });
+          });
+          // 直接遍历所有 decorator nodes
+          const allNodes = root.getChildren();
+          for (const para of allNodes) {
+            const children = para.getChildren?.() || [];
+            for (const node of children) {
+              if ($isImageChipNode(node) && node.getPending()) {
+                node.setPending(false);
+              }
+            }
+          }
+        });
+      },
+      removeChipByKey: (canvasKey: string) => {
+        editor.update(() => {
+          const root = $getRoot();
+          const allNodes = root.getChildren();
+          for (const para of allNodes) {
+            const children = para.getChildren?.() || [];
+            for (const node of children) {
+              if ($isImageChipNode(node) && node.getCanvasKey() === canvasKey) {
+                node.remove();
+              }
+            }
           }
         });
       },
