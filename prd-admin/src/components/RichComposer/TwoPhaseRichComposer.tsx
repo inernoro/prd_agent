@@ -94,6 +94,7 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
 
     // 更新 pending keys 并通知外部
     const updatePendingKeys = useCallback((keys: Set<string>) => {
+      console.log('[TwoPhaseRichComposer] updatePendingKeys called', { keys: [...keys], hasCallback: !!onPendingKeysChange });
       setPendingChipKeys(keys);
       onPendingKeysChange?.(keys);
     }, [onPendingKeysChange]);

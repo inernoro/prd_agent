@@ -1006,6 +1006,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [pendingChipKeys, setPendingChipKeys] = useState<Set<string>>(new Set());
   const isPendingKey = (k: string) => pendingChipKeys.has(k);
   const handlePendingKeysChange = useCallback((keys: Set<string>) => {
+    console.log('[AdvancedVisualAgentTab] handlePendingKeysChange called, keys:', [...keys]);
     setPendingChipKeys(keys);
   }, []);
 
