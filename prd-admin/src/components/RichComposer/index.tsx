@@ -145,7 +145,13 @@ function EditorInner({
       },
       insertImageChip: (option: ImageOption, opts?: { pending?: boolean }) => {
         editor.update(() => {
-          const selection = $getSelection();
+          let selection = $getSelection();
+          // 如果没有 selection，选中编辑器末尾
+          if (!$isRangeSelection(selection)) {
+            const root = $getRoot();
+            root.selectEnd();
+            selection = $getSelection();
+          }
           if (!$isRangeSelection(selection)) return;
           const chipNode = $createImageChipNode({
             canvasKey: option.key,
