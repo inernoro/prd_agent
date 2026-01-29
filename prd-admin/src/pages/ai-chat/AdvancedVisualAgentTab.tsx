@@ -3375,15 +3375,29 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
    * 点击画布图片 → 通过 TwoPhaseRichComposer 插入灰色 pending chip
    */
   const handleCanvasImagePreselect = useCallback((it: CanvasImageItem) => {
+    console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect called', { it, richComposerRef: richComposerRef.current });
     const composer = richComposerRef.current;
-    if (!composer) return;
+    if (!composer) {
+      console.warn('[AdvancedVisualAgentTab] handleCanvasImagePreselect: composer is null!');
+      return;
+    }
 
     const kind = it.kind ?? 'image';
-    if (kind !== 'image') return;
-    if (!it.src) return;
+    if (kind !== 'image') {
+      console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect: not an image, skip');
+      return;
+    }
+    if (!it.src) {
+      console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect: no src, skip');
+      return;
+    }
 
     const refId = ensureRefIdForKey(it.key);
-    if (!refId) return;
+    console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect: refId =', refId);
+    if (!refId) {
+      console.warn('[AdvancedVisualAgentTab] handleCanvasImagePreselect: no refId, skip');
+      return;
+    }
 
     // 构建 ImageOption 并调用组件的 preselectImage 方法
     const option: ImageOption = {
@@ -3392,10 +3406,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       src: it.src,
       label: it.prompt || `img${refId}`,
     };
+    console.log('[AdvancedVisualAgentTab] calling composer.preselectImage with option:', option);
     composer.preselectImage(option);
 
     // 选中该图片（视觉同步）
     setSelectedKeys([it.key]);
+    console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect done');
   }, [ensureRefIdForKey]);
 
   /**

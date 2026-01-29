@@ -145,6 +145,7 @@ function EditorInner({
         editor.focus();
       },
       insertImageChip: (option: ImageOption, opts?: { ready?: boolean }) => {
+        console.log('[RichComposer] insertImageChip called', { option, opts, ready: opts?.ready });
         editor.update(() => {
           let selection = $getSelection();
           // 如果没有 selection，选中编辑器末尾
@@ -154,6 +155,7 @@ function EditorInner({
             selection = $getSelection();
           }
           if (!$isRangeSelection(selection)) return;
+          console.log('[RichComposer] creating chip with ready =', opts?.ready);
           const chipNode = $createImageChipNode({
             canvasKey: option.key,
             refId: option.refId,
