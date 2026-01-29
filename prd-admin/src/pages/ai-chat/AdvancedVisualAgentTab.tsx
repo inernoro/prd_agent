@@ -4512,6 +4512,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       if (e.button === 2) return;
                       focusStage();
                       e.stopPropagation();
+
+                      // Cmd/Ctrl + 点击：直接插入就绪的 @imgN 引用（跳过两阶段）
+                      if (kind === 'image' && (e.metaKey || e.ctrlKey)) {
+                        setSelectedKeys((prev) => (prev.includes(it.key) ? prev : prev.concat(it.key)));
+                        const id = ensureRefIdForKey(it.key);
+                        if (id) insertAtCursor(`@img${id} `);
+                        focusComposer();
+                        // 不启动拖拽
+                        return;
+                      }
+
+                      // 普通点击图片（非 shift）：两阶段预选
+                      if (kind === 'image' && it.src && !e.shiftKey) {
+                        console.log('[Canvas] onPointerDown: calling handleCanvasImagePreselect for:', it.key);
+                        handleCanvasImagePreselect(it);
+                        // 继续拖拽逻辑（允许拖动预选的图片）
+                      }
+
                       // 确定本次拖拽涉及的选中集合（按 Figma：未选中则先选中）
                       const shift = e.shiftKey;
                       const cur = selectedKeys;
