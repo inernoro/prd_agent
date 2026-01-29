@@ -31,7 +31,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
 import {
-  buildInlineImageToken,
+  buildMultipleInlineImageTokens,
   computeRequestedSizeByRefRatio,
   extractInlineImageToken,
   extractSizeToken,
@@ -1610,7 +1610,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     id: string;
     displayText: string;
     requestText: string;
-    primaryRef: CanvasImageItem | null;
+    /** 所有引用的图片（按顺序），第一个为主图 */
+    imageRefs: CanvasImageItem[];
     seedSelectedKey: string;
     sizeOverride?: string | null;
   };
@@ -2724,12 +2725,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const runFromText = async (
     displayText: string,
     requestText: string,
-    primaryRef: CanvasImageItem | null,
+    imageRefs: CanvasImageItem[],
     seedSelectedKey?: string,
     sizeOverride?: string | null
   ) => {
     const display = String(displayText ?? '').trim();
-    // 直连模式：解析 @model(...) 只用于“强制选模型”，不应当把标记本身发给生图 prompt
+    // 直连模式：解析 @model(...) 只用于"强制选模型"，不应当把标记本身发给生图 prompt
     const stripModelMention = (s: string) => String(s ?? '').replace(/@model\([^)]*\)/gi, '').replace(/\s{2,}/g, ' ').trim();
 
     const forcedPick = extractForcedImageModel(directPrompt ? displayText : requestText);
@@ -2746,9 +2747,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     setError('');
     const seedKey = String(seedSelectedKey ?? '').trim();
     const selectedAtSend = seedKey ? (canvasRef.current.find((x) => x.key === seedKey) ?? null) : null;
+    // 主引用图（第一张）用于尺寸推算等
+    const primaryRef = imageRefs[0] ?? null;
     const refForUi = (primaryRef ?? selectedAtSend) as CanvasImageItem | null;
     const refSrc = String(refForUi?.src ?? '').trim();
-    const inlineRefToken = buildInlineImageToken(refSrc, guessRefName(refForUi));
+    // 构建所有引用图片的内联标记
+    const allRefImages = imageRefs.length > 0
+      ? imageRefs.map((ref) => ({ src: ref.src ?? '', name: guessRefName(ref) }))
+      : refForUi?.src
+        ? [{ src: refForUi.src, name: guessRefName(refForUi) }]
+        : [];
+    const inlineRefToken = buildMultipleInlineImageTokens(allRefImages);
     const forcedSize = (() => {
       const s = String(sizeOverride ?? '').trim();
       if (!s) return null;
@@ -3254,7 +3263,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       void (async () => {
         try {
-          await runFromText(job.displayText, job.requestText, job.primaryRef, job.seedSelectedKey, job.sizeOverride);
+          await runFromText(job.displayText, job.requestText, job.imageRefs, job.seedSelectedKey, job.sizeOverride);
         } finally {
           runningCountRef.current = Math.max(0, runningCountRef.current - 1);
           setRunningCount(runningCountRef.current);
@@ -3305,15 +3314,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     });
 
     // 使用新的 buildRequestText
-    const { requestText, primaryRef: resolvedPrimaryRef } = buildRequestText(
+    const { requestText } = buildRequestText(
       resolveResult.cleanText,
       resolveResult.refs
     );
 
-    // 转换 primaryRef 为旧格式（兼容 runFromText）
-    const primaryRef = resolvedPrimaryRef
-      ? canvas.find((c) => c.key === resolvedPrimaryRef.canvasKey) ?? null
-      : null;
+    // 转换所有 refs 为 CanvasImageItem（用于 UI 显示和生成）
+    const imageRefs: CanvasImageItem[] = resolveResult.refs
+      .map((ref) => canvas.find((c) => c.key === ref.canvasKey))
+      .filter((c): c is CanvasImageItem => !!c);
 
     const seedSelectedKey = String(selectedKeysRef.current?.[0] ?? '').trim();
     const sizeOverride = sized.size ?? composerSize ?? autoSizeForSelectedImage ?? null;
@@ -3321,7 +3330,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       id: `job_${Date.now()}_${Math.random().toString(16).slice(2)}`,
       displayText: cleanDisplay,
       requestText,
-      primaryRef,
+      imageRefs,
       seedSelectedKey,
       sizeOverride,
     };

@@ -62,6 +62,21 @@ export function buildInlineImageToken(src: string, name?: string): string {
   return safeName ? `[IMAGE src=${safeSrc} name=${safeName}] ` : `[IMAGE src=${safeSrc}] `;
 }
 
+/**
+ * 为多张图片构建内联图片标记
+ * @param images 图片数组，每个包含 src 和可选的 name
+ * @returns 多个 [IMAGE ...] 标记拼接的字符串
+ */
+export function buildMultipleInlineImageTokens(
+  images: Array<{ src: string; name?: string }>
+): string {
+  if (!images || images.length === 0) return '';
+  return images
+    .map((img) => buildInlineImageToken(img.src, img.name))
+    .filter(Boolean)
+    .join('');
+}
+
 export function tryParseWxH(size: string | null | undefined): { w: number; h: number } | null {
   const s = String(size ?? '').trim();
   if (!s) return null;
