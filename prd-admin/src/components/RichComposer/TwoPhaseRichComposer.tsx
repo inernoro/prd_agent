@@ -52,16 +52,16 @@ export interface TwoPhaseRichComposerRef {
   clear: () => void;
   /** 聚焦编辑器 */
   focus: () => void;
-  /** 插入图片 chip（直接插入为就绪状态） */
+  /** 插入图片 chip（ready: true = 蓝色就绪；无 ready = 灰色 pending，自动添加到 pendingChipKeys） */
   insertImageChip: (option: ImageOption, opts?: { ready?: boolean }) => void;
   /** 插入文本 */
   insertText: (text: string) => void;
-  /** 将所有待选 chip 标记为就绪 */
+  /** 将所有待选 chip 标记为就绪（同时清空 pendingChipKeys） */
   markChipsReady: () => void;
-  /** 移除指定 key 的 chip */
+  /** 移除指定 key 的 chip（同时从 pendingChipKeys 移除） */
   removeChipByKey: (canvasKey: string) => void;
-  /** 【两阶段】预选图片（插入灰色 pending chip） */
-  preselectImage: (option: ImageOption) => void;
+  /** 【两阶段】预选图片（插入灰色 pending chip，默认替换模式） */
+  preselectImage: (option: ImageOption, opts?: { replace?: boolean }) => void;
   /** 【两阶段】确认所有 pending chips（灰→蓝） */
   confirmPending: () => void;
   /** 【两阶段】清除所有 pending chips（不发送） */
@@ -99,21 +99,29 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
     }, [onPendingKeysChange]);
 
     // 预选图片（两阶段第一步）
-    const preselectImage = useCallback((option: ImageOption) => {
+    // replace: true（默认）= 替换现有 pending；false = 累加到现有 pending
+    const preselectImage = useCallback((option: ImageOption, opts?: { replace?: boolean }) => {
       const composer = composerRef.current;
       if (!composer) return;
+
+      const replace = opts?.replace !== false; // 默认替换
 
       // 如果点击的是同一张图片（已经是 pending），不做任何操作
       if (pendingChipKeys.has(option.key)) return;
 
-      // 移除所有现有的 pending chips（替换逻辑）
-      pendingChipKeys.forEach((key) => {
-        composer.removeChipByKey(key);
-      });
-
-      // 插入新的 pending chip（灰色，不传 ready）
-      composer.insertImageChip(option);
-      updatePendingKeys(new Set([option.key]));
+      if (replace) {
+        // 移除所有现有的 pending chips（替换逻辑）
+        pendingChipKeys.forEach((key) => {
+          composer.removeChipByKey(key);
+        });
+        // 插入新的 pending chip（灰色，不传 ready）
+        composer.insertImageChip(option);
+        updatePendingKeys(new Set([option.key]));
+      } else {
+        // 累加模式：保留现有 pending，添加新的
+        composer.insertImageChip(option);
+        updatePendingKeys(new Set([...pendingChipKeys, option.key]));
+      }
     }, [pendingChipKeys, updatePendingKeys]);
 
     // 确认 pending chips（灰→蓝）
@@ -156,22 +164,56 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
       updatePendingKeys(new Set());
     }, [updatePendingKeys]);
 
+    // 插入图片 chip，同步 pendingChipKeys 状态
+    const handleInsertImageChip = useCallback((option: ImageOption, opts?: { ready?: boolean }) => {
+      const composer = composerRef.current;
+      if (!composer) return;
+
+      composer.insertImageChip(option, opts);
+
+      // 如果是灰色 chip（没有 ready 或 ready: false），添加到 pendingChipKeys
+      if (!opts?.ready) {
+        updatePendingKeys(new Set([...pendingChipKeys, option.key]));
+      }
+    }, [pendingChipKeys, updatePendingKeys]);
+
+    // 移除 chip，同步 pendingChipKeys 状态
+    const handleRemoveChipByKey = useCallback((key: string) => {
+      const composer = composerRef.current;
+      if (!composer) return;
+
+      composer.removeChipByKey(key);
+
+      // 如果是 pending chip，从 pendingChipKeys 移除
+      if (pendingChipKeys.has(key)) {
+        const newKeys = new Set(pendingChipKeys);
+        newKeys.delete(key);
+        updatePendingKeys(newKeys);
+      }
+    }, [pendingChipKeys, updatePendingKeys]);
+
+    // markChipsReady 同步状态
+    const handleMarkChipsReady = useCallback(() => {
+      composerRef.current?.markChipsReady();
+      updatePendingKeys(new Set());
+    }, [updatePendingKeys]);
+
     // 暴露 ref 方法
     useImperativeHandle(ref, () => ({
       getPlainText: () => composerRef.current?.getPlainText() ?? '',
       getStructuredContent: () => composerRef.current?.getStructuredContent() ?? { text: '', imageRefs: [] },
       clear: handleClear,
       focus: () => composerRef.current?.focus(),
-      insertImageChip: (option, opts) => composerRef.current?.insertImageChip(option, opts),
+      insertImageChip: handleInsertImageChip,
       insertText: (text) => composerRef.current?.insertText(text),
-      markChipsReady: () => composerRef.current?.markChipsReady(),
-      removeChipByKey: (key) => composerRef.current?.removeChipByKey(key),
+      markChipsReady: handleMarkChipsReady,
+      removeChipByKey: handleRemoveChipByKey,
       preselectImage,
       confirmPending,
       clearPending,
       getPendingKeys: () => pendingChipKeys,
       hasPending: () => pendingChipKeys.size > 0,
-    }), [pendingChipKeys, preselectImage, confirmPending, clearPending, handleClear]);
+    }), [pendingChipKeys, preselectImage, confirmPending, clearPending, handleClear, handleInsertImageChip, handleRemoveChipByKey, handleMarkChipsReady]);
 
     const hasPending = pendingChipKeys.size > 0;
 
