@@ -1020,18 +1020,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     return it;
   }, [selected, selectedKeys.length]);
 
-  // 多选时：获取所有选中的图片（用于顶部 chip 显示）
-  const selectedImagesForComposer = useMemo(() => {
-    if (selectedKeys.length === 0) return [];
-    return selectedKeys
-      .map((k) => canvas.find((c) => c.key === k))
-      .filter((it): it is CanvasImageItem => {
-        if (!it) return false;
-        if ((it.kind ?? 'image') !== 'image') return false;
-        const src = String(it.src ?? '').trim();
-        return !!src;
-      });
-  }, [canvas, selectedKeys]);
+  // 注：已删除 selectedImagesForComposer（老代码），现在使用 TwoPhaseRichComposer 管理 chip 显示
 
   const autoSizeForSelectedImage = useMemo(() => {
     const it = selectedSingleImageForComposer;
@@ -1128,23 +1117,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     );
   }, [composerSize, selectedKeys, canvas]);
 
-  // chip 作为内联元素，需要根据选中数量计算高度
-  // 每个 chip 约 140px 宽，每行可容纳 2-3 个
-  // 行高 20px + gap 6px = 26px，加上尺寸选择器
-  // 注意：当有 pending chip 时，上方的选中图片 chip 不显示，所以不需要顶部 padding
-  const composerMetaPadTop = useMemo(() => {
-    // 有 pending chip 时不需要顶部 padding（使用 RichComposer 内的 chip）
-    if (pendingChipKeys.size > 0) return 0;
-    const count = selectedImagesForComposer.length;
-    if (count === 0) return 0;
-    // 估算：每行约 2-3 个 chip，考虑尺寸选择器占一行
-    // 1-2 张：1 行 chip + 尺寸 = 28 + 26 = 54px（但通常一行够）
-    // 3+ 张：可能换行
-    // 简化：count <= 2 用 28px，3-4 用 54px，5+ 用 80px
-    if (count <= 2) return 28;
-    if (count <= 4) return 54;
-    return 80;
-  }, [selectedImagesForComposer.length, pendingChipKeys.size]);
+  // 注：已删除老代码的 selectedImagesForComposer 显示区域
+  // TwoPhaseRichComposer 内部自己管理 chip 显示，不需要外部 padding
+  const composerMetaPadTop = 0;
 
   const HOVER_MENU_CLOSE_DELAY_MS = 320;
 
@@ -6675,98 +6650,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 </div>
               ) : null}
 
-              {/* 选中图片时：显示参照图 chip（支持多选）
-                  注意：当有 pending chip 时不显示此区域，避免与 RichComposer 中的 chip 冲突 */}
-              {selectedImagesForComposer.length > 0 && pendingChipKeys.size === 0 ? (
-                <div
-                  className="absolute left-3 right-3 top-3 z-30 inline-flex items-center gap-1.5"
-                  style={{ pointerEvents: 'auto', flexWrap: 'wrap' }}
-                >
-                  {/* 渲染每个选中的图片 chip */}
-                  {selectedImagesForComposer.map((img, idx) => (
-                    <button
-                      key={img.key}
-                      type="button"
-                      className="inline-flex items-center gap-1.5"
-                      style={{
-                        height: 20,
-                        maxWidth: 140,
-                        paddingLeft: 4,
-                        paddingRight: 6,
-                        borderRadius: 4,
-                        overflow: 'hidden',
-                        border: '1px solid var(--border-subtle)',
-                        background: 'rgba(255,255,255,0.02)',
-                        color: 'rgba(255,255,255,0.82)',
-                      }}
-                      title={guessRefName(img) ? `参照图 ${idx + 1}：${guessRefName(img)}` : `参照图 ${idx + 1}`}
-                      aria-label={`预览参考图 ${idx + 1}`}
-                      onClick={() =>
-                        setPreview({
-                          open: true,
-                          src: String(img.src ?? ''),
-                          prompt: guessRefName(img) || `参照图 ${idx + 1}`,
-                        })
-                      }
-                    >
-                      {/* 序号标记 */}
-                      <span
-                        style={{
-                          minWidth: 14,
-                          height: 14,
-                          borderRadius: 3,
-                          background: 'rgba(99, 102, 241, 0.25)',
-                          border: '1px solid rgba(99, 102, 241, 0.4)',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 9,
-                          fontWeight: 700,
-                          color: 'rgba(99, 102, 241, 1)',
-                          flexShrink: 0,
-                        }}
-                      >
-                        {idx + 1}
-                      </span>
-                      <span
-                        style={{
-                          width: 14,
-                          height: 14,
-                          borderRadius: 3,
-                          overflow: 'hidden',
-                          border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'rgba(255,255,255,0.06)',
-                          display: 'inline-flex',
-                          flex: '0 0 auto',
-                        }}
-                      >
-                        <img
-                          src={String(img.src ?? '')}
-                          alt={guessRefName(img) || `参照图 ${idx + 1}`}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                        />
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          lineHeight: '16px',
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          maxWidth: 70,
-                        }}
-                      >
-                        {truncateLabelFront(guessRefName(img) || `图${idx + 1}`, 6)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-
-              {/* 两阶段选择富文本编辑器 - 内置容器点击确认 pending chips */}
+              {/* 两阶段选择富文本编辑器 - 内置容器点击确认 pending chips
+                  注：已删除老代码的 selectedImagesForComposer chip 显示区域，
+                  现在完全由 TwoPhaseRichComposer 内部管理 chip 显示 */}
               <TwoPhaseRichComposer
                 ref={richComposerRef}
-                placeholder={selectedImagesForComposer.length > 0 ? '' : '请输入你的设计需求（Enter 发送，Shift+Enter 换行）'}
+                placeholder="请输入你的设计需求（Enter 发送，Shift+Enter 换行）"
                 imageOptions={imageOptions}
                 onChange={(text) => {
                   activeComposerRef.current = 'right';
