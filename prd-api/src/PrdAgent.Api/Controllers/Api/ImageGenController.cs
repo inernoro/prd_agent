@@ -12,6 +12,7 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.Prompts.Templates;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Infrastructure.Services.VisualAgent;
 using System.Text.RegularExpressions;
 using PrdAgent.Core.Security;
 
@@ -36,6 +37,7 @@ public class ImageGenController : ControllerBase
     private readonly IAssetStorage _assetStorage;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IRunEventStore _runStore;
+    private readonly IMultiImageComposeService _composeService;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -49,7 +51,8 @@ public class ImageGenController : ControllerBase
         IAppSettingsService settingsService,
         IAssetStorage assetStorage,
         IHttpClientFactory httpClientFactory,
-        IRunEventStore runStore)
+        IRunEventStore runStore,
+        IMultiImageComposeService composeService)
     {
         _db = db;
         _modelDomain = modelDomain;
@@ -61,6 +64,7 @@ public class ImageGenController : ControllerBase
         _assetStorage = assetStorage;
         _httpClientFactory = httpClientFactory;
         _runStore = runStore;
+        _composeService = composeService;
     }
 
     private string GetAdminId() =>
@@ -371,6 +375,150 @@ public class ImageGenController : ControllerBase
         }
 
         return Ok(ApiResponse<ImageGenResult>.Ok(res.Data!));
+    }
+
+    /// <summary>
+    /// 多图组合生成：解析用户指令中的多图关系，生成组合图片
+    /// </summary>
+    [HttpPost("compose")]
+    [ProducesResponseType(typeof(ApiResponse<ImageGenComposeResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status502BadGateway)]
+    public async Task<IActionResult> Compose([FromBody] ImageGenComposeRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var instruction = (request?.Instruction ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(instruction))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "instruction 不能为空"));
+        }
+
+        var images = request?.Images ?? new List<ImageGenComposeImageRef>();
+        if (images.Count == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "images 不能为空"));
+        }
+
+        if (images.Count > 10)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "最多支持 10 张图片"));
+        }
+
+        // 转换为服务层的 ImageReference
+        var imageRefs = images.Select(x => new ImageReference
+        {
+            Index = x.Index,
+            AssetId = x.AssetId,
+            Name = x.Name
+        }).ToList();
+
+        // 1. 解析组合意图
+        ComposeIntentResult intentResult;
+        try
+        {
+            intentResult = await _composeService.ParseComposeIntentAsync(instruction, imageRefs, adminId, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Compose intent parsing failed");
+            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, "意图解析失败"));
+        }
+
+        if (string.IsNullOrWhiteSpace(intentResult.GeneratedPrompt))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无法解析组合意图"));
+        }
+
+        // 2. 如果仅请求解析（不生图），直接返回 Prompt
+        if (request?.ParseOnly == true)
+        {
+            return Ok(ApiResponse<ImageGenComposeResponse>.Ok(new ImageGenComposeResponse
+            {
+                GeneratedPrompt = intentResult.GeneratedPrompt,
+                Images = new List<ImageGenImage>(),
+                ImageDescriptions = intentResult.ImageDescriptions.Select(x => new ImageDescriptionDto
+                {
+                    Index = x.Index,
+                    AssetId = x.AssetId,
+                    Description = x.Description,
+                    HasDescription = x.HasDescription
+                }).ToList()
+            }));
+        }
+
+        // 3. 调用生图模型
+        var modelId = (request?.ModelId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(modelId)) modelId = null;
+        var platformId = (request?.PlatformId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
+        var configModelId = (request?.ConfigModelId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(configModelId)) configModelId = null;
+
+        // 如果提供了 configModelId，解析 platformId 和 modelId
+        if (!string.IsNullOrWhiteSpace(configModelId))
+        {
+            var m = await _db.LLMModels.Find(x => x.Id == configModelId && x.Enabled).FirstOrDefaultAsync(ct);
+            if (m != null)
+            {
+                platformId = m.PlatformId;
+                modelId = m.ModelName;
+            }
+        }
+
+        // 如果仍然没有模型信息，使用调度器解析
+        var appCallerCode = AppCallerRegistry.VisualAgent.Compose.Generation;
+        ResolvedModelInfo? resolved = null;
+        if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
+        {
+            resolved = await _modelScheduler.ResolveModelAsync(appCallerCode, "generation", ct);
+            if (resolved != null)
+            {
+                platformId = resolved.PlatformId;
+                modelId = resolved.ModelId;
+            }
+        }
+
+        var size = string.IsNullOrWhiteSpace(request?.Size) ? "1024x1024" : request!.Size!.Trim();
+        var responseFormat = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "b64_json" : request!.ResponseFormat!.Trim();
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: adminId,
+            ViewRole: "ADMIN",
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[IMAGE_GEN_COMPOSE]",
+            RequestType: "imageGen",
+            RequestPurpose: appCallerCode,
+            ModelResolutionType: resolved?.ResolutionType ?? ModelResolutionType.DirectModel,
+            ModelGroupId: resolved?.ModelGroupId,
+            ModelGroupName: resolved?.ModelGroupName));
+
+        var res = await _imageClient.GenerateAsync(intentResult.GeneratedPrompt, n: 1, size, responseFormat, ct, modelId, platformId);
+        if (!res.Success)
+        {
+            var code = res.Error?.Code ?? ErrorCodes.INTERNAL_ERROR;
+            if (code == ErrorCodes.LLM_ERROR)
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(code, res.Error?.Message ?? "生图失败"));
+            }
+            return BadRequest(ApiResponse<object>.Fail(code, res.Error?.Message ?? "生图失败"));
+        }
+
+        return Ok(ApiResponse<ImageGenComposeResponse>.Ok(new ImageGenComposeResponse
+        {
+            GeneratedPrompt = intentResult.GeneratedPrompt,
+            Images = res.Data?.Images ?? new List<ImageGenImage>(),
+            ImageDescriptions = intentResult.ImageDescriptions.Select(x => new ImageDescriptionDto
+            {
+                Index = x.Index,
+                AssetId = x.AssetId,
+                Description = x.Description,
+                HasDescription = x.HasDescription
+            }).ToList()
+        }));
     }
 
     private static bool TryValidateExternalImageUrl(string raw, out Uri? uri)
@@ -1339,4 +1487,93 @@ public class ImageGenRunPlanItemInput
     public string Prompt { get; set; } = string.Empty;
     public int Count { get; set; } = 1;
     public string? Size { get; set; }
+}
+
+// ===== 多图组合生成 =====
+
+public class ImageGenComposeRequest
+{
+    /// <summary>
+    /// 用户指令（如 "把 [IMAGE_1] 放进 [IMAGE_2] 里"）
+    /// </summary>
+    public string Instruction { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 图片引用列表
+    /// </summary>
+    public List<ImageGenComposeImageRef> Images { get; set; } = new();
+
+    /// <summary>
+    /// 可选：仅解析意图，不生成图片
+    /// </summary>
+    public bool? ParseOnly { get; set; }
+
+    /// <summary>
+    /// 可选：内部配置模型 ID（LLMModel.Id）
+    /// </summary>
+    public string? ConfigModelId { get; set; }
+
+    /// <summary>
+    /// 平台侧模型 ID
+    /// </summary>
+    public string? ModelId { get; set; }
+
+    /// <summary>
+    /// 平台 ID
+    /// </summary>
+    public string? PlatformId { get; set; }
+
+    /// <summary>
+    /// 生图尺寸（如 "1024x1024"）
+    /// </summary>
+    public string? Size { get; set; }
+
+    /// <summary>
+    /// 响应格式（b64_json | url）
+    /// </summary>
+    public string? ResponseFormat { get; set; }
+}
+
+public class ImageGenComposeImageRef
+{
+    /// <summary>
+    /// 引用索引（对应指令中的 [IMAGE_N]）
+    /// </summary>
+    public int Index { get; set; }
+
+    /// <summary>
+    /// 图片资产 ID
+    /// </summary>
+    public string AssetId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 显示名称（可选）
+    /// </summary>
+    public string? Name { get; set; }
+}
+
+public class ImageGenComposeResponse
+{
+    /// <summary>
+    /// VLM 生成的英文 Prompt
+    /// </summary>
+    public string GeneratedPrompt { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 生成的图片列表
+    /// </summary>
+    public List<ImageGenImage> Images { get; set; } = new();
+
+    /// <summary>
+    /// 图片描述信息（用于调试）
+    /// </summary>
+    public List<ImageDescriptionDto> ImageDescriptions { get; set; } = new();
+}
+
+public class ImageDescriptionDto
+{
+    public int Index { get; set; }
+    public string AssetId { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public bool HasDescription { get; set; }
 }

@@ -137,6 +137,33 @@ public static class VisualAgent
             Category = "Image"
         )]
         public const string Chat = "visual-agent.image::chat";
+
+        [AppCallerMetadata(
+            "图片描述提取",
+            "使用 VLM 提取图片的视觉描述（用于多图组合）",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Image"
+        )]
+        public const string Describe = "visual-agent.image.describe::vision";
+    }
+
+    public static class Compose
+    {
+        [AppCallerMetadata(
+            "多图组合-意图解析",
+            "解析用户的多图组合指令，生成英文 Prompt",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Compose"
+        )]
+        public const string Intent = "visual-agent.compose::vision";
+
+        [AppCallerMetadata(
+            "多图组合-图片生成",
+            "根据解析后的 Prompt 生成组合图片",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Compose"
+        )]
+        public const string Generation = "visual-agent.compose::generation";
     }
 }
 

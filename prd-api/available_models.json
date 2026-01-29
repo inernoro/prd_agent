@@ -1,0 +1,2664 @@
+﻿{
+    "success":  true,
+    "data":  [
+                 {
+                     "modelName":  "ChatTTS",
+                     "displayName":  "ChatTTS",
+                     "group":  "chattts",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "CosyVoice2",
+                     "displayName":  "CosyVoice2",
+                     "group":  "cosyvoice2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "DeepSeek-R1-Distill-Qwen-1.5B",
+                     "displayName":  "DeepSeek-R1-Distill-Qwen-1.5B",
+                     "group":  "deepseek-r1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "DeepSeek-R1-Distill-Qwen-14B",
+                     "displayName":  "DeepSeek-R1-Distill-Qwen-14B",
+                     "group":  "deepseek-r1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "DeepSeek-R1-Distill-Qwen-32B",
+                     "displayName":  "DeepSeek-R1-Distill-Qwen-32B",
+                     "group":  "deepseek-r1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "DeepSeek-R1-Distill-Qwen-7B",
+                     "displayName":  "DeepSeek-R1-Distill-Qwen-7B",
+                     "group":  "deepseek-r1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "ERNIE-4.5-Turbo",
+                     "displayName":  "ERNIE-4.5-Turbo",
+                     "group":  "ernie-4.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "ERNIE-X1-Turbo",
+                     "displayName":  "ERNIE-X1-Turbo",
+                     "group":  "ernie-x1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Fin-R1",
+                     "displayName":  "Fin-R1",
+                     "group":  "fin-r1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "FunAudioLLM-CosyVoice-300M",
+                     "displayName":  "FunAudioLLM-CosyVoice-300M",
+                     "group":  "funaudiollm-cosyvoice",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "HealthGPT-L14",
+                     "displayName":  "HealthGPT-L14",
+                     "group":  "healthgpt-l14",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Hi3DGen",
+                     "displayName":  "Hi3DGen",
+                     "group":  "hi3dgen",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Hunyuan3D-2",
+                     "displayName":  "Hunyuan3D-2",
+                     "group":  "hunyuan3d-2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "HunyuanDiT-v1.2-Diffusers-Distilled",
+                     "displayName":  "HunyuanDiT-v1.2-Diffusers-Distilled",
+                     "group":  "hunyuandit-v1.2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "I2V-01",
+                     "displayName":  "I2V-01",
+                     "group":  "i2v-01",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "I2V-01-Director",
+                     "displayName":  "I2V-01-Director",
+                     "group":  "i2v-01",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "I2V-01-live",
+                     "displayName":  "I2V-01-live",
+                     "group":  "i2v-01",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "InternVL2-8B",
+                     "displayName":  "InternVL2-8B",
+                     "group":  "internvl2-8b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "InternVL2.5-26B",
+                     "displayName":  "InternVL2.5-26B",
+                     "group":  "internvl2.5-26b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "InternVL2.5-78B",
+                     "displayName":  "InternVL2.5-78B",
+                     "group":  "internvl2.5-78b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "InternVL3-38B",
+                     "displayName":  "InternVL3-38B",
+                     "group":  "internvl3-38b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "InternVL3-78B",
+                     "displayName":  "InternVL3-78B",
+                     "group":  "internvl3-78b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Kolors",
+                     "displayName":  "Kolors",
+                     "group":  "kolors",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "MegaTTS3",
+                     "displayName":  "MegaTTS3",
+                     "group":  "megatts3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Qwen2-72B-Instruct",
+                     "displayName":  "Qwen2-72B-Instruct",
+                     "group":  "qwen2-72b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Qwen2-VL-72B",
+                     "displayName":  "Qwen2-VL-72B",
+                     "group":  "qwen2-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Qwen2.5-32B-Instruct",
+                     "displayName":  "Qwen2.5-32B-Instruct",
+                     "group":  "qwen2.5-32b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Qwen2.5-72B-Instruct",
+                     "displayName":  "Qwen2.5-72B-Instruct",
+                     "group":  "qwen2.5-72b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Qwen2.5-Coder-32B-Instruct",
+                     "displayName":  "Qwen2.5-Coder-32B-Instruct",
+                     "group":  "qwen2.5-coder",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Qwen2.5-VL-32B-Instruct",
+                     "displayName":  "Qwen2.5-VL-32B-Instruct",
+                     "group":  "qwen2.5-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Qwen3-235B-A22B-Instruct-2507",
+                     "displayName":  "Qwen3-235B-A22B-Instruct-2507",
+                     "group":  "qwen3-235b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Qwen3-Embedding-8B",
+                     "displayName":  "Qwen3-Embedding-8B",
+                     "group":  "qwen3-embedding",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Qwen3-Reranker-8B",
+                     "displayName":  "Qwen3-Reranker-8B",
+                     "group":  "qwen3-reranker",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "S2V-01",
+                     "displayName":  "S2V-01",
+                     "group":  "s2v-01",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "SenseVoiceSmall",
+                     "displayName":  "SenseVoiceSmall",
+                     "group":  "sensevoicesmall",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Step-Audio-TTS-3B",
+                     "displayName":  "Step-Audio-TTS-3B",
+                     "group":  "step-audio",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Step1X-3D",
+                     "displayName":  "Step1X-3D",
+                     "group":  "step1x-3d",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "T2V-01",
+                     "displayName":  "T2V-01",
+                     "group":  "t2v-01",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "T2V-01-Director",
+                     "displayName":  "T2V-01-Director",
+                     "group":  "t2v-01",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "Yi-34B-Chat",
+                     "displayName":  "Yi-34B-Chat",
+                     "group":  "yi-34b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "bce-embedding-base_v1",
+                     "displayName":  "bce-embedding-base_v1",
+                     "group":  "bce-embedding",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "bge-large-zh-v1.5",
+                     "displayName":  "bge-large-zh-v1.5",
+                     "group":  "bge-large",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "bge-m3",
+                     "displayName":  "bge-m3",
+                     "group":  "bge-m3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "chatgpt-4o-latest",
+                     "displayName":  "chatgpt-4o-latest",
+                     "group":  "chatgpt-4o",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "dall-e-3",
+                     "displayName":  "dall-e-3",
+                     "group":  "dall-e",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-chat",
+                     "displayName":  "deepseek-chat",
+                     "group":  "deepseek-chat",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-coder-33B-instruct",
+                     "displayName":  "deepseek-coder-33B-instruct",
+                     "group":  "deepseek-coder",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-r1",
+                     "displayName":  "deepseek-r1",
+                     "group":  "deepseek-r1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-r1-250528",
+                     "displayName":  "deepseek-r1-250528",
+                     "group":  "deepseek-r1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-r1-search",
+                     "displayName":  "deepseek-r1-search",
+                     "group":  "deepseek-r1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-reasoner",
+                     "displayName":  "deepseek-reasoner",
+                     "group":  "deepseek-reasoner",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-v3",
+                     "displayName":  "deepseek-v3",
+                     "group":  "deepseek-v3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-v3-search",
+                     "displayName":  "deepseek-v3-search",
+                     "group":  "deepseek-v3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-v3.1",
+                     "displayName":  "deepseek-v3.1",
+                     "group":  "deepseek-v3.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-v3.1-250821",
+                     "displayName":  "deepseek-v3.1-250821",
+                     "group":  "deepseek-v3.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-v3.1-terminus",
+                     "displayName":  "deepseek-v3.1-terminus",
+                     "group":  "deepseek-v3.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-v3.1-terminus-thinking",
+                     "displayName":  "deepseek-v3.1-terminus-thinking",
+                     "group":  "deepseek-v3.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-v3.1-thinking",
+                     "displayName":  "deepseek-v3.1-thinking",
+                     "group":  "deepseek-v3.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-v3.2",
+                     "displayName":  "deepseek-v3.2",
+                     "group":  "deepseek-v3.2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-v3.2-thinking",
+                     "displayName":  "deepseek-v3.2-thinking",
+                     "group":  "deepseek-v3.2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "direct-generate-pptx",
+                     "displayName":  "direct-generate-pptx",
+                     "group":  "direct-generate",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-1-5-lite-32k",
+                     "displayName":  "doubao-1-5-lite-32k",
+                     "group":  "doubao-1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-1-5-pro-256k",
+                     "displayName":  "doubao-1-5-pro-256k",
+                     "group":  "doubao-1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-1-5-pro-32k",
+                     "displayName":  "doubao-1-5-pro-32k",
+                     "group":  "doubao-1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-1-5-vision-pro-32k",
+                     "displayName":  "doubao-1-5-vision-pro-32k",
+                     "group":  "doubao-1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-embedding-text",
+                     "displayName":  "doubao-embedding-text",
+                     "group":  "doubao-embedding",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-6-251015",
+                     "displayName":  "doubao-seed-1-6-251015",
+                     "group":  "doubao-seed",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-6-flash-250615",
+                     "displayName":  "doubao-seed-1-6-flash-250615",
+                     "group":  "doubao-seed",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-6-thinking-250615",
+                     "displayName":  "doubao-seed-1-6-thinking-250615",
+                     "group":  "doubao-seed",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-8-251228",
+                     "displayName":  "doubao-seed-1-8-251228",
+                     "group":  "doubao-seed",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seedance-1-0-lite-i2v-250428",
+                     "displayName":  "doubao-seedance-1-0-lite-i2v-250428",
+                     "group":  "doubao-seedance",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seedance-1-0-lite-t2v-250428",
+                     "displayName":  "doubao-seedance-1-0-lite-t2v-250428",
+                     "group":  "doubao-seedance",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seedance-1-0-pro-250528",
+                     "displayName":  "doubao-seedance-1-0-pro-250528",
+                     "group":  "doubao-seedance",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seedance-1-0-pro-fast-251015",
+                     "displayName":  "doubao-seedance-1-0-pro-fast-251015",
+                     "group":  "doubao-seedance",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seedance-1-5-pro-251215",
+                     "displayName":  "doubao-seedance-1-5-pro-251215",
+                     "group":  "doubao-seedance",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seedance-1-5-pro-251215_false",
+                     "displayName":  "doubao-seedance-1-5-pro-251215_false",
+                     "group":  "doubao-seedance",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seedance-1-5-pro-251215_true",
+                     "displayName":  "doubao-seedance-1-5-pro-251215_true",
+                     "group":  "doubao-seedance",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seededit-3-0-i2i-250628",
+                     "displayName":  "doubao-seededit-3-0-i2i-250628",
+                     "group":  "doubao-seededit",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seedream-3-0-t2i-250415",
+                     "displayName":  "doubao-seedream-3-0-t2i-250415",
+                     "group":  "doubao-seedream",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seedream-4-0-250828",
+                     "displayName":  "doubao-seedream-4-0-250828",
+                     "group":  "doubao-seedream",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seedream-4-5-251128",
+                     "displayName":  "doubao-seedream-4-5-251128",
+                     "group":  "doubao-seedream",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "fish-speech-1.2-sft",
+                     "displayName":  "fish-speech-1.2-sft",
+                     "group":  "fish-speech",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "flux",
+                     "displayName":  "flux",
+                     "group":  "flux",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "flux-1-schnell",
+                     "displayName":  "flux-1-schnell",
+                     "group":  "flux-1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "flux-1.1-pro",
+                     "displayName":  "flux-1.1-pro",
+                     "group":  "flux-1.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "flux-dev",
+                     "displayName":  "flux-dev",
+                     "group":  "flux-dev",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "flux-kontext-dev",
+                     "displayName":  "flux-kontext-dev",
+                     "group":  "flux-kontext",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "flux-kontext-max",
+                     "displayName":  "flux-kontext-max",
+                     "group":  "flux-kontext",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "flux-kontext-pro",
+                     "displayName":  "flux-kontext-pro",
+                     "group":  "flux-kontext",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "flux-pro",
+                     "displayName":  "flux-pro",
+                     "group":  "flux-pro",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "flux-pro-1.1",
+                     "displayName":  "flux-pro-1.1",
+                     "group":  "flux-pro",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "flux-pro-1.1-ultra",
+                     "displayName":  "flux-pro-1.1-ultra",
+                     "group":  "flux-pro",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "flux-pro-max",
+                     "displayName":  "flux-pro-max",
+                     "group":  "flux-pro",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "ge-2.0-flash",
+                     "displayName":  "ge-2.0-flash",
+                     "group":  "ge-2.0",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "ge-2.5-flash",
+                     "displayName":  "ge-2.5-flash",
+                     "group":  "ge-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "ge-2.5-flash-thinking",
+                     "displayName":  "ge-2.5-flash-thinking",
+                     "group":  "ge-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "ge-2.5-pro",
+                     "displayName":  "ge-2.5-pro",
+                     "group":  "ge-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "ge-2.5-pro-thinking",
+                     "displayName":  "ge-2.5-pro-thinking",
+                     "group":  "ge-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "ge-3-pro-preview",
+                     "displayName":  "ge-3-pro-preview",
+                     "group":  "ge-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.0-flash",
+                     "displayName":  "gemini-2.0-flash",
+                     "group":  "gemini-2.0",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.0-flash-001",
+                     "displayName":  "gemini-2.0-flash-001",
+                     "group":  "gemini-2.0",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.0-flash-lite",
+                     "displayName":  "gemini-2.0-flash-lite",
+                     "group":  "gemini-2.0",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.0-flash-lite-001",
+                     "displayName":  "gemini-2.0-flash-lite-001",
+                     "group":  "gemini-2.0",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.0-flash-search",
+                     "displayName":  "gemini-2.0-flash-search",
+                     "group":  "gemini-2.0",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash",
+                     "displayName":  "gemini-2.5-flash",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-image",
+                     "displayName":  "gemini-2.5-flash-image",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-lite",
+                     "displayName":  "gemini-2.5-flash-lite",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-lite-preview-06-17",
+                     "displayName":  "gemini-2.5-flash-lite-preview-06-17",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-lite-preview-09-2025",
+                     "displayName":  "gemini-2.5-flash-lite-preview-09-2025",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-lite-preview-09-2025-thinking",
+                     "displayName":  "gemini-2.5-flash-lite-preview-09-2025-thinking",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-lite-preview-09-2025-thinking-*",
+                     "displayName":  "gemini-2.5-flash-lite-preview-09-2025-thinking-*",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-lite-thinking",
+                     "displayName":  "gemini-2.5-flash-lite-thinking",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-nothinking",
+                     "displayName":  "gemini-2.5-flash-nothinking",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-preview-09-2025",
+                     "displayName":  "gemini-2.5-flash-preview-09-2025",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-preview-09-2025-nothinking",
+                     "displayName":  "gemini-2.5-flash-preview-09-2025-nothinking",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-preview-09-2025-thinking",
+                     "displayName":  "gemini-2.5-flash-preview-09-2025-thinking",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-preview-09-2025-thinking-*",
+                     "displayName":  "gemini-2.5-flash-preview-09-2025-thinking-*",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-preview-tts",
+                     "displayName":  "gemini-2.5-flash-preview-tts",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-search",
+                     "displayName":  "gemini-2.5-flash-search",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-thinking",
+                     "displayName":  "gemini-2.5-flash-thinking",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-flash-thinking-*",
+                     "displayName":  "gemini-2.5-flash-thinking-*",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-pro",
+                     "displayName":  "gemini-2.5-pro",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-pro-preview-06-05",
+                     "displayName":  "gemini-2.5-pro-preview-06-05",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-pro-preview-tts",
+                     "displayName":  "gemini-2.5-pro-preview-tts",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-pro-search",
+                     "displayName":  "gemini-2.5-pro-search",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-pro-thinking",
+                     "displayName":  "gemini-2.5-pro-thinking",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-2.5-pro-thinking-*",
+                     "displayName":  "gemini-2.5-pro-thinking-*",
+                     "group":  "gemini-2.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-3-flash-preview",
+                     "displayName":  "gemini-3-flash-preview",
+                     "group":  "gemini-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-3-flash-preview-nothinking",
+                     "displayName":  "gemini-3-flash-preview-nothinking",
+                     "group":  "gemini-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-3-flash-preview-search",
+                     "displayName":  "gemini-3-flash-preview-search",
+                     "group":  "gemini-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-3-flash-preview-thinking",
+                     "displayName":  "gemini-3-flash-preview-thinking",
+                     "group":  "gemini-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-3-flash-preview-thinking-*",
+                     "displayName":  "gemini-3-flash-preview-thinking-*",
+                     "group":  "gemini-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-3-pro-image-preview",
+                     "displayName":  "gemini-3-pro-image-preview",
+                     "group":  "gemini-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-3-pro-image-preview-2k",
+                     "displayName":  "gemini-3-pro-image-preview-2k",
+                     "group":  "gemini-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-3-pro-image-preview-4k",
+                     "displayName":  "gemini-3-pro-image-preview-4k",
+                     "group":  "gemini-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-3-pro-preview",
+                     "displayName":  "gemini-3-pro-preview",
+                     "group":  "gemini-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-3-pro-preview-low",
+                     "displayName":  "gemini-3-pro-preview-low",
+                     "group":  "gemini-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-3-pro-preview-search",
+                     "displayName":  "gemini-3-pro-preview-search",
+                     "group":  "gemini-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-3-pro-preview-thinking",
+                     "displayName":  "gemini-3-pro-preview-thinking",
+                     "group":  "gemini-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-3-pro-preview-thinking-*",
+                     "displayName":  "gemini-3-pro-preview-thinking-*",
+                     "group":  "gemini-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-embedding-001",
+                     "displayName":  "gemini-embedding-001",
+                     "group":  "gemini-embedding",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-flash-latest",
+                     "displayName":  "gemini-flash-latest",
+                     "group":  "gemini-flash",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-flash-latest-nothinking",
+                     "displayName":  "gemini-flash-latest-nothinking",
+                     "group":  "gemini-flash",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-flash-latest-search",
+                     "displayName":  "gemini-flash-latest-search",
+                     "group":  "gemini-flash",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-flash-latest-thinking",
+                     "displayName":  "gemini-flash-latest-thinking",
+                     "group":  "gemini-flash",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-flash-latest-thinking-*",
+                     "displayName":  "gemini-flash-latest-thinking-*",
+                     "group":  "gemini-flash",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-flash-lite-latest",
+                     "displayName":  "gemini-flash-lite-latest",
+                     "group":  "gemini-flash",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-flash-lite-latest-nothinking",
+                     "displayName":  "gemini-flash-lite-latest-nothinking",
+                     "group":  "gemini-flash",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-flash-lite-latest-search",
+                     "displayName":  "gemini-flash-lite-latest-search",
+                     "group":  "gemini-flash",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-flash-lite-latest-thinking",
+                     "displayName":  "gemini-flash-lite-latest-thinking",
+                     "group":  "gemini-flash",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-flash-lite-latest-thinking-*",
+                     "displayName":  "gemini-flash-lite-latest-thinking-*",
+                     "group":  "gemini-flash",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-pro-latest",
+                     "displayName":  "gemini-pro-latest",
+                     "group":  "gemini-pro",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-pro-latest-search",
+                     "displayName":  "gemini-pro-latest-search",
+                     "group":  "gemini-pro",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-pro-latest-thinking",
+                     "displayName":  "gemini-pro-latest-thinking",
+                     "group":  "gemini-pro",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gemini-pro-latest-thinking-*",
+                     "displayName":  "gemini-pro-latest-thinking-*",
+                     "group":  "gemini-pro",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4-0520",
+                     "displayName":  "glm-4-0520",
+                     "group":  "glm-4",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4-air",
+                     "displayName":  "glm-4-air",
+                     "group":  "glm-4",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4-airx",
+                     "displayName":  "glm-4-airx",
+                     "group":  "glm-4",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4-flash",
+                     "displayName":  "glm-4-flash",
+                     "group":  "glm-4",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4-long",
+                     "displayName":  "glm-4-long",
+                     "group":  "glm-4",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4-plus",
+                     "displayName":  "glm-4-plus",
+                     "group":  "glm-4",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4.5",
+                     "displayName":  "glm-4.5",
+                     "group":  "glm-4.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4.5-air",
+                     "displayName":  "glm-4.5-air",
+                     "group":  "glm-4.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4.5-airx",
+                     "displayName":  "glm-4.5-airx",
+                     "group":  "glm-4.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4.5-flash",
+                     "displayName":  "glm-4.5-flash",
+                     "group":  "glm-4.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4.5-x",
+                     "displayName":  "glm-4.5-x",
+                     "group":  "glm-4.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4.5v",
+                     "displayName":  "glm-4.5v",
+                     "group":  "glm-4.5v",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4.6",
+                     "displayName":  "glm-4.6",
+                     "group":  "glm-4.6",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4.7",
+                     "displayName":  "glm-4.7",
+                     "group":  "glm-4.7",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4v",
+                     "displayName":  "glm-4v",
+                     "group":  "glm-4v",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "glm-4v-plus",
+                     "displayName":  "glm-4v-plus",
+                     "group":  "glm-4v",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-3.5-turbo-16k",
+                     "displayName":  "gpt-3.5-turbo-16k",
+                     "group":  "gpt-3.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-3.5-turbo-instruct",
+                     "displayName":  "gpt-3.5-turbo-instruct",
+                     "group":  "gpt-3.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4-all",
+                     "displayName":  "gpt-4-all",
+                     "group":  "gpt-4",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4-gizmo-*",
+                     "displayName":  "gpt-4-gizmo-*",
+                     "group":  "gpt-4",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4.1",
+                     "displayName":  "gpt-4.1",
+                     "group":  "gpt-4.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4.1-2025-04-14",
+                     "displayName":  "gpt-4.1-2025-04-14",
+                     "group":  "gpt-4.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4.1-mini",
+                     "displayName":  "gpt-4.1-mini",
+                     "group":  "gpt-4.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4.1-mini-2025-04-14",
+                     "displayName":  "gpt-4.1-mini-2025-04-14",
+                     "group":  "gpt-4.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4.1-nano",
+                     "displayName":  "gpt-4.1-nano",
+                     "group":  "gpt-4.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4.1-nano-2025-04-14",
+                     "displayName":  "gpt-4.1-nano-2025-04-14",
+                     "group":  "gpt-4.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4o",
+                     "displayName":  "gpt-4o",
+                     "group":  "gpt-4o",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4o-2024-05-13",
+                     "displayName":  "gpt-4o-2024-05-13",
+                     "group":  "gpt-4o",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4o-2024-08-06",
+                     "displayName":  "gpt-4o-2024-08-06",
+                     "group":  "gpt-4o",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4o-2024-11-20",
+                     "displayName":  "gpt-4o-2024-11-20",
+                     "group":  "gpt-4o",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4o-all",
+                     "displayName":  "gpt-4o-all",
+                     "group":  "gpt-4o",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4o-image",
+                     "displayName":  "gpt-4o-image",
+                     "group":  "gpt-4o",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4o-image-vip",
+                     "displayName":  "gpt-4o-image-vip",
+                     "group":  "gpt-4o",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4o-mini",
+                     "displayName":  "gpt-4o-mini",
+                     "group":  "gpt-4o",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4o-mini-2024-07-18",
+                     "displayName":  "gpt-4o-mini-2024-07-18",
+                     "group":  "gpt-4o",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5",
+                     "displayName":  "gpt-5",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-2025-08-07",
+                     "displayName":  "gpt-5-2025-08-07",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-all",
+                     "displayName":  "gpt-5-all",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-chat-latest",
+                     "displayName":  "gpt-5-chat-latest",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-fast",
+                     "displayName":  "gpt-5-fast",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-flex",
+                     "displayName":  "gpt-5-flex",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-high",
+                     "displayName":  "gpt-5-high",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-low",
+                     "displayName":  "gpt-5-low",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-medium",
+                     "displayName":  "gpt-5-medium",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-mini",
+                     "displayName":  "gpt-5-mini",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-mini-2025-08-07",
+                     "displayName":  "gpt-5-mini-2025-08-07",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-mini-high",
+                     "displayName":  "gpt-5-mini-high",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-mini-low",
+                     "displayName":  "gpt-5-mini-low",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-mini-medium",
+                     "displayName":  "gpt-5-mini-medium",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-mini-minimal",
+                     "displayName":  "gpt-5-mini-minimal",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-minimal",
+                     "displayName":  "gpt-5-minimal",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-nano",
+                     "displayName":  "gpt-5-nano",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-nano-2025-08-07",
+                     "displayName":  "gpt-5-nano-2025-08-07",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-thinking-all",
+                     "displayName":  "gpt-5-thinking-all",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1",
+                     "displayName":  "gpt-5.1",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-2025-11-13",
+                     "displayName":  "gpt-5.1-2025-11-13",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-all",
+                     "displayName":  "gpt-5.1-all",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-chat-2025-11-13",
+                     "displayName":  "gpt-5.1-chat-2025-11-13",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-chat-latest",
+                     "displayName":  "gpt-5.1-chat-latest",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-codex-mini-2025-11-13",
+                     "displayName":  "gpt-5.1-codex-mini-2025-11-13",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-thinking-all",
+                     "displayName":  "gpt-5.1-thinking-all",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.2",
+                     "displayName":  "gpt-5.2",
+                     "group":  "gpt-5.2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.2-2025-12-11",
+                     "displayName":  "gpt-5.2-2025-12-11",
+                     "group":  "gpt-5.2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-image-1",
+                     "displayName":  "gpt-image-1",
+                     "group":  "gpt-image",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-image-1.5",
+                     "displayName":  "gpt-image-1.5",
+                     "group":  "gpt-image",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-oss-120b",
+                     "displayName":  "gpt-oss-120b",
+                     "group":  "gpt-oss",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "grok-3",
+                     "displayName":  "grok-3",
+                     "group":  "grok-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "grok-3-deepersearch",
+                     "displayName":  "grok-3-deepersearch",
+                     "group":  "grok-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "grok-3-deepsearch",
+                     "displayName":  "grok-3-deepsearch",
+                     "group":  "grok-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "grok-3-reasoner",
+                     "displayName":  "grok-3-reasoner",
+                     "group":  "grok-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "grok-4",
+                     "displayName":  "grok-4",
+                     "group":  "grok-4",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "grok-4.1",
+                     "displayName":  "grok-4.1",
+                     "group":  "grok-4.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gte-rerank-v2",
+                     "displayName":  "gte-rerank-v2",
+                     "group":  "gte-rerank",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "imagen-3.0-generate-002",
+                     "displayName":  "imagen-3.0-generate-002",
+                     "group":  "imagen-3.0",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "imagen-4.0-fast-generate-001",
+                     "displayName":  "imagen-4.0-fast-generate-001",
+                     "group":  "imagen-4.0",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "imagen-4.0-generate-001",
+                     "displayName":  "imagen-4.0-generate-001",
+                     "group":  "imagen-4.0",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "imagen-4.0-ultra-generate-001",
+                     "displayName":  "imagen-4.0-ultra-generate-001",
+                     "group":  "imagen-4.0",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "jimeng-image",
+                     "displayName":  "jimeng-image",
+                     "group":  "jimeng-image",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "jimeng-image2video",
+                     "displayName":  "jimeng-image2video",
+                     "group":  "jimeng-image2video",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "jimeng-text2video",
+                     "displayName":  "jimeng-text2video",
+                     "group":  "jimeng-text2video",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "kimi-k2-0711-preview",
+                     "displayName":  "kimi-k2-0711-preview",
+                     "group":  "kimi-k2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "kimi-k2-0905-preview",
+                     "displayName":  "kimi-k2-0905-preview",
+                     "group":  "kimi-k2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "llama-3-8b-instruct",
+                     "displayName":  "llama-3-8b-instruct",
+                     "group":  "llama-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "llama-3.1-405b-instruct",
+                     "displayName":  "llama-3.1-405b-instruct",
+                     "group":  "llama-3.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "llama-3.1-8b-instruct",
+                     "displayName":  "llama-3.1-8b-instruct",
+                     "group":  "llama-3.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "llama-3.3-70b-instruct",
+                     "displayName":  "llama-3.3-70b-instruct",
+                     "group":  "llama-3.3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "llama-3.3-70b-instruct-fp8-fast",
+                     "displayName":  "llama-3.3-70b-instruct-fp8-fast",
+                     "group":  "llama-3.3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "llama-4-maverick-17b-128e-instruct-fp8",
+                     "displayName":  "llama-4-maverick-17b-128e-instruct-fp8",
+                     "group":  "llama-4",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "llama-4-scout",
+                     "displayName":  "llama-4-scout",
+                     "group":  "llama-4",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "llama-4-scout-17b-16e-instruct",
+                     "displayName":  "llama-4-scout-17b-16e-instruct",
+                     "group":  "llama-4",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "medgemma-4b-it",
+                     "displayName":  "medgemma-4b-it",
+                     "group":  "medgemma-4b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "moark-text-moderation",
+                     "displayName":  "moark-text-moderation",
+                     "group":  "moark-text",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "moonshot-v1-128k",
+                     "displayName":  "moonshot-v1-128k",
+                     "group":  "moonshot-v1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "moonshot-v1-32k",
+                     "displayName":  "moonshot-v1-32k",
+                     "group":  "moonshot-v1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "moonshot-v1-8k",
+                     "displayName":  "moonshot-v1-8k",
+                     "group":  "moonshot-v1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "nano-banana",
+                     "displayName":  "nano-banana",
+                     "group":  "nano-banana",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "nano-banana-pro",
+                     "displayName":  "nano-banana-pro",
+                     "group":  "nano-banana",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "nano-banana-pro-2k",
+                     "displayName":  "nano-banana-pro-2k",
+                     "group":  "nano-banana",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "nano-banana-pro-4k",
+                     "displayName":  "nano-banana-pro-4k",
+                     "group":  "nano-banana",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "net-gpt-3.5-turbo",
+                     "displayName":  "net-gpt-3.5-turbo",
+                     "group":  "net-gpt",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "net-gpt-3.5-turbo-16k",
+                     "displayName":  "net-gpt-3.5-turbo-16k",
+                     "group":  "net-gpt",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "net-gpt-4",
+                     "displayName":  "net-gpt-4",
+                     "group":  "net-gpt",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "net-gpt-4-0125-preview",
+                     "displayName":  "net-gpt-4-0125-preview",
+                     "group":  "net-gpt",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "net-gpt-4-32k",
+                     "displayName":  "net-gpt-4-32k",
+                     "group":  "net-gpt",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "net-gpt-4-turbo",
+                     "displayName":  "net-gpt-4-turbo",
+                     "group":  "net-gpt",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o1",
+                     "displayName":  "o1",
+                     "group":  "o1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o1-2024-12-17",
+                     "displayName":  "o1-2024-12-17",
+                     "group":  "o1-2024",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o1-all",
+                     "displayName":  "o1-all",
+                     "group":  "o1-all",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o1-mini",
+                     "displayName":  "o1-mini",
+                     "group":  "o1-mini",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o1-mini-2024-09-12",
+                     "displayName":  "o1-mini-2024-09-12",
+                     "group":  "o1-mini",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o1-mini-all",
+                     "displayName":  "o1-mini-all",
+                     "group":  "o1-mini",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o1-preview",
+                     "displayName":  "o1-preview",
+                     "group":  "o1-preview",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o1-preview-2024-09-12",
+                     "displayName":  "o1-preview-2024-09-12",
+                     "group":  "o1-preview",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o1-preview-all",
+                     "displayName":  "o1-preview-all",
+                     "group":  "o1-preview",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o3",
+                     "displayName":  "o3",
+                     "group":  "o3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o3-2025-04-16",
+                     "displayName":  "o3-2025-04-16",
+                     "group":  "o3-2025",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o3-mini",
+                     "displayName":  "o3-mini",
+                     "group":  "o3-mini",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o3-mini-2025-01-31",
+                     "displayName":  "o3-mini-2025-01-31",
+                     "group":  "o3-mini",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o3-mini-all",
+                     "displayName":  "o3-mini-all",
+                     "group":  "o3-mini",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o3-mini-high-all",
+                     "displayName":  "o3-mini-high-all",
+                     "group":  "o3-mini",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o4-mini",
+                     "displayName":  "o4-mini",
+                     "group":  "o4-mini",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o4-mini-2025-04-16",
+                     "displayName":  "o4-mini-2025-04-16",
+                     "group":  "o4-mini",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o4-mini-high",
+                     "displayName":  "o4-mini-high",
+                     "group":  "o4-mini",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o4-mini-low",
+                     "displayName":  "o4-mini-low",
+                     "group":  "o4-mini",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "ppt-chat",
+                     "displayName":  "ppt-chat",
+                     "group":  "ppt-chat",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-image",
+                     "displayName":  "qwen-image",
+                     "group":  "qwen-image",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-image-edit",
+                     "displayName":  "qwen-image-edit",
+                     "group":  "qwen-image",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-long",
+                     "displayName":  "qwen-long",
+                     "group":  "qwen-long",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-long-latest",
+                     "displayName":  "qwen-long-latest",
+                     "group":  "qwen-long",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-235b-a22b-c",
+                     "displayName":  "qwen3-235b-a22b-c",
+                     "group":  "qwen3-235b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-rerank",
+                     "displayName":  "qwen3-rerank",
+                     "group":  "qwen3-rerank",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-tts-flash",
+                     "displayName":  "qwen3-tts-flash",
+                     "group":  "qwen3-tts",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "search-gpts-chat",
+                     "displayName":  "search-gpts-chat",
+                     "group":  "search-gpts",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "sonar",
+                     "displayName":  "sonar",
+                     "group":  "sonar",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "sonar-deep-research",
+                     "displayName":  "sonar-deep-research",
+                     "group":  "sonar-deep",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "sonar-pro",
+                     "displayName":  "sonar-pro",
+                     "group":  "sonar-pro",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "sonar-reasoning",
+                     "displayName":  "sonar-reasoning",
+                     "group":  "sonar-reasoning",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "sonar-reasoning-pro",
+                     "displayName":  "sonar-reasoning-pro",
+                     "group":  "sonar-reasoning",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "sora_video2",
+                     "displayName":  "sora_video2",
+                     "group":  "sora-video2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "stable-diffusion",
+                     "displayName":  "stable-diffusion",
+                     "group":  "stable-diffusion",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "stable-diffusion-3-medium",
+                     "displayName":  "stable-diffusion-3-medium",
+                     "group":  "stable-diffusion",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "stable-diffusion-3.5-large-turbo",
+                     "displayName":  "stable-diffusion-3.5-large-turbo",
+                     "group":  "stable-diffusion",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "stable-diffusion-xl-base-1.0",
+                     "displayName":  "stable-diffusion-xl-base-1.0",
+                     "group":  "stable-diffusion",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "suno_concat",
+                     "displayName":  "suno_concat",
+                     "group":  "suno-concat",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "suno_lyrics",
+                     "displayName":  "suno_lyrics",
+                     "group":  "suno-lyrics",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "suno_music",
+                     "displayName":  "suno_music",
+                     "group":  "suno-music",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "text-embedding-3-large",
+                     "displayName":  "text-embedding-3-large",
+                     "group":  "text-embedding",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "text-embedding-3-small",
+                     "displayName":  "text-embedding-3-small",
+                     "group":  "text-embedding",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "text-embedding-ada-002",
+                     "displayName":  "text-embedding-ada-002",
+                     "group":  "text-embedding",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "text-embedding-v1",
+                     "displayName":  "text-embedding-v1",
+                     "group":  "text-embedding",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "text-embedding-v2",
+                     "displayName":  "text-embedding-v2",
+                     "group":  "text-embedding",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "text-embedding-v3",
+                     "displayName":  "text-embedding-v3",
+                     "group":  "text-embedding",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "text-embedding-v4",
+                     "displayName":  "text-embedding-v4",
+                     "group":  "text-embedding",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "wan2.2-t2i-flash",
+                     "displayName":  "wan2.2-t2i-flash",
+                     "group":  "wan2.2-t2i",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "wan2.2-t2i-plus",
+                     "displayName":  "wan2.2-t2i-plus",
+                     "group":  "wan2.2-t2i",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-3-5-haiku-20241022",
+                     "displayName":  "claude-3-5-haiku-20241022",
+                     "group":  "claude-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-3-5-sonnet-20240620",
+                     "displayName":  "claude-3-5-sonnet-20240620",
+                     "group":  "claude-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-3-5-sonnet-20241022",
+                     "displayName":  "claude-3-5-sonnet-20241022",
+                     "group":  "claude-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-3-7-sonnet-20250219",
+                     "displayName":  "claude-3-7-sonnet-20250219",
+                     "group":  "claude-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-3-7-sonnet-20250219-thinking",
+                     "displayName":  "claude-3-7-sonnet-20250219-thinking",
+                     "group":  "claude-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-3-haiku-20240307",
+                     "displayName":  "claude-3-haiku-20240307",
+                     "group":  "claude-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-haiku-4-5-20251001",
+                     "displayName":  "claude-haiku-4-5-20251001",
+                     "group":  "claude-haiku",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-haiku-4-5-20251001-thinking",
+                     "displayName":  "claude-haiku-4-5-20251001-thinking",
+                     "group":  "claude-haiku",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-opus-4-1-20250805",
+                     "displayName":  "claude-opus-4-1-20250805",
+                     "group":  "claude-opus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-opus-4-1-20250805-thinking",
+                     "displayName":  "claude-opus-4-1-20250805-thinking",
+                     "group":  "claude-opus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-opus-4-20250514",
+                     "displayName":  "claude-opus-4-20250514",
+                     "group":  "claude-opus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-opus-4-20250514-thinking",
+                     "displayName":  "claude-opus-4-20250514-thinking",
+                     "group":  "claude-opus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-opus-4-5-20251101",
+                     "displayName":  "claude-opus-4-5-20251101",
+                     "group":  "claude-opus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-opus-4-5-20251101-thinking",
+                     "displayName":  "claude-opus-4-5-20251101-thinking",
+                     "group":  "claude-opus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-sonnet-4-20250514",
+                     "displayName":  "claude-sonnet-4-20250514",
+                     "group":  "claude-sonnet",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-sonnet-4-20250514-thinking",
+                     "displayName":  "claude-sonnet-4-20250514-thinking",
+                     "group":  "claude-sonnet",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-sonnet-4-5",
+                     "displayName":  "claude-sonnet-4-5",
+                     "group":  "claude-sonnet",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-sonnet-4-5-20250929",
+                     "displayName":  "claude-sonnet-4-5-20250929",
+                     "group":  "claude-sonnet",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "claude-sonnet-4-5-20250929-thinking",
+                     "displayName":  "claude-sonnet-4-5-20250929-thinking",
+                     "group":  "claude-sonnet",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cld-3-5-haiku-20241022",
+                     "displayName":  "cld-3-5-haiku-20241022",
+                     "group":  "cld-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cld-3-5-sonnet-20240620",
+                     "displayName":  "cld-3-5-sonnet-20240620",
+                     "group":  "cld-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cld-3-5-sonnet-20241022",
+                     "displayName":  "cld-3-5-sonnet-20241022",
+                     "group":  "cld-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cld-3-7-sonnet-20250219",
+                     "displayName":  "cld-3-7-sonnet-20250219",
+                     "group":  "cld-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cld-3-7-sonnet-20250219-thinking",
+                     "displayName":  "cld-3-7-sonnet-20250219-thinking",
+                     "group":  "cld-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cld-sonnet-4-20250514",
+                     "displayName":  "cld-sonnet-4-20250514",
+                     "group":  "cld-sonnet",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cld-sonnet-4-20250514-thinking",
+                     "displayName":  "cld-sonnet-4-20250514-thinking",
+                     "group":  "cld-sonnet",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cld-sonnet-4-5-20250929",
+                     "displayName":  "cld-sonnet-4-5-20250929",
+                     "group":  "cld-sonnet",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cld-sonnet-4-5-20250929-thinking",
+                     "displayName":  "cld-sonnet-4-5-20250929-thinking",
+                     "group":  "cld-sonnet",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cc-3-5-haiku-20241022",
+                     "displayName":  "cc-3-5-haiku-20241022",
+                     "group":  "cc-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cc-3-7-sonnet-20250219",
+                     "displayName":  "cc-3-7-sonnet-20250219",
+                     "group":  "cc-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cc-3-7-sonnet-20250219-thinking",
+                     "displayName":  "cc-3-7-sonnet-20250219-thinking",
+                     "group":  "cc-3",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cc-haiku-4-5-20251001",
+                     "displayName":  "cc-haiku-4-5-20251001",
+                     "group":  "cc-haiku",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cc-opus-4-1-20250805",
+                     "displayName":  "cc-opus-4-1-20250805",
+                     "group":  "cc-opus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cc-opus-4-1-20250805-thinking",
+                     "displayName":  "cc-opus-4-1-20250805-thinking",
+                     "group":  "cc-opus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cc-opus-4-20250514",
+                     "displayName":  "cc-opus-4-20250514",
+                     "group":  "cc-opus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cc-opus-4-5-20251101",
+                     "displayName":  "cc-opus-4-5-20251101",
+                     "group":  "cc-opus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cc-opus-4-5-20251101-thinking",
+                     "displayName":  "cc-opus-4-5-20251101-thinking",
+                     "group":  "cc-opus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cc-sonnet-4-20250514",
+                     "displayName":  "cc-sonnet-4-20250514",
+                     "group":  "cc-sonnet",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cc-sonnet-4-20250514-thinking",
+                     "displayName":  "cc-sonnet-4-20250514-thinking",
+                     "group":  "cc-sonnet",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cc-sonnet-4-5-20250929",
+                     "displayName":  "cc-sonnet-4-5-20250929",
+                     "group":  "cc-sonnet",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "cc-sonnet-4-5-20250929-thinking",
+                     "displayName":  "cc-sonnet-4-5-20250929-thinking",
+                     "group":  "cc-sonnet",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-coder-plus",
+                     "displayName":  "qwen-coder-plus",
+                     "group":  "qwen-coder",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-coder-plus-latest",
+                     "displayName":  "qwen-coder-plus-latest",
+                     "group":  "qwen-coder",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-math-plus",
+                     "displayName":  "qwen-math-plus",
+                     "group":  "qwen-math",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-math-turbo",
+                     "displayName":  "qwen-math-turbo",
+                     "group":  "qwen-math",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-math-turbo-latest",
+                     "displayName":  "qwen-math-turbo-latest",
+                     "group":  "qwen-math",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-max",
+                     "displayName":  "qwen-max",
+                     "group":  "qwen-max",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-max-latest",
+                     "displayName":  "qwen-max-latest",
+                     "group":  "qwen-max",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-mt-plus",
+                     "displayName":  "qwen-mt-plus",
+                     "group":  "qwen-mt",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-mt-plus-*",
+                     "displayName":  "qwen-mt-plus-*",
+                     "group":  "qwen-mt",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-mt-turbo",
+                     "displayName":  "qwen-mt-turbo",
+                     "group":  "qwen-mt",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-mt-turbo-*",
+                     "displayName":  "qwen-mt-turbo-*",
+                     "group":  "qwen-mt",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-plus",
+                     "displayName":  "qwen-plus",
+                     "group":  "qwen-plus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-plus-latest",
+                     "displayName":  "qwen-plus-latest",
+                     "group":  "qwen-plus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-tts",
+                     "displayName":  "qwen-tts",
+                     "group":  "qwen-tts",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-tts-latest",
+                     "displayName":  "qwen-tts-latest",
+                     "group":  "qwen-tts",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-turbo",
+                     "displayName":  "qwen-turbo",
+                     "group":  "qwen-turbo",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-turbo-latest",
+                     "displayName":  "qwen-turbo-latest",
+                     "group":  "qwen-turbo",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-vl-max",
+                     "displayName":  "qwen-vl-max",
+                     "group":  "qwen-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-vl-max-latest",
+                     "displayName":  "qwen-vl-max-latest",
+                     "group":  "qwen-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-vl-ocr",
+                     "displayName":  "qwen-vl-ocr",
+                     "group":  "qwen-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-vl-plus",
+                     "displayName":  "qwen-vl-plus",
+                     "group":  "qwen-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen-vl-plus-latest",
+                     "displayName":  "qwen-vl-plus-latest",
+                     "group":  "qwen-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen2.5-14b-instruct",
+                     "displayName":  "qwen2.5-14b-instruct",
+                     "group":  "qwen2.5-14b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen2.5-32b-instruct",
+                     "displayName":  "qwen2.5-32b-instruct",
+                     "group":  "qwen2.5-32b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen2.5-72b-instruct",
+                     "displayName":  "qwen2.5-72b-instruct",
+                     "group":  "qwen2.5-72b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen2.5-math-7b-instruct",
+                     "displayName":  "qwen2.5-math-7b-instruct",
+                     "group":  "qwen2.5-math",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen2.5-vl-72b-instruct",
+                     "displayName":  "qwen2.5-vl-72b-instruct",
+                     "group":  "qwen2.5-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-14b",
+                     "displayName":  "qwen3-14b",
+                     "group":  "qwen3-14b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-235b-a22b",
+                     "displayName":  "qwen3-235b-a22b",
+                     "group":  "qwen3-235b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-235b-a22b-instruct-2507",
+                     "displayName":  "qwen3-235b-a22b-instruct-2507",
+                     "group":  "qwen3-235b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-235b-a22b-thinking-2507",
+                     "displayName":  "qwen3-235b-a22b-thinking-2507",
+                     "group":  "qwen3-235b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-30b-a3b",
+                     "displayName":  "qwen3-30b-a3b",
+                     "group":  "qwen3-30b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-30b-a3b-instruct-2507",
+                     "displayName":  "qwen3-30b-a3b-instruct-2507",
+                     "group":  "qwen3-30b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-30b-a3b-thinking-2507",
+                     "displayName":  "qwen3-30b-a3b-thinking-2507",
+                     "group":  "qwen3-30b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-32b",
+                     "displayName":  "qwen3-32b",
+                     "group":  "qwen3-32b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-4b",
+                     "displayName":  "qwen3-4b",
+                     "group":  "qwen3-4b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-8b",
+                     "displayName":  "qwen3-8b",
+                     "group":  "qwen3-8b",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-coder-flash",
+                     "displayName":  "qwen3-coder-flash",
+                     "group":  "qwen3-coder",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-coder-plus",
+                     "displayName":  "qwen3-coder-plus",
+                     "group":  "qwen3-coder",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-max",
+                     "displayName":  "qwen3-max",
+                     "group":  "qwen3-max",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-max-preview",
+                     "displayName":  "qwen3-max-preview",
+                     "group":  "qwen3-max",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-next-80b-a3b-instruct",
+                     "displayName":  "qwen3-next-80b-a3b-instruct",
+                     "group":  "qwen3-next",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-next-80b-a3b-thinking",
+                     "displayName":  "qwen3-next-80b-a3b-thinking",
+                     "group":  "qwen3-next",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-vl-235b-a22b-instruct",
+                     "displayName":  "qwen3-vl-235b-a22b-instruct",
+                     "group":  "qwen3-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-vl-235b-a22b-thinking",
+                     "displayName":  "qwen3-vl-235b-a22b-thinking",
+                     "group":  "qwen3-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-vl-30b-a3b-instruct",
+                     "displayName":  "qwen3-vl-30b-a3b-instruct",
+                     "group":  "qwen3-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-vl-30b-a3b-thinking",
+                     "displayName":  "qwen3-vl-30b-a3b-thinking",
+                     "group":  "qwen3-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-vl-32b-instruct",
+                     "displayName":  "qwen3-vl-32b-instruct",
+                     "group":  "qwen3-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-vl-32b-thinking",
+                     "displayName":  "qwen3-vl-32b-thinking",
+                     "group":  "qwen3-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-vl-8b-instruct",
+                     "displayName":  "qwen3-vl-8b-instruct",
+                     "group":  "qwen3-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-vl-8b-thinking",
+                     "displayName":  "qwen3-vl-8b-thinking",
+                     "group":  "qwen3-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-vl-flash",
+                     "displayName":  "qwen3-vl-flash",
+                     "group":  "qwen3-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwen3-vl-plus",
+                     "displayName":  "qwen3-vl-plus",
+                     "group":  "qwen3-vl",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "qwq-plus-latest",
+                     "displayName":  "qwq-plus-latest",
+                     "group":  "qwq-plus",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-codex",
+                     "displayName":  "gpt-5-codex",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-codex-high",
+                     "displayName":  "gpt-5-codex-high",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-codex-low",
+                     "displayName":  "gpt-5-codex-low",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-codex-medium",
+                     "displayName":  "gpt-5-codex-medium",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-codex",
+                     "displayName":  "gpt-5.1-codex",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-codex-high",
+                     "displayName":  "gpt-5.1-codex-high",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-codex-low",
+                     "displayName":  "gpt-5.1-codex-low",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-codex-max",
+                     "displayName":  "gpt-5.1-codex-max",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-codex-max-high",
+                     "displayName":  "gpt-5.1-codex-max-high",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-codex-max-low",
+                     "displayName":  "gpt-5.1-codex-max-low",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-codex-max-medium",
+                     "displayName":  "gpt-5.1-codex-max-medium",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-codex-medium",
+                     "displayName":  "gpt-5.1-codex-medium",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-high",
+                     "displayName":  "gpt-5.1-high",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-low",
+                     "displayName":  "gpt-5.1-low",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.1-medium",
+                     "displayName":  "gpt-5.1-medium",
+                     "group":  "gpt-5.1",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.2-codex",
+                     "displayName":  "gpt-5.2-codex",
+                     "group":  "gpt-5.2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.2-codex-low",
+                     "displayName":  "gpt-5.2-codex-low",
+                     "group":  "gpt-5.2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.2-codex-medium",
+                     "displayName":  "gpt-5.2-codex-medium",
+                     "group":  "gpt-5.2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.2-high",
+                     "displayName":  "gpt-5.2-high",
+                     "group":  "gpt-5.2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.2-medium",
+                     "displayName":  "gpt-5.2-medium",
+                     "group":  "gpt-5.2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "dall-e-2",
+                     "displayName":  "dall-e-2",
+                     "group":  "dall-e",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-3.5-turbo",
+                     "displayName":  "gpt-3.5-turbo",
+                     "group":  "gpt-3.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-3.5-turbo-0125",
+                     "displayName":  "gpt-3.5-turbo-0125",
+                     "group":  "gpt-3.5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4-turbo",
+                     "displayName":  "gpt-4-turbo",
+                     "group":  "gpt-4",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4o-mini-realtime-preview-2024-12-17",
+                     "displayName":  "gpt-4o-mini-realtime-preview-2024-12-17",
+                     "group":  "gpt-4o",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4o-realtime-preview-2024-12-17",
+                     "displayName":  "gpt-4o-realtime-preview-2024-12-17",
+                     "group":  "gpt-4o",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-4o-realtime-preview-2025-06-03",
+                     "displayName":  "gpt-4o-realtime-preview-2025-06-03",
+                     "group":  "gpt-4o",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-mini-fast",
+                     "displayName":  "gpt-5-mini-fast",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-mini-flex",
+                     "displayName":  "gpt-5-mini-flex",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-pro",
+                     "displayName":  "gpt-5-pro",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5-search-api",
+                     "displayName":  "gpt-5-search-api",
+                     "group":  "gpt-5",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.2-chat-latest",
+                     "displayName":  "gpt-5.2-chat-latest",
+                     "group":  "gpt-5.2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.2-pro",
+                     "displayName":  "gpt-5.2-pro",
+                     "group":  "gpt-5.2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-5.2-pro-2025-12-11",
+                     "displayName":  "gpt-5.2-pro-2025-12-11",
+                     "group":  "gpt-5.2",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "gpt-realtime-mini",
+                     "displayName":  "gpt-realtime-mini",
+                     "group":  "gpt-realtime",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o1-pro-all",
+                     "displayName":  "o1-pro-all",
+                     "group":  "o1-pro",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o3-pro",
+                     "displayName":  "o3-pro",
+                     "group":  "o3-pro",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "o3-pro-2025-06-10",
+                     "displayName":  "o3-pro-2025-06-10",
+                     "group":  "o3-pro",
+                     "tags":  null
+                 }
+             ],
+    "error":  null
+}

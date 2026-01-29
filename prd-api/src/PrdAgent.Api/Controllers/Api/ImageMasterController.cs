@@ -13,6 +13,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Infrastructure.Services.VisualAgent;
 using PrdAgent.Api.Models.Requests;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -40,6 +41,7 @@ public class ImageMasterController : ControllerBase
     private readonly IModelDomainService _modelDomain;
     private readonly ISmartModelScheduler _modelScheduler;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IImageDescriptionService _imageDescriptionService;
 
     private static readonly TimeSpan IdemExpiry = TimeSpan.FromMinutes(30);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -66,7 +68,8 @@ public class ImageMasterController : ControllerBase
         ILogger<ImageMasterController> logger,
         IModelDomainService modelDomain,
         ISmartModelScheduler modelScheduler,
-        ILLMRequestContextAccessor llmRequestContext)
+        ILLMRequestContextAccessor llmRequestContext,
+        IImageDescriptionService imageDescriptionService)
     {
         _db = db;
         _assetStorage = assetStorage;
@@ -76,6 +79,7 @@ public class ImageMasterController : ControllerBase
         _modelDomain = modelDomain;
         _modelScheduler = modelScheduler;
         _llmRequestContext = llmRequestContext;
+        _imageDescriptionService = imageDescriptionService;
     }
 
     private string GetAdminId() =>
@@ -1133,6 +1137,10 @@ public class ImageMasterController : ControllerBase
         {
             throw;
         }
+
+        // Fire-and-forget: 异步提取图片描述（用于多图组合功能）
+        _ = _imageDescriptionService.ExtractDescriptionAsync(asset.Id);
+
         // 资产变化：更新 assetsHash/contentHash（不改封面）
         var now = DateTime.UtcNow;
         var newAssetsHash = Guid.NewGuid().ToString("N");
@@ -1654,6 +1662,9 @@ public class ImageMasterController : ControllerBase
 
         await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
 
+        // Fire-and-forget: 异步提取图片描述（用于多图组合功能）
+        _ = _imageDescriptionService.ExtractDescriptionAsync(asset.Id);
+
         var payload = new { asset };
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
@@ -1673,6 +1684,52 @@ public class ImageMasterController : ControllerBase
         var asset = await _db.ImageAssets.Find(x => x.Id == aid && x.OwnerUserId == adminId).FirstOrDefaultAsync(ct);
         if (asset == null) return NotFound(ApiResponse<object>.Fail("ASSET_NOT_FOUND", "资产不存在"));
         return Ok(ApiResponse<object>.Ok(new { asset }));
+    }
+
+    /// <summary>
+    /// 手动触发图片描述提取（用于多图组合功能）
+    /// </summary>
+    [HttpPost("assets/{id}/describe")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status502BadGateway)]
+    public async Task<IActionResult> DescribeAsset(string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var aid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(aid))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+        }
+
+        var asset = await _db.ImageAssets.Find(x => x.Id == aid && x.OwnerUserId == adminId).FirstOrDefaultAsync(ct);
+        if (asset == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("ASSET_NOT_FOUND", "资产不存在"));
+        }
+
+        try
+        {
+            var description = await _imageDescriptionService.ExtractDescriptionSyncAsync(aid, ct);
+            if (string.IsNullOrWhiteSpace(description))
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, "描述提取失败"));
+            }
+
+            // 重新查询以获取更新后的资产
+            asset = await _db.ImageAssets.Find(x => x.Id == aid).FirstOrDefaultAsync(ct);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                description = asset?.Description,
+                extractedAt = asset?.DescriptionExtractedAt,
+                modelId = asset?.DescriptionModelId
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to extract description for asset {AssetId}", aid);
+            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, "描述提取失败"));
+        }
     }
 
     [HttpDelete("assets/{id}")]

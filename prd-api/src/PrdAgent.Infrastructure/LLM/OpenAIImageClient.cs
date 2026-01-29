@@ -429,7 +429,19 @@ public class OpenAIImageClient
             }
             else
             {
-                if (isVolces)
+                // reqObj 可能是 Dictionary<string, object>（文生图）或类型化对象（图生图）
+                // 直接序列化 reqObj 并添加日志所需的额外字段
+                if (reqObj is Dictionary<string, object> dictReq)
+                {
+                    // 复制字典并添加日志字段
+                    var logDict = new Dictionary<string, object>(dictReq)
+                    {
+                        ["initImageProvided"] = initImageProvidedForLog,
+                        ["initImageUsed"] = false
+                    };
+                    reqRawJson = JsonSerializer.Serialize(logDict);
+                }
+                else if (isVolces)
                 {
                     var r = (VolcesImageRequest)reqObj;
                     reqRawJson = JsonSerializer.Serialize(new
@@ -512,9 +524,20 @@ public class OpenAIImageClient
                     : new Uri(endpoint.TrimStart('/'), UriKind.Relative);
                 if (initImageBase64 == null)
                 {
-                    var reqJsonInner = isVolces
-                        ? JsonSerializer.Serialize((VolcesImageRequest)reqObj, VolcesImageJsonContext.Default.VolcesImageRequest)
-                        : JsonSerializer.Serialize((OpenAIImageRequest)reqObj, OpenAIImageJsonContext.Default.OpenAIImageRequest);
+                    // reqObj 可能是 Dictionary<string, object>（文生图）或类型化对象
+                    string reqJsonInner;
+                    if (reqObj is Dictionary<string, object> dictReq)
+                    {
+                        reqJsonInner = JsonSerializer.Serialize(dictReq);
+                    }
+                    else if (isVolces)
+                    {
+                        reqJsonInner = JsonSerializer.Serialize((VolcesImageRequest)reqObj, VolcesImageJsonContext.Default.VolcesImageRequest);
+                    }
+                    else
+                    {
+                        reqJsonInner = JsonSerializer.Serialize((OpenAIImageRequest)reqObj, OpenAIImageJsonContext.Default.OpenAIImageRequest);
+                    }
                     var contentInner = new StringContent(reqJsonInner, Encoding.UTF8, "application/json");
                     return await httpClient.PostAsync(targetUriInner, contentInner, token);
                 }

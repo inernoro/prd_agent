@@ -1,0 +1,629 @@
+﻿{
+    "success":  true,
+    "data":  [
+                 {
+                     "modelName":  "doubao-embedding-text-240515",
+                     "displayName":  "doubao-embedding",
+                     "group":  "doubao-embedding",
+                     "tags":  [
+                                  "embedding"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-pro-32k-240615",
+                     "displayName":  "doubao-pro-32k",
+                     "group":  "doubao-pro",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-embedding-text-240715",
+                     "displayName":  "doubao-embedding",
+                     "group":  "doubao-embedding",
+                     "tags":  [
+                                  "embedding"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-pro-32k-240828",
+                     "displayName":  "doubao-pro-32k",
+                     "group":  "doubao-pro",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-lite-4k-character-240828",
+                     "displayName":  "doubao-lite-4k",
+                     "group":  "doubao-lite",
+                     "tags":  [
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-pro-32k-character-240828",
+                     "displayName":  "doubao-pro-32k",
+                     "group":  "doubao-pro",
+                     "tags":  [
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-lite-32k-240828",
+                     "displayName":  "doubao-lite-32k",
+                     "group":  "doubao-lite",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-embedding-large-text-240915",
+                     "displayName":  "doubao-embedding-large",
+                     "group":  "doubao-embedding",
+                     "tags":  [
+                                  "embedding"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-pro-32k-browsing-241115",
+                     "displayName":  "doubao-pro-32k",
+                     "group":  "doubao-pro",
+                     "tags":  [
+                                  "reasoning",
+                                  "web_search"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-pro-32k-character-241215",
+                     "displayName":  "doubao-pro-32k",
+                     "group":  "doubao-pro",
+                     "tags":  [
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-pro-32k-241215",
+                     "displayName":  "doubao-pro-32k",
+                     "group":  "doubao-pro",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-1-5-lite-32k-250115",
+                     "displayName":  "doubao-1-5-lite-32k",
+                     "group":  "doubao-1",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-1-5-pro-32k-250115",
+                     "displayName":  "doubao-1-5-pro-32k",
+                     "group":  "doubao-1",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-1-5-vision-pro-32k-250115",
+                     "displayName":  "doubao-1-5-vision-pro-32k",
+                     "group":  "doubao-1",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-embedding-vision-241215",
+                     "displayName":  "doubao-embedding-vision",
+                     "group":  "doubao-embedding",
+                     "tags":  [
+                                  "embedding",
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-1-5-pro-256k-250115",
+                     "displayName":  "doubao-1-5-pro-256k",
+                     "group":  "doubao-1",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "deepseek-v3-241226",
+                     "displayName":  "deepseek-v3",
+                     "group":  "deepseek-v3",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "deepseek-r1-250120",
+                     "displayName":  "deepseek-r1",
+                     "group":  "deepseek-r1",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-1-5-pro-32k-character-250228",
+                     "displayName":  "doubao-1-5-pro-32k",
+                     "group":  "doubao-1",
+                     "tags":  [
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-1.5-vision-lite-250315",
+                     "displayName":  "doubao-1-5-vision-lite",
+                     "group":  "doubao-1.5",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "deepseek-v3-250324",
+                     "displayName":  "deepseek-v3",
+                     "group":  "deepseek-v3",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-1.5-vision-pro-250328",
+                     "displayName":  "doubao-1-5-vision-pro",
+                     "group":  "doubao-1.5",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-lite-32k-character-250228",
+                     "displayName":  "doubao-lite-32k",
+                     "group":  "doubao-lite",
+                     "tags":  [
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-1.5-ui-tars-250328",
+                     "displayName":  "doubao-1-5-ui-tars",
+                     "group":  "doubao-1.5",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-embedding-vision-250328",
+                     "displayName":  "doubao-embedding-vision",
+                     "group":  "doubao-embedding",
+                     "tags":  [
+                                  "embedding",
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-1-5-thinking-pro-250415",
+                     "displayName":  "doubao-1-5-thinking-pro",
+                     "group":  "doubao-1",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seedance-1-0-lite-i2v-250428",
+                     "displayName":  "doubao-seedance-1-0-lite-i2v",
+                     "group":  "doubao-seedance",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seedance-1-0-lite-t2v-250428",
+                     "displayName":  "doubao-seedance-1-0-lite-t2v",
+                     "group":  "doubao-seedance",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seedream-3-0-t2i-250415",
+                     "displayName":  "doubao-seedream-3-0-t2i",
+                     "group":  "doubao-seedream",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-1-5-thinking-vision-pro-250428",
+                     "displayName":  "doubao-1-5-thinking-vision-pro",
+                     "group":  "doubao-1",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-1-5-thinking-pro-m-250428",
+                     "displayName":  "doubao-1-5-thinking-pro",
+                     "group":  "doubao-1",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-embedding-large-text-250515",
+                     "displayName":  "doubao-embedding-large",
+                     "group":  "doubao-embedding",
+                     "tags":  [
+                                  "embedding"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-1-5-ui-tars-250428",
+                     "displayName":  "doubao-1-5-ui-tars",
+                     "group":  "doubao-1",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "deepseek-r1-250528",
+                     "displayName":  "deepseek-r1",
+                     "group":  "deepseek-r1",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-6-flash-250615",
+                     "displayName":  "doubao-seed-1-6-flash",
+                     "group":  "doubao-seed",
+                     "tags":  [
+                                  "reasoning",
+                                  "vision",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-6-250615",
+                     "displayName":  "doubao-seed-1-6",
+                     "group":  "doubao-seed",
+                     "tags":  [
+                                  "reasoning",
+                                  "vision",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-6-thinking-250615",
+                     "displayName":  "doubao-seed-1-6-thinking",
+                     "group":  "doubao-seed",
+                     "tags":  [
+                                  "reasoning",
+                                  "vision",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seedance-1-0-pro-250528",
+                     "displayName":  "doubao-seedance-1-0-pro",
+                     "group":  "doubao-seedance",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-embedding-vision-250615",
+                     "displayName":  "doubao-embedding-vision",
+                     "group":  "doubao-embedding",
+                     "tags":  [
+                                  "embedding",
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-6-thinking-250715",
+                     "displayName":  "doubao-seed-1-6-thinking",
+                     "group":  "doubao-seed",
+                     "tags":  [
+                                  "reasoning",
+                                  "vision",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-1-5-pro-32k-character-250715",
+                     "displayName":  "doubao-1-5-pro-32k",
+                     "group":  "doubao-1",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seededit-3-0-i2i-250628",
+                     "displayName":  "doubao-seededit-3-0-i2i",
+                     "group":  "doubao-seededit",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-6-flash-250715",
+                     "displayName":  "doubao-seed-1-6-flash",
+                     "group":  "doubao-seed",
+                     "tags":  [
+                                  "reasoning",
+                                  "vision",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "kimi-k2-250711",
+                     "displayName":  "kimi-k2",
+                     "group":  "kimi-k2",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-6-vision-250815",
+                     "displayName":  "doubao-seed-1-6-vision",
+                     "group":  "doubao-seed",
+                     "tags":  [
+                                  "reasoning",
+                                  "vision",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "deepseek-v3-1-250821",
+                     "displayName":  "deepseek-v3-1",
+                     "group":  "deepseek-v3",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-6-flash-250828",
+                     "displayName":  "doubao-seed-1-6-flash",
+                     "group":  "doubao-seed",
+                     "tags":  [
+                                  "reasoning",
+                                  "vision",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "glm-4-5-air-20250728",
+                     "displayName":  "glm-4-5-air",
+                     "group":  "glm-4",
+                     "tags":  [
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "qwen3-8b-20250429",
+                     "displayName":  "qwen3-8b",
+                     "group":  "qwen3-8b",
+                     "tags":  [
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "qwen3-32b-20250429",
+                     "displayName":  "qwen3-32b",
+                     "group":  "qwen3-32b",
+                     "tags":  [
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "qwen2-5-72b-20240919",
+                     "displayName":  "qwen2-5-72b",
+                     "group":  "qwen2-5",
+                     "tags":  [
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seedream-4-0-250828",
+                     "displayName":  "doubao-seedream-4-0",
+                     "group":  "doubao-seedream",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "kimi-k2-250905",
+                     "displayName":  "kimi-k2",
+                     "group":  "kimi-k2",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seed-translation-250915",
+                     "displayName":  "doubao-seed-translation",
+                     "group":  "doubao-seed",
+                     "tags":  [
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "deepseek-v3-1-terminus",
+                     "displayName":  "deepseek-v3-1",
+                     "group":  "deepseek-v3",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-smart-router-250928",
+                     "displayName":  "doubao-smart-router",
+                     "group":  "doubao-smart",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-6-251015",
+                     "displayName":  "doubao-seed-1-6",
+                     "group":  "doubao-seed",
+                     "tags":  [
+                                  "reasoning",
+                                  "vision",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seedance-1-0-pro-fast-251015",
+                     "displayName":  "doubao-seedance-1-0-pro-fast",
+                     "group":  "doubao-seedance",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-6-lite-251015",
+                     "displayName":  "doubao-seed-1-6-lite",
+                     "group":  "doubao-seed",
+                     "tags":  [
+                                  "reasoning",
+                                  "vision",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seed3d-1-0-250928",
+                     "displayName":  "doubao-seed3d-1-0",
+                     "group":  "doubao-seed3d",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "kimi-k2-thinking-251104",
+                     "displayName":  "kimi-k2",
+                     "group":  "kimi-k2",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seed-code-preview-251028",
+                     "displayName":  "doubao-seed-code",
+                     "group":  "doubao-seed",
+                     "tags":  [
+                                  "reasoning",
+                                  "vision",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "qwen3-0-6b-20250429",
+                     "displayName":  "qwen3-0-6b",
+                     "group":  "qwen3-0",
+                     "tags":  [
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "qwen3-14b-20250429",
+                     "displayName":  "qwen3-14b",
+                     "group":  "qwen3-14b",
+                     "tags":  [
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seedream-4-5-251128",
+                     "displayName":  "doubao-seedream-4-5",
+                     "group":  "doubao-seedream",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-embedding-vision-251215",
+                     "displayName":  "doubao-embedding-vision",
+                     "group":  "doubao-embedding",
+                     "tags":  null
+                 },
+                 {
+                     "modelName":  "deepseek-v3-2-251201",
+                     "displayName":  "deepseek-v3-2",
+                     "group":  "deepseek-v3",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seedance-1-5-pro-251215",
+                     "displayName":  "doubao-seedance-1-5-pro",
+                     "group":  "doubao-seedance",
+                     "tags":  [
+                                  "vision",
+                                  "reasoning"
+                              ]
+                 },
+                 {
+                     "modelName":  "glm-4-7-251222",
+                     "displayName":  "glm-4-7",
+                     "group":  "glm-4",
+                     "tags":  [
+                                  "reasoning",
+                                  "function_calling"
+                              ]
+                 },
+                 {
+                     "modelName":  "doubao-seed-1-8-251228",
+                     "displayName":  "doubao-seed-1-8",
+                     "group":  "doubao-seed",
+                     "tags":  [
+                                  "reasoning",
+                                  "vision",
+                                  "function_calling"
+                              ]
+                 }
+             ],
+    "error":  null
+}

@@ -25,6 +25,12 @@ namespace PrdAgent.Infrastructure.LLM;
 [JsonSerializable(typeof(OpenAIDelta))]
 [JsonSerializable(typeof(OpenAIUsage))]
 [JsonSerializable(typeof(OpenAIPromptTokensDetails))]
+// OpenAI Vision 多模态内容类型
+[JsonSerializable(typeof(OpenAIRequestMessage))]
+[JsonSerializable(typeof(OpenAITextContent))]
+[JsonSerializable(typeof(OpenAIImageUrlContent))]
+[JsonSerializable(typeof(OpenAIImageUrl))]
+[JsonSerializable(typeof(List<object>))]
 internal partial class LLMJsonContext : JsonSerializerContext
 {
 }

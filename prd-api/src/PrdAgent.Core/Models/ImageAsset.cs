@@ -34,6 +34,24 @@ public class ImageAsset
     /// 原图 SHA256。用于参考图查询时定位无水印版本。
     /// </summary>
     public string? OriginalSha256 { get; set; }
+
+    // ===== 多图组合功能：VLM 图片描述 =====
+
+    /// <summary>
+    /// VLM 生成的图片描述（用于多图组合时的语义理解）。
+    /// 最大 500 字符。
+    /// </summary>
+    public string? Description { get; set; }
+
+    /// <summary>
+    /// 描述提取时间（UTC）。
+    /// </summary>
+    public DateTime? DescriptionExtractedAt { get; set; }
+
+    /// <summary>
+    /// 提取描述时使用的模型标识（如 gpt-4o、claude-3-5-sonnet）。
+    /// </summary>
+    public string? DescriptionModelId { get; set; }
 }
 
 

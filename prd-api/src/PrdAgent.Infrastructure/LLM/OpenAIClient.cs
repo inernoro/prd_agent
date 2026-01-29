@@ -206,8 +206,21 @@ public class OpenAIClient : ILLMClient
                 cancellationToken);
         }
 
+        // 检查是否包含视觉内容（图片附件）
+        var hasVisionContent = messages.Any(m => m.Attachments?.Any(a => a.Type == "image") == true);
+        
+        // 对于视觉内容，使用默认序列化器（支持多态 object Content）
+        // 否则使用 Source Generator 以获得更好的性能
+        var requestJson = hasVisionContent
+            ? JsonSerializer.Serialize(requestBody, new JsonSerializerOptions 
+              { 
+                  PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+                  DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+              })
+            : JsonSerializer.Serialize(requestBody, LLMJsonContext.Default.OpenAIRequest);
+        
         var content = new StringContent(
-            JsonSerializer.Serialize(requestBody, LLMJsonContext.Default.OpenAIRequest),
+            requestJson,
             Encoding.UTF8,
             "application/json");
 
