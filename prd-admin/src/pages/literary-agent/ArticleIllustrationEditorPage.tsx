@@ -1015,6 +1015,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         maxConcurrency: 1,
         workspaceId,  // 传入 workspaceId，后端会自动保存图片到 COS
         appKey: 'literary-agent',  // 文学创作应用标识，用于水印配置
+        articleMarkerIndex: markerIndex,  // 传入 markerIndex，后端 Worker 完成/失败时自动回填 marker 状态
       },
       idempotencyKey: idem,
     });

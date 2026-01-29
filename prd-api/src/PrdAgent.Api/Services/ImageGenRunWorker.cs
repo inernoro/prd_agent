@@ -302,6 +302,9 @@ public class ImageGenRunWorker : BackgroundService
                                 errorCode = code,
                                 errorMessage = msg
                             }, ct);
+
+                            // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 error
+                            await TryPatchArticleMarkerAsync(run, "error", msg, null, ct);
                             return;
                         }
 
@@ -361,6 +364,9 @@ public class ImageGenRunWorker : BackgroundService
                                 originalSha256 = persisted.OriginalSha256
                             }
                         }, ct);
+
+                        // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 done
+                        await TryPatchArticleMarkerAsync(run, "done", null, url ?? persisted?.Url, ct);
                     }
                     finally
                     {
@@ -679,6 +685,74 @@ public class ImageGenRunWorker : BackgroundService
                 cancellationToken: ct);
             if (res.ModifiedCount > 0) return;
         }
+    }
+
+    /// <summary>
+    /// 文学创作场景：自动回填 ArticleIllustrationMarker 的状态。
+    /// 当 run.ArticleMarkerIndex 有值时，更新对应 marker 的 status/errorMessage/url。
+    /// </summary>
+    private async Task TryPatchArticleMarkerAsync(
+        ImageGenRun run,
+        string status,
+        string? errorMessage,
+        string? url,
+        CancellationToken ct)
+    {
+        // 只有文学创作场景（有 ArticleMarkerIndex）才需要回填
+        if (!run.ArticleMarkerIndex.HasValue) return;
+        var wid = (run.WorkspaceId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return;
+
+        var markerIndex = run.ArticleMarkerIndex.Value;
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+            if (ws == null) return;
+
+            var wf = ws.ArticleWorkflow;
+            if (wf == null || wf.Markers == null || markerIndex < 0 || markerIndex >= wf.Markers.Count) return;
+
+            var marker = wf.Markers[markerIndex];
+            marker.Status = status;
+            marker.UpdatedAt = DateTime.UtcNow;
+
+            if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                marker.ErrorMessage = errorMessage;
+            }
+            else if (status == "done")
+            {
+                marker.ErrorMessage = null; // 清空错误信息
+            }
+
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                marker.Url = url;
+            }
+
+            var res = await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                x => x.Id == wid && x.UpdatedAt == ws.UpdatedAt,
+                Builders<ImageMasterWorkspace>.Update
+                    .Set(x => x.ArticleWorkflow, wf)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+
+            if (res.ModifiedCount > 0)
+            {
+                _logger.LogInformation(
+                    "[文学创作] Marker 状态自动回填: WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, Status={Status}",
+                    wid, markerIndex, status);
+                return;
+            }
+
+            // 乐观锁冲突，重试
+            await Task.Delay(50, ct);
+        }
+
+        _logger.LogWarning(
+            "[文学创作] Marker 状态回填失败（乐观锁冲突次数过多）: WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}",
+            wid, markerIndex);
     }
 
     /// <summary>

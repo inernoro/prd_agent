@@ -905,6 +905,9 @@ public class ImageGenController : ControllerBase
             };
         }
 
+        // 文学创作场景：关联的配图标记索引
+        var articleMarkerIndex = request?.ArticleMarkerIndex;
+
         var run = new ImageGenRun
         {
             OwnerAdminId = adminId,
@@ -925,6 +928,7 @@ public class ImageGenController : ControllerBase
             WorkspaceId = workspaceId,
             AppCallerCode = resolvedAppCallerCode,
             AppKey = appKey,
+            ArticleMarkerIndex = articleMarkerIndex,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1322,6 +1326,12 @@ public class CreateImageGenRunRequest
     /// 可选：应用标识（如 "literary-agent"）。用于水印等功能的隔离。
     /// </summary>
     public string? AppKey { get; set; }
+
+    /// <summary>
+    /// 可选：文学创作场景下，关联的配图标记索引。
+    /// Worker 完成/失败时会自动回填 ArticleIllustrationMarker.Status。
+    /// </summary>
+    public int? ArticleMarkerIndex { get; set; }
 }
 
 public class ImageGenRunPlanItemInput

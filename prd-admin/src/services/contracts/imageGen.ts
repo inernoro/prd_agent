@@ -107,6 +107,8 @@ export type CreateImageGenRunInput = {
   workspaceId?: string;
   /** 可选：应用标识（如 "literary-agent"）。用于水印等功能的隔离 */
   appKey?: string;
+  /** 可选：文学创作场景下，关联的配图标记索引。Worker 完成/失败时会自动回填 ArticleIllustrationMarker.Status */
+  articleMarkerIndex?: number;
 };
 
 export type CreateImageGenRunResponse = {
