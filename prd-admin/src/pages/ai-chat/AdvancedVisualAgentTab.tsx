@@ -40,8 +40,8 @@ import {
   readImageSizeFromSrc,
   tryParseWxH,
 } from '@/lib/visualAgentPromptUtils';
-import { resolveImageRefs, debugResolveResult } from '@/lib/imageRefResolver';
-import type { CanvasImageItem as ContractCanvasItem } from '@/lib/imageRefContract';
+import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
+import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, VisualAgentCanvas, VisualAgentMessage, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
@@ -1588,7 +1588,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [rightWidth, setRightWidth] = useState(0);
   const dragRef = useRef<{ dragging: boolean; startX: number; startRight: number } | null>(null);
 
-  const [busy, setBusy] = useState(false);
+  const [_busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
   const [defectFlash, setDefectFlash] = useState(false);
   const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
@@ -3202,6 +3202,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   }, [workspaceId, initialPromptFromProps]);
 
+  // 首页带入处理（入口3）
   useEffect(() => {
     if (!initialPrompt?.text) return;
     if (initialPromptHandledRef.current) return;
@@ -3215,17 +3216,27 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 延迟执行，确保 UI 已渲染完成
     const timer = window.setTimeout(() => {
       const inline = initialPrompt.inlineImage;
-      const inlineRef = inline?.src
-        ? {
-            key: `inline_${Date.now()}`,
-            createdAt: Date.now(),
-            prompt: inline.name || '参考图',
-            src: inline.src,
-            status: 'done' as const,
-            kind: 'image' as const,
-          }
-        : null;
-      void runFromText(initialPrompt.text, initialPrompt.text, inlineRef, undefined, initialPrompt.size ?? null);
+
+      // 如果有内联图片，先添加到 canvas
+      if (inline?.src) {
+        const inlineKey = `inline_${Date.now()}`;
+        const inlineCanvasItem: CanvasImageItem = {
+          key: inlineKey,
+          createdAt: Date.now(),
+          prompt: inline.name || '参考图',
+          src: inline.src,
+          status: 'done',
+          kind: 'image',
+          refId: ensureRefIdForKey(inlineKey) ?? 1,
+        };
+        setCanvas((prev) => [...prev, inlineCanvasItem]);
+        setSelectedKeys([inlineKey]);
+      }
+
+      // 通过统一守门员发送（inlineImage 现在已在 canvas 中，会被 selectedKeys 引用）
+      void sendText(initialPrompt.text, {
+        inlineImage: inline,
+      });
     }, 500);
 
     return () => window.clearTimeout(timer);
@@ -3244,59 +3255,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const pos = start + text.length;
       ta.setSelectionRange(pos, pos);
     });
-  };
-
-  const extractReferencedImagesInOrder = (text: string) => {
-    const s = String(text ?? '');
-    const rx = /@img(\d+)/g;
-    const ids: number[] = [];
-    const seen = new Set<number>();
-    let m: RegExpExecArray | null;
-    while ((m = rx.exec(s))) {
-      const id = Number(m[1]);
-      if (!Number.isFinite(id) || id <= 0) continue;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      ids.push(id);
-    }
-    const items: CanvasImageItem[] = [];
-    for (const id of ids) {
-      const it = canvas.find((x) => x.refId === id);
-      if (it && (it.kind ?? 'image') === 'image') items.push(it);
-    }
-    return items;
-  };
-
-  const buildRequestTextWithRefs = (rawText: string) => {
-    const refsByText = extractReferencedImagesInOrder(rawText);
-
-    const merged: CanvasImageItem[] = [];
-    const seen = new Set<string>();
-    for (const it of refsByText) {
-      if (seen.has(it.key)) continue;
-      seen.add(it.key);
-      merged.push(it);
-    }
-    // 若文本没有 @imgN 引用：默认用当前选中（按 selectedKeys 顺序）作为引用顺序
-    if (merged.length === 0 && selectedKeys.length > 0) {
-      for (const k of selectedKeys) {
-        const it = canvas.find((x) => x.key === k);
-        if (!it) continue;
-        if ((it.kind ?? 'image') !== 'image') continue;
-        if (!it.src) continue;
-        if (seen.has(it.key)) continue;
-        seen.add(it.key);
-        merged.push(it);
-      }
-    }
-
-    if (merged.length === 0) return { requestText: rawText, primaryRef: null as CanvasImageItem | null };
-    const lines = merged.map((it) => {
-      const id = it.refId ?? ensureRefIdForKey(it.key) ?? '?';
-      return `- @img${id}: ${it.prompt || '（无描述）'}`;
-    });
-    const requestText = `${rawText}\n\n【引用图片（按顺序）】\n${lines.join('\n')}`;
-    return { requestText, primaryRef: merged[0] ?? null };
   };
 
   const drainGenQueue = () => {
@@ -3321,7 +3279,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   };
 
-  const sendText = async (rawText: string) => {
+  /**
+   * 统一发送函数（三入口守门员）
+   * @param rawText 原始文本
+   * @param opts.chipRefs 来自 RichComposer 的 chip 引用
+   * @param opts.inlineImage 首页带入的内联图片
+   */
+  const sendText = async (rawText: string, opts?: {
+    chipRefs?: ChipRef[];
+    inlineImage?: { src: string; name?: string };
+  }) => {
     const raw = String(rawText ?? '').trim();
     if (!raw) return;
     const now = Date.now();
@@ -3331,7 +3298,36 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const sized = extractSizeToken(raw);
     const cleanDisplay = String(sized.cleanText ?? '').trim();
     if (!cleanDisplay) return;
-    const { requestText, primaryRef } = buildRequestTextWithRefs(cleanDisplay);
+
+    // 使用统一解析器
+    const contractCanvas: ContractCanvasItem[] = canvas
+      .filter((it) => (it.kind ?? 'image') === 'image' && it.src)
+      .map((it) => ({
+        key: it.key,
+        refId: it.refId ?? 0,
+        src: it.src!,
+        label: it.prompt || '',
+      }));
+
+    const resolveResult = resolveImageRefs({
+      rawText: cleanDisplay,
+      chipRefs: opts?.chipRefs ?? [],
+      selectedKeys,
+      inlineImage: opts?.inlineImage,
+      canvas: contractCanvas,
+    });
+
+    // 使用新的 buildRequestText
+    const { requestText, primaryRef: resolvedPrimaryRef } = buildRequestText(
+      resolveResult.cleanText,
+      resolveResult.refs
+    );
+
+    // 转换 primaryRef 为旧格式（兼容 runFromText）
+    const primaryRef = resolvedPrimaryRef
+      ? canvas.find((c) => c.key === resolvedPrimaryRef.canvasKey) ?? null
+      : null;
+
     const seedSelectedKey = String(selectedKeysRef.current?.[0] ?? '').trim();
     const sizeOverride = sized.size ?? composerSize ?? autoSizeForSelectedImage ?? null;
     const job: GenJob = {
@@ -3361,12 +3357,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   };
 
 
-  // 富文本编辑器发送
+  // 富文本编辑器发送（入口1）
   const onSendRich = async () => {
     const composer = richComposerRef.current;
     if (!composer) return;
 
-    // Step 3: 获取结构化内容（包含 imageRefs）
+    // 获取结构化内容（包含 imageRefs）
     const { text, imageRefs } = composer.getStructuredContent();
     if (!text.trim()) return;
 
@@ -3374,55 +3370,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const clean = String(extractSizeToken(text).cleanText ?? '').trim();
     if (!clean) return;
 
-    // Step 3: 并行调用新解析器，对比结果（仅日志，不切换逻辑）
-    // 转换 canvas 为契约格式
-    const contractCanvas: ContractCanvasItem[] = canvas
-      .filter((it) => (it.kind ?? 'image') === 'image' && it.src)
-      .map((it) => ({
-        key: it.key,
-        refId: it.refId ?? 0,
-        src: it.src!,
-        label: it.prompt || '',
-      }));
-
-    // 调用新解析器
-    const newResult = resolveImageRefs({
-      rawText: text,
-      chipRefs: imageRefs,
-      selectedKeys,
-      canvas: contractCanvas,
-    });
-
-    // 旧逻辑结果（用于对比）
-    const oldResult = buildRequestTextWithRefs(clean);
-
-    // 对比日志
-    console.group('[Step 3 对比] ImageRefResolver vs buildRequestTextWithRefs');
-    console.log('输入:', { text, imageRefs, selectedKeys: [...selectedKeys] });
-    console.log('新解析器结果:');
-    debugResolveResult(newResult);
-    console.log('旧逻辑结果:', {
-      primaryRef: oldResult.primaryRef ? {
-        key: oldResult.primaryRef.key,
-        refId: oldResult.primaryRef.refId,
-        prompt: oldResult.primaryRef.prompt,
-      } : null,
-      requestText: oldResult.requestText.slice(0, 200) + (oldResult.requestText.length > 200 ? '...' : ''),
-    });
-    // 简单对比：主引用是否一致
-    const newPrimary = newResult.refs[0];
-    const oldPrimary = oldResult.primaryRef;
-    const primaryMatch = (!newPrimary && !oldPrimary) ||
-      (newPrimary && oldPrimary && newPrimary.canvasKey === oldPrimary.key);
-    console.log('主引用是否一致:', primaryMatch ? '✅ 一致' : '❌ 不一致');
-    console.groupEnd();
-
     composer.clear();
     setInput('');
     composerSizeAutoRef.current = true;
     if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
-    // 继续使用旧逻辑发送
-    await sendText(text);
+
+    // 传递 chipRefs 给统一守门员
+    await sendText(text, { chipRefs: imageRefs });
   };
 
   const onSendQuick = async () => {
