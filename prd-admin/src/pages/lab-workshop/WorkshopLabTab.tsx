@@ -22,7 +22,7 @@ const MOCK_IMAGES: ImageOption[] = [
   { key: 'img-e', refId: 5, src: 'https://picsum.photos/seed/e/100/100', label: '背景素材' },
 ];
 
-// 边界测试用例
+// 边界测试用例 - 直接插入（已确认状态）
 const TEST_CASES = [
   { name: '正常输入', text: '请帮我修改一下图片' },
   { name: '单个 @img', text: '把 @img1 的背景换成蓝色' },
@@ -31,6 +31,13 @@ const TEST_CASES = [
   { name: '超长文本', text: '这是一段超级长的文本用于测试输入框在内容很多的情况下是否能正常显示包括滚动条换行以及与图片chip混合时的表现。'.repeat(2) },
   { name: '重复引用', text: '@img1 和 @img1 是同一张' },
   { name: '空白', text: '   ' },
+];
+
+// 两阶段测试用例 - pending → confirm 流程
+const PENDING_TEST_CASES = [
+  { name: '单图预选', refIds: [1], desc: '插入 pending，点击文本框确认' },
+  { name: '多图预选', refIds: [1, 2, 3], desc: '批量插入 pending，点击文本框确认' },
+  { name: '替换预选', refIds: [1], thenRefIds: [2], desc: '先预选1，再预选2（替换）' },
 ];
 
 export default function WorkshopLabTab() {
@@ -185,6 +192,54 @@ export default function WorkshopLabTab() {
 
     addOutput('insertTestCase()', { text, segments });
   }, [addOutput]);
+
+  /**
+   * 插入 pending 测试用例（两阶段选择流程）
+   */
+  const handleInsertPendingTestCase = useCallback((refIds: number[], thenRefIds?: number[]) => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    composer.clear();
+    setPendingChipKeys(new Set());
+
+    // 先删除所有现有 pending
+    pendingChipKeys.forEach((key) => {
+      composer.removeChipByKey(key);
+    });
+
+    // 插入第一批 pending chips
+    const newPendingKeys = new Set<string>();
+    for (const refId of refIds) {
+      const img = MOCK_IMAGES.find((i) => i.refId === refId);
+      if (img) {
+        composer.insertImageChip(img, { pending: true });
+        newPendingKeys.add(img.key);
+      }
+    }
+    setPendingChipKeys(newPendingKeys);
+    addOutput('insertPendingTestCase()', { refIds, pending: true });
+
+    // 如果有 thenRefIds，延迟后替换
+    if (thenRefIds && thenRefIds.length > 0) {
+      setTimeout(() => {
+        // 删除之前的 pending
+        newPendingKeys.forEach((key) => {
+          composer.removeChipByKey(key);
+        });
+        // 插入新的 pending
+        const nextPendingKeys = new Set<string>();
+        for (const refId of thenRefIds) {
+          const img = MOCK_IMAGES.find((i) => i.refId === refId);
+          if (img) {
+            composer.insertImageChip(img, { pending: true });
+            nextPendingKeys.add(img.key);
+          }
+        }
+        setPendingChipKeys(nextPendingKeys);
+        addOutput('replacePendingTestCase()', { thenRefIds, pending: true });
+      }, 800);
+    }
+  }, [pendingChipKeys, addOutput]);
 
   /**
    * 自动测试定义
@@ -623,11 +678,35 @@ export default function WorkshopLabTab() {
               border: '1px solid var(--border-default)',
             }}>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-                边界测试用例
+                边界测试用例（直接插入蓝色 chip）
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {TEST_CASES.map((tc, idx) => (
                   <Btn key={idx} onClick={() => handleInsertTestCase(tc.text)} size="sm">
+                    {tc.name}
+                  </Btn>
+                ))}
+              </div>
+            </div>
+
+            {/* 两阶段测试用例 */}
+            <div style={{
+              background: 'var(--bg-elevated)',
+              borderRadius: 8,
+              padding: 12,
+              border: '1px solid var(--border-default)',
+            }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+                两阶段测试（灰色 pending → 点击文本框 → 蓝色确认）
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {PENDING_TEST_CASES.map((tc, idx) => (
+                  <Btn
+                    key={idx}
+                    onClick={() => handleInsertPendingTestCase(tc.refIds, tc.thenRefIds)}
+                    size="sm"
+                    title={tc.desc}
+                  >
                     {tc.name}
                   </Btn>
                 ))}
