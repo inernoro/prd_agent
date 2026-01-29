@@ -1001,6 +1001,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const selected = useMemo(() => canvas.find((x) => x.key === primarySelectedKey) ?? null, [canvas, primarySelectedKey]);
   const isSelectedKey = (k: string) => selectedKeys.includes(k);
 
+  // 两阶段选择：跟踪当前有 pending chip 的图片 key（灰色，待确认）
+  const [pendingChipKeys, setPendingChipKeys] = useState<Set<string>>(new Set());
+  const isPendingKey = (k: string) => pendingChipKeys.has(k);
+
   const selectedSingleImageForComposer = useMemo(() => {
     if (selectedKeys.length !== 1) return null;
     const it = selected;
@@ -3356,11 +3360,82 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   };
 
+  // ====== 两阶段选择：画布点击 → 预选（灰色 chip） → 点击输入框确认（蓝色） ======
+
+  /**
+   * 画布图片预选（两阶段第一步）
+   * 点击画布图片 → 插入灰色 pending chip
+   */
+  const handleCanvasImagePreselect = useCallback((it: CanvasImageItem) => {
+    const composer = richComposerRef.current;
+    if (!composer) return;
+
+    const kind = it.kind ?? 'image';
+    if (kind !== 'image') return;
+    if (!it.src) return;
+
+    const refId = ensureRefIdForKey(it.key);
+    if (!refId) return;
+
+    // 如果已经是 pending 状态，不重复插入
+    if (pendingChipKeys.has(it.key)) return;
+
+    // 移除所有现有的 pending chips（替换逻辑，一次只预选一张）
+    pendingChipKeys.forEach((key) => {
+      composer.removeChipByKey(key);
+    });
+
+    // 插入新的 pending chip（灰色，不传 ready 参数）
+    const option: ImageOption = {
+      key: it.key,
+      refId,
+      src: it.src,
+      label: it.prompt || `img${refId}`,
+    };
+    composer.insertImageChip(option);
+    setPendingChipKeys(new Set([it.key]));
+
+    // 选中该图片（视觉同步）
+    setSelectedKeys([it.key]);
+  }, [pendingChipKeys, ensureRefIdForKey]);
+
+  /**
+   * 点击输入框容器时确认 pending chips（灰→蓝）
+   */
+  const handleInputContainerClick = useCallback(() => {
+    const composer = richComposerRef.current;
+    if (!composer) return;
+
+    if (pendingChipKeys.size > 0) {
+      composer.markChipsReady();
+      setPendingChipKeys(new Set());
+    }
+    composer.focus();
+  }, [pendingChipKeys]);
+
+  /**
+   * 清除所有 pending chips
+   */
+  const clearPendingChips = useCallback(() => {
+    const composer = richComposerRef.current;
+    if (!composer) return;
+
+    pendingChipKeys.forEach((key) => {
+      composer.removeChipByKey(key);
+    });
+    setPendingChipKeys(new Set());
+  }, [pendingChipKeys]);
 
   // 富文本编辑器发送（入口1）
   const onSendRich = async () => {
     const composer = richComposerRef.current;
     if (!composer) return;
+
+    // 发送前先确认所有 pending chips（灰→蓝）
+    if (pendingChipKeys.size > 0) {
+      composer.markChipsReady();
+      setPendingChipKeys(new Set());
+    }
 
     // 获取结构化内容（包含 imageRefs）
     const { text, imageRefs } = composer.getStructuredContent();
@@ -4368,6 +4443,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 const w = it.w ?? 320;
                 const h = it.h ?? 220;
                 const active = isSelectedKey(it.key);
+                const isPending = isPendingKey(it.key); // 两阶段选择：pending 状态
                 const showSelectOverlay = effectiveTool !== 'hand' && active && (kind === 'image' || kind === 'generator');
                 // 单选时显示可交互的四角控制点；多选时也显示但仅作为视觉标识（不可 resize）
                 const isSingleSelect = selectedKeys.length === 1;
@@ -4493,7 +4569,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         focusComposer();
                         return;
                       }
-                      // Cmd/Ctrl + 点击：插入图片引用 @imgN
+                      // Cmd/Ctrl + 点击：直接插入就绪的 @imgN 引用（跳过两阶段）
                       if (kind === 'image' && (e.metaKey || e.ctrlKey)) {
                         setSelectedKeys((prev) => (prev.includes(it.key) ? prev : prev.concat(it.key)));
                         const id = ensureRefIdForKey(it.key);
@@ -4501,6 +4577,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         focusComposer();
                         return;
                       }
+                      // Shift 点击：多选
                       if (e.shiftKey) {
                         setSelectedKeys((prev) => {
                           const set = new Set(prev);
@@ -4508,9 +4585,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           else set.add(it.key);
                           return Array.from(set);
                         });
-                      } else {
-                        setSelectedKeys([it.key]);
+                        return;
                       }
+                      // 普通点击图片：两阶段预选（插入灰色 pending chip）
+                      if (kind === 'image' && it.src) {
+                        handleCanvasImagePreselect(it);
+                        return;
+                      }
+                      // 其他类型（shape/text 等）：仅选中
+                      setSelectedKeys([it.key]);
                     }}
                     title={it.prompt}
                   >
@@ -4743,6 +4826,37 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         )}
                       </div>
                     )}
+
+                    {/* 两阶段选择：pending 状态遮罩（灰色边框 + 对勾标记） */}
+                    {isPending && kind === 'image' ? (
+                      <div
+                        className="absolute rounded-[14px]"
+                        style={{
+                          left: selX,
+                          top: selY,
+                          width: selW,
+                          height: selH,
+                          background: 'rgba(156, 163, 175, 0.25)',
+                          border: '2px solid rgba(156, 163, 175, 0.6)',
+                          pointerEvents: 'none',
+                          zIndex: 35,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <span
+                          style={{
+                            color: 'white',
+                            fontSize: Math.max(20, Math.min(selW, selH) * 0.15),
+                            fontWeight: 700,
+                            textShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                          }}
+                        >
+                          ✓
+                        </span>
+                      </div>
+                    ) : null}
 
                     {/* 选中覆盖层：蓝色描边 + 四角圆点（单选可 resize） */}
                     {showSelectOverlay ? (
@@ -6490,7 +6604,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 background: directPrompt ? 'rgba(0,0,0,0.14)' : 'rgba(251,146,60,0.06)',
               }}
             >
-              {/* 若直连被关闭（auto/解析模式）：做明显提示，避免用户误以为“直连默认开启” */}
+              {/* 若直连被关闭（auto/解析模式）：做明显提示，避免用户误以为"直连默认开启" */}
               {!directPrompt ? (
                 <div
                   className="absolute z-30 inline-flex items-center gap-1 rounded-full px-2 h-5 text-[10px] font-extrabold tracking-wide"
@@ -6506,6 +6620,42 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 >
                   <Sparkles size={12} className="shrink-0" />
                   AUTO
+                </div>
+              ) : null}
+
+              {/* 两阶段选择：待确认计数提示 */}
+              {pendingChipKeys.size > 0 ? (
+                <div
+                  className="absolute z-30 inline-flex items-center gap-1 rounded-full px-2 h-5 text-[10px] font-medium"
+                  style={{
+                    right: 12,
+                    top: -10,
+                    background: 'rgba(156, 163, 175, 0.16)',
+                    border: '1px solid rgba(156, 163, 175, 0.42)',
+                    color: 'rgba(156, 163, 175, 1)',
+                    boxShadow: '0 10px 28px rgba(0,0,0,0.35)',
+                  }}
+                >
+                  <span>待确认 {pendingChipKeys.size} 张</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      clearPendingChips();
+                    }}
+                    style={{
+                      marginLeft: 4,
+                      padding: '1px 4px',
+                      fontSize: 9,
+                      background: 'rgba(156, 163, 175, 0.25)',
+                      border: '1px solid rgba(156, 163, 175, 0.4)',
+                      borderRadius: 3,
+                      color: 'rgba(156, 163, 175, 1)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    清除
+                  </button>
                 </div>
               ) : null}
 
@@ -6596,37 +6746,48 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 </div>
               ) : null}
 
-              {/* 富文本编辑器 */}
-              <RichComposer
-                ref={richComposerRef}
-                placeholder={selectedImagesForComposer.length > 0 ? '' : '请输入你的设计需求（Enter 发送，Shift+Enter 换行）'}
-                imageOptions={imageOptions}
-                onChange={(text) => {
-                  activeComposerRef.current = 'right';
-                  setInput(text);
-                }}
-                onSubmit={() => {
-                  // IME 合成输入时不触发发送
-                  if (composingRef.current) return false;
-                  void onSendRich();
-                  return true;
-                }}
-                onPasteImage={(file) => {
-                  // 粘贴图片到文本框时，上传到画板（与画板粘贴行为一致）
-                  const now = Date.now();
-                  const type = (file.type || 'image/png').toLowerCase();
-                  const ext = type.includes('png') ? 'png' : type.includes('jpeg') || type.includes('jpg') ? 'jpg' : type.includes('webp') ? 'webp' : 'png';
-                  const name = (file.name && file.name.trim()) ? file.name : `clipboard_${now}.${ext}`;
-                  const normalizedFile = new File([file], name, { type });
-                  void onUploadImages([normalizedFile], { mode: 'add' });
-                  return true;
-                }}
+              {/* 富文本编辑器容器 - 点击时确认 pending chips */}
+              <div
+                onClick={handleInputContainerClick}
                 style={{
-                  paddingTop: composerMetaPadTop,
+                  cursor: 'text',
+                  border: pendingChipKeys.size > 0 ? '1px solid rgba(156, 163, 175, 0.4)' : '1px solid transparent',
+                  borderRadius: 8,
+                  transition: 'border-color 0.15s',
+                  margin: -1, // 抵消 border 的空间占用
                 }}
-                minHeight={MIN_TA_HEIGHT}
-                maxHeight={120}
-              />
+              >
+                <RichComposer
+                  ref={richComposerRef}
+                  placeholder={pendingChipKeys.size > 0 ? '点击此处确认选择，或继续输入...' : (selectedImagesForComposer.length > 0 ? '' : '请输入你的设计需求（Enter 发送，Shift+Enter 换行）')}
+                  imageOptions={imageOptions}
+                  onChange={(text) => {
+                    activeComposerRef.current = 'right';
+                    setInput(text);
+                  }}
+                  onSubmit={() => {
+                    // IME 合成输入时不触发发送
+                    if (composingRef.current) return false;
+                    void onSendRich();
+                    return true;
+                  }}
+                  onPasteImage={(file) => {
+                    // 粘贴图片到文本框时，上传到画板（与画板粘贴行为一致）
+                    const now = Date.now();
+                    const type = (file.type || 'image/png').toLowerCase();
+                    const ext = type.includes('png') ? 'png' : type.includes('jpeg') || type.includes('jpg') ? 'jpg' : type.includes('webp') ? 'webp' : 'png';
+                    const name = (file.name && file.name.trim()) ? file.name : `clipboard_${now}.${ext}`;
+                    const normalizedFile = new File([file], name, { type });
+                    void onUploadImages([normalizedFile], { mode: 'add' });
+                    return true;
+                  }}
+                  style={{
+                    paddingTop: composerMetaPadTop,
+                  }}
+                  minHeight={MIN_TA_HEIGHT}
+                  maxHeight={120}
+                />
+              </div>
 
               {mentionOpen ? (
                 <div
