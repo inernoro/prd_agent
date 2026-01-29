@@ -393,8 +393,8 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        // 支持常见图片/字体扩展
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2" };
+        // 支持常见图片/字体/文本扩展
+        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
         foreach (var ext in exts)
         {
             // 1) 新规则（domain/type）
@@ -420,8 +420,8 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        // 由于 ext 可能未知，这里按常见图片/字体扩展逐个尝试删除（不存在视为成功）
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2" };
+        // 由于 ext 可能未知，这里按常见图片/字体/文本扩展逐个尝试删除（不存在视为成功）
+        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
         foreach (var ext in exts)
         {
             try
@@ -612,6 +612,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             "font/otf" or "application/x-font-opentype" => "otf",
             "font/woff" or "application/font-woff" => "woff",
             "font/woff2" or "application/font-woff2" => "woff2",
+            "text/plain" => "txt",
             _ => "png"
         };
     }
@@ -627,6 +628,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             "otf" => "font/otf",
             "woff" => "font/woff",
             "woff2" => "font/woff2",
+            "txt" => "text/plain; charset=utf-8",
             _ => "image/png"
         };
     }

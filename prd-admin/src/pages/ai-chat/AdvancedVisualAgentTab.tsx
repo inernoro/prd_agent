@@ -7,6 +7,7 @@ import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader
 import { RichComposer, type RichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import * as Popover from '@radix-ui/react-popover';
 import {
   addVisualAgentWorkspaceMessage,
   deleteVisualAgentWorkspaceAsset,
@@ -671,27 +672,16 @@ function detectTierFromSize(size: string): '1k' | '2k' | '4k' {
   return '1k';
 }
 
-// 从尺寸字符串检测比例
+// 从尺寸字符串检测比例（仅匹配标准比例，不使用 GCD 计算避免用户误解）
 function detectAspectFromSize(size: string): string {
   const s = (size || '').trim().toLowerCase();
-  // 先从 ASPECT_OPTIONS 匹配
+  // 从 ASPECT_OPTIONS 精确匹配
   for (const opt of ASPECT_OPTIONS) {
     if (opt.size1k.toLowerCase() === s || opt.size2k.toLowerCase() === s || opt.size4k.toLowerCase() === s) {
       return opt.id;
     }
   }
-  // 解析尺寸并计算比例
-  const m = /(\d+)\s*[xX×]\s*(\d+)/.exec(s);
-  if (m) {
-    const w = Number(m[1]);
-    const h = Number(m[2]);
-    if (w > 0 && h > 0) {
-      const g = gcd(w, h);
-      const rw = Math.round(w / g);
-      const rh = Math.round(h / g);
-      return `${rw}:${rh}`;
-    }
-  }
+  // 不使用 GCD 计算，返回默认值（调用方应优先使用 sizeToAspectMap）
   return '1:1';
 }
 
@@ -800,6 +790,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   // 模型偏好：按账号持久化到数据库
   const [modelPrefOpen, setModelPrefOpen] = useState(false);
+  // 画布智能输入框的模型/尺寸选择面板
+  const [quickModelOpen, setQuickModelOpen] = useState(false);
+  const [quickSizeOpen, setQuickSizeOpen] = useState(false);
   const [modelPrefAuto, setModelPrefAuto] = useState(true);
   const [modelPrefModelId, setModelPrefModelId] = useState<string>('');
   const [modelPrefReady, setModelPrefReady] = useState(false);
@@ -840,42 +833,34 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     return byId ?? serverDefaultModel;
   }, [enabledImageModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
 
-  // 尺寸选项（从后端获取）
-  type SizeOption = { size: string; aspectRatio: string | null; resolution: string | null };
-  const [sizeOptions, setSizeOptions] = useState<SizeOption[]>([]);
+  // 尺寸选项（后端按分辨率分组返回，前端直接使用，无需转换）
+  type SizeOption = { size: string; aspectRatio: string };
+  type SizesByResolutionType = Record<'1k' | '2k' | '4k', SizeOption[]>;
+  const [sizesByResolution, setSizesByResolution] = useState<SizesByResolutionType>({ '1k': [], '2k': [], '4k': [] });
+
   useEffect(() => {
-    // 优先使用 actualModelId（模型池中实际模型的 ID），否则使用 modelName
-    const modelNameForAdapter = (effectiveModel as ModelWithSource | undefined)?.actualModelId || effectiveModel?.modelName;
-    if (!modelNameForAdapter) {
-      setSizeOptions([]);
+    // 使用模型池 code（对于 visual-agent 就是 modelName）获取尺寸配置
+    const modelCode = effectiveModel?.modelName;
+    if (!modelCode) {
+      setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
       return;
     }
 
-    getAdapterInfoByModelName(modelNameForAdapter)
+    getAdapterInfoByModelName(modelCode)
       .then((res) => {
-        if (res.success && res.data?.matched) {
-          const options = Array.isArray(res.data.sizeOptions) ? res.data.sizeOptions : [];
-          setSizeOptions(options.map((opt) => ({
-            size: String(opt.size ?? '').trim(),
-            aspectRatio: opt.aspectRatio ?? null,
-            resolution: opt.resolution ? String(opt.resolution).trim().toLowerCase() : null,
-          })));
+        if (res.success && res.data?.matched && res.data.sizesByResolution) {
+          const data = res.data.sizesByResolution;
+          setSizesByResolution({
+            '1k': Array.isArray(data['1k']) ? data['1k'] : [],
+            '2k': Array.isArray(data['2k']) ? data['2k'] : [],
+            '4k': Array.isArray(data['4k']) ? data['4k'] : [],
+          });
         } else {
-          setSizeOptions([]);
+          setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
         }
       })
-      .catch(() => setSizeOptions([]));
+      .catch(() => setSizesByResolution({ '1k': [], '2k': [], '4k': [] }));
   }, [effectiveModel]);
-
-  // 按分辨率分组的 sizeOptions
-  const sizeOptionsByResolution = useMemo(() => {
-    const bucket: Record<'1k' | '2k' | '4k', SizeOption[]> = { '1k': [], '2k': [], '4k': [] };
-    for (const opt of sizeOptions) {
-      const r = opt.resolution;
-      if (r === '1k' || r === '2k' || r === '4k') bucket[r].push(opt);
-    }
-    return bucket;
-  }, [sizeOptions]);
 
   // 按比例分组，每个比例只保留一个尺寸
   const ratiosByResolution = useMemo(() => {
@@ -885,24 +870,31 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       '4k': new Map(),
     };
     for (const tier of ['1k', '2k', '4k'] as const) {
-      for (const opt of sizeOptionsByResolution[tier]) {
+      for (const opt of sizesByResolution[tier]) {
         const ratio = opt.aspectRatio || 'unknown';
         if (!result[tier].has(ratio)) result[tier].set(ratio, opt);
       }
     }
     return result;
-  }, [sizeOptionsByResolution]);
+  }, [sizesByResolution]);
 
   // 尺寸到比例的映射（使用后端返回的 aspectRatio，避免 GCD 计算偏差）
   const sizeToAspectMap = useMemo(() => {
     const map = new Map<string, string>();
-    for (const opt of sizeOptions) {
-      if (opt.size && opt.aspectRatio) {
-        map.set(opt.size.toLowerCase(), opt.aspectRatio);
+    for (const tier of ['1k', '2k', '4k'] as const) {
+      for (const opt of sizesByResolution[tier]) {
+        if (opt.size && opt.aspectRatio) {
+          map.set(opt.size.toLowerCase(), opt.aspectRatio);
+        }
       }
     }
     return map;
-  }, [sizeOptions]);
+  }, [sizesByResolution]);
+
+  // 所有尺寸的扁平列表（用于验证）
+  const allSizeOptions = useMemo(() => {
+    return [...sizesByResolution['1k'], ...sizesByResolution['2k'], ...sizesByResolution['4k']];
+  }, [sizesByResolution]);
 
   // 初始化水印配置
   useEffect(() => {
@@ -965,6 +957,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [quickInput, setQuickInput] = useState('');
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const quickInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const quickPanelRef = useRef<HTMLDivElement | null>(null); // 快捷输入框容器，用于 GPU 加速更新
   const activeComposerRef = useRef<'right' | 'quick'>('right');
   
   // 富文本编辑器 ref
@@ -1062,14 +1055,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (composerSizeAutoRef.current) setComposerSize(autoSize);
   }, [autoSizeForSelectedImage, selectedSingleImageForComposer?.key]);
 
-  // 当 sizeOptions 变化时，如果当前尺寸不在支持列表中，自动选择一个有效尺寸
+  // 当 sizesByResolution 变化时，如果当前尺寸不在支持列表中，自动选择一个有效尺寸
   useEffect(() => {
-    if (sizeOptions.length === 0) return;
+    if (allSizeOptions.length === 0) return;
     const currentSize = composerSize ?? '1024x1024';
-    const isCurrentValid = sizeOptions.some((opt) => opt.size?.toLowerCase() === currentSize.toLowerCase());
+    const isCurrentValid = allSizeOptions.some((opt) => opt.size?.toLowerCase() === currentSize.toLowerCase());
     if (!isCurrentValid) {
-      // 按优先级选择：2K > 1K > 4K
+      // 先尝试保持当前比例，切换到支持的分辨率
+      const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
       const priorities = ['2k', '1k', '4k'] as const;
+      // 第一轮：找相同比例的
+      for (const tier of priorities) {
+        const sameAspectOpt = ratiosByResolution[tier].get(currentAspect);
+        if (sameAspectOpt?.size) {
+          composerSizeAutoRef.current = false;
+          setComposerSize(sameAspectOpt.size);
+          return;
+        }
+      }
+      // 第二轮：退而求其次，选择任意可用尺寸
       for (const tier of priorities) {
         const firstOpt = ratiosByResolution[tier].values().next().value;
         if (firstOpt?.size) {
@@ -1079,7 +1083,41 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }
       }
     }
-  }, [sizeOptions, ratiosByResolution, composerSize]);
+  }, [allSizeOptions, ratiosByResolution, composerSize, sizeToAspectMap]);
+
+  // 尺寸联动：当通过智能面板修改 composerSize 时，同步更新画布上选中的 Generator 的尺寸
+  // 使用 ref 追踪上一次的 composerSize，避免在 canvas 变化时重复触发
+  const prevComposerSizeRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!composerSize) return;
+    // 仅在用户手动选择尺寸时（非自动模式）才联动
+    if (composerSizeAutoRef.current) return;
+    // 仅在 composerSize 实际变化时才执行
+    if (prevComposerSizeRef.current === composerSize) return;
+    prevComposerSizeRef.current = composerSize;
+
+    const k = selectedKeys[0];
+    if (!k) return;
+    const it = canvas.find((x) => x.key === k);
+    if (!it || (it.kind ?? 'image') !== 'generator') return;
+    // 解析尺寸字符串（如 "768x1024"）
+    const m = /^(\d+)\s*[xX×]\s*(\d+)$/i.exec(composerSize);
+    if (!m) return;
+    const newW = parseInt(m[1], 10);
+    const newH = parseInt(m[2], 10);
+    const oldW = it.w ?? 1024;
+    const oldH = it.h ?? 1024;
+    // 避免重复更新
+    if (oldW === newW && oldH === newH) return;
+    // 围绕中心点变化：调整 x, y 使中心点保持不变
+    const oldCx = (it.x ?? 0) + oldW / 2;
+    const oldCy = (it.y ?? 0) + oldH / 2;
+    const newX = oldCx - newW / 2;
+    const newY = oldCy - newH / 2;
+    setCanvas((prev) =>
+      prev.map((x) => (x.key === k ? { ...x, x: newX, y: newY, w: newW, h: newH } : x))
+    );
+  }, [composerSize, selectedKeys, canvas]);
 
   // chip 作为内联元素，需要根据选中数量计算高度
   // 每个 chip 约 140px 宽，每行可容纳 2-3 个
@@ -1194,6 +1232,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       ui.style.transformOrigin = '0 0';
       ui.style.setProperty('--zoom', String(z));
       ui.style.setProperty('--invZoom', String(1 / Math.max(0.0001, z)));
+    }
+    // 同步更新快捷输入框位置（避免 React 状态延迟导致不跟手）
+    const quickPanel = quickPanelRef.current;
+    const gen = selectedGeneratorRef.current;
+    if (quickPanel && gen) {
+      const x = Math.round(((gen.x ?? 0) + (gen.w ?? 1024) / 2) * z + cam.x);
+      const y = Math.round(((gen.y ?? 0) + (gen.h ?? 1024)) * z + cam.y + 26);
+      quickPanel.style.transform = `translate(${x}px, ${y}px) translate(-50%, 0)`;
     }
   }, []);
 
@@ -1549,10 +1595,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [, setBooting] = useState(false);
   const initWorkspaceRef = useRef<{ workspaceId: string; started: boolean }>({ workspaceId: '', started: false });
 
-  // 触发缺陷提交按钮闪烁（生图失败时调用）
+  // 触发缺陷提交按钮闪烁（生图失败时调用，持续闪烁直到用户点击）
   const triggerDefectFlash = useCallback(() => {
     setDefectFlash(true);
-    setTimeout(() => setDefectFlash(false), 1500);
   }, []);
   // debug logs removed
 
@@ -1642,6 +1687,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }>({ open: false, x: 0, y: 0, src: '', prompt: '', key: '' });
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const msgContentRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const canvasBootedRef = useRef(false);
@@ -2116,9 +2162,51 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     };
   }, [rightWidth, splitKey]);
 
+  // 滚动到消息列表底部
+  // 使用 ResizeObserver 监听消息内容高度变化（图片加载会导致高度增加），自动滚动到底部
+  const shouldAutoScrollRef = useRef(true);
+  const programmaticScrollRef = useRef(false); // 标记是否为程序触发的滚动
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: busy ? 'auto' : 'smooth' });
-  }, [messages, busy]);
+    const scrollEl = scrollRef.current;
+    const contentEl = msgContentRef.current;
+    if (!scrollEl || !contentEl) return;
+
+    // 判断用户是否手动滚动过（如果用户往上滚动了，就不自动滚动）
+    const checkAutoScroll = () => {
+      // 如果是程序触发的滚动，不更新 shouldAutoScrollRef
+      if (programmaticScrollRef.current) return;
+      const threshold = 100; // 距离底部 100px 以内视为"在底部"
+      shouldAutoScrollRef.current = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < threshold;
+    };
+
+    const scrollToBottom = () => {
+      if (!shouldAutoScrollRef.current) return;
+      programmaticScrollRef.current = true;
+      scrollEl.scrollTop = scrollEl.scrollHeight;
+      // 延迟重置标记，确保 scroll 事件已处理完
+      requestAnimationFrame(() => {
+        programmaticScrollRef.current = false;
+      });
+    };
+
+    // 监听用户滚动
+    scrollEl.addEventListener('scroll', checkAutoScroll);
+
+    // 监听消息内容高度变化（图片加载会触发 contentEl 高度增加）
+    const ro = new ResizeObserver(() => {
+      scrollToBottom();
+    });
+    ro.observe(contentEl);
+
+    // 初始滚动
+    shouldAutoScrollRef.current = true;
+    scrollToBottom();
+
+    return () => {
+      scrollEl.removeEventListener('scroll', checkAutoScroll);
+      ro.disconnect();
+    };
+  }, [messages]);
 
   // 监听画布尺寸变化（用于居中/适配）
   useEffect(() => {
@@ -3992,6 +4080,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     return it;
   }, [canvas, selectedKeys]);
 
+  // 同步 selectedGenerator 到 ref，供 applyWorldTransform 使用（避免 React 状态延迟）
+  const selectedGeneratorRef = useRef<typeof selectedGenerator>(null);
+  useEffect(() => {
+    selectedGeneratorRef.current = selectedGenerator;
+  }, [selectedGenerator]);
+
   return (
     <div ref={containerRef} className="h-full min-h-0">
       {uploadToast ? (
@@ -5023,15 +5117,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 这里用屏幕坐标定位一个“仅自身大小”的浮层。 */}
             {selectedGenerator ? (
               <div
+                ref={quickPanelRef}
                 className="absolute z-40"
                 style={{
-                  left: Math.round(
-                    ((selectedGenerator.x ?? 0) + (selectedGenerator.w ?? 1024) / 2) * zoom + camera.x
-                  ),
-                  top: Math.round(
-                    ((selectedGenerator.y ?? 0) + (selectedGenerator.h ?? 1024)) * zoom + camera.y + 26
-                  ),
-                  transform: 'translate(-50%, 0)',
+                  left: 0,
+                  top: 0,
+                  // 初始位置通过 React 设置，后续拖动时由 applyWorldTransform 直接更新 DOM 避免延迟
+                  transform: `translate(${Math.round(((selectedGenerator.x ?? 0) + (selectedGenerator.w ?? 1024) / 2) * zoom + camera.x)}px, ${Math.round(((selectedGenerator.y ?? 0) + (selectedGenerator.h ?? 1024)) * zoom + camera.y + 26)}px) translate(-50%, 0)`,
+                  willChange: 'transform',
                   pointerEvents: 'auto',
                 }}
                 onPointerDown={(e) => e.stopPropagation()}
@@ -5041,13 +5134,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 }}
               >
                 <div
-                  className="w-[560px] max-w-[82vw] rounded-[12px]"
+                  className="w-[560px] max-w-[82vw] rounded-[12px] p-3"
                   style={{
-                    background: 'rgba(255,255,255,0.88)',
-                    border: '1px solid rgba(0,0,0,0.10)',
-                    boxShadow: '0 24px 90px rgba(0,0,0,0.18)',
-                    padding: 16,
-                    minHeight: 168,
+                    background: 'rgba(0,0,0,0.14)',
+                    border: '1px solid var(--border-subtle, rgba(255,255,255,0.12))',
+                    boxShadow: '0 24px 90px rgba(0,0,0,0.45)',
+                    backdropFilter: 'blur(20px) saturate(180%)',
+                    WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+                    minHeight: 148,
                   }}
                 >
                   <textarea
@@ -5093,36 +5187,206 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         void onSendQuick();
                       }
                     }}
-                    placeholder="今天我们要创作什么"
+                    placeholder="请输入你的设计需求（Enter 发送，Shift+Enter 换行）"
                     className="w-full resize-none outline-none focus:outline-none focus-visible:outline-none"
                     style={{
-                      height: 104,
+                      height: 88,
                       background: 'transparent',
                       border: 'none',
                       outline: 'none',
                       boxShadow: 'none',
-                      color: 'rgba(0,0,0,0.86)',
-                      fontSize: 15,
-                      fontWeight: 600,
+                      color: 'var(--text-primary, rgba(255,255,255,0.92))',
+                      fontSize: 14,
+                      fontWeight: 500,
                       lineHeight: '20px',
                     }}
                   />
 
-                  <div className="mt-2 flex items-end justify-between gap-3">
-                    <DropdownMenu.Root>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    {/* 尺寸选择器 */}
+                    <Popover.Root open={quickSizeOpen} onOpenChange={(open) => {
+                      setQuickSizeOpen(open);
+                      // 打开时检查并自动修正不支持的尺寸
+                      if (open && allSizeOptions.length > 0) {
+                        const currentSize = composerSize ?? '1024x1024';
+                        const isCurrentValid = allSizeOptions.some((opt) => opt.size?.toLowerCase() === currentSize.toLowerCase());
+                        if (!isCurrentValid) {
+                          const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
+                          const priorities = ['2k', '1k', '4k'] as const;
+                          for (const tier of priorities) {
+                            const sameAspectOpt = ratiosByResolution[tier].get(currentAspect);
+                            if (sameAspectOpt?.size) {
+                              composerSizeAutoRef.current = false;
+                              setComposerSize(sameAspectOpt.size);
+                              return;
+                            }
+                          }
+                          for (const tier of priorities) {
+                            const firstOpt = ratiosByResolution[tier].values().next().value;
+                            if (firstOpt?.size) {
+                              composerSizeAutoRef.current = false;
+                              setComposerSize(firstOpt.size);
+                              return;
+                            }
+                          }
+                        }
+                      }
+                    }}>
+                      <Popover.Trigger asChild>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-full px-2.5 h-6 text-[11px] font-medium cursor-pointer hover:opacity-80 transition-opacity"
+                          style={{
+                            background: 'rgba(34, 197, 94, 0.12)',
+                            border: '1px solid rgba(34, 197, 94, 0.35)',
+                            color: 'rgba(74, 222, 128, 0.95)',
+                          }}
+                          title="选择尺寸"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {(() => {
+                            const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                            const tier = detectTierFromSize(size);
+                            const aspect = sizeToAspectMap.get(size.toLowerCase()) || detectAspectFromSize(size);
+                            // 如果当前分辨率不可用，显示实际会使用的分辨率
+                            const availableTiers = (['1k', '2k', '4k'] as const).filter((t) => ratiosByResolution[t].size > 0);
+                            const effectiveTier = availableTiers.length > 0 && !availableTiers.includes(tier) ? availableTiers[0] : tier;
+                            const tierLabel = effectiveTier === '4k' ? '4K' : effectiveTier === '2k' ? '2K' : '1K';
+                            return <span style={{ whiteSpace: 'nowrap' }}>{tierLabel} · {aspect || '1:1'}</span>;
+                          })()}
+                          <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
+                        </button>
+                      </Popover.Trigger>
+                      <Popover.Portal>
+                        <Popover.Content
+                          side="top"
+                          align="start"
+                          sideOffset={10}
+                          className="z-50 rounded-[16px] p-3"
+                          style={{
+                            width: 280,
+                            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          }}
+                          onPointerDownOutside={(e) => e.preventDefault()}
+                          onInteractOutside={(e) => e.preventDefault()}
+                          onFocusOutside={(e) => e.preventDefault()}
+                        >
+                          {/* 分辨率 */}
+                          <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>分辨率</div>
+                          <div className="flex gap-1.5 mb-3">
+                            {(() => {
+                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                              const currentTier = detectTierFromSize(currentSize);
+                              const availableTiers = (['1k', '2k', '4k'] as const).filter((t) => ratiosByResolution[t].size > 0);
+                              // 如果当前分辨率不可用，计算实际应该选中的分辨率
+                              const effectiveTier = availableTiers.includes(currentTier) ? currentTier : availableTiers[0];
+                              return availableTiers.map((tier) => {
+                                const isSelected = effectiveTier === tier;
+                                const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
+                                return (
+                                  <button
+                                    key={tier}
+                                    type="button"
+                                    className="flex-1 h-7 rounded-[8px] text-[12px] font-semibold transition-colors"
+                                    style={{
+                                      background: isSelected ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
+                                      border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
+                                      color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
+                                    }}
+                                    onClick={() => {
+                                      const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
+                                      const targetOpt = ratiosByResolution[tier].get(currentAspect);
+                                      if (targetOpt) {
+                                        composerSizeAutoRef.current = false;
+                                        setComposerSize(targetOpt.size);
+                                      } else {
+                                        const first = ratiosByResolution[tier].values().next().value;
+                                        if (first) {
+                                          composerSizeAutoRef.current = false;
+                                          setComposerSize(first.size);
+                                        }
+                                      }
+                                    }}
+                                  >
+                                    {label}
+                                  </button>
+                                );
+                              });
+                            })()}
+                          </div>
+                          {/* 比例 */}
+                          <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>Size</div>
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {(() => {
+                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                              const currentTier = detectTierFromSize(currentSize);
+                              const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
+                              // 如果当前分辨率不可用，回退到第一个可用的分辨率
+                              let ratios = ratiosByResolution[currentTier];
+                              if (ratios.size === 0) {
+                                for (const tier of ['2k', '1k', '4k'] as const) {
+                                  if (ratiosByResolution[tier].size > 0) {
+                                    ratios = ratiosByResolution[tier];
+                                    break;
+                                  }
+                                }
+                              }
+                              return Array.from(ratios.entries()).map(([ratio, opt]) => {
+                                const isSelected = ratio === currentAspect;
+                                const [rw, rh] = ratio.includes(':') ? ratio.split(':').map(Number) : [1, 1];
+                                const aspectVal = rw && rh ? rw / rh : 1;
+                                const iconW = aspectVal >= 1 ? 20 : Math.round(20 * aspectVal);
+                                const iconH = aspectVal <= 1 ? 20 : Math.round(20 / aspectVal);
+                                return (
+                                  <button
+                                    key={ratio}
+                                    type="button"
+                                    className="flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors"
+                                    style={{
+                                      background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
+                                      border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
+                                      color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
+                                    }}
+                                    onClick={() => {
+                                      composerSizeAutoRef.current = false;
+                                      setComposerSize(opt.size);
+                                      setQuickSizeOpen(false);
+                                    }}
+                                  >
+                                    <div style={{ width: iconW, height: iconH, border: '1.5px solid currentColor', borderRadius: 3, opacity: 0.7 }} />
+                                    <span className="text-[10px] font-medium">{ratio}</span>
+                                  </button>
+                                );
+                              });
+                            })()}
+                          </div>
+                        </Popover.Content>
+                      </Popover.Portal>
+                    </Popover.Root>
+
+                    {/* 模型选择器 */}
+                    <DropdownMenu.Root open={quickModelOpen} onOpenChange={setQuickModelOpen}>
                       <DropdownMenu.Trigger asChild>
                         <button
                           type="button"
-                          className="text-[14px] font-semibold inline-flex items-center gap-1 rounded-[10px] px-2 py-1 hover:bg-black/5"
-                          style={{ color: 'rgba(0,0,0,0.92)' }}
+                          className="text-[11px] font-medium inline-flex items-center gap-1 rounded-full px-2.5 h-6 hover:bg-white/5 transition-colors"
+                          style={{
+                            background: 'rgba(99, 102, 241, 0.12)',
+                            border: '1px solid rgba(99, 102, 241, 0.35)',
+                            color: 'rgba(129, 140, 248, 0.95)',
+                          }}
                           title="切换绘图模型"
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          <span className="truncate max-w-[260px]">
+                          <Sparkles size={10} className="shrink-0" />
+                          <span className="truncate max-w-[140px]">
                             {effectiveModel?.name || effectiveModel?.modelName || '自动模型'}
                           </span>
-                          <span className="text-[12px]" style={{ color: 'rgba(0,0,0,0.35)' }}>
-                            ▾
-                          </span>
+                          <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
                         </button>
                       </DropdownMenu.Trigger>
                       <DropdownMenu.Portal>
@@ -5130,18 +5394,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           side="top"
                           align="start"
                           sideOffset={10}
-                          className="z-50 rounded-[18px] p-2"
+                          className="z-50 rounded-[18px] p-3"
                           style={{
                             minWidth: 320,
-                            background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
-                            border: '1px solid rgba(0, 0, 0, 0.08)',
-                            boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
-                            backdropFilter: 'blur(40px) saturate(180%)',
-                            WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-                            color: '#0b0b0f',
+                            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                           }}
                         >
-                          <div className="px-2 py-1 text-[11px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                          <div className="px-2 py-1 text-[11px] font-semibold" style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}>
                             {(() => {
                               const first = allImageGenModels[0];
                               if (first?.isDedicated) return '绘图模型（专属模型池）';
@@ -5176,51 +5439,59 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   <button
                                     key={m.id}
                                     type="button"
-                                    className="w-full text-left rounded-[12px] px-3 py-2 hover:bg-black/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="w-full text-left rounded-[12px] px-3 py-2 hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                    style={{
+                                      border: using ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+                                      background: using ? 'rgba(250,204,21,0.08)' : 'transparent',
+                                    }}
                                     disabled={disabled}
                                     onClick={() => {
                                       setModelPrefAuto(false);
                                       setModelPrefModelId(m.id);
+                                      setQuickModelOpen(false);
                                     }}
                                   >
                                     <div className="flex items-center gap-2 min-w-0">
                                       <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-1.5">
-                                          <div className="text-[13px] font-semibold truncate" style={{ color: '#0b0b0f' }}>
+                                          <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary, rgba(255,255,255,0.92))' }}>
                                             {m.name || m.modelName}
                                           </div>
                                           {m.isDedicated && (
-                                            <span className="shrink-0 text-[9px] px-1 py-0.5 rounded-[4px]" style={{ background: 'rgba(147,51,234,0.15)', color: 'rgb(147,51,234)' }}>
+                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(147,51,234,0.20)', color: 'rgb(192,132,252)' }}>
                                               专属
                                             </span>
                                           )}
                                           {m.isDefault && !m.isDedicated && (
-                                            <span className="shrink-0 text-[9px] px-1 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.15)', color: 'rgb(34,197,94)' }}>
+                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.18)', color: 'rgb(74,222,128)' }}>
                                               默认
                                             </span>
                                           )}
                                           {m.isLegacy && (
-                                            <span className="shrink-0 text-[9px] px-1 py-0.5 rounded-[4px]" style={{ background: 'rgba(234,179,8,0.15)', color: 'rgb(180,140,20)' }}>
+                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(234,179,8,0.18)', color: 'rgb(250,204,21)' }}>
                                               传统
                                             </span>
                                           )}
                                         </div>
-                                        <div className="text-[11px] mt-0.5 truncate" style={{ color: 'rgba(0,0,0,0.40)' }}>
+                                        <div className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--text-muted, rgba(255,255,255,0.40))' }}>
                                           {isPool ? m.modelName : (disabled ? '已禁用（模型管理可启用）' : sourceLabel)}
                                         </div>
                                       </div>
-                                      <div className="ml-auto shrink-0">{using ? <Check size={16} color="#0b0b0f" /> : null}</div>
+                                      <div className="ml-auto shrink-0">
+                                        {using ? <Check size={16} style={{ color: 'rgba(250,204,21,0.95)' }} /> : null}
+                                      </div>
                                     </div>
                                   </button>
                                 );
                               })}
                           </div>
-                                                  </DropdownMenu.Content>
+                        </DropdownMenu.Content>
                       </DropdownMenu.Portal>
                     </DropdownMenu.Root>
 
-                    <div className="text-[13px]" style={{ color: 'rgba(0,0,0,0.45)' }}>
-                      Enter 发送，Shift+Enter 换行
+                    <div className="flex-1" />
+                    <div className="text-[10px]" style={{ color: 'var(--text-muted, rgba(255,255,255,0.40))' }}>
+                      Enter 发送
                     </div>
                   </div>
                 </div>
@@ -5893,7 +6164,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </div>
               <button
                 type="button"
-                onClick={() => useGlobalDefectStore.getState().openDialog()}
+                onClick={() => {
+                  setDefectFlash(false); // 用户点击后停止闪烁
+                  useGlobalDefectStore.getState().openDialog();
+                }}
                 className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
                 style={{ color: 'var(--text-muted)' }}
                 aria-label="提交缺陷"
@@ -5928,7 +6202,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </div>
             ) : null}
 
-            <div ref={scrollRef} className="mt-2 flex-1 min-h-0 overflow-auto pr-1 space-y-1.5">
+            <div ref={scrollRef} className="mt-2 flex-1 min-h-0 overflow-auto pr-1">
+              <div ref={msgContentRef} className="space-y-1.5">
               {messages.map((m) => {
                 const isUser = m.role === 'User';
                 // 过滤历史遗留的"本次使用模型/直连模式..."提示（用户要求移除）
@@ -6181,7 +6456,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     whiteSpace: 'nowrap',
                                   }}
                                 >
-                                  {msgSize}
+                                  {sizeToAspectMap.get(msgSize.toLowerCase()) || detectAspectFromSize(msgSize)}
                                 </span>
                               </span>
                             ) : null}
@@ -6244,6 +6519,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 );
               })}
               <div ref={bottomRef} />
+              </div>
             </div>
 
             {error ? (

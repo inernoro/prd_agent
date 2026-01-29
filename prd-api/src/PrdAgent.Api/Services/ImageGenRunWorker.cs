@@ -238,13 +238,19 @@ public class ImageGenRunWorker : BackgroundService
                         _logger.LogInformation("[ImageGenRunWorker Debug] Run {RunId}: AppKey={AppKey}, UserId={UserId}, AppCallerCode={AppCallerCode}",
                             run.Id, run.AppKey ?? "(null)", run.OwnerAdminId, run.AppCallerCode ?? "(null)");
 
-                        // AppCallerCode: 优先使用 run.AppCallerCode，否则根据 AppKey 生成，最后回退到默认值
+                        // AppCallerCode: 优先使用 run.AppCallerCode（已在 ResolveModelGroupAsync 中正确设置）
+                        // 这里仅用于 LlmRequestContext 日志记录，保持与调度逻辑一致的映射
                         var appCallerCode = run.AppCallerCode;
                         if (string.IsNullOrWhiteSpace(appCallerCode) && !string.IsNullOrWhiteSpace(run.AppKey))
                         {
-                            appCallerCode = $"{run.AppKey}.image::generation";
+                            appCallerCode = run.AppKey switch
+                            {
+                                "visual-agent" => AppCallerRegistry.VisualAgent.Image.Generation,
+                                "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Generation,
+                                _ => $"{run.AppKey}.image::generation"
+                            };
                         }
-                        appCallerCode ??= "prd-agent-web.image::generation"; // 最终回退（符合命名规范）
+                        appCallerCode ??= AppCallerRegistry.Admin.Lab.Generation; // 最终回退到实验室生成
 
                         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                             RequestId: $"{run.Id}-{curItemIndex}-{imageIndex}",
@@ -296,6 +302,9 @@ public class ImageGenRunWorker : BackgroundService
                                 errorCode = code,
                                 errorMessage = msg
                             }, ct);
+
+                            // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 error
+                            await TryPatchArticleMarkerAsync(run, "error", msg, null, ct);
                             return;
                         }
 
@@ -355,6 +364,9 @@ public class ImageGenRunWorker : BackgroundService
                                 originalSha256 = persisted.OriginalSha256
                             }
                         }, ct);
+
+                        // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 done
+                        await TryPatchArticleMarkerAsync(run, "done", null, url ?? persisted?.Url, ct);
                     }
                     finally
                     {
@@ -676,6 +688,74 @@ public class ImageGenRunWorker : BackgroundService
     }
 
     /// <summary>
+    /// 文学创作场景：自动回填 ArticleIllustrationMarker 的状态。
+    /// 当 run.ArticleMarkerIndex 有值时，更新对应 marker 的 status/errorMessage/url。
+    /// </summary>
+    private async Task TryPatchArticleMarkerAsync(
+        ImageGenRun run,
+        string status,
+        string? errorMessage,
+        string? url,
+        CancellationToken ct)
+    {
+        // 只有文学创作场景（有 ArticleMarkerIndex）才需要回填
+        if (!run.ArticleMarkerIndex.HasValue) return;
+        var wid = (run.WorkspaceId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return;
+
+        var markerIndex = run.ArticleMarkerIndex.Value;
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+            if (ws == null) return;
+
+            var wf = ws.ArticleWorkflow;
+            if (wf == null || wf.Markers == null || markerIndex < 0 || markerIndex >= wf.Markers.Count) return;
+
+            var marker = wf.Markers[markerIndex];
+            marker.Status = status;
+            marker.UpdatedAt = DateTime.UtcNow;
+
+            if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                marker.ErrorMessage = errorMessage;
+            }
+            else if (status == "done")
+            {
+                marker.ErrorMessage = null; // 清空错误信息
+            }
+
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                marker.Url = url;
+            }
+
+            var res = await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                x => x.Id == wid && x.UpdatedAt == ws.UpdatedAt,
+                Builders<ImageMasterWorkspace>.Update
+                    .Set(x => x.ArticleWorkflow, wf)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+
+            if (res.ModifiedCount > 0)
+            {
+                _logger.LogInformation(
+                    "[文学创作] Marker 状态自动回填: WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, Status={Status}",
+                    wid, markerIndex, status);
+                return;
+            }
+
+            // 乐观锁冲突，重试
+            await Task.Delay(50, ct);
+        }
+
+        _logger.LogWarning(
+            "[文学创作] Marker 状态回填失败（乐观锁冲突次数过多）: WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}",
+            wid, markerIndex);
+    }
+
+    /// <summary>
     /// 模型池调度：统一在 Worker 中处理，确保所有来源的 Run 都能正确关联模型池
     /// 仅通过 AppCaller 绑定关系查询模型池，不进行 platformId+modelId 反查
     /// </summary>
@@ -709,10 +789,17 @@ public class ImageGenRunWorker : BackgroundService
         string? resolvedModelId = null;
 
         // 通过 AppCaller 从模型池中选择模型（唯一方式）
+        // 注意：不同应用的 appCallerCode 命名不同，必须映射到 AppCallerRegistry 中定义的值
         var appCallerCode = run.AppCallerCode;
         if (string.IsNullOrWhiteSpace(appCallerCode) && !string.IsNullOrWhiteSpace(run.AppKey))
         {
-            appCallerCode = $"{run.AppKey}.image::generation";
+            // 根据 appKey 映射到 AppCallerRegistry 中定义的正确 appCallerCode
+            appCallerCode = run.AppKey switch
+            {
+                "visual-agent" => AppCallerRegistry.VisualAgent.Image.Generation,      // visual-agent.image::generation
+                "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Generation, // literary-agent.illustration::generation
+                _ => $"{run.AppKey}.image::generation" // 其他应用回退默认命名
+            };
         }
         
         // 简洁：不再单独打印 AppCallerCode

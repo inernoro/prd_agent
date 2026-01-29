@@ -1646,8 +1646,7 @@ export default function ModelManagePage() {
                                         `适配器: ${info.displayName ?? info.adapterName}`,
                                         info.provider ? `提供商: ${info.provider}` : null,
                                         info.sizeConstraintType ? `约束类型: ${info.sizeConstraintType}` : null,
-                                        info.allowedSizesCount ? `支持尺寸: ${info.allowedSizesCount} 种` : null,
-                                        info.allowedRatios?.length ? `比例: ${info.allowedRatios.join(', ')}` : null,
+                                        info.sizesCount ? `支持尺寸: ${info.sizesCount} 种` : null,
                                         ...(info.notes ?? []),
                                       ].filter(Boolean);
                                       return (

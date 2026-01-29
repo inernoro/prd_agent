@@ -117,6 +117,12 @@ public class ImageGenRun
     public double? TargetY { get; set; }
     public double? TargetW { get; set; }
     public double? TargetH { get; set; }
+
+    /// <summary>
+    /// 可选：文学创作（ArticleIllustration）场景下，关联的配图标记索引。
+    /// Worker 完成/失败时会自动回填 ArticleIllustrationMarker.Status。
+    /// </summary>
+    public int? ArticleMarkerIndex { get; set; }
 }
 
 public enum ImageGenRunStatus

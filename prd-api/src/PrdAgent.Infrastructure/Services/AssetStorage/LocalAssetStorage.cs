@@ -65,8 +65,8 @@ public class LocalAssetStorage : IAssetStorage
         // 2) baseDir 兜底（兼容旧数据）
         dirs.Add(_baseDir);
 
-        // 支持常见图片/字体扩展
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2" };
+        // 支持常见图片/字体/文本扩展
+        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
         foreach (var dir in dirs.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             foreach (var ext in exts)
@@ -100,8 +100,8 @@ public class LocalAssetStorage : IAssetStorage
         }
         dirs.Add(_baseDir);
 
-        // 支持常见图片/字体扩展（与读取逻辑保持一致）
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2" };
+        // 支持常见图片/字体/文本扩展（与读取逻辑保持一致）
+        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
         foreach (var dir in dirs.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             foreach (var ext in exts)
@@ -140,6 +140,7 @@ public class LocalAssetStorage : IAssetStorage
             "font/otf" or "application/x-font-opentype" => "otf",
             "font/woff" or "application/font-woff" => "woff",
             "font/woff2" or "application/font-woff2" => "woff2",
+            "text/plain" => "txt",
             _ => "png"
         };
     }
@@ -155,6 +156,7 @@ public class LocalAssetStorage : IAssetStorage
             "otf" => "font/otf",
             "woff" => "font/woff",
             "woff2" => "font/woff2",
+            "txt" => "text/plain; charset=utf-8",
             _ => "image/png"
         };
     }

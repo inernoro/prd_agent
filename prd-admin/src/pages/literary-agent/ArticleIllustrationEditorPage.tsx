@@ -19,6 +19,7 @@ import {
   updateLiteraryPrompt,
   deleteLiteraryPrompt,
   getWatermarkByApp,
+  getImageGenRun,
 } from '@/services';
 import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, Check, Copy, DownloadCloud, MapPin } from 'lucide-react';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -263,6 +264,44 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           }));
           setMarkerRunItems(restoredItems);
           setMarkerRunItemsRestored(true); // 标记已恢复
+
+          // 对于 status === 'running' 且有 runId 的 marker，查询后端 Run 的真实状态
+          // 后端是状态的唯一来源，前端只是观察者
+          const runningItems = restoredItems.filter(item => item.status === 'running' && item.runId);
+          if (runningItems.length > 0) {
+            // 异步查询每个 run 的真实状态（不阻塞 UI）
+            Promise.all(runningItems.map(async (item) => {
+              try {
+                const runRes = await getImageGenRun({ runId: item.runId!, includeItems: true });
+                if (runRes.success && runRes.data) {
+                  const runStatus = runRes.data.run.status;
+                  // 根据后端 Run 状态更新前端显示
+                  if (runStatus === 'Failed' || runStatus === 'Cancelled') {
+                    const errorMsg = runRes.data.items?.[0]?.errorMessage || '生图失败';
+                    setMarkerRunItems(prev => prev.map(x => 
+                      x.markerIndex === item.markerIndex 
+                        ? { ...x, status: 'error' as MarkerRunStatus, errorMessage: errorMsg }
+                        : x
+                    ));
+                  } else if (runStatus === 'Completed') {
+                    // Run 已完成但 marker 状态未更新（可能是刷新时丢失了 SSE 事件）
+                    const doneItem = runRes.data.items?.[0];
+                    const url = doneItem?.url || doneItem?.base64;
+                    if (url) {
+                      setMarkerRunItems(prev => prev.map(x => 
+                        x.markerIndex === item.markerIndex 
+                          ? { ...x, status: 'done' as MarkerRunStatus, url, assetUrl: url, errorMessage: null }
+                          : x
+                      ));
+                    }
+                  }
+                  // 如果 runStatus 是 'Running' 或 'Queued'，保持当前状态，后续 SSE 会更新
+                }
+              } catch (error) {
+                console.error(`Failed to query run status for runId ${item.runId}:`, error);
+              }
+            }));
+          }
         }
         
         // 加载文学创作提示词（从后端）
@@ -976,6 +1015,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         maxConcurrency: 1,
         workspaceId,  // 传入 workspaceId，后端会自动保存图片到 COS
         appKey: 'literary-agent',  // 文学创作应用标识，用于水印配置
+        articleMarkerIndex: markerIndex,  // 传入 markerIndex，后端 Worker 完成/失败时自动回填 marker 状态
       },
       idempotencyKey: idem,
     });

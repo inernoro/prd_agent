@@ -37,17 +37,19 @@ public static class ImageGenModelAdapterRegistry
     public static SizeAdaptationResult NormalizeSize(ImageGenModelAdapterConfig config, string? requestedSize)
     {
         var result = new SizeAdaptationResult();
+        var allSizes = GetAllSizesFromConfig(config);
+        var allRatios = GetAllRatiosFromConfig(config);
 
         // 解析请求尺寸
         if (!TryParseSize(requestedSize, out var reqW, out var reqH))
         {
             // 无法解析：使用默认尺寸
-            var defaultSize = config.AllowedSizes.FirstOrDefault() ?? "1024x1024";
+            var defaultSize = allSizes.FirstOrDefault() ?? "1024x1024";
             TryParseSize(defaultSize, out var dw, out var dh);
             result.Size = defaultSize;
             result.Width = dw;
             result.Height = dh;
-            result.AspectRatio = DetectAspectRatio(dw, dh, config.AllowedRatios);
+            result.AspectRatio = DetectAspectRatio(dw, dh, allRatios);
             result.Resolution = DetectResolution(dw, dh);
             result.SizeAdjusted = true;
             return result;
@@ -56,24 +58,24 @@ public static class ImageGenModelAdapterRegistry
         switch (config.SizeConstraintType)
         {
             case SizeConstraintTypes.Whitelist:
-                return NormalizeSizeWhitelist(config, reqW, reqH);
+                return NormalizeSizeWhitelist(config, reqW, reqH, allSizes, allRatios);
 
             case SizeConstraintTypes.Range:
-                return NormalizeSizeRange(config, reqW, reqH);
+                return NormalizeSizeRange(config, reqW, reqH, allRatios);
 
             case SizeConstraintTypes.AspectRatio:
-                return NormalizeSizeAspectRatio(config, reqW, reqH);
+                return NormalizeSizeAspectRatio(config, reqW, reqH, allSizes, allRatios);
 
             default:
                 // 回退到白名单模式
-                return NormalizeSizeWhitelist(config, reqW, reqH);
+                return NormalizeSizeWhitelist(config, reqW, reqH, allSizes, allRatios);
         }
     }
 
     /// <summary>
     /// 白名单模式：选择最接近的尺寸
     /// </summary>
-    private static SizeAdaptationResult NormalizeSizeWhitelist(ImageGenModelAdapterConfig config, int reqW, int reqH)
+    private static SizeAdaptationResult NormalizeSizeWhitelist(ImageGenModelAdapterConfig config, int reqW, int reqH, List<string> allSizes, List<string> allRatios)
     {
         var result = new SizeAdaptationResult();
         var reqRatio = (double)reqW / reqH;
@@ -83,7 +85,7 @@ public static class ImageGenModelAdapterRegistry
         double bestScore = double.MaxValue;
         int bestW = 1024, bestH = 1024;
 
-        foreach (var sizeStr in config.AllowedSizes)
+        foreach (var sizeStr in allSizes)
         {
             if (!TryParseSize(sizeStr, out var w, out var h)) continue;
 
@@ -107,7 +109,7 @@ public static class ImageGenModelAdapterRegistry
         result.Size = bestSize ?? "1024x1024";
         result.Width = bestW;
         result.Height = bestH;
-        result.AspectRatio = DetectAspectRatio(bestW, bestH, config.AllowedRatios);
+        result.AspectRatio = DetectAspectRatio(bestW, bestH, allRatios);
         result.Resolution = DetectResolution(bestW, bestH);
         result.SizeAdjusted = bestW != reqW || bestH != reqH;
         result.RatioAdjusted = IsRatioSignificantlyDifferent(reqW, reqH, bestW, bestH, 0.05);
@@ -118,7 +120,7 @@ public static class ImageGenModelAdapterRegistry
     /// <summary>
     /// 范围模式：在范围内调整尺寸
     /// </summary>
-    private static SizeAdaptationResult NormalizeSizeRange(ImageGenModelAdapterConfig config, int reqW, int reqH)
+    private static SizeAdaptationResult NormalizeSizeRange(ImageGenModelAdapterConfig config, int reqW, int reqH, List<string> allRatios)
     {
         var result = new SizeAdaptationResult();
 
@@ -155,7 +157,7 @@ public static class ImageGenModelAdapterRegistry
         result.Size = $"{w}x{h}";
         result.Width = w;
         result.Height = h;
-        result.AspectRatio = DetectAspectRatio(w, h, config.AllowedRatios);
+        result.AspectRatio = DetectAspectRatio(w, h, allRatios);
         result.Resolution = DetectResolution(w, h);
         result.SizeAdjusted = w != reqW || h != reqH;
         result.RatioAdjusted = IsRatioSignificantlyDifferent(reqW, reqH, w, h, 0.05);
@@ -166,17 +168,17 @@ public static class ImageGenModelAdapterRegistry
     /// <summary>
     /// 比例模式：只返回比例和分辨率档位
     /// </summary>
-    private static SizeAdaptationResult NormalizeSizeAspectRatio(ImageGenModelAdapterConfig config, int reqW, int reqH)
+    private static SizeAdaptationResult NormalizeSizeAspectRatio(ImageGenModelAdapterConfig config, int reqW, int reqH, List<string> allSizes, List<string> allRatios)
     {
         var result = new SizeAdaptationResult();
 
         var reqRatio = (double)reqW / reqH;
-        var bestRatio = FindClosestRatio(reqRatio, config.AllowedRatios);
+        var bestRatio = FindClosestRatio(reqRatio, allRatios);
 
         // 如果有白名单尺寸，选择最接近的
-        if (config.AllowedSizes.Count > 0)
+        if (allSizes.Count > 0)
         {
-            var whitelist = NormalizeSizeWhitelist(config, reqW, reqH);
+            var whitelist = NormalizeSizeWhitelist(config, reqW, reqH, allSizes, allRatios);
             result.Size = whitelist.Size;
             result.Width = whitelist.Width;
             result.Height = whitelist.Height;
@@ -263,10 +265,12 @@ public static class ImageGenModelAdapterRegistry
             AdapterName = config.ModelIdPattern.TrimEnd('*'),
             DisplayName = config.DisplayName,
             Provider = config.Provider,
+            OfficialDocUrl = config.OfficialDocUrl,
+            LastUpdated = config.LastUpdated,
             SizeConstraintType = config.SizeConstraintType,
             SizeConstraintDescription = config.SizeConstraintDescription,
-            AllowedSizes = config.AllowedSizes,
-            AllowedRatios = config.AllowedRatios,
+            // 直接返回按分辨率分组的尺寸配置，前端无需转换
+            SizesByResolution = config.SizesByResolution,
             SizeParamFormat = config.SizeParamFormat,
             MustBeDivisibleBy = config.MustBeDivisibleBy,
             MaxWidth = config.MaxWidth,
@@ -281,27 +285,92 @@ public static class ImageGenModelAdapterRegistry
     }
 
     /// <summary>
-    /// 将允许尺寸转换为可直接展示的尺寸选项（包含比例与分辨率档位）
+    /// 从 SizesByResolution 获取所有尺寸的扁平列表（用于内部尺寸归一化）
     /// </summary>
-    public static List<ImageGenSizeOption> BuildSizeOptions(List<string> allowedSizes, List<string> allowedRatios)
+    public static List<string> GetAllSizesFromConfig(ImageGenModelAdapterConfig config)
     {
-        var results = new List<ImageGenSizeOption>();
-        if (allowedSizes == null || allowedSizes.Count == 0) return results;
-
-        foreach (var size in allowedSizes)
+        var sizes = new List<string>();
+        foreach (var tier in config.SizesByResolution.Values)
         {
-            if (!TryParseSize(size, out var w, out var h)) continue;
-            var ratio = DetectAspectRatio(w, h, allowedRatios ?? new List<string>());
-            var resolution = DetectResolution(w, h);
-            results.Add(new ImageGenSizeOption
+            foreach (var opt in tier)
             {
-                Size = $"{w}x{h}",
-                AspectRatio = ratio,
-                Resolution = resolution
-            });
+                if (!string.IsNullOrEmpty(opt.Size))
+                    sizes.Add(opt.Size);
+            }
+        }
+        return sizes;
+    }
+
+    /// <summary>
+    /// 从 SizesByResolution 获取所有比例的扁平列表（用于内部尺寸归一化）
+    /// </summary>
+    public static List<string> GetAllRatiosFromConfig(ImageGenModelAdapterConfig config)
+    {
+        var ratios = new HashSet<string>();
+        foreach (var tier in config.SizesByResolution.Values)
+        {
+            foreach (var opt in tier)
+            {
+                if (!string.IsNullOrEmpty(opt.AspectRatio))
+                    ratios.Add(opt.AspectRatio);
+            }
+        }
+        return ratios.ToList();
+    }
+
+    /// <summary>
+    /// 一站式构建生图请求参数（尺寸适配 + 参数格式转换 + 参数重命名）
+    /// 调用方只需使用返回的 SizeParams 和 OtherParams，无需了解底层参数格式差异
+    /// </summary>
+    /// <param name="modelName">模型名称（用于匹配适配器）</param>
+    /// <param name="requestedSize">请求的尺寸（WxH 格式，如 "1024x1024"）</param>
+    /// <param name="extraParams">额外参数（会应用 ParamRenames 重命名）</param>
+    /// <returns>构建好的请求参数</returns>
+    public static ImageGenRequestParams BuildRequestParams(
+        string? modelName,
+        string? requestedSize,
+        Dictionary<string, object>? extraParams = null)
+    {
+        var result = new ImageGenRequestParams();
+
+        var config = TryMatch(modelName);
+        if (config == null)
+        {
+            // 未匹配到适配器，返回默认 WxH 格式
+            result.HasAdapter = false;
+            result.SizeParamFormat = SizeParamFormats.WxH;
+            result.SizeParams["size"] = string.IsNullOrWhiteSpace(requestedSize) ? "1024x1024" : requestedSize.Trim();
+            result.Adaptation = new SizeAdaptationResult
+            {
+                Size = result.SizeParams["size"]?.ToString() ?? "1024x1024",
+                Width = 1024,
+                Height = 1024,
+            };
+            if (extraParams != null)
+            {
+                result.OtherParams = new Dictionary<string, object>(extraParams);
+            }
+            return result;
         }
 
-        return results;
+        result.HasAdapter = true;
+        result.AdapterName = config.ModelIdPattern;
+        result.SizeParamFormat = config.SizeParamFormat;
+
+        // 1. 尺寸归一化
+        var sizeResult = NormalizeSize(config, requestedSize);
+        result.Adaptation = sizeResult;
+
+        // 2. 应用尺寸参数格式（WxH / width+height / aspect_ratio）
+        ApplySizeParams(config, sizeResult, result.SizeParams);
+
+        // 3. 参数重命名（如 model -> model_name）
+        if (extraParams != null)
+        {
+            result.OtherParams = TransformParams(config, extraParams);
+        }
+
+        return result;
     }
 
     #region Helper Methods
@@ -409,10 +478,17 @@ public class ImageGenAdapterInfo
     public string AdapterName { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public string Provider { get; set; } = string.Empty;
+    public string? OfficialDocUrl { get; set; }
+    public string? LastUpdated { get; set; }
     public string SizeConstraintType { get; set; } = string.Empty;
     public string SizeConstraintDescription { get; set; } = string.Empty;
-    public List<string> AllowedSizes { get; set; } = new();
-    public List<string> AllowedRatios { get; set; } = new();
+    
+    /// <summary>
+    /// 按分辨率分组的尺寸选项（1k/2k/4k）
+    /// 前端直接使用，无需转换
+    /// </summary>
+    public Dictionary<string, List<SizeOption>> SizesByResolution { get; set; } = new();
+    
     public string SizeParamFormat { get; set; } = string.Empty;
     public int? MustBeDivisibleBy { get; set; }
     public int? MaxWidth { get; set; }
@@ -423,14 +499,4 @@ public class ImageGenAdapterInfo
     public List<string> Notes { get; set; } = new();
     public bool SupportsImageToImage { get; set; }
     public bool SupportsInpainting { get; set; }
-}
-
-/// <summary>
-/// 生图尺寸选项（用于前端展示）
-/// </summary>
-public class ImageGenSizeOption
-{
-    public string Size { get; set; } = string.Empty;
-    public string? AspectRatio { get; set; }
-    public string? Resolution { get; set; }
 }

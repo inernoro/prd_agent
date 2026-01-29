@@ -514,7 +514,7 @@ export function DefectDetailPanel() {
               </div>
             )}
 
-            {/* 系统日志附件 - 不可点击下载 */}
+            {/* 系统日志附件 */}
             {logAttachments.length > 0 && (
               <div>
                 <div
@@ -526,19 +526,22 @@ export function DefectDetailPanel() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {logAttachments.map((att) => (
-                    <div
+                    <a
                       key={att.id}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] cursor-default"
+                      href={att.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] hover:ring-2 hover:ring-white/30 transition-all"
                       style={{
                         background: att.type === DefectAttachmentType.LogError
                           ? 'rgba(255, 100, 100, 0.08)'
                           : 'rgba(100, 200, 255, 0.08)',
-                        color: 'var(--text-muted)',
+                        color: 'var(--text-secondary)',
                         border: att.type === DefectAttachmentType.LogError
                           ? '1px solid rgba(255, 100, 100, 0.15)'
                           : '1px solid rgba(100, 200, 255, 0.15)',
                       }}
-                      title="系统自动采集的日志，仅开发人员可查看原文件"
+                      title="点击查看系统日志"
                     >
                       <FileText size={12} style={{
                         color: att.type === DefectAttachmentType.LogError
@@ -546,7 +549,8 @@ export function DefectDetailPanel() {
                           : 'rgba(100, 200, 255, 0.8)',
                       }} />
                       <span className="max-w-[180px] truncate">{att.fileName}</span>
-                    </div>
+                      <ExternalLink size={12} style={{ opacity: 0.6 }} />
+                    </a>
                   ))}
                 </div>
               </div>

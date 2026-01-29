@@ -893,6 +893,20 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(appKey)) appKey = null;
 
         // 模型池调度逻辑统一在 ImageGenRunWorker 中处理
+        // 根据 appKey 映射到 AppCallerRegistry 中定义的正确 appCallerCode
+        string? resolvedAppCallerCode = null;
+        if (!string.IsNullOrWhiteSpace(appKey))
+        {
+            resolvedAppCallerCode = appKey switch
+            {
+                "visual-agent" => AppCallerRegistry.VisualAgent.Image.Generation,      // visual-agent.image::generation
+                "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Generation, // literary-agent.illustration::generation
+                _ => $"{appKey}.image::generation" // 其他应用回退默认命名
+            };
+        }
+
+        // 文学创作场景：关联的配图标记索引
+        var articleMarkerIndex = request?.ArticleMarkerIndex;
 
         var run = new ImageGenRun
         {
@@ -912,9 +926,9 @@ public class ImageGenController : ControllerBase
             LastSeq = 0,
             IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
             WorkspaceId = workspaceId,
-            // 格式: {app}.{feature}::modelType（符合 doc/rule.app-feature-definition.md）
-            AppCallerCode = string.IsNullOrWhiteSpace(appKey) ? null : $"{appKey}.image::generation",
+            AppCallerCode = resolvedAppCallerCode,
             AppKey = appKey,
+            ArticleMarkerIndex = articleMarkerIndex,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1312,6 +1326,12 @@ public class CreateImageGenRunRequest
     /// 可选：应用标识（如 "literary-agent"）。用于水印等功能的隔离。
     /// </summary>
     public string? AppKey { get; set; }
+
+    /// <summary>
+    /// 可选：文学创作场景下，关联的配图标记索引。
+    /// Worker 完成/失败时会自动回填 ArticleIllustrationMarker.Status。
+    /// </summary>
+    public int? ArticleMarkerIndex { get; set; }
 }
 
 public class ImageGenRunPlanItemInput

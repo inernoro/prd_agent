@@ -320,10 +320,13 @@ public class ImageGenModelAdapterTests
         Assert.NotNull(info);
         Assert.Equal(SizeConstraintTypes.Whitelist, info.SizeConstraintType);
         Assert.Equal(SizeParamFormats.WxH, info.SizeParamFormat);
-        Assert.Contains("1024x1024", info.AllowedSizes);
-        Assert.Contains("1024x1792", info.AllowedSizes);
-        Assert.Contains("1792x1024", info.AllowedSizes);
-        Assert.Equal(3, info.AllowedSizes.Count);
+
+        // 使用 SizesByResolution 验证（AllowedSizes 已废弃）
+        var allSizes = info.SizesByResolution?.Values.SelectMany(x => x.Select(s => s.Size)).ToList() ?? new List<string>();
+        Assert.Contains("1024x1024", allSizes);
+        Assert.Contains("1024x1792", allSizes);
+        Assert.Contains("1792x1024", allSizes);
+        Assert.Equal(3, allSizes.Count);
         Assert.False(info.SupportsImageToImage);
     }
 

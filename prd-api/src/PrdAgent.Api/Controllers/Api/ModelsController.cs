@@ -734,14 +734,15 @@ public class ModelsController : ControllerBase
             adapterName = adapterInfo.AdapterName,
             displayName = adapterInfo.DisplayName,
             provider = adapterInfo.Provider,
+            officialDocUrl = adapterInfo.OfficialDocUrl,
+            lastUpdated = adapterInfo.LastUpdated,
             sizeConstraint = new
             {
                 type = adapterInfo.SizeConstraintType,
                 description = adapterInfo.SizeConstraintDescription,
             },
-            allowedSizes = adapterInfo.AllowedSizes,
-            allowedRatios = adapterInfo.AllowedRatios,
-            sizeOptions = Infrastructure.LLM.ImageGenModelAdapterRegistry.BuildSizeOptions(adapterInfo.AllowedSizes, adapterInfo.AllowedRatios),
+            // 按分辨率分组的尺寸选项，前端直接使用，无需转换
+            sizesByResolution = adapterInfo.SizesByResolution,
             sizeParamFormat = adapterInfo.SizeParamFormat,
             limitations = new
             {
@@ -792,14 +793,15 @@ public class ModelsController : ControllerBase
             adapterName = adapterInfo.AdapterName,
             displayName = adapterInfo.DisplayName,
             provider = adapterInfo.Provider,
+            officialDocUrl = adapterInfo.OfficialDocUrl,
+            lastUpdated = adapterInfo.LastUpdated,
             sizeConstraint = new
             {
                 type = adapterInfo.SizeConstraintType,
                 description = adapterInfo.SizeConstraintDescription,
             },
-            allowedSizes = adapterInfo.AllowedSizes,
-            allowedRatios = adapterInfo.AllowedRatios,
-            sizeOptions = Infrastructure.LLM.ImageGenModelAdapterRegistry.BuildSizeOptions(adapterInfo.AllowedSizes, adapterInfo.AllowedRatios),
+            // 按分辨率分组的尺寸选项，前端直接使用，无需转换
+            sizesByResolution = adapterInfo.SizesByResolution,
             sizeParamFormat = adapterInfo.SizeParamFormat,
             limitations = new
             {
@@ -838,6 +840,8 @@ public class ModelsController : ControllerBase
             var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(model.ModelName);
             if (adapterInfo != null && adapterInfo.Matched)
             {
+                // 计算总尺寸数
+                var totalSizesCount = adapterInfo.SizesByResolution.Values.Sum(x => x.Count);
                 result[model.Id] = new
                 {
                     matched = true,
@@ -846,8 +850,8 @@ public class ModelsController : ControllerBase
                     displayName = adapterInfo.DisplayName,
                     provider = adapterInfo.Provider,
                     sizeConstraintType = adapterInfo.SizeConstraintType,
-                    allowedSizesCount = adapterInfo.AllowedSizes.Count,
-                    allowedRatios = adapterInfo.AllowedRatios,
+                    sizesCount = totalSizesCount,
+                    sizesByResolution = adapterInfo.SizesByResolution,
                     notes = adapterInfo.Notes,
                 };
             }

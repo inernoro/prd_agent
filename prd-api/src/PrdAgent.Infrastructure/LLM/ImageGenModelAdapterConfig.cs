@@ -1,6 +1,22 @@
 namespace PrdAgent.Infrastructure.LLM;
 
 /// <summary>
+/// 生图尺寸选项（用于前端展示，按分辨率分组）
+/// </summary>
+public class SizeOption
+{
+    public string Size { get; set; } = string.Empty;
+    public string AspectRatio { get; set; } = string.Empty;
+
+    public SizeOption() { }
+    public SizeOption(string size, string aspectRatio)
+    {
+        Size = size;
+        AspectRatio = aspectRatio;
+    }
+}
+
+/// <summary>
 /// 生图模型尺寸约束类型
 /// </summary>
 public static class SizeConstraintTypes
@@ -40,16 +56,35 @@ public class ImageGenModelAdapterConfig
     /// <summary>提供商名称（如 Google、OpenAI）</summary>
     public string Provider { get; set; } = string.Empty;
 
+    /// <summary>官方文档链接（方便对照校验）</summary>
+    public string? OfficialDocUrl { get; set; }
+
+    /// <summary>配置最后更新时间（如 2026-01-29）</summary>
+    public string? LastUpdated { get; set; }
+
     /// <summary>尺寸约束类型：whitelist / range / aspect_ratio</summary>
     public string SizeConstraintType { get; set; } = SizeConstraintTypes.Whitelist;
 
     /// <summary>约束描述</summary>
     public string SizeConstraintDescription { get; set; } = string.Empty;
 
-    /// <summary>白名单尺寸列表（格式：WxH）</summary>
+    /// <summary>
+    /// 按分辨率分组的尺寸选项（1k/2k/4k）
+    /// 前端直接使用，无需转换
+    /// </summary>
+    public Dictionary<string, List<SizeOption>> SizesByResolution { get; set; } = new()
+    {
+        ["1k"] = new(),
+        ["2k"] = new(),
+        ["4k"] = new(),
+    };
+
+    /// <summary>白名单尺寸列表（格式：WxH）- 已废弃，请使用 SizesByResolution</summary>
+    [Obsolete("请使用 SizesByResolution 代替")]
     public List<string> AllowedSizes { get; set; } = new();
 
-    /// <summary>允许的比例列表（如 1:1, 2:3）</summary>
+    /// <summary>允许的比例列表（如 1:1, 2:3）- 已废弃，比例信息已包含在 SizesByResolution 中</summary>
+    [Obsolete("比例信息已包含在 SizesByResolution 中")]
     public List<string> AllowedRatios { get; set; } = new();
 
     /// <summary>尺寸参数格式：WxH / {width,height} / aspect_ratio</summary>
@@ -114,4 +149,34 @@ public class SizeAdaptationResult
 
     /// <summary>是否进行了比例调整</summary>
     public bool RatioAdjusted { get; set; }
+}
+
+/// <summary>
+/// 一站式生图请求参数构建结果
+/// 整合尺寸适配、参数格式转换、参数重命名
+/// </summary>
+public class ImageGenRequestParams
+{
+    /// <summary>尺寸适配结果（含元信息：SizeAdjusted, RatioAdjusted, Resolution 等）</summary>
+    public SizeAdaptationResult Adaptation { get; set; } = new();
+
+    /// <summary>
+    /// 尺寸相关的 API 参数（根据模型格式自动选择）：
+    /// - WxH 格式: { "size": "1024x1024" }
+    /// - WidthHeight 格式: { "width": 1024, "height": 1024 }
+    /// - AspectRatio 格式: { "aspect_ratio": "1:1", "resolution": "2k" }
+    /// </summary>
+    public Dictionary<string, object> SizeParams { get; set; } = new();
+
+    /// <summary>其他参数（已应用 ParamRenames 重命名，如 model -> model_name）</summary>
+    public Dictionary<string, object> OtherParams { get; set; } = new();
+
+    /// <summary>是否匹配到适配器配置</summary>
+    public bool HasAdapter { get; set; }
+
+    /// <summary>匹配到的适配器名称（如 doubao-seedream-4-5*）</summary>
+    public string? AdapterName { get; set; }
+
+    /// <summary>参数格式类型（WxH / {width,height} / aspect_ratio）</summary>
+    public string SizeParamFormat { get; set; } = SizeParamFormats.WxH;
 }
