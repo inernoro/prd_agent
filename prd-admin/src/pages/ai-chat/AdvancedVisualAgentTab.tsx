@@ -669,27 +669,16 @@ function detectTierFromSize(size: string): '1k' | '2k' | '4k' {
   return '1k';
 }
 
-// 从尺寸字符串检测比例
+// 从尺寸字符串检测比例（仅匹配标准比例，不使用 GCD 计算避免用户误解）
 function detectAspectFromSize(size: string): string {
   const s = (size || '').trim().toLowerCase();
-  // 先从 ASPECT_OPTIONS 匹配
+  // 从 ASPECT_OPTIONS 精确匹配
   for (const opt of ASPECT_OPTIONS) {
     if (opt.size1k.toLowerCase() === s || opt.size2k.toLowerCase() === s || opt.size4k.toLowerCase() === s) {
       return opt.id;
     }
   }
-  // 解析尺寸并计算比例
-  const m = /(\d+)\s*[xX×]\s*(\d+)/.exec(s);
-  if (m) {
-    const w = Number(m[1]);
-    const h = Number(m[2]);
-    if (w > 0 && h > 0) {
-      const g = gcd(w, h);
-      const rw = Math.round(w / g);
-      const rh = Math.round(h / g);
-      return `${rw}:${rh}`;
-    }
-  }
+  // 不使用 GCD 计算，返回默认值（调用方应优先使用 sizeToAspectMap）
   return '1:1';
 }
 
@@ -1547,10 +1536,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [, setBooting] = useState(false);
   const initWorkspaceRef = useRef<{ workspaceId: string; started: boolean }>({ workspaceId: '', started: false });
 
-  // 触发缺陷提交按钮闪烁（生图失败时调用）
+  // 触发缺陷提交按钮闪烁（生图失败时调用，持续闪烁直到用户点击）
   const triggerDefectFlash = useCallback(() => {
     setDefectFlash(true);
-    setTimeout(() => setDefectFlash(false), 1500);
   }, []);
   // debug logs removed
 
@@ -1640,6 +1628,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }>({ open: false, x: 0, y: 0, src: '', prompt: '', key: '' });
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const msgContentRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const canvasBootedRef = useRef(false);
@@ -2114,9 +2103,51 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     };
   }, [rightWidth, splitKey]);
 
+  // 滚动到消息列表底部
+  // 使用 ResizeObserver 监听消息内容高度变化（图片加载会导致高度增加），自动滚动到底部
+  const shouldAutoScrollRef = useRef(true);
+  const programmaticScrollRef = useRef(false); // 标记是否为程序触发的滚动
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: busy ? 'auto' : 'smooth' });
-  }, [messages, busy]);
+    const scrollEl = scrollRef.current;
+    const contentEl = msgContentRef.current;
+    if (!scrollEl || !contentEl) return;
+
+    // 判断用户是否手动滚动过（如果用户往上滚动了，就不自动滚动）
+    const checkAutoScroll = () => {
+      // 如果是程序触发的滚动，不更新 shouldAutoScrollRef
+      if (programmaticScrollRef.current) return;
+      const threshold = 100; // 距离底部 100px 以内视为"在底部"
+      shouldAutoScrollRef.current = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < threshold;
+    };
+
+    const scrollToBottom = () => {
+      if (!shouldAutoScrollRef.current) return;
+      programmaticScrollRef.current = true;
+      scrollEl.scrollTop = scrollEl.scrollHeight;
+      // 延迟重置标记，确保 scroll 事件已处理完
+      requestAnimationFrame(() => {
+        programmaticScrollRef.current = false;
+      });
+    };
+
+    // 监听用户滚动
+    scrollEl.addEventListener('scroll', checkAutoScroll);
+
+    // 监听消息内容高度变化（图片加载会触发 contentEl 高度增加）
+    const ro = new ResizeObserver(() => {
+      scrollToBottom();
+    });
+    ro.observe(contentEl);
+
+    // 初始滚动
+    shouldAutoScrollRef.current = true;
+    scrollToBottom();
+
+    return () => {
+      scrollEl.removeEventListener('scroll', checkAutoScroll);
+      ro.disconnect();
+    };
+  }, [messages]);
 
   // 监听画布尺寸变化（用于居中/适配）
   useEffect(() => {
@@ -5846,7 +5877,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </div>
               <button
                 type="button"
-                onClick={() => useGlobalDefectStore.getState().openDialog()}
+                onClick={() => {
+                  setDefectFlash(false); // 用户点击后停止闪烁
+                  useGlobalDefectStore.getState().openDialog();
+                }}
                 className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
                 style={{ color: 'var(--text-muted)' }}
                 aria-label="提交缺陷"
@@ -5881,7 +5915,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </div>
             ) : null}
 
-            <div ref={scrollRef} className="mt-2 flex-1 min-h-0 overflow-auto pr-1 space-y-1.5">
+            <div ref={scrollRef} className="mt-2 flex-1 min-h-0 overflow-auto pr-1">
+              <div ref={msgContentRef} className="space-y-1.5">
               {messages.map((m) => {
                 const isUser = m.role === 'User';
                 // 过滤历史遗留的"本次使用模型/直连模式..."提示（用户要求移除）
@@ -6134,7 +6169,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     whiteSpace: 'nowrap',
                                   }}
                                 >
-                                  {msgSize}
+                                  {sizeToAspectMap.get(msgSize.toLowerCase()) || detectAspectFromSize(msgSize)}
                                 </span>
                               </span>
                             ) : null}
@@ -6197,6 +6232,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 );
               })}
               <div ref={bottomRef} />
+              </div>
             </div>
 
             {error ? (

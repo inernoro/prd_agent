@@ -800,50 +800,30 @@ select optgroup {
   }
 }
 
-/* 缺陷提交按钮爆闪动画（生图失败时触发） */
+/* 缺陷提交按钮持续闪烁动画（生图失败时触发，持续闪烁直到用户点击） */
 @keyframes defectSubmitFlash {
   0% {
     opacity: 1;
     transform: scale(1);
-    color: var(--text-muted);
+    color: rgba(239, 68, 68, 0.6);
+    filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.4));
   }
-  15% {
+  50% {
     opacity: 1;
-    transform: scale(1.3);
-    color: rgba(239, 68, 68, 1);
-    filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.8));
-  }
-  30% {
-    opacity: 1;
-    transform: scale(0.95);
-    color: rgba(239, 68, 68, 0.9);
-  }
-  45% {
-    opacity: 1;
-    transform: scale(1.2);
+    transform: scale(1.25);
     color: rgba(239, 68, 68, 1);
     filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.9));
-  }
-  60% {
-    opacity: 1;
-    transform: scale(1);
-    color: rgba(239, 68, 68, 0.8);
-  }
-  75% {
-    opacity: 1;
-    transform: scale(1.1);
-    color: rgba(239, 68, 68, 0.6);
   }
   100% {
     opacity: 1;
     transform: scale(1);
-    color: var(--text-muted);
-    filter: none;
+    color: rgba(239, 68, 68, 0.6);
+    filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.4));
   }
 }
 
 .defect-submit-flash {
-  animation: defectSubmitFlash 1.5s ease-out forwards;
+  animation: defectSubmitFlash 1.5s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
