@@ -1126,7 +1126,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // chip 作为内联元素，需要根据选中数量计算高度
   // 每个 chip 约 140px 宽，每行可容纳 2-3 个
   // 行高 20px + gap 6px = 26px，加上尺寸选择器
+  // 注意：当有 pending chip 时，上方的选中图片 chip 不显示，所以不需要顶部 padding
   const composerMetaPadTop = useMemo(() => {
+    // 有 pending chip 时不需要顶部 padding（使用 RichComposer 内的 chip）
+    if (pendingChipKeys.size > 0) return 0;
     const count = selectedImagesForComposer.length;
     if (count === 0) return 0;
     // 估算：每行约 2-3 个 chip，考虑尺寸选择器占一行
@@ -1136,7 +1139,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (count <= 2) return 28;
     if (count <= 4) return 54;
     return 80;
-  }, [selectedImagesForComposer.length]);
+  }, [selectedImagesForComposer.length, pendingChipKeys.size]);
 
   const HOVER_MENU_CLOSE_DELAY_MS = 320;
 
@@ -6659,8 +6662,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 </div>
               ) : null}
 
-              {/* 选中图片时：显示参照图 chip（支持多选） */}
-              {selectedImagesForComposer.length > 0 ? (
+              {/* 选中图片时：显示参照图 chip（支持多选）
+                  注意：当有 pending chip 时不显示此区域，避免与 RichComposer 中的 chip 冲突 */}
+              {selectedImagesForComposer.length > 0 && pendingChipKeys.size === 0 ? (
                 <div
                   className="absolute left-3 right-3 top-3 z-30 inline-flex items-center gap-1.5"
                   style={{ pointerEvents: 'auto', flexWrap: 'wrap' }}
