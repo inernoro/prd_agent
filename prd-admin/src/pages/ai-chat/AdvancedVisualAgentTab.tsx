@@ -4542,9 +4542,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       e.preventDefault();
                     }}
                     onClick={(e) => {
+                      console.log('[Canvas] onClick triggered', { key: it.key, kind, src: it.src, effectiveTool });
                       focusStage();
                       e.stopPropagation();
-                      if (effectiveTool === 'hand') return;
+                      if (effectiveTool === 'hand') {
+                        console.log('[Canvas] effectiveTool is hand, return');
+                        return;
+                      }
                       // 生成器区域：仅做选中，不做 @img 引用插入
                       if (kind === 'generator') {
                         if (e.shiftKey) {
@@ -4580,10 +4584,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       }
                       // 普通点击图片：两阶段预选（插入灰色 pending chip）
                       if (kind === 'image' && it.src) {
+                        console.log('[Canvas] calling handleCanvasImagePreselect for:', it.key);
                         handleCanvasImagePreselect(it);
                         return;
                       }
                       // 其他类型（shape/text 等）：仅选中
+                      console.log('[Canvas] fallback to setSelectedKeys only');
                       setSelectedKeys([it.key]);
                     }}
                     title={it.prompt}
