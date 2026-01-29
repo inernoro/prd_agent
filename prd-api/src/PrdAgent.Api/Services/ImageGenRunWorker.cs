@@ -238,13 +238,19 @@ public class ImageGenRunWorker : BackgroundService
                         _logger.LogInformation("[ImageGenRunWorker Debug] Run {RunId}: AppKey={AppKey}, UserId={UserId}, AppCallerCode={AppCallerCode}",
                             run.Id, run.AppKey ?? "(null)", run.OwnerAdminId, run.AppCallerCode ?? "(null)");
 
-                        // AppCallerCode: 优先使用 run.AppCallerCode，否则根据 AppKey 生成，最后回退到默认值
+                        // AppCallerCode: 优先使用 run.AppCallerCode（已在 ResolveModelGroupAsync 中正确设置）
+                        // 这里仅用于 LlmRequestContext 日志记录，保持与调度逻辑一致的映射
                         var appCallerCode = run.AppCallerCode;
                         if (string.IsNullOrWhiteSpace(appCallerCode) && !string.IsNullOrWhiteSpace(run.AppKey))
                         {
-                            appCallerCode = $"{run.AppKey}.image::generation";
+                            appCallerCode = run.AppKey switch
+                            {
+                                "visual-agent" => AppCallerRegistry.VisualAgent.Image.Generation,
+                                "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Generation,
+                                _ => $"{run.AppKey}.image::generation"
+                            };
                         }
-                        appCallerCode ??= "prd-agent-web.image::generation"; // 最终回退（符合命名规范）
+                        appCallerCode ??= AppCallerRegistry.Admin.Lab.Generation; // 最终回退到实验室生成
 
                         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                             RequestId: $"{run.Id}-{curItemIndex}-{imageIndex}",
@@ -709,10 +715,17 @@ public class ImageGenRunWorker : BackgroundService
         string? resolvedModelId = null;
 
         // 通过 AppCaller 从模型池中选择模型（唯一方式）
+        // 注意：不同应用的 appCallerCode 命名不同，必须映射到 AppCallerRegistry 中定义的值
         var appCallerCode = run.AppCallerCode;
         if (string.IsNullOrWhiteSpace(appCallerCode) && !string.IsNullOrWhiteSpace(run.AppKey))
         {
-            appCallerCode = $"{run.AppKey}.image::generation";
+            // 根据 appKey 映射到 AppCallerRegistry 中定义的正确 appCallerCode
+            appCallerCode = run.AppKey switch
+            {
+                "visual-agent" => AppCallerRegistry.VisualAgent.Image.Generation,      // visual-agent.image::generation
+                "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Generation, // literary-agent.illustration::generation
+                _ => $"{run.AppKey}.image::generation" // 其他应用回退默认命名
+            };
         }
         
         // 简洁：不再单独打印 AppCallerCode

@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using PrdAgent.Core.Models;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -29,8 +30,8 @@ public class ModelPoolCodeMatchingTests
     [Fact(Skip = "需要真实服务运行")]
     public async Task GetModelGroupsForApp_ShouldReturnBoundPools()
     {
-        // Arrange
-        var appCallerCode = "visual-agent.image::generation";
+        // Arrange - 使用 AppCallerRegistry 常量
+        var appCallerCode = AppCallerRegistry.VisualAgent.Image.Generation;
         var modelType = "generation";
 
         // Act
@@ -118,9 +119,10 @@ public class ModelPoolCodeMatchingTests
     [Fact(Skip = "需要真实服务运行且需要认证")]
     public async Task CreateImageGenRun_ShouldUseSelectedModelPool()
     {
-        // 先获取可用的模型池
+        // 先获取可用的模型池 - 使用 AppCallerRegistry 常量
+        var appCallerCode = Uri.EscapeDataString(AppCallerRegistry.VisualAgent.Image.Generation);
         var poolsResponse = await _client.GetAsync(
-            "/api/mds/model-groups/for-app?appCallerCode=visual-agent.image%3A%3Ageneration&modelType=generation");
+            $"/api/mds/model-groups/for-app?appCallerCode={appCallerCode}&modelType=generation");
         var poolsContent = await poolsResponse.Content.ReadAsStringAsync();
         _output.WriteLine($"可用模型池: {poolsContent}");
 

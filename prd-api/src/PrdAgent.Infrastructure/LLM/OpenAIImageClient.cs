@@ -202,18 +202,26 @@ public class OpenAIImageClient
         var requestedSizeNorm = NormalizeSizeString(requestedSizeRaw);
         List<string>? allowedSizesForLog = null;
 
-        // 生图模型适配器：基于模型名匹配，适用于所有平台
+        // 一站式构建生图请求参数（尺寸适配 + 参数格式转换）
+        var reqParams = ImageGenModelAdapterRegistry.BuildRequestParams(
+            modelName: effectiveModelName,
+            requestedSize: requestedSizeNorm
+        );
+
         ImageGenModelAdapterConfig? adapterConfig = null;
         SizeAdaptationResult? adapterSizeResult = null;
-        adapterConfig = ImageGenModelAdapterRegistry.TryMatch(effectiveModelName);
-        if (adapterConfig != null)
+
+        if (reqParams.HasAdapter)
         {
-            adapterSizeResult = ImageGenModelAdapterRegistry.NormalizeSize(adapterConfig, requestedSizeNorm);
-            if (adapterSizeResult != null)
+            adapterConfig = ImageGenModelAdapterRegistry.TryMatch(effectiveModelName);
+            adapterSizeResult = reqParams.Adaptation;
+            size = adapterSizeResult.Size;
+
+            if (adapterConfig != null)
             {
-                size = adapterSizeResult.Size;
-                allowedSizesForLog = adapterConfig.AllowedSizes.Count > 0
-                    ? adapterConfig.AllowedSizes.Take(64).ToList()
+                var allSizes = ImageGenModelAdapterRegistry.GetAllSizesFromConfig(adapterConfig);
+                allowedSizesForLog = allSizes.Count > 0
+                    ? allSizes.Take(64).ToList()
                     : null;
             }
         }
@@ -280,28 +288,65 @@ public class OpenAIImageClient
                 // 兼容前端统一输入：即使前端请求 b64_json，Volces 侧也强制用 url（再由后端下载转 base64/dataURL 回传）
                 var volcesResponseFormat = "url";
                 var volcesSize = NormalizeVolcesSize(size);
-                reqObj = new VolcesImageRequest
+
+                // 使用动态对象支持不同的尺寸参数格式
+                var volcesReqDict = new Dictionary<string, object>
                 {
-                    Model = effectiveModelName,
-                    Prompt = prompt.Trim(),
-                    N = n,
-                    Size = volcesSize,
-                    ResponseFormat = volcesResponseFormat,
-                    SequentialImageGeneration = "disabled",
-                    Stream = false,
-                    Watermark = true
+                    ["model"] = effectiveModelName,
+                    ["prompt"] = prompt.Trim(),
+                    ["n"] = n,
+                    ["response_format"] = volcesResponseFormat,
+                    ["sequential_image_generation"] = "disabled",
+                    ["stream"] = false,
+                    ["watermark"] = true
                 };
+
+                // 根据适配器配置的参数格式添加尺寸参数
+                if (reqParams.HasAdapter && reqParams.SizeParams.Count > 0)
+                {
+                    foreach (var kv in reqParams.SizeParams)
+                    {
+                        volcesReqDict[kv.Key] = kv.Value;
+                    }
+                }
+                else
+                {
+                    // 默认使用 size 参数（WxH 格式）
+                    volcesReqDict["size"] = volcesSize;
+                }
+
+                reqObj = volcesReqDict;
             }
             else
             {
-                reqObj = new OpenAIImageRequest
+                // 使用动态对象支持不同的尺寸参数格式
+                var openaiReqDict = new Dictionary<string, object>
                 {
-                    Model = effectiveModelName,
-                    Prompt = prompt.Trim(),
-                    N = n,
-                    Size = string.IsNullOrWhiteSpace(size) ? null : size.Trim(),
-                    ResponseFormat = string.IsNullOrWhiteSpace(responseFormat) ? null : responseFormat.Trim()
+                    ["model"] = effectiveModelName,
+                    ["prompt"] = prompt.Trim(),
+                    ["n"] = n,
                 };
+
+                if (!string.IsNullOrWhiteSpace(responseFormat))
+                {
+                    openaiReqDict["response_format"] = responseFormat.Trim();
+                }
+
+                // 根据适配器配置的参数格式添加尺寸参数
+                if (reqParams.HasAdapter && reqParams.SizeParams.Count > 0)
+                {
+                    foreach (var kv in reqParams.SizeParams)
+                    {
+                        openaiReqDict[kv.Key] = kv.Value;
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(size))
+                {
+                    // 默认使用 size 参数（WxH 格式）
+                    openaiReqDict["size"] = size.Trim();
+                }
+
+                reqObj = openaiReqDict;
             }
         }
         else

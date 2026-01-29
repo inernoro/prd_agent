@@ -49,7 +49,7 @@ export interface DefectAttachment {
    * - log-error: 错误日志
    */
   type?: string;
-  /** 是否系统自动生成（日志类附件不可删除、不可下载） */
+  /** 是否系统自动生成（日志类附件不可删除） */
   isSystemGenerated?: boolean;
 }
 

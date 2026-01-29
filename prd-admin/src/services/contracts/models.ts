@@ -54,17 +54,24 @@ export type ModelAdapterLimitations = {
   notes: string[];
 };
 
+/** 尺寸选项（后端按分辨率分组返回） */
+export type SizeOptionFromBackend = {
+  size: string;
+  aspectRatio: string;
+};
+
 export type ModelAdapterInfo = {
   matched: boolean;
   modelId: string;
-  modelName: string;
+  modelName?: string;
   adapterName?: string;
   displayName?: string;
   provider?: string;
+  officialDocUrl?: string;
+  lastUpdated?: string;
   sizeConstraint?: ModelAdapterSizeConstraint;
-  allowedSizes?: string[];
-  allowedRatios?: string[];
-  sizeOptions?: Array<{ size: string; aspectRatio?: string | null; resolution?: string | null }>;
+  /** 按分辨率分组的尺寸选项（1k/2k/4k），前端直接使用 */
+  sizesByResolution?: Record<string, SizeOptionFromBackend[]>;
   sizeParamFormat?: string;
   limitations?: ModelAdapterLimitations;
   supportsImageToImage?: boolean;
@@ -77,8 +84,8 @@ export type ModelAdapterInfoBrief = {
   displayName?: string;
   provider?: string;
   sizeConstraintType?: string;
-  allowedSizesCount?: number;
-  allowedRatios?: string[];
+  sizesCount?: number;
+  sizesByResolution?: Record<string, SizeOptionFromBackend[]>;
   notes?: string[];
 };
 

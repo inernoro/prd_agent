@@ -893,6 +893,17 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(appKey)) appKey = null;
 
         // 模型池调度逻辑统一在 ImageGenRunWorker 中处理
+        // 根据 appKey 映射到 AppCallerRegistry 中定义的正确 appCallerCode
+        string? resolvedAppCallerCode = null;
+        if (!string.IsNullOrWhiteSpace(appKey))
+        {
+            resolvedAppCallerCode = appKey switch
+            {
+                "visual-agent" => AppCallerRegistry.VisualAgent.Image.Generation,      // visual-agent.image::generation
+                "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Generation, // literary-agent.illustration::generation
+                _ => $"{appKey}.image::generation" // 其他应用回退默认命名
+            };
+        }
 
         var run = new ImageGenRun
         {
@@ -912,8 +923,7 @@ public class ImageGenController : ControllerBase
             LastSeq = 0,
             IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
             WorkspaceId = workspaceId,
-            // 格式: {app}.{feature}::modelType（符合 doc/rule.app-feature-definition.md）
-            AppCallerCode = string.IsNullOrWhiteSpace(appKey) ? null : $"{appKey}.image::generation",
+            AppCallerCode = resolvedAppCallerCode,
             AppKey = appKey,
             CreatedAt = DateTime.UtcNow
         };

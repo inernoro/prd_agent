@@ -52,6 +52,9 @@ Cargo.lock
 TestResults/
 coverage/
 
+# Generated test images
+**/GeneratedImages/
+
 # Misc
 *.swp
 *.swo

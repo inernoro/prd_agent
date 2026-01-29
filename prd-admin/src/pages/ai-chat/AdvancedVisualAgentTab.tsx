@@ -831,42 +831,34 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     return byId ?? serverDefaultModel;
   }, [enabledImageModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
 
-  // 尺寸选项（从后端获取）
-  type SizeOption = { size: string; aspectRatio: string | null; resolution: string | null };
-  const [sizeOptions, setSizeOptions] = useState<SizeOption[]>([]);
+  // 尺寸选项（后端按分辨率分组返回，前端直接使用，无需转换）
+  type SizeOption = { size: string; aspectRatio: string };
+  type SizesByResolutionType = Record<'1k' | '2k' | '4k', SizeOption[]>;
+  const [sizesByResolution, setSizesByResolution] = useState<SizesByResolutionType>({ '1k': [], '2k': [], '4k': [] });
+
   useEffect(() => {
-    // 优先使用 actualModelId（模型池中实际模型的 ID），否则使用 modelName
-    const modelNameForAdapter = (effectiveModel as ModelWithSource | undefined)?.actualModelId || effectiveModel?.modelName;
-    if (!modelNameForAdapter) {
-      setSizeOptions([]);
+    // 使用模型池 code（对于 visual-agent 就是 modelName）获取尺寸配置
+    const modelCode = effectiveModel?.modelName;
+    if (!modelCode) {
+      setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
       return;
     }
 
-    getAdapterInfoByModelName(modelNameForAdapter)
+    getAdapterInfoByModelName(modelCode)
       .then((res) => {
-        if (res.success && res.data?.matched) {
-          const options = Array.isArray(res.data.sizeOptions) ? res.data.sizeOptions : [];
-          setSizeOptions(options.map((opt) => ({
-            size: String(opt.size ?? '').trim(),
-            aspectRatio: opt.aspectRatio ?? null,
-            resolution: opt.resolution ? String(opt.resolution).trim().toLowerCase() : null,
-          })));
+        if (res.success && res.data?.matched && res.data.sizesByResolution) {
+          const data = res.data.sizesByResolution;
+          setSizesByResolution({
+            '1k': Array.isArray(data['1k']) ? data['1k'] : [],
+            '2k': Array.isArray(data['2k']) ? data['2k'] : [],
+            '4k': Array.isArray(data['4k']) ? data['4k'] : [],
+          });
         } else {
-          setSizeOptions([]);
+          setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
         }
       })
-      .catch(() => setSizeOptions([]));
+      .catch(() => setSizesByResolution({ '1k': [], '2k': [], '4k': [] }));
   }, [effectiveModel]);
-
-  // 按分辨率分组的 sizeOptions
-  const sizeOptionsByResolution = useMemo(() => {
-    const bucket: Record<'1k' | '2k' | '4k', SizeOption[]> = { '1k': [], '2k': [], '4k': [] };
-    for (const opt of sizeOptions) {
-      const r = opt.resolution;
-      if (r === '1k' || r === '2k' || r === '4k') bucket[r].push(opt);
-    }
-    return bucket;
-  }, [sizeOptions]);
 
   // 按比例分组，每个比例只保留一个尺寸
   const ratiosByResolution = useMemo(() => {
@@ -876,24 +868,31 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       '4k': new Map(),
     };
     for (const tier of ['1k', '2k', '4k'] as const) {
-      for (const opt of sizeOptionsByResolution[tier]) {
+      for (const opt of sizesByResolution[tier]) {
         const ratio = opt.aspectRatio || 'unknown';
         if (!result[tier].has(ratio)) result[tier].set(ratio, opt);
       }
     }
     return result;
-  }, [sizeOptionsByResolution]);
+  }, [sizesByResolution]);
 
   // 尺寸到比例的映射（使用后端返回的 aspectRatio，避免 GCD 计算偏差）
   const sizeToAspectMap = useMemo(() => {
     const map = new Map<string, string>();
-    for (const opt of sizeOptions) {
-      if (opt.size && opt.aspectRatio) {
-        map.set(opt.size.toLowerCase(), opt.aspectRatio);
+    for (const tier of ['1k', '2k', '4k'] as const) {
+      for (const opt of sizesByResolution[tier]) {
+        if (opt.size && opt.aspectRatio) {
+          map.set(opt.size.toLowerCase(), opt.aspectRatio);
+        }
       }
     }
     return map;
-  }, [sizeOptions]);
+  }, [sizesByResolution]);
+
+  // 所有尺寸的扁平列表（用于验证）
+  const allSizeOptions = useMemo(() => {
+    return [...sizesByResolution['1k'], ...sizesByResolution['2k'], ...sizesByResolution['4k']];
+  }, [sizesByResolution]);
 
   // 初始化水印配置
   useEffect(() => {
@@ -1054,14 +1053,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (composerSizeAutoRef.current) setComposerSize(autoSize);
   }, [autoSizeForSelectedImage, selectedSingleImageForComposer?.key]);
 
-  // 当 sizeOptions 变化时，如果当前尺寸不在支持列表中，自动选择一个有效尺寸
+  // 当 sizesByResolution 变化时，如果当前尺寸不在支持列表中，自动选择一个有效尺寸
   useEffect(() => {
-    if (sizeOptions.length === 0) return;
+    if (allSizeOptions.length === 0) return;
     const currentSize = composerSize ?? '1024x1024';
-    const isCurrentValid = sizeOptions.some((opt) => opt.size?.toLowerCase() === currentSize.toLowerCase());
+    const isCurrentValid = allSizeOptions.some((opt) => opt.size?.toLowerCase() === currentSize.toLowerCase());
     if (!isCurrentValid) {
-      // 按优先级选择：2K > 1K > 4K
+      // 先尝试保持当前比例，切换到支持的分辨率
+      const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
       const priorities = ['2k', '1k', '4k'] as const;
+      // 第一轮：找相同比例的
+      for (const tier of priorities) {
+        const sameAspectOpt = ratiosByResolution[tier].get(currentAspect);
+        if (sameAspectOpt?.size) {
+          composerSizeAutoRef.current = false;
+          setComposerSize(sameAspectOpt.size);
+          return;
+        }
+      }
+      // 第二轮：退而求其次，选择任意可用尺寸
       for (const tier of priorities) {
         const firstOpt = ratiosByResolution[tier].values().next().value;
         if (firstOpt?.size) {
@@ -1071,7 +1081,41 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }
       }
     }
-  }, [sizeOptions, ratiosByResolution, composerSize]);
+  }, [allSizeOptions, ratiosByResolution, composerSize, sizeToAspectMap]);
+
+  // 尺寸联动：当通过智能面板修改 composerSize 时，同步更新画布上选中的 Generator 的尺寸
+  // 使用 ref 追踪上一次的 composerSize，避免在 canvas 变化时重复触发
+  const prevComposerSizeRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!composerSize) return;
+    // 仅在用户手动选择尺寸时（非自动模式）才联动
+    if (composerSizeAutoRef.current) return;
+    // 仅在 composerSize 实际变化时才执行
+    if (prevComposerSizeRef.current === composerSize) return;
+    prevComposerSizeRef.current = composerSize;
+
+    const k = selectedKeys[0];
+    if (!k) return;
+    const it = canvas.find((x) => x.key === k);
+    if (!it || (it.kind ?? 'image') !== 'generator') return;
+    // 解析尺寸字符串（如 "768x1024"）
+    const m = /^(\d+)\s*[xX×]\s*(\d+)$/i.exec(composerSize);
+    if (!m) return;
+    const newW = parseInt(m[1], 10);
+    const newH = parseInt(m[2], 10);
+    const oldW = it.w ?? 1024;
+    const oldH = it.h ?? 1024;
+    // 避免重复更新
+    if (oldW === newW && oldH === newH) return;
+    // 围绕中心点变化：调整 x, y 使中心点保持不变
+    const oldCx = (it.x ?? 0) + oldW / 2;
+    const oldCy = (it.y ?? 0) + oldH / 2;
+    const newX = oldCx - newW / 2;
+    const newY = oldCy - newH / 2;
+    setCanvas((prev) =>
+      prev.map((x) => (x.key === k ? { ...x, x: newX, y: newY, w: newW, h: newH } : x))
+    );
+  }, [composerSize, selectedKeys, canvas]);
 
   // chip 作为内联元素，需要根据选中数量计算高度
   // 每个 chip 约 140px 宽，每行可容纳 2-3 个
@@ -5113,7 +5157,34 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
                   <div className="mt-2 flex items-center justify-between gap-2">
                     {/* 尺寸选择器 */}
-                    <Popover.Root open={quickSizeOpen} onOpenChange={setQuickSizeOpen}>
+                    <Popover.Root open={quickSizeOpen} onOpenChange={(open) => {
+                      setQuickSizeOpen(open);
+                      // 打开时检查并自动修正不支持的尺寸
+                      if (open && allSizeOptions.length > 0) {
+                        const currentSize = composerSize ?? '1024x1024';
+                        const isCurrentValid = allSizeOptions.some((opt) => opt.size?.toLowerCase() === currentSize.toLowerCase());
+                        if (!isCurrentValid) {
+                          const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
+                          const priorities = ['2k', '1k', '4k'] as const;
+                          for (const tier of priorities) {
+                            const sameAspectOpt = ratiosByResolution[tier].get(currentAspect);
+                            if (sameAspectOpt?.size) {
+                              composerSizeAutoRef.current = false;
+                              setComposerSize(sameAspectOpt.size);
+                              return;
+                            }
+                          }
+                          for (const tier of priorities) {
+                            const firstOpt = ratiosByResolution[tier].values().next().value;
+                            if (firstOpt?.size) {
+                              composerSizeAutoRef.current = false;
+                              setComposerSize(firstOpt.size);
+                              return;
+                            }
+                          }
+                        }
+                      }
+                    }}>
                       <Popover.Trigger asChild>
                         <button
                           type="button"
@@ -5124,12 +5195,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             color: 'rgba(74, 222, 128, 0.95)',
                           }}
                           title="选择尺寸"
+                          onClick={(e) => e.stopPropagation()}
                         >
                           {(() => {
                             const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
                             const tier = detectTierFromSize(size);
                             const aspect = sizeToAspectMap.get(size.toLowerCase()) || detectAspectFromSize(size);
-                            const tierLabel = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
+                            // 如果当前分辨率不可用，显示实际会使用的分辨率
+                            const availableTiers = (['1k', '2k', '4k'] as const).filter((t) => ratiosByResolution[t].size > 0);
+                            const effectiveTier = availableTiers.length > 0 && !availableTiers.includes(tier) ? availableTiers[0] : tier;
+                            const tierLabel = effectiveTier === '4k' ? '4K' : effectiveTier === '2k' ? '2K' : '1K';
                             return <span style={{ whiteSpace: 'nowrap' }}>{tierLabel} · {aspect || '1:1'}</span>;
                           })()}
                           <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
@@ -5149,44 +5224,52 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                             WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                           }}
+                          onPointerDownOutside={(e) => e.preventDefault()}
+                          onInteractOutside={(e) => e.preventDefault()}
+                          onFocusOutside={(e) => e.preventDefault()}
                         >
                           {/* 分辨率 */}
                           <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>分辨率</div>
                           <div className="flex gap-1.5 mb-3">
-                            {(['1k', '2k', '4k'] as const).filter((t) => ratiosByResolution[t].size > 0).map((tier) => {
+                            {(() => {
                               const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
                               const currentTier = detectTierFromSize(currentSize);
-                              const isSelected = currentTier === tier;
-                              const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
-                              return (
-                                <button
-                                  key={tier}
-                                  type="button"
-                                  className="flex-1 h-7 rounded-[8px] text-[12px] font-semibold transition-colors"
-                                  style={{
-                                    background: isSelected ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
-                                    border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                                    color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                  }}
-                                  onClick={() => {
-                                    const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
-                                    const targetOpt = ratiosByResolution[tier].get(currentAspect);
-                                    if (targetOpt) {
-                                      composerSizeAutoRef.current = false;
-                                      setComposerSize(targetOpt.size);
-                                    } else {
-                                      const first = ratiosByResolution[tier].values().next().value;
-                                      if (first) {
+                              const availableTiers = (['1k', '2k', '4k'] as const).filter((t) => ratiosByResolution[t].size > 0);
+                              // 如果当前分辨率不可用，计算实际应该选中的分辨率
+                              const effectiveTier = availableTiers.includes(currentTier) ? currentTier : availableTiers[0];
+                              return availableTiers.map((tier) => {
+                                const isSelected = effectiveTier === tier;
+                                const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
+                                return (
+                                  <button
+                                    key={tier}
+                                    type="button"
+                                    className="flex-1 h-7 rounded-[8px] text-[12px] font-semibold transition-colors"
+                                    style={{
+                                      background: isSelected ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
+                                      border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
+                                      color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
+                                    }}
+                                    onClick={() => {
+                                      const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
+                                      const targetOpt = ratiosByResolution[tier].get(currentAspect);
+                                      if (targetOpt) {
                                         composerSizeAutoRef.current = false;
-                                        setComposerSize(first.size);
+                                        setComposerSize(targetOpt.size);
+                                      } else {
+                                        const first = ratiosByResolution[tier].values().next().value;
+                                        if (first) {
+                                          composerSizeAutoRef.current = false;
+                                          setComposerSize(first.size);
+                                        }
                                       }
-                                    }
-                                  }}
-                                >
-                                  {label}
-                                </button>
-                              );
-                            })}
+                                    }}
+                                  >
+                                    {label}
+                                  </button>
+                                );
+                              });
+                            })()}
                           </div>
                           {/* 比例 */}
                           <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>Size</div>
@@ -5195,7 +5278,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
                               const currentTier = detectTierFromSize(currentSize);
                               const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
-                              const ratios = ratiosByResolution[currentTier];
+                              // 如果当前分辨率不可用，回退到第一个可用的分辨率
+                              let ratios = ratiosByResolution[currentTier];
+                              if (ratios.size === 0) {
+                                for (const tier of ['2k', '1k', '4k'] as const) {
+                                  if (ratiosByResolution[tier].size > 0) {
+                                    ratios = ratiosByResolution[tier];
+                                    break;
+                                  }
+                                }
+                              }
                               return Array.from(ratios.entries()).map(([ratio, opt]) => {
                                 const isSelected = ratio === currentAspect;
                                 const [rw, rh] = ratio.includes(':') ? ratio.split(':').map(Number) : [1, 1];
@@ -5241,6 +5333,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             color: 'rgba(129, 140, 248, 0.95)',
                           }}
                           title="切换绘图模型"
+                          onClick={(e) => e.stopPropagation()}
                         >
                           <Sparkles size={10} className="shrink-0" />
                           <span className="truncate max-w-[140px]">
