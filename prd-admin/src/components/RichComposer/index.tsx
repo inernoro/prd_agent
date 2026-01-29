@@ -13,6 +13,7 @@ import type { EditorState, LexicalEditor } from 'lexical';
 import {
   $getRoot,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   $isTextNode,
   COMMAND_PRIORITY_HIGH,
@@ -33,12 +34,12 @@ export interface RichComposerRef {
   clear: () => void;
   /** 聚焦编辑器 */
   focus: () => void;
-  /** 插入图片 chip（可选 pending 状态） */
-  insertImageChip: (option: ImageOption, opts?: { pending?: boolean }) => void;
+  /** 插入图片 chip（默认灰色待选，ready: true 为蓝色就绪） */
+  insertImageChip: (option: ImageOption, opts?: { ready?: boolean }) => void;
   /** 插入文本 */
   insertText: (text: string) => void;
-  /** 确认所有 pending 状态的 chip（变为正常蓝色） */
-  confirmPendingChips: () => void;
+  /** 将所有待选 chip 标记为就绪（灰→蓝） */
+  markChipsReady: () => void;
   /** 移除指定 key 的 chip */
   removeChipByKey: (canvasKey: string) => void;
 }
@@ -143,7 +144,7 @@ function EditorInner({
       focus: () => {
         editor.focus();
       },
-      insertImageChip: (option: ImageOption, opts?: { pending?: boolean }) => {
+      insertImageChip: (option: ImageOption, opts?: { ready?: boolean }) => {
         editor.update(() => {
           let selection = $getSelection();
           // 如果没有 selection，选中编辑器末尾
@@ -158,7 +159,7 @@ function EditorInner({
             refId: option.refId,
             src: option.src,
             label: option.label,
-            pending: opts?.pending,
+            ready: opts?.ready, // 默认 undefined/false = 灰色待选
           });
           selection.insertNodes([chipNode]);
           selection.insertText(' ');
@@ -172,22 +173,23 @@ function EditorInner({
           }
         });
       },
-      confirmPendingChips: () => {
+      markChipsReady: () => {
         editor.update(() => {
           const root = $getRoot();
-          // 遍历所有节点，找到 pending 的 ImageChipNode 并替换为非 pending 版本
+          // 遍历所有节点，找到未就绪的 ImageChipNode 并标记为就绪
           const allNodes = root.getChildren();
           for (const para of allNodes) {
-            const children = para.getChildren?.() || [];
+            if (!$isElementNode(para)) continue;
+            const children = para.getChildren();
             for (const node of children) {
-              if ($isImageChipNode(node) && node.getPending()) {
+              if ($isImageChipNode(node) && !node.getReady()) {
                 // 创建新节点替换旧节点，确保 DOM 和 React 组件都更新
                 const newNode = $createImageChipNode({
                   canvasKey: node.getCanvasKey(),
                   refId: node.getRefId(),
                   src: node.getSrc(),
                   label: node.getLabel(),
-                  pending: false,
+                  ready: true,
                 });
                 node.replace(newNode);
               }
@@ -200,7 +202,8 @@ function EditorInner({
           const root = $getRoot();
           const allNodes = root.getChildren();
           for (const para of allNodes) {
-            const children = para.getChildren?.() || [];
+            if (!$isElementNode(para)) continue;
+            const children = para.getChildren();
             for (const node of children) {
               if ($isImageChipNode(node) && node.getCanvasKey() === canvasKey) {
                 node.remove();

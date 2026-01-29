@@ -22,8 +22,8 @@ export interface ImageChipPayload {
   src: string;
   /** 显示名称（可选） */
   label?: string;
-  /** 是否为待确认状态（灰色显示） */
-  pending?: boolean;
+  /** 是否已就绪（蓝色显示），默认 false = 待选（灰色） */
+  ready?: boolean;
 }
 
 export type SerializedImageChipNode = Spread<
@@ -32,7 +32,7 @@ export type SerializedImageChipNode = Spread<
     refId: number;
     src: string;
     label?: string;
-    pending?: boolean;
+    ready?: boolean;
   },
   SerializedLexicalNode
 >;
@@ -42,7 +42,7 @@ export class ImageChipNode extends DecoratorNode<JSX.Element> {
   __refId: number;
   __src: string;
   __label: string;
-  __pending: boolean;
+  __ready: boolean;
 
   static getType(): string {
     return 'image-chip';
@@ -54,7 +54,7 @@ export class ImageChipNode extends DecoratorNode<JSX.Element> {
       node.__refId,
       node.__src,
       node.__label,
-      node.__pending,
+      node.__ready,
       node.__key
     );
   }
@@ -64,7 +64,7 @@ export class ImageChipNode extends DecoratorNode<JSX.Element> {
     refId: number,
     src: string,
     label?: string,
-    pending?: boolean,
+    ready?: boolean,
     key?: NodeKey
   ) {
     super(key);
@@ -72,15 +72,15 @@ export class ImageChipNode extends DecoratorNode<JSX.Element> {
     this.__refId = refId;
     this.__src = src;
     this.__label = label || `img${refId}`;
-    this.__pending = pending ?? false;
+    this.__ready = ready ?? false; // 默认 false = 待选（灰色）
   }
 
   createDOM(_config: EditorConfig): HTMLElement {
     const span = document.createElement('span');
     span.className = 'image-chip-node';
-    // 根据 pending 状态使用不同的颜色
-    const bgColor = this.__pending ? 'rgba(156, 163, 175, 0.18)' : 'rgba(96, 165, 250, 0.18)';
-    const borderColor = this.__pending ? 'rgba(156, 163, 175, 0.35)' : 'rgba(96, 165, 250, 0.35)';
+    // ready = 蓝色（就绪），!ready = 灰色（待选）
+    const bgColor = this.__ready ? 'rgba(96, 165, 250, 0.18)' : 'rgba(156, 163, 175, 0.18)';
+    const borderColor = this.__ready ? 'rgba(96, 165, 250, 0.35)' : 'rgba(156, 163, 175, 0.35)';
     span.style.cssText = `
       display: inline-flex;
       align-items: center;
@@ -96,25 +96,24 @@ export class ImageChipNode extends DecoratorNode<JSX.Element> {
       user-select: none;
     `;
     span.contentEditable = 'false';
-    if (this.__pending) {
-      span.setAttribute('data-pending', 'true');
+    if (this.__ready) {
+      span.setAttribute('data-ready', 'true');
     }
     return span;
   }
 
   updateDOM(prevNode: ImageChipNode, dom: HTMLElement): boolean {
-    // 如果 pending 状态改变，需要更新 DOM 样式
-    if (prevNode.__pending !== this.__pending) {
-      const bgColor = this.__pending ? 'rgba(156, 163, 175, 0.18)' : 'rgba(96, 165, 250, 0.18)';
-      const borderColor = this.__pending ? 'rgba(156, 163, 175, 0.35)' : 'rgba(96, 165, 250, 0.35)';
+    // 如果 ready 状态改变，需要更新 DOM 样式
+    if (prevNode.__ready !== this.__ready) {
+      const bgColor = this.__ready ? 'rgba(96, 165, 250, 0.18)' : 'rgba(156, 163, 175, 0.18)';
+      const borderColor = this.__ready ? 'rgba(96, 165, 250, 0.35)' : 'rgba(156, 163, 175, 0.35)';
       dom.style.background = bgColor;
       dom.style.borderColor = borderColor;
-      if (this.__pending) {
-        dom.setAttribute('data-pending', 'true');
+      if (this.__ready) {
+        dom.setAttribute('data-ready', 'true');
       } else {
-        dom.removeAttribute('data-pending');
+        dom.removeAttribute('data-ready');
       }
-      // 返回 false 因为我们已经手动更新了 DOM，不需要重新创建
       return false;
     }
     return false;
@@ -126,7 +125,7 @@ export class ImageChipNode extends DecoratorNode<JSX.Element> {
       refId: serializedNode.refId,
       src: serializedNode.src,
       label: serializedNode.label,
-      pending: serializedNode.pending,
+      ready: serializedNode.ready,
     });
   }
 
@@ -138,7 +137,7 @@ export class ImageChipNode extends DecoratorNode<JSX.Element> {
       refId: this.__refId,
       src: this.__src,
       label: this.__label,
-      pending: this.__pending,
+      ready: this.__ready,
     };
   }
 
@@ -171,14 +170,14 @@ export class ImageChipNode extends DecoratorNode<JSX.Element> {
     return this.__label;
   }
 
-  getPending(): boolean {
-    return this.__pending;
+  getReady(): boolean {
+    return this.__ready;
   }
 
-  /** 确认 pending 状态（变为正常状态） */
-  setPending(pending: boolean): ImageChipNode {
+  /** 设置就绪状态 */
+  setReady(ready: boolean): ImageChipNode {
     const writable = this.getWritable();
-    writable.__pending = pending;
+    writable.__ready = ready;
     return writable;
   }
 
@@ -194,7 +193,7 @@ export class ImageChipNode extends DecoratorNode<JSX.Element> {
         refId={this.__refId}
         src={this.__src}
         label={this.__label}
-        pending={this.__pending}
+        ready={this.__ready}
       />
     );
   }
@@ -204,23 +203,23 @@ function ImageChipComponent({
   refId,
   src,
   label,
-  pending,
+  ready,
 }: {
   canvasKey: string;
   refId: number;
   src: string;
   label: string;
-  pending: boolean;
+  ready: boolean;
 }) {
   // 截断标签
   const displayLabel = label.length > 8 ? `${label.slice(0, 6)}...` : label;
 
-  // 根据 pending 状态选择颜色
-  const accentColor = pending ? 'rgba(156, 163, 175, 1)' : 'rgba(99, 102, 241, 1)';
-  const accentBg = pending ? 'rgba(156, 163, 175, 0.25)' : 'rgba(99, 102, 241, 0.25)';
-  const accentBorder = pending ? 'rgba(156, 163, 175, 0.4)' : 'rgba(99, 102, 241, 0.4)';
-  const textOpacity = pending ? 0.6 : 0.88;
-  const imgOpacity = pending ? 0.6 : 1;
+  // ready = 蓝色（就绪），!ready = 灰色（待选）
+  const accentColor = ready ? 'rgba(99, 102, 241, 1)' : 'rgba(156, 163, 175, 1)';
+  const accentBg = ready ? 'rgba(99, 102, 241, 0.25)' : 'rgba(156, 163, 175, 0.25)';
+  const accentBorder = ready ? 'rgba(99, 102, 241, 0.4)' : 'rgba(156, 163, 175, 0.4)';
+  const textOpacity = ready ? 0.88 : 0.6;
+  const imgOpacity = ready ? 1 : 0.6;
 
   return (
     <>
@@ -277,7 +276,7 @@ function ImageChipComponent({
 
 export function $createImageChipNode(payload: ImageChipPayload): ImageChipNode {
   return $applyNodeReplacement(
-    new ImageChipNode(payload.canvasKey, payload.refId, payload.src, payload.label, payload.pending)
+    new ImageChipNode(payload.canvasKey, payload.refId, payload.src, payload.label, payload.ready)
   );
 }
 

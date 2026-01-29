@@ -11,8 +11,6 @@
  */
 
 import type {
-  CanvasImageItem,
-  ChipRef,
   ImageRefResolveInput,
   ImageRefResolveResult,
   ResolvedImageRef,

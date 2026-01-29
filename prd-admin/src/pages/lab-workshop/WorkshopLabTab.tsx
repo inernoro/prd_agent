@@ -2,7 +2,7 @@
  * 试验车间 - RichComposer 组件测试
  * 用于独立测试 RichComposer 组件的各种功能和边界情况
  */
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useCallback } from 'react';
 import { RichComposer, type RichComposerRef, type ImageOption } from '@/components/RichComposer';
 
 // 自动测试结果类型
@@ -100,8 +100,8 @@ export default function WorkshopLabTab() {
       composer.removeChipByKey(key);
     });
 
-    // 插入新的 pending chip（灰色）
-    composer.insertImageChip(option, { pending: true });
+    // 插入新的 pending chip（灰色，默认状态无需传 ready）
+    composer.insertImageChip(option);
     setPendingChipKeys(new Set([option.key]));
     addOutput('pendingChip.replace()', { key: option.key, label: option.label });
   }, [pendingChipKeys, addOutput]);
@@ -112,26 +112,18 @@ export default function WorkshopLabTab() {
     if (!composer) return;
 
     if (pendingChipKeys.size > 0) {
-      composer.confirmPendingChips();
-      addOutput('confirmPendingChips()', { keys: [...pendingChipKeys] });
+      composer.markChipsReady();
+      addOutput('markChipsReady()', { keys: [...pendingChipKeys] });
       setPendingChipKeys(new Set());
     }
     composer.focus();
   }, [pendingChipKeys, addOutput]);
 
-  // 直接插入 chip（用于自动测试等场景）
-  const handleInsertChip = useCallback((option: ImageOption) => {
-    const composer = composerRef.current;
-    if (!composer) return;
-    composer.insertImageChip(option);
-    addOutput('insertImageChip()', option);
-  }, [addOutput]);
-
   const handleSubmit = useCallback(() => {
     const composer = composerRef.current;
     if (!composer) return true;
     // 先确认所有 pending chip（灰→蓝）
-    composer.confirmPendingChips();
+    composer.markChipsReady();
     setPendingChipKeys(new Set());
     const result = composer.getStructuredContent();
     addOutput('onSubmit()', result);
@@ -182,7 +174,8 @@ export default function WorkshopLabTab() {
         // 查找对应的图片
         const img = MOCK_IMAGES.find((i) => i.refId === seg.refId);
         if (img) {
-          composer.insertImageChip(img);
+          // 直接插入为就绪状态（蓝色）
+          composer.insertImageChip(img, { ready: true });
         } else {
           // 找不到对应图片，插入原文
           composer.insertText(seg.value);
@@ -207,17 +200,17 @@ export default function WorkshopLabTab() {
       composer.removeChipByKey(key);
     });
 
-    // 插入第一批 pending chips
+    // 插入第一批 pending chips（灰色，默认状态）
     const newPendingKeys = new Set<string>();
     for (const refId of refIds) {
       const img = MOCK_IMAGES.find((i) => i.refId === refId);
       if (img) {
-        composer.insertImageChip(img, { pending: true });
+        composer.insertImageChip(img); // 默认灰色
         newPendingKeys.add(img.key);
       }
     }
     setPendingChipKeys(newPendingKeys);
-    addOutput('insertPendingTestCase()', { refIds, pending: true });
+    addOutput('insertPendingTestCase()', { refIds });
 
     // 如果有 thenRefIds，延迟后替换
     if (thenRefIds && thenRefIds.length > 0) {
@@ -226,17 +219,17 @@ export default function WorkshopLabTab() {
         newPendingKeys.forEach((key) => {
           composer.removeChipByKey(key);
         });
-        // 插入新的 pending
+        // 插入新的 pending（灰色，默认状态）
         const nextPendingKeys = new Set<string>();
         for (const refId of thenRefIds) {
           const img = MOCK_IMAGES.find((i) => i.refId === refId);
           if (img) {
-            composer.insertImageChip(img, { pending: true });
+            composer.insertImageChip(img); // 默认灰色
             nextPendingKeys.add(img.key);
           }
         }
         setPendingChipKeys(nextPendingKeys);
-        addOutput('replacePendingTestCase()', { thenRefIds, pending: true });
+        addOutput('replacePendingTestCase()', { thenRefIds });
       }, 800);
     }
   }, [pendingChipKeys, addOutput]);
@@ -261,7 +254,7 @@ export default function WorkshopLabTab() {
           if (!composer) return { pass: false, message: 'composerRef 不存在' };
           composer.clear();
           composer.focus();
-          composer.insertImageChip(MOCK_IMAGES[0]);
+          composer.insertImageChip(MOCK_IMAGES[0], { ready: true });
           await new Promise((r) => setTimeout(r, 100));
           const { imageRefs } = composer.getStructuredContent();
           if (imageRefs.length !== 1) {
@@ -280,9 +273,9 @@ export default function WorkshopLabTab() {
           if (!composer) return { pass: false, message: 'composerRef 不存在' };
           composer.clear();
           composer.focus();
-          composer.insertImageChip(MOCK_IMAGES[0]);
-          composer.insertImageChip(MOCK_IMAGES[1]);
-          composer.insertImageChip(MOCK_IMAGES[2]);
+          composer.insertImageChip(MOCK_IMAGES[0], { ready: true });
+          composer.insertImageChip(MOCK_IMAGES[1], { ready: true });
+          composer.insertImageChip(MOCK_IMAGES[2], { ready: true });
           await new Promise((r) => setTimeout(r, 100));
           const { imageRefs } = composer.getStructuredContent();
           if (imageRefs.length !== 3) {
@@ -299,7 +292,7 @@ export default function WorkshopLabTab() {
           composer.clear();
           composer.focus();
           composer.insertText('测试文本 ');
-          composer.insertImageChip(MOCK_IMAGES[1]);
+          composer.insertImageChip(MOCK_IMAGES[1], { ready: true });
           composer.insertText(' 更多文本');
           await new Promise((r) => setTimeout(r, 100));
           const { text, imageRefs } = composer.getStructuredContent();
@@ -320,7 +313,7 @@ export default function WorkshopLabTab() {
           composer.clear();
           composer.focus();
           // 使用带超长标签的图片
-          composer.insertImageChip(MOCK_IMAGES[3]); // 超长标签
+          composer.insertImageChip(MOCK_IMAGES[3], { ready: true }); // 超长标签
           await new Promise((r) => setTimeout(r, 100));
           const { imageRefs } = composer.getStructuredContent();
           if (imageRefs.length !== 1) {
@@ -345,8 +338,8 @@ export default function WorkshopLabTab() {
           if (!composer) return { pass: false, message: 'narrowComposerRef 不存在' };
           composer.clear();
           composer.focus();
-          composer.insertImageChip(MOCK_IMAGES[0]);
-          composer.insertImageChip(MOCK_IMAGES[1]);
+          composer.insertImageChip(MOCK_IMAGES[0], { ready: true });
+          composer.insertImageChip(MOCK_IMAGES[1], { ready: true });
           await new Promise((r) => setTimeout(r, 100));
           const { imageRefs } = composer.getStructuredContent();
           if (imageRefs.length !== 2) {
@@ -361,7 +354,7 @@ export default function WorkshopLabTab() {
           const composer = composerRef.current;
           if (!composer) return { pass: false, message: 'composerRef 不存在' };
           composer.insertText('一些内容');
-          composer.insertImageChip(MOCK_IMAGES[0]);
+          composer.insertImageChip(MOCK_IMAGES[0], { ready: true });
           await new Promise((r) => setTimeout(r, 50));
           composer.clear();
           await new Promise((r) => setTimeout(r, 50));
@@ -380,7 +373,7 @@ export default function WorkshopLabTab() {
           composer.clear();
           composer.focus();
           composer.insertText('Hello ');
-          composer.insertImageChip(MOCK_IMAGES[0]);
+          composer.insertImageChip(MOCK_IMAGES[0], { ready: true });
           composer.insertText(' World');
           await new Promise((r) => setTimeout(r, 100));
           const plainText = composer.getPlainText();
@@ -398,9 +391,9 @@ export default function WorkshopLabTab() {
           if (!composer) return { pass: false, message: 'composerRef 不存在' };
           composer.clear();
           composer.focus();
-          composer.insertImageChip(MOCK_IMAGES[0]);
+          composer.insertImageChip(MOCK_IMAGES[0], { ready: true });
           composer.insertText(' 和 ');
-          composer.insertImageChip(MOCK_IMAGES[0]); // 同一张图片
+          composer.insertImageChip(MOCK_IMAGES[0], { ready: true }); // 同一张图片
           await new Promise((r) => setTimeout(r, 100));
           const { imageRefs } = composer.getStructuredContent();
           // 重复的 chip 应该都被记录
@@ -971,11 +964,13 @@ function Btn({
   onClick,
   variant = 'default',
   size = 'md',
+  title,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   variant?: 'default' | 'danger';
   size?: 'xs' | 'sm' | 'md';
+  title?: string;
 }) {
   const sizeStyles = {
     xs: { padding: '2px 6px', fontSize: 9 },
@@ -989,6 +984,7 @@ function Btn({
   return (
     <button
       onClick={onClick}
+      title={title}
       style={{
         ...sizeStyles[size],
         ...variantStyles[variant],
