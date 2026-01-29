@@ -320,3 +320,6 @@ export const RichComposer = forwardRef<RichComposerRef, RichComposerProps>(
 );
 
 export { ImageChipNode, $createImageChipNode, $isImageChipNode };
+
+// 导出两阶段选择组件
+export { TwoPhaseRichComposer, type TwoPhaseRichComposerProps, type TwoPhaseRichComposerRef } from './TwoPhaseRichComposer';

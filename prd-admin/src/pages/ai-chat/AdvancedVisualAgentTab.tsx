@@ -4,7 +4,7 @@ import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
-import { RichComposer, type RichComposerRef, type ImageOption } from '@/components/RichComposer';
+import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Popover from '@radix-ui/react-popover';
@@ -960,8 +960,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const quickPanelRef = useRef<HTMLDivElement | null>(null); // 快捷输入框容器，用于 GPU 加速更新
   const activeComposerRef = useRef<'right' | 'quick'>('right');
   
-  // 富文本编辑器 ref
-  const richComposerRef = useRef<RichComposerRef | null>(null);
+  // 两阶段选择富文本编辑器 ref
+  const richComposerRef = useRef<TwoPhaseRichComposerRef | null>(null);
   const composingRef = useRef(false);
   const [composerSize, setComposerSize] = useState<string | null>(null);
   const composerSizeAutoRef = useRef(true);
@@ -1002,8 +1002,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const isSelectedKey = (k: string) => selectedKeys.includes(k);
 
   // 两阶段选择：跟踪当前有 pending chip 的图片 key（灰色，待确认）
+  // 通过 TwoPhaseRichComposer 的 onPendingKeysChange 回调自动更新
   const [pendingChipKeys, setPendingChipKeys] = useState<Set<string>>(new Set());
   const isPendingKey = (k: string) => pendingChipKeys.has(k);
+  const handlePendingKeysChange = useCallback((keys: Set<string>) => {
+    setPendingChipKeys(keys);
+  }, []);
 
   const selectedSingleImageForComposer = useMemo(() => {
     if (selectedKeys.length !== 1) return null;
@@ -3364,10 +3368,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   };
 
   // ====== 两阶段选择：画布点击 → 预选（灰色 chip） → 点击输入框确认（蓝色） ======
+  // 逻辑已封装在 TwoPhaseRichComposer 组件中
 
   /**
    * 画布图片预选（两阶段第一步）
-   * 点击画布图片 → 插入灰色 pending chip
+   * 点击画布图片 → 通过 TwoPhaseRichComposer 插入灰色 pending chip
    */
   const handleCanvasImagePreselect = useCallback((it: CanvasImageItem) => {
     const composer = richComposerRef.current;
@@ -3380,67 +3385,34 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const refId = ensureRefIdForKey(it.key);
     if (!refId) return;
 
-    // 如果已经是 pending 状态，不重复插入
-    if (pendingChipKeys.has(it.key)) return;
-
-    // 移除所有现有的 pending chips（替换逻辑，一次只预选一张）
-    pendingChipKeys.forEach((key) => {
-      composer.removeChipByKey(key);
-    });
-
-    // 插入新的 pending chip（灰色，不传 ready 参数）
+    // 构建 ImageOption 并调用组件的 preselectImage 方法
     const option: ImageOption = {
       key: it.key,
       refId,
       src: it.src,
       label: it.prompt || `img${refId}`,
     };
-    composer.insertImageChip(option);
-    setPendingChipKeys(new Set([it.key]));
+    composer.preselectImage(option);
 
     // 选中该图片（视觉同步）
     setSelectedKeys([it.key]);
-  }, [pendingChipKeys, ensureRefIdForKey]);
-
-  /**
-   * 点击输入框容器时确认 pending chips（灰→蓝）
-   */
-  const handleInputContainerClick = useCallback(() => {
-    const composer = richComposerRef.current;
-    if (!composer) return;
-
-    if (pendingChipKeys.size > 0) {
-      composer.markChipsReady();
-      setPendingChipKeys(new Set());
-    }
-    composer.focus();
-  }, [pendingChipKeys]);
+  }, [ensureRefIdForKey]);
 
   /**
    * 清除所有 pending chips
    */
   const clearPendingChips = useCallback(() => {
-    const composer = richComposerRef.current;
-    if (!composer) return;
-
-    pendingChipKeys.forEach((key) => {
-      composer.removeChipByKey(key);
-    });
-    setPendingChipKeys(new Set());
-  }, [pendingChipKeys]);
+    richComposerRef.current?.clearPending();
+  }, []);
 
   // 富文本编辑器发送（入口1）
+  // 注意：TwoPhaseRichComposer 的 onSubmit 回调会自动确认 pending chips
   const onSendRich = async () => {
     const composer = richComposerRef.current;
     if (!composer) return;
 
-    // 发送前先确认所有 pending chips（灰→蓝）
-    if (pendingChipKeys.size > 0) {
-      composer.markChipsReady();
-      setPendingChipKeys(new Set());
-    }
-
     // 获取结构化内容（包含 imageRefs）
+    // TwoPhaseRichComposer 已在 onSubmit 中自动调用 confirmPending()
     const { text, imageRefs } = composer.getStructuredContent();
     if (!text.trim()) return;
 
@@ -6750,48 +6722,38 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 </div>
               ) : null}
 
-              {/* 富文本编辑器容器 - 点击时确认 pending chips */}
-              <div
-                onClick={handleInputContainerClick}
-                style={{
-                  cursor: 'text',
-                  border: pendingChipKeys.size > 0 ? '1px solid rgba(156, 163, 175, 0.4)' : '1px solid transparent',
-                  borderRadius: 8,
-                  transition: 'border-color 0.15s',
-                  margin: -1, // 抵消 border 的空间占用
+              {/* 两阶段选择富文本编辑器 - 内置容器点击确认 pending chips */}
+              <TwoPhaseRichComposer
+                ref={richComposerRef}
+                placeholder={selectedImagesForComposer.length > 0 ? '' : '请输入你的设计需求（Enter 发送，Shift+Enter 换行）'}
+                imageOptions={imageOptions}
+                onChange={(text) => {
+                  activeComposerRef.current = 'right';
+                  setInput(text);
                 }}
-              >
-                <RichComposer
-                  ref={richComposerRef}
-                  placeholder={pendingChipKeys.size > 0 ? '点击此处确认选择，或继续输入...' : (selectedImagesForComposer.length > 0 ? '' : '请输入你的设计需求（Enter 发送，Shift+Enter 换行）')}
-                  imageOptions={imageOptions}
-                  onChange={(text) => {
-                    activeComposerRef.current = 'right';
-                    setInput(text);
-                  }}
-                  onSubmit={() => {
-                    // IME 合成输入时不触发发送
-                    if (composingRef.current) return false;
-                    void onSendRich();
-                    return true;
-                  }}
-                  onPasteImage={(file) => {
-                    // 粘贴图片到文本框时，上传到画板（与画板粘贴行为一致）
-                    const now = Date.now();
-                    const type = (file.type || 'image/png').toLowerCase();
-                    const ext = type.includes('png') ? 'png' : type.includes('jpeg') || type.includes('jpg') ? 'jpg' : type.includes('webp') ? 'webp' : 'png';
-                    const name = (file.name && file.name.trim()) ? file.name : `clipboard_${now}.${ext}`;
-                    const normalizedFile = new File([file], name, { type });
-                    void onUploadImages([normalizedFile], { mode: 'add' });
-                    return true;
-                  }}
-                  style={{
-                    paddingTop: composerMetaPadTop,
-                  }}
-                  minHeight={MIN_TA_HEIGHT}
-                  maxHeight={120}
-                />
-              </div>
+                onSubmit={() => {
+                  // IME 合成输入时不触发发送
+                  if (composingRef.current) return false;
+                  void onSendRich();
+                  return true;
+                }}
+                onPasteImage={(file) => {
+                  // 粘贴图片到文本框时，上传到画板（与画板粘贴行为一致）
+                  const now = Date.now();
+                  const type = (file.type || 'image/png').toLowerCase();
+                  const ext = type.includes('png') ? 'png' : type.includes('jpeg') || type.includes('jpg') ? 'jpg' : type.includes('webp') ? 'webp' : 'png';
+                  const name = (file.name && file.name.trim()) ? file.name : `clipboard_${now}.${ext}`;
+                  const normalizedFile = new File([file], name, { type });
+                  void onUploadImages([normalizedFile], { mode: 'add' });
+                  return true;
+                }}
+                onPendingKeysChange={handlePendingKeysChange}
+                style={{
+                  paddingTop: composerMetaPadTop,
+                }}
+                minHeight={MIN_TA_HEIGHT}
+                maxHeight={120}
+              />
 
               {mentionOpen ? (
                 <div
