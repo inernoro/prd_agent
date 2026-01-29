@@ -675,10 +675,94 @@ const sendText = async (rawText: string) => {
 
 ---
 
-## 十三、变更记录
+## 十三、技术经验沉淀
+
+### 13.1 Lexical DecoratorNode 状态更新
+
+**问题**: 修改 DecoratorNode 内部状态后，React 组件不重新渲染
+
+**原因**: Lexical 的 `updateDOM` 返回 `false` 时，不会触发 React 组件重新挂载
+
+**解决方案**: **替换节点** 而非修改状态
+```typescript
+// ❌ 错误：只修改状态，不会触发重渲染
+node.setReady(true);
+
+// ✅ 正确：创建新节点替换旧节点
+const newNode = $createImageChipNode({
+  canvasKey: node.getCanvasKey(),
+  refId: node.getRefId(),
+  src: node.getSrc(),
+  label: node.getLabel(),
+  ready: true,  // 新状态
+});
+node.replace(newNode);
+```
+
+### 13.2 Chip 状态 API 设计
+
+**设计决策**: 采用 `ready` 而非 `pending` 作为状态属性
+
+| 方案 | 默认值 | 灰色 | 蓝色 | 问题 |
+|------|--------|------|------|------|
+| `pending: true/false` | false | `pending: true` | 无属性 | 新元素默认是蓝色，不安全 |
+| `ready: true/false` | false | 无属性 | `ready: true` | 新元素默认是灰色，安全 ✅ |
+
+**最终 API**:
+```typescript
+// 插入待选（灰色）- 默认状态
+composer.insertImageChip(option);
+
+// 插入就绪（蓝色）- 明确指定
+composer.insertImageChip(option, { ready: true });
+
+// 将所有待选标记为就绪
+composer.markChipsReady();
+```
+
+### 13.3 无选区时插入节点
+
+**问题**: 页面刷新后首次点击图片，chip 不插入
+
+**原因**: Lexical 编辑器没有有效的 selection，`$isRangeSelection(selection)` 返回 `false`
+
+**解决方案**: 先 `selectEnd()` 再插入
+```typescript
+let selection = $getSelection();
+if (!$isRangeSelection(selection)) {
+  const root = $getRoot();
+  root.selectEnd();  // 将光标移到末尾
+  selection = $getSelection();
+}
+// 现在可以安全插入
+```
+
+### 13.4 类型安全的节点遍历
+
+**问题**: `para.getChildren()` TypeScript 报错 "不存在于 LexicalNode"
+
+**原因**: 只有 ElementNode 有 `getChildren` 方法
+
+**解决方案**: 使用 `$isElementNode` 类型守卫
+```typescript
+import { $isElementNode } from 'lexical';
+
+for (const para of root.getChildren()) {
+  if (!$isElementNode(para)) continue;  // 类型守卫
+  const children = para.getChildren();  // 现在类型安全
+  // ...
+}
+```
+
+---
+
+## 十四、变更记录
 
 | 日期 | 变更内容 | 作者 |
 |------|----------|------|
+| 2026-01-29 | 添加技术经验沉淀（第十三章） | AI Assistant |
+| 2026-01-29 | 重构 chip 状态 API：pending → ready | AI Assistant |
+| 2026-01-29 | 添加合并计划书和多图 AI 交互计划书 | AI Assistant |
 | 2026-01-28 | 添加意图分析 Agent 规划（第十一章） | AI Assistant |
 | 2026-01-28 | 实现两阶段选择功能（预选→确认） | AI Assistant |
 | 2026-01-28 | 完成 Step 2：创建契约和解析器 | AI Assistant |
