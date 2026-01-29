@@ -5114,18 +5114,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           side="top"
                           align="start"
                           sideOffset={10}
-                          className="z-50 rounded-[18px] p-2"
+                          className="z-50 rounded-[18px] p-3"
                           style={{
                             minWidth: 320,
-                            background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
-                            border: '1px solid rgba(0, 0, 0, 0.08)',
-                            boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
-                            backdropFilter: 'blur(40px) saturate(180%)',
-                            WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-                            color: '#0b0b0f',
+                            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+                            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
                           }}
                         >
-                          <div className="px-2 py-1 text-[11px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                          <div className="px-2 py-1 text-[11px] font-semibold" style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}>
                             {(() => {
                               const first = allImageGenModels[0];
                               if (first?.isDedicated) return '绘图模型（专属模型池）';
@@ -5160,7 +5159,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   <button
                                     key={m.id}
                                     type="button"
-                                    className="w-full text-left rounded-[12px] px-3 py-2 hover:bg-black/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="w-full text-left rounded-[12px] px-3 py-2 hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                    style={{
+                                      border: using ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
+                                      background: using ? 'rgba(250,204,21,0.08)' : 'transparent',
+                                    }}
                                     disabled={disabled}
                                     onClick={() => {
                                       setModelPrefAuto(false);
@@ -5170,36 +5173,38 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     <div className="flex items-center gap-2 min-w-0">
                                       <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-1.5">
-                                          <div className="text-[13px] font-semibold truncate" style={{ color: '#0b0b0f' }}>
+                                          <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary, rgba(255,255,255,0.92))' }}>
                                             {m.name || m.modelName}
                                           </div>
                                           {m.isDedicated && (
-                                            <span className="shrink-0 text-[9px] px-1 py-0.5 rounded-[4px]" style={{ background: 'rgba(147,51,234,0.15)', color: 'rgb(147,51,234)' }}>
+                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(147,51,234,0.20)', color: 'rgb(192,132,252)' }}>
                                               专属
                                             </span>
                                           )}
                                           {m.isDefault && !m.isDedicated && (
-                                            <span className="shrink-0 text-[9px] px-1 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.15)', color: 'rgb(34,197,94)' }}>
+                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.18)', color: 'rgb(74,222,128)' }}>
                                               默认
                                             </span>
                                           )}
                                           {m.isLegacy && (
-                                            <span className="shrink-0 text-[9px] px-1 py-0.5 rounded-[4px]" style={{ background: 'rgba(234,179,8,0.15)', color: 'rgb(180,140,20)' }}>
+                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(234,179,8,0.18)', color: 'rgb(250,204,21)' }}>
                                               传统
                                             </span>
                                           )}
                                         </div>
-                                        <div className="text-[11px] mt-0.5 truncate" style={{ color: 'rgba(0,0,0,0.40)' }}>
+                                        <div className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--text-muted, rgba(255,255,255,0.40))' }}>
                                           {isPool ? m.modelName : (disabled ? '已禁用（模型管理可启用）' : sourceLabel)}
                                         </div>
                                       </div>
-                                      <div className="ml-auto shrink-0">{using ? <Check size={16} color="#0b0b0f" /> : null}</div>
+                                      <div className="ml-auto shrink-0">
+                                        {using ? <Check size={16} style={{ color: 'rgba(250,204,21,0.95)' }} /> : null}
+                                      </div>
                                     </div>
                                   </button>
                                 );
                               })}
                           </div>
-                                                  </DropdownMenu.Content>
+                        </DropdownMenu.Content>
                       </DropdownMenu.Portal>
                     </DropdownMenu.Root>
 
