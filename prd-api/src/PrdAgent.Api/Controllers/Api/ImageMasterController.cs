@@ -1721,9 +1721,23 @@ public class ImageMasterController : ControllerBase
         var sha = dot > 0 ? n[..dot] : n;
         if (sha.Length != 64) return NotFound();
 
-        var found = await _assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-        if (found == null) return NotFound();
-        return File(found.Value.bytes, found.Value.mime);
+        // 按优先级尝试多个 domain/type 组合
+        var searchPaths = new (string domain, string type)[]
+        {
+            (AppDomainPaths.DomainVisualAgent, AppDomainPaths.TypeImg),
+            (AppDomainPaths.DomainDefectAgent, AppDomainPaths.TypeLog),
+        };
+
+        foreach (var (domain, type) in searchPaths)
+        {
+            var found = await _assetStorage.TryReadByShaAsync(sha, ct, domain: domain, type: type);
+            if (found != null)
+            {
+                return File(found.Value.bytes, found.Value.mime);
+            }
+        }
+
+        return NotFound();
     }
 
     private static bool TryDecodeDataUrlOrBase64(string raw, out string mime, out byte[] bytes)
