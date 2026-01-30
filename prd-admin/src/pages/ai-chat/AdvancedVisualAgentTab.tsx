@@ -31,7 +31,6 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
 import {
-  buildMultipleInlineImageTokens,
   computeRequestedSizeByRefRatio,
   extractInlineImageToken,
   extractSizeToken,
@@ -43,6 +42,7 @@ import {
 import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
+import { assignMissingRefIds, allocateNextRefId, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, VisualAgentCanvas, VisualAgentMessage, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import type { Model } from '@/types/admin';
@@ -388,6 +388,8 @@ function persistedV1ToCanvas(
         h: typeof el.h === 'number' && el.h > 0 ? el.h : a?.height || undefined,
         naturalW: typeof el.naturalW === 'number' && el.naturalW > 0 ? el.naturalW : a?.width || undefined,
         naturalH: typeof el.naturalH === 'number' && el.naturalH > 0 ? el.naturalH : a?.height || undefined,
+        // 恢复持久化的 refId
+        refId: typeof el.refId === 'number' && el.refId > 0 ? el.refId : undefined,
       });
     } else if (el.kind === 'generator') {
       out.push({
@@ -1822,7 +1824,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const parsed = safeJsonParse<PersistedCanvasStateV1>(canvasObj.payloadJson);
       if (parsed && parsed.schemaVersion === 1 && Array.isArray(parsed.elements)) {
         const restored = persistedV1ToCanvas(parsed, assetsList);
+        // 为没有 refId 的图片分配新的 refId（老数据迁移）
+        const refIdChanged = assignMissingRefIds(restored.canvas);
         setCanvas(restored.canvas);
+        // 更新 nextRefId 为当前最大值 + 1
+        const maxRef = getMaxRefId(restored.canvas);
+        if (maxRef > 0) {
+          setNextRefId(maxRef + 1);
+        }
+        // 如果有 refId 变更，标记需要保存
+        if (refIdChanged) {
+          canvasDirtyRef.current = true;
+        }
         clearSelectionWithChips();
         return;
       }
@@ -2023,6 +2036,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       const applyCanvasFocus = (items: CanvasImageItem[]) => {
         setCanvas(items);
+        // 更新 nextRefId 为当前最大值 + 1
+        const maxRef = getMaxRefId(items);
+        if (maxRef > 0) {
+          setNextRefId(maxRef + 1);
+        }
         canvasBootedRef.current = true;
         if (items.length > 0) {
           // 画布初始化时，如果当前没有选中，则选中第一张图片并同步 chip
@@ -2062,6 +2080,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         const parsed = safeJsonParse<PersistedCanvasStateV1>(String(canvasObj.payloadJson ?? ''));
         if (parsed && parsed.schemaVersion === 1 && Array.isArray(parsed.elements)) {
           const restored = persistedV1ToCanvas(parsed, assetsList);
+          // 为没有 refId 的图片分配新的 refId（老数据迁移）
+          const refIdChanged = assignMissingRefIds(restored.canvas);
           applyCanvasFocus(restored.canvas);
           if (restored.missingAssets > 0 || restored.localOnlyImages > 0) {
             pushMsg(
@@ -2071,6 +2091,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           }
           lastSavedJsonRef.current = canvasObj.payloadJson;
           pendingLocalOnlyWarnRef.current = Number((parsed.meta as { skippedLocalOnlyImages?: unknown } | undefined)?.skippedLocalOnlyImages ?? 0) || 0;
+          // 如果有 refId 变更（老数据迁移），标记需要保存
+          if (refIdChanged) {
+            canvasDirtyRef.current = true;
+          }
           return;
         }
         pushMsg('Assistant', '检测到画布数据格式异常，已回退到资产列表并重新建立画布。');
@@ -2868,13 +2892,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const primaryRef = imageRefs[0] ?? null;
     const refForUi = (primaryRef ?? selectedAtSend) as CanvasImageItem | null;
     const refSrc = String(refForUi?.src ?? '').trim();
-    // 构建所有引用图片的内联标记
-    const allRefImages = imageRefs.length > 0
-      ? imageRefs.map((ref) => ({ src: ref.src ?? '', name: guessRefName(ref) }))
-      : refForUi?.src
-        ? [{ src: refForUi.src, name: guessRefName(refForUi) }]
-        : [];
-    const inlineRefToken = buildMultipleInlineImageTokens(allRefImages);
+    // 注意：不再使用 [IMAGE src=... name=...] 标记
+    // 因为用户输入的 @imgN 引用已由 MessageContentRenderer 渲染为 Chip
     const forcedSize = (() => {
       const s = String(sizeOverride ?? '').trim();
       if (!s) return null;
@@ -2884,7 +2903,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const uiSizeToken = forcedSize ? `(@size:${forcedSize}) ` : '';
     const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
     const uiModelToken = modelPoolName ? `(@model:${modelPoolName}) ` : '';
-    pushMsg('User', `${inlineRefToken}${uiSizeToken}${uiModelToken}${display || reqText}`);
+    pushMsg('User', `${uiSizeToken}${uiModelToken}${display || reqText}`);
 
     let items: Array<{ prompt: string }> = [];
     let firstPrompt = '';
