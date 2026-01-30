@@ -25,6 +25,7 @@ public class CreateWatermarkRequest
     public int? BaseCanvasWidth { get; set; }
     public string? TextColor { get; set; }
     public string? BackgroundColor { get; set; }
+    public string? PreviewBackgroundImageRef { get; set; }
 }
 
 /// <summary>
@@ -52,4 +53,5 @@ public class UpdateWatermarkRequest
     public int? BaseCanvasWidth { get; set; }
     public string? TextColor { get; set; }
     public string? BackgroundColor { get; set; }
+    public string? PreviewBackgroundImageRef { get; set; }
 }

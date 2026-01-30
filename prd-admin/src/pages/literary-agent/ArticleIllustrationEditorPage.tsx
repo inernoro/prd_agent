@@ -286,7 +286,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   } else if (runStatus === 'Completed') {
                     // Run 已完成但 marker 状态未更新（可能是刷新时丢失了 SSE 事件）
                     const doneItem = runRes.data.items?.[0];
-                    const url = doneItem?.url || doneItem?.base64;
+                    const url = doneItem?.url || doneItem?.base64 || item.url;
                     if (url) {
                       setMarkerRunItems(prev => prev.map(x => 
                         x.markerIndex === item.markerIndex 

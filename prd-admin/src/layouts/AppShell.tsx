@@ -94,6 +94,8 @@ export default function AppShell() {
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(new Set());
+  const [toastCollapsed, setToastCollapsed] = useState(false);
+  const [toastHovering, setToastHovering] = useState(false);
 
   // 导航滚动状态：用于显示渐变阴影指示器
   const navRef = useRef<HTMLElement>(null);
@@ -274,13 +276,24 @@ export default function AppShell() {
     });
   }, []);
 
+  // 自动消失逻辑：悬浮或收缩时暂停计时
   useEffect(() => {
     if (!toastNotification) return;
+    // 悬浮或收缩状态下不自动消失
+    if (toastHovering || toastCollapsed) return;
     const timer = window.setTimeout(() => {
       dismissToast(toastNotification.id);
     }, 12000);
     return () => window.clearTimeout(timer);
-  }, [toastNotification, dismissToast]);
+  }, [toastNotification, dismissToast, toastHovering, toastCollapsed]);
+
+  // 当通知消失时，重置收缩状态
+  useEffect(() => {
+    if (!toastNotification) {
+      setToastCollapsed(false);
+      setToastHovering(false);
+    }
+  }, [toastNotification]);
 
   useEffect(() => {
     if (!user?.userId) return;
@@ -296,60 +309,101 @@ export default function AppShell() {
       <SystemDialogHost />
       <GlobalDefectSubmitDialog />
       {toastNotification && (
-        <div
-          className="fixed bottom-5 right-5 z-[120] w-[360px] rounded-[18px] p-4 shadow-xl"
-          style={{
-            background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
-            border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
-            boxShadow: '0 12px 30px rgba(0,0,0,0.45)',
-            backdropFilter: 'blur(18px)',
-          }}
-        >
-          <div className="flex items-start gap-3">
-            <div
-              className="mt-1 h-2.5 w-2.5 rounded-full"
-              style={{ background: getNotificationTone(toastNotification.level).text }}
-            />
-            <div className="flex-1 min-w-0">
-              <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                {toastNotification.title}
-              </div>
-              {toastNotification.message && (
-                <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                  {toastNotification.message}
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              className="h-7 w-7 inline-flex items-center justify-center rounded-full hover:bg-white/10"
-              onClick={() => dismissToast(toastNotification.id)}
-              aria-label="稍后提醒"
+        toastCollapsed ? (
+          // 收缩状态：浮动按钮
+          <button
+            type="button"
+            className="fixed bottom-5 right-5 z-[120] h-12 w-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105"
+            style={{
+              background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
+              border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+              backdropFilter: 'blur(18px)',
+            }}
+            onClick={() => setToastCollapsed(false)}
+            onMouseEnter={() => setToastHovering(true)}
+            onMouseLeave={() => setToastHovering(false)}
+            aria-label="展开通知"
+          >
+            <Bell size={18} style={{ color: getNotificationTone(toastNotification.level).text }} />
+            {/* 未读数徽章 */}
+            <span
+              className="absolute -top-1 -right-1 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold"
+              style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
             >
-              <X size={14} />
-            </button>
-          </div>
-          <div className="mt-3 flex items-center justify-end gap-2">
-            {toastNotification.actionUrl && (
+              {activeNotifications.length > 9 ? '9+' : activeNotifications.length}
+            </span>
+          </button>
+        ) : (
+          // 展开状态：完整通知卡片
+          <div
+            className="fixed bottom-5 right-5 z-[120] w-[360px] rounded-[18px] p-4 shadow-xl"
+            style={{
+              background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
+              border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
+              boxShadow: '0 12px 30px rgba(0,0,0,0.45)',
+              backdropFilter: 'blur(18px)',
+            }}
+            onMouseEnter={() => setToastHovering(true)}
+            onMouseLeave={() => setToastHovering(false)}
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className="mt-1 h-2.5 w-2.5 rounded-full"
+                style={{ background: getNotificationTone(toastNotification.level).text }}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {toastNotification.title}
+                </div>
+                {toastNotification.message && (
+                  <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                    {toastNotification.message}
+                  </div>
+                )}
+              </div>
+              {/* 收缩按钮 */}
+              <button
+                type="button"
+                className="h-7 w-7 inline-flex items-center justify-center rounded-full hover:bg-white/10"
+                onClick={() => setToastCollapsed(true)}
+                aria-label="收缩通知"
+                title="收缩为浮动按钮"
+              >
+                <PanelLeftClose size={14} style={{ transform: 'rotate(90deg)' }} />
+              </button>
+              {/* 关闭按钮 */}
+              <button
+                type="button"
+                className="h-7 w-7 inline-flex items-center justify-center rounded-full hover:bg-white/10"
+                onClick={() => dismissToast(toastNotification.id)}
+                aria-label="稍后提醒"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="mt-3 flex items-center justify-end gap-2">
+              {toastNotification.actionUrl && (
+                <button
+                  type="button"
+                  className="px-3 py-1.5 text-[12px] rounded-full"
+                  style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
+                  onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl)}
+                >
+                  {toastNotification.actionLabel || '去处理'}
+                </button>
+              )}
               <button
                 type="button"
                 className="px-3 py-1.5 text-[12px] rounded-full"
-                style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
-                onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl)}
+                style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                onClick={() => handleNotification(toastNotification.id)}
               >
-                {toastNotification.actionLabel || '去处理'}
+                标记已处理
               </button>
-            )}
-            <button
-              type="button"
-              className="px-3 py-1.5 text-[12px] rounded-full"
-              style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
-              onClick={() => handleNotification(toastNotification.id)}
-            >
-              标记已处理
-            </button>
+            </div>
           </div>
-        </div>
+        )
       )}
       {/* 全局背景：覆盖侧边栏 + 主区（像背景色一样） */}
       <RecursiveGridBackdrop

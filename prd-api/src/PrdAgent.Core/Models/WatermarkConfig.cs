@@ -118,6 +118,11 @@ public class WatermarkConfig
     public string? BackgroundColor { get; set; }
 
     /// <summary>
+    /// 预览底图URL（用于渲染预览时的背景图）
+    /// </summary>
+    public string? PreviewBackgroundImageRef { get; set; }
+
+    /// <summary>
     /// 预览图URL
     /// </summary>
     public string? PreviewUrl { get; set; }

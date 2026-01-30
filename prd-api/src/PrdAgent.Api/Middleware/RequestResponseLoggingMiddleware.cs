@@ -35,6 +35,9 @@ public class RequestResponseLoggingMiddleware
     private const int MaxInspectRequestBytes = 256 * 1024; // 256KB（用于系统日志 request body）
     private static readonly TimeSpan UserDisplayCacheTtl = TimeSpan.FromMinutes(10);
 
+    // 两阶段存储配置
+    private const int PreInsertDelayMs = 3000; // 预插入延迟：最多等待 3 秒
+
     // 不记录日志的路径（避免噪音）
     private static readonly HashSet<string> SkipLogPathPrefixes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -71,6 +74,7 @@ public class RequestResponseLoggingMiddleware
         }
 
         var requestId = Activity.Current?.Id ?? Guid.NewGuid().ToString("N")[..8];
+        context.Items["RequestId"] = requestId;  // 全链路打通：Controller 可通过 HttpContext.Items["RequestId"] 获取
         var method = context.Request.Method;
         var query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : "";
         var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -118,11 +122,38 @@ public class RequestResponseLoggingMiddleware
 
         var requestBodyCapture = await TryCaptureRequestBodyAsync(context);
 
+        // 两阶段存储：生成唯一 logId，提取请求上下文
+        var logId = Guid.NewGuid().ToString("N");
+        var requestCtx = shouldPersistApiLog ? ExtractRequestContext(context, requestBodyCapture) : null;
+        CancellationTokenSource? preInsertCts = null;
+
         // 统一前缀通过 Serilog LogContext 注入，避免各处重复拼接前缀
         // 回滚方案：移除 PushProperty("User", ...) 并恢复日志模板即可
         using (LogContext.PushProperty("User", userPrefix))
         {
             var sw = Stopwatch.StartNew();
+
+            // 启动预插入任务（延迟 3 秒）
+            if (shouldPersistApiLog && requestCtx != null)
+            {
+                preInsertCts = new CancellationTokenSource();
+                var preInsertToken = preInsertCts.Token;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(PreInsertDelayMs, preInsertToken);
+                        if (!preInsertToken.IsCancellationRequested)
+                        {
+                            await TryPreInsertApiRequestLogAsync(logId, requestId, startedAt, isEventStream, requestCtx);
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // 预插入被取消（请求已完成）
+                    }
+                }, preInsertToken);
+            }
 
             // SSE 流式响应不能缓存整个 body，否则会阻塞/卡住
             if (isEventStream)
@@ -134,17 +165,26 @@ public class RequestResponseLoggingMiddleware
                 finally
                 {
                     sw.Stop();
-                    if (shouldPersistApiLog)
+                    // 取消预插入任务
+                    preInsertCts?.Cancel();
+
+                    if (shouldPersistApiLog && requestCtx != null)
                     {
+                        var finalCtx = requestCtx with
+                        {
+                            ResponseContentType = context.Response.ContentType,
+                            StatusCode = context.Response.StatusCode
+                        };
                         await TryPersistApiRequestLogAsync(
-                            context,
+                            logId,
                             requestId,
                             startedAt,
                             endedAt: DateTime.UtcNow,
                             durationMs: sw.ElapsedMilliseconds,
                             isEventStream: true,
                             apiSummary: "stream=text/event-stream",
-                            requestBodyCapture: requestBodyCapture);
+                            ctx: finalCtx,
+                            responseBodyText: null);
                     }
 
                     await TryUpdateDesktopPresenceAsync(context, requestId, sw.ElapsedMilliseconds);
@@ -175,6 +215,8 @@ public class RequestResponseLoggingMiddleware
             finally
             {
                 sw.Stop();
+                // 取消预插入任务
+                preInsertCts?.Cancel();
 
                 var statusCode = context.Response.StatusCode;
                 string? responseBody = null;
@@ -197,17 +239,23 @@ public class RequestResponseLoggingMiddleware
                     apiSummary = "";
                 }
 
-                if (shouldPersistApiLog)
+                if (shouldPersistApiLog && requestCtx != null)
                 {
+                    var finalCtx = requestCtx with
+                    {
+                        ResponseContentType = context.Response.ContentType,
+                        StatusCode = statusCode
+                    };
                     await TryPersistApiRequestLogAsync(
-                        context,
+                        logId,
                         requestId,
                         startedAt,
                         endedAt: DateTime.UtcNow,
                         durationMs: sw.ElapsedMilliseconds,
                         isEventStream: false,
                         apiSummary: apiSummary,
-                        requestBodyCapture: requestBodyCapture);
+                        ctx: finalCtx,
+                        responseBodyText: responseBody);
                 }
 
                 await TryUpdateDesktopPresenceAsync(context, requestId, sw.ElapsedMilliseconds);
@@ -615,107 +663,260 @@ public class RequestResponseLoggingMiddleware
         }
     }
 
+    private const int MaxResponseBodyStoreBytes = 256 * 1024; // 256KB 响应体存储上限
+
+    /// <summary>
+    /// 提取请求的元数据（用于预插入和完整插入共享）
+    /// </summary>
+    private ApiRequestLogContext ExtractRequestContext(HttpContext context, CapturedRequestBody? requestBodyCapture)
+    {
+        var path = context.Request.Path.Value ?? "";
+        var query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : "";
+        var method = context.Request.Method;
+        var protocol = context.Request.Protocol;
+        var absoluteUrl = BuildAbsoluteUrl(context, path, query);
+        var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var userId = context.User?.FindFirst("sub")?.Value ?? "anonymous";
+        var ua = context.Request.Headers.UserAgent.ToString();
+
+        var clientType = context.Request.Headers["X-Client"].ToString();
+        if (string.IsNullOrWhiteSpace(clientType))
+        {
+            clientType = context.User?.FindFirst("clientType")?.Value ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(clientType))
+            {
+                var authType = context.User?.FindFirst("authType")?.Value ?? string.Empty;
+                if (authType.Equals("apikey", StringComparison.OrdinalIgnoreCase) ||
+                    authType.Equals("apikey-test", StringComparison.OrdinalIgnoreCase))
+                {
+                    clientType = "open-platform";
+                }
+            }
+        }
+        if (string.IsNullOrWhiteSpace(clientType)) clientType = "unknown";
+        var clientId = context.Request.Headers["X-Client-Id"].ToString();
+        if (string.IsNullOrWhiteSpace(clientId)) clientId = null;
+        var appId = context.User?.FindFirst("appId")?.Value;
+        if (string.IsNullOrWhiteSpace(appId)) appId = null;
+        var appName = context.User?.FindFirst("appName")?.Value;
+        if (string.IsNullOrWhiteSpace(appName))
+        {
+            appName = context.Request.Headers["X-App-Name"].ToString();
+        }
+        if (string.IsNullOrWhiteSpace(appName)) appName = null;
+        if (appId != null && appName == null) appName = "unknown";
+
+        var routeSessionId = context.Request.RouteValues.TryGetValue("sessionId", out var sid) ? sid?.ToString() : null;
+        var routeGroupId = context.Request.RouteValues.TryGetValue("groupId", out var gid) ? gid?.ToString() : null;
+
+        var requestContentType = context.Request.ContentType;
+        var requestBody = requestBodyCapture?.SanitizedJsonText ?? requestBodyCapture?.RawText;
+        var truncated = requestBodyCapture?.Truncated ?? false;
+
+        return new ApiRequestLogContext(
+            Path: path,
+            Query: query,
+            Method: method,
+            Protocol: protocol,
+            AbsoluteUrl: absoluteUrl,
+            ClientIp: clientIp,
+            UserId: userId,
+            UserAgent: ua,
+            ClientType: clientType,
+            ClientId: clientId,
+            AppId: appId,
+            AppName: appName,
+            RouteSessionId: routeSessionId,
+            RouteGroupId: routeGroupId,
+            RequestContentType: requestContentType,
+            RequestBody: requestBody,
+            RequestBodyTruncated: truncated
+        );
+    }
+
+    /// <summary>
+    /// 预插入：请求开始后延迟执行，插入 status=running 的记录
+    /// MongoDB 唯一索引会阻止重复插入，无需应用层锁
+    /// </summary>
+    private async Task TryPreInsertApiRequestLogAsync(
+        string logId,
+        string requestId,
+        DateTime startedAt,
+        bool isEventStream,
+        ApiRequestLogContext ctx)
+    {
+        try
+        {
+            var curl = BuildCurl(ctx.Method, ctx.AbsoluteUrl, ctx.RequestContentType, ctx.RequestBody, isEventStream, ctx.ClientType, ctx.ClientId);
+
+            var log = new ApiRequestLog
+            {
+                Id = logId,
+                RequestId = requestId,
+                StartedAt = startedAt,
+                EndedAt = null,  // 未完成
+                DurationMs = null,
+                Method = ctx.Method,
+                Path = ctx.Path,
+                Query = string.IsNullOrWhiteSpace(ctx.Query) ? null : ctx.Query,
+                AbsoluteUrl = ctx.AbsoluteUrl,
+                Protocol = ctx.Protocol,
+                RequestContentType = ctx.RequestContentType,
+                ResponseContentType = null,
+                StatusCode = 0,  // 未知
+                ApiSummary = null,
+                ErrorCode = null,
+                UserId = ctx.UserId,
+                GroupId = ctx.RouteGroupId,
+                SessionId = ctx.RouteSessionId,
+                ClientIp = ctx.ClientIp,
+                UserAgent = ctx.UserAgent,
+                ClientType = ctx.ClientType,
+                ClientId = ctx.ClientId,
+                AppId = ctx.AppId,
+                AppName = ctx.AppName,
+                RequestBody = ctx.RequestBody,
+                RequestBodyTruncated = ctx.RequestBodyTruncated,
+                Curl = curl,
+                IsEventStream = isEventStream,
+                Status = "running",  // 进行中
+                Direction = "inbound"
+            };
+
+            // 直接插入，如果 Id 已存在（完整插入先完成了），MongoDB 会抛出重复键异常，忽略即可
+            await _db.ApiRequestLogs.InsertOneAsync(log);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 完整插入已经先完成，忽略预插入
+        }
+        catch
+        {
+            // 其他错误也忽略，不影响请求
+        }
+    }
+
+    /// <summary>
+    /// 完整持久化：请求结束后执行，upsert 完整记录
+    /// ReplaceOne + IsUpsert 是原子操作，无需应用层锁
+    /// </summary>
     private async Task TryPersistApiRequestLogAsync(
-        HttpContext context,
+        string logId,
         string requestId,
         DateTime startedAt,
         DateTime endedAt,
         long durationMs,
         bool isEventStream,
         string? apiSummary,
-        CapturedRequestBody? requestBodyCapture)
+        ApiRequestLogContext ctx,
+        string? responseBodyText)
     {
         try
         {
-            var path = context.Request.Path.Value ?? "";
-            var query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : "";
-            var method = context.Request.Method;
-            var protocol = context.Request.Protocol;
-            var absoluteUrl = BuildAbsoluteUrl(context, path, query);
-            var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-            var userId = context.User?.FindFirst("sub")?.Value ?? "anonymous";
-            var ua = context.Request.Headers.UserAgent.ToString();
-
-            var clientType = context.Request.Headers["X-Client"].ToString();
-            if (string.IsNullOrWhiteSpace(clientType))
-            {
-                clientType = context.User?.FindFirst("clientType")?.Value ?? string.Empty;
-                if (string.IsNullOrWhiteSpace(clientType))
-                {
-                    var authType = context.User?.FindFirst("authType")?.Value ?? string.Empty;
-                    if (authType.Equals("apikey", StringComparison.OrdinalIgnoreCase) ||
-                        authType.Equals("apikey-test", StringComparison.OrdinalIgnoreCase))
-                    {
-                        clientType = "open-platform";
-                    }
-                }
-            }
-            if (string.IsNullOrWhiteSpace(clientType)) clientType = "unknown";
-            var clientId = context.Request.Headers["X-Client-Id"].ToString();
-            if (string.IsNullOrWhiteSpace(clientId)) clientId = null;
-            var appId = context.User?.FindFirst("appId")?.Value;
-            if (string.IsNullOrWhiteSpace(appId)) appId = null;
-            var appName = context.User?.FindFirst("appName")?.Value;
-            if (string.IsNullOrWhiteSpace(appName))
-            {
-                appName = context.Request.Headers["X-App-Name"].ToString();
-            }
-            if (string.IsNullOrWhiteSpace(appName)) appName = null;
-            if (appId != null && appName == null) appName = "unknown";
-
-            var routeSessionId = context.Request.RouteValues.TryGetValue("sessionId", out var sid) ? sid?.ToString() : null;
-            var routeGroupId = context.Request.RouteValues.TryGetValue("groupId", out var gid) ? gid?.ToString() : null;
-
-            var requestContentType = context.Request.ContentType;
-            var responseContentType = context.Response.ContentType;
-
-            var statusCode = context.Response.StatusCode;
+            var responseContentType = ctx.ResponseContentType;
+            var statusCode = ctx.StatusCode;
             var errorCode = ExtractErrorCode(apiSummary);
 
-            var requestBody = requestBodyCapture?.SanitizedJsonText ?? requestBodyCapture?.RawText;
-            var truncated = requestBodyCapture?.Truncated ?? false;
+            var curl = BuildCurl(ctx.Method, ctx.AbsoluteUrl, ctx.RequestContentType, ctx.RequestBody, isEventStream, ctx.ClientType, ctx.ClientId);
 
-            var curl = BuildCurl(method, absoluteUrl, requestContentType, requestBody, isEventStream, clientType, clientId);
+            // 处理响应体存储（限制大小）
+            string? responseBodyStored = null;
+            var responseBodyTruncated = false;
+            int? responseBodyBytes = null;
+            if (!string.IsNullOrEmpty(responseBodyText))
+            {
+                responseBodyBytes = System.Text.Encoding.UTF8.GetByteCount(responseBodyText);
+                if (responseBodyBytes <= MaxResponseBodyStoreBytes)
+                {
+                    responseBodyStored = responseBodyText;
+                }
+                else
+                {
+                    // 截断到约 256KB
+                    var truncateChars = MaxResponseBodyStoreBytes / 3;
+                    responseBodyStored = responseBodyText.Length > truncateChars
+                        ? responseBodyText[..truncateChars] + "...(truncated)"
+                        : responseBodyText;
+                    responseBodyTruncated = true;
+                }
+            }
+
+            // 确定状态
+            var status = statusCode >= 200 && statusCode < 400 ? "completed" : "failed";
 
             var log = new ApiRequestLog
             {
-                Id = Guid.NewGuid().ToString("N"),
+                Id = logId,
                 RequestId = requestId,
                 StartedAt = startedAt,
                 EndedAt = endedAt,
                 DurationMs = durationMs,
-                Method = method,
-                Path = path,
-                Query = string.IsNullOrWhiteSpace(query) ? null : query,
-                AbsoluteUrl = absoluteUrl,
-                Protocol = protocol,
-                RequestContentType = requestContentType,
+                Method = ctx.Method,
+                Path = ctx.Path,
+                Query = string.IsNullOrWhiteSpace(ctx.Query) ? null : ctx.Query,
+                AbsoluteUrl = ctx.AbsoluteUrl,
+                Protocol = ctx.Protocol,
+                RequestContentType = ctx.RequestContentType,
                 ResponseContentType = responseContentType,
                 StatusCode = statusCode,
                 ApiSummary = apiSummary,
                 ErrorCode = errorCode,
-                UserId = userId,
-                GroupId = routeGroupId,
-                SessionId = routeSessionId,
-                ClientIp = clientIp,
-                UserAgent = ua,
-                ClientType = clientType,
-                ClientId = clientId,
-                AppId = appId,
-                AppName = appName,
-                RequestBody = requestBody,
-                RequestBodyTruncated = truncated,
+                UserId = ctx.UserId,
+                GroupId = ctx.RouteGroupId,
+                SessionId = ctx.RouteSessionId,
+                ClientIp = ctx.ClientIp,
+                UserAgent = ctx.UserAgent,
+                ClientType = ctx.ClientType,
+                ClientId = ctx.ClientId,
+                AppId = ctx.AppId,
+                AppName = ctx.AppName,
+                RequestBody = ctx.RequestBody,
+                RequestBodyTruncated = ctx.RequestBodyTruncated,
                 Curl = curl,
-                IsEventStream = isEventStream
+                IsEventStream = isEventStream,
+                Status = status,
+                Direction = "inbound",
+                ResponseBody = responseBodyStored,
+                ResponseBodyTruncated = responseBodyTruncated,
+                ResponseBodyBytes = responseBodyBytes
             };
 
-            await _db.ApiRequestLogs.InsertOneAsync(log);
+            // Upsert：有就替换，没有就插入（原子操作）
+            await _db.ApiRequestLogs.ReplaceOneAsync(
+                x => x.Id == logId,
+                log,
+                new ReplaceOptions { IsUpsert = true });
         }
         catch
         {
             // 系统日志写入失败不影响业务请求
         }
     }
+
+    /// <summary>
+    /// 请求上下文数据（用于两阶段存储共享）
+    /// </summary>
+    private record ApiRequestLogContext(
+        string Path,
+        string Query,
+        string Method,
+        string Protocol,
+        string AbsoluteUrl,
+        string ClientIp,
+        string UserId,
+        string UserAgent,
+        string ClientType,
+        string? ClientId,
+        string? AppId,
+        string? AppName,
+        string? RouteSessionId,
+        string? RouteGroupId,
+        string? RequestContentType,
+        string? RequestBody,
+        bool RequestBodyTruncated,
+        string? ResponseContentType = null,
+        int StatusCode = 0
+    );
 
     private static string? ExtractErrorCode(string? apiSummary)
     {

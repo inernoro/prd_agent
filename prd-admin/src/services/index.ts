@@ -247,6 +247,7 @@ import {
   unbindWatermarkAppReal,
   uploadWatermarkFontReal,
   uploadWatermarkIconReal,
+  testWatermarkReal,
 } from '@/services/real/watermark';
 import { adminImpersonateReal } from '@/services/real/lab';
 import {
@@ -696,6 +697,7 @@ export const updateWatermark: UpdateWatermarkContract = withAuth(updateWatermark
 export const deleteWatermark: DeleteWatermarkContract = withAuth(deleteWatermarkReal);
 export const bindWatermarkApp: BindWatermarkAppContract = withAuth(bindWatermarkAppReal);
 export const unbindWatermarkApp: UnbindWatermarkAppContract = withAuth(unbindWatermarkAppReal);
+export const testWatermark = testWatermarkReal;
 export const getWatermarkFonts: GetWatermarkFontsContract = withAuth(getWatermarkFontsReal);
 export const uploadWatermarkFont: UploadWatermarkFontContract = withAuth(uploadWatermarkFontReal);
 export const uploadWatermarkIcon: UploadWatermarkIconContract = withAuth(uploadWatermarkIconReal);
