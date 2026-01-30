@@ -11,9 +11,12 @@ import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import type { EditorState, LexicalEditor } from 'lexical';
 import {
+  $createParagraphNode,
+  $createTextNode,
   $getRoot,
   $getSelection,
   $isElementNode,
+  $isParagraphNode,
   $isRangeSelection,
   $isTextNode,
   COMMAND_PRIORITY_HIGH,
@@ -34,8 +37,8 @@ export interface RichComposerRef {
   clear: () => void;
   /** 聚焦编辑器 */
   focus: () => void;
-  /** 插入图片 chip（默认灰色待选，ready: true 为蓝色就绪） */
-  insertImageChip: (option: ImageOption, opts?: { ready?: boolean }) => void;
+  /** 插入图片 chip（默认灰色待选，ready: true 为蓝色就绪，preserveFocus: true 保持当前焦点） */
+  insertImageChip: (option: ImageOption, opts?: { ready?: boolean; preserveFocus?: boolean }) => void;
   /** 插入文本 */
   insertText: (text: string) => void;
   /** 将所有待选 chip 标记为就绪（灰→蓝） */
@@ -107,7 +110,8 @@ function EditorInner({
           const root = $getRoot();
           text = root.getTextContent();
         });
-        return text;
+        // 过滤零宽度空格（用于光标锚点）
+        return text.replace(/\u200B/g, '');
       },
       getStructuredContent: () => {
         let text = '';
@@ -133,7 +137,8 @@ function EditorInner({
           };
           traverse(root);
         });
-        return { text: text.trim(), imageRefs };
+        // 过滤零宽度空格（用于光标锚点）
+        return { text: text.replace(/\u200B/g, '').trim(), imageRefs };
       },
       clear: () => {
         editor.update(() => {
@@ -144,17 +149,14 @@ function EditorInner({
       focus: () => {
         editor.focus();
       },
-      insertImageChip: (option: ImageOption, opts?: { ready?: boolean }) => {
+      insertImageChip: (option: ImageOption, opts?: { ready?: boolean; preserveFocus?: boolean }) => {
         console.log('[RichComposer] insertImageChip called', { option, opts, ready: opts?.ready });
+        
+        // 保存当前焦点元素（用于 preserveFocus 模式）
+        const prevActiveElement = opts?.preserveFocus ? document.activeElement as HTMLElement | null : null;
+        
         editor.update(() => {
-          let selection = $getSelection();
-          // 如果没有 selection，选中编辑器末尾
-          if (!$isRangeSelection(selection)) {
-            const root = $getRoot();
-            root.selectEnd();
-            selection = $getSelection();
-          }
-          if (!$isRangeSelection(selection)) return;
+          const root = $getRoot();
           console.log('[RichComposer] creating chip with ready =', opts?.ready);
           const chipNode = $createImageChipNode({
             canvasKey: option.key,
@@ -163,9 +165,44 @@ function EditorInner({
             label: option.label,
             ready: opts?.ready, // 默认 undefined/false = 灰色待选
           });
-          selection.insertNodes([chipNode]);
-          selection.insertText(' ');
-        });
+          
+          // 直接在编辑器末尾追加节点
+          const lastChild = root.getLastChild();
+          if ($isParagraphNode(lastChild)) {
+            // 先清理末尾的零宽度空格（避免累积）
+            const children = lastChild.getChildren();
+            for (let i = children.length - 1; i >= 0; i--) {
+              const child = children[i];
+              if ($isTextNode(child) && child.getTextContent() === '\u200B') {
+                child.remove();
+              } else {
+                break; // 遇到非零宽度空格节点就停止
+              }
+            }
+            // 在最后一个段落末尾追加 chip 和新的锚点
+            const anchorNode = $createTextNode('\u200B');
+            lastChild.append(chipNode, anchorNode);
+          } else {
+            // 创建新段落
+            const para = $createParagraphNode();
+            const anchorNode = $createTextNode('\u200B');
+            para.append(chipNode, anchorNode);
+            root.append(para);
+          }
+        }, { discrete: true }); // discrete: 避免触发不必要的副作用
+        
+        // 恢复焦点（DOM 更新可能是异步的，需要延迟恢复）
+        if (prevActiveElement) {
+          queueMicrotask(() => {
+            if (document.activeElement !== prevActiveElement) {
+              try {
+                prevActiveElement.focus({ preventScroll: true });
+              } catch {
+                // ignore
+              }
+            }
+          });
+        }
       },
       insertText: (text: string) => {
         editor.update(() => {

@@ -14,6 +14,7 @@
 import {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -52,8 +53,8 @@ export interface TwoPhaseRichComposerRef {
   clear: () => void;
   /** 聚焦编辑器 */
   focus: () => void;
-  /** 插入图片 chip（ready: true = 蓝色就绪；无 ready = 灰色 pending，自动添加到 pendingChipKeys） */
-  insertImageChip: (option: ImageOption, opts?: { ready?: boolean }) => void;
+  /** 插入图片 chip（ready: true = 蓝色就绪；无 ready = 灰色 pending，自动添加到 pendingChipKeys；preserveFocus: true 保持当前焦点） */
+  insertImageChip: (option: ImageOption, opts?: { ready?: boolean; preserveFocus?: boolean }) => void;
   /** 插入文本 */
   insertText: (text: string) => void;
   /** 将所有待选 chip 标记为就绪（同时清空 pendingChipKeys） */
@@ -92,12 +93,17 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
     // 两阶段选择：跟踪当前有 pending chip 的图片 key
     const [pendingChipKeys, setPendingChipKeys] = useState<Set<string>>(new Set());
 
-    // 更新 pending keys 并通知外部
+    // 使用 useEffect 监听 pendingChipKeys 变化，通知外部（避免在 setState 内调用 setState）
+    useEffect(() => {
+      console.log('[TwoPhaseRichComposer] pendingChipKeys changed, notifying parent:', [...pendingChipKeys]);
+      onPendingKeysChange?.(pendingChipKeys);
+    }, [pendingChipKeys, onPendingKeysChange]);
+
+    // 更新 pending keys
     const updatePendingKeys = useCallback((keys: Set<string>) => {
-      console.log('[TwoPhaseRichComposer] updatePendingKeys called', { keys: [...keys], hasCallback: !!onPendingKeysChange });
+      console.log('[TwoPhaseRichComposer] updatePendingKeys called', { keys: [...keys] });
       setPendingChipKeys(keys);
-      onPendingKeysChange?.(keys);
-    }, [onPendingKeysChange]);
+    }, []);
 
     // 预选图片（两阶段第一步）
     // replace: true（默认）= 替换现有 pending；false = 累加到现有 pending
@@ -124,14 +130,14 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
           console.log('[TwoPhaseRichComposer] removing old pending chip:', key);
           composer.removeChipByKey(key);
         });
-        // 插入新的 pending chip（灰色，不传 ready）
+        // 插入新的 pending chip（灰色，不传 ready），preserveFocus: true 保持画布焦点
         console.log('[TwoPhaseRichComposer] inserting new pending chip:', option.key);
-        composer.insertImageChip(option);
+        composer.insertImageChip(option, { preserveFocus: true });
         updatePendingKeys(new Set([option.key]));
       } else {
-        // 累加模式：保留现有 pending，添加新的
+        // 累加模式：保留现有 pending，添加新的，preserveFocus: true 保持画布焦点
         console.log('[TwoPhaseRichComposer] accumulating pending chip:', option.key);
-        composer.insertImageChip(option);
+        composer.insertImageChip(option, { preserveFocus: true });
         updatePendingKeys(new Set([...pendingChipKeys, option.key]));
       }
       console.log('[TwoPhaseRichComposer] preselectImage done');
@@ -155,16 +161,22 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
       }
     }, [pendingChipKeys, updatePendingKeys]);
 
+    // 使用 ref 存储最新的 pendingChipKeys，避免闭包问题
+    const pendingChipKeysRef = useRef(pendingChipKeys);
+    pendingChipKeysRef.current = pendingChipKeys;
+
     // 清除 pending chips
     const clearPending = useCallback(() => {
       const composer = composerRef.current;
       if (!composer) return;
 
-      pendingChipKeys.forEach((key) => {
+      console.log('[TwoPhaseRichComposer] clearPending called, pendingKeys:', [...pendingChipKeysRef.current]);
+      // 使用 ref 获取最新的 pendingChipKeys，避免闭包捕获旧值
+      pendingChipKeysRef.current.forEach((key) => {
         composer.removeChipByKey(key);
       });
       updatePendingKeys(new Set());
-    }, [pendingChipKeys, updatePendingKeys]);
+    }, [updatePendingKeys]);
 
     // 点击输入框容器时确认 pending chips
     const handleContainerClick = useCallback(() => {
@@ -186,17 +198,22 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
     }, [updatePendingKeys]);
 
     // 插入图片 chip，同步 pendingChipKeys 状态
-    const handleInsertImageChip = useCallback((option: ImageOption, opts?: { ready?: boolean }) => {
+    const handleInsertImageChip = useCallback((option: ImageOption, opts?: { ready?: boolean; preserveFocus?: boolean }) => {
       const composer = composerRef.current;
       if (!composer) return;
 
       composer.insertImageChip(option, opts);
 
       // 如果是灰色 chip（没有 ready 或 ready: false），添加到 pendingChipKeys
+      // 使用函数式更新避免闭包陷阱（循环中多次调用时能正确累加）
       if (!opts?.ready) {
-        updatePendingKeys(new Set([...pendingChipKeys, option.key]));
+        setPendingChipKeys((prev) => {
+          const next = new Set(prev);
+          next.add(option.key);
+          return next;
+        });
       }
-    }, [pendingChipKeys, updatePendingKeys]);
+    }, []);
 
     // 移除 chip，同步 pendingChipKeys 状态
     const handleRemoveChipByKey = useCallback((key: string) => {
@@ -206,12 +223,14 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
       composer.removeChipByKey(key);
 
       // 如果是 pending chip，从 pendingChipKeys 移除
-      if (pendingChipKeys.has(key)) {
-        const newKeys = new Set(pendingChipKeys);
-        newKeys.delete(key);
-        updatePendingKeys(newKeys);
-      }
-    }, [pendingChipKeys, updatePendingKeys]);
+      // 使用函数式更新避免闭包陷阱
+      setPendingChipKeys((prev) => {
+        if (!prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }, []);
 
     // markChipsReady 同步状态
     const handleMarkChipsReady = useCallback(() => {
@@ -244,13 +263,9 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
         className={className}
         style={{
           cursor: 'text',
-          background: 'var(--bg-base)',
-          borderRadius: 6,
-          padding: 10,
-          border: hasPending
-            ? '1px solid rgba(156, 163, 175, 0.5)'
-            : '1px solid var(--border-default)',
-          transition: 'border-color 0.15s',
+          background: 'transparent',
+          border: 'none',
+          padding: 0,
         }}
       >
         <RichComposer

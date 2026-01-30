@@ -1010,6 +1010,31 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     setPendingChipKeys(keys);
   }, []);
 
+  // [已废弃] clearPendingChips - 应使用 selectionManagerRef.current.clear() 代替
+
+  /**
+   * ============================================================
+   * 选择状态管理器 - 所有修改 selectedKeys 的操作必须通过这里
+   * ============================================================
+   * 
+   * 设计原则：
+   * - 禁止直接调用 setSelectedKeys（除了这个管理器内部）
+   * - 所有选择操作通过 selectionManager 进行
+   * - 自动判断是否需要同步 chip（只有图片类型需要）
+   */
+  const selectionManagerRef = useRef<{
+    /** 清空选中（四个球 + chip 一起清除） */
+    clear: () => void;
+    /** 设置选中（替换模式，自动同步 chip） */
+    set: (keys: string[]) => void;
+    /** 添加选中（追加模式，自动同步 chip） */
+    add: (keys: string[]) => void;
+    /** 移除选中（自动同步 chip） */
+    remove: (keys: string[]) => void;
+    /** 设置选中但不同步 chip（仅用于非图片类型如 generator/shape/text） */
+    setWithoutChip: (keys: string[]) => void;
+  } | null>(null);
+
   const selectedSingleImageForComposer = useMemo(() => {
     if (selectedKeys.length !== 1) return null;
     const it = selected;
@@ -1497,6 +1522,91 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     [canvas, nextRefId]
   );
 
+  /**
+   * ============================================================
+   * 选择管理器实现 - 同步 selectedKeys（四个球）和 chip（对勾）
+   * ============================================================
+   */
+  
+  // 内部方法：同步 chip 到当前选中的图片
+  const syncChipsToSelection = useCallback((newKeys: string[]) => {
+    richComposerRef.current?.clearPending();
+    
+    for (const key of newKeys) {
+      // 优先从 canvasRef 获取（避免闭包问题）
+      const item = canvasRef.current.find(x => x.key === key);
+      if (item && (item.kind ?? 'image') === 'image' && item.src) {
+        const refId = item.refId ?? ensureRefIdForKey(key);
+        if (refId) {
+          richComposerRef.current?.insertImageChip(
+            { key, refId, src: item.src, label: item.prompt || `img${refId}` },
+            { preserveFocus: true }
+          );
+        }
+      }
+    }
+  }, [ensureRefIdForKey]);
+
+  // 清空选中（四个球 + chip 一起清除）
+  const clearSelection = useCallback(() => {
+    console.log('[SelectionManager] clear');
+    setSelectedKeys([]);
+    richComposerRef.current?.clearPending();
+  }, []);
+
+  // 设置选中（替换模式，自动同步 chip）
+  const setSelection = useCallback((keys: string[]) => {
+    console.log('[SelectionManager] set', keys);
+    setSelectedKeys(keys);
+    syncChipsToSelection(keys);
+  }, [syncChipsToSelection]);
+
+  // 添加选中（追加模式，自动同步 chip）
+  const addSelection = useCallback((keys: string[]) => {
+    console.log('[SelectionManager] add', keys);
+    const currentKeys = selectedKeysRef.current;
+    const newKeys = [...new Set([...currentKeys, ...keys])];
+    setSelectedKeys(newKeys);
+    syncChipsToSelection(newKeys);
+  }, [syncChipsToSelection]);
+
+  // 移除选中（自动同步 chip）
+  const removeSelection = useCallback((keys: string[]) => {
+    console.log('[SelectionManager] remove', keys);
+    const currentKeys = selectedKeysRef.current;
+    const removeSet = new Set(keys);
+    const newKeys = currentKeys.filter(k => !removeSet.has(k));
+    setSelectedKeys(newKeys);
+    syncChipsToSelection(newKeys);
+  }, [syncChipsToSelection]);
+
+  // 设置选中但不同步 chip（仅用于非图片类型）
+  const setSelectionWithoutChip = useCallback((keys: string[]) => {
+    console.log('[SelectionManager] setWithoutChip', keys);
+    setSelectedKeys(keys);
+    // 不同步 chip - 用于 generator/shape/text 等非图片类型
+  }, []);
+
+  // 更新 ref 以便在回调中使用最新方法
+  selectionManagerRef.current = {
+    clear: clearSelection,
+    set: setSelection,
+    add: addSelection,
+    remove: removeSelection,
+    setWithoutChip: setSelectionWithoutChip,
+  };
+
+  // 兼容旧代码的别名
+  const clearSelectionWithChips = clearSelection;
+  const updateSelectionWithChips = useCallback((
+    keys: string[],
+    mode: 'replace' | 'add' | 'remove' = 'replace'
+  ) => {
+    if (mode === 'replace') setSelection(keys);
+    else if (mode === 'add') addSelection(keys);
+    else removeSelection(keys);
+  }, [setSelection, addSelection, removeSelection]);
+
   const focusComposer = useCallback(() => {
     try {
       inputPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -1721,13 +1831,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (parsed && parsed.schemaVersion === 1 && Array.isArray(parsed.elements)) {
         const restored = persistedV1ToCanvas(parsed, assetsList);
         setCanvas(restored.canvas);
-        setSelectedKeys([]);
+        clearSelectionWithChips();
         return;
       }
     }
     setCanvas([]);
-    setSelectedKeys([]);
-  }, [setViewport, workspaceId]);
+    clearSelectionWithChips();
+  }, [setViewport, workspaceId, clearSelectionWithChips]);
 
   const confirmAndDeleteSelectedKeys = useCallback(
     async (keysArg?: string[]) => {
@@ -1756,7 +1866,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       // 先乐观删除 UI
       setCanvas((prev) => prev.filter((it) => !set.has(it.key)));
-      setSelectedKeys([]);
+      clearSelectionWithChips();
 
       if (assetIds.length === 0) return;
       const results = await Promise.all(assetIds.map((id) => deleteVisualAgentWorkspaceAsset({ id: workspaceId, assetId: id })));
@@ -1767,7 +1877,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         await reloadWorkspace();
       }
     },
-    [reloadWorkspace, workspaceId]
+    [reloadWorkspace, workspaceId, clearSelectionWithChips]
   );
 
   useEffect(() => {
@@ -1923,7 +2033,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         setCanvas(items);
         canvasBootedRef.current = true;
         if (items.length > 0) {
-          setSelectedKeys((cur) => (cur.length > 0 ? cur : [items[0].key]));
+          // 画布初始化时，如果当前没有选中，则选中第一张图片并同步 chip
+          const currentSelected = selectedKeysRef.current;
+          if (currentSelected.length === 0) {
+            const firstItem = items[0];
+            // 确保有 refId（使用 items 中的数据，因为 canvas 状态可能还未更新）
+            const refId = firstItem.refId ?? 1;
+            setSelectedKeys([firstItem.key]);
+            // 同步插入 chip
+            richComposerRef.current?.clearPending();
+            if ((firstItem.kind ?? 'image') === 'image' && firstItem.src) {
+              richComposerRef.current?.insertImageChip(
+                { key: firstItem.key, refId, src: firstItem.src, label: firstItem.prompt || `img${refId}` },
+                { preserveFocus: true }
+              );
+            }
+          }
           requestAnimationFrame(() => {
             const ae = document.activeElement as HTMLElement | null;
             const tag = (ae?.tagName ?? '').toLowerCase();
@@ -1936,7 +2061,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             focusStage();
           });
         } else {
-          setSelectedKeys([]);
+          clearSelectionWithChips();
         }
       };
 
@@ -2292,10 +2417,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         return;
       }
 
-      // Escape：取消选中
+      // Escape：取消选中，同时清除 pending chips
       if (e.key === 'Escape') {
         e.preventDefault();
-        setSelectedKeys([]);
+        clearSelectionWithChips();
         return;
       }
 
@@ -2313,7 +2438,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const opts = { capture: true } as const;
     window.addEventListener('keydown', onDown, opts);
     return () => window.removeEventListener('keydown', onDown, opts);
-  }, [confirmAndDeleteSelectedKeys, focusStage]);
+  }, [confirmAndDeleteSelectedKeys, focusStage, clearSelectionWithChips]);
 
   const zoomAt = useCallback((clientX: number, clientY: number, nextZoom: number) => {
     const el = stageRef.current;
@@ -2456,7 +2581,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           stroke: 'rgba(0,0,0,0.14)',
         };
         setCanvas((prev) => [next, ...prev].slice(0, 120));
-        setSelectedKeys([key]);
+        setSelectionWithoutChip([key]); // 形状不需要 chip
         setPlacing(null);
         return true;
       }
@@ -2481,7 +2606,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         stroke: 'rgba(0,0,0,0.10)',
       };
       setCanvas((prev) => [next, ...prev].slice(0, 120));
-      setSelectedKeys([key]);
+      setSelectionWithoutChip([key]); // 文字不需要 chip
       setPlacing(null);
       setTextEdit({ open: true, key, value: next.text || 'Text' });
       return true;
@@ -2895,7 +3020,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return [...prev, placeholder].slice(-60);
     });
     // 体验：像"上传图片"一样，开始生成就把视角移动到占位图位置（避免用户找不到新图）
-    setSelectedKeys([key]);
+    setSelectionWithoutChip([key]); // generator 不需要 chip
     requestAnimationFrame(() => {
       const f = focusKeyRef.current;
       if (!f || f.key !== key) return;
@@ -3216,6 +3341,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       // 如果有内联图片，先添加到 canvas
       if (inline?.src) {
         const inlineKey = `inline_${Date.now()}`;
+        // 为新图片分配 refId
+        const maxExisting = canvasRef.current.reduce((acc, x) => (typeof x.refId === 'number' && x.refId > acc ? x.refId : acc), 0);
+        const newRefId = Math.max(nextRefId, maxExisting + 1);
+        setNextRefId(newRefId + 1);
+        
         const inlineCanvasItem: CanvasImageItem = {
           key: inlineKey,
           createdAt: Date.now(),
@@ -3223,10 +3353,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           src: inline.src,
           status: 'done',
           kind: 'image',
-          refId: ensureRefIdForKey(inlineKey) ?? 1,
+          refId: newRefId,
         };
         setCanvas((prev) => [...prev, inlineCanvasItem]);
+        // 手动同步选中和 chip（因为 setCanvas 是异步的）
         setSelectedKeys([inlineKey]);
+        richComposerRef.current?.clearPending();
+        richComposerRef.current?.insertImageChip(
+          { key: inlineKey, refId: newRefId, src: inline.src, label: inline.name || `img${newRefId}` },
+          { preserveFocus: true }
+        );
       }
 
       // 通过统一守门员发送（inlineImage 现在已在 canvas 中，会被 selectedKeys 引用）
@@ -3357,54 +3493,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   /**
    * 画布图片预选（两阶段第一步）
-   * 点击画布图片 → 通过 TwoPhaseRichComposer 插入灰色 pending chip
+   * 点击画布图片 → 使用统一方法同时更新 selectedKeys 和 pending chips
    */
   const handleCanvasImagePreselect = useCallback((it: CanvasImageItem) => {
-    console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect called', { it, richComposerRef: richComposerRef.current });
-    const composer = richComposerRef.current;
-    if (!composer) {
-      console.warn('[AdvancedVisualAgentTab] handleCanvasImagePreselect: composer is null!');
-      return;
-    }
-
+    console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect called', { key: it.key });
+    
     const kind = it.kind ?? 'image';
-    if (kind !== 'image') {
-      console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect: not an image, skip');
-      return;
-    }
-    if (!it.src) {
-      console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect: no src, skip');
+    if (kind !== 'image' || !it.src) {
+      console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect: not a valid image, skip');
       return;
     }
 
-    const refId = ensureRefIdForKey(it.key);
-    console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect: refId =', refId);
-    if (!refId) {
-      console.warn('[AdvancedVisualAgentTab] handleCanvasImagePreselect: no refId, skip');
-      return;
-    }
-
-    // 构建 ImageOption 并调用组件的 preselectImage 方法
-    const option: ImageOption = {
-      key: it.key,
-      refId,
-      src: it.src,
-      label: it.prompt || `img${refId}`,
-    };
-    console.log('[AdvancedVisualAgentTab] calling composer.preselectImage with option:', option);
-    composer.preselectImage(option);
-
-    // 选中该图片（视觉同步）
-    setSelectedKeys([it.key]);
+    // 确保有 refId
+    ensureRefIdForKey(it.key);
+    
+    // 使用统一方法同时更新四个球和 chip
+    updateSelectionWithChips([it.key], 'replace');
     console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect done');
-  }, [ensureRefIdForKey]);
-
-  /**
-   * 清除所有 pending chips
-   */
-  const clearPendingChips = useCallback(() => {
-    richComposerRef.current?.clearPending();
-  }, []);
+  }, [ensureRefIdForKey, updateSelectionWithChips]);
 
   // 富文本编辑器发送（入口1）
   // 注意：TwoPhaseRichComposer 的 onSubmit 回调会自动确认 pending chips
@@ -3640,8 +3746,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       canvasRef.current = merged;
       setCanvas(merged);
     }
-    // 默认选中最新一张（放在最上层的那张）
-    setSelectedKeys([added[added.length - 1]!.key]);
+    // 默认选中最新一张（放在最上层的那张）并同步 chip
+    // 注意：setCanvas 是异步的，所以我们直接从 added 数组获取图片信息
+    const lastAdded = added[added.length - 1]!;
+    const lastAddedKey = lastAdded.key;
+    // 为新图片分配 refId（这会更新 canvas，但我们直接使用返回值）
+    const maxExisting = canvasRef.current.reduce((acc, x) => (typeof x.refId === 'number' && x.refId > acc ? x.refId : acc), 0);
+    const newRefId = Math.max(nextRefId, maxExisting + 1);
+    setNextRefId(newRefId + 1);
+    // 更新 canvas 中的 refId（使用 canvasRef 避免闭包问题）
+    setCanvas((prev) => prev.map((x) => (x.key === lastAddedKey ? { ...x, refId: newRefId } : x)));
+    // 同步选中和 chip
+    setSelectedKeys([lastAddedKey]);
+    richComposerRef.current?.clearPending();
+    if ((lastAdded.kind ?? 'image') === 'image' && lastAdded.src) {
+      richComposerRef.current?.insertImageChip(
+        { key: lastAddedKey, refId: newRefId, src: lastAdded.src, label: lastAdded.prompt || `img${newRefId}` },
+        { preserveFocus: true }
+      );
+    }
     requestAnimationFrame(() => {
       const f = focusKeyRef.current;
       if (!f) return;
@@ -4302,8 +4425,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
               const isClick = box.w < 6 && box.h < 6;
               if (isClick) {
-                // 点击空白：取消选中
-                if (!box.shift) setSelectedKeys([]);
+                // 点击空白：取消选中，同时清除 pending chips
+                if (!box.shift) {
+                  clearSelectionWithChips();
+                }
                 return;
               }
 
@@ -4336,14 +4461,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 })
                 .map((it) => it.key);
 
+              // 确保所有框选的图片都有 refId
+              for (const key of hits) {
+                ensureRefIdForKey(key);
+              }
+              
               if (!box.shift) {
-                setSelectedKeys(hits);
+                // 非 Shift：使用统一方法替换选中
+                updateSelectionWithChips(hits, 'replace');
               } else {
-                setSelectedKeys((prev) => {
-                  const set = new Set(prev);
-                  for (const k of hits) set.add(k);
-                  return Array.from(set);
-                });
+                // Shift：使用统一方法追加选中
+                updateSelectionWithChips(hits, 'add');
               }
 
               try {
@@ -4485,7 +4613,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       });
                       // 如果当前元素未被选中，则单选它（便于后续图层操作）
                       if (!selectedKeys.includes(it.key)) {
-                        setSelectedKeys([it.key]);
+                        // 根据类型决定是否同步 chip
+                        if (kind === 'image' && it.src) {
+                          setSelection([it.key]);
+                        } else {
+                          setSelectionWithoutChip([it.key]);
+                        }
                       }
                     }}
                     onMouseDown={(e) => {
@@ -4498,9 +4631,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       focusStage();
                       e.stopPropagation();
 
-                      // Cmd/Ctrl + 点击：直接插入就绪的 @imgN 引用（跳过两阶段）
+                      // Cmd/Ctrl + 点击：直接插入就绪的 @imgN 引用（跳过两阶段，不同步 pending chip）
                       if (kind === 'image' && (e.metaKey || e.ctrlKey)) {
-                        setSelectedKeys((prev) => (prev.includes(it.key) ? prev : prev.concat(it.key)));
+                        // 只更新四个球，不影响 pending chip（因为这是直接插入确认的引用）
+                        const currentKeys = selectedKeysRef.current;
+                        if (!currentKeys.includes(it.key)) {
+                          setSelectionWithoutChip([...currentKeys, it.key]);
+                        }
                         const id = ensureRefIdForKey(it.key);
                         if (id) insertAtCursor(`@img${id} `);
                         focusComposer();
@@ -4508,24 +4645,32 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         return;
                       }
 
-                      // 普通点击图片（非 shift）：两阶段预选
-                      if (kind === 'image' && it.src && !e.shiftKey) {
-                        console.log('[Canvas] onPointerDown: calling handleCanvasImagePreselect for:', it.key);
-                        handleCanvasImagePreselect(it);
-                        // 继续拖拽逻辑（允许拖动预选的图片）
-                      }
-
                       // 确定本次拖拽涉及的选中集合（按 Figma：未选中则先选中）
                       const shift = e.shiftKey;
-                      const cur = selectedKeys;
+                      const wasSelected = selectedKeys.includes(it.key);
                       let nextKeys: string[];
+                      
                       if (shift) {
-                        // shift+拖拽不做"取消选择"，只做追加选择
-                        nextKeys = cur.includes(it.key) ? cur : cur.concat(it.key);
-                        setSelectedKeys(nextKeys);
+                        // Shift+点击：追加选中（不取消已选中的）
+                        nextKeys = wasSelected ? selectedKeys : [...selectedKeys, it.key];
+                        if (!wasSelected) {
+                          // 确保有 refId
+                          ensureRefIdForKey(it.key);
+                          // 使用统一方法：追加选中并同步 chip
+                          updateSelectionWithChips([it.key], 'add');
+                        }
                       } else {
-                        nextKeys = cur.includes(it.key) ? cur : [it.key];
-                        setSelectedKeys(nextKeys);
+                        // 普通点击：替换选中
+                        nextKeys = wasSelected ? selectedKeys : [it.key];
+                        if (kind === 'image' && it.src) {
+                          // 确保有 refId
+                          ensureRefIdForKey(it.key);
+                          // 使用统一方法：替换选中并同步 chip
+                          updateSelectionWithChips([it.key], 'replace');
+                        } else {
+                          // 非图片：只更新 selectedKeys，不同步 chip
+                          setSelectionWithoutChip([it.key]);
+                        }
                       }
                       // 开始拖拽（多选整体移动）
                       const base: Record<string, { x: number; y: number }> = {};
@@ -4552,24 +4697,29 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         console.log('[Canvas] effectiveTool is hand, return');
                         return;
                       }
+                      // 注意：由于 onPointerDown 中的 e.preventDefault()，onClick 实际上不会触发
+                      // 但为了代码一致性，仍保留这些处理
+
                       // 生成器区域：仅做选中，不做 @img 引用插入
                       if (kind === 'generator') {
                         if (e.shiftKey) {
-                          setSelectedKeys((prev) => {
-                            const set = new Set(prev);
-                            if (set.has(it.key)) set.delete(it.key);
-                            else set.add(it.key);
-                            return Array.from(set);
-                          });
+                          const currentKeys = selectedKeysRef.current;
+                          const set = new Set(currentKeys);
+                          if (set.has(it.key)) set.delete(it.key);
+                          else set.add(it.key);
+                          setSelectionWithoutChip(Array.from(set));
                         } else {
-                          setSelectedKeys([it.key]);
+                          setSelectionWithoutChip([it.key]);
                         }
                         focusComposer();
                         return;
                       }
                       // Cmd/Ctrl + 点击：直接插入就绪的 @imgN 引用（跳过两阶段）
                       if (kind === 'image' && (e.metaKey || e.ctrlKey)) {
-                        setSelectedKeys((prev) => (prev.includes(it.key) ? prev : prev.concat(it.key)));
+                        const currentKeys = selectedKeysRef.current;
+                        if (!currentKeys.includes(it.key)) {
+                          setSelectionWithoutChip([...currentKeys, it.key]);
+                        }
                         const id = ensureRefIdForKey(it.key);
                         if (id) insertAtCursor(`@img${id} `);
                         focusComposer();
@@ -4577,23 +4727,23 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       }
                       // Shift 点击：多选
                       if (e.shiftKey) {
-                        setSelectedKeys((prev) => {
-                          const set = new Set(prev);
-                          if (set.has(it.key)) set.delete(it.key);
-                          else set.add(it.key);
-                          return Array.from(set);
-                        });
+                        const alreadySelected = selectedKeys.includes(it.key);
+                        if (alreadySelected) {
+                          removeSelection([it.key]);
+                        } else {
+                          addSelection([it.key]);
+                        }
                         return;
                       }
-                      // 普通点击图片：两阶段预选（插入灰色 pending chip）
+                      // 普通点击图片：两阶段预选
                       if (kind === 'image' && it.src) {
                         console.log('[Canvas] calling handleCanvasImagePreselect for:', it.key);
                         handleCanvasImagePreselect(it);
                         return;
                       }
                       // 其他类型（shape/text 等）：仅选中
-                      console.log('[Canvas] fallback to setSelectedKeys only');
-                      setSelectedKeys([it.key]);
+                      console.log('[Canvas] fallback to setSelectionWithoutChip');
+                      setSelectionWithoutChip([it.key]);
                     }}
                     title={it.prompt}
                   >
@@ -6140,7 +6290,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     focusKeyRef.current = { key, cx: pos.x + w / 2, cy: pos.y + h / 2, w, h };
                     return [next, ...prev].slice(0, 80);
                   });
-                  setSelectedKeys([key]);
+                  setSelectionWithoutChip([key]); // generator 不需要 chip
                   requestAnimationFrame(() => {
                     const f = focusKeyRef.current;
                     if (!f || f.key !== key) return;
@@ -6641,7 +6791,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      clearPendingChips();
+                      // 清除按钮：同时清除四个球和钩子
+                      selectionManagerRef.current?.clear();
                     }}
                     style={{
                       marginLeft: 4,
