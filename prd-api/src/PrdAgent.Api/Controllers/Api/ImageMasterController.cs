@@ -2109,9 +2109,9 @@ public class ImageMasterController : ControllerBase
     }
 
     /// <summary>
-    /// 唤醒逻辑：检测 running 状态的 marker，同步 run 的真实状态。
+    /// 唤醒逻辑：检测卡住的 marker 状态，自动修正。
     /// 后端是状态的唯一来源，当检测到不一致时自动修正。
-    /// 场景：前端刷新时丢失 SSE 事件，或后端重启导致 run 状态未同步到 marker。
+    /// 场景：前端刷新时丢失 SSE 事件，或后端重启导致状态未同步。
     /// </summary>
     private async Task TrySyncRunningMarkersAsync(ImageMasterWorkspace ws, CancellationToken ct)
     {
@@ -2120,12 +2120,52 @@ public class ImageMasterController : ControllerBase
             var wf = ws.ArticleWorkflow;
             if (wf?.Markers == null || wf.Markers.Count == 0) return;
 
-            // 找出所有 status=running 且有 runId 的 marker
+            var now = DateTime.UtcNow;
+            var needUpdate = false;
+
+            // 1. 检测 parsing 状态超时（超过 5 分钟认为卡住）
+            var parsingMarkers = wf.Markers
+                .Where(m => m.Status == "parsing")
+                .ToList();
+
+            foreach (var marker in parsingMarkers)
+            {
+                // 如果 UpdatedAt 为空（历史数据），使用 workflow 的 UpdatedAt 或直接视为超时
+                var markerTime = marker.UpdatedAt ?? wf.UpdatedAt;
+                var elapsed = now - markerTime;
+                if (elapsed > TimeSpan.FromMinutes(5))
+                {
+                    marker.Status = "error";
+                    marker.ErrorMessage = "意图解析超时，请重试";
+                    marker.UpdatedAt = now;
+                    needUpdate = true;
+                    _logger?.LogInformation(
+                        "Auto-corrected stuck parsing marker: workspace={WorkspaceId}, index={Index}, elapsed={Elapsed}min",
+                        ws.Id, marker.Index, elapsed.TotalMinutes);
+                }
+            }
+
+            // 2. 检测 running 状态的 marker，同步 run 的真实状态
             var runningMarkers = wf.Markers
                 .Where(m => m.Status == "running" && !string.IsNullOrEmpty(m.RunId))
                 .ToList();
 
-            if (runningMarkers.Count == 0) return;
+            if (runningMarkers.Count == 0 && !needUpdate)
+            {
+                return;
+            }
+
+            if (runningMarkers.Count == 0)
+            {
+                // 只有 parsing 超时的更新
+                await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                    x => x.Id == ws.Id,
+                    Builders<ImageMasterWorkspace>.Update
+                        .Set(x => x.ArticleWorkflow, wf)
+                        .Set(x => x.UpdatedAt, now),
+                    cancellationToken: ct);
+                return;
+            }
 
             // 批量查询这些 run 的状态
             var runIds = runningMarkers.Select(m => m.RunId!).Distinct().ToList();
@@ -2134,8 +2174,6 @@ public class ImageMasterController : ControllerBase
                 .ToListAsync(ct);
 
             var runById = runs.ToDictionary(r => r.Id);
-            var needUpdate = false;
-            var now = DateTime.UtcNow;
 
             foreach (var marker in runningMarkers)
             {

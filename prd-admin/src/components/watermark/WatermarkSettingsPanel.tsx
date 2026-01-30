@@ -622,19 +622,16 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             {item.name || `Watermark ${index + 1}`}
                           </div>
                         </div>
-                        {isActive ? (
-                          <span
-                            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full"
-                            style={{
-                              background: 'rgba(245, 158, 11, 0.18)',
-                              color: 'rgba(245, 158, 11, 0.9)',
-                              border: '1px solid rgba(255,255,255,0.12)',
-                            }}
-                          >
-                            <CheckCircle2 size={12} />
-                            激活
-                          </span>
-                        ) : null}
+                        <Button
+                          size="xs"
+                          variant="secondary"
+                          onClick={() => handleTestClick(item.id)}
+                          disabled={saving || testingId === item.id}
+                          title="上传图片测试水印效果"
+                        >
+                          <FlaskConical size={12} />
+                          {testingId === item.id ? '测试中...' : '测试'}
+                        </Button>
                       </div>
                       {/* 授权应用提示 */}
                       {item.appKeys && item.appKeys.length > 0 ? (
@@ -732,16 +729,21 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                     <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
                       <div className="flex flex-wrap gap-1.5 justify-end">
                         {isActive ? (
-                          <Button
-                            size="xs"
-                            variant="secondary"
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                            style={{
+                              background: 'rgba(34, 197, 94, 0.15)',
+                              border: '1px solid rgba(34, 197, 94, 0.3)',
+                              color: 'rgba(34, 197, 94, 0.95)',
+                            }}
                             onClick={() => handleDeactivate(item.id)}
                             disabled={saving}
                             title="点击取消选择"
                           >
-                            <CheckCircle2 size={12} style={{ color: 'rgba(34, 197, 94, 0.9)' }} />
+                            <CheckCircle2 size={12} />
                             已选择
-                          </Button>
+                          </button>
                         ) : (
                           <Button size="xs" variant="secondary" onClick={() => handleActivate(item.id)} disabled={saving}>
                             <Check size={12} />
@@ -759,16 +761,6 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                         >
                           <Pencil size={12} />
                           编辑
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="secondary"
-                          onClick={() => handleTestClick(item.id)}
-                          disabled={saving || testingId === item.id}
-                          title="上传图片测试水印效果"
-                        >
-                          <FlaskConical size={12} />
-                          {testingId === item.id ? '测试中...' : '测试'}
                         </Button>
                         <Button
                           size="xs"

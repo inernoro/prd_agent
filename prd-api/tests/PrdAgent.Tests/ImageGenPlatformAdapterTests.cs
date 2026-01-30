@@ -70,7 +70,11 @@ public class ImageGenPlatformAdapterTests
     }
 
     [Theory]
-    [InlineData("https://api.openai.com/v1", "/v1/images/generations")]
+    [InlineData("https://api.openai.com", "https://api.openai.com/v1/images/generations")]
+    [InlineData("https://api.openai.com/v1", "https://api.openai.com/v1/images/generations")]
+    [InlineData("https://api.openai.com/v1/", "https://api.openai.com/v1/images/generations")]
+    [InlineData("https://custom-gateway.example.com", "https://custom-gateway.example.com/v1/images/generations")]
+    [InlineData("https://custom-gateway.example.com/v1/images/generations#", "https://custom-gateway.example.com/v1/images/generations")] // force exact url
     public void OpenAIAdapter_GetGenerationsEndpoint_ReturnsCorrectPath(string baseUrl, string expected)
     {
         var adapter = new OpenAIPlatformAdapter();

@@ -175,6 +175,14 @@ public class OpenAIImageClient
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图模型 API 配置不完整");
         }
 
+        // 验证 apiUrl 必须是有效的 HTTP(S) URL，避免 file:// 等无效协议
+        if (!Uri.TryCreate(apiUrl, UriKind.Absolute, out var apiUrlUri) ||
+            (apiUrlUri.Scheme != Uri.UriSchemeHttp && apiUrlUri.Scheme != Uri.UriSchemeHttps))
+        {
+            _logger.LogError("生图模型 API URL 无效（非 HTTP(S) 协议）: {ApiUrl}", apiUrl);
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, $"生图模型 API URL 无效（必须是 http:// 或 https:// 开头）: {apiUrl}");
+        }
+
         // Anthropic 不支持 images endpoint；避免误配后 500
         if (string.Equals(platformType, "anthropic", StringComparison.OrdinalIgnoreCase) ||
             apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase))
@@ -568,6 +576,16 @@ public class OpenAIImageClient
                             RequestMessage = httpClient.BaseAddress != null ? new HttpRequestMessage(HttpMethod.Post, httpClient.BaseAddress) : null
                         };
                     }
+                }
+                else
+                {
+                    // 无法提取错误消息时，也需要把 body 还回去（避免后续重复读取空内容）
+                    resp.Dispose();
+                    resp = new HttpResponseMessage(HttpStatusCode.BadRequest)
+                    {
+                        Content = new StringContent(firstBody ?? string.Empty, Encoding.UTF8, "application/json"),
+                        RequestMessage = httpClient.BaseAddress != null ? new HttpRequestMessage(HttpMethod.Post, httpClient.BaseAddress) : null
+                    };
                 }
             }
 

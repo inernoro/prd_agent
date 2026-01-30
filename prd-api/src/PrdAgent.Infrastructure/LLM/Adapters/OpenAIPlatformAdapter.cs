@@ -19,12 +19,50 @@ public class OpenAIPlatformAdapter : IImageGenPlatformAdapter
 
     public string GetGenerationsEndpoint(string baseUrl)
     {
-        return "/v1/images/generations";
+        return BuildOpenAIEndpoint(baseUrl, "images/generations");
     }
 
     public string GetEditsEndpoint(string baseUrl)
     {
-        return "/v1/images/edits";
+        return BuildOpenAIEndpoint(baseUrl, "images/edits");
+    }
+
+    /// <summary>
+    /// 构建 OpenAI 兼容端点路径
+    /// </summary>
+    private static string BuildOpenAIEndpoint(string baseUrl, string capabilityPath)
+    {
+        if (string.IsNullOrWhiteSpace(baseUrl)) return string.Empty;
+        if (string.IsNullOrWhiteSpace(capabilityPath)) return string.Empty;
+
+        var raw = baseUrl.Trim();
+        var cap = capabilityPath.Trim().TrimStart('/');
+
+        // 规则：以 # 结尾 - 强制使用原地址（不做任何拼接）
+        if (raw.EndsWith("#", StringComparison.Ordinal))
+        {
+            return raw.TrimEnd('#');
+        }
+
+        if (Uri.TryCreate(raw, UriKind.Absolute, out var u))
+        {
+            var path = (u.AbsolutePath ?? string.Empty).TrimEnd('/');
+
+            // 若 baseUrl 已经是完整的能力 endpoint，则直接使用
+            if (path.EndsWith("/" + cap, StringComparison.OrdinalIgnoreCase))
+            {
+                return raw;
+            }
+
+            // 若已包含 /v1（作为 base），则直接拼接能力路径
+            if (path.Contains("/v1", StringComparison.OrdinalIgnoreCase))
+            {
+                return raw.TrimEnd('/') + "/" + cap;
+            }
+        }
+
+        // 默认补上 /v1
+        return raw.TrimEnd('/') + "/v1/" + cap;
     }
 
     public object BuildGenerationRequest(

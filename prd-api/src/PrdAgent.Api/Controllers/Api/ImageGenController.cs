@@ -908,6 +908,46 @@ public class ImageGenController : ControllerBase
         // 文学创作场景：关联的配图标记索引
         var articleMarkerIndex = request?.ArticleMarkerIndex;
 
+        // 参考图/底图 SHA256
+        var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
+
+        // 参考图风格提示词（用于追加到生图 prompt）
+        string? referenceImagePrompt = null;
+
+        // 文学创作场景：若未指定参考图，自动从配置中获取底图
+        if (initImageAssetSha256 == null && appKey == "literary-agent")
+        {
+            // 优先从新的 ReferenceImageConfigs 获取激活的配置
+            var activeRefConfig = await _db.ReferenceImageConfigs
+                .Find(x => x.AppKey == "literary-agent" && x.IsActive)
+                .FirstOrDefaultAsync(ct);
+
+            if (activeRefConfig != null && !string.IsNullOrWhiteSpace(activeRefConfig.ImageSha256))
+            {
+                initImageAssetSha256 = activeRefConfig.ImageSha256.Trim().ToLowerInvariant();
+                referenceImagePrompt = activeRefConfig.Prompt;
+            }
+            else
+            {
+                // 回退到旧的 LiteraryAgentConfigs
+                var literaryConfig = await _db.LiteraryAgentConfigs.Find(x => x.Id == "literary-agent").FirstOrDefaultAsync(ct);
+                if (literaryConfig != null && !string.IsNullOrWhiteSpace(literaryConfig.ReferenceImageSha256))
+                {
+                    initImageAssetSha256 = literaryConfig.ReferenceImageSha256.Trim().ToLowerInvariant();
+                }
+            }
+        }
+
+        // 如果有参考图风格提示词，追加到每个 plan item 的 prompt 中
+        if (!string.IsNullOrWhiteSpace(referenceImagePrompt) && initImageAssetSha256 != null)
+        {
+            for (var i = 0; i < plan.Count; i++)
+            {
+                plan[i].Prompt = $"{referenceImagePrompt}\n\n{plan[i].Prompt}";
+            }
+        }
+
         var run = new ImageGenRun
         {
             OwnerAdminId = adminId,
@@ -929,6 +969,7 @@ public class ImageGenController : ControllerBase
             AppCallerCode = resolvedAppCallerCode,
             AppKey = appKey,
             ArticleMarkerIndex = articleMarkerIndex,
+            InitImageAssetSha256 = initImageAssetSha256,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1332,6 +1373,12 @@ public class CreateImageGenRunRequest
     /// Worker 完成/失败时会自动回填 ArticleIllustrationMarker.Status。
     /// </summary>
     public int? ArticleMarkerIndex { get; set; }
+
+    /// <summary>
+    /// 可选：图生图的参考图资产 SHA256。
+    /// 若提供，Worker 会从 COS 读取此图片作为参考图进行图生图。
+    /// </summary>
+    public string? InitImageAssetSha256 { get; set; }
 }
 
 public class ImageGenRunPlanItemInput

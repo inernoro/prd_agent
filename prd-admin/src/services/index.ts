@@ -143,6 +143,20 @@ import type {
   DeleteLiteraryPromptContract,
 } from '@/services/contracts/literaryPrompts';
 import type {
+  GetLiteraryAgentConfigContract,
+  UpdateLiteraryAgentConfigContract,
+  UploadReferenceImageContract,
+  ClearReferenceImageContract,
+  ListReferenceImageConfigsContract,
+  CreateReferenceImageConfigContract,
+  UpdateReferenceImageConfigContract,
+  UpdateReferenceImageFileContract,
+  DeleteReferenceImageConfigContract,
+  ActivateReferenceImageConfigContract,
+  DeactivateReferenceImageConfigContract,
+  GetActiveReferenceImageConfigContract,
+} from '@/services/contracts/literaryAgentConfig';
+import type {
   ListDefectTemplatesContract,
   CreateDefectTemplateContract,
   UpdateDefectTemplateContract,
@@ -354,6 +368,20 @@ import {
   updateLiteraryPromptReal,
   deleteLiteraryPromptReal,
 } from '@/services/real/literaryPrompts';
+import {
+  getLiteraryAgentConfigReal,
+  updateLiteraryAgentConfigReal,
+  uploadReferenceImageReal,
+  clearReferenceImageReal,
+  listReferenceImageConfigsReal,
+  createReferenceImageConfigReal,
+  updateReferenceImageConfigReal,
+  updateReferenceImageFileReal,
+  deleteReferenceImageConfigReal,
+  activateReferenceImageConfigReal,
+  deactivateReferenceImageConfigReal,
+  getActiveReferenceImageConfigReal,
+} from '@/services/real/literaryAgentConfig';
 import {
   listDefectTemplatesReal,
   createDefectTemplateReal,
@@ -602,6 +630,22 @@ export const listLiteraryPrompts: ListLiteraryPromptsContract = withAuth(listLit
 export const createLiteraryPrompt: CreateLiteraryPromptContract = withAuth(createLiteraryPromptReal);
 export const updateLiteraryPrompt: UpdateLiteraryPromptContract = withAuth(updateLiteraryPromptReal);
 export const deleteLiteraryPrompt: DeleteLiteraryPromptContract = withAuth(deleteLiteraryPromptReal);
+
+// Literary Agent Config
+export const getLiteraryAgentConfig: GetLiteraryAgentConfigContract = withAuth(getLiteraryAgentConfigReal);
+export const updateLiteraryAgentConfig: UpdateLiteraryAgentConfigContract = withAuth(updateLiteraryAgentConfigReal);
+export const uploadReferenceImage: UploadReferenceImageContract = uploadReferenceImageReal;  // 已内置 token 处理
+export const clearReferenceImage: ClearReferenceImageContract = withAuth(clearReferenceImageReal);
+
+// Reference Image Configs (新的多配置 API)
+export const listReferenceImageConfigs: ListReferenceImageConfigsContract = withAuth(listReferenceImageConfigsReal);
+export const createReferenceImageConfig: CreateReferenceImageConfigContract = createReferenceImageConfigReal;  // 已内置 token 处理
+export const updateReferenceImageConfig: UpdateReferenceImageConfigContract = withAuth(updateReferenceImageConfigReal);
+export const updateReferenceImageFile: UpdateReferenceImageFileContract = updateReferenceImageFileReal;  // 已内置 token 处理
+export const deleteReferenceImageConfig: DeleteReferenceImageConfigContract = withAuth(deleteReferenceImageConfigReal);
+export const activateReferenceImageConfig: ActivateReferenceImageConfigContract = withAuth(activateReferenceImageConfigReal);
+export const deactivateReferenceImageConfig: DeactivateReferenceImageConfigContract = withAuth(deactivateReferenceImageConfigReal);
+export const getActiveReferenceImageConfig: GetActiveReferenceImageConfigContract = withAuth(getActiveReferenceImageConfigReal);
 
 // Defect Agent
 export const listDefectTemplates: ListDefectTemplatesContract = withAuth(listDefectTemplatesReal);

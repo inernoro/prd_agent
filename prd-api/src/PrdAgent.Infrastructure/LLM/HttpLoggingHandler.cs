@@ -65,6 +65,16 @@ public class HttpLoggingHandler : DelegatingHandler
         HttpRequestMessage request, 
         CancellationToken cancellationToken)
     {
+        // 防护：检测非 HTTP(S) 请求，提前报错（避免 'file' scheme not supported 等模糊错误）
+        var requestUri = request.RequestUri;
+        if (requestUri != null && requestUri.IsAbsoluteUri &&
+            requestUri.Scheme != Uri.UriSchemeHttp && requestUri.Scheme != Uri.UriSchemeHttps)
+        {
+            var errorMsg = $"不支持的请求协议 '{requestUri.Scheme}'（必须是 http 或 https）: {requestUri}";
+            _logger.LogError("HTTP 请求失败: {Error}", errorMsg);
+            throw new NotSupportedException(errorMsg);
+        }
+
         var requestId = Guid.NewGuid().ToString("N")[..8];
         var stopwatch = Stopwatch.StartNew();
 

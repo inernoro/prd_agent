@@ -20,8 +20,16 @@ import {
   deleteLiteraryPrompt,
   getWatermarkByApp,
   getImageGenRun,
+  listReferenceImageConfigs,
+  createReferenceImageConfig,
+  updateReferenceImageConfig,
+  updateReferenceImageFile,
+  deleteReferenceImageConfig,
+  activateReferenceImageConfig,
+  deactivateReferenceImageConfig,
 } from '@/services';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, Check, Copy, DownloadCloud, MapPin } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil } from 'lucide-react';
+import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
@@ -105,6 +113,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setWatermarkStatus({ enabled: status.hasActiveConfig, name: status.activeName ?? null });
   }, []);
   const watermarkPanelRef = useRef<WatermarkSettingsPanelHandle | null>(null);
+
+  // 风格图/参考图配置（新的多配置模型）
+  const [referenceImageConfigs, setReferenceImageConfigs] = useState<ReferenceImageConfig[]>([]);
+  const [referenceImageLoading, setReferenceImageLoading] = useState(false);
+  const [referenceImageSaving, setReferenceImageSaving] = useState(false);
+  const referenceImageInputRef = useRef<HTMLInputElement | null>(null);
+  const editRefImageInputRef = useRef<HTMLInputElement | null>(null);
+  const [editingRefConfig, setEditingRefConfig] = useState<ReferenceImageConfig | null>(null);
+  const [editingRefConfigOpen, setEditingRefConfigOpen] = useState(false);
   
   // 文件上传相关状态
   const [uploadedFileName, setUploadedFileName] = useState('');
@@ -207,6 +224,23 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       cancelled = true;
     };
   }, []);
+
+  // 加载风格图配置列表
+  const loadReferenceImageConfigs = useCallback(async () => {
+    setReferenceImageLoading(true);
+    try {
+      const res = await listReferenceImageConfigs();
+      if (res?.success && res.data?.items) {
+        setReferenceImageConfigs(res.data.items);
+      }
+    } finally {
+      setReferenceImageLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadReferenceImageConfigs();
+  }, [loadReferenceImageConfigs]);
 
   async function loadWorkspace() {
     try {
@@ -1085,7 +1119,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     const finalB64 = String(gotBase64 || '').trim();
     if (finalUrl) {
       setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl: finalUrl, url: finalUrl } : x))
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl: finalUrl, url: finalUrl, errorMessage: null } : x))
       );
       // 保存图片URL到后端
       await updateMarkerStatus(markerIndex, { status: 'done' });
@@ -1129,7 +1163,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
     setMarkerRunItems((prev) =>
-      prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl, url: assetUrl } : x))
+      prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl, url: assetUrl, errorMessage: null } : x))
     );
     // 图片已经通过 uploadVisualAgentWorkspaceAsset 上传到腾讯云 COS，assetUrl 就是 COS 的 URL
     // 保存 URL 到后端（刷新后可恢复）
@@ -1219,8 +1253,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   };
 
   const handleRegenerateOne = async (markerIndex: number) => {
-    if (isBusy) return;
-    setGenerating(true);
+    // 每个配图独立生成，不检查全局 isBusy
     try {
       await runSingleMarker(markerIndex);
     } catch (error) {
@@ -1234,7 +1267,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         )
       );
     } finally {
-      setGenerating(false);
       // 3 状态模式：生图完成后仍保持在 MarkersGenerated
       setPhase(2); // MarkersGenerated
     }
@@ -1254,7 +1286,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   };
 
   const handleDeleteMarker = async (markerIndex: number) => {
-    if (isBusy) return;
+    // 只检查当前配图状态，不检查全局 isBusy
+    const currentItem = markerRunItemsRef.current.find((x) => x.markerIndex === markerIndex);
+    if (currentItem?.status === 'running' || currentItem?.status === 'parsing') return;
     const marker = markers.find((m) => m.index === markerIndex) ?? null;
     if (!marker) return;
 
@@ -1595,55 +1629,68 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             </div>
           </div>
 
-          {/* 系统提示词：永远可见（预览 + 列表） */}
+          {/* 配置状态栏：系统提示词 + 风格图 + 水印 */}
           <div className="mb-3">
-            <div className="mt-2 rounded-[12px] px-2 py-2 flex items-center gap-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
-              {/* 标签 */}
-              <div className="inline-block text-[10px] px-2 py-1 rounded font-semibold shrink-0" style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.7)', border: '1px solid rgba(147, 197, 253, 0.2)' }}>
-                系统提示词
+            <div className="mt-2 rounded-[12px] px-2 py-2 flex items-center gap-2 flex-wrap" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
+              {/* 系统提示词配置项 */}
+              <div
+                className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg font-medium shrink-0"
+                style={{
+                  background: 'rgba(147, 197, 253, 0.08)',
+                  border: '1px solid rgba(147, 197, 253, 0.2)',
+                  color: 'rgba(147, 197, 253, 0.9)',
+                }}
+              >
+                <FileText size={12} />
+                <span style={{ color: 'var(--text-muted)' }}>提示词:</span>
+                <span style={{ color: 'var(--text-primary)' }}>
+                  {selectedPrompt?.title || '未选择'}
+                </span>
               </div>
-              {watermarkStatus.enabled && (
-                <div
-                  className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-full font-semibold shrink-0"
-                  style={{ background: 'rgba(245, 158, 11, 0.12)', color: 'rgba(245, 158, 11, 0.85)', border: '1px solid rgba(245, 158, 11, 0.28)' }}
-                >
-                  水印: {watermarkStatus.name || '默认水印'}
-                </div>
-              )}
-              
-              {/* 标题 */}
-              <div className="flex-1 min-w-0">
-                {allPrompts.length === 0 ? (
-                  <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    还没有提示词模板
-                  </div>
-                ) : selectedPrompt ? (
-                  <div
-                    className="text-sm font-semibold"
-                    title={selectedPrompt.title}
-                    style={{
-                      color: 'var(--text-primary)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      minWidth: 0,
-                    }}
-                  >
-                    {selectedPrompt.title}
-                  </div>
-                ) : null}
+
+              {/* 风格图配置项 */}
+              <div
+                className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg font-medium shrink-0"
+                style={{
+                  background: referenceImageConfigs.find(c => c.isActive) ? 'rgba(168, 85, 247, 0.08)' : 'rgba(255, 255, 255, 0.03)',
+                  border: referenceImageConfigs.find(c => c.isActive) ? '1px solid rgba(168, 85, 247, 0.2)' : '1px solid rgba(255, 255, 255, 0.08)',
+                  color: referenceImageConfigs.find(c => c.isActive) ? 'rgba(168, 85, 247, 0.9)' : 'var(--text-muted)',
+                }}
+              >
+                <ImageIcon size={12} />
+                <span style={{ color: 'var(--text-muted)' }}>风格图:</span>
+                <span style={{ color: referenceImageConfigs.find(c => c.isActive) ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  {referenceImageConfigs.find(c => c.isActive)?.name || '未选择'}
+                </span>
+              </div>
+
+              {/* 水印配置项 */}
+              <div
+                className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg font-medium shrink-0"
+                style={{
+                  background: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.08)' : 'rgba(255, 255, 255, 0.03)',
+                  border: watermarkStatus.enabled ? '1px solid rgba(245, 158, 11, 0.2)' : '1px solid rgba(255, 255, 255, 0.08)',
+                  color: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.9)' : 'var(--text-muted)',
+                }}
+              >
+                <Sparkles size={12} />
+                <span style={{ color: 'var(--text-muted)' }}>水印:</span>
+                <span style={{ color: watermarkStatus.enabled ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  {watermarkStatus.enabled ? (watermarkStatus.name || '默认水印') : '未启用'}
+                </span>
               </div>
               
               {/* 按钮 */}
+              <div className="flex-1" />
               <div className="shrink-0">
                 <Button
                   size="xs"
                   variant="secondary"
                   onClick={() => setPromptPreviewOpen(true)}
-                  title="切换系统提示词"
+                  title="管理配置"
                 >
                   <Eye size={12} />
-                  切换
+                  配置
                 </Button>
               </div>
             </div>
@@ -2435,17 +2482,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
       />
 
-      {/* 系统提示词与水印配置对话框 */}
+      {/* 系统提示词、底图与水印配置对话框 */}
       <Dialog
         open={promptPreviewOpen}
         onOpenChange={setPromptPreviewOpen}
         title="配置管理"
-        description="系统提示词与水印设置"
-        maxWidth={1120}
+        description="系统提示词、风格图与水印设置"
+        maxWidth={1400}
         contentClassName="overflow-hidden !p-4"
         contentStyle={{ maxHeight: '70vh', height: '70vh' }}
         content={
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-2 h-full min-h-0">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-2 h-full min-h-0">
             {/* 左侧：系统提示词 */}
             <div className="min-h-0 flex flex-col h-full">
               <div className="flex items-center justify-between mb-2">
@@ -2580,7 +2627,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               {selectedPrompt?.id !== prompt.id ? (
                                 <Button
                                   size="xs"
-                                  variant="primary"
+                                  variant="secondary"
                                   onClick={() => {
                                     setSelectedPrompt(prompt);
                                     setPromptPreviewOpen(false);
@@ -2590,14 +2637,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   选择
                                 </Button>
                               ) : (
-                                <Button
-                                  size="xs"
-                                  variant="secondary"
-                                  disabled
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200"
+                                  style={{
+                                    background: 'rgba(34, 197, 94, 0.15)',
+                                    border: '1px solid rgba(34, 197, 94, 0.3)',
+                                    color: 'rgba(34, 197, 94, 0.95)',
+                                  }}
+                                  title="当前选中"
                                 >
-                                  <Check size={12} />
-                                  已选
-                                </Button>
+                                  <CheckCircle2 size={12} />
+                                  已选择
+                                </button>
                               )}
                               <Button
                                 size="xs"
@@ -2628,6 +2680,227 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* 中间：风格图设置 */}
+            <div className="min-h-0 flex flex-col h-full border-l pl-4" style={{ borderColor: 'var(--border-subtle)' }}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  风格图设置
+                </div>
+                <Button
+                  size="xs"
+                  variant="primary"
+                  disabled={referenceImageSaving}
+                  onClick={() => referenceImageInputRef.current?.click()}
+                >
+                  <Plus size={12} />
+                  新增配置
+                </Button>
+              </div>
+              <input
+                ref={referenceImageInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  e.target.value = '';
+                  // 弹出输入框让用户输入名称
+                  const name = await systemDialog.prompt({
+                    title: '新建风格图配置',
+                    message: '请输入配置名称（如"科技风格"、"水墨风格"等）',
+                    defaultValue: `风格图配置 ${referenceImageConfigs.length + 1}`,
+                  });
+                  if (!name) return;
+                  setReferenceImageSaving(true);
+                  try {
+                    const res = await createReferenceImageConfig({ name, file });
+                    if (res.success && res.data?.config) {
+                      await loadReferenceImageConfigs();
+                      toast.success('风格图配置创建成功');
+                    } else {
+                      toast.error('创建失败', res.error?.message || '未知错误');
+                    }
+                  } finally {
+                    setReferenceImageSaving(false);
+                  }
+                }}
+              />
+              <div className="flex-1 min-h-0 overflow-auto pr-1">
+                {referenceImageLoading ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+                  </div>
+                ) : referenceImageConfigs.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-4 h-full">
+                    <div
+                      className="w-16 h-16 rounded-xl flex items-center justify-center"
+                      style={{ background: 'rgba(147, 197, 253, 0.08)', border: '1px dashed rgba(147, 197, 253, 0.25)' }}
+                    >
+                      <ImageIcon size={28} style={{ color: 'rgba(147, 197, 253, 0.5)' }} />
+                    </div>
+                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      上传一张风格图后，生成的所有图片都会参考此图的风格。
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3">
+                    {referenceImageConfigs.map((config) => (
+                      <GlassCard key={config.id} className="p-0 overflow-hidden">
+                        <div className="flex flex-col">
+                          {/* 标题栏 */}
+                          <div className="p-2 pb-1 flex-shrink-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                  {config.name}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 内容区：左侧提示词 + 右侧图片预览 */}
+                          <div className="px-2 pb-1 flex-shrink-0">
+                            <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px' }}>
+                              {/* 左侧：提示词预览 */}
+                              <div
+                                className="overflow-auto border rounded-[6px] p-2"
+                                style={{
+                                  borderColor: 'var(--border-subtle)',
+                                  background: 'rgba(255,255,255,0.02)',
+                                  minHeight: '80px',
+                                  maxHeight: '100px',
+                                }}
+                              >
+                                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                  {config.prompt || '（无提示词）'}
+                                </div>
+                              </div>
+                              {/* 右侧：图片预览 */}
+                              <div
+                                className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
+                                style={{
+                                  background: config.imageUrl
+                                    ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
+                                    : 'rgba(255,255,255,0.02)',
+                                  border: config.imageUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
+                                  minHeight: '80px',
+                                  maxHeight: '100px',
+                                }}
+                              >
+                                {config.imageUrl ? (
+                                  <img
+                                    src={config.imageUrl}
+                                    alt={config.name}
+                                    className="block w-full h-full object-contain"
+                                  />
+                                ) : (
+                                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 操作按钮区 */}
+                          <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                            <div className="flex flex-wrap gap-1.5 justify-end">
+                              {config.isActive ? (
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                                  style={{
+                                    background: 'rgba(34, 197, 94, 0.15)',
+                                    border: '1px solid rgba(34, 197, 94, 0.3)',
+                                    color: 'rgba(34, 197, 94, 0.95)',
+                                  }}
+                                  onClick={async () => {
+                                    setReferenceImageSaving(true);
+                                    try {
+                                      const res = await deactivateReferenceImageConfig({ id: config.id });
+                                      if (res.success) {
+                                        await loadReferenceImageConfigs();
+                                      }
+                                    } finally {
+                                      setReferenceImageSaving(false);
+                                    }
+                                  }}
+                                  disabled={referenceImageSaving}
+                                  title="点击取消选择"
+                                >
+                                  <CheckCircle2 size={12} />
+                                  已选择
+                                </button>
+                              ) : (
+                                <Button
+                                  size="xs"
+                                  variant="secondary"
+                                  onClick={async () => {
+                                    setReferenceImageSaving(true);
+                                    try {
+                                      const res = await activateReferenceImageConfig({ id: config.id });
+                                      if (res.success) {
+                                        await loadReferenceImageConfigs();
+                                      }
+                                    } finally {
+                                      setReferenceImageSaving(false);
+                                    }
+                                  }}
+                                  disabled={referenceImageSaving}
+                                >
+                                  <Check size={12} />
+                                  选择
+                                </Button>
+                              )}
+                              <Button
+                                size="xs"
+                                variant="secondary"
+                                onClick={() => {
+                                  setEditingRefConfig({ ...config });
+                                  setEditingRefConfigOpen(true);
+                                }}
+                              >
+                                <Pencil size={12} />
+                                编辑
+                              </Button>
+                              <Button
+                                size="xs"
+                                variant="danger"
+                                onClick={async () => {
+                                  const confirmed = await systemDialog.confirm({
+                                    title: '删除风格图配置',
+                                    message: `确定要删除「${config.name}」吗？`,
+                                    confirmText: '确定删除',
+                                    tone: 'danger',
+                                  });
+                                  if (!confirmed) return;
+                                  setReferenceImageSaving(true);
+                                  try {
+                                    const res = await deleteReferenceImageConfig({ id: config.id });
+                                    if (res.success) {
+                                      await loadReferenceImageConfigs();
+                                      toast.success('已删除');
+                                    } else {
+                                      toast.error('删除失败', res.error?.message || '未知错误');
+                                    }
+                                  } finally {
+                                    setReferenceImageSaving(false);
+                                  }
+                                }}
+                                disabled={referenceImageSaving}
+                              >
+                                <Trash2 size={12} />
+                                删除
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      </GlassCard>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* 右侧：水印设置 */}
@@ -2664,6 +2937,177 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         initialIndex={imagePreviewIndex}
         open={imagePreviewOpen}
         onClose={() => setImagePreviewOpen(false)}
+      />
+
+      {/* 风格图配置编辑对话框 */}
+      <Dialog
+        open={editingRefConfigOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditingRefConfigOpen(false);
+            setEditingRefConfig(null);
+          }
+        }}
+        title="编辑风格图配置"
+        description="修改配置名称和参考图风格提示词"
+        maxWidth={800}
+        content={
+          editingRefConfig ? (
+            <div className="flex flex-col gap-4 p-2">
+              {/* 左右布局：左边表单，右边图片预览 */}
+              <div className="grid grid-cols-2 gap-6">
+                {/* 左侧：表单 */}
+                <div className="flex flex-col gap-4">
+                  <div>
+                    <label className="text-sm font-medium mb-1 block" style={{ color: 'var(--text-primary)' }}>
+                      配置名称
+                    </label>
+                    <input
+                      type="text"
+                      value={editingRefConfig.name}
+                      onChange={(e) => setEditingRefConfig({ ...editingRefConfig, name: e.target.value })}
+                      className="w-full px-3 py-2 rounded-lg text-sm"
+                      style={{
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--border-subtle)',
+                        color: 'var(--text-primary)',
+                      }}
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-sm font-medium mb-1 block" style={{ color: 'var(--text-primary)' }}>
+                      参考图风格提示词
+                    </label>
+                    <textarea
+                      value={editingRefConfig.prompt}
+                      onChange={(e) => setEditingRefConfig({ ...editingRefConfig, prompt: e.target.value })}
+                      rows={8}
+                      className="w-full px-3 py-2 rounded-lg text-sm resize-none"
+                      style={{
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--border-subtle)',
+                        color: 'var(--text-primary)',
+                      }}
+                      placeholder="例如：请参考图中的风格、色调、构图和视觉元素来生成图片，保持整体美学风格的一致性。"
+                    />
+                    <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                      此提示词会自动追加到每个生图请求中，引导 AI 参考风格图的风格。
+                    </div>
+                  </div>
+                </div>
+
+                {/* 右侧：风格图预览 */}
+                <div className="flex flex-col">
+                  <label className="text-sm font-medium mb-1 block" style={{ color: 'var(--text-primary)' }}>
+                    当前风格图
+                  </label>
+                  <input
+                    ref={editRefImageInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file || !editingRefConfig) return;
+                      e.target.value = '';
+                      setReferenceImageSaving(true);
+                      try {
+                        const res = await updateReferenceImageFile({ id: editingRefConfig.id, file });
+                        if (res.success && res.data?.config) {
+                          setEditingRefConfig(res.data.config);
+                          await loadReferenceImageConfigs();
+                          toast.success('风格图已更新');
+                        } else {
+                          toast.error('更新失败', res.error?.message || '未知错误');
+                        }
+                      } finally {
+                        setReferenceImageSaving(false);
+                      }
+                    }}
+                  />
+                  <div
+                    className="flex-1 rounded-lg overflow-hidden relative group cursor-pointer"
+                    style={{
+                      background: editingRefConfig.imageUrl ? 'transparent' : 'rgba(255,255,255,0.02)',
+                      border: editingRefConfig.imageUrl ? 'none' : '1px dashed var(--border-subtle)',
+                      minHeight: '200px',
+                    }}
+                    onClick={() => editRefImageInputRef.current?.click()}
+                  >
+                    {editingRefConfig.imageUrl ? (
+                      <>
+                        <img
+                          src={editingRefConfig.imageUrl}
+                          alt={editingRefConfig.name}
+                          className="w-full h-full object-cover rounded-lg"
+                        />
+                        {/* 悬浮替换按钮 */}
+                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                          <div
+                            className="w-1/3 aspect-square rounded-xl flex items-center justify-center"
+                            style={{
+                              background: 'rgba(0, 0, 0, 0.6)',
+                              backdropFilter: 'blur(4px)',
+                            }}
+                          >
+                            <Upload size={32} style={{ color: 'rgba(255, 255, 255, 0.9)' }} />
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                        <div className="flex flex-col items-center gap-2">
+                          <Upload size={24} style={{ color: 'var(--text-muted)' }} />
+                          <span>点击上传风格图</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* 底部按钮 */}
+              <div className="flex gap-2 justify-end pt-2 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setEditingRefConfigOpen(false);
+                    setEditingRefConfig(null);
+                  }}
+                >
+                  取消
+                </Button>
+                <Button
+                  variant="primary"
+                  disabled={referenceImageSaving || !editingRefConfig.name.trim()}
+                  onClick={async () => {
+                    if (!editingRefConfig.name.trim()) return;
+                    setReferenceImageSaving(true);
+                    try {
+                      const res = await updateReferenceImageConfig({
+                        id: editingRefConfig.id,
+                        name: editingRefConfig.name.trim(),
+                        prompt: editingRefConfig.prompt.trim(),
+                      });
+                      if (res.success) {
+                        await loadReferenceImageConfigs();
+                        setEditingRefConfigOpen(false);
+                        setEditingRefConfig(null);
+                        toast.success('保存成功');
+                      } else {
+                        toast.error('保存失败', res.error?.message || '未知错误');
+                      }
+                    } finally {
+                      setReferenceImageSaving(false);
+                    }
+                  }}
+                >
+                  保存
+                </Button>
+              </div>
+            </div>
+          ) : null
+        }
       />
     </div>
   );

@@ -71,11 +71,10 @@ public class ImageGenPlatformAdapterIntegrationTests
         httpClient.Timeout = TimeSpan.FromSeconds(120);
 
         var endpoint = adapter.GetGenerationsEndpoint(apiUrl);
-        var fullUrl = apiUrl.TrimEnd('/') + endpoint;
-        _output.WriteLine($"Endpoint: {fullUrl}");
+        _output.WriteLine($"Endpoint: {endpoint}");
 
         var content = new StringContent(json, Encoding.UTF8, "application/json");
-        var response = await httpClient.PostAsync(fullUrl, content);
+        var response = await httpClient.PostAsync(endpoint, content);
 
         var body = await response.Content.ReadAsStringAsync();
         _output.WriteLine($"Response Status: {(int)response.StatusCode}");
@@ -125,13 +124,12 @@ public class ImageGenPlatformAdapterIntegrationTests
         httpClient.Timeout = TimeSpan.FromSeconds(120);
 
         var endpoint = adapter.GetGenerationsEndpoint(apiUrl);
-        var fullUrl = apiUrl.TrimEnd('/') + endpoint;
 
         var content = new StringContent(json, Encoding.UTF8, "application/json");
-        var response = await httpClient.PostAsync(fullUrl, content);
+        var response = await httpClient.PostAsync(endpoint, content);
         var body = await response.Content.ReadAsStringAsync();
 
-        _output.WriteLine($"Size {size}: Status {(int)response.StatusCode}");
+        _output.WriteLine($"Size {size}: Status {(int)response.StatusCode}, Endpoint: {endpoint}");
         Assert.True(response.IsSuccessStatusCode, $"Failed for size {size}: {body}");
     }
 
