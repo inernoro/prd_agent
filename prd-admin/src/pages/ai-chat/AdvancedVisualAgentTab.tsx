@@ -6470,7 +6470,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         {genError.prompt ? (
                           <div className="px-2.5 pt-2 pb-1.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
                             <div className="w-[3px] shrink-0 self-stretch rounded-full" style={{ background: 'rgba(239,68,68,0.4)' }} />
-                            <div className="text-[11px] min-w-0 truncate flex-1" style={{ color: 'rgba(255,255,255,0.5)' }} title={genError.prompt}>
+                            <div className="text-[11px] min-w-0 flex-1 line-clamp-2" style={{ color: 'rgba(255,255,255,0.5)' }} title={genError.prompt}>
                               <MessageContentRenderer
                                 content={genError.prompt}
                                 canvasItems={canvas}
