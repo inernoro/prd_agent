@@ -93,6 +93,8 @@ public class UserProfileResponse
     public int TotalImageCount { get; set; }
     /// <summary>生图任务总数（最近30天）</summary>
     public int TotalRunCount { get; set; }
+    /// <summary>缺陷统计（最近30天）</summary>
+    public UserProfileDefectStats? DefectStats { get; set; }
 }
 
 /// <summary>
@@ -112,6 +114,17 @@ public class UserProfileAgentUsageItem
 {
     public string AppKey { get; set; } = string.Empty;
     public int UsageCount { get; set; }
+}
+
+/// <summary>
+/// 用户简要资料 - 缺陷统计项
+/// </summary>
+public class UserProfileDefectStats
+{
+    /// <summary>收到的缺陷数（被指派给我的）</summary>
+    public int ReceivedCount { get; set; }
+    /// <summary>提交的缺陷数（我报告的）</summary>
+    public int SubmittedCount { get; set; }
 }
 
 /// <summary>

@@ -301,6 +301,21 @@ public class UsersController : ControllerBase
         );
         var totalImageCount = (int)await _db.ImageGenRunItems.CountDocumentsAsync(imageCountFilter, cancellationToken: ct);
 
+        // 统计缺陷数（最近30天）- 收到的（被指派给我）和提交的（我报告的）
+        var defectReceivedFilter = Builders<DefectReport>.Filter.And(
+            Builders<DefectReport>.Filter.Eq(d => d.AssigneeId, userId),
+            Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false),
+            Builders<DefectReport>.Filter.Gte(d => d.CreatedAt, thirtyDaysAgo)
+        );
+        var defectReceivedCount = (int)await _db.DefectReports.CountDocumentsAsync(defectReceivedFilter, cancellationToken: ct);
+
+        var defectSubmittedFilter = Builders<DefectReport>.Filter.And(
+            Builders<DefectReport>.Filter.Eq(d => d.ReporterId, userId),
+            Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false),
+            Builders<DefectReport>.Filter.Gte(d => d.CreatedAt, thirtyDaysAgo)
+        );
+        var defectSubmittedCount = (int)await _db.DefectReports.CountDocumentsAsync(defectSubmittedFilter, cancellationToken: ct);
+
         var remaining = await _loginAttemptService.GetLockoutRemainingSecondsAsync(user.Username);
 
         var profile = new UserProfileResponse
@@ -321,7 +336,14 @@ public class UsersController : ControllerBase
             Groups = groups,
             AgentUsage = agentUsage,
             TotalImageCount = totalImageCount,
-            TotalRunCount = totalRunCount
+            TotalRunCount = totalRunCount,
+            DefectStats = (defectReceivedCount > 0 || defectSubmittedCount > 0)
+                ? new UserProfileDefectStats
+                {
+                    ReceivedCount = defectReceivedCount,
+                    SubmittedCount = defectSubmittedCount
+                }
+                : null
         };
 
         return Ok(ApiResponse<UserProfileResponse>.Ok(profile));

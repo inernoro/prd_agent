@@ -64,6 +64,13 @@ export type UserProfileAgentUsageItem = {
   usageCount: number;
 };
 
+export type UserProfileDefectStats = {
+  /** 收到的缺陷数（被指派给我的） */
+  receivedCount: number;
+  /** 提交的缺陷数（我报告的） */
+  submittedCount: number;
+};
+
 export type UserProfileResponse = {
   userId: string;
   username: string;
@@ -84,6 +91,8 @@ export type UserProfileResponse = {
   totalImageCount: number;
   /** 生图任务总数（最近30天） */
   totalRunCount: number;
+  /** 缺陷统计（最近30天） */
+  defectStats?: UserProfileDefectStats | null;
 };
 
 export type GetUserProfileContract = (userId: string) => Promise<ApiResponse<UserProfileResponse>>;

@@ -56,6 +56,12 @@ public class ImageGenModelAdapterConfig
     /// <summary>提供商名称（如 Google、OpenAI）</summary>
     public string Provider { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 平台类型标识（用于选择正确的平台适配器）
+    /// 值：openai / volces / null（自动检测）
+    /// </summary>
+    public string? PlatformType { get; set; }
+
     /// <summary>官方文档链接（方便对照校验）</summary>
     public string? OfficialDocUrl { get; set; }
 

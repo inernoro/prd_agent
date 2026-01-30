@@ -16,6 +16,7 @@ using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Infrastructure.LLM.Adapters;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -181,17 +182,21 @@ public class OpenAIImageClient
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图模型不支持 Anthropic 平台（请配置 OpenAI 兼容的 images API）");
         }
 
-        var isVolces = IsVolcesImagesApi(apiUrl);
+        // 获取平台适配器（优先使用模型配置，fallback 到 URL 检测）
+        var platformAdapter = ImageGenPlatformAdapterFactory.GetAdapter(apiUrl, effectiveModelName);
+        var isVolces = platformAdapter.PlatformType == "volces"; // 保留兼容变量
         initImageBase64 = string.IsNullOrWhiteSpace(initImageBase64) ? null : initImageBase64.Trim();
         // 说明：某些路径（如 Volces 降级）会把 initImageBase64 清空，但我们仍希望日志能追溯“用户是否提供过参考图”
         var initImageProvidedForLog = initImageProvided || initImageBase64 != null;
-        if (isVolces && initImageBase64 != null)
+        if (!platformAdapter.SupportsImageToImage && initImageBase64 != null)
         {
-            // Volces/豆包不支持 OpenAI images/edits，避免 404；降级为文生图
+            // 平台不支持图生图，降级为文生图
             initImageBase64 = null;
         }
         var initImageUsedForCall = initImageBase64 != null;
-        var endpoint = initImageBase64 == null ? GetImagesEndpoint(apiUrl) : GetImagesEditEndpoint(apiUrl);
+        var endpoint = initImageBase64 == null 
+            ? platformAdapter.GetGenerationsEndpoint(apiUrl) 
+            : platformAdapter.GetEditsEndpoint(apiUrl);
         if (string.IsNullOrWhiteSpace(endpoint))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图模型 API URL 无效");
@@ -278,103 +283,39 @@ public class OpenAIImageClient
             httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/').TrimEnd('#') + "/");
         }
 
-        var providerForLog = isVolces ? "Volces" : "OpenAI";
+        var providerForLog = platformAdapter.ProviderNameForLog;
+        
+        // 确定实际使用的响应格式（某些平台强制 url）
+        var effectiveResponseFormat = platformAdapter.ForceUrlResponseFormat ? "url" : responseFormat;
+        
+        // 归一化尺寸（某些平台有最小尺寸要求）
+        var normalizedSize = platformAdapter.NormalizeSize(size);
+        
+        // 使用平台适配器构建请求
         object reqObj;
         if (initImageBase64 == null)
         {
-            if (isVolces)
-            {
-                // Volces Ark Images API（/api/v3/images/generations）
-                // 兼容前端统一输入：即使前端请求 b64_json，Volces 侧也强制用 url（再由后端下载转 base64/dataURL 回传）
-                var volcesResponseFormat = "url";
-                var volcesSize = NormalizeVolcesSize(size);
-
-                // 使用动态对象支持不同的尺寸参数格式
-                var volcesReqDict = new Dictionary<string, object>
-                {
-                    ["model"] = effectiveModelName,
-                    ["prompt"] = prompt.Trim(),
-                    ["n"] = n,
-                    ["response_format"] = volcesResponseFormat,
-                    ["sequential_image_generation"] = "disabled",
-                    ["stream"] = false,
-                    ["watermark"] = true
-                };
-
-                // 根据适配器配置的参数格式添加尺寸参数
-                if (reqParams.HasAdapter && reqParams.SizeParams.Count > 0)
-                {
-                    foreach (var kv in reqParams.SizeParams)
-                    {
-                        volcesReqDict[kv.Key] = kv.Value;
-                    }
-                }
-                else
-                {
-                    // 默认使用 size 参数（WxH 格式）
-                    volcesReqDict["size"] = volcesSize;
-                }
-
-                reqObj = volcesReqDict;
-            }
-            else
-            {
-                // 使用动态对象支持不同的尺寸参数格式
-                var openaiReqDict = new Dictionary<string, object>
-                {
-                    ["model"] = effectiveModelName,
-                    ["prompt"] = prompt.Trim(),
-                    ["n"] = n,
-                };
-
-                if (!string.IsNullOrWhiteSpace(responseFormat))
-                {
-                    openaiReqDict["response_format"] = responseFormat.Trim();
-                }
-
-                // 根据适配器配置的参数格式添加尺寸参数
-                if (reqParams.HasAdapter && reqParams.SizeParams.Count > 0)
-                {
-                    foreach (var kv in reqParams.SizeParams)
-                    {
-                        openaiReqDict[kv.Key] = kv.Value;
-                    }
-                }
-                else if (!string.IsNullOrWhiteSpace(size))
-                {
-                    // 默认使用 size 参数（WxH 格式）
-                    openaiReqDict["size"] = size.Trim();
-                }
-
-                reqObj = openaiReqDict;
-            }
+            // 文生图请求
+            var sizeParams = reqParams.HasAdapter && reqParams.SizeParams.Count > 0 
+                ? reqParams.SizeParams 
+                : null;
+            reqObj = platformAdapter.BuildGenerationRequest(
+                effectiveModelName, 
+                prompt, 
+                n, 
+                normalizedSize, 
+                effectiveResponseFormat,
+                sizeParams);
         }
         else
         {
-            // 图生图（首帧）：使用 images/edits（multipart/form-data）
-            if (isVolces)
-            {
-                reqObj = new VolcesImageEditRequest
-                {
-                    Model = effectiveModelName,
-                    Prompt = prompt.Trim(),
-                    N = n,
-                    Size = NormalizeVolcesSize(size),
-                    ResponseFormat = "url",
-                    Watermark = true
-                };
-            }
-            else
-            {
-                reqObj = new OpenAIImageEditRequest
-                {
-                    Model = effectiveModelName,
-                    Prompt = prompt.Trim(),
-                    N = n,
-                    Size = string.IsNullOrWhiteSpace(size) ? null : size.Trim(),
-                    ResponseFormat = string.IsNullOrWhiteSpace(responseFormat) ? null : responseFormat.Trim()
-                };
-            }
+            // 图生图请求（multipart/form-data）
+            reqObj = platformAdapter.BuildEditRequest(
+                effectiveModelName, 
+                prompt, 
+                n, 
+                normalizedSize, 
+                effectiveResponseFormat);
         }
 
         // 提前保存参考图到 COS 并创建 input artifact（确保即使请求失败也能在日志中预览参考图）
@@ -415,13 +356,32 @@ public class OpenAIImageClient
             string reqRawJson;
             if (initImageUsedForCall)
             {
+                // 图生图请求的日志序列化
+                var editSize = reqObj switch
+                {
+                    VolcesImageEditRequest ver => ver.Size,
+                    Adapters.VolcesImageEditRequest ver2 => ver2.Size,
+                    OpenAIImageEditRequest oer => oer.Size,
+                    Adapters.OpenAIImageEditRequest oer2 => oer2.Size,
+                    Dictionary<string, object> dict => dict.TryGetValue("size", out var s) ? s?.ToString() : null,
+                    _ => null
+                };
+                var editRespFormat = reqObj switch
+                {
+                    VolcesImageEditRequest ver => ver.ResponseFormat,
+                    Adapters.VolcesImageEditRequest ver2 => ver2.ResponseFormat,
+                    OpenAIImageEditRequest oer => oer.ResponseFormat,
+                    Adapters.OpenAIImageEditRequest oer2 => oer2.ResponseFormat,
+                    Dictionary<string, object> dict => dict.TryGetValue("response_format", out var rf) ? rf?.ToString() : null,
+                    _ => null
+                };
                 reqRawJson = JsonSerializer.Serialize(new
                 {
                     model = effectiveModelName,
                     prompt = prompt.Trim(),
                     n,
-                    size = isVolces ? ((VolcesImageEditRequest)reqObj).Size : ((OpenAIImageEditRequest)reqObj).Size,
-                    responseFormat = isVolces ? ((VolcesImageEditRequest)reqObj).ResponseFormat : ((OpenAIImageEditRequest)reqObj).ResponseFormat,
+                    size = editSize,
+                    responseFormat = editRespFormat,
                     initImageProvided = initImageProvidedForLog,
                     initImageUsed = true,
                     image = initImageCosUrl
@@ -429,33 +389,22 @@ public class OpenAIImageClient
             }
             else
             {
-                if (isVolces)
+                // 文生图请求：适配器总是返回 Dictionary<string, object>
+                if (reqObj is Dictionary<string, object> reqDict)
                 {
-                    var r = (VolcesImageRequest)reqObj;
-                    reqRawJson = JsonSerializer.Serialize(new
+                    var logDict = new Dictionary<string, object>(reqDict)
                     {
-                        model = r.Model,
-                        prompt = r.Prompt,
-                        n = r.N,
-                        size = r.Size,
-                        responseFormat = r.ResponseFormat,
-                        sequentialImageGeneration = r.SequentialImageGeneration,
-                        stream = r.Stream,
-                        watermark = r.Watermark,
-                        initImageProvided = initImageProvidedForLog,
-                        initImageUsed = false
-                    });
+                        ["initImageProvided"] = initImageProvidedForLog,
+                        ["initImageUsed"] = false
+                    };
+                    reqRawJson = JsonSerializer.Serialize(logDict);
                 }
                 else
                 {
-                    var r = (OpenAIImageRequest)reqObj;
+                    // Fallback: 序列化未知对象类型
                     reqRawJson = JsonSerializer.Serialize(new
                     {
-                        model = r.Model,
-                        prompt = r.Prompt,
-                        n = r.N,
-                        size = r.Size,
-                        responseFormat = r.ResponseFormat,
+                        reqObj,
                         initImageProvided = initImageProvidedForLog,
                         initImageUsed = false
                     });
@@ -512,9 +461,8 @@ public class OpenAIImageClient
                     : new Uri(endpoint.TrimStart('/'), UriKind.Relative);
                 if (initImageBase64 == null)
                 {
-                    var reqJsonInner = isVolces
-                        ? JsonSerializer.Serialize((VolcesImageRequest)reqObj, VolcesImageJsonContext.Default.VolcesImageRequest)
-                        : JsonSerializer.Serialize((OpenAIImageRequest)reqObj, OpenAIImageJsonContext.Default.OpenAIImageRequest);
+                    // 文生图请求：适配器返回 Dictionary<string, object>，使用通用序列化器序列化
+                    var reqJsonInner = platformAdapter.SerializeRequest(reqObj);
                     var contentInner = new StringContent(reqJsonInner, Encoding.UTF8, "application/json");
                     return await httpClient.PostAsync(targetUriInner, contentInner, token);
                 }
@@ -539,24 +487,55 @@ public class OpenAIImageClient
                 imgContent.Headers.ContentType = new MediaTypeHeaderValue(string.IsNullOrWhiteSpace(imgMime) ? "image/png" : imgMime);
                 mp.Add(imgContent, "image", "init.png");
 
-                if (isVolces)
+                // 图生图请求：从 reqObj 提取字段构建 multipart/form-data
+                // 支持适配器返回的类型或旧的强类型对象
+                void AddEditField(string name, string? value)
                 {
-                    var r = (VolcesImageEditRequest)reqObj;
-                    mp.Add(new StringContent(r.Model ?? string.Empty), "model");
-                    mp.Add(new StringContent(r.Prompt ?? string.Empty), "prompt");
-                    mp.Add(new StringContent(r.N.ToString()), "n");
-                    if (!string.IsNullOrWhiteSpace(r.Size)) mp.Add(new StringContent(r.Size), "size");
-                    if (!string.IsNullOrWhiteSpace(r.ResponseFormat)) mp.Add(new StringContent(r.ResponseFormat), "response_format");
-                    if (r.Watermark.HasValue) mp.Add(new StringContent(r.Watermark.Value ? "true" : "false"), "watermark");
+                    if (!string.IsNullOrWhiteSpace(value))
+                        mp.Add(new StringContent(value), name);
                 }
-                else
+                void AddEditFieldInt(string name, int value) => mp.Add(new StringContent(value.ToString()), name);
+                void AddEditFieldBool(string name, bool? value)
                 {
-                    var r = (OpenAIImageEditRequest)reqObj;
-                    mp.Add(new StringContent(r.Model ?? string.Empty), "model");
-                    mp.Add(new StringContent(r.Prompt ?? string.Empty), "prompt");
-                    mp.Add(new StringContent(r.N.ToString()), "n");
-                    if (!string.IsNullOrWhiteSpace(r.Size)) mp.Add(new StringContent(r.Size), "size");
-                    if (!string.IsNullOrWhiteSpace(r.ResponseFormat)) mp.Add(new StringContent(r.ResponseFormat), "response_format");
+                    if (value.HasValue)
+                        mp.Add(new StringContent(value.Value ? "true" : "false"), name);
+                }
+
+                switch (reqObj)
+                {
+                    case Adapters.VolcesImageEditRequest ver:
+                        AddEditField("model", ver.Model);
+                        AddEditField("prompt", ver.Prompt);
+                        AddEditFieldInt("n", ver.N);
+                        AddEditField("size", ver.Size);
+                        AddEditField("response_format", ver.ResponseFormat);
+                        AddEditFieldBool("watermark", ver.Watermark);
+                        break;
+                    case Adapters.OpenAIImageEditRequest oer:
+                        AddEditField("model", oer.Model);
+                        AddEditField("prompt", oer.Prompt);
+                        AddEditFieldInt("n", oer.N);
+                        AddEditField("size", oer.Size);
+                        AddEditField("response_format", oer.ResponseFormat);
+                        break;
+                    case VolcesImageEditRequest ver:
+                        AddEditField("model", ver.Model);
+                        AddEditField("prompt", ver.Prompt);
+                        AddEditFieldInt("n", ver.N);
+                        AddEditField("size", ver.Size);
+                        AddEditField("response_format", ver.ResponseFormat);
+                        AddEditFieldBool("watermark", ver.Watermark);
+                        break;
+                    case OpenAIImageEditRequest oer:
+                        AddEditField("model", oer.Model);
+                        AddEditField("prompt", oer.Prompt);
+                        AddEditFieldInt("n", oer.N);
+                        AddEditField("size", oer.Size);
+                        AddEditField("response_format", oer.ResponseFormat);
+                        break;
+                    default:
+                        _logger.LogWarning("Unexpected reqObj type for image edit: {Type}", reqObj.GetType().Name);
+                        break;
                 }
 
                 return await httpClient.PostAsync(targetUriInner, mp, token);
@@ -564,29 +543,31 @@ public class OpenAIImageClient
 
             resp = await SendOnceAsync(ct);
 
-            // Volces：size 太小会 400，自动升级到最小要求并重试一次（前端无需改）
-            if (isVolces && initImageBase64 == null && resp.StatusCode == HttpStatusCode.BadRequest)
+            // 平台特定的尺寸错误处理：使用适配器自动修正
+            if (initImageBase64 == null && resp.StatusCode == HttpStatusCode.BadRequest)
             {
                 var firstBody = await resp.Content.ReadAsStringAsync(ct);
-                if (TryExtractUpstreamErrorMessage(firstBody ?? string.Empty, out var errMsg) &&
-                    errMsg.Contains("size", StringComparison.OrdinalIgnoreCase) &&
-                    errMsg.Contains("at least", StringComparison.OrdinalIgnoreCase) &&
-                    reqObj is VolcesImageRequest vReq &&
-                    !string.Equals(vReq.Size, "1920x1920", StringComparison.OrdinalIgnoreCase))
+                if (TryExtractUpstreamErrorMessage(firstBody ?? string.Empty, out var errMsg))
                 {
-                    vReq.Size = "1920x1920"; // 1920*1920=3,686,400（满足报错要求的最小像素数）
-                    resp.Dispose();
-                    resp = await SendOnceAsync(ct);
-                }
-                else
-                {
-                    // 兜底：把第一次 body 还回去，下面统一处理
-                    resp.Dispose();
-                    resp = new HttpResponseMessage(HttpStatusCode.BadRequest)
+                    var currentSize = GetCurrentRequestedSizeForRetry(reqObj, initImageBase64);
+                    var suggestedSize = platformAdapter.HandleSizeError(errMsg, currentSize);
+                    
+                    if (!string.IsNullOrEmpty(suggestedSize))
                     {
-                        Content = new StringContent(firstBody ?? string.Empty, Encoding.UTF8, "application/json"),
-                        RequestMessage = httpClient.BaseAddress != null ? new HttpRequestMessage(HttpMethod.Post, httpClient.BaseAddress) : null
-                    };
+                        SetRequestedSizeForRetry(reqObj, initImageBase64, suggestedSize);
+                        resp.Dispose();
+                        resp = await SendOnceAsync(ct);
+                    }
+                    else
+                    {
+                        // 兜底：把第一次 body 还回去，下面统一处理
+                        resp.Dispose();
+                        resp = new HttpResponseMessage(HttpStatusCode.BadRequest)
+                        {
+                            Content = new StringContent(firstBody ?? string.Empty, Encoding.UTF8, "application/json"),
+                            RequestMessage = httpClient.BaseAddress != null ? new HttpRequestMessage(HttpMethod.Post, httpClient.BaseAddress) : null
+                        };
+                    }
                 }
             }
 
@@ -620,7 +601,7 @@ public class OpenAIImageClient
                     if (!string.Equals(NormalizeSizeString(currentSize), NormalizeSizeString(chosenStr), StringComparison.OrdinalIgnoreCase))
                     {
                         // 将第一次响应“还回去”给统一处理前，先尝试一次自动修正重试
-                        SetRequestedSizeForRetry(reqObj, initImageBase64, chosenStr, isVolces: false);
+                        SetRequestedSizeForRetry(reqObj, initImageBase64, chosenStr);
                         // 注意：不能用 MarkError 写“尺寸替换”，否则会把日志状态置为 failed 并写入 Error 字段。
                         // 真实的“本次替换信息”会在 MarkDone 的 AnswerText（summary）与 API meta 中落库/返回。
                         resp.Dispose();
@@ -878,12 +859,38 @@ public class OpenAIImageClient
             {
                 var endedAt = DateTime.UtcNow;
                     var respContentType = resp.Content.Headers.ContentType?.MediaType;
-                var responseFormatForLog = initImageBase64 == null
-                    ? (isVolces ? ((VolcesImageRequest)reqObj).ResponseFormat : ((OpenAIImageRequest)reqObj).ResponseFormat)
-                    : (isVolces ? ((VolcesImageEditRequest)reqObj).ResponseFormat : ((OpenAIImageEditRequest)reqObj).ResponseFormat);
-                var sizeForLog = initImageBase64 == null
-                    ? (isVolces ? ((VolcesImageRequest)reqObj).Size : ((OpenAIImageRequest)reqObj).Size)
-                    : (isVolces ? ((VolcesImageEditRequest)reqObj).Size : ((OpenAIImageEditRequest)reqObj).Size);
+                // 从请求对象中提取 responseFormat 和 size 用于日志
+                string? responseFormatForLog = null;
+                string? sizeForLog = null;
+                if (reqObj is Dictionary<string, object> logDict)
+                {
+                    responseFormatForLog = logDict.TryGetValue("response_format", out var rf) ? rf?.ToString() : null;
+                    sizeForLog = logDict.TryGetValue("size", out var sz) ? sz?.ToString() : null;
+                }
+                else
+                {
+                    // Fallback: 兼容强类型对象
+                    responseFormatForLog = reqObj switch
+                    {
+                        Adapters.VolcesImageEditRequest ver => ver.ResponseFormat,
+                        Adapters.OpenAIImageEditRequest oer => oer.ResponseFormat,
+                        VolcesImageRequest vr => vr.ResponseFormat,
+                        OpenAIImageRequest orr => orr.ResponseFormat,
+                        VolcesImageEditRequest ver => ver.ResponseFormat,
+                        OpenAIImageEditRequest oer => oer.ResponseFormat,
+                        _ => null
+                    };
+                    sizeForLog = reqObj switch
+                    {
+                        Adapters.VolcesImageEditRequest ver => ver.Size,
+                        Adapters.OpenAIImageEditRequest oer => oer.Size,
+                        VolcesImageRequest vr => vr.Size,
+                        OpenAIImageRequest orr => orr.Size,
+                        VolcesImageEditRequest ver => ver.Size,
+                        OpenAIImageEditRequest oer => oer.Size,
+                        _ => null
+                    };
+                }
                 var effectiveSizeNormForLog = NormalizeSizeString(sizeForLog);
                 var sizeAdjustedForLog = !string.IsNullOrWhiteSpace(requestedSizeNorm) &&
                                          !string.IsNullOrWhiteSpace(effectiveSizeNormForLog) &&
@@ -1732,6 +1739,14 @@ public class OpenAIImageClient
     {
         if (initImageBase64 == null)
         {
+            // 支持 Dictionary<string, object> 类型（适配器返回的请求对象）
+            if (reqObj is Dictionary<string, object> dict)
+            {
+                if (dict.TryGetValue("size", out var sizeVal) && sizeVal is string sizeStr)
+                    return sizeStr;
+                return null;
+            }
+            // Fallback: 兼容旧的强类型请求对象
             return reqObj switch
             {
                 OpenAIImageRequest r => r.Size,
@@ -1739,24 +1754,43 @@ public class OpenAIImageClient
                 _ => null
             };
         }
+        // 图生图请求
         return reqObj switch
         {
-            OpenAIImageEditRequest r => r.Size,
+            Adapters.VolcesImageEditRequest ver => ver.Size,
+            Adapters.OpenAIImageEditRequest oer => oer.Size,
             VolcesImageEditRequest r => r.Size,
+            OpenAIImageEditRequest r => r.Size,
             _ => null
         };
     }
 
-    private static void SetRequestedSizeForRetry(object reqObj, string? initImageBase64, string? newSize, bool isVolces)
+    private static void SetRequestedSizeForRetry(object reqObj, string? initImageBase64, string? newSize)
     {
         if (initImageBase64 == null)
         {
-            if (isVolces && reqObj is VolcesImageRequest vr) vr.Size = newSize;
-            if (!isVolces && reqObj is OpenAIImageRequest orr) orr.Size = newSize;
+            // 支持 Dictionary<string, object> 类型（适配器返回的请求对象）
+            if (reqObj is Dictionary<string, object> dict)
+            {
+                dict["size"] = newSize ?? string.Empty;
+                return;
+            }
+            // Fallback: 兼容旧的强类型请求对象
+            switch (reqObj)
+            {
+                case VolcesImageRequest vr: vr.Size = newSize; break;
+                case OpenAIImageRequest orr: orr.Size = newSize; break;
+            }
             return;
         }
-        if (isVolces && reqObj is VolcesImageEditRequest ver) ver.Size = newSize;
-        if (!isVolces && reqObj is OpenAIImageEditRequest oer) oer.Size = newSize;
+        // 图生图请求（强类型对象）
+        switch (reqObj)
+        {
+            case Adapters.VolcesImageEditRequest ver: ver.Size = newSize; break;
+            case Adapters.OpenAIImageEditRequest oer: oer.Size = newSize; break;
+            case VolcesImageEditRequest ver: ver.Size = newSize; break;
+            case OpenAIImageEditRequest oer: oer.Size = newSize; break;
+        }
     }
 
     /// <summary>
