@@ -179,14 +179,14 @@ function EditorInner({
                 break; // 遇到非零宽度空格节点就停止
               }
             }
-            // 在最后一个段落末尾追加 chip 和新的锚点
-            const anchorNode = $createTextNode('\u200B');
-            lastChild.append(chipNode, anchorNode);
+            // 在最后一个段落末尾追加 chip
+            // 注意：不再追加 \u200B 锚点，这会导致光标移动时出现“卡顿”（需要多按一次方向键才能跨过）
+            // 依赖 CSS (.rich-composer-paragraph { display: block; min-height: 1.5em; }) 来保证点击聚焦体验
+            lastChild.append(chipNode);
           } else {
             // 创建新段落
             const para = $createParagraphNode();
-            const anchorNode = $createTextNode('\u200B');
-            para.append(chipNode, anchorNode);
+            para.append(chipNode);
             root.append(para);
           }
         }, { discrete: true }); // discrete: 避免触发不必要的副作用
