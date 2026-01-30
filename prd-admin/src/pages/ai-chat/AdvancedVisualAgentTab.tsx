@@ -716,6 +716,73 @@ function buildTemplate(name: string) {
   return '';
 }
 
+// 提取元数据渲染组件
+function MessageMetadata({
+  size,
+  model,
+  className,
+  style,
+  sizeToAspectMap,
+}: {
+  size?: string;
+  model?: string;
+  className?: string;
+  style?: React.CSSProperties;
+  sizeToAspectMap?: Map<string, string>;
+}) {
+  if (!size && !model) return null;
+
+  const tier = detectTierFromSize(size || '');
+  const aspect = size ? ((sizeToAspectMap?.get(size.toLowerCase())) || detectAspectFromSize(size)) : '';
+  const tierLabel = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
+  const sizeLabel = aspect ? `${tierLabel} · ${aspect}` : size;
+
+  return (
+    <div className={`flex flex-wrap items-center justify-between w-full gap-1.5 mt-1 opacity-70 ${className || ''}`} style={style}>
+      {size ? (
+        <span
+          className="inline-flex items-center gap-1 px-2 rounded-full shrink-0"
+          style={{
+            height: 17, // 匹配 h-7 (28px) -> 这里的 17px 是因为字号只有 9px，整体更紧凑
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'rgba(255,255,255,0.04)',
+            color: 'rgba(255,255,255,0.75)',
+            fontSize: 9,
+            fontWeight: 500,
+          }}
+          title={`尺寸：${size}`}
+        >
+          <AspectIcon size={size} style={{ width: 10, height: 10, opacity: 0.8 }} />
+          <span className="tabular-nums" style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>
+            {sizeLabel}
+          </span>
+        </span>
+      ) : <div />}
+
+      {/* 模型池标签 */}
+      {model ? (
+        <span
+          className="inline-flex items-center gap-1 px-2 rounded-full shrink-0 ml-auto"
+          style={{
+            height: 17,
+            border: '1px solid rgba(99, 102, 241, 0.35)',
+            background: 'rgba(99, 102, 241, 0.1)',
+            color: 'rgba(129, 140, 248, 0.95)',
+            fontSize: 9,
+            fontWeight: 500,
+          }}
+          title={`模型池：${model}`}
+        >
+          <Sparkles size={9} style={{ opacity: 0.9 }} />
+          <span style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>
+            {model}
+          </span>
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 export default function AdvancedVisualAgentTab(props: { workspaceId: string; initialPrompt?: string }) {
   // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
   const workspaceId = String(props.workspaceId ?? '').trim();
@@ -6469,7 +6536,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         {/* 引用用户提示词 + 重试按钮 */}
                         {genError.prompt ? (
                           <div className="px-2.5 pt-2 pb-1.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
-                            <div className="w-[3px] shrink-0 self-stretch rounded-full" style={{ background: 'rgba(239,68,68,0.4)' }} />
                             <div className="text-[11px] min-w-0 flex-1 line-clamp-2" style={{ color: 'rgba(255,255,255,0.5)' }} title={genError.prompt}>
                               <MessageContentRenderer
                                 content={genError.prompt}
@@ -6532,22 +6598,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
                         style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgb(35, 35, 40)' }}
                       >
-                        {/* 引用用户提示词 + 参考图 */}
+                        {/* 引用用户提示词（Top） */}
                         {(genDone.prompt || genDone.refSrc) ? (
-                          <div className="px-2.5 pt-2 pb-1.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                            <div className="w-[3px] shrink-0 self-stretch rounded-full" style={{ background: 'rgba(214,178,106,0.5)' }} />
-                            {genDone.refSrc ? (
-                              <button
-                                type="button"
-                                className="shrink-0 rounded-[4px] overflow-hidden"
-                                style={{ width: 20, height: 20, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.15)' }}
-                                onClick={() => setPreview({ open: true, src: genDone.refSrc!, prompt: '参照图' })}
-                                title="点击预览参照图"
-                              >
-                                <img src={genDone.refSrc} alt="参照图" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                              </button>
-                            ) : null}
-                            <div className="text-[11px] min-w-0 truncate" style={{ color: 'rgba(255,255,255,0.5)' }} title={genDone.prompt}>
+                          <div className="px-2.5 pb-2 pt-1 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                            <div className="text-[11px] min-w-0 flex-1 line-clamp-1" style={{ color: 'rgba(255,255,255,0.5)' }} title={genDone.prompt}>
                               <MessageContentRenderer
                                 content={genDone.prompt || ''}
                                 canvasItems={canvas}
@@ -6556,7 +6610,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </div>
                           </div>
                         ) : null}
-                        {/* 生成的图片 */}
+
+                        {/* 生成的图片（Middle） */}
                         <button
                           type="button"
                           className="block w-full"
@@ -6569,6 +6624,65 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             style={{ width: '100%', maxHeight: 70, objectFit: 'contain', display: 'block' }}
                           />
                         </button>
+
+                        {/* 元数据（Bottom） */}
+                        {(() => {
+                          const originalUserMsg = messages.find(om => om.id === m.id.replace('msg_a', 'msg_u')) || messages[messages.indexOf(m) - 1];
+                          // 强制渲染元数据（即使用户消息中没有显式 token，也显示默认值或提取的值）
+                          // 如果用户消息没找到，或者 role 不是 User，我们仍然尝试从 m.content (GenDoneMeta) 中找线索，
+                          // 但 GenDoneMeta 里通常没有 size/model。
+                          // 回退逻辑：如果提取不到，就使用当前上下文的 effectiveModel 和默认尺寸。
+                          // 但这里是在渲染历史消息，不能直接用当前 effectiveModel（因为可能已经变了）。
+                          // 只能依赖 originalUserMsg。如果 originalUserMsg 存在，就提取。
+                          
+                          let msgSize = '';
+                          let msgModel = '';
+
+                          if (originalUserMsg && originalUserMsg.role === 'User') {
+                            const parsed = extractInlineImageToken(originalUserMsg.content);
+                            const contentText = parsed ? parsed.clean : originalUserMsg.content;
+                            const sizedMsg = extractSizeToken(contentText);
+                            msgSize = String(sizedMsg.size ?? '').trim();
+                            const modeledMsg = extractModelToken(sizedMsg.cleanText);
+                            msgModel = String(modeledMsg.model ?? '').trim();
+                          }
+
+                          // 如果没提取到，尝试使用默认值（仅当有 originalUserMsg 时，避免凭空捏造）
+                          if (originalUserMsg && !msgSize) {
+                             // 如果消息里没写尺寸，系统通常默认用 1024x1024。
+                             // 这里硬编码回退显示，以保证 UI 一致性（用户要求“下栏”）
+                             msgSize = '1024x1024';
+                          }
+                          
+                          // 如果没提取到模型，尝试从 GenDoneMeta 中获取 modelPool
+                          if (!msgModel) {
+                            const meta = parseGenDone(m.content);
+                            if (meta && meta.modelPool) {
+                              msgModel = meta.modelPool;
+                            }
+                          }
+
+                          // 如果还是没有，且有 originalUserMsg，尝试回退到 effectiveModel（仅作参考，可能不准）
+                          // 但为了准确性，如果不确定，最好不显示。
+                          // 不过用户想要“模型呢？”，我们可以尝试显示 serverDefaultModel 或 effectiveModel 的名称作为兜底
+                          // 注意：这里无法准确知道当时生图用了哪个模型（除非后端返回在 GenDoneMeta 里）
+                          // 目前 GenDoneMeta 有 modelPool 字段，应该能取到。
+                          
+                          // 只有在明确有数据时才渲染元数据栏
+                          if (msgSize || msgModel) {
+                            return (
+                              <div className="px-2.5 pt-2 pb-1.5 flex" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                                <MessageMetadata 
+                                  size={msgSize} 
+                                  model={msgModel} 
+                                  className="!mt-0 w-full" 
+                                  sizeToAspectMap={sizeToAspectMap} 
+                                />
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                       <span
                         className="text-[9px] tabular-nums select-none pl-1"
@@ -6640,63 +6754,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         
                         {/* 气泡底部元数据：尺寸/模型 */}
                         {isUser && (msgSize || msgModel) ? (
-                          <div className="flex flex-wrap items-center gap-1.5 mt-1 opacity-70">
-                            {msgSize ? (
-                              <span
-                                className="inline-flex items-center gap-1"
-                                style={{
-                                  height: 16,
-                                  paddingLeft: 4,
-                                  paddingRight: 6,
-                                  borderRadius: 3,
-                                  border: '1px solid rgba(255,255,255,0.1)',
-                                  background: 'rgba(255,255,255,0.03)',
-                                }}
-                                title={`尺寸：${msgSize}`}
-                              >
-                                <AspectIcon size={msgSize} />
-                                <span
-                                  className="tabular-nums"
-                                  style={{
-                                    fontSize: 9,
-                                    lineHeight: '12px',
-                                    color: 'rgba(255,255,255,0.6)',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  {sizeToAspectMap.get(msgSize.toLowerCase()) || detectAspectFromSize(msgSize)}
-                                </span>
-                              </span>
-                            ) : null}
-
-                            {/* 模型池标签 */}
-                            {msgModel ? (
-                              <span
-                                className="inline-flex items-center gap-1"
-                                style={{
-                                  height: 16,
-                                  paddingLeft: 4,
-                                  paddingRight: 6,
-                                  borderRadius: 3,
-                                  border: '1px solid rgba(99, 102, 241, 0.25)',
-                                  background: 'rgba(99, 102, 241, 0.08)',
-                                }}
-                                title={`模型池：${msgModel}`}
-                              >
-                                <Sparkles size={9} style={{ color: 'rgba(129, 140, 248, 0.75)' }} />
-                                <span
-                                  style={{
-                                    fontSize: 9,
-                                    lineHeight: '12px',
-                                    color: 'rgba(129, 140, 248, 0.75)',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  {msgModel}
-                                </span>
-                              </span>
-                            ) : null}
-                          </div>
+                          null // 移除用户消息中的元数据
                         ) : null}
                       </div>
                       {isLongMsg ? (
