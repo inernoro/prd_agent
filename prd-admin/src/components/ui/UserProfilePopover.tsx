@@ -4,7 +4,7 @@ import { getUserProfile, getUserAuthz, getSystemRoles } from '@/services';
 import type { UserProfileResponse } from '@/services/contracts/adminUsers';
 import type { AdminUserAuthzSnapshot, SystemRoleDto } from '@/services/contracts/authz';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
-import { Users2, Zap, Clock, Image, Eye, ChevronDown, ChevronUp, Shield, Pencil } from 'lucide-react';
+import { Users2, Zap, Clock, Image, Eye, ChevronDown, ChevronUp, Shield, Pencil, Bug, Palette, BookOpen, FileText, LayoutDashboard, Settings, Database, ScrollText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -25,12 +25,27 @@ const agentLabels: Record<string, string> = {
   'prd-agent': 'PRD Agent',
   'visual-agent': '视觉创作',
   'literary-agent': '文学创作',
+  'defect-agent': '缺陷管理',
   dashboard: '仪表盘',
   users: '用户管理',
   groups: '群组管理',
   mds: '模型管理',
   logs: '日志',
   settings: '设置',
+};
+
+// Agent 图标映射
+const agentIcons: Record<string, React.ReactNode> = {
+  'prd-agent': <FileText size={10} />,
+  'visual-agent': <Palette size={10} />,
+  'literary-agent': <BookOpen size={10} />,
+  'defect-agent': <Bug size={10} />,
+  dashboard: <LayoutDashboard size={10} />,
+  users: <Users2 size={10} />,
+  groups: <Users2 size={10} />,
+  mds: <Database size={10} />,
+  logs: <ScrollText size={10} />,
+  settings: <Settings size={10} />,
 };
 
 // 角色图标配置
@@ -419,7 +434,7 @@ export function UserProfilePopover({
               )}
 
               {/* Agent 使用统计（可点击跳转日志） */}
-              {profile.agentUsage.length > 0 && (
+              {(profile.agentUsage.length > 0 || profile.defectStats) && (
                 <div>
                   <div className="flex items-center gap-1.5 mb-1.5">
                     <Zap size={12} style={{ color: 'var(--text-muted)' }} />
@@ -442,6 +457,9 @@ export function UserProfilePopover({
                         }}
                         title={`查看 ${agentLabels[a.appKey] || a.appKey} 日志`}
                       >
+                        {agentIcons[a.appKey] && (
+                          <span style={{ color: 'var(--text-muted)' }}>{agentIcons[a.appKey]}</span>
+                        )}
                         <span className="text-[10px]" style={{ color: 'var(--text-primary)' }}>
                           {agentLabels[a.appKey] || a.appKey}
                         </span>
@@ -450,6 +468,31 @@ export function UserProfilePopover({
                         </span>
                       </button>
                     ))}
+                    {/* 缺陷管理统计 */}
+                    {profile.defectStats && (
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded-[4px] transition-colors hover:bg-white/10 cursor-pointer"
+                        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpen(false);
+                          setIsClicked(false);
+                          navigate('/defect-agent');
+                        }}
+                        title="缺陷管理：收到/提交"
+                      >
+                        <Bug size={10} style={{ color: 'var(--text-muted)' }} />
+                        <span className="text-[10px]" style={{ color: 'var(--text-primary)' }}>
+                          缺陷管理
+                        </span>
+                        <span className="text-[9px] flex items-center gap-0.5">
+                          <span style={{ color: 'rgba(239,68,68,0.9)' }}>{profile.defectStats.receivedCount}</span>
+                          <span style={{ color: 'var(--text-muted)' }}>/</span>
+                          <span style={{ color: 'rgba(59,130,246,0.9)' }}>{profile.defectStats.submittedCount}</span>
+                        </span>
+                      </button>
+                    )}
                   </div>
                 </div>
               )}

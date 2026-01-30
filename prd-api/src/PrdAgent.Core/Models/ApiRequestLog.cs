@@ -71,5 +71,37 @@ public class ApiRequestLog
     public string? Curl { get; set; }
 
     public bool IsEventStream { get; set; }
+
+    // ===== 新增字段（系统日志增强） =====
+
+    /// <summary>
+    /// 请求状态：running(进行中) / completed(完成) / failed(失败) / timeout(超时)
+    /// </summary>
+    public string? Status { get; set; }
+
+    /// <summary>
+    /// 方向：inbound(入站) / outbound(出站)
+    /// </summary>
+    public string? Direction { get; set; }
+
+    /// <summary>
+    /// 响应体（可能被截断）
+    /// </summary>
+    public string? ResponseBody { get; set; }
+
+    /// <summary>
+    /// 响应体是否被截断
+    /// </summary>
+    public bool ResponseBodyTruncated { get; set; }
+
+    /// <summary>
+    /// 响应体原始字节数
+    /// </summary>
+    public int? ResponseBodyBytes { get; set; }
+
+    /// <summary>
+    /// 目标地址（出站请求时记录）
+    /// </summary>
+    public string? TargetHost { get; set; }
 }
 

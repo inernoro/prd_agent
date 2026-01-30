@@ -295,6 +295,18 @@ export const api = {
       list: () => '/api/literary-agent/prompts',
       byId: (id: string) => `/api/literary-agent/prompts/${id}`,
     },
+    config: {
+      get: () => '/api/literary-agent/config',
+      referenceImage: () => '/api/literary-agent/config/reference-image',
+      referenceImages: {
+        list: () => '/api/literary-agent/config/reference-images',
+        byId: (id: string) => `/api/literary-agent/config/reference-images/${id}`,
+        image: (id: string) => `/api/literary-agent/config/reference-images/${id}/image`,
+        activate: (id: string) => `/api/literary-agent/config/reference-images/${id}/activate`,
+        deactivate: (id: string) => `/api/literary-agent/config/reference-images/${id}/deactivate`,
+        active: () => '/api/literary-agent/config/reference-images/active',
+      },
+    },
   },
 
   // ============ Defect Agent 缺陷管理 ============

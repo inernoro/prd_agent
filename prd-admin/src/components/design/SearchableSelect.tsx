@@ -13,7 +13,10 @@ import {
 
 export interface SearchableSelectOption {
   value: string;
+  /** 用于搜索和下拉列表显示 */
   label: string;
+  /** 可选，用于 Trigger 显示（不提供则使用 label） */
+  displayLabel?: string;
 }
 
 export interface SearchableSelectProps {
@@ -91,7 +94,7 @@ export function SearchableSelect({
           </div>
         )}
         <SelectPrimitive.Value placeholder={placeholder}>
-          {selectedOption?.label || placeholder}
+          {selectedOption?.displayLabel || selectedOption?.label || placeholder}
         </SelectPrimitive.Value>
         <ChevronDown
           aria-hidden

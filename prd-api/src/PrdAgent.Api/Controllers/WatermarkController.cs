@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.IO.Compression;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -128,6 +129,16 @@ public class WatermarkController : ControllerBase
             config.IconImageRef = normalized;
         }
 
+        // 处理预览底图
+        if (!string.IsNullOrWhiteSpace(config.PreviewBackgroundImageRef))
+        {
+            var (bgOk, bgNormalized) = await NormalizeIconRefAsync(config.PreviewBackgroundImageRef, ct);
+            if (bgOk && !string.IsNullOrWhiteSpace(bgNormalized))
+            {
+                config.PreviewBackgroundImageRef = bgNormalized;
+            }
+        }
+
         await _db.WatermarkConfigs.InsertOneAsync(config, cancellationToken: ct);
 
         _logger.LogInformation("Watermark created for user {UserId}. Id={Id}", userId, config.Id);
@@ -184,6 +195,16 @@ public class WatermarkController : ControllerBase
                 return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "图标必须先上传到腾讯云"));
             }
             existing.IconImageRef = normalized;
+        }
+
+        // 处理预览底图
+        if (!string.IsNullOrWhiteSpace(existing.PreviewBackgroundImageRef))
+        {
+            var (bgOk, bgNormalized) = await NormalizeIconRefAsync(existing.PreviewBackgroundImageRef, ct);
+            if (bgOk && !string.IsNullOrWhiteSpace(bgNormalized))
+            {
+                existing.PreviewBackgroundImageRef = bgNormalized;
+            }
         }
 
         existing.UpdatedAt = DateTime.UtcNow;
@@ -353,6 +374,103 @@ public class WatermarkController : ControllerBase
         }
 
         return File(bytes, string.IsNullOrWhiteSpace(mime) ? "image/png" : mime);
+    }
+
+    /// <summary>
+    /// 测试水印：上传图片，应用指定水印配置，返回带水印的图片
+    /// 单张图片返回图片文件，多张图片返回 ZIP 压缩包
+    /// </summary>
+    [HttpPost("/api/watermarks/{id}/test")]
+    [RequestSizeLimit(100 * 1024 * 1024)] // 100MB for multiple files
+    public async Task<IActionResult> TestWatermark([FromRoute] string id, [FromForm] List<IFormFile> files, CancellationToken ct)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        if (files == null || files.Count == 0 || files.All(f => f.Length == 0))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传图片文件"));
+        }
+
+        var config = await _db.WatermarkConfigs
+            .Find(x => x.Id == id && x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+
+        if (config == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "水印配置不存在"));
+        }
+
+        try
+        {
+            // 过滤掉空文件
+            var validFiles = files.Where(f => f.Length > 0).ToList();
+            
+            // 单文件：直接返回图片
+            if (validFiles.Count == 1)
+            {
+                var file = validFiles[0];
+                await using var ms = new MemoryStream();
+                await file.CopyToAsync(ms, ct);
+                var inputBytes = ms.ToArray();
+                var inputMime = file.ContentType ?? "image/png";
+
+                var (resultBytes, resultMime) = await _watermarkRenderer.ApplyAsync(inputBytes, inputMime, config, ct);
+
+                var fileName = $"watermark-test-{DateTime.UtcNow:yyyyMMddHHmmss}.png";
+                Response.Headers.Append("Content-Disposition", $"attachment; filename=\"{fileName}\"");
+                return File(resultBytes, resultMime);
+            }
+            
+            // 多文件：返回 ZIP 压缩包
+            await using var zipStream = new MemoryStream();
+            using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                var index = 0;
+                foreach (var file in validFiles)
+                {
+                    index++;
+                    try
+                    {
+                        await using var fileMs = new MemoryStream();
+                        await file.CopyToAsync(fileMs, ct);
+                        var inputBytes = fileMs.ToArray();
+                        var inputMime = file.ContentType ?? "image/png";
+
+                        var (resultBytes, _) = await _watermarkRenderer.ApplyAsync(inputBytes, inputMime, config, ct);
+
+                        // 使用原文件名或生成文件名
+                        var originalName = Path.GetFileNameWithoutExtension(file.FileName);
+                        var entryName = string.IsNullOrWhiteSpace(originalName) 
+                            ? $"watermark-{index:D3}.png" 
+                            : $"{originalName}-watermark.png";
+                        
+                        var entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
+                        await using var entryStream = entry.Open();
+                        await entryStream.WriteAsync(resultBytes, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to process file {Index} in batch watermark test", index);
+                        // 继续处理其他文件
+                    }
+                }
+            }
+            
+            zipStream.Position = 0;
+            var zipFileName = $"watermark-test-{DateTime.UtcNow:yyyyMMddHHmmss}.zip";
+            Response.Headers.Append("Content-Disposition", $"attachment; filename=\"{zipFileName}\"");
+            return File(zipStream.ToArray(), "application/zip");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to apply watermark for test. ConfigId={Id}", id);
+            return StatusCode(StatusCodes.Status500InternalServerError, 
+                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "水印应用失败"));
+        }
     }
 
     [HttpGet("/api/watermark/fonts")]
@@ -701,6 +819,7 @@ public class WatermarkController : ControllerBase
             BaseCanvasWidth = request.BaseCanvasWidth ?? 320,
             TextColor = textColor,
             BackgroundColor = request.BackgroundColor ?? "#000000",
+            PreviewBackgroundImageRef = request.PreviewBackgroundImageRef,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -728,6 +847,7 @@ public class WatermarkController : ControllerBase
         if (request.BaseCanvasWidth.HasValue) config.BaseCanvasWidth = request.BaseCanvasWidth.Value;
         if (request.TextColor != null) config.TextColor = request.TextColor;
         if (request.BackgroundColor != null) config.BackgroundColor = request.BackgroundColor;
+        if (request.PreviewBackgroundImageRef != null) config.PreviewBackgroundImageRef = request.PreviewBackgroundImageRef;
     }
 
     private async Task<(bool ok, string? normalized)> NormalizeIconRefAsync(string iconRef, CancellationToken ct)

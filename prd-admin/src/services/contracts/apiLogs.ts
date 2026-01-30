@@ -14,8 +14,13 @@ export type ApiLogsListParams = {
   clientId?: string;
   groupId?: string;
   sessionId?: string;
+  appName?: string;
+  direction?: string;
+  status?: string;
   /** 过滤噪声日志（如 auth/refresh 等高频无意义请求） */
   excludeNoise?: boolean;
+  /** 排除进行中的请求（用于下栏列表） */
+  excludeRunning?: boolean;
 };
 
 export type ApiLogsListItem = {
@@ -46,6 +51,9 @@ export type ApiLogsListItem = {
   requestBodyPreview: string | null;
   curlPreview: string | null;
   requestBodyTruncated: boolean;
+  direction: string | null;
+  status: string | null;
+  // 注意：responseBody 只在详情接口返回，避免列表循环增长
 };
 
 export type ApiLogsListData = {
@@ -58,6 +66,10 @@ export type ApiLogsListData = {
 export type ApiLogsMetaData = {
   clientTypes: string[];
   methods: string[];
+  userIds: string[];
+  appNames: string[];
+  directions: string[];
+  statuses: string[];
 };
 
 export type ApiRequestLog = {
@@ -89,6 +101,12 @@ export type ApiRequestLog = {
   requestBodyTruncated: boolean;
   curl: string | null;
   isEventStream: boolean;
+  direction: string | null;
+  status: string | null;
+  responseBody: string | null;
+  responseBodyTruncated: boolean;
+  responseBodyBytes: number | null;
+  targetHost: string | null;
 };
 
 export type GetApiLogsContract = (params?: ApiLogsListParams) => Promise<ApiResponse<ApiLogsListData>>;

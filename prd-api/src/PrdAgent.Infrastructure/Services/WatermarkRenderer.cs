@@ -181,12 +181,44 @@ public class WatermarkRenderer
     public async Task<(byte[] bytes, string mime)> RenderPreviewAsync(WatermarkConfig config, CancellationToken ct)
     {
         var baseSize = config.BaseCanvasWidth > 0 ? config.BaseCanvasWidth : 512;
-        using var canvas = new Image<Rgba32>(baseSize, baseSize);
-        canvas.Mutate(ctx => ctx.Fill(Color.FromRgba(18, 18, 22, 255)));
 
-        await using var ms = new MemoryStream();
-        canvas.SaveAsPng(ms);
-        return await ApplyAsync(ms.ToArray(), "image/png", config, ct);
+        // 如果有底图，尝试加载
+        if (!string.IsNullOrWhiteSpace(config.PreviewBackgroundImageRef))
+        {
+            try
+            {
+                var bgBytes = await TryLoadIconBytesAsync(config.PreviewBackgroundImageRef, ct);
+                if (bgBytes != null && bgBytes.Length > 0)
+                {
+                    // 使用底图
+                    using var bgImage = Image.Load<Rgba32>(bgBytes);
+                    // 调整底图大小为画布尺寸，保持比例并居中裁切
+                    bgImage.Mutate(ctx => ctx.Resize(new ResizeOptions
+                    {
+                        Size = new Size(baseSize, baseSize),
+                        Mode = ResizeMode.Crop,
+                        Position = AnchorPositionMode.Center,
+                        Sampler = KnownResamplers.Bicubic
+                    }));
+
+                    await using var ms = new MemoryStream();
+                    bgImage.SaveAsPng(ms);
+                    return await ApplyAsync(ms.ToArray(), "image/png", config, ct);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to load preview background image, falling back to transparent.");
+            }
+        }
+
+        // 没有底图或加载失败，使用透明背景
+        using var canvas = new Image<Rgba32>(baseSize, baseSize);
+        // 透明背景不需要填充任何颜色
+
+        await using var msTransparent = new MemoryStream();
+        canvas.SaveAsPng(msTransparent);
+        return await ApplyAsync(msTransparent.ToArray(), "image/png", config, ct);
     }
 
     private static Color ResolveColorHex(string? hexInput, double opacity, Color? fallback = null)

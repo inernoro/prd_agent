@@ -27,6 +27,7 @@ export type WatermarkConfig = {
   baseCanvasWidth: number;
   textColor?: string | null;
   backgroundColor?: string | null;
+  previewBackgroundImageRef?: string | null;
   previewUrl?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -70,6 +71,7 @@ export type CreateWatermarkInput = {
   baseCanvasWidth?: number;
   textColor?: string | null;
   backgroundColor?: string | null;
+  previewBackgroundImageRef?: string | null;
 };
 
 /**

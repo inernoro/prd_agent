@@ -1205,7 +1205,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
               { value: '', label: '用户' },
               ...metaUsers.map((u) => ({
                 value: u.userId,
-                label: u.username ? `${u.userId} / ${u.username}` : u.userId,
+                label: u.username ? `${u.username} / ${u.userId}` : u.userId,
+                displayLabel: u.username || u.userId,
               })),
             ]}
             placeholder="用户"

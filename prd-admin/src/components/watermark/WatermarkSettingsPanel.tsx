@@ -21,13 +21,15 @@ import {
   updateWatermark,
   deleteWatermark,
   bindWatermarkApp,
+  unbindWatermarkApp,
   uploadWatermarkFont,
   uploadWatermarkIcon,
+  testWatermark,
 } from '@/services';
 import type { WatermarkFontInfo, WatermarkConfig } from '@/services/contracts/watermark';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
-import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2 } from 'lucide-react';
+import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical } from 'lucide-react';
 
 const DEFAULT_CANVAS_SIZE = 320;
 const watermarkSizeCache = new Map<string, { width: number; height: number }>();
@@ -83,6 +85,7 @@ const buildDefaultConfig = (fontKey: string): WatermarkConfig => ({
   baseCanvasWidth: DEFAULT_CANVAS_SIZE,
   textColor: '#FFFFFF',
   backgroundColor: '#000000',
+  previewBackgroundImageRef: null,
 });
 
 const normalizeConfig = (config: WatermarkConfig, fallbackName: string): WatermarkConfig => {
@@ -104,6 +107,7 @@ const normalizeConfig = (config: WatermarkConfig, fallbackName: string): Waterma
     cornerRadius: Number.isFinite(config.cornerRadius) ? config.cornerRadius : 0,
     textColor: resolvedTextColor,
     backgroundColor: config.backgroundColor ?? '#000000',
+    previewBackgroundImageRef: config.previewBackgroundImageRef ?? null,
   };
 };
 
@@ -206,9 +210,12 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
   const [fontUploading, setFontUploading] = useState(false);
   const [iconUploading, setIconUploading] = useState(false);
   const [fontDeletingKey, setFontDeletingKey] = useState<string | null>(null);
-  const [previewEpoch, setPreviewEpoch] = useState(0);
+  const [previewEpoch, setPreviewEpoch] = useState(() => Date.now());
   const [previewErrorById, setPreviewErrorById] = useState<Record<string, boolean>>({});
   const [enlargedPreviewUrl, setEnlargedPreviewUrl] = useState<string | null>(null);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const testInputRef = useRef<HTMLInputElement | null>(null);
+  const testTargetIdRef = useRef<string | null>(null);
 
   const fontMap = useMemo(() => new Map(fonts.map((f) => [f.fontKey, f])), [fonts]);
 
@@ -240,6 +247,8 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
           )
         );
         setConfigs(normalizedConfigs);
+        // 刷新缓存时间戳，确保预览图不被浏览器缓存
+        setPreviewEpoch(Date.now());
       } else {
         setConfigs([]);
       }
@@ -295,6 +304,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             baseCanvasWidth: config.baseCanvasWidth,
             textColor: config.textColor,
             backgroundColor: config.backgroundColor,
+            previewBackgroundImageRef: config.previewBackgroundImageRef,
           });
           if (res?.success) {
             await load();
@@ -323,6 +333,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             baseCanvasWidth: config.baseCanvasWidth,
             textColor: config.textColor,
             backgroundColor: config.backgroundColor,
+            previewBackgroundImageRef: config.previewBackgroundImageRef,
           });
           if (res?.success) {
             await load();
@@ -357,6 +368,62 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDeactivate = async (id: string) => {
+    setSaving(true);
+    try {
+      const res = await unbindWatermarkApp({ id, appKey });
+      if (res?.success) {
+        await load();
+        toast.success('已取消水印绑定');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTestClick = (id: string) => {
+    testTargetIdRef.current = id;
+    testInputRef.current?.click();
+  };
+
+  const handleTestFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0 || !testTargetIdRef.current) return;
+    
+    const files = Array.from(fileList);
+    const id = testTargetIdRef.current;
+    setTestingId(id);
+    
+    try {
+      const result = await testWatermark({ id, files });
+      if (result.success && result.blob) {
+        // 触发下载
+        const url = URL.createObjectURL(result.blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = result.isZip 
+          ? `watermark-test-${Date.now()}.zip` 
+          : `watermark-test-${Date.now()}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        const msg = files.length > 1 
+          ? `已处理 ${files.length} 张图片，下载压缩包中` 
+          : '水印测试完成，已开始下载';
+        toast.success(msg);
+      } else {
+        toast.error('水印测试失败', result.error || '未知错误');
+      }
+    } catch (err) {
+      toast.error('水印测试失败', err instanceof Error ? err.message : '未知错误');
+    } finally {
+      setTestingId(null);
+      testTargetIdRef.current = null;
+      if (testInputRef.current) testInputRef.current.value = '';
     }
   };
 
@@ -513,6 +580,15 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
 
   return (
     <div className="min-h-0 h-full flex flex-col gap-3 overflow-hidden">
+      {/* 隐藏的测试文件上传 input（支持多选） */}
+      <input
+        ref={testInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={handleTestFileChange}
+      />
       {!hideAddButton ? (
         <div className="flex items-center justify-end flex-shrink-0">
           <Button variant="secondary" size="xs" onClick={handleAddConfig} disabled={saving}>
@@ -546,19 +622,16 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             {item.name || `Watermark ${index + 1}`}
                           </div>
                         </div>
-                        {isActive ? (
-                          <span
-                            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full"
-                            style={{
-                              background: 'rgba(245, 158, 11, 0.18)',
-                              color: 'rgba(245, 158, 11, 0.9)',
-                              border: '1px solid rgba(255,255,255,0.12)',
-                            }}
-                          >
-                            <CheckCircle2 size={12} />
-                            激活
-                          </span>
-                        ) : null}
+                        <Button
+                          size="xs"
+                          variant="secondary"
+                          onClick={() => handleTestClick(item.id)}
+                          disabled={saving || testingId === item.id}
+                          title="上传图片测试水印效果"
+                        >
+                          <FlaskConical size={12} />
+                          {testingId === item.id ? '测试中...' : '测试'}
+                        </Button>
                       </div>
                       {/* 授权应用提示 */}
                       {item.appKeys && item.appKeys.length > 0 ? (
@@ -621,12 +694,13 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           </div>
                         </div>
                         <div
-                          className="relative flex items-center justify-center border"
+                          className="relative flex items-center justify-center overflow-hidden"
                           style={{
-                            borderColor: 'rgba(255,255,255,0.08)',
+                            // 使用棋盘格图案表示透明背景
                             background: previewUrl && !previewError
-                              ? 'linear-gradient(180deg, #E9D19C 0%, #D8B46B 100%)'
-                              : 'transparent',
+                              ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 16px 16px'
+                              : 'rgba(255,255,255,0.02)',
+                            border: previewUrl && !previewError ? 'none' : '1px solid rgba(255,255,255,0.08)',
                             minHeight: '120px',
                             maxHeight: '160px',
                             cursor: previewUrl && !previewError ? 'zoom-in' : 'default',
@@ -642,7 +716,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             <img
                               src={previewUrl}
                               alt="Preview"
-                              className="w-full h-auto object-contain"
+                              className="block w-full h-auto object-contain"
                               onError={() => setPreviewErrorById((prev) => ({ ...prev, [item.id]: true }))}
                             />
                           ) : (
@@ -655,10 +729,21 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                     <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
                       <div className="flex flex-wrap gap-1.5 justify-end">
                         {isActive ? (
-                          <Button size="xs" variant="primary" disabled>
-                            <Check size={12} />
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                            style={{
+                              background: 'rgba(34, 197, 94, 0.15)',
+                              border: '1px solid rgba(34, 197, 94, 0.3)',
+                              color: 'rgba(34, 197, 94, 0.95)',
+                            }}
+                            onClick={() => handleDeactivate(item.id)}
+                            disabled={saving}
+                            title="点击取消选择"
+                          >
+                            <CheckCircle2 size={12} />
                             已选择
-                          </Button>
+                          </button>
                         ) : (
                           <Button size="xs" variant="secondary" onClick={() => handleActivate(item.id)} disabled={saving}>
                             <Check size={12} />
@@ -749,12 +834,20 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
           onClick={() => setEnlargedPreviewUrl(null)}
         >
           <div className="relative max-w-[90vw] max-h-[90vh]">
-            <img
-              src={enlargedPreviewUrl}
-              alt="预览大图"
-              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
+            <div
+              className="rounded-lg overflow-hidden shadow-2xl"
+              style={{
+                // 使用棋盘格图案表示透明背景
+                background: 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 20px 20px',
+              }}
               onClick={(e) => e.stopPropagation()}
-            />
+            >
+              <img
+                src={enlargedPreviewUrl}
+                alt="预览大图"
+                className="max-w-full max-h-[90vh] object-contain"
+              />
+            </div>
             <button
               type="button"
               className="absolute -top-3 -right-3 w-8 h-8 rounded-full flex items-center justify-center"
@@ -786,7 +879,8 @@ function WatermarkEditor(props: {
   onSave: () => void;
 }) {
   const { config, fonts, fontUploading, fontDeletingKey, iconUploading, onChange, onUploadFont, onUploadIcon, onDeleteFont, onSave } = props;
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  // 初始化时使用配置中保存的底图
+  const [previewImage, setPreviewImage] = useState<string | null>(config.previewBackgroundImageRef ?? null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mainPreviewRef = useRef<HTMLDivElement | null>(null);
   const [mainPreviewSize, setMainPreviewSize] = useState(config.baseCanvasWidth || DEFAULT_CANVAS_SIZE);
@@ -828,7 +922,10 @@ function WatermarkEditor(props: {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      setPreviewImage(String(reader.result || ''));
+      const dataUrl = String(reader.result || '');
+      setPreviewImage(dataUrl);
+      // 保存到配置中，这样保存时会发送给后端上传到 COS
+      updateConfig({ previewBackgroundImageRef: dataUrl });
     };
     reader.readAsDataURL(file);
   };
@@ -1787,7 +1884,7 @@ function WatermarkPreview(props: {
             fontFamily,
             fontSize,
             padding: decorationPadding,
-            background: hasDecoration ? backgroundColor : 'transparent',
+            background: spec.backgroundEnabled ? backgroundColor : 'transparent',
             border: spec.borderEnabled ? `${borderWidth}px solid ${borderColor}` : '1px solid transparent',
             borderRadius: (spec.cornerRadius ?? 0) * previewScale,
           }}

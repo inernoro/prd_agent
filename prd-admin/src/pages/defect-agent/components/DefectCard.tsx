@@ -96,7 +96,13 @@ export function DefectCard({ defect }: DefectCardProps) {
       ? 'assignee'
       : null;
   const oppositeRole = currentRole === 'reporter' ? 'assignee' : currentRole === 'assignee' ? 'reporter' : null;
-  const hasPeerCommented = Boolean(oppositeRole && defect.lastCommentBy === oppositeRole);
+  // 我方未读状态
+  const myUnread = currentRole === 'reporter'
+    ? defect.reporterUnread
+    : currentRole === 'assignee'
+    ? defect.assigneeUnread
+    : undefined;
+  // 对方未读状态
   const peerUnread = oppositeRole === 'reporter'
     ? defect.reporterUnread
     : oppositeRole === 'assignee'
@@ -104,9 +110,83 @@ export function DefectCard({ defect }: DefectCardProps) {
     : undefined;
   // 完成/驳回状态不显示已读/未读/评论标签
   const isArchived = defect.status === DefectStatus.Resolved || defect.status === DefectStatus.Rejected;
-  const showPeerCommented = !isArchived && hasPeerCommented;
-  const showPeerUnread = !isArchived && !hasPeerCommented && peerUnread === true;
-  const showPeerRead = !isArchived && !hasPeerCommented && peerUnread === false;
+
+  // ========== 根据最后操作者决定显示状态 ==========
+  // 操作包括：评论、读取、创建
+  // 规则：
+  // - 如果我最后评论，但对方已读 → 对方是最后操作者（对方"读取"发生在我的"评论"之后）
+  // - 如果对方最后评论，但我已读 → 我是最后操作者（我的"读取"发生在对方的"评论"之后）
+  // - 如果没有评论记录，创建者是第一个操作者，读取者是后续操作者
+
+  const lastCommentByMe = defect.lastCommentBy === currentRole;
+  const lastCommentByPeer = defect.lastCommentBy === oppositeRole;
+
+  // 判断真正的最后操作者和操作类型
+  let lastActor: 'me' | 'peer' | null = null;
+  let lastAction: 'comment' | 'read' | 'create' | null = null;
+
+  if (lastCommentByMe) {
+    // 我最后评论了
+    if (peerUnread === false) {
+      // 对方在我评论后读取过 → 对方是最后操作者
+      lastActor = 'peer';
+      lastAction = 'read';
+    } else {
+      // 对方还没读（或状态未知）→ 我是最后操作者
+      lastActor = 'me';
+      lastAction = 'comment';
+    }
+  } else if (lastCommentByPeer) {
+    // 对方最后评论了
+    if (myUnread === false) {
+      // 我在对方评论后读取过 → 我是最后操作者
+      lastActor = 'me';
+      lastAction = 'read';
+    } else {
+      // 我还没读（或状态未知）→ 对方是最后操作者
+      lastActor = 'peer';
+      lastAction = 'comment';
+    }
+  } else {
+    // 没有评论记录（新建缺陷）
+    if (currentRole === 'reporter') {
+      // 我是提交者（创建者）
+      if (peerUnread === false) {
+        // 处理者已读 → 处理者是最后操作者
+        lastActor = 'peer';
+        lastAction = 'read';
+      } else {
+        // 处理者未读 → 我是最后操作者（创建）
+        lastActor = 'me';
+        lastAction = 'create';
+      }
+    } else if (currentRole === 'assignee') {
+      // 我是处理者
+      if (myUnread === false) {
+        // 我已读 → 我是最后操作者
+        lastActor = 'me';
+        lastAction = 'read';
+      } else {
+        // 我未读 → 提交者是最后操作者（创建）
+        lastActor = 'peer';
+        lastAction = 'create';
+      }
+    }
+  }
+
+  // 我方未读是最高优先级（需要我立即关注）
+  const showMyUnread = !isArchived && myUnread === true;
+
+  // 根据最后操作者和操作类型显示状态
+  // 我是最后操作者
+  const showMyCommented = !isArchived && !showMyUnread && lastActor === 'me' && lastAction === 'comment';
+  const showMyRead = !isArchived && !showMyUnread && lastActor === 'me' && lastAction === 'read';
+  const showMyCreated = !isArchived && !showMyUnread && lastActor === 'me' && lastAction === 'create';
+
+  // 对方是最后操作者
+  const showPeerCommented = !isArchived && !showMyUnread && lastActor === 'peer' && lastAction === 'comment';
+  const showPeerRead = !isArchived && !showMyUnread && lastActor === 'peer' && lastAction === 'read';
+  const showPeerCreated = !isArchived && !showMyUnread && lastActor === 'peer' && lastAction === 'create';
   const resolvedByName = defect.resolvedByName || '';
   const resolvedByAvatarUrl = resolveAvatarUrl({ avatarFileName: defect.resolvedByAvatarFileName ?? undefined });
   const rejectedByName = defect.rejectedByName || '';
@@ -281,7 +361,68 @@ export function DefectCard({ defect }: DefectCardProps) {
             )}
             {/* Header: 标题 + 编号 */}
             <div className="px-3 pt-3 pb-2 flex items-center gap-2">
-              {showPeerUnread && (
+              {/* 我方未读 - 醒目的新缺陷/新回复标签（最高优先级） */}
+              {showMyUnread && currentRole === 'assignee' && (
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium flex-shrink-0 animate-pulse"
+                  style={{
+                    background: 'rgba(255, 100, 100, 0.25)',
+                    color: 'rgba(255, 120, 120, 1)',
+                    border: '1px solid rgba(255, 100, 100, 0.6)',
+                    boxShadow: '0 0 8px rgba(255, 100, 100, 0.3)',
+                  }}
+                  title="新收到的缺陷，点击查看"
+                >
+                  <Bug size={10} />
+                  新缺陷
+                </span>
+              )}
+              {showMyUnread && currentRole === 'reporter' && (
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium flex-shrink-0 animate-pulse"
+                  style={{
+                    background: 'rgba(120, 220, 180, 0.25)',
+                    color: 'rgba(120, 220, 180, 1)',
+                    border: '1px solid rgba(120, 220, 180, 0.6)',
+                    boxShadow: '0 0 8px rgba(120, 220, 180, 0.3)',
+                  }}
+                  title="有新回复，点击查看"
+                >
+                  <MessageCircle size={10} />
+                  新回复
+                </span>
+              )}
+
+              {/* ========== 我是最后操作者 - 显示我的状态（不带"对方"前缀）========== */}
+              {showMyCommented && (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
+                  style={{
+                    background: 'rgba(120, 220, 180, 0.14)',
+                    color: 'rgba(120, 220, 180, 0.9)',
+                    border: '1px solid rgba(120, 220, 180, 0.4)',
+                  }}
+                  title="我已评论，等待对方回应"
+                >
+                  <MessageCircle size={10} />
+                  已评
+                </span>
+              )}
+              {showMyRead && (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
+                  style={{
+                    background: 'rgba(140, 190, 255, 0.12)',
+                    color: 'rgba(140, 190, 255, 0.95)',
+                    border: '1px solid rgba(140, 190, 255, 0.45)',
+                  }}
+                  title="我已读"
+                >
+                  <CheckCircle size={10} />
+                  已读
+                </span>
+              )}
+              {showMyCreated && (
                 <span
                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
                   style={{
@@ -289,11 +430,13 @@ export function DefectCard({ defect }: DefectCardProps) {
                     color: 'rgba(255, 200, 80, 0.95)',
                     border: '1px solid rgba(255, 200, 80, 0.4)',
                   }}
-                  title="对方未读"
+                  title="我已提交，等待对方查看"
                 >
-                  对方未读
+                  已提交
                 </span>
               )}
+
+              {/* ========== 对方是最后操作者 - 显示对方的状态（带"对方"前缀）========== */}
               {showPeerCommented && (
                 <span
                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
@@ -305,7 +448,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   title="对方已评论"
                 >
                   <MessageCircle size={10} />
-                  对方已评论
+                  对方已评
                 </span>
               )}
               {showPeerRead && (
@@ -320,6 +463,19 @@ export function DefectCard({ defect }: DefectCardProps) {
                 >
                   <CheckCircle size={10} />
                   对方已读
+                </span>
+              )}
+              {showPeerCreated && (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
+                  style={{
+                    background: 'rgba(255, 200, 80, 0.18)',
+                    color: 'rgba(255, 200, 80, 0.95)',
+                    border: '1px solid rgba(255, 200, 80, 0.4)',
+                  }}
+                  title="对方已提交，等待你查看"
+                >
+                  对方已提交
                 </span>
               )}
               {/* 标题 */}

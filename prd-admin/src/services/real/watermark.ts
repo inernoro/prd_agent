@@ -131,3 +131,39 @@ export const getModelSizesReal: GetModelSizesContract = async (input) => {
   const key = encodeURIComponent(input.modelKey);
   return await apiRequest(api.modelSizes(key), { method: 'GET' });
 };
+
+/**
+ * 测试水印：上传图片，返回带水印的图片 Blob
+ * 单张图片返回图片，多张图片返回 ZIP 压缩包
+ */
+export const testWatermarkReal = async (input: { id: string; files: File[] }): Promise<{ success: boolean; blob?: Blob; isZip?: boolean; error?: string }> => {
+  const token = useAuthStore.getState().token;
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const fd = new FormData();
+  for (const file of input.files) {
+    fd.append('files', file);
+  }
+
+  const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+  const url = rawBase ? `${rawBase}/api/watermarks/${encodeURIComponent(input.id)}/test` : `/api/watermarks/${encodeURIComponent(input.id)}/test`;
+  
+  try {
+    const res = await fetch(url, { method: 'POST', headers, body: fd });
+    if (!res.ok) {
+      const text = await res.text();
+      try {
+        const json = JSON.parse(text);
+        return { success: false, error: json.error?.message || `请求失败 (${res.status})` };
+      } catch {
+        return { success: false, error: `请求失败 (${res.status})` };
+      }
+    }
+    const blob = await res.blob();
+    const isZip = blob.type === 'application/zip' || res.headers.get('content-type')?.includes('zip');
+    return { success: true, blob, isZip };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : '网络请求失败' };
+  }
+};

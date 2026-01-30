@@ -785,6 +785,10 @@ public class ImageMasterController : ControllerBase
             // ignore
         }
 
+        // 唤醒逻辑：检测 running 状态的 marker，同步 run 的真实状态
+        // 后端是状态的唯一来源，前端只是观察者
+        await TrySyncRunningMarkersAsync(ws, ct);
+
         return Ok(ApiResponse<object>.Ok(new { workspace = ws, messages, assets, canvas, viewport }));
     }
 
@@ -2159,6 +2163,135 @@ public class ImageMasterController : ControllerBase
             cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { marker }));
+    }
+
+    /// <summary>
+    /// 唤醒逻辑：检测卡住的 marker 状态，自动修正。
+    /// 后端是状态的唯一来源，当检测到不一致时自动修正。
+    /// 场景：前端刷新时丢失 SSE 事件，或后端重启导致状态未同步。
+    /// </summary>
+    private async Task TrySyncRunningMarkersAsync(ImageMasterWorkspace ws, CancellationToken ct)
+    {
+        try
+        {
+            var wf = ws.ArticleWorkflow;
+            if (wf?.Markers == null || wf.Markers.Count == 0) return;
+
+            var now = DateTime.UtcNow;
+            var needUpdate = false;
+
+            // 1. 检测 parsing 状态超时（超过 5 分钟认为卡住）
+            var parsingMarkers = wf.Markers
+                .Where(m => m.Status == "parsing")
+                .ToList();
+
+            foreach (var marker in parsingMarkers)
+            {
+                // 如果 UpdatedAt 为空（历史数据），使用 workflow 的 UpdatedAt 或直接视为超时
+                var markerTime = marker.UpdatedAt ?? wf.UpdatedAt;
+                var elapsed = now - markerTime;
+                if (elapsed > TimeSpan.FromMinutes(5))
+                {
+                    marker.Status = "error";
+                    marker.ErrorMessage = "意图解析超时，请重试";
+                    marker.UpdatedAt = now;
+                    needUpdate = true;
+                    _logger?.LogInformation(
+                        "Auto-corrected stuck parsing marker: workspace={WorkspaceId}, index={Index}, elapsed={Elapsed}min",
+                        ws.Id, marker.Index, elapsed.TotalMinutes);
+                }
+            }
+
+            // 2. 检测 running 状态的 marker，同步 run 的真实状态
+            var runningMarkers = wf.Markers
+                .Where(m => m.Status == "running" && !string.IsNullOrEmpty(m.RunId))
+                .ToList();
+
+            if (runningMarkers.Count == 0 && !needUpdate)
+            {
+                return;
+            }
+
+            if (runningMarkers.Count == 0)
+            {
+                // 只有 parsing 超时的更新
+                await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                    x => x.Id == ws.Id,
+                    Builders<ImageMasterWorkspace>.Update
+                        .Set(x => x.ArticleWorkflow, wf)
+                        .Set(x => x.UpdatedAt, now),
+                    cancellationToken: ct);
+                return;
+            }
+
+            // 批量查询这些 run 的状态
+            var runIds = runningMarkers.Select(m => m.RunId!).Distinct().ToList();
+            var runs = await _db.ImageGenRuns
+                .Find(r => runIds.Contains(r.Id))
+                .ToListAsync(ct);
+
+            var runById = runs.ToDictionary(r => r.Id);
+
+            foreach (var marker in runningMarkers)
+            {
+                if (!runById.TryGetValue(marker.RunId!, out var run)) continue;
+
+                // Run 已完成
+                if (run.Status == ImageGenRunStatus.Completed)
+                {
+                    // 从 run items 获取 url
+                    var item = await _db.ImageGenRunItems
+                        .Find(i => i.RunId == run.Id && i.Status == ImageGenRunItemStatus.Done)
+                        .FirstOrDefaultAsync(ct);
+                    
+                    marker.Status = "done";
+                    marker.Url = item?.Url ?? marker.Url; // 优先使用 run item 的 url
+                    marker.ErrorMessage = null;
+                    marker.UpdatedAt = now;
+                    needUpdate = true;
+                }
+                // Run 失败或取消
+                else if (run.Status == ImageGenRunStatus.Failed || run.Status == ImageGenRunStatus.Cancelled)
+                {
+                    var item = await _db.ImageGenRunItems
+                        .Find(i => i.RunId == run.Id)
+                        .FirstOrDefaultAsync(ct);
+                    
+                    marker.Status = "error";
+                    marker.ErrorMessage = item?.ErrorMessage ?? (run.Status == ImageGenRunStatus.Cancelled ? "任务已取消" : "生图失败");
+                    marker.UpdatedAt = now;
+                    needUpdate = true;
+                }
+                // Run 还在运行，但超时（超过 10 分钟认为卡住）
+                else if (run.Status == ImageGenRunStatus.Running || run.Status == ImageGenRunStatus.Queued)
+                {
+                    var elapsed = now - run.CreatedAt;
+                    if (elapsed > TimeSpan.FromMinutes(10))
+                    {
+                        marker.Status = "error";
+                        marker.ErrorMessage = "生图任务超时，请重试";
+                        marker.UpdatedAt = now;
+                        needUpdate = true;
+                    }
+                }
+            }
+
+            // 如果有状态变更，更新数据库
+            if (needUpdate)
+            {
+                await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                    x => x.Id == ws.Id,
+                    Builders<ImageMasterWorkspace>.Update
+                        .Set(x => x.ArticleWorkflow, wf)
+                        .Set(x => x.UpdatedAt, now),
+                    cancellationToken: ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            // 唤醒逻辑是 best-effort，不应影响主流程
+            _logger?.LogWarning(ex, "TrySyncRunningMarkersAsync failed for workspace {WorkspaceId}", ws.Id);
+        }
     }
 
     private async Task WriteJsonResponseAsync(object data, int statusCode, CancellationToken ct)

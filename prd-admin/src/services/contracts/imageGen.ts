@@ -109,6 +109,8 @@ export type CreateImageGenRunInput = {
   appKey?: string;
   /** 可选：文学创作场景下，关联的配图标记索引。Worker 完成/失败时会自动回填 ArticleIllustrationMarker.Status */
   articleMarkerIndex?: number;
+  /** 可选：图生图的参考图资产 SHA256。若提供，Worker 会从 COS 读取此图片作为参考图 */
+  initImageAssetSha256?: string;
 };
 
 export type CreateImageGenRunResponse = {

@@ -45,7 +45,44 @@ public class ApiLogsController : ControllerBase
 
         var methods = new[] { "GET", "POST", "PUT", "PATCH", "DELETE" };
 
-        return Ok(ApiResponse<object>.Ok(new { clientTypes, methods }));
+        // 获取近期活跃的 userIds（最多 200 个）
+        var userIds = (await _db.ApiRequestLogs
+                .Distinct(x => x.UserId, Builders<ApiRequestLog>.Filter.Empty)
+                .ToListAsync())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .Take(200)
+            .ToArray();
+
+        // 获取 appNames
+        var appNames = (await _db.ApiRequestLogs
+                .Distinct(x => x.AppName, Builders<ApiRequestLog>.Filter.Empty)
+                .ToListAsync())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        // 获取 directions（入站/出站）
+        var directions = (await _db.ApiRequestLogs
+                .Distinct(x => x.Direction, Builders<ApiRequestLog>.Filter.Empty)
+                .ToListAsync())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        // 获取 statuses（请求状态）
+        var statuses = (await _db.ApiRequestLogs
+                .Distinct(x => x.Status, Builders<ApiRequestLog>.Filter.Empty)
+                .ToListAsync())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return Ok(ApiResponse<object>.Ok(new { clientTypes, methods, userIds, appNames, directions, statuses }));
     }
 
     /// <summary>
@@ -75,7 +112,11 @@ public class ApiLogsController : ControllerBase
         [FromQuery] string? clientId = null,
         [FromQuery] string? groupId = null,
         [FromQuery] string? sessionId = null,
-        [FromQuery] bool excludeNoise = false)
+        [FromQuery] string? appName = null,
+        [FromQuery] string? direction = null,
+        [FromQuery] string? status = null,
+        [FromQuery] bool excludeNoise = false,
+        [FromQuery] bool excludeRunning = false)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 10, 200);
@@ -91,8 +132,12 @@ public class ApiLogsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(clientType)) filter &= Builders<ApiRequestLog>.Filter.Eq(x => x.ClientType, clientType);
         if (!string.IsNullOrWhiteSpace(clientId)) filter &= Builders<ApiRequestLog>.Filter.Eq(x => x.ClientId, clientId);
         if (!string.IsNullOrWhiteSpace(groupId)) filter &= Builders<ApiRequestLog>.Filter.Eq(x => x.GroupId, groupId);
+        if (!string.IsNullOrWhiteSpace(appName)) filter &= Builders<ApiRequestLog>.Filter.Eq(x => x.AppName, appName);
         if (!string.IsNullOrWhiteSpace(sessionId)) filter &= Builders<ApiRequestLog>.Filter.Eq(x => x.SessionId, sessionId);
+        if (!string.IsNullOrWhiteSpace(direction)) filter &= Builders<ApiRequestLog>.Filter.Eq(x => x.Direction, direction);
+        if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<ApiRequestLog>.Filter.Eq(x => x.Status, status);
         if (excludeNoise) filter &= Builders<ApiRequestLog>.Filter.Nin(x => x.Path, NoisePaths);
+        if (excludeRunning) filter &= Builders<ApiRequestLog>.Filter.Ne(x => x.Status, "running");
 
         var total = await _db.ApiRequestLogs.CountDocumentsAsync(filter);
         var rawItems = await _db.ApiRequestLogs.Find(filter)
@@ -127,7 +172,10 @@ public class ApiLogsController : ControllerBase
                 x.IsEventStream,
                 x.RequestBody,
                 x.Curl,
-                x.RequestBodyTruncated
+                x.RequestBodyTruncated,
+                x.Direction,
+                x.Status
+                // 注意：不投影 ResponseBody，避免列表刷新时循环增长
             })
             .ToListAsync();
 
@@ -161,7 +209,10 @@ public class ApiLogsController : ControllerBase
             x.IsEventStream,
             requestBodyPreview = Truncate(x.RequestBody, 800),
             curlPreview = Truncate(x.Curl, 800),
-            x.RequestBodyTruncated
+            x.RequestBodyTruncated,
+            x.Direction,
+            x.Status
+            // 注意：responseBody 只在 Detail 接口返回，避免列表循环增长
         }).ToList();
 
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));

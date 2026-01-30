@@ -706,8 +706,15 @@ public class SmartModelScheduler : ISmartModelScheduler
             throw new InvalidOperationException($"平台 API 配置不完整: platformId={modelItem.PlatformId}, platformName={platformName}");
         }
 
-        var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
+        // 验证 apiUrl 必须是有效的 HTTP(S) URL，避免 file:// 等无效协议
         var apiUrlTrim = apiUrl.Trim();
+        if (!Uri.TryCreate(apiUrlTrim, UriKind.Absolute, out var apiUrlUri) ||
+            (apiUrlUri.Scheme != Uri.UriSchemeHttp && apiUrlUri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new InvalidOperationException($"平台 API URL 无效（必须是 http:// 或 https:// 开头）: platformId={modelItem.PlatformId}, platformName={platformName}, apiUrl={apiUrlTrim}");
+        }
+
+        var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
         httpClient.BaseAddress = new Uri(apiUrlTrim.TrimEnd('#').TrimEnd('/') + "/");
 
         // 模型池项级配置（模型池是决定缓存的唯一来源）
