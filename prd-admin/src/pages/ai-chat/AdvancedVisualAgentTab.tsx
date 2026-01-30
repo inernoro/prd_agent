@@ -77,6 +77,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 
+import { MessageContentRenderer } from './components/MessageContentRenderer';
+
 type CanvasImageItem = {
   key: string;
   createdAt: number;
@@ -531,16 +533,6 @@ function guessRefName(ref: CanvasImageItem | null): string {
   if (sha && sha.length >= 8) return `参考图 ${sha.slice(0, 8)}`;
   return '参考图';
 }
-
-function truncateLabelFront(s: string, maxChars: number): string {
-  const t = String(s ?? '').trim();
-  if (!t) return '';
-  const n = Math.max(1, Math.floor(maxChars));
-  if (t.length <= n) return t;
-  // 用 "..."，与用户期望一致
-  return t.slice(0, Math.max(1, n - 3)) + '...';
-}
-
 
 function gcd(a: number, b: number) {
   let x = Math.abs(Math.round(a));
@@ -5223,31 +5215,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         const selY = Math.round(inner.y);
                         const selW = Math.max(1, Math.round(inner.w));
                         const selH = Math.max(1, Math.round(inner.h));
-                        // 顶部标签：保持“两块”（name 在左、size 在右），但必须不重叠
-                        // 做法：
-                        // - 标签文字大小不随 zoom 缩放（通过 scale(var(--invZoom)) 达成），但容器可用“屏幕宽度”会随 zoom 和窗口尺寸变化；
-                        // - 所以 name 的截断宽度要基于“屏幕可用宽度”动态计算，窗口缩小/zoom 改变时会自动裁剪更多字符。
+                        // 顶部标签宽度计算
                         const gap = 8;
                         const pad = 16; // label 左右 padding 合计（8+8）
-                        // 精确测量文本宽度（像素），避免仅按 length 估算导致“该裁不裁/不该裁却裁”
                         const sizeTextPx = measureLabelTextPx(sizeText);
                         const nameTextPx = measureLabelTextPx(name);
-                        // 右侧尺寸标签宽度（像素）：文本宽 + padding/边框余量
                         const sizeLabelW0 = Math.min(220, Math.max(60, sizeTextPx + pad + 14));
-                        // 选中框左上角在屏幕坐标中的 x（用于限制标签不超过可视区域宽度；窗口缩小时会变小）
                         const screenLeft = Math.round((Math.round(x) + selX) * zoom + camera.x);
                         const stageW = stageSize.w || stageRef.current?.clientWidth || 0;
-                        // 可用宽度应随窗口变化；不要再硬编码 360，否则“大图/宽窗口”也会被迫裁剪
-                        // 仍保留一个合理上限，避免超大画布时标签无限拉长影响观感
                         const maxByViewport = stageW > 0 ? Math.max(80, Math.floor(stageW - 12 - screenLeft)) : 9999;
                         const labelHardMax = 920;
-                        // 选中框在屏幕上的宽度（容器被缩放，但标签不缩放，因此必须用屏幕宽度来做约束）
                         const screenSelW = Math.max(40, Math.floor(selW * zoom));
                         const labelBoxW = Math.max(80, Math.min(labelHardMax, maxByViewport, screenSelW));
                         const sizeLabelW = Math.min(sizeLabelW0, Math.max(52, labelBoxW - gap - 48));
-                        // nameBoxW：以“真实文本宽度”为上限，避免在空间足够时仍然不必要地裁剪
                         const nameNeedW = Math.min(labelBoxW - sizeLabelW - gap, nameTextPx + pad + 14);
                         const nameBoxW = Math.max(48, Math.floor(Math.min(labelBoxW - sizeLabelW - gap, Math.max(48, nameNeedW))));
+                        // 如果名字中包含 @imgN 引用，则尝试使用 MessageContentRenderer 渲染为 Chip
+                        const isChipLabel = name.match(/@img\d+/);
+                        
                         return (
                           <div
                             key={`ui_sel_${it.key}`}
@@ -5278,7 +5263,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 border: 'none',
                                 color: 'rgba(255,255,255,0.86)',
                                 textShadow: 'none',
-                                pointerEvents: 'none',
+                                pointerEvents: 'auto', // 允许点击 Chip
                                 minWidth: 0,
                               }}
                               title={name}
@@ -5292,7 +5277,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   whiteSpace: 'nowrap',
                                 }}
                               >
-                                {name}
+                                {isChipLabel ? (
+                                  <MessageContentRenderer
+                                    content={name}
+                                    canvasItems={canvas}
+                                    onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
+                                  />
+                                ) : (
+                                  name
+                                )}
                               </span>
                             </div>
 
@@ -6569,9 +6562,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
                 // 普通消息（用户/助手纯文本）
                 const parsed = isUser ? extractInlineImageToken(m.content) : null;
-                const refSrc = parsed?.src ? String(parsed.src).trim() : '';
-                const refNameFull = String(parsed?.name ?? '').trim();
-                const refName = truncateLabelFront(refNameFull || '参照图', 9) || '参照图';
                 const contentText = parsed ? parsed.clean : m.content;
                 const sizedMsg = isUser ? extractSizeToken(contentText) : { size: null as string | null, cleanText: String(contentText ?? '') };
                 const msgSize = String(sizedMsg.size ?? '').trim();
@@ -6597,70 +6587,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       }}
                     >
                       <div style={{ maxHeight: isLongMsg && !isExpanded ? 64 : undefined, overflow: isLongMsg && !isExpanded ? 'hidden' : undefined }}>
-                        {isUser && (refSrc || msgSize || msgModel) ? (
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {refSrc ? (
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1"
-                                style={{
-                                  height: 18,
-                                  maxWidth: 120,
-                                  paddingLeft: 4,
-                                  paddingRight: 6,
-                                  borderRadius: 4,
-                                  overflow: 'hidden',
-                                  border: '1px solid var(--border-subtle)',
-                                  background: 'rgba(214, 178, 106, 0.12)',
-                                }}
-                                title={refNameFull ? `参照图：${refNameFull}` : '点击预览参照图'}
-                                aria-label="预览参考图"
-                                onClick={() => setPreview({ open: true, src: refSrc, prompt: refNameFull || '参照图' })}
-                              >
-                                <span
-                                  style={{
-                                    width: 14,
-                                    height: 14,
-                                    borderRadius: 3,
-                                    overflow: 'hidden',
-                                    border: '1px solid rgba(255,255,255,0.22)',
-                                    background: 'rgba(255,255,255,0.06)',
-                                    display: 'inline-flex',
-                                    flex: '0 0 auto',
-                                  }}
-                                >
-                                  <img
-                                    src={refSrc}
-                                    alt={refName || '参照图'}
-                                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                                  />
-                                </span>
-                                <span
-                                  style={{
-                                    fontSize: 10,
-                                    lineHeight: '14px',
-                                    color: 'rgba(255,255,255,0.7)',
-                                    whiteSpace: 'nowrap',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    maxWidth: 80,
-                                  }}
-                                >
-                                {refName}
-                                </span>
-                              </button>
-                            ) : null}
-
+                        <MessageContentRenderer
+                          content={msgBody}
+                          canvasItems={canvas}
+                          onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
+                        />
+                        
+                        {/* 气泡底部元数据：尺寸/模型 */}
+                        {isUser && (msgSize || msgModel) ? (
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1 opacity-70">
                             {msgSize ? (
                               <span
                                 className="inline-flex items-center gap-1"
                                 style={{
-                                  height: 18,
+                                  height: 16,
                                   paddingLeft: 4,
                                   paddingRight: 6,
-                                  borderRadius: 4,
-                                  border: '1px solid var(--border-subtle)',
-                                  background: 'rgba(214, 178, 106, 0.10)',
+                                  borderRadius: 3,
+                                  border: '1px solid rgba(255,255,255,0.1)',
+                                  background: 'rgba(255,255,255,0.03)',
                                 }}
                                 title={`尺寸：${msgSize}`}
                               >
@@ -6668,9 +6613,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 <span
                                   className="tabular-nums"
                                   style={{
-                                    fontSize: 10,
-                                    lineHeight: '14px',
-                                    color: 'rgba(255,255,255,0.7)',
+                                    fontSize: 9,
+                                    lineHeight: '12px',
+                                    color: 'rgba(255,255,255,0.6)',
                                     whiteSpace: 'nowrap',
                                   }}
                                 >
@@ -6684,21 +6629,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               <span
                                 className="inline-flex items-center gap-1"
                                 style={{
-                                  height: 18,
+                                  height: 16,
                                   paddingLeft: 4,
                                   paddingRight: 6,
-                                  borderRadius: 4,
-                                  border: '1px solid rgba(99, 102, 241, 0.35)',
-                                  background: 'rgba(99, 102, 241, 0.12)',
+                                  borderRadius: 3,
+                                  border: '1px solid rgba(99, 102, 241, 0.25)',
+                                  background: 'rgba(99, 102, 241, 0.08)',
                                 }}
                                 title={`模型池：${msgModel}`}
                               >
-                                <Sparkles size={10} style={{ color: 'rgba(129, 140, 248, 0.85)' }} />
+                                <Sparkles size={9} style={{ color: 'rgba(129, 140, 248, 0.75)' }} />
                                 <span
                                   style={{
-                                    fontSize: 10,
-                                    lineHeight: '14px',
-                                    color: 'rgba(129, 140, 248, 0.85)',
+                                    fontSize: 9,
+                                    lineHeight: '12px',
+                                    color: 'rgba(129, 140, 248, 0.75)',
                                     whiteSpace: 'nowrap',
                                   }}
                                 >
@@ -6708,7 +6653,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             ) : null}
                           </div>
                         ) : null}
-                        <div>{msgBody}</div>
                       </div>
                       {isLongMsg ? (
                         <button

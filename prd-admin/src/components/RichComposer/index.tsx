@@ -12,7 +12,6 @@ import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext
 import type { EditorState, LexicalEditor } from 'lexical';
 import {
   $createParagraphNode,
-  $createTextNode,
   $getRoot,
   $getSelection,
   $isElementNode,
