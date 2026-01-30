@@ -542,52 +542,6 @@ function guessRefName(ref: CanvasImageItem | null): string {
   return '参考图';
 }
 
-function gcd(a: number, b: number) {
-  let x = Math.abs(Math.round(a));
-  let y = Math.abs(Math.round(b));
-  while (y !== 0) {
-    const t = x % y;
-    x = y;
-    y = t;
-  }
-  return x || 1;
-}
-
-function aspectIconDimsFromSize(size: string | null | undefined): { w: number; h: number } {
-  const parsed = tryParseWxH(size);
-  const w0 = parsed?.w ?? 1;
-  const h0 = parsed?.h ?? 1;
-  const g = gcd(w0, h0);
-  const a = Math.max(1, Math.round(w0 / g));
-  const b = Math.max(1, Math.round(h0 / g));
-  const ratioId = `${a}:${b}` as any;
-  const match = ASPECT_OPTIONS.find((x) => x.id === ratioId);
-  if (match) return { w: match.iconW, h: match.iconH };
-  // fallback：按比例缩放到一个小盒子里
-  const r = w0 / h0;
-  const base = 18;
-  if (!Number.isFinite(r) || r <= 0) return { w: 18, h: 18 };
-  if (r >= 1) return { w: base, h: Math.max(8, Math.round(base / r)) };
-  return { w: Math.max(8, Math.round(base * r)), h: base };
-}
-
-/** 比例小图形（外框按比例适配，内框纯比例矩形） */
-function AspectIcon({ size }: { size: string | null | undefined }) {
-  const dims = aspectIconDimsFromSize(size);
-  return (
-    <span
-      className="rounded-[5px] flex items-center justify-center shrink-0"
-      style={{
-        width: dims.w,
-        height: dims.h,
-        border: '2px solid rgba(255,255,255,0.22)',
-        background: 'rgba(255,255,255,0.02)',
-      }}
-      aria-hidden="true"
-    />
-  );
-}
-
 async function copyToClipboard(text: string) {
   const t = String(text ?? '');
   if (!t) return;

@@ -210,7 +210,7 @@ public class DefectAgentTests
         Assert.Empty(attachment.FileName);
         Assert.Equal(0, attachment.FileSize);
         Assert.Empty(attachment.MimeType);
-        Assert.Empty(attachment.CosUrl);
+        Assert.Empty(attachment.Url);
         Assert.Null(attachment.ThumbnailUrl);
     }
 
@@ -223,7 +223,7 @@ public class DefectAgentTests
             FileName = "screenshot.png",
             FileSize = 1024 * 100, // 100KB
             MimeType = "image/png",
-            CosUrl = "https://cos.example.com/defect-agent/attachments/2025/01/xxx/screenshot.png",
+            Url = "https://cos.example.com/defect-agent/attachments/2025/01/xxx/screenshot.png",
             ThumbnailUrl = "https://cos.example.com/defect-agent/attachments/2025/01/xxx/screenshot_thumb.png"
         };
 
@@ -231,7 +231,7 @@ public class DefectAgentTests
         Assert.Equal("screenshot.png", attachment.FileName);
         Assert.Equal(102400, attachment.FileSize);
         Assert.Equal("image/png", attachment.MimeType);
-        Assert.Contains("cos.example.com", attachment.CosUrl);
+        Assert.Contains("cos.example.com", attachment.Url);
         Assert.Contains("thumb", attachment.ThumbnailUrl);
     }
 
@@ -425,7 +425,7 @@ public class DefectAgentTests
             FileName = "error.log",
             FileSize = 5000,
             MimeType = "text/plain",
-            CosUrl = "https://cos.example.com/logs/error.log"
+            Url = "https://cos.example.com/logs/error.log"
         };
 
         // Act
@@ -665,11 +665,10 @@ public class DefectAgentTests
     public void DefectPriority_All_ShouldContainAllPriorities()
     {
         // Assert
-        Assert.Contains(DefectPriority.Urgent, DefectPriority.All);
         Assert.Contains(DefectPriority.High, DefectPriority.All);
         Assert.Contains(DefectPriority.Medium, DefectPriority.All);
         Assert.Contains(DefectPriority.Low, DefectPriority.All);
-        Assert.Equal(4, DefectPriority.All.Length);
+        Assert.Equal(3, DefectPriority.All.Length);
     }
 
     [Fact]
@@ -679,10 +678,10 @@ public class DefectAgentTests
         var defect = new DefectReport();
 
         // Act
-        defect.Priority = DefectPriority.Urgent;
+        defect.Priority = DefectPriority.High;
 
         // Assert
-        Assert.Equal(DefectPriority.Urgent, defect.Priority);
+        Assert.Equal(DefectPriority.High, defect.Priority);
     }
 
     #endregion
