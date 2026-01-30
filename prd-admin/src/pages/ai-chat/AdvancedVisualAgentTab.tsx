@@ -42,7 +42,7 @@ import {
 import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
-import { assignMissingRefIds, allocateNextRefId, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
+import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, VisualAgentCanvas, VisualAgentMessage, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import type { Model } from '@/types/admin';
@@ -56,6 +56,7 @@ import {
   Copy,
   Download,
   Droplet,
+  Eye,
   Grid3X3,
   Hand,
   ImagePlus,
@@ -78,6 +79,7 @@ import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 
 import { MessageContentRenderer } from './components/MessageContentRenderer';
+import { LlmLogsPanel } from '@/pages/LlmLogsPage';
 
 type CanvasImageItem = {
   key: string;
@@ -191,6 +193,8 @@ type PersistedCanvasElementV1 =
       hidden?: boolean;
       /** 占位状态：running 表示生成中，后端会回填 */
       status?: 'running' | 'error';
+      /** 图片引用 ID，用于消息中的 @imgN 引用，持久化保存 */
+      refId?: number;
       ext?: Record<string, unknown>;
     }
   | {
@@ -306,6 +310,8 @@ function canvasToPersistedV1(items: CanvasImageItem[]): { state: PersistedCanvas
         naturalH: it.naturalH,
         // 保存占位状态，以便后端回填时能找到目标元素
         status: isPlaceholder ? (it.status as 'running' | 'error') : undefined,
+        // 持久化 refId
+        refId: typeof it.refId === 'number' && it.refId > 0 ? it.refId : undefined,
         ext: {},
       });
     } else if (kind === 'generator') {
@@ -1499,7 +1505,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }>({ active: false, startX: 0, startY: 0, x: 0, y: 0, w: 0, h: 0, shift: false });
 
   // @imgN 占位符
+  const [showLogs, setShowLogs] = useState(false);
   const [nextRefId, setNextRefId] = useState(1);
+  const canvasDirtyRef = useRef(false);
 
   const ensureRefIdForKey = useCallback(
     (key: string) => {
@@ -6394,6 +6402,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </div>
               <button
                 type="button"
+                onClick={() => setShowLogs(true)}
+                className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
+                style={{ color: 'var(--text-muted)' }}
+                aria-label="查看 LLM 日志"
+                title="查看 LLM 日志"
+              >
+                <Eye size={14} />
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   setDefectFlash(false); // 用户点击后停止闪烁
                   useGlobalDefectStore.getState().openDialog();
@@ -6453,7 +6471,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <div className="px-2.5 pt-2 pb-1.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
                             <div className="w-[3px] shrink-0 self-stretch rounded-full" style={{ background: 'rgba(239,68,68,0.4)' }} />
                             <div className="text-[11px] min-w-0 truncate flex-1" style={{ color: 'rgba(255,255,255,0.5)' }} title={genError.prompt}>
-                              {genError.prompt}
+                              <MessageContentRenderer
+                                content={genError.prompt}
+                                canvasItems={canvas}
+                                onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
+                              />
                             </div>
                             <button
                               type="button"
@@ -6526,7 +6548,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               </button>
                             ) : null}
                             <div className="text-[11px] min-w-0 truncate" style={{ color: 'rgba(255,255,255,0.5)' }} title={genDone.prompt}>
-                              {genDone.prompt || ''}
+                              <MessageContentRenderer
+                                content={genDone.prompt || ''}
+                                canvasItems={canvas}
+                                onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
+                              />
                             </div>
                           </div>
                         ) : null}
@@ -7566,6 +7592,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </Button>
             </div>
           </div>
+        }
+      />
+
+      <Dialog
+        open={showLogs}
+        onOpenChange={setShowLogs}
+        title="LLM 调用日志 (Visual Agent)"
+        maxWidth={1200}
+        contentStyle={{ height: '80vh', padding: 0 }}
+        content={
+          <LlmLogsPanel
+            embedded
+            defaultAppKey="visual-agent"
+          />
         }
       />
       </GlassCard>

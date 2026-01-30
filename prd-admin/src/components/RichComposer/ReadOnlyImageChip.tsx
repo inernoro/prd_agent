@@ -12,7 +12,6 @@ export interface ReadOnlyImageChipProps {
 }
 
 export function ReadOnlyImageChip({
-  refId,
   src,
   label,
   ready = true, // 默认就绪（蓝色），聊天记录中通常是就绪状态
@@ -24,9 +23,6 @@ export function ReadOnlyImageChip({
   const displayLabel = label.length > 8 ? `${label.slice(0, 6)}...` : label;
 
   // ready = 蓝色（就绪），!ready = 灰色（待选）
-  const accentColor = ready ? 'rgba(99, 102, 241, 1)' : 'rgba(156, 163, 175, 1)';
-  const accentBg = ready ? 'rgba(99, 102, 241, 0.25)' : 'rgba(156, 163, 175, 0.25)';
-  const accentBorder = ready ? 'rgba(99, 102, 241, 0.4)' : 'rgba(156, 163, 175, 0.4)';
   const textOpacity = ready ? 0.88 : 0.6;
   const imgOpacity = ready ? 1 : 0.6;
 
@@ -49,25 +45,6 @@ export function ReadOnlyImageChip({
 
   return (
     <span className={className} style={containerStyle} onClick={onClick}>
-      {/* 序号 */}
-      <span
-        style={{
-          minWidth: 14,
-          height: 14,
-          borderRadius: 3,
-          background: accentBg,
-          border: `1px solid ${accentBorder}`,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 9,
-          fontWeight: 700,
-          color: accentColor,
-          flexShrink: 0,
-        }}
-      >
-        {refId}
-      </span>
       {/* 缩略图 */}
       <img
         src={src}

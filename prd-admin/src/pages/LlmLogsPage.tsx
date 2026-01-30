@@ -715,11 +715,12 @@ function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
   );
 }
 
-export default function LlmLogsPage() {
+export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; defaultAppKey?: string } = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get('tab') ?? 'llm') as 'llm' | 'system';
 
   const setTab = (next: 'llm' | 'system') => {
+    if (embedded) return; // 嵌入模式下不支持切换 tab
     const sp = new URLSearchParams(searchParams);
     sp.set('tab', next);
     setSearchParams(sp, { replace: true });
@@ -742,7 +743,7 @@ export default function LlmLogsPage() {
   const [qGroupId, setQGroupId] = useState(() => searchParams.get('groupId') ?? '');
   const [qSessionId, setQSessionId] = useState(() => searchParams.get('sessionId') ?? '');
   const [qUserId, setQUserId] = useState(() => searchParams.get('userId') ?? '');
-  const [qRequestPurpose, setQRequestPurpose] = useState(() => searchParams.get('requestPurpose') ?? '');
+  const [qRequestPurpose, setQRequestPurpose] = useState(() => defaultAppKey ?? searchParams.get('requestPurpose') ?? '');
 
   const [metaModels, setMetaModels] = useState<string[]>([]);
   const [metaRequestPurposes, setMetaRequestPurposes] = useState<string[]>([]);
@@ -871,20 +872,22 @@ export default function LlmLogsPage() {
     if (opts?.resetPage) setPage(1);
     setLoading(true);
     try {
-      const sp = new URLSearchParams(searchParams);
-      sp.delete('provider');
-      sp.set('model', qModel || '');
-      sp.set('status', qStatus || '');
-      sp.set('requestId', qRequestId || '');
-      sp.set('groupId', qGroupId || '');
-      sp.set('sessionId', qSessionId || '');
-      sp.set('userId', qUserId || '');
-      sp.set('requestPurpose', qRequestPurpose || '');
-      // 清理空参数（保持 URL 干净）
-      ['model', 'status', 'requestId', 'groupId', 'sessionId', 'userId', 'requestPurpose'].forEach((k) => {
-        if (!String(sp.get(k) ?? '').trim()) sp.delete(k);
-      });
-      setSearchParams(sp, { replace: true });
+      if (!embedded) {
+        const sp = new URLSearchParams(searchParams);
+        sp.delete('provider');
+        sp.set('model', qModel || '');
+        sp.set('status', qStatus || '');
+        sp.set('requestId', qRequestId || '');
+        sp.set('groupId', qGroupId || '');
+        sp.set('sessionId', qSessionId || '');
+        sp.set('userId', qUserId || '');
+        sp.set('requestPurpose', qRequestPurpose || '');
+        // 清理空参数（保持 URL 干净）
+        ['model', 'status', 'requestId', 'groupId', 'sessionId', 'userId', 'requestPurpose'].forEach((k) => {
+          if (!String(sp.get(k) ?? '').trim()) sp.delete(k);
+        });
+        setSearchParams(sp, { replace: true });
+      }
 
       const res = await getLlmLogs({
         page: opts?.resetPage ? 1 : page,
@@ -1100,7 +1103,7 @@ export default function LlmLogsPage() {
     { key: 'system' as const, label: '系统日志', icon: <Server size={14} /> },
   ];
 
-  if (tab === 'system') {
+  if (tab === 'system' && !embedded) {
     return (
       <div className="h-full min-h-0 flex flex-col gap-4">
         <TabBar
@@ -1117,43 +1120,45 @@ export default function LlmLogsPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
-      <TabBar
-        items={tabs}
-        activeKey={tab}
-        onChange={(key) => setTab(key as 'llm' | 'system')}
-        actions={
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setQModel('');
-                setQStatus('');
-                setQRequestId('');
-                setQUserId('');
-                setQGroupId('');
-                setQSessionId('');
-                setQRequestPurpose('');
-                setPage(1);
-                setTimeout(() => load({ resetPage: true }), 0);
-              }}
-              disabled={loading}
-            >
-              <Eraser size={16} />
-              清空
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => load()}
-              disabled={loading}
-            >
-              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-              刷新
-            </Button>
-          </div>
-        }
-      />
+      {!embedded && (
+        <TabBar
+          items={tabs}
+          activeKey={tab}
+          onChange={(key) => setTab(key as 'llm' | 'system')}
+          actions={
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setQModel('');
+                  setQStatus('');
+                  setQRequestId('');
+                  setQUserId('');
+                  setQGroupId('');
+                  setQSessionId('');
+                  setQRequestPurpose('');
+                  setPage(1);
+                  setTimeout(() => load({ resetPage: true }), 0);
+                }}
+                disabled={loading}
+              >
+                <Eraser size={16} />
+                清空
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => load()}
+                disabled={loading}
+              >
+                <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                刷新
+              </Button>
+            </div>
+          }
+        />
+      )}
 
       <GlassCard glow className="p-4">
         <div className="grid gap-3 grid-cols-4 md:grid-cols-8">
@@ -2420,4 +2425,8 @@ export default function LlmLogsPage() {
       />
     </div>
   );
+}
+
+export default function LlmLogsPage() {
+  return <LlmLogsPanel />;
 }
