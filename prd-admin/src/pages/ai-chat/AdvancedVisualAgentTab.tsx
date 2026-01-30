@@ -738,16 +738,16 @@ function MessageMetadata({
   const sizeLabel = aspect ? `${tierLabel} · ${aspect}` : size;
 
   return (
-    <div className={`flex flex-wrap items-center justify-between w-full gap-1.5 mt-1 opacity-70 ${className || ''}`} style={style}>
+    <div className={`flex flex-wrap items-center justify-between w-full gap-1.5 mt-1 ${className || ''}`} style={style}>
       {size ? (
         <span
-          className="inline-flex items-center gap-1 px-2 rounded-full shrink-0"
+          className="inline-flex items-center gap-1 px-1.5 rounded-full shrink-0"
           style={{
-            height: 28, // 匹配编辑器底部按钮高度 (h-7)
+            height: 22, // 比编辑器底部按钮 (28px) 小一号
             border: '1px solid rgba(255,255,255,0.1)',
             background: 'rgba(255,255,255,0.04)',
             color: 'var(--text-secondary)',
-            fontSize: 11,
+            fontSize: 10,
             fontWeight: 600,
           }}
           title={`尺寸：${size}`}
@@ -761,9 +761,9 @@ function MessageMetadata({
       {/* 模型池标签 */}
       {model ? (
         <span
-          className="inline-flex items-center gap-1 px-2 rounded-full shrink-0 ml-auto"
+          className="inline-flex items-center gap-1 px-1.5 rounded-full shrink-0 ml-auto"
           style={{
-            height: 24, // 匹配编辑器底部模型选择按钮高度 (h-6)
+            height: 22, // 保持与尺寸标签高度一致，且比底部 (24px) 略小
             border: '1px solid rgba(99, 102, 241, 0.35)',
             background: 'rgba(99, 102, 241, 0.12)',
             color: 'rgba(129, 140, 248, 0.95)',
@@ -6617,11 +6617,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '', runId: genDone.runId })}
                           title="点击放大"
                         >
-                          <img
-                            src={genDone.src}
-                            alt={genDone.prompt || '生成结果'}
-                            style={{ width: '100%', maxHeight: 70, objectFit: 'contain', display: 'block' }}
-                          />
+                  <img
+                    src={genDone.src}
+                    alt={genDone.prompt || '生成结果'}
+                    style={{ width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block' }}
+                  />
                         </button>
 
                         {/* 元数据（Bottom） */}
