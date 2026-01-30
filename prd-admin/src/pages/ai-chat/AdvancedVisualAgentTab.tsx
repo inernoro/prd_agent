@@ -743,16 +743,15 @@ function MessageMetadata({
         <span
           className="inline-flex items-center gap-1 px-2 rounded-full shrink-0"
           style={{
-            height: 17, // 匹配 h-7 (28px) -> 这里的 17px 是因为字号只有 9px，整体更紧凑
+            height: 28, // 匹配编辑器底部按钮高度 (h-7)
             border: '1px solid rgba(255,255,255,0.1)',
             background: 'rgba(255,255,255,0.04)',
-            color: 'rgba(255,255,255,0.75)',
-            fontSize: 9,
-            fontWeight: 500,
+            color: 'var(--text-secondary)',
+            fontSize: 11,
+            fontWeight: 600,
           }}
           title={`尺寸：${size}`}
         >
-          <AspectIcon size={size} style={{ width: 10, height: 10, opacity: 0.8 }} />
           <span className="tabular-nums" style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>
             {sizeLabel}
           </span>
@@ -764,16 +763,16 @@ function MessageMetadata({
         <span
           className="inline-flex items-center gap-1 px-2 rounded-full shrink-0 ml-auto"
           style={{
-            height: 17,
+            height: 24, // 匹配编辑器底部模型选择按钮高度 (h-6)
             border: '1px solid rgba(99, 102, 241, 0.35)',
-            background: 'rgba(99, 102, 241, 0.1)',
+            background: 'rgba(99, 102, 241, 0.12)',
             color: 'rgba(129, 140, 248, 0.95)',
-            fontSize: 9,
+            fontSize: 10,
             fontWeight: 500,
           }}
           title={`模型池：${model}`}
         >
-          <Sparkles size={9} style={{ opacity: 0.9 }} />
+          <Sparkles size={10} className="shrink-0" />
           <span style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>
             {model}
           </span>
