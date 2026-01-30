@@ -131,7 +131,12 @@ public class LocalAssetStorage : IAssetStorage
 
     private static string MimeToExt(string mime)
     {
-        return mime.ToLowerInvariant() switch
+        // 提取 mime type 主体部分（去掉 charset 等参数）
+        var m = mime.ToLowerInvariant();
+        var semi = m.IndexOf(';');
+        if (semi > 0) m = m[..semi].Trim();
+
+        return m switch
         {
             "image/jpeg" or "image/jpg" => "jpg",
             "image/webp" => "webp",

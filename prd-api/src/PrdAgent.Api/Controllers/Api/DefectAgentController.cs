@@ -1261,15 +1261,16 @@ public class DefectAgentController : ControllerBase
 
             // 3. 格式化并上传请求日志
             // domain: defect-agent (与 appKey 一致), type: log
+            const string textUtf8Mime = "text/plain; charset=utf-8";
             var requestLogContent = FormatApiLogs(recentLogs, "请求日志");
             var requestLogBytes = Encoding.UTF8.GetBytes(requestLogContent);
-            var requestLogAsset = await _assetStorage.SaveAsync(requestLogBytes, "text/plain", ct, "defect-agent", "log");
+            var requestLogAsset = await _assetStorage.SaveAsync(requestLogBytes, textUtf8Mime, ct, "defect-agent", "log");
 
             defect.Attachments.Add(new DefectAttachment
             {
                 FileName = $"近{recentLogs.Count}条请求日志.txt",
                 FileSize = requestLogBytes.Length,
-                MimeType = "text/plain",
+                MimeType = textUtf8Mime,
                 Type = DefectAttachmentType.LogRequest,
                 IsSystemGenerated = true,
                 Url = requestLogAsset.Url,
@@ -1284,13 +1285,13 @@ public class DefectAgentController : ControllerBase
             {
                 var errorLogContent = FormatApiLogs(errorLogs, "错误日志");
                 var errorLogBytes = Encoding.UTF8.GetBytes(errorLogContent);
-                var errorLogAsset = await _assetStorage.SaveAsync(errorLogBytes, "text/plain", ct, "defect-agent", "log");
+                var errorLogAsset = await _assetStorage.SaveAsync(errorLogBytes, textUtf8Mime, ct, "defect-agent", "log");
 
                 defect.Attachments.Add(new DefectAttachment
                 {
                     FileName = $"错误日志({errorLogs.Count}条).txt",
                     FileSize = errorLogBytes.Length,
-                    MimeType = "text/plain",
+                    MimeType = textUtf8Mime,
                     Type = DefectAttachmentType.LogError,
                     IsSystemGenerated = true,
                     Url = errorLogAsset.Url,
