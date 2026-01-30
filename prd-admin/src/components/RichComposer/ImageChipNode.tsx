@@ -59,6 +59,14 @@ export class ImageChipNode extends DecoratorNode<JSX.Element> {
     );
   }
 
+  isInline(): boolean {
+    return true;
+  }
+
+  isKeyboardSelectable(): boolean {
+    return false;
+  }
+
   constructor(
     canvasKey: string,
     refId: number,
