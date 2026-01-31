@@ -605,75 +605,7 @@ url
     }
 
     /// <summary>
-    /// 测试6: 风格迁移场景 (原测试4)
-------WebKitFormBoundary
-Content-Disposition: form-data; name=""response_format""
-
-url
-------WebKitFormBoundary--");
-        Log(new string('-', 40));
-
-        Log("\n【OpenAIImageClient 日志输出】");
-        Log(new string('-', 40));
-        Log(@"[OpenAIImageClient] 发送图生图请求:
-  端点: https://api.vveai.com/v1/images/edits
-  模型: nano-banana-pro
-  提供者: openai
-  提示词: @img16@img17 把这两张图融合成一张\n\n【图片对照表】\n@img16 对应 风格参考图\n@img17 对应 目标图片
-  参考图大小: 234567 bytes
-  请求类型: multipart/form-data (img2img)");
-        Log(new string('-', 40));
-
-        Log("\n【说明】");
-        Log("  1. 文生图使用 /v1/images/generations (application/json)");
-        Log("  2. 图生图使用 /v1/images/edits (multipart/form-data)");
-        Log("  3. 多图场景当前只取第一张作为 initImage");
-        Log("  4. 增强提示词包含【图片对照表】供模型理解多图关系");
-
-        // 如果有 API Key，尝试真实调用
-        if (!string.IsNullOrWhiteSpace(_apiKey))
-        {
-            Log("\n【真实 API 调用 - 文生图模式】");
-
-            var endpoint = $"{_baseUrl.TrimEnd('/')}/v1/images/generations";
-            var requestBody = new
-            {
-                model = "nano-banana-pro",
-                prompt = enhancedPrompt,
-                n = 1,
-                size = "1024x1024",
-                response_format = "url"
-            };
-
-            var requestJson = JsonSerializer.Serialize(requestBody, new JsonSerializerOptions { WriteIndented = true });
-            Log($"  请求体:\n{requestJson}");
-
-            _httpClient.DefaultRequestHeaders.Clear();
-            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
-
-            var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
-            var startTime = DateTime.Now;
-
-            Log($"\n  发送中 {startTime:HH:mm:ss}...");
-
-            var response = await _httpClient.PostAsync(endpoint, content);
-            var elapsed = DateTime.Now - startTime;
-            var responseBody = await response.Content.ReadAsStringAsync();
-
-            Log($"  状态: {(int)response.StatusCode}");
-            Log($"  耗时: {elapsed.TotalSeconds:F2} 秒");
-            Log($"  响应: {FormatJson(responseBody)}");
-        }
-        else
-        {
-            Log("\n[跳过真实调用] VVEAI_API_KEY 未设置");
-        }
-
-        Log("\n【通过】图生图请求格式展示完成!");
-    }
-
-    /// <summary>
-    /// 测试4: 风格迁移场景
+    /// 测试6: 风格迁移场景
     /// </summary>
     [Fact]
     public async Task 风格迁移_NanoBananaPro_应返回图片URL()
