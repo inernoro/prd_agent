@@ -111,17 +111,41 @@ public static class Desktop
 public static class VisualAgent
 {
     public const string AppName = "Visual Agent";
-    
+
     public static class Image
     {
         [AppCallerMetadata(
             "图片生成",
-            "根据描述生成图片",
+            "根据描述生成图片（通用，兼容旧代码）",
             ModelTypes = new[] { ModelTypes.ImageGen },
             Category = "Image"
         )]
         public const string Generation = "visual-agent.image::generation";
-        
+
+        [AppCallerMetadata(
+            "文生图",
+            "纯文本描述生成图片（无参考图）",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Image"
+        )]
+        public const string Text2Img = "visual-agent.image.text2img::generation";
+
+        [AppCallerMetadata(
+            "图生图",
+            "单图参考生成（传统 img2img）",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Image"
+        )]
+        public const string Img2Img = "visual-agent.image.img2img::generation";
+
+        [AppCallerMetadata(
+            "多图 Vision 生成",
+            "多图参考生成（Vision API）",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Image"
+        )]
+        public const string VisionGen = "visual-agent.image.vision::generation";
+
         [AppCallerMetadata(
             "图片分析",
             "分析图片内容",
@@ -129,7 +153,7 @@ public static class VisualAgent
             Category = "Image"
         )]
         public const string Vision = "visual-agent.image::vision";
-        
+
         [AppCallerMetadata(
             "创意对话",
             "与AI讨论创意想法",

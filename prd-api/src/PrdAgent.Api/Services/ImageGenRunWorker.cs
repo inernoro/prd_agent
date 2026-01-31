@@ -329,19 +329,34 @@ public class ImageGenRunWorker : BackgroundService
                         _logger.LogInformation("[ImageGenRunWorker Debug] Run {RunId}: AppKey={AppKey}, UserId={UserId}, AppCallerCode={AppCallerCode}",
                             run.Id, run.AppKey ?? "(null)", run.OwnerAdminId, run.AppCallerCode ?? "(null)");
 
-                        // AppCallerCode: 优先使用 run.AppCallerCode（已在 ResolveModelGroupAsync 中正确设置）
-                        // 这里仅用于 LlmRequestContext 日志记录，保持与调度逻辑一致的映射
-                        var appCallerCode = run.AppCallerCode;
-                        if (string.IsNullOrWhiteSpace(appCallerCode) && !string.IsNullOrWhiteSpace(run.AppKey))
+                        // AppCallerCode: 根据生成模式选择正确的 code
+                        // - text2img: 纯文本生成（无参考图）
+                        // - img2img: 单图参考生成
+                        // - vision: 多图 Vision API 生成
+                        string appCallerCode;
+                        if (run.AppKey == "visual-agent")
                         {
-                            appCallerCode = run.AppKey switch
+                            if (isMultiImageVisionMode && loadedImageRefs.Count > 1)
                             {
-                                "visual-agent" => AppCallerRegistry.VisualAgent.Image.Generation,
-                                "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Generation,
-                                _ => $"{run.AppKey}.image::generation"
-                            };
+                                appCallerCode = AppCallerRegistry.VisualAgent.Image.VisionGen;  // 多图 Vision
+                            }
+                            else if (initImageBase64 != null || loadedImageRefs.Count == 1)
+                            {
+                                appCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img;   // 单图 img2img
+                            }
+                            else
+                            {
+                                appCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img;  // 纯文本生成
+                            }
                         }
-                        appCallerCode ??= AppCallerRegistry.Admin.Lab.Generation; // 最终回退到实验室生成
+                        else if (run.AppKey == "literary-agent")
+                        {
+                            appCallerCode = AppCallerRegistry.LiteraryAgent.Illustration.Generation;
+                        }
+                        else
+                        {
+                            appCallerCode = run.AppCallerCode ?? AppCallerRegistry.Admin.Lab.Generation;
+                        }
 
                         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                             RequestId: $"{run.Id}-{curItemIndex}-{imageIndex}",
@@ -922,17 +937,43 @@ public class ImageGenRunWorker : BackgroundService
         string? resolvedModelId = null;
 
         // 通过 AppCaller 从模型池中选择模型（唯一方式）
-        // 注意：不同应用的 appCallerCode 命名不同，必须映射到 AppCallerRegistry 中定义的值
+        // 根据生成模式选择正确的 AppCallerCode：
+        // - text2img: 纯文本生成（无参考图）
+        // - img2img: 单图参考生成
+        // - vision: 多图 Vision API 生成
         var appCallerCode = run.AppCallerCode;
         if (string.IsNullOrWhiteSpace(appCallerCode) && !string.IsNullOrWhiteSpace(run.AppKey))
         {
-            // 根据 appKey 映射到 AppCallerRegistry 中定义的正确 appCallerCode
-            appCallerCode = run.AppKey switch
+            if (run.AppKey == "visual-agent")
             {
-                "visual-agent" => AppCallerRegistry.VisualAgent.Image.Generation,      // visual-agent.image::generation
-                "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Generation, // literary-agent.illustration::generation
-                _ => $"{run.AppKey}.image::generation" // 其他应用回退默认命名
-            };
+                // 根据 ImageRefs 数量确定生成模式
+                var imageRefCount = run.ImageRefs?.Count ?? 0;
+                var hasInitImage = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256);
+
+                if (imageRefCount > 1)
+                {
+                    appCallerCode = AppCallerRegistry.VisualAgent.Image.VisionGen;  // 多图 Vision
+                    _logger.LogDebug("[生图模型匹配] 使用 Vision 多图模式 (imageRefs={Count})", imageRefCount);
+                }
+                else if (imageRefCount == 1 || hasInitImage)
+                {
+                    appCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img;   // 单图 img2img
+                    _logger.LogDebug("[生图模型匹配] 使用 img2img 模式");
+                }
+                else
+                {
+                    appCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img;  // 纯文本生成
+                    _logger.LogDebug("[生图模型匹配] 使用 text2img 模式");
+                }
+            }
+            else if (run.AppKey == "literary-agent")
+            {
+                appCallerCode = AppCallerRegistry.LiteraryAgent.Illustration.Generation;
+            }
+            else
+            {
+                appCallerCode = $"{run.AppKey}.image::generation"; // 其他应用回退默认命名
+            }
         }
         
         // 简洁：不再单独打印 AppCallerCode
