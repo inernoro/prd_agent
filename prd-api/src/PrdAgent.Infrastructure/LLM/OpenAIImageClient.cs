@@ -1478,10 +1478,106 @@ public class OpenAIImageClient
                 images.Count,
                 durationMs);
 
-            // 记录成功日志
+            // 处理图片结果：保存到 COS 并获取稳定 URL
+            var watermarkConfig = string.IsNullOrWhiteSpace(appKey) ? null : await TryGetWatermarkConfigAsync(appKey, ct);
+            var cosInfos = new List<object>();
+
+            for (var i = 0; i < images.Count; i++)
+            {
+                byte[]? bytes = null;
+                var outMime = "image/png";
+
+                if (!string.IsNullOrWhiteSpace(images[i].Base64))
+                {
+                    if (TryDecodeDataUrlOrBase64(images[i].Base64!, out var decoded, out var decodedMime))
+                    {
+                        bytes = decoded;
+                        if (!string.IsNullOrWhiteSpace(decodedMime)) outMime = decodedMime;
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(images[i].Url))
+                {
+                    var dl = await TryDownloadImageBytesAsync(images[i].Url!, ct);
+                    if (dl.bytes != null && dl.bytes.Length > 0)
+                    {
+                        bytes = dl.bytes;
+                        if (!string.IsNullOrWhiteSpace(dl.mime)) outMime = dl.mime!;
+                    }
+                }
+
+                if (bytes == null || bytes.Length == 0) continue;
+
+                // 1. 原图保存到 visual-agent 目录
+                var stored = await _assetStorage.SaveAsync(bytes, outMime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+
+                // 2. 默认展示原图 URL
+                var displayUrl = stored.Url;
+
+                // 3. 如果有水印配置，生成水印图
+                if (watermarkConfig != null)
+                {
+                    try
+                    {
+                        var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, watermarkConfig, ct);
+                        var watermarkedStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct, domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
+                        displayUrl = watermarkedStored.Url;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "[Vision API] Failed to apply watermark. Using original image.");
+                    }
+                }
+
+                // 更新图片对象
+                images[i].Url = displayUrl;
+                images[i].Base64 = null;
+                images[i].OriginalUrl = stored.Url;
+                images[i].OriginalSha256 = stored.Sha256;
+
+                cosInfos.Add(new { index = i, url = stored.Url, sha256 = stored.Sha256, mime = stored.Mime, sizeBytes = stored.SizeBytes });
+            }
+
+            // 记录成功日志（结构化格式，支持前端图片预览）
             if (logId != null)
             {
-                var resultUrl = images.FirstOrDefault()?.Url ?? images.FirstOrDefault()?.Base64?[..Math.Min(100, images.FirstOrDefault()?.Base64?.Length ?? 0)];
+                // 构建参考图列表（用于前端左侧显示）
+                var referenceImages = imageRefs.Select(img => new
+                {
+                    refId = img.RefId,
+                    label = img.Label,
+                    role = img.Role,
+                    url = img.CosUrl ?? _assetStorage.TryBuildUrlBySha(img.Sha256 ?? "", img.MimeType, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg),
+                    sha256 = img.Sha256,
+                    mime = img.MimeType
+                }).ToList();
+
+                // 构建结果图列表（用于前端右侧显示）
+                var resultImages = images.Select((img, idx) => new
+                {
+                    index = idx,
+                    url = img.Url,
+                    originalUrl = img.OriginalUrl,
+                    sha256 = img.OriginalSha256,
+                    revisedPrompt = img.RevisedPrompt
+                }).ToList();
+
+                // 构建结构化的 AnswerText（支持前端图片对照组显示）
+                var answerSummary = new
+                {
+                    type = "vision_image_gen",
+                    success = true,
+                    imageCount = images.Count,
+                    referenceCount = imageRefs.Count,
+                    prompt = prompt.Length > 500 ? prompt[..500] + "..." : prompt,
+                    referenceImages,
+                    resultImages,
+                    cos = cosInfos.Take(10).ToArray(),
+                    model = effectiveModelName,
+                    platform = platformNameForLog ?? platformIdForLog,
+                    durationMs
+                };
+                var answerText = JsonSerializer.Serialize(answerSummary);
+
                 _logWriter?.MarkDone(
                     logId,
                     new LlmLogDone(
@@ -1496,9 +1592,9 @@ public class OpenAIImageClient
                         CacheReadInputTokens: null,
                         TokenUsageSource: "missing",
                         ImageSuccessCount: images.Count,
-                        AnswerText: $"[Vision API 生成成功] {images.Count} 张图片, URL: {resultUrl}",
-                        AssembledTextChars: respBody.Length,
-                        AssembledTextHash: LlmLogRedactor.Sha256Hex(respBody),
+                        AnswerText: answerText,
+                        AssembledTextChars: answerText.Length,
+                        AssembledTextHash: LlmLogRedactor.Sha256Hex(answerText),
                         Status: "succeeded",
                         EndedAt: endedAt,
                         DurationMs: durationMs));

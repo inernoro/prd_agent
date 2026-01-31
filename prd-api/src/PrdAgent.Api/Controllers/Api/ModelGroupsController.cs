@@ -350,7 +350,7 @@ public class ModelGroupsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("INVALID_MODEL_TYPE", $"无效的模型类型: {request.ModelType}"));
         }
 
-        // 检查是否已存在同类型的默认分组
+        // 如果要设为默认，先取消同类型的其他默认分组
         if (request.IsDefaultForType)
         {
             var existingDefault = await _db.ModelGroups
@@ -359,9 +359,16 @@ public class ModelGroupsController : ControllerBase
 
             if (existingDefault != null)
             {
-                return BadRequest(ApiResponse<object>.Fail(
-                    "DEFAULT_GROUP_EXISTS",
-                    $"该类型已存在默认分组: {existingDefault.Name}"));
+                // 自动取消旧的默认分组
+                await _db.ModelGroups.UpdateOneAsync(
+                    g => g.Id == existingDefault.Id,
+                    Builders<ModelGroup>.Update
+                        .Set(g => g.IsDefaultForType, false)
+                        .Set(g => g.UpdatedAt, DateTime.UtcNow));
+
+                _logger.LogInformation(
+                    "自动取消旧默认分组: {OldGroupId} ({OldGroupName})，新默认将是: {NewGroupName}",
+                    existingDefault.Id, existingDefault.Name, request.Name);
             }
         }
 
@@ -439,28 +446,34 @@ public class ModelGroupsController : ControllerBase
             group.Models = request.Models;
         }
 
-        // 更新默认分组标记
+        // 更新默认分组标记（自动取消旧默认）
         if (request.IsDefaultForType.HasValue && request.IsDefaultForType.Value != group.IsDefaultForType)
         {
             if (request.IsDefaultForType.Value)
             {
-                // 检查是否已存在其他默认分组
+                // 自动取消同类型的其他默认分组
                 var existingDefault = await _db.ModelGroups
                     .Find(g => g.ModelType == group.ModelType && g.IsDefaultForType && g.Id != id)
                     .FirstOrDefaultAsync();
 
                 if (existingDefault != null)
                 {
-                    return BadRequest(ApiResponse<object>.Fail(
-                        "DEFAULT_GROUP_EXISTS",
-                        $"该类型已存在默认分组: {existingDefault.Name}"));
+                    await _db.ModelGroups.UpdateOneAsync(
+                        g => g.Id == existingDefault.Id,
+                        Builders<ModelGroup>.Update
+                            .Set(g => g.IsDefaultForType, false)
+                            .Set(g => g.UpdatedAt, DateTime.UtcNow));
+
+                    _logger.LogInformation(
+                        "自动取消旧默认分组: {OldGroupId} ({OldGroupName})，新默认将是: {GroupName}",
+                        existingDefault.Id, existingDefault.Name, group.Name);
                 }
             }
 
             group.IsDefaultForType = request.IsDefaultForType.Value;
         }
 
-        // 如果修改了类型且当前为默认分组，需要验证新类型是否已有默认分组
+        // 如果修改了类型且当前为默认分组，自动取消新类型的其他默认分组
         if (!string.IsNullOrWhiteSpace(request.ModelType) && group.IsDefaultForType)
         {
             var existingDefault = await _db.ModelGroups
@@ -469,9 +482,15 @@ public class ModelGroupsController : ControllerBase
 
             if (existingDefault != null)
             {
-                return BadRequest(ApiResponse<object>.Fail(
-                    "DEFAULT_GROUP_EXISTS",
-                    $"该类型已存在默认分组: {existingDefault.Name}"));
+                await _db.ModelGroups.UpdateOneAsync(
+                    g => g.Id == existingDefault.Id,
+                    Builders<ModelGroup>.Update
+                        .Set(g => g.IsDefaultForType, false)
+                        .Set(g => g.UpdatedAt, DateTime.UtcNow));
+
+                _logger.LogInformation(
+                    "更改类型后自动取消旧默认分组: {OldGroupId} ({OldGroupName})",
+                    existingDefault.Id, existingDefault.Name);
             }
         }
 

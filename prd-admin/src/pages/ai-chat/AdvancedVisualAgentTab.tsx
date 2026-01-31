@@ -6542,7 +6542,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
                         style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgb(35, 35, 40)' }}
                       >
-                        {/* 引用用户提示词（Top） */}
+                        {/* 引用用户提示词 + 重试按钮（Top） */}
                         {(genDone.prompt || genDone.refSrc) ? (
                           <div className="px-2.5 pb-2 pt-1 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                             <div className="text-[11px] min-w-0 flex-1 line-clamp-1" style={{ color: 'rgba(255,255,255,0.5)' }} title={genDone.prompt}>
@@ -6552,6 +6552,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
                               />
                             </div>
+                            <button
+                              type="button"
+                              className="shrink-0 px-2 py-0.5 text-[10px] rounded-md transition-all hover:brightness-110"
+                              style={{
+                                border: '1px solid rgba(255,255,255,0.15)',
+                                background: 'rgba(255,255,255,0.05)',
+                                color: 'rgba(255,255,255,0.7)',
+                              }}
+                              title="使用相同提示词重新生成"
+                              onClick={() => { if (genDone.prompt) void sendText(genDone.prompt); }}
+                            >
+                              重试
+                            </button>
                           </div>
                         ) : null}
 

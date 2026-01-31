@@ -914,12 +914,25 @@ public class ImageGenRunWorker : BackgroundService
         var frontendExpectedModelId = run.ModelId;
         var frontendExpectedConfigModelId = run.ConfigModelId;
         
-        // 简洁日志：记录输入参数（包含用户 prompt）
+        // 详细日志：记录输入参数（包含图片引用数量）
         var firstPrompt = run.Items?.FirstOrDefault()?.Prompt ?? "";
         var promptPreview = firstPrompt.Length > 30 ? firstPrompt.Substring(0, 30) + "..." : firstPrompt;
+        var imageRefCount = run.ImageRefs?.Count ?? 0;
+        var hasInitImage = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256);
+
         _logger.LogInformation(
-            "[生图模型匹配] 开始 | RunId={RunId} | 期望={ExpectedCode} | Prompt=\"{Prompt}\"",
-            run.Id, frontendExpectedModelId ?? "(随机)", promptPreview);
+            "[生图模型匹配] ====== 开始 ======\n" +
+            "  RunId: {RunId}\n" +
+            "  AppKey: {AppKey}\n" +
+            "  ImageRefs数量: {ImageRefCount}\n" +
+            "  HasInitImage: {HasInitImage}\n" +
+            "  前端期望ModelId: {ExpectedModelId}\n" +
+            "  前端期望PlatformId: {ExpectedPlatformId}\n" +
+            "  前端ConfigModelId: {ConfigModelId}\n" +
+            "  Prompt: \"{Prompt}\"",
+            run.Id, run.AppKey ?? "(null)", imageRefCount, hasInitImage,
+            frontendExpectedModelId ?? "(null)", frontendExpectedPlatformId ?? "(null)",
+            frontendExpectedConfigModelId ?? "(null)", promptPreview);
 
         // 如果已经有模型解析类型信息，跳过
         if (run.ModelResolutionType.HasValue)
@@ -946,24 +959,36 @@ public class ImageGenRunWorker : BackgroundService
         {
             if (run.AppKey == "visual-agent")
             {
-                // 根据 ImageRefs 数量确定生成模式
-                var imageRefCount = run.ImageRefs?.Count ?? 0;
-                var hasInitImage = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256);
+                // 重新获取（避免用外层变量）
+                var refCount = run.ImageRefs?.Count ?? 0;
+                var hasInit = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256);
 
-                if (imageRefCount > 1)
+                if (refCount > 1)
                 {
                     appCallerCode = AppCallerRegistry.VisualAgent.Image.VisionGen;  // 多图 Vision
-                    _logger.LogDebug("[生图模型匹配] 使用 Vision 多图模式 (imageRefs={Count})", imageRefCount);
+                    _logger.LogInformation(
+                        "[生图模型匹配] 选择 VisionGen 模式\n" +
+                        "  原因: ImageRefs.Count={RefCount} > 1\n" +
+                        "  AppCallerCode: {AppCallerCode}",
+                        refCount, appCallerCode);
                 }
-                else if (imageRefCount == 1 || hasInitImage)
+                else if (refCount == 1 || hasInit)
                 {
                     appCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img;   // 单图 img2img
-                    _logger.LogDebug("[生图模型匹配] 使用 img2img 模式");
+                    _logger.LogInformation(
+                        "[生图模型匹配] 选择 Img2Img 模式\n" +
+                        "  原因: ImageRefs.Count={RefCount}, HasInitImage={HasInit}\n" +
+                        "  AppCallerCode: {AppCallerCode}",
+                        refCount, hasInit, appCallerCode);
                 }
                 else
                 {
                     appCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img;  // 纯文本生成
-                    _logger.LogDebug("[生图模型匹配] 使用 text2img 模式");
+                    _logger.LogInformation(
+                        "[生图模型匹配] 选择 Text2Img 模式\n" +
+                        "  原因: 无参考图 (ImageRefs.Count={RefCount}, HasInitImage={HasInit})\n" +
+                        "  AppCallerCode: {AppCallerCode}",
+                        refCount, hasInit, appCallerCode);
                 }
             }
             else if (run.AppKey == "literary-agent")
@@ -1033,19 +1058,26 @@ public class ImageGenRunWorker : BackgroundService
             && (string.Equals(frontendExpectedModelId, modelGroupName, StringComparison.OrdinalIgnoreCase)
                 || string.IsNullOrWhiteSpace(modelGroupName));
         
-        // 一行简洁日志：用户期望 -> 匹配模型池 -> 实际模型
+        // 详细日志：显示完整的匹配结果
         _logger.LogInformation(
-            "[生图模型匹配] 完成 | 期望={Expected} | 匹配池={MatchedPool} | 实际模型={ActualModel} | 匹配{MatchResult}",
-            frontendExpectedModelId ?? "(随机)",
+            "[生图模型匹配] ====== 完成 ======\n" +
+            "  AppCallerCode (用于匹配): {AppCallerCode}\n" +
+            "  ResolutionType: {ResolutionType}\n" +
+            "  匹配到的模型池ID: {ModelGroupId}\n" +
+            "  匹配到的模型池名称: {ModelGroupName}\n" +
+            "  最终PlatformId: {FinalPlatformId}\n" +
+            "  最终ModelId: {FinalModelId}\n" +
+            "  调度器返回结果: {HasResult}\n" +
+            "  期望vs实际: {Expected} -> {Actual}",
+            appCallerCode ?? "(null)",
+            resolutionType,
+            modelGroupId ?? "(无)",
             modelGroupName ?? "(无)",
-            finalModelId ?? "(未知)",
-            isPoolMatched || string.IsNullOrWhiteSpace(frontendExpectedModelId) ? "成功" : "失败");
-        
-        // 匹配失败时打印警告
-        if (!string.IsNullOrWhiteSpace(frontendExpectedModelId) && !isPoolMatched && !string.IsNullOrWhiteSpace(modelGroupName))
-        {
-            _logger.LogWarning("[生图模型匹配] 匹配失败: 期望={Expected}, 实际={Actual}", frontendExpectedModelId, modelGroupName);
-        }
+            finalPlatformId ?? "(null)",
+            finalModelId ?? "(null)",
+            hasSchedulerResult ? "是" : "否",
+            frontendExpectedModelId ?? "(随机)",
+            modelGroupName ?? "(使用前端指定)");
 
         // 更新 Run 对象和数据库
         var updateDef = Builders<ImageGenRun>.Update
