@@ -952,10 +952,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [markerRunItems, phase, rebuildMergedMarkdown]);
 
   const runSingleMarker = async (markerIndex: number) => {
-    if (isStreamingRef.current) {
-      toast.warning('标记正在生成中，请稍后再试');
-      return;
-    }
     if (!imageGenModel) {
       toast.error(imageGenModelError || '未选择生图模型');
       return;
@@ -2125,93 +2121,101 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     </div>
                   ) : null}
 
-                  {(showPlaceholder || canShow) ? (
-                    <div
-                      className="mt-2 rounded-[12px] overflow-hidden relative group"
-                      style={{
-                        height: 160,
-                        background: 'rgba(0,0,0,0.18)',
-                        border: '1px solid rgba(255,255,255,0.10)',
-                        cursor: canShow ? 'pointer' : 'default',
-                      }}
-                      onClick={() => {
-                        if (!canShow) return;
-                        const allImages = markerRunItems
-                          .filter(x => x.assetUrl || x.url || x.base64)
-                          .map((x, i) => ({
-                            url: x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
-                            alt: `配图 ${i + 1}`,
-                          }));
-                        const currentIdx = allImages.findIndex((_, i) => {
-                          const item = markerRunItems.filter(x => x.assetUrl || x.url || x.base64)[i];
-                          return item?.markerIndex === it.markerIndex;
-                        });
-                        setImagePreviewIndex(currentIdx >= 0 ? currentIdx : 0);
-                        setImagePreviewOpen(true);
-                      }}
-                    >
-                      {showPlaceholder ? (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          {/* 使用 fill 模式适应容器，内层正方形保持花瓣比例 */}
-                          <div style={{ width: '100%', height: '100%', maxWidth: 160, maxHeight: 160, aspectRatio: '1' }}>
-                            <PrdPetalBreathingLoader fill />
-                          </div>
+                  <div
+                    className="mt-2 rounded-[12px] overflow-hidden relative group"
+                    style={{
+                      height: 160,
+                      background: 'rgba(0,0,0,0.18)',
+                      border: '1px solid rgba(255,255,255,0.10)',
+                      cursor: canShow ? 'pointer' : 'default',
+                    }}
+                    onClick={() => {
+                      if (!canShow) return;
+                      const allImages = markerRunItems
+                        .filter(x => x.assetUrl || x.url || x.base64)
+                        .map((x, i) => ({
+                          url: x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
+                          alt: `配图 ${i + 1}`,
+                        }));
+                      const currentIdx = allImages.findIndex((_, i) => {
+                        const item = markerRunItems.filter(x => x.assetUrl || x.url || x.base64)[i];
+                        return item?.markerIndex === it.markerIndex;
+                      });
+                      setImagePreviewIndex(currentIdx >= 0 ? currentIdx : 0);
+                      setImagePreviewOpen(true);
+                    }}
+                  >
+                    {showPlaceholder ? (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        {/* 使用 fill 模式适应容器，内层正方形保持花瓣比例 */}
+                        <div style={{ width: '100%', height: '100%', maxWidth: 160, maxHeight: 160, aspectRatio: '1' }}>
+                          <PrdPetalBreathingLoader fill />
                         </div>
-                      ) : null}
-                      {canShow ? (
-                        <>
-                          <img src={src} alt={`img-${idx + 1}`} className="w-full h-full block" style={{ objectFit: 'contain' }} />
+                      </div>
+                    ) : null}
+                    {canShow ? (
+                      <>
+                        <img src={src} alt={`img-${idx + 1}`} className="w-full h-full block" style={{ objectFit: 'contain' }} />
 
-                          {/* Copy and Download icons */}
-                          <div
-                            className="absolute bottom-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={(e) => e.stopPropagation()}
+                        {/* Copy and Download icons */}
+                        <div
+                          className="absolute bottom-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            className="p-2 rounded-lg"
+                            style={{
+                              background: 'rgba(0, 0, 0, 0.6)',
+                              border: '1px solid rgba(255, 255, 255, 0.2)',
+                              backdropFilter: 'blur(10px)',
+                            }}
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(src);
+                                toast.success('已复制', '图片链接已复制到剪贴板');
+                              } catch (error) {
+                                console.error('Copy failed:', error);
+                              }
+                            }}
+                            title="复制图片链接"
                           >
-                            <button
-                              className="p-2 rounded-lg"
-                              style={{
-                                background: 'rgba(0, 0, 0, 0.6)',
-                                border: '1px solid rgba(255, 255, 255, 0.2)',
-                                backdropFilter: 'blur(10px)',
-                              }}
-                              onClick={async () => {
-                                try {
-                                  await navigator.clipboard.writeText(src);
-                                  toast.success('已复制', '图片链接已复制到剪贴板');
-                                } catch (error) {
-                                  console.error('Copy failed:', error);
-                                }
-                              }}
-                              title="复制图片链接"
-                            >
-                              <Copy size={16} style={{ color: 'white' }} />
-                            </button>
-                            <button
-                              className="p-2 rounded-lg"
-                              style={{
-                                background: 'rgba(0, 0, 0, 0.6)',
-                                border: '1px solid rgba(255, 255, 255, 0.2)',
-                                backdropFilter: 'blur(10px)',
-                              }}
-                              onClick={async () => {
-                                try {
-                                  const link = document.createElement('a');
-                                  link.href = src;
-                                  link.download = `配图-${idx + 1}.png`;
-                                  link.click();
-                                } catch (error) {
-                                  console.error('Download failed:', error);
-                                }
-                              }}
-                              title="下载图片"
-                            >
-                              <DownloadCloud size={16} style={{ color: 'white' }} />
-                            </button>
-                          </div>
-                        </>
-                      ) : null}
-                    </div>
-                  ) : null}
+                            <Copy size={16} style={{ color: 'white' }} />
+                          </button>
+                          <button
+                            className="p-2 rounded-lg"
+                            style={{
+                              background: 'rgba(0, 0, 0, 0.6)',
+                              border: '1px solid rgba(255, 255, 255, 0.2)',
+                              backdropFilter: 'blur(10px)',
+                            }}
+                            onClick={async () => {
+                              try {
+                                const link = document.createElement('a');
+                                link.href = src;
+                                link.download = `配图-${idx + 1}.png`;
+                                link.click();
+                              } catch (error) {
+                                console.error('Download failed:', error);
+                              }
+                            }}
+                            title="下载图片"
+                          >
+                            <DownloadCloud size={16} style={{ color: 'white' }} />
+                          </button>
+                        </div>
+                      </>
+                    ) : !showPlaceholder ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                        <div
+                          className="w-10 h-10 rounded-lg flex items-center justify-center"
+                          style={{ background: 'rgba(255,255,255,0.05)', border: '1px dashed rgba(255,255,255,0.15)' }}
+                        >
+                          <ImageIcon size={18} style={{ opacity: 0.5 }} />
+                        </div>
+                        <div>待生成配图</div>
+                      </div>
+                    ) : null}
+                  </div>
 
                   <textarea
                     value={it.draftText}
@@ -2501,7 +2505,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </div>
                 <Button
                   size="xs"
-                  variant="primary"
+                  variant="secondary"
                   onClick={() => {
                     handleCreatePrompt();
                     setPromptPreviewOpen(false);
@@ -2690,7 +2694,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </div>
                 <Button
                   size="xs"
-                  variant="primary"
+                  variant="secondary"
                   disabled={referenceImageSaving}
                   onClick={() => referenceImageInputRef.current?.click()}
                 >
