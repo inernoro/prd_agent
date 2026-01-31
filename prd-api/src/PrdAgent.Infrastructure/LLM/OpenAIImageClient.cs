@@ -1263,9 +1263,6 @@ public class OpenAIImageClient
             }
         };
 
-        // 构建端点 URL（使用 chat/completions）
-        var endpoint = OpenAICompatUrl.BuildEndpoint(apiUrl, "chat/completions");
-
         // 序列化请求体
         var requestJson = JsonSerializer.Serialize(visionRequest, new JsonSerializerOptions
         {
