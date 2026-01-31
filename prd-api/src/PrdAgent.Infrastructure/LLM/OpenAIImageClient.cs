@@ -98,7 +98,7 @@ public class OpenAIImageClient
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
-                resolution.ErrorMessage ?? "未配置可用的生图模型（请在模型管理中设置"生图"）");
+                resolution.ErrorMessage ?? "未配置可用的生图模型（请在模型管理中设置 生图）");
         }
 
         var apiUrl = resolution.ApiUrl;
