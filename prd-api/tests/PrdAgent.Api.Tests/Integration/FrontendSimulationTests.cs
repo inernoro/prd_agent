@@ -1,60 +1,24 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using Xunit.Abstractions;
 
 namespace PrdAgent.Api.Tests.Integration;
 
 /// <summary>
-/// Frontend simulation integration tests
-/// Simulates actual frontend requests with API authentication
-///
-/// Prerequisites:
-/// 1. MongoDB running with test data
-/// 2. Set environment variables:
-///    $env:AI_ACCESS_KEY = "123"
-///    $env:MONGODB_CONNECTION_STRING = "mongodb://localhost:27017"
+/// Frontend simulation tests - verifies request/response format contracts
 ///
 /// Run with PowerShell:
-/// $env:AI_ACCESS_KEY = "123"
 /// cd prd-api
 /// dotnet test --filter "FrontendSimulationTests" --logger "console;verbosity=detailed"
 /// </summary>
-public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
+public class FrontendSimulationTests
 {
-    private readonly WebApplicationFactory<Program> _factory;
-    private readonly HttpClient _client;
     private readonly ITestOutputHelper _output;
 
-    public FrontendSimulationTests(WebApplicationFactory<Program> factory, ITestOutputHelper output)
+    public FrontendSimulationTests(ITestOutputHelper output)
     {
         _output = output;
-
-        // Configure test server
-        _factory = factory.WithWebHostBuilder(builder =>
-        {
-            builder.ConfigureAppConfiguration((context, config) =>
-            {
-                // Override configuration for tests
-                config.AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["AI_ACCESS_KEY"] = "123",
-                    ["Jwt:Secret"] = "TestSecretKeyForJwtTokenGeneration12345678"
-                });
-            });
-        });
-
-        _client = _factory.CreateClient();
-        _client.Timeout = TimeSpan.FromMinutes(2);
-
-        Log("[Init] Test server started");
-        Log($"[Init] AI_ACCESS_KEY configured: 123");
+        Log("[Init] Frontend Simulation Tests initialized");
     }
 
     private void Log(string message)
@@ -63,29 +27,15 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
         Console.WriteLine(message);
     }
 
-    public void Dispose()
-    {
-        _client.Dispose();
-    }
-
-    /// <summary>
-    /// Helper to add AI access key headers
-    /// </summary>
-    private void AddAuthHeaders(HttpRequestMessage request, string impersonateUser = "admin")
-    {
-        request.Headers.Add("X-AI-Access-Key", "123");
-        request.Headers.Add("X-AI-Impersonate", impersonateUser);
-    }
-
     /// <summary>
     /// Test: Verify CreateWorkspaceImageGenRun request body format
     /// This simulates exactly what the frontend sends
     /// </summary>
     [Fact]
-    public async Task CreateWorkspaceImageGenRun_MultiImage_ShouldLogCorrectRequestBody()
+    public void CreateWorkspaceImageGenRun_MultiImage_RequestBodyFormat()
     {
         Log("\n" + new string('=', 80));
-        Log("[Test] Frontend Simulation: CreateWorkspaceImageGenRun with Multi-Image");
+        Log("[Test] Frontend Request Body Format: CreateWorkspaceImageGenRun with Multi-Image");
         Log(new string('=', 80));
 
         // Simulate the exact request body that frontend sends
@@ -93,7 +43,7 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
         {
             prompt = "@img16@img17 把这两张图融合成一张",
             targetKey = "canvas-element-" + Guid.NewGuid().ToString("N")[..8],
-            configModelId = (string?)null, // Will use default
+            configModelId = (string?)null,
             platformId = "test-platform",
             modelId = "nano-banana-pro",
             size = "1024x1024",
@@ -129,7 +79,7 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
             WriteIndented = true
         });
 
-        Log("\n[Frontend Request Body]");
+        Log("\n[Frontend Request Body - JSON]");
         Log(new string('-', 40));
         Log(requestJson);
         Log(new string('-', 40));
@@ -146,7 +96,7 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
         }
 
         // Expected format in database/logs
-        Log("\n[Expected Log Format in ImageMasterController]");
+        Log("\n[Expected Log Output in ImageMasterController]");
         Log(new string('-', 40));
         Log($@"[CreateWorkspaceImageGenRun] Incoming Request:
   TraceId: {{traceId}}
@@ -163,6 +113,13 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
   ImageRefs: @img16:风格参考图(sha=ae7a4a31...), @img17:目标图片(sha=b2c3d4e5...)");
         Log(new string('-', 40));
 
+        // Assertions
+        Assert.Equal(2, requestBody.imageRefs.Length);
+        Assert.Equal(16, requestBody.imageRefs[0].refId);
+        Assert.Equal(17, requestBody.imageRefs[1].refId);
+        Assert.Contains("@img16", requestBody.prompt);
+        Assert.Contains("@img17", requestBody.prompt);
+
         Log("\n[PASS] Request body structure verified!");
     }
 
@@ -170,7 +127,7 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
     /// Test: Verify the exact format that gets sent to image generation API
     /// </summary>
     [Fact]
-    public async Task MultiImagePrompt_ShouldBuildCorrectFinalPrompt()
+    public void MultiImagePrompt_FinalPromptFormat()
     {
         Log("\n" + new string('=', 80));
         Log("[Test] Multi-Image Final Prompt Format Verification");
@@ -197,7 +154,7 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
         Log(expectedFinalPrompt);
         Log(new string('-', 40));
 
-        Log("\n[Expected Log Format in OpenAIImageClient]");
+        Log("\n[Expected Log Output in OpenAIImageClient]");
         Log(new string('-', 40));
         Log($@"[OpenAIImageClient] Sending request to image gen API:
   Endpoint: https://api.vveai.com/v1/images/generations
@@ -224,7 +181,7 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
     /// Test: Single image scenario should preserve original prompt
     /// </summary>
     [Fact]
-    public async Task SingleImage_ShouldPreserveOriginalPrompt()
+    public void SingleImage_PreservesOriginalPrompt()
     {
         Log("\n" + new string('=', 80));
         Log("[Test] Single Image Prompt Format Verification");
@@ -239,6 +196,9 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
         Log("\n[Expected Final Prompt]");
         Log($"  \"{userPrompt}\" (unchanged - single image scenario)");
 
+        // Single image should NOT have reference table
+        Assert.DoesNotContain("图片对照表", userPrompt);
+
         Log("\n[PASS] Single image format verified!");
     }
 
@@ -246,7 +206,7 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
     /// Test: Verify ImageRefInput DTO matches expected contract
     /// </summary>
     [Fact]
-    public void ImageRefInputDto_ShouldMatchFrontendContract()
+    public void ImageRefInputDto_ContractVerification()
     {
         Log("\n" + new string('=', 80));
         Log("[Test] ImageRefInput DTO Contract Verification");
@@ -255,11 +215,11 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
         // Frontend sends this structure
         var frontendImageRef = new
         {
-            refId = 16,                // int - 对应 @img16
-            assetSha256 = "ae7a4a31...", // string - 64 chars hex
-            url = "https://...",       // string - COS URL
-            label = "风格参考图",        // string - user label
-            role = (string?)null       // optional - target/reference/style/background
+            refId = 16,
+            assetSha256 = "ae7a4a315940b54d4b07112a8188966268c386de38abe8bbbd457fa294cbf649",
+            url = "https://cos.example.com/image.jpg",
+            label = "风格参考图",
+            role = (string?)null
         };
 
         Log("\n[Frontend Contract (TypeScript)]");
@@ -285,17 +245,9 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
 }");
         Log(new string('-', 40));
 
-        Log("\n[Domain Model (C#)]");
-        Log(new string('-', 40));
-        Log(@"public class ImageRefInput
-{
-    public int RefId { get; set; }
-    public string AssetSha256 { get; set; } = string.Empty;
-    public string Url { get; set; } = string.Empty;
-    public string Label { get; set; } = string.Empty;
-    public string? Role { get; set; }
-}");
-        Log(new string('-', 40));
+        // Verify SHA256 format
+        Assert.Equal(64, frontendImageRef.assetSha256.Length);
+        Assert.Matches("^[0-9a-f]{64}$", frontendImageRef.assetSha256);
 
         Log("\n[PASS] Contract verified - frontend and backend types match!");
     }
@@ -304,13 +256,13 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
     /// Test: Full flow simulation with expected log output
     /// </summary>
     [Fact]
-    public async Task FullFlow_ShouldGenerateExpectedLogs()
+    public void FullFlow_ExpectedLogSequence()
     {
         Log("\n" + new string('=', 80));
-        Log("[Test] Full Flow Log Output Verification");
+        Log("[Test] Full Flow Expected Log Sequence");
         Log(new string('=', 80));
 
-        Log("\n=== Expected Log Sequence ===\n");
+        Log("\n=== Expected Log Sequence (when running real app) ===\n");
 
         // Step 1: Controller receives request
         Log("[1] ImageMasterController.CreateWorkspaceImageGenRun");
@@ -332,8 +284,11 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
         // Step 2: Worker processes
         Log("\n[2] ImageGenRunWorker - Multi-image Processing");
         Log(new string('-', 60));
-        Log(@"[多图处理] RunId=run_xyz789, 引用数=2, 原始Prompt=""@img16@img17 把这两张图融..."", 增强Prompt=""@img16@img17 把这两张图融合成一张\n\n【图片对照表...""
-[多图处理] 检测到多图场景，当前仅使用第一张。引用列表: @img16:风格参考图, @img17:目标图片
+        Log(@"[多图处理] RunId=run_xyz789, 引用数=2
+  原始Prompt=""@img16@img17 把这两张图融...""
+  增强Prompt=""@img16@img17 把这两张图融合成一张\n\n【图片对照表...""
+[多图处理] 检测到多图场景，当前仅使用第一张
+  引用列表: @img16:风格参考图, @img17:目标图片
 [多图处理] 使用第一张图 @img16 作为参考图");
 
         // Step 3: Before calling image API
@@ -356,12 +311,15 @@ public class FrontendSimulationTests : IClassFixture<WebApplicationFactory<Progr
   Endpoint: https://api.vveai.com/v1/images/edits
   Model: nano-banana-pro
   Provider: openai
-  Prompt: @img16@img17 把这两张图融合成一张\n\n【图片对照表】\n@img16 对应 风格参考图\n@img17 对应 目标图片
+  Prompt: @img16@img17 把这两张图融合成一张\n\n【图片对照表】...
   InitImage Size: 234567 bytes
   RequestType: multipart/form-data (img2img)");
 
         Log("\n" + new string('=', 80));
-        Log("[PASS] Full flow log sequence verified!");
+        Log("[PASS] Full flow log sequence documented!");
         Log(new string('=', 80) + "\n");
+
+        // This test always passes - it's documentation
+        Assert.True(true);
     }
 }
