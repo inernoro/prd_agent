@@ -1,3 +1,5 @@
+using PrdAgent.Core.Models;
+
 namespace PrdAgent.Core.Interfaces;
 
 public record LlmRequestContext(
