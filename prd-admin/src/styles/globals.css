@@ -1031,3 +1031,17 @@ select optgroup {
   .sa-submitMessage .sa-icon { opacity: 1; top: 0; }
   .sa-loadingMessage { display: none; }
 }
+
+/* Lexical RichComposer 修复 */
+.rich-composer-paragraph {
+  /* 确保段落是块级元素 */
+  display: block;
+  /* 修复行尾光标定位问题 */
+  min-height: 1.5em;
+  /* 允许长单词换行 */
+  word-break: break-word;
+  /* 确保光标样式 */
+  cursor: text;
+  /* 移除 margin */
+  margin: 0;
+}

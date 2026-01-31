@@ -469,8 +469,20 @@ public class OpenAIImageClient
                     : new Uri(endpoint.TrimStart('/'), UriKind.Relative);
                 if (initImageBase64 == null)
                 {
-                    // 文生图请求：适配器返回 Dictionary<string, object>，使用通用序列化器序列化
-                    var reqJsonInner = platformAdapter.SerializeRequest(reqObj);
+                    // reqObj 可能是 Dictionary<string, object>（文生图）或类型化对象
+                    string reqJsonInner;
+                    if (reqObj is Dictionary<string, object> dictReq)
+                    {
+                        reqJsonInner = JsonSerializer.Serialize(dictReq);
+                    }
+                    else if (isVolces)
+                    {
+                        reqJsonInner = JsonSerializer.Serialize((VolcesImageRequest)reqObj, VolcesImageJsonContext.Default.VolcesImageRequest);
+                    }
+                    else
+                    {
+                        reqJsonInner = JsonSerializer.Serialize((OpenAIImageRequest)reqObj, OpenAIImageJsonContext.Default.OpenAIImageRequest);
+                    }
                     var contentInner = new StringContent(reqJsonInner, Encoding.UTF8, "application/json");
                     return await httpClient.PostAsync(targetUriInner, contentInner, token);
                 }

@@ -58,7 +58,11 @@ export function SystemDialogHost() {
               <Button variant="secondary" onClick={() => closeConfirm(false)}>
                 {current.cancelText}
               </Button>
-              <Button variant={current.tone === 'danger' ? 'danger' : 'primary'} onClick={() => closeConfirm(true)}>
+              <Button
+                autoFocus
+                variant={current.tone === 'danger' ? 'danger' : 'primary'}
+                onClick={() => closeConfirm(true)}
+              >
                 {current.confirmText}
               </Button>
             </div>

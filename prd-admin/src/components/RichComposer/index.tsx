@@ -11,8 +11,11 @@ import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import type { EditorState, LexicalEditor } from 'lexical';
 import {
+  $createParagraphNode,
   $getRoot,
   $getSelection,
+  $isElementNode,
+  $isParagraphNode,
   $isRangeSelection,
   $isTextNode,
   COMMAND_PRIORITY_HIGH,
@@ -33,10 +36,14 @@ export interface RichComposerRef {
   clear: () => void;
   /** 聚焦编辑器 */
   focus: () => void;
-  /** 插入图片 chip */
-  insertImageChip: (option: ImageOption) => void;
+  /** 插入图片 chip（默认灰色待选，ready: true 为蓝色就绪，preserveFocus: true 保持当前焦点） */
+  insertImageChip: (option: ImageOption, opts?: { ready?: boolean; preserveFocus?: boolean }) => void;
   /** 插入文本 */
   insertText: (text: string) => void;
+  /** 将所有待选 chip 标记为就绪（灰→蓝） */
+  markChipsReady: () => void;
+  /** 移除指定 key 的 chip */
+  removeChipByKey: (canvasKey: string) => void;
 }
 
 interface RichComposerProps {
@@ -102,7 +109,8 @@ function EditorInner({
           const root = $getRoot();
           text = root.getTextContent();
         });
-        return text;
+        // 过滤零宽度空格（用于光标锚点）
+        return text.replace(/\u200B/g, '');
       },
       getStructuredContent: () => {
         let text = '';
@@ -128,7 +136,8 @@ function EditorInner({
           };
           traverse(root);
         });
-        return { text: text.trim(), imageRefs };
+        // 过滤零宽度空格（用于光标锚点）
+        return { text: text.replace(/\u200B/g, '').trim(), imageRefs };
       },
       clear: () => {
         editor.update(() => {
@@ -139,25 +148,105 @@ function EditorInner({
       focus: () => {
         editor.focus();
       },
-      insertImageChip: (option: ImageOption) => {
+      insertImageChip: (option: ImageOption, opts?: { ready?: boolean; preserveFocus?: boolean }) => {
+        console.log('[RichComposer] insertImageChip called', { option, opts, ready: opts?.ready });
+        
+        // 保存当前焦点元素（用于 preserveFocus 模式）
+        const prevActiveElement = opts?.preserveFocus ? document.activeElement as HTMLElement | null : null;
+        
         editor.update(() => {
-          const selection = $getSelection();
-          if (!$isRangeSelection(selection)) return;
+          const root = $getRoot();
+          console.log('[RichComposer] creating chip with ready =', opts?.ready);
           const chipNode = $createImageChipNode({
             canvasKey: option.key,
             refId: option.refId,
             src: option.src,
             label: option.label,
+            ready: opts?.ready, // 默认 undefined/false = 灰色待选
           });
-          selection.insertNodes([chipNode]);
-          selection.insertText(' ');
-        });
+          
+          // 直接在编辑器末尾追加节点
+          const lastChild = root.getLastChild();
+          if ($isParagraphNode(lastChild)) {
+            // 先清理末尾的零宽度空格（避免累积）
+            const children = lastChild.getChildren();
+            for (let i = children.length - 1; i >= 0; i--) {
+              const child = children[i];
+              if ($isTextNode(child) && child.getTextContent() === '\u200B') {
+                child.remove();
+              } else {
+                break; // 遇到非零宽度空格节点就停止
+              }
+            }
+            // 在最后一个段落末尾追加 chip
+            // 注意：不再追加 \u200B 锚点，这会导致光标移动时出现“卡顿”（需要多按一次方向键才能跨过）
+            // 依赖 CSS (.rich-composer-paragraph { display: block; min-height: 1.5em; }) 来保证点击聚焦体验
+            lastChild.append(chipNode);
+          } else {
+            // 创建新段落
+            const para = $createParagraphNode();
+            para.append(chipNode);
+            root.append(para);
+          }
+        }, { discrete: true }); // discrete: 避免触发不必要的副作用
+        
+        // 恢复焦点（DOM 更新可能是异步的，需要延迟恢复）
+        if (prevActiveElement) {
+          queueMicrotask(() => {
+            if (document.activeElement !== prevActiveElement) {
+              try {
+                prevActiveElement.focus({ preventScroll: true });
+              } catch {
+                // ignore
+              }
+            }
+          });
+        }
       },
       insertText: (text: string) => {
         editor.update(() => {
           const selection = $getSelection();
           if ($isRangeSelection(selection)) {
             selection.insertText(text);
+          }
+        });
+      },
+      markChipsReady: () => {
+        editor.update(() => {
+          const root = $getRoot();
+          // 遍历所有节点，找到未就绪的 ImageChipNode 并标记为就绪
+          const allNodes = root.getChildren();
+          for (const para of allNodes) {
+            if (!$isElementNode(para)) continue;
+            const children = para.getChildren();
+            for (const node of children) {
+              if ($isImageChipNode(node) && !node.getReady()) {
+                // 创建新节点替换旧节点，确保 DOM 和 React 组件都更新
+                const newNode = $createImageChipNode({
+                  canvasKey: node.getCanvasKey(),
+                  refId: node.getRefId(),
+                  src: node.getSrc(),
+                  label: node.getLabel(),
+                  ready: true,
+                });
+                node.replace(newNode);
+              }
+            }
+          }
+        });
+      },
+      removeChipByKey: (canvasKey: string) => {
+        editor.update(() => {
+          const root = $getRoot();
+          const allNodes = root.getChildren();
+          for (const para of allNodes) {
+            if (!$isElementNode(para)) continue;
+            const children = para.getChildren();
+            for (const node of children) {
+              if ($isImageChipNode(node) && node.getCanvasKey() === canvasKey) {
+                node.remove();
+              }
+            }
           }
         });
       },
@@ -269,3 +358,6 @@ export const RichComposer = forwardRef<RichComposerRef, RichComposerProps>(
 );
 
 export { ImageChipNode, $createImageChipNode, $isImageChipNode };
+
+// 导出两阶段选择组件
+export { TwoPhaseRichComposer, type TwoPhaseRichComposerProps, type TwoPhaseRichComposerRef } from './TwoPhaseRichComposer';

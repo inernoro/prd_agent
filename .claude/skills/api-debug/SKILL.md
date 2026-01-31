@@ -26,8 +26,10 @@ The API uses AI Access Key authentication:
 ## Base URL
 
 ```
-http://[::1]:5000
+http://localhost:8000
 ```
+
+> 注意：用户可能配置了不同端口，以实际运行的 API 服务端口为准。
 
 ## Common API Endpoints
 
@@ -49,10 +51,25 @@ http://[::1]:5000
 | GET | `/api/prd/projects` | List projects |
 | GET | `/api/prd/projects/{id}` | Get project details |
 
-### Model Groups
+### Model Management
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/model-groups` | List model groups |
+| GET | `/api/mds/model-groups` | List all model groups |
+| PUT | `/api/mds/model-groups/{id}` | Update model group (e.g., set isDefaultForType) |
+| GET | `/api/mds/platforms` | List LLM platforms |
+| GET | `/api/mds/models` | List configured models |
+
+### LLM Logs (Critical for debugging)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/logs/llm?limit=10` | Get recent LLM request logs |
+
+### Visual Agent
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/visual-agent/image-master/workspaces` | List workspaces |
+| POST | `/api/visual-agent/image-gen/generate` | Generate image |
+| POST | `/api/visual-agent/image-gen/compose` | Multi-image compose |
 
 ### System
 | Method | Endpoint | Description |
@@ -80,6 +97,28 @@ http://[::1]:5000
    ```
 
 4. **Analyze the data**: Use the returned data to understand the system state and diagnose issues.
+
+## LLM Log Analysis (Important)
+
+When debugging LLM-related features, always check the LLM logs:
+
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/api/logs/llm?limit=10" -Headers @{"X-AI-Access-Key"="123"; "X-AI-Impersonate"="admin"} | ForEach-Object { $_.data.items } | ForEach-Object {
+    Write-Host "---"
+    Write-Host "Model: $($_.model)"
+    Write-Host "Purpose: $($_.requestPurpose)"
+    Write-Host "Status: $($_.status)"
+    Write-Host "Duration: $($_.durationMs)ms"
+    if ($_.error) { Write-Host "Error: $($_.error)" }
+}
+```
+
+Key fields to check:
+- `requestPurpose`: Identifies which feature made the call (e.g., `visual-agent.compose::vision`)
+- `status`: `succeeded` or `failed`
+- `error`: Error message if failed
+- `requestBody`: The actual request sent to LLM (check if data is missing)
+- `answerPreview`: Preview of LLM response
 
 ## Example Queries
 
@@ -117,3 +156,7 @@ curl -s "http://[::1]:5000/api/prd/projects?page=1&pageSize=10" \
 - Use responsibly for debugging purposes only
 - The access key should be kept secure and not logged
 - All requests are logged on the server for audit purposes
+
+## Related Skills
+
+- **auto-test-debug**：涉及 LLM 调用链路的自动化测试与调试，包含完整的验证流程和问题定位方法

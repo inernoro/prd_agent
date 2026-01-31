@@ -31,6 +31,8 @@ export type PersistedCanvasElementV1 =
       hidden?: boolean;
       /** 占位状态：running 表示生成中，后端会回填 */
       status?: 'running' | 'error';
+      /** 图片引用 ID，用于消息中的 @imgN 引用，持久化保存 */
+      refId?: number;
       ext?: Record<string, unknown>;
     }
   | {
@@ -206,6 +208,8 @@ export function canvasToPersistedV1(items: CanvasImageItem[]): {
         naturalH: it.naturalH,
         // 保存占位状态，以便后端回填时能找到目标元素
         status: isPlaceholder ? (it.status as 'running' | 'error') : undefined,
+        // 持久化 refId，用于消息中的 @imgN 引用
+        refId: typeof it.refId === 'number' && it.refId > 0 ? it.refId : undefined,
         ext: {},
       });
     } else if (kind === 'generator') {
@@ -304,6 +308,8 @@ export function persistedV1ToCanvas(
         h: typeof el.h === 'number' && el.h > 0 ? el.h : a?.height || undefined,
         naturalW: typeof el.naturalW === 'number' && el.naturalW > 0 ? el.naturalW : a?.width || undefined,
         naturalH: typeof el.naturalH === 'number' && el.naturalH > 0 ? el.naturalH : a?.height || undefined,
+        // 恢复持久化的 refId
+        refId: typeof el.refId === 'number' && el.refId > 0 ? el.refId : undefined,
       });
     } else if (el.kind === 'generator') {
       out.push({
@@ -360,4 +366,45 @@ export function persistedV1ToCanvas(
   }
 
   return { canvas: out, missingAssets, localOnlyImages };
+}
+
+// ============ refId 管理函数 ============
+
+/**
+ * 获取画布中已使用的最大 refId
+ */
+export function getMaxRefId(items: CanvasImageItem[]): number {
+  let max = 0;
+  for (const it of items) {
+    if ((it.kind ?? 'image') === 'image' && typeof it.refId === 'number' && it.refId > max) {
+      max = it.refId;
+    }
+  }
+  return max;
+}
+
+/**
+ * 为画布中没有 refId 的图片分配新的 refId
+ * 返回是否有变更（用于判断是否需要保存）
+ */
+export function assignMissingRefIds(items: CanvasImageItem[]): boolean {
+  let nextRefId = getMaxRefId(items) + 1;
+  let changed = false;
+  
+  for (const it of items) {
+    // 只为 image 类型（非 generator/shape/text）分配 refId
+    if ((it.kind ?? 'image') === 'image' && (typeof it.refId !== 'number' || it.refId <= 0)) {
+      it.refId = nextRefId++;
+      changed = true;
+    }
+  }
+  
+  return changed;
+}
+
+/**
+ * 为新添加的图片分配下一个可用的 refId
+ */
+export function allocateNextRefId(items: CanvasImageItem[]): number {
+  return getMaxRefId(items) + 1;
 }

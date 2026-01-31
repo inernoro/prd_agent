@@ -4,7 +4,7 @@ import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
-import { RichComposer, type RichComposerRef, type ImageOption } from '@/components/RichComposer';
+import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Popover from '@radix-ui/react-popover';
@@ -31,7 +31,6 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
 import {
-  buildInlineImageToken,
   computeRequestedSizeByRefRatio,
   extractInlineImageToken,
   extractSizeToken,
@@ -40,7 +39,10 @@ import {
   readImageSizeFromSrc,
   tryParseWxH,
 } from '@/lib/visualAgentPromptUtils';
+import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
+import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
+import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, VisualAgentCanvas, VisualAgentMessage, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import type { Model } from '@/types/admin';
@@ -54,6 +56,7 @@ import {
   Copy,
   Download,
   Droplet,
+  Eye,
   Grid3X3,
   Hand,
   ImagePlus,
@@ -74,6 +77,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
+
+import { MessageContentRenderer } from './components/MessageContentRenderer';
+import { LlmLogsPanel } from '@/pages/LlmLogsPage';
 
 type CanvasImageItem = {
   key: string;
@@ -187,6 +193,8 @@ type PersistedCanvasElementV1 =
       hidden?: boolean;
       /** 占位状态：running 表示生成中，后端会回填 */
       status?: 'running' | 'error';
+      /** 图片引用 ID，用于消息中的 @imgN 引用，持久化保存 */
+      refId?: number;
       ext?: Record<string, unknown>;
     }
   | {
@@ -302,6 +310,8 @@ function canvasToPersistedV1(items: CanvasImageItem[]): { state: PersistedCanvas
         naturalH: it.naturalH,
         // 保存占位状态，以便后端回填时能找到目标元素
         status: isPlaceholder ? (it.status as 'running' | 'error') : undefined,
+        // 持久化 refId
+        refId: typeof it.refId === 'number' && it.refId > 0 ? it.refId : undefined,
         ext: {},
       });
     } else if (kind === 'generator') {
@@ -384,6 +394,8 @@ function persistedV1ToCanvas(
         h: typeof el.h === 'number' && el.h > 0 ? el.h : a?.height || undefined,
         naturalW: typeof el.naturalW === 'number' && el.naturalW > 0 ? el.naturalW : a?.width || undefined,
         naturalH: typeof el.naturalH === 'number' && el.naturalH > 0 ? el.naturalH : a?.height || undefined,
+        // 恢复持久化的 refId
+        refId: typeof el.refId === 'number' && el.refId > 0 ? el.refId : undefined,
       });
     } else if (el.kind === 'generator') {
       out.push({
@@ -530,62 +542,6 @@ function guessRefName(ref: CanvasImageItem | null): string {
   return '参考图';
 }
 
-function truncateLabelFront(s: string, maxChars: number): string {
-  const t = String(s ?? '').trim();
-  if (!t) return '';
-  const n = Math.max(1, Math.floor(maxChars));
-  if (t.length <= n) return t;
-  // 用 "..."，与用户期望一致
-  return t.slice(0, Math.max(1, n - 3)) + '...';
-}
-
-
-function gcd(a: number, b: number) {
-  let x = Math.abs(Math.round(a));
-  let y = Math.abs(Math.round(b));
-  while (y !== 0) {
-    const t = x % y;
-    x = y;
-    y = t;
-  }
-  return x || 1;
-}
-
-function aspectIconDimsFromSize(size: string | null | undefined): { w: number; h: number } {
-  const parsed = tryParseWxH(size);
-  const w0 = parsed?.w ?? 1;
-  const h0 = parsed?.h ?? 1;
-  const g = gcd(w0, h0);
-  const a = Math.max(1, Math.round(w0 / g));
-  const b = Math.max(1, Math.round(h0 / g));
-  const ratioId = `${a}:${b}` as any;
-  const match = ASPECT_OPTIONS.find((x) => x.id === ratioId);
-  if (match) return { w: match.iconW, h: match.iconH };
-  // fallback：按比例缩放到一个小盒子里
-  const r = w0 / h0;
-  const base = 18;
-  if (!Number.isFinite(r) || r <= 0) return { w: 18, h: 18 };
-  if (r >= 1) return { w: base, h: Math.max(8, Math.round(base / r)) };
-  return { w: Math.max(8, Math.round(base * r)), h: base };
-}
-
-/** 比例小图形（外框按比例适配，内框纯比例矩形） */
-function AspectIcon({ size }: { size: string | null | undefined }) {
-  const dims = aspectIconDimsFromSize(size);
-  return (
-    <span
-      className="rounded-[5px] flex items-center justify-center shrink-0"
-      style={{
-        width: dims.w,
-        height: dims.h,
-        border: '2px solid rgba(255,255,255,0.22)',
-        background: 'rgba(255,255,255,0.02)',
-      }}
-      aria-hidden="true"
-    />
-  );
-}
-
 async function copyToClipboard(text: string) {
   const t = String(text ?? '');
   if (!t) return;
@@ -712,6 +668,72 @@ function buildTemplate(name: string) {
     return `为短片做分镜首帧图：\n- 画面：室内夜景，窗外雨，暖光\n- 情绪：克制、孤独\n- 镜头：中景，人物背影\n请输出：分镜描述 + 首帧生图提示词`;
   }
   return '';
+}
+
+// 提取元数据渲染组件
+function MessageMetadata({
+  size,
+  model,
+  className,
+  style,
+  sizeToAspectMap,
+}: {
+  size?: string;
+  model?: string;
+  className?: string;
+  style?: React.CSSProperties;
+  sizeToAspectMap?: Map<string, string>;
+}) {
+  if (!size && !model) return null;
+
+  const tier = detectTierFromSize(size || '');
+  const aspect = size ? ((sizeToAspectMap?.get(size.toLowerCase())) || detectAspectFromSize(size)) : '';
+  const tierLabel = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
+  const sizeLabel = aspect ? `${tierLabel} · ${aspect}` : size;
+
+  return (
+    <div className={`flex flex-wrap items-center justify-between w-full gap-1.5 mt-1 ${className || ''}`} style={style}>
+      {size ? (
+        <span
+          className="inline-flex items-center gap-1 px-1.5 rounded-full shrink-0"
+          style={{
+            height: 22, // 比编辑器底部按钮 (28px) 小一号
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'rgba(255,255,255,0.04)',
+            color: 'var(--text-secondary)',
+            fontSize: 10,
+            fontWeight: 600,
+          }}
+          title={`尺寸：${size}`}
+        >
+          <span className="tabular-nums" style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>
+            {sizeLabel}
+          </span>
+        </span>
+      ) : <div />}
+
+      {/* 模型池标签 */}
+      {model ? (
+        <span
+          className="inline-flex items-center gap-1 px-1.5 rounded-full shrink-0 ml-auto"
+          style={{
+            height: 22, // 保持与尺寸标签高度一致，且比底部 (24px) 略小
+            border: '1px solid rgba(99, 102, 241, 0.35)',
+            background: 'rgba(99, 102, 241, 0.12)',
+            color: 'rgba(129, 140, 248, 0.95)',
+            fontSize: 10,
+            fontWeight: 500,
+          }}
+          title={`模型池：${model}`}
+        >
+          <Sparkles size={10} className="shrink-0" />
+          <span style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>
+            {model}
+          </span>
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 export default function AdvancedVisualAgentTab(props: { workspaceId: string; initialPrompt?: string }) {
@@ -958,8 +980,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const quickPanelRef = useRef<HTMLDivElement | null>(null); // 快捷输入框容器，用于 GPU 加速更新
   const activeComposerRef = useRef<'right' | 'quick'>('right');
   
-  // 富文本编辑器 ref
-  const richComposerRef = useRef<RichComposerRef | null>(null);
+  // 两阶段选择富文本编辑器 ref
+  const richComposerRef = useRef<TwoPhaseRichComposerRef | null>(null);
   const composingRef = useRef(false);
   const [composerSize, setComposerSize] = useState<string | null>(null);
   const composerSizeAutoRef = useRef(true);
@@ -999,6 +1021,40 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const selected = useMemo(() => canvas.find((x) => x.key === primarySelectedKey) ?? null, [canvas, primarySelectedKey]);
   const isSelectedKey = (k: string) => selectedKeys.includes(k);
 
+  // 两阶段选择：跟踪当前有 pending chip 的图片 key（灰色，待确认）
+  // 通过 TwoPhaseRichComposer 的 onPendingKeysChange 回调自动更新
+  const [pendingChipKeys, setPendingChipKeys] = useState<Set<string>>(new Set());
+  const isPendingKey = (k: string) => pendingChipKeys.has(k);
+  const handlePendingKeysChange = useCallback((keys: Set<string>) => {
+    console.log('[AdvancedVisualAgentTab] handlePendingKeysChange called, keys:', [...keys]);
+    setPendingChipKeys(keys);
+  }, []);
+
+  // [已废弃] clearPendingChips - 应使用 selectionManagerRef.current.clear() 代替
+
+  /**
+   * ============================================================
+   * 选择状态管理器 - 所有修改 selectedKeys 的操作必须通过这里
+   * ============================================================
+   * 
+   * 设计原则：
+   * - 禁止直接调用 setSelectedKeys（除了这个管理器内部）
+   * - 所有选择操作通过 selectionManager 进行
+   * - 自动判断是否需要同步 chip（只有图片类型需要）
+   */
+  const selectionManagerRef = useRef<{
+    /** 清空选中（四个球 + chip 一起清除） */
+    clear: () => void;
+    /** 设置选中（替换模式，自动同步 chip） */
+    set: (keys: string[]) => void;
+    /** 添加选中（追加模式，自动同步 chip） */
+    add: (keys: string[]) => void;
+    /** 移除选中（自动同步 chip） */
+    remove: (keys: string[]) => void;
+    /** 设置选中但不同步 chip（仅用于非图片类型如 generator/shape/text） */
+    setWithoutChip: (keys: string[]) => void;
+  } | null>(null);
+
   const selectedSingleImageForComposer = useMemo(() => {
     if (selectedKeys.length !== 1) return null;
     const it = selected;
@@ -1009,18 +1065,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     return it;
   }, [selected, selectedKeys.length]);
 
-  // 多选时：获取所有选中的图片（用于顶部 chip 显示）
-  const selectedImagesForComposer = useMemo(() => {
-    if (selectedKeys.length === 0) return [];
-    return selectedKeys
-      .map((k) => canvas.find((c) => c.key === k))
-      .filter((it): it is CanvasImageItem => {
-        if (!it) return false;
-        if ((it.kind ?? 'image') !== 'image') return false;
-        const src = String(it.src ?? '').trim();
-        return !!src;
-      });
-  }, [canvas, selectedKeys]);
+  // 注：已删除 selectedImagesForComposer（老代码），现在使用 TwoPhaseRichComposer 管理 chip 显示
 
   const autoSizeForSelectedImage = useMemo(() => {
     const it = selectedSingleImageForComposer;
@@ -1117,20 +1162,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     );
   }, [composerSize, selectedKeys, canvas]);
 
-  // chip 作为内联元素，需要根据选中数量计算高度
-  // 每个 chip 约 140px 宽，每行可容纳 2-3 个
-  // 行高 20px + gap 6px = 26px，加上尺寸选择器
-  const composerMetaPadTop = useMemo(() => {
-    const count = selectedImagesForComposer.length;
-    if (count === 0) return 0;
-    // 估算：每行约 2-3 个 chip，考虑尺寸选择器占一行
-    // 1-2 张：1 行 chip + 尺寸 = 28 + 26 = 54px（但通常一行够）
-    // 3+ 张：可能换行
-    // 简化：count <= 2 用 28px，3-4 用 54px，5+ 用 80px
-    if (count <= 2) return 28;
-    if (count <= 4) return 54;
-    return 80;
-  }, [selectedImagesForComposer.length]);
+  // 注：已删除老代码的 selectedImagesForComposer 显示区域
+  // TwoPhaseRichComposer 内部自己管理 chip 显示，不需要外部 padding
+  const composerMetaPadTop = 0;
 
   const HOVER_MENU_CLOSE_DELAY_MS = 320;
 
@@ -1491,7 +1525,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }>({ active: false, startX: 0, startY: 0, x: 0, y: 0, w: 0, h: 0, shift: false });
 
   // @imgN 占位符
+  const [showLogs, setShowLogs] = useState(false);
   const [nextRefId, setNextRefId] = useState(1);
+  const canvasDirtyRef = useRef(false);
 
   const ensureRefIdForKey = useCallback(
     (key: string) => {
@@ -1507,6 +1543,91 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     },
     [canvas, nextRefId]
   );
+
+  /**
+   * ============================================================
+   * 选择管理器实现 - 同步 selectedKeys（四个球）和 chip（对勾）
+   * ============================================================
+   */
+  
+  // 内部方法：同步 chip 到当前选中的图片
+  const syncChipsToSelection = useCallback((newKeys: string[]) => {
+    richComposerRef.current?.clearPending();
+    
+    for (const key of newKeys) {
+      // 优先从 canvasRef 获取（避免闭包问题）
+      const item = canvasRef.current.find(x => x.key === key);
+      if (item && (item.kind ?? 'image') === 'image' && item.src) {
+        const refId = item.refId ?? ensureRefIdForKey(key);
+        if (refId) {
+          richComposerRef.current?.insertImageChip(
+            { key, refId, src: item.src, label: item.prompt || `img${refId}` },
+            { preserveFocus: true }
+          );
+        }
+      }
+    }
+  }, [ensureRefIdForKey]);
+
+  // 清空选中（四个球 + chip 一起清除）
+  const clearSelection = useCallback(() => {
+    console.log('[SelectionManager] clear');
+    setSelectedKeys([]);
+    richComposerRef.current?.clearPending();
+  }, []);
+
+  // 设置选中（替换模式，自动同步 chip）
+  const setSelection = useCallback((keys: string[]) => {
+    console.log('[SelectionManager] set', keys);
+    setSelectedKeys(keys);
+    syncChipsToSelection(keys);
+  }, [syncChipsToSelection]);
+
+  // 添加选中（追加模式，自动同步 chip）
+  const addSelection = useCallback((keys: string[]) => {
+    console.log('[SelectionManager] add', keys);
+    const currentKeys = selectedKeysRef.current;
+    const newKeys = [...new Set([...currentKeys, ...keys])];
+    setSelectedKeys(newKeys);
+    syncChipsToSelection(newKeys);
+  }, [syncChipsToSelection]);
+
+  // 移除选中（自动同步 chip）
+  const removeSelection = useCallback((keys: string[]) => {
+    console.log('[SelectionManager] remove', keys);
+    const currentKeys = selectedKeysRef.current;
+    const removeSet = new Set(keys);
+    const newKeys = currentKeys.filter(k => !removeSet.has(k));
+    setSelectedKeys(newKeys);
+    syncChipsToSelection(newKeys);
+  }, [syncChipsToSelection]);
+
+  // 设置选中但不同步 chip（仅用于非图片类型）
+  const setSelectionWithoutChip = useCallback((keys: string[]) => {
+    console.log('[SelectionManager] setWithoutChip', keys);
+    setSelectedKeys(keys);
+    // 不同步 chip - 用于 generator/shape/text 等非图片类型
+  }, []);
+
+  // 更新 ref 以便在回调中使用最新方法
+  selectionManagerRef.current = {
+    clear: clearSelection,
+    set: setSelection,
+    add: addSelection,
+    remove: removeSelection,
+    setWithoutChip: setSelectionWithoutChip,
+  };
+
+  // 兼容旧代码的别名
+  const clearSelectionWithChips = clearSelection;
+  const updateSelectionWithChips = useCallback((
+    keys: string[],
+    mode: 'replace' | 'add' | 'remove' = 'replace'
+  ) => {
+    if (mode === 'replace') setSelection(keys);
+    else if (mode === 'add') addSelection(keys);
+    else removeSelection(keys);
+  }, [setSelection, addSelection, removeSelection]);
 
   const focusComposer = useCallback(() => {
     try {
@@ -1586,7 +1707,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [rightWidth, setRightWidth] = useState(0);
   const dragRef = useRef<{ dragging: boolean; startX: number; startRight: number } | null>(null);
 
-  const [busy, setBusy] = useState(false);
+  const [_busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
   const [defectFlash, setDefectFlash] = useState(false);
   const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
@@ -1621,7 +1742,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     id: string;
     displayText: string;
     requestText: string;
-    primaryRef: CanvasImageItem | null;
+    /** 所有引用的图片（按顺序），第一个为主图 */
+    imageRefs: CanvasImageItem[];
     seedSelectedKey: string;
     sizeOverride?: string | null;
   };
@@ -1730,14 +1852,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const parsed = safeJsonParse<PersistedCanvasStateV1>(canvasObj.payloadJson);
       if (parsed && parsed.schemaVersion === 1 && Array.isArray(parsed.elements)) {
         const restored = persistedV1ToCanvas(parsed, assetsList);
+        // 为没有 refId 的图片分配新的 refId（老数据迁移）
+        const refIdChanged = assignMissingRefIds(restored.canvas);
         setCanvas(restored.canvas);
-        setSelectedKeys([]);
+        // 更新 nextRefId 为当前最大值 + 1
+        const maxRef = getMaxRefId(restored.canvas);
+        if (maxRef > 0) {
+          setNextRefId(maxRef + 1);
+        }
+        // 如果有 refId 变更，标记需要保存
+        if (refIdChanged) {
+          canvasDirtyRef.current = true;
+        }
+        clearSelectionWithChips();
         return;
       }
     }
     setCanvas([]);
-    setSelectedKeys([]);
-  }, [setViewport, workspaceId]);
+    clearSelectionWithChips();
+  }, [setViewport, workspaceId, clearSelectionWithChips]);
 
   const confirmAndDeleteSelectedKeys = useCallback(
     async (keysArg?: string[]) => {
@@ -1766,7 +1899,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       // 先乐观删除 UI
       setCanvas((prev) => prev.filter((it) => !set.has(it.key)));
-      setSelectedKeys([]);
+      clearSelectionWithChips();
 
       if (assetIds.length === 0) return;
       const results = await Promise.all(assetIds.map((id) => deleteVisualAgentWorkspaceAsset({ id: workspaceId, assetId: id })));
@@ -1777,7 +1910,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         await reloadWorkspace();
       }
     },
-    [reloadWorkspace, workspaceId]
+    [reloadWorkspace, workspaceId, clearSelectionWithChips]
   );
 
   useEffect(() => {
@@ -1931,9 +2064,29 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       const applyCanvasFocus = (items: CanvasImageItem[]) => {
         setCanvas(items);
+        // 更新 nextRefId 为当前最大值 + 1
+        const maxRef = getMaxRefId(items);
+        if (maxRef > 0) {
+          setNextRefId(maxRef + 1);
+        }
         canvasBootedRef.current = true;
         if (items.length > 0) {
-          setSelectedKeys((cur) => (cur.length > 0 ? cur : [items[0].key]));
+          // 画布初始化时，如果当前没有选中，则选中第一张图片并同步 chip
+          const currentSelected = selectedKeysRef.current;
+          if (currentSelected.length === 0) {
+            const firstItem = items[0];
+            // 确保有 refId（使用 items 中的数据，因为 canvas 状态可能还未更新）
+            const refId = firstItem.refId ?? 1;
+            setSelectedKeys([firstItem.key]);
+            // 同步插入 chip
+            richComposerRef.current?.clearPending();
+            if ((firstItem.kind ?? 'image') === 'image' && firstItem.src) {
+              richComposerRef.current?.insertImageChip(
+                { key: firstItem.key, refId, src: firstItem.src, label: firstItem.prompt || `img${refId}` },
+                { preserveFocus: true }
+              );
+            }
+          }
           requestAnimationFrame(() => {
             const ae = document.activeElement as HTMLElement | null;
             const tag = (ae?.tagName ?? '').toLowerCase();
@@ -1946,7 +2099,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             focusStage();
           });
         } else {
-          setSelectedKeys([]);
+          clearSelectionWithChips();
         }
       };
 
@@ -1955,6 +2108,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         const parsed = safeJsonParse<PersistedCanvasStateV1>(String(canvasObj.payloadJson ?? ''));
         if (parsed && parsed.schemaVersion === 1 && Array.isArray(parsed.elements)) {
           const restored = persistedV1ToCanvas(parsed, assetsList);
+          // 为没有 refId 的图片分配新的 refId（老数据迁移）
+          const refIdChanged = assignMissingRefIds(restored.canvas);
           applyCanvasFocus(restored.canvas);
           if (restored.missingAssets > 0 || restored.localOnlyImages > 0) {
             pushMsg(
@@ -1964,6 +2119,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           }
           lastSavedJsonRef.current = canvasObj.payloadJson;
           pendingLocalOnlyWarnRef.current = Number((parsed.meta as { skippedLocalOnlyImages?: unknown } | undefined)?.skippedLocalOnlyImages ?? 0) || 0;
+          // 如果有 refId 变更（老数据迁移），标记需要保存
+          if (refIdChanged) {
+            canvasDirtyRef.current = true;
+          }
           return;
         }
         pushMsg('Assistant', '检测到画布数据格式异常，已回退到资产列表并重新建立画布。');
@@ -2302,10 +2461,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         return;
       }
 
-      // Escape：取消选中
+      // Escape：取消选中，同时清除 pending chips
       if (e.key === 'Escape') {
         e.preventDefault();
-        setSelectedKeys([]);
+        clearSelectionWithChips();
         return;
       }
 
@@ -2323,7 +2482,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const opts = { capture: true } as const;
     window.addEventListener('keydown', onDown, opts);
     return () => window.removeEventListener('keydown', onDown, opts);
-  }, [confirmAndDeleteSelectedKeys, focusStage]);
+  }, [confirmAndDeleteSelectedKeys, focusStage, clearSelectionWithChips]);
 
   const zoomAt = useCallback((clientX: number, clientY: number, nextZoom: number) => {
     const el = stageRef.current;
@@ -2466,7 +2625,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           stroke: 'rgba(0,0,0,0.14)',
         };
         setCanvas((prev) => [next, ...prev].slice(0, 120));
-        setSelectedKeys([key]);
+        setSelectionWithoutChip([key]); // 形状不需要 chip
         setPlacing(null);
         return true;
       }
@@ -2491,7 +2650,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         stroke: 'rgba(0,0,0,0.10)',
       };
       setCanvas((prev) => [next, ...prev].slice(0, 120));
-      setSelectedKeys([key]);
+      setSelectionWithoutChip([key]); // 文字不需要 chip
       setPlacing(null);
       setTextEdit({ open: true, key, value: next.text || 'Text' });
       return true;
@@ -2735,12 +2894,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const runFromText = async (
     displayText: string,
     requestText: string,
-    primaryRef: CanvasImageItem | null,
+    imageRefs: CanvasImageItem[],
     seedSelectedKey?: string,
     sizeOverride?: string | null
   ) => {
     const display = String(displayText ?? '').trim();
-    // 直连模式：解析 @model(...) 只用于“强制选模型”，不应当把标记本身发给生图 prompt
+    // 直连模式：解析 @model(...) 只用于"强制选模型"，不应当把标记本身发给生图 prompt
     const stripModelMention = (s: string) => String(s ?? '').replace(/@model\([^)]*\)/gi, '').replace(/\s{2,}/g, ' ').trim();
 
     const forcedPick = extractForcedImageModel(directPrompt ? displayText : requestText);
@@ -2757,9 +2916,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     setError('');
     const seedKey = String(seedSelectedKey ?? '').trim();
     const selectedAtSend = seedKey ? (canvasRef.current.find((x) => x.key === seedKey) ?? null) : null;
+    // 主引用图（第一张）用于尺寸推算等
+    const primaryRef = imageRefs[0] ?? null;
     const refForUi = (primaryRef ?? selectedAtSend) as CanvasImageItem | null;
     const refSrc = String(refForUi?.src ?? '').trim();
-    const inlineRefToken = buildInlineImageToken(refSrc, guessRefName(refForUi));
+    // 注意：不再使用 [IMAGE src=... name=...] 标记
+    // 因为用户输入的 @imgN 引用已由 MessageContentRenderer 渲染为 Chip
     const forcedSize = (() => {
       const s = String(sizeOverride ?? '').trim();
       if (!s) return null;
@@ -2769,7 +2931,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const uiSizeToken = forcedSize ? `(@size:${forcedSize}) ` : '';
     const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
     const uiModelToken = modelPoolName ? `(@model:${modelPoolName}) ` : '';
-    pushMsg('User', `${inlineRefToken}${uiSizeToken}${uiModelToken}${display || reqText}`);
+    pushMsg('User', `${uiSizeToken}${uiModelToken}${display || reqText}`);
 
     let items: Array<{ prompt: string }> = [];
     let firstPrompt = '';
@@ -2897,7 +3059,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return [...prev, placeholder].slice(-60);
     });
     // 体验：像"上传图片"一样，开始生成就把视角移动到占位图位置（避免用户找不到新图）
-    setSelectedKeys([key]);
+    setSelectionWithoutChip([key]); // generator 不需要 chip
     requestAnimationFrame(() => {
       const f = focusKeyRef.current;
       if (!f || f.key !== key) return;
@@ -3200,6 +3362,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   }, [workspaceId, initialPromptFromProps]);
 
+  // 首页带入处理（入口3）
   useEffect(() => {
     if (!initialPrompt?.text) return;
     if (initialPromptHandledRef.current) return;
@@ -3213,17 +3376,38 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 延迟执行，确保 UI 已渲染完成
     const timer = window.setTimeout(() => {
       const inline = initialPrompt.inlineImage;
-      const inlineRef = inline?.src
-        ? {
-            key: `inline_${Date.now()}`,
-            createdAt: Date.now(),
-            prompt: inline.name || '参考图',
-            src: inline.src,
-            status: 'done' as const,
-            kind: 'image' as const,
-          }
-        : null;
-      void runFromText(initialPrompt.text, initialPrompt.text, inlineRef, undefined, initialPrompt.size ?? null);
+
+      // 如果有内联图片，先添加到 canvas
+      if (inline?.src) {
+        const inlineKey = `inline_${Date.now()}`;
+        // 为新图片分配 refId
+        const maxExisting = canvasRef.current.reduce((acc, x) => (typeof x.refId === 'number' && x.refId > acc ? x.refId : acc), 0);
+        const newRefId = Math.max(nextRefId, maxExisting + 1);
+        setNextRefId(newRefId + 1);
+        
+        const inlineCanvasItem: CanvasImageItem = {
+          key: inlineKey,
+          createdAt: Date.now(),
+          prompt: inline.name || '参考图',
+          src: inline.src,
+          status: 'done',
+          kind: 'image',
+          refId: newRefId,
+        };
+        setCanvas((prev) => [...prev, inlineCanvasItem]);
+        // 手动同步选中和 chip（因为 setCanvas 是异步的）
+        setSelectedKeys([inlineKey]);
+        richComposerRef.current?.clearPending();
+        richComposerRef.current?.insertImageChip(
+          { key: inlineKey, refId: newRefId, src: inline.src, label: inline.name || `img${newRefId}` },
+          { preserveFocus: true }
+        );
+      }
+
+      // 通过统一守门员发送（inlineImage 现在已在 canvas 中，会被 selectedKeys 引用）
+      void sendText(initialPrompt.text, {
+        inlineImage: inline,
+      });
     }, 500);
 
     return () => window.clearTimeout(timer);
@@ -3244,59 +3428,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     });
   };
 
-  const extractReferencedImagesInOrder = (text: string) => {
-    const s = String(text ?? '');
-    const rx = /@img(\d+)/g;
-    const ids: number[] = [];
-    const seen = new Set<number>();
-    let m: RegExpExecArray | null;
-    while ((m = rx.exec(s))) {
-      const id = Number(m[1]);
-      if (!Number.isFinite(id) || id <= 0) continue;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      ids.push(id);
-    }
-    const items: CanvasImageItem[] = [];
-    for (const id of ids) {
-      const it = canvas.find((x) => x.refId === id);
-      if (it && (it.kind ?? 'image') === 'image') items.push(it);
-    }
-    return items;
-  };
-
-  const buildRequestTextWithRefs = (rawText: string) => {
-    const refsByText = extractReferencedImagesInOrder(rawText);
-
-    const merged: CanvasImageItem[] = [];
-    const seen = new Set<string>();
-    for (const it of refsByText) {
-      if (seen.has(it.key)) continue;
-      seen.add(it.key);
-      merged.push(it);
-    }
-    // 若文本没有 @imgN 引用：默认用当前选中（按 selectedKeys 顺序）作为引用顺序
-    if (merged.length === 0 && selectedKeys.length > 0) {
-      for (const k of selectedKeys) {
-        const it = canvas.find((x) => x.key === k);
-        if (!it) continue;
-        if ((it.kind ?? 'image') !== 'image') continue;
-        if (!it.src) continue;
-        if (seen.has(it.key)) continue;
-        seen.add(it.key);
-        merged.push(it);
-      }
-    }
-
-    if (merged.length === 0) return { requestText: rawText, primaryRef: null as CanvasImageItem | null };
-    const lines = merged.map((it) => {
-      const id = it.refId ?? ensureRefIdForKey(it.key) ?? '?';
-      return `- @img${id}: ${it.prompt || '（无描述）'}`;
-    });
-    const requestText = `${rawText}\n\n【引用图片（按顺序）】\n${lines.join('\n')}`;
-    return { requestText, primaryRef: merged[0] ?? null };
-  };
-
   const drainGenQueue = () => {
     while (runningCountRef.current < MAX_GEN_CONCURRENCY && pendingJobsRef.current.length > 0) {
       const job = pendingJobsRef.current.shift()!;
@@ -3307,7 +3438,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       void (async () => {
         try {
-          await runFromText(job.displayText, job.requestText, job.primaryRef, job.seedSelectedKey, job.sizeOverride);
+          await runFromText(job.displayText, job.requestText, job.imageRefs, job.seedSelectedKey, job.sizeOverride);
         } finally {
           runningCountRef.current = Math.max(0, runningCountRef.current - 1);
           setRunningCount(runningCountRef.current);
@@ -3319,7 +3450,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   };
 
-  const sendText = async (rawText: string) => {
+  /**
+   * 统一发送函数（三入口守门员）
+   * @param rawText 原始文本
+   * @param opts.chipRefs 来自 RichComposer 的 chip 引用
+   * @param opts.inlineImage 首页带入的内联图片
+   */
+  const sendText = async (rawText: string, opts?: {
+    chipRefs?: ChipRef[];
+    inlineImage?: { src: string; name?: string };
+  }) => {
     const raw = String(rawText ?? '').trim();
     if (!raw) return;
     const now = Date.now();
@@ -3329,14 +3469,43 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const sized = extractSizeToken(raw);
     const cleanDisplay = String(sized.cleanText ?? '').trim();
     if (!cleanDisplay) return;
-    const { requestText, primaryRef } = buildRequestTextWithRefs(cleanDisplay);
+
+    // 使用统一解析器
+    const contractCanvas: ContractCanvasItem[] = canvas
+      .filter((it) => (it.kind ?? 'image') === 'image' && it.src)
+      .map((it) => ({
+        key: it.key,
+        refId: it.refId ?? 0,
+        src: it.src!,
+        label: it.prompt || '',
+      }));
+
+    const resolveResult = resolveImageRefs({
+      rawText: cleanDisplay,
+      chipRefs: opts?.chipRefs ?? [],
+      selectedKeys,
+      inlineImage: opts?.inlineImage,
+      canvas: contractCanvas,
+    });
+
+    // 使用新的 buildRequestText
+    const { requestText } = buildRequestText(
+      resolveResult.cleanText,
+      resolveResult.refs
+    );
+
+    // 转换所有 refs 为 CanvasImageItem（用于 UI 显示和生成）
+    const imageRefs: CanvasImageItem[] = resolveResult.refs
+      .map((ref) => canvas.find((c) => c.key === ref.canvasKey))
+      .filter((c): c is CanvasImageItem => !!c);
+
     const seedSelectedKey = String(selectedKeysRef.current?.[0] ?? '').trim();
     const sizeOverride = sized.size ?? composerSize ?? autoSizeForSelectedImage ?? null;
     const job: GenJob = {
       id: `job_${Date.now()}_${Math.random().toString(16).slice(2)}`,
       displayText: cleanDisplay,
       requestText,
-      primaryRef,
+      imageRefs,
       seedSelectedKey,
       sizeOverride,
     };
@@ -3358,24 +3527,52 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   };
 
+  // ====== 两阶段选择：画布点击 → 预选（灰色 chip） → 点击输入框确认（蓝色） ======
+  // 逻辑已封装在 TwoPhaseRichComposer 组件中
 
-  // 富文本编辑器发送
+  /**
+   * 画布图片预选（两阶段第一步）
+   * 点击画布图片 → 使用统一方法同时更新 selectedKeys 和 pending chips
+   */
+  const handleCanvasImagePreselect = useCallback((it: CanvasImageItem) => {
+    console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect called', { key: it.key });
+    
+    const kind = it.kind ?? 'image';
+    if (kind !== 'image' || !it.src) {
+      console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect: not a valid image, skip');
+      return;
+    }
+
+    // 确保有 refId
+    ensureRefIdForKey(it.key);
+    
+    // 使用统一方法同时更新四个球和 chip
+    updateSelectionWithChips([it.key], 'replace');
+    console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect done');
+  }, [ensureRefIdForKey, updateSelectionWithChips]);
+
+  // 富文本编辑器发送（入口1）
+  // 注意：TwoPhaseRichComposer 的 onSubmit 回调会自动确认 pending chips
   const onSendRich = async () => {
     const composer = richComposerRef.current;
     if (!composer) return;
-    
-    const { text } = composer.getStructuredContent();
+
+    // 获取结构化内容（包含 imageRefs）
+    // TwoPhaseRichComposer 已在 onSubmit 中自动调用 confirmPending()
+    const { text, imageRefs } = composer.getStructuredContent();
     if (!text.trim()) return;
-    
+
     // 只有 (@size:...) 而没有实际内容时，不应发送
     const clean = String(extractSizeToken(text).cleanText ?? '').trim();
     if (!clean) return;
-    
+
     composer.clear();
     setInput('');
     composerSizeAutoRef.current = true;
     if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
-    await sendText(text);
+
+    // 传递 chipRefs 给统一守门员
+    await sendText(text, { chipRefs: imageRefs });
   };
 
   const onSendQuick = async () => {
@@ -3588,8 +3785,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       canvasRef.current = merged;
       setCanvas(merged);
     }
-    // 默认选中最新一张（放在最上层的那张）
-    setSelectedKeys([added[added.length - 1]!.key]);
+    // 默认选中最新一张（放在最上层的那张）并同步 chip
+    // 注意：setCanvas 是异步的，所以我们直接从 added 数组获取图片信息
+    const lastAdded = added[added.length - 1]!;
+    const lastAddedKey = lastAdded.key;
+    // 为新图片分配 refId（这会更新 canvas，但我们直接使用返回值）
+    const maxExisting = canvasRef.current.reduce((acc, x) => (typeof x.refId === 'number' && x.refId > acc ? x.refId : acc), 0);
+    const newRefId = Math.max(nextRefId, maxExisting + 1);
+    setNextRefId(newRefId + 1);
+    // 更新 canvas 中的 refId（使用 canvasRef 避免闭包问题）
+    setCanvas((prev) => prev.map((x) => (x.key === lastAddedKey ? { ...x, refId: newRefId } : x)));
+    // 同步选中和 chip
+    setSelectedKeys([lastAddedKey]);
+    richComposerRef.current?.clearPending();
+    if ((lastAdded.kind ?? 'image') === 'image' && lastAdded.src) {
+      richComposerRef.current?.insertImageChip(
+        { key: lastAddedKey, refId: newRefId, src: lastAdded.src, label: lastAdded.prompt || `img${newRefId}` },
+        { preserveFocus: true }
+      );
+    }
     requestAnimationFrame(() => {
       const f = focusKeyRef.current;
       if (!f) return;
@@ -4250,8 +4464,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
               const isClick = box.w < 6 && box.h < 6;
               if (isClick) {
-                // 点击空白：取消选中
-                if (!box.shift) setSelectedKeys([]);
+                // 点击空白：取消选中，同时清除 pending chips
+                if (!box.shift) {
+                  clearSelectionWithChips();
+                }
                 return;
               }
 
@@ -4284,14 +4500,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 })
                 .map((it) => it.key);
 
+              // 确保所有框选的图片都有 refId
+              for (const key of hits) {
+                ensureRefIdForKey(key);
+              }
+              
               if (!box.shift) {
-                setSelectedKeys(hits);
+                // 非 Shift：使用统一方法替换选中
+                updateSelectionWithChips(hits, 'replace');
               } else {
-                setSelectedKeys((prev) => {
-                  const set = new Set(prev);
-                  for (const k of hits) set.add(k);
-                  return Array.from(set);
-                });
+                // Shift：使用统一方法追加选中
+                updateSelectionWithChips(hits, 'add');
               }
 
               try {
@@ -4367,6 +4586,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 const w = it.w ?? 320;
                 const h = it.h ?? 220;
                 const active = isSelectedKey(it.key);
+                const isPending = isPendingKey(it.key); // 两阶段选择：pending 状态
                 const showSelectOverlay = effectiveTool !== 'hand' && active && (kind === 'image' || kind === 'generator');
                 // 单选时显示可交互的四角控制点；多选时也显示但仅作为视觉标识（不可 resize）
                 const isSingleSelect = selectedKeys.length === 1;
@@ -4432,7 +4652,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       });
                       // 如果当前元素未被选中，则单选它（便于后续图层操作）
                       if (!selectedKeys.includes(it.key)) {
-                        setSelectedKeys([it.key]);
+                        // 根据类型决定是否同步 chip
+                        if (kind === 'image' && it.src) {
+                          setSelection([it.key]);
+                        } else {
+                          setSelectionWithoutChip([it.key]);
+                        }
                       }
                     }}
                     onMouseDown={(e) => {
@@ -4444,17 +4669,47 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       if (e.button === 2) return;
                       focusStage();
                       e.stopPropagation();
+
+                      // Cmd/Ctrl + 点击：直接插入就绪的 @imgN 引用（跳过两阶段，不同步 pending chip）
+                      if (kind === 'image' && (e.metaKey || e.ctrlKey)) {
+                        // 只更新四个球，不影响 pending chip（因为这是直接插入确认的引用）
+                        const currentKeys = selectedKeysRef.current;
+                        if (!currentKeys.includes(it.key)) {
+                          setSelectionWithoutChip([...currentKeys, it.key]);
+                        }
+                        const id = ensureRefIdForKey(it.key);
+                        if (id) insertAtCursor(`@img${id} `);
+                        focusComposer();
+                        // 不启动拖拽
+                        return;
+                      }
+
                       // 确定本次拖拽涉及的选中集合（按 Figma：未选中则先选中）
                       const shift = e.shiftKey;
-                      const cur = selectedKeys;
+                      const wasSelected = selectedKeys.includes(it.key);
                       let nextKeys: string[];
+                      
                       if (shift) {
-                        // shift+拖拽不做"取消选择"，只做追加选择
-                        nextKeys = cur.includes(it.key) ? cur : cur.concat(it.key);
-                        setSelectedKeys(nextKeys);
+                        // Shift+点击：追加选中（不取消已选中的）
+                        nextKeys = wasSelected ? selectedKeys : [...selectedKeys, it.key];
+                        if (!wasSelected) {
+                          // 确保有 refId
+                          ensureRefIdForKey(it.key);
+                          // 使用统一方法：追加选中并同步 chip
+                          updateSelectionWithChips([it.key], 'add');
+                        }
                       } else {
-                        nextKeys = cur.includes(it.key) ? cur : [it.key];
-                        setSelectedKeys(nextKeys);
+                        // 普通点击：替换选中
+                        nextKeys = wasSelected ? selectedKeys : [it.key];
+                        if (kind === 'image' && it.src) {
+                          // 确保有 refId
+                          ensureRefIdForKey(it.key);
+                          // 使用统一方法：替换选中并同步 chip
+                          updateSelectionWithChips([it.key], 'replace');
+                        } else {
+                          // 非图片：只更新 selectedKeys，不同步 chip
+                          setSelectionWithoutChip([it.key]);
+                        }
                       }
                       // 开始拖拽（多选整体移动）
                       const base: Record<string, { x: number; y: number }> = {};
@@ -4474,42 +4729,60 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       e.preventDefault();
                     }}
                     onClick={(e) => {
+                      console.log('[Canvas] onClick triggered', { key: it.key, kind, src: it.src, effectiveTool });
                       focusStage();
                       e.stopPropagation();
-                      if (effectiveTool === 'hand') return;
+                      if (effectiveTool === 'hand') {
+                        console.log('[Canvas] effectiveTool is hand, return');
+                        return;
+                      }
+                      // 注意：由于 onPointerDown 中的 e.preventDefault()，onClick 实际上不会触发
+                      // 但为了代码一致性，仍保留这些处理
+
                       // 生成器区域：仅做选中，不做 @img 引用插入
                       if (kind === 'generator') {
                         if (e.shiftKey) {
-                          setSelectedKeys((prev) => {
-                            const set = new Set(prev);
-                            if (set.has(it.key)) set.delete(it.key);
-                            else set.add(it.key);
-                            return Array.from(set);
-                          });
+                          const currentKeys = selectedKeysRef.current;
+                          const set = new Set(currentKeys);
+                          if (set.has(it.key)) set.delete(it.key);
+                          else set.add(it.key);
+                          setSelectionWithoutChip(Array.from(set));
                         } else {
-                          setSelectedKeys([it.key]);
+                          setSelectionWithoutChip([it.key]);
                         }
                         focusComposer();
                         return;
                       }
-                      // Cmd/Ctrl + 点击：插入图片引用 @imgN
+                      // Cmd/Ctrl + 点击：直接插入就绪的 @imgN 引用（跳过两阶段）
                       if (kind === 'image' && (e.metaKey || e.ctrlKey)) {
-                        setSelectedKeys((prev) => (prev.includes(it.key) ? prev : prev.concat(it.key)));
+                        const currentKeys = selectedKeysRef.current;
+                        if (!currentKeys.includes(it.key)) {
+                          setSelectionWithoutChip([...currentKeys, it.key]);
+                        }
                         const id = ensureRefIdForKey(it.key);
                         if (id) insertAtCursor(`@img${id} `);
                         focusComposer();
                         return;
                       }
+                      // Shift 点击：多选
                       if (e.shiftKey) {
-                        setSelectedKeys((prev) => {
-                          const set = new Set(prev);
-                          if (set.has(it.key)) set.delete(it.key);
-                          else set.add(it.key);
-                          return Array.from(set);
-                        });
-                      } else {
-                        setSelectedKeys([it.key]);
+                        const alreadySelected = selectedKeys.includes(it.key);
+                        if (alreadySelected) {
+                          removeSelection([it.key]);
+                        } else {
+                          addSelection([it.key]);
+                        }
+                        return;
                       }
+                      // 普通点击图片：两阶段预选
+                      if (kind === 'image' && it.src) {
+                        console.log('[Canvas] calling handleCanvasImagePreselect for:', it.key);
+                        handleCanvasImagePreselect(it);
+                        return;
+                      }
+                      // 其他类型（shape/text 等）：仅选中
+                      console.log('[Canvas] fallback to setSelectionWithoutChip');
+                      setSelectionWithoutChip([it.key]);
                     }}
                     title={it.prompt}
                   >
@@ -4743,6 +5016,37 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       </div>
                     )}
 
+                    {/* 两阶段选择：pending 状态遮罩（灰色边框 + 对勾标记） */}
+                    {isPending && kind === 'image' ? (
+                      <div
+                        className="absolute rounded-[14px]"
+                        style={{
+                          left: selX,
+                          top: selY,
+                          width: selW,
+                          height: selH,
+                          background: 'rgba(156, 163, 175, 0.25)',
+                          border: '2px solid rgba(156, 163, 175, 0.6)',
+                          pointerEvents: 'none',
+                          zIndex: 35,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <span
+                          style={{
+                            color: 'white',
+                            fontSize: Math.max(20, Math.min(selW, selH) * 0.15),
+                            fontWeight: 700,
+                            textShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                          }}
+                        >
+                          ✓
+                        </span>
+                      </div>
+                    ) : null}
+
                     {/* 选中覆盖层：蓝色描边 + 四角圆点（单选可 resize） */}
                     {showSelectOverlay ? (
                       <div
@@ -4958,31 +5262,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         const selY = Math.round(inner.y);
                         const selW = Math.max(1, Math.round(inner.w));
                         const selH = Math.max(1, Math.round(inner.h));
-                        // 顶部标签：保持“两块”（name 在左、size 在右），但必须不重叠
-                        // 做法：
-                        // - 标签文字大小不随 zoom 缩放（通过 scale(var(--invZoom)) 达成），但容器可用“屏幕宽度”会随 zoom 和窗口尺寸变化；
-                        // - 所以 name 的截断宽度要基于“屏幕可用宽度”动态计算，窗口缩小/zoom 改变时会自动裁剪更多字符。
+                        // 顶部标签宽度计算
                         const gap = 8;
                         const pad = 16; // label 左右 padding 合计（8+8）
-                        // 精确测量文本宽度（像素），避免仅按 length 估算导致“该裁不裁/不该裁却裁”
                         const sizeTextPx = measureLabelTextPx(sizeText);
                         const nameTextPx = measureLabelTextPx(name);
-                        // 右侧尺寸标签宽度（像素）：文本宽 + padding/边框余量
                         const sizeLabelW0 = Math.min(220, Math.max(60, sizeTextPx + pad + 14));
-                        // 选中框左上角在屏幕坐标中的 x（用于限制标签不超过可视区域宽度；窗口缩小时会变小）
                         const screenLeft = Math.round((Math.round(x) + selX) * zoom + camera.x);
                         const stageW = stageSize.w || stageRef.current?.clientWidth || 0;
-                        // 可用宽度应随窗口变化；不要再硬编码 360，否则“大图/宽窗口”也会被迫裁剪
-                        // 仍保留一个合理上限，避免超大画布时标签无限拉长影响观感
                         const maxByViewport = stageW > 0 ? Math.max(80, Math.floor(stageW - 12 - screenLeft)) : 9999;
                         const labelHardMax = 920;
-                        // 选中框在屏幕上的宽度（容器被缩放，但标签不缩放，因此必须用屏幕宽度来做约束）
                         const screenSelW = Math.max(40, Math.floor(selW * zoom));
                         const labelBoxW = Math.max(80, Math.min(labelHardMax, maxByViewport, screenSelW));
                         const sizeLabelW = Math.min(sizeLabelW0, Math.max(52, labelBoxW - gap - 48));
-                        // nameBoxW：以“真实文本宽度”为上限，避免在空间足够时仍然不必要地裁剪
                         const nameNeedW = Math.min(labelBoxW - sizeLabelW - gap, nameTextPx + pad + 14);
                         const nameBoxW = Math.max(48, Math.floor(Math.min(labelBoxW - sizeLabelW - gap, Math.max(48, nameNeedW))));
+                        // 如果名字中包含 @imgN 引用，则尝试使用 MessageContentRenderer 渲染为 Chip
+                        const isChipLabel = name.match(/@img\d+/);
+                        
                         return (
                           <div
                             key={`ui_sel_${it.key}`}
@@ -5013,7 +5310,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 border: 'none',
                                 color: 'rgba(255,255,255,0.86)',
                                 textShadow: 'none',
-                                pointerEvents: 'none',
+                                pointerEvents: 'auto', // 允许点击 Chip
                                 minWidth: 0,
                               }}
                               title={name}
@@ -5027,7 +5324,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   whiteSpace: 'nowrap',
                                 }}
                               >
-                                {name}
+                                {isChipLabel ? (
+                                  <MessageContentRenderer
+                                    content={name}
+                                    canvasItems={canvas}
+                                    onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
+                                  />
+                                ) : (
+                                  name
+                                )}
                               </span>
                             </div>
 
@@ -6025,7 +6330,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     focusKeyRef.current = { key, cx: pos.x + w / 2, cy: pos.y + h / 2, w, h };
                     return [next, ...prev].slice(0, 80);
                   });
-                  setSelectedKeys([key]);
+                  setSelectionWithoutChip([key]); // generator 不需要 chip
                   requestAnimationFrame(() => {
                     const f = focusKeyRef.current;
                     if (!f || f.key !== key) return;
@@ -6117,6 +6422,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </div>
               <button
                 type="button"
+                onClick={() => setShowLogs(true)}
+                className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
+                style={{ color: 'var(--text-muted)' }}
+                aria-label="查看 LLM 日志"
+                title="查看 LLM 日志"
+              >
+                <Eye size={14} />
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   setDefectFlash(false); // 用户点击后停止闪烁
                   useGlobalDefectStore.getState().openDialog();
@@ -6174,9 +6489,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         {/* 引用用户提示词 + 重试按钮 */}
                         {genError.prompt ? (
                           <div className="px-2.5 pt-2 pb-1.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
-                            <div className="w-[3px] shrink-0 self-stretch rounded-full" style={{ background: 'rgba(239,68,68,0.4)' }} />
-                            <div className="text-[11px] min-w-0 truncate flex-1" style={{ color: 'rgba(255,255,255,0.5)' }} title={genError.prompt}>
-                              {genError.prompt}
+                            <div className="text-[11px] min-w-0 flex-1 line-clamp-2" style={{ color: 'rgba(255,255,255,0.5)' }} title={genError.prompt}>
+                              <MessageContentRenderer
+                                content={genError.prompt}
+                                canvasItems={canvas}
+                                onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
+                              />
                             </div>
                             <button
                               type="button"
@@ -6233,39 +6551,91 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
                         style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgb(35, 35, 40)' }}
                       >
-                        {/* 引用用户提示词 + 参考图 */}
+                        {/* 引用用户提示词（Top） */}
                         {(genDone.prompt || genDone.refSrc) ? (
-                          <div className="px-2.5 pt-2 pb-1.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                            <div className="w-[3px] shrink-0 self-stretch rounded-full" style={{ background: 'rgba(214,178,106,0.5)' }} />
-                            {genDone.refSrc ? (
-                              <button
-                                type="button"
-                                className="shrink-0 rounded-[4px] overflow-hidden"
-                                style={{ width: 20, height: 20, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.15)' }}
-                                onClick={() => setPreview({ open: true, src: genDone.refSrc!, prompt: '参照图' })}
-                                title="点击预览参照图"
-                              >
-                                <img src={genDone.refSrc} alt="参照图" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                              </button>
-                            ) : null}
-                            <div className="text-[11px] min-w-0 truncate" style={{ color: 'rgba(255,255,255,0.5)' }} title={genDone.prompt}>
-                              {genDone.prompt || ''}
+                          <div className="px-2.5 pb-2 pt-1 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                            <div className="text-[11px] min-w-0 flex-1 line-clamp-1" style={{ color: 'rgba(255,255,255,0.5)' }} title={genDone.prompt}>
+                              <MessageContentRenderer
+                                content={genDone.prompt || ''}
+                                canvasItems={canvas}
+                                onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
+                              />
                             </div>
                           </div>
                         ) : null}
-                        {/* 生成的图片 */}
+
+                        {/* 生成的图片（Middle） */}
                         <button
                           type="button"
                           className="block w-full"
                           onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '', runId: genDone.runId })}
                           title="点击放大"
                         >
-                          <img
-                            src={genDone.src}
-                            alt={genDone.prompt || '生成结果'}
-                            style={{ width: '100%', maxHeight: 70, objectFit: 'contain', display: 'block' }}
-                          />
+                  <img
+                    src={genDone.src}
+                    alt={genDone.prompt || '生成结果'}
+                    style={{ width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block' }}
+                  />
                         </button>
+
+                        {/* 元数据（Bottom） */}
+                        {(() => {
+                          const originalUserMsg = messages.find(om => om.id === m.id.replace('msg_a', 'msg_u')) || messages[messages.indexOf(m) - 1];
+                          // 强制渲染元数据（即使用户消息中没有显式 token，也显示默认值或提取的值）
+                          // 如果用户消息没找到，或者 role 不是 User，我们仍然尝试从 m.content (GenDoneMeta) 中找线索，
+                          // 但 GenDoneMeta 里通常没有 size/model。
+                          // 回退逻辑：如果提取不到，就使用当前上下文的 effectiveModel 和默认尺寸。
+                          // 但这里是在渲染历史消息，不能直接用当前 effectiveModel（因为可能已经变了）。
+                          // 只能依赖 originalUserMsg。如果 originalUserMsg 存在，就提取。
+                          
+                          let msgSize = '';
+                          let msgModel = '';
+
+                          if (originalUserMsg && originalUserMsg.role === 'User') {
+                            const parsed = extractInlineImageToken(originalUserMsg.content);
+                            const contentText = parsed ? parsed.clean : originalUserMsg.content;
+                            const sizedMsg = extractSizeToken(contentText);
+                            msgSize = String(sizedMsg.size ?? '').trim();
+                            const modeledMsg = extractModelToken(sizedMsg.cleanText);
+                            msgModel = String(modeledMsg.model ?? '').trim();
+                          }
+
+                          // 如果没提取到，尝试使用默认值（仅当有 originalUserMsg 时，避免凭空捏造）
+                          if (originalUserMsg && !msgSize) {
+                             // 如果消息里没写尺寸，系统通常默认用 1024x1024。
+                             // 这里硬编码回退显示，以保证 UI 一致性（用户要求“下栏”）
+                             msgSize = '1024x1024';
+                          }
+                          
+                          // 如果没提取到模型，尝试从 GenDoneMeta 中获取 modelPool
+                          if (!msgModel) {
+                            const meta = parseGenDone(m.content);
+                            if (meta && meta.modelPool) {
+                              msgModel = meta.modelPool;
+                            }
+                          }
+
+                          // 如果还是没有，且有 originalUserMsg，尝试回退到 effectiveModel（仅作参考，可能不准）
+                          // 但为了准确性，如果不确定，最好不显示。
+                          // 不过用户想要“模型呢？”，我们可以尝试显示 serverDefaultModel 或 effectiveModel 的名称作为兜底
+                          // 注意：这里无法准确知道当时生图用了哪个模型（除非后端返回在 GenDoneMeta 里）
+                          // 目前 GenDoneMeta 有 modelPool 字段，应该能取到。
+                          
+                          // 只有在明确有数据时才渲染元数据栏
+                          if (msgSize || msgModel) {
+                            return (
+                              <div className="px-2.5 pt-2 pb-1.5 flex" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                                <MessageMetadata 
+                                  size={msgSize} 
+                                  model={msgModel} 
+                                  className="!mt-0 w-full" 
+                                  sizeToAspectMap={sizeToAspectMap} 
+                                />
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                       <span
                         className="text-[9px] tabular-nums select-none pl-1"
@@ -6304,9 +6674,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
                 // 普通消息（用户/助手纯文本）
                 const parsed = isUser ? extractInlineImageToken(m.content) : null;
-                const refSrc = parsed?.src ? String(parsed.src).trim() : '';
-                const refNameFull = String(parsed?.name ?? '').trim();
-                const refName = truncateLabelFront(refNameFull || '参照图', 9) || '参照图';
                 const contentText = parsed ? parsed.clean : m.content;
                 const sizedMsg = isUser ? extractSizeToken(contentText) : { size: null as string | null, cleanText: String(contentText ?? '') };
                 const msgSize = String(sizedMsg.size ?? '').trim();
@@ -6332,118 +6699,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       }}
                     >
                       <div style={{ maxHeight: isLongMsg && !isExpanded ? 64 : undefined, overflow: isLongMsg && !isExpanded ? 'hidden' : undefined }}>
-                        {isUser && (refSrc || msgSize || msgModel) ? (
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {refSrc ? (
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1"
-                                style={{
-                                  height: 18,
-                                  maxWidth: 120,
-                                  paddingLeft: 4,
-                                  paddingRight: 6,
-                                  borderRadius: 4,
-                                  overflow: 'hidden',
-                                  border: '1px solid var(--border-subtle)',
-                                  background: 'rgba(214, 178, 106, 0.12)',
-                                }}
-                                title={refNameFull ? `参照图：${refNameFull}` : '点击预览参照图'}
-                                aria-label="预览参考图"
-                                onClick={() => setPreview({ open: true, src: refSrc, prompt: refNameFull || '参照图' })}
-                              >
-                                <span
-                                  style={{
-                                    width: 14,
-                                    height: 14,
-                                    borderRadius: 3,
-                                    overflow: 'hidden',
-                                    border: '1px solid rgba(255,255,255,0.22)',
-                                    background: 'rgba(255,255,255,0.06)',
-                                    display: 'inline-flex',
-                                    flex: '0 0 auto',
-                                  }}
-                                >
-                                  <img
-                                    src={refSrc}
-                                    alt={refName || '参照图'}
-                                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                                  />
-                                </span>
-                                <span
-                                  style={{
-                                    fontSize: 10,
-                                    lineHeight: '14px',
-                                    color: 'rgba(255,255,255,0.7)',
-                                    whiteSpace: 'nowrap',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    maxWidth: 80,
-                                  }}
-                                >
-                                {refName}
-                                </span>
-                              </button>
-                            ) : null}
-
-                            {msgSize ? (
-                              <span
-                                className="inline-flex items-center gap-1"
-                                style={{
-                                  height: 18,
-                                  paddingLeft: 4,
-                                  paddingRight: 6,
-                                  borderRadius: 4,
-                                  border: '1px solid var(--border-subtle)',
-                                  background: 'rgba(214, 178, 106, 0.10)',
-                                }}
-                                title={`尺寸：${msgSize}`}
-                              >
-                                <AspectIcon size={msgSize} />
-                                <span
-                                  className="tabular-nums"
-                                  style={{
-                                    fontSize: 10,
-                                    lineHeight: '14px',
-                                    color: 'rgba(255,255,255,0.7)',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  {sizeToAspectMap.get(msgSize.toLowerCase()) || detectAspectFromSize(msgSize)}
-                                </span>
-                              </span>
-                            ) : null}
-
-                            {/* 模型池标签 */}
-                            {msgModel ? (
-                              <span
-                                className="inline-flex items-center gap-1"
-                                style={{
-                                  height: 18,
-                                  paddingLeft: 4,
-                                  paddingRight: 6,
-                                  borderRadius: 4,
-                                  border: '1px solid rgba(99, 102, 241, 0.35)',
-                                  background: 'rgba(99, 102, 241, 0.12)',
-                                }}
-                                title={`模型池：${msgModel}`}
-                              >
-                                <Sparkles size={10} style={{ color: 'rgba(129, 140, 248, 0.85)' }} />
-                                <span
-                                  style={{
-                                    fontSize: 10,
-                                    lineHeight: '14px',
-                                    color: 'rgba(129, 140, 248, 0.85)',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  {msgModel}
-                                </span>
-                              </span>
-                            ) : null}
-                          </div>
+                        <MessageContentRenderer
+                          content={msgBody}
+                          canvasItems={canvas}
+                          onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
+                        />
+                        
+                        {/* 气泡底部元数据：尺寸/模型 */}
+                        {isUser && (msgSize || msgModel) ? (
+                          null // 移除用户消息中的元数据
                         ) : null}
-                        <div>{msgBody}</div>
                       </div>
                       {isLongMsg ? (
                         <button
@@ -6489,7 +6754,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 background: directPrompt ? 'rgba(0,0,0,0.14)' : 'rgba(251,146,60,0.06)',
               }}
             >
-              {/* 若直连被关闭（auto/解析模式）：做明显提示，避免用户误以为“直连默认开启” */}
+              {/* 若直连被关闭（auto/解析模式）：做明显提示，避免用户误以为"直连默认开启" */}
               {!directPrompt ? (
                 <div
                   className="absolute z-30 inline-flex items-center gap-1 rounded-full px-2 h-5 text-[10px] font-extrabold tracking-wide"
@@ -6508,97 +6773,49 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 </div>
               ) : null}
 
-              {/* 选中图片时：显示参照图 chip（支持多选） */}
-              {selectedImagesForComposer.length > 0 ? (
+              {/* 两阶段选择：待确认计数提示 */}
+              {pendingChipKeys.size > 0 ? (
                 <div
-                  className="absolute left-3 right-3 top-3 z-30 inline-flex items-center gap-1.5"
-                  style={{ pointerEvents: 'auto', flexWrap: 'wrap' }}
+                  className="absolute z-30 inline-flex items-center gap-1 rounded-full px-2 h-5 text-[10px] font-medium"
+                  style={{
+                    right: 12,
+                    top: -10,
+                    background: 'rgba(156, 163, 175, 0.16)',
+                    border: '1px solid rgba(156, 163, 175, 0.42)',
+                    color: 'rgba(156, 163, 175, 1)',
+                    boxShadow: '0 10px 28px rgba(0,0,0,0.35)',
+                  }}
                 >
-                  {/* 渲染每个选中的图片 chip */}
-                  {selectedImagesForComposer.map((img, idx) => (
-                    <button
-                      key={img.key}
-                      type="button"
-                      className="inline-flex items-center gap-1.5"
-                      style={{
-                        height: 20,
-                        maxWidth: 140,
-                        paddingLeft: 4,
-                        paddingRight: 6,
-                        borderRadius: 4,
-                        overflow: 'hidden',
-                        border: '1px solid var(--border-subtle)',
-                        background: 'rgba(255,255,255,0.02)',
-                        color: 'rgba(255,255,255,0.82)',
-                      }}
-                      title={guessRefName(img) ? `参照图 ${idx + 1}：${guessRefName(img)}` : `参照图 ${idx + 1}`}
-                      aria-label={`预览参考图 ${idx + 1}`}
-                      onClick={() =>
-                        setPreview({
-                          open: true,
-                          src: String(img.src ?? ''),
-                          prompt: guessRefName(img) || `参照图 ${idx + 1}`,
-                        })
-                      }
-                    >
-                      {/* 序号标记 */}
-                      <span
-                        style={{
-                          minWidth: 14,
-                          height: 14,
-                          borderRadius: 3,
-                          background: 'rgba(99, 102, 241, 0.25)',
-                          border: '1px solid rgba(99, 102, 241, 0.4)',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 9,
-                          fontWeight: 700,
-                          color: 'rgba(99, 102, 241, 1)',
-                          flexShrink: 0,
-                        }}
-                      >
-                        {idx + 1}
-                      </span>
-                      <span
-                        style={{
-                          width: 14,
-                          height: 14,
-                          borderRadius: 3,
-                          overflow: 'hidden',
-                          border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'rgba(255,255,255,0.06)',
-                          display: 'inline-flex',
-                          flex: '0 0 auto',
-                        }}
-                      >
-                        <img
-                          src={String(img.src ?? '')}
-                          alt={guessRefName(img) || `参照图 ${idx + 1}`}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                        />
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          lineHeight: '16px',
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          maxWidth: 70,
-                        }}
-                      >
-                        {truncateLabelFront(guessRefName(img) || `图${idx + 1}`, 6)}
-                      </span>
-                    </button>
-                  ))}
+                  <span>待确认 {pendingChipKeys.size} 张</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // 清除按钮：同时清除四个球和钩子
+                      selectionManagerRef.current?.clear();
+                    }}
+                    style={{
+                      marginLeft: 4,
+                      padding: '1px 4px',
+                      fontSize: 9,
+                      background: 'rgba(156, 163, 175, 0.25)',
+                      border: '1px solid rgba(156, 163, 175, 0.4)',
+                      borderRadius: 3,
+                      color: 'rgba(156, 163, 175, 1)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    清除
+                  </button>
                 </div>
               ) : null}
 
-              {/* 富文本编辑器 */}
-              <RichComposer
+              {/* 两阶段选择富文本编辑器 - 内置容器点击确认 pending chips
+                  注：已删除老代码的 selectedImagesForComposer chip 显示区域，
+                  现在完全由 TwoPhaseRichComposer 内部管理 chip 显示 */}
+              <TwoPhaseRichComposer
                 ref={richComposerRef}
-                placeholder={selectedImagesForComposer.length > 0 ? '' : '请输入你的设计需求（Enter 发送，Shift+Enter 换行）'}
+                placeholder="请输入你的设计需求（Enter 发送，Shift+Enter 换行）"
                 imageOptions={imageOptions}
                 onChange={(text) => {
                   activeComposerRef.current = 'right';
@@ -6620,6 +6837,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   void onUploadImages([normalizedFile], { mode: 'add' });
                   return true;
                 }}
+                onPendingKeysChange={handlePendingKeysChange}
                 style={{
                   paddingTop: composerMetaPadTop,
                 }}
@@ -7385,6 +7603,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </Button>
             </div>
           </div>
+        }
+      />
+
+      <Dialog
+        open={showLogs}
+        onOpenChange={setShowLogs}
+        title="LLM 调用日志 (Visual Agent)"
+        maxWidth={1200}
+        contentStyle={{ height: '80vh', padding: 0 }}
+        content={
+          <LlmLogsPanel
+            embedded
+            defaultAppKey="visual-agent"
+          />
         }
       />
       </GlassCard>
