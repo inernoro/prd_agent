@@ -65,6 +65,108 @@ public async Task<IActionResult> CreateImageGenRun([FromBody] Request request)
 
 ---
 
+## LLM Gateway 统一调用规则
+
+**核心原则**：所有大模型调用必须通过 `ILlmGateway` 守门员接口，禁止直接调用底层 LLM 客户端。
+
+### 为什么需要 Gateway
+
+1. **统一模型调度**：根据 AppCallerCode 自动匹配模型池，无需手动解析
+2. **统一日志记录**：自动记录期望模型 vs 实际模型、Token 使用量、响应时间
+3. **统一健康管理**：自动更新模型健康状态（成功恢复 / 失败降权）
+4. **未来可扩展**：Gateway 模块可独立部署，成为模型调度中心
+
+### 使用方式
+
+```csharp
+// ✅ 正确做法：通过 Gateway 调用
+public class MyService
+{
+    private readonly ILlmGateway _gateway;
+
+    public async Task<string> ProcessAsync(string prompt, CancellationToken ct)
+    {
+        var request = new GatewayRequest
+        {
+            AppCallerCode = "my-app.feature::chat",  // 必填
+            ModelType = "chat",                       // 必填
+            ExpectedModel = "gpt-4o",                 // 可选，仅作为调度提示
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = prompt }
+                }
+            }
+        };
+
+        // 非流式
+        var response = await _gateway.SendAsync(request, ct);
+        return response.Content;
+
+        // 流式
+        await foreach (var chunk in _gateway.StreamAsync(request, ct))
+        {
+            yield return chunk.Content;
+        }
+    }
+}
+```
+
+```csharp
+// ❌ 错误做法：直接调用底层客户端
+public class MyService
+{
+    private readonly OpenAIClient _client;  // 不要这样做！
+
+    public async Task ProcessAsync()
+    {
+        // 绕过 Gateway = 绕过调度 + 绕过日志 + 绕过健康管理
+        await _client.StreamGenerateAsync(...);  // 禁止！
+    }
+}
+```
+
+### Gateway 核心文件
+
+| 文件 | 用途 |
+|------|------|
+| `ILlmGateway.cs` | 接口定义 |
+| `LlmGateway.cs` | 核心实现（调度 + 日志 + 健康管理） |
+| `GatewayRequest.cs` | 请求模型 |
+| `GatewayResponse.cs` | 响应模型（包含调度信息） |
+| `Adapters/*.cs` | 平台适配器（OpenAI、Claude 等） |
+
+### AppCallerCode 命名规范
+
+格式：`{app-key}.{feature}::{model-type}`
+
+| 示例 | 说明 |
+|------|------|
+| `visual-agent.image.vision::generation` | 视觉代理 - 多图生成 |
+| `visual-agent.image.text2img::generation` | 视觉代理 - 文生图 |
+| `prd-agent.chat::chat` | PRD 代理 - 对话 |
+| `defect-agent.analyze::intent` | 缺陷代理 - 意图识别 |
+
+### 模型调度优先级
+
+1. **专属模型池**：AppCallerCode 绑定的 ModelGroupIds
+2. **默认模型池**：ModelType 对应的 IsDefaultForType 池
+3. **传统配置**：IsMain / IsIntent / IsVision / IsImageGen 标记
+
+### 日志记录字段
+
+Gateway 自动记录以下信息到 `llm_request_logs`：
+
+| 字段 | 说明 |
+|------|------|
+| `RequestPurpose` | AppCallerCode（用于过滤特定应用的日志） |
+| `ModelResolutionType` | 调度来源（DedicatedPool / DefaultPool / Legacy） |
+| `ModelGroupId` / `ModelGroupName` | 使用的模型池 |
+| `Model` | 实际使用的模型名称 |
+
+---
+
 ## Codebase Skill（代码库快照 — 供 AI 增量维护用）
 
 > **最后更新**：2026-01-25 | **总提交数**：111 | **文档版本**：SRS v3.0, PRD v2.0

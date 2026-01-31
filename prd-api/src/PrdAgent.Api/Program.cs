@@ -140,7 +140,10 @@ builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 // 智能模型调度器（新架构：应用身份识别 + 分组化配置 + 智能降权）
 builder.Services.AddScoped<ISmartModelScheduler, SmartModelScheduler>();
 
-// OpenAI 兼容 Images API（用于“生图模型”）
+// LLM Gateway 统一守门员（所有大模型调用必须通过此接口）
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+
+// OpenAI 兼容 Images API（用于"生图模型"）
 builder.Services.AddScoped<OpenAIImageClient>();
 builder.Services.AddSingleton<WatermarkFontRegistry>();
 builder.Services.AddSingleton<WatermarkRenderer>();
