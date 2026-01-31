@@ -389,7 +389,7 @@ public class DefectAgentTests
         Assert.StartsWith(expectedPrefix, defectNo1);
         Assert.StartsWith(expectedPrefix, defectNo2);
         Assert.StartsWith(expectedPrefix, defectNo3);
-        Assert.Equal(14, defectNo1.Length); // DEF-2025-0001
+        Assert.Equal(13, defectNo1.Length); // DEF-YYYY-0001 = 13 chars
     }
 
     [Theory]
@@ -450,7 +450,7 @@ public class DefectAgentTests
         // Assert
         Assert.Equal(3, report.Attachments.Count);
         Assert.Equal(2, report.Attachments.Count(a => a.MimeType == "image/png"));
-        Assert.Single(report.Attachments.Where(a => a.MimeType == "text/plain"));
+        Assert.Single(report.Attachments, a => a.MimeType == "text/plain");
     }
 
     [Fact]
