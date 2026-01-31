@@ -65,8 +65,7 @@ public class ModelResolverTests
             Id = ObjectId.GenerateNewId().ToString(),
             AppCode = appCode,
             DisplayName = displayName,
-            Enabled = true,
-            ModelRequirements = requirements.Select(r => new ModelRequirement
+            ModelRequirements = requirements.Select(r => new AppModelRequirement
             {
                 ModelType = r.modelType,
                 ModelGroupIds = r.groupIds
