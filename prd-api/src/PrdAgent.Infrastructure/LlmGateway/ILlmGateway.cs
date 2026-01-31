@@ -33,38 +33,26 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 public interface ILlmGateway
 {
     /// <summary>
-    /// 发送非流式请求
+    /// 发送非流式请求（Chat/Completion）
     /// </summary>
-    /// <param name="request">网关请求</param>
-    /// <param name="ct">取消令牌</param>
-    /// <returns>网关响应</returns>
     Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default);
 
     /// <summary>
-    /// 发送流式请求
+    /// 发送流式请求（Chat/Completion）
     /// </summary>
-    /// <param name="request">网关请求（Stream 字段会被忽略，强制为流式）</param>
-    /// <param name="ct">取消令牌</param>
-    /// <returns>流式响应块</returns>
     IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default);
 
     /// <summary>
-    /// 发送图片生成请求
+    /// 发送原始 HTTP 请求（用于图片生成等复杂场景）
+    /// Gateway 负责：模型调度 + model 字段替换 + HTTP 发送 + 日志 + 健康管理
+    /// 调用方负责：构建请求体（业务逻辑如尺寸适配、水印等）
     /// </summary>
-    /// <param name="request">图片生成请求</param>
-    /// <param name="ct">取消令牌</param>
-    /// <returns>图片生成响应</returns>
-    Task<ImageGenGatewayResponse> GenerateImageAsync(ImageGenGatewayRequest request, CancellationToken ct = default);
+    Task<GatewayRawResponse> SendRawAsync(GatewayRawRequest request, CancellationToken ct = default);
 
     /// <summary>
     /// 预解析模型调度结果（不发送请求）
     /// 用于前端展示可用模型池信息
     /// </summary>
-    /// <param name="appCallerCode">应用调用标识</param>
-    /// <param name="modelType">模型类型</param>
-    /// <param name="expectedModel">期望模型名（可选）</param>
-    /// <param name="ct">取消令牌</param>
-    /// <returns>调度结果</returns>
     Task<GatewayModelResolution> ResolveModelAsync(
         string appCallerCode,
         string modelType,
@@ -74,10 +62,6 @@ public interface ILlmGateway
     /// <summary>
     /// 获取指定 AppCallerCode 可用的模型池列表
     /// </summary>
-    /// <param name="appCallerCode">应用调用标识</param>
-    /// <param name="modelType">模型类型</param>
-    /// <param name="ct">取消令牌</param>
-    /// <returns>可用模型池列表（按优先级排序）</returns>
     Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode,
         string modelType,

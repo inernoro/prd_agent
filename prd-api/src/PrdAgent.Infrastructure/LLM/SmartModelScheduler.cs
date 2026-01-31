@@ -5,15 +5,18 @@ using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LLM;
 
 /// <summary>
-/// 智能模型调度器 - 负责根据应用需求选择最佳模型并处理降权恢复
+/// 智能模型调度器 - 负责根据应用需求选择最佳模型
+/// 所有 LLM 调用都通过 Gateway 统一管理
 /// </summary>
 public class SmartModelScheduler : ISmartModelScheduler
 {
     private readonly MongoDbContext _db;
+    private readonly ILlmGateway _gateway;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private readonly ILlmRequestLogWriter _logWriter;
@@ -23,6 +26,7 @@ public class SmartModelScheduler : ISmartModelScheduler
 
     public SmartModelScheduler(
         MongoDbContext db,
+        ILlmGateway gateway,
         IHttpClientFactory httpClientFactory,
         IConfiguration config,
         ILlmRequestLogWriter logWriter,
@@ -31,6 +35,7 @@ public class SmartModelScheduler : ISmartModelScheduler
         ILogger<SmartModelScheduler> logger)
     {
         _db = db;
+        _gateway = gateway;
         _httpClientFactory = httpClientFactory;
         _config = config;
         _logWriter = logWriter;
@@ -109,8 +114,8 @@ public class SmartModelScheduler : ISmartModelScheduler
         // 检查测试桩配置（用于故障模拟）
         await CheckTestStubAsync(bestModel, group.Id, ct);
 
-        // 创建客户端
-        var client = await CreateClientForModelAsync(bestModel, group.Id, ct);
+        // 创建客户端（使用 Gateway 统一管理所有 LLM 调用）
+        var client = await CreateClientForModelAsync(bestModel, group.Id, appCallerCode, modelType, ct);
 
         // 返回客户端及模型池信息
         // 根据模型来源确定解析类型
@@ -674,88 +679,29 @@ public class SmartModelScheduler : ISmartModelScheduler
         return null;
     }
 
-    private async Task<ILLMClient> CreateClientForModelAsync(
+    private Task<ILLMClient> CreateClientForModelAsync(
         ModelGroupItem modelItem,
         string groupId,
+        string appCallerCode,
+        string modelType,
         CancellationToken ct)
     {
-        // 直接通过 platformId 查询平台信息，不依赖 LLMModels 表（LLMModels 只是收藏夹）
-        // modelItem.ModelId 存储的是模型名称（如 deepseek-ai/DeepSeek-R1-Distill-Qwen-32B）
-        // modelItem.PlatformId 存储的是平台 ID
-
-        if (string.IsNullOrEmpty(modelItem.PlatformId))
-        {
-            throw new InvalidOperationException($"模型配置缺少平台ID: modelId={modelItem.ModelId}");
-        }
-
-        var platform = await _db.LLMPlatforms.Find(p => p.Id == modelItem.PlatformId).FirstOrDefaultAsync(ct);
-        if (platform == null)
-        {
-            throw new InvalidOperationException($"平台不存在: platformId={modelItem.PlatformId}");
-        }
-
-        var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-        var apiUrl = platform.ApiUrl;
-        var apiKey = ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
-        var platformType = platform.PlatformType?.ToLowerInvariant();
-        var platformId = platform.Id;
-        var platformName = platform.Name;
-
-        if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
-        {
-            throw new InvalidOperationException($"平台 API 配置不完整: platformId={modelItem.PlatformId}, platformName={platformName}");
-        }
-
-        // 验证 apiUrl 必须是有效的 HTTP(S) URL，避免 file:// 等无效协议
-        var apiUrlTrim = apiUrl.Trim();
-        if (!Uri.TryCreate(apiUrlTrim, UriKind.Absolute, out var apiUrlUri) ||
-            (apiUrlUri.Scheme != Uri.UriSchemeHttp && apiUrlUri.Scheme != Uri.UriSchemeHttps))
-        {
-            throw new InvalidOperationException($"平台 API URL 无效（必须是 http:// 或 https:// 开头）: platformId={modelItem.PlatformId}, platformName={platformName}, apiUrl={apiUrlTrim}");
-        }
-
-        var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
-        httpClient.BaseAddress = new Uri(apiUrlTrim.TrimEnd('#').TrimEnd('/') + "/");
-
-        // 模型池项级配置（模型池是决定缓存的唯一来源）
+        // 使用 GatewayLLMClient：所有 LLM 调用都通过 Gateway 统一管理
+        // Gateway 负责：模型调度、HTTP 请求、日志记录、健康管理
         var enablePromptCache = modelItem.EnablePromptCache ?? true;
         var maxTokens = modelItem.MaxTokens ?? 4096;
 
-        // 模型名称直接使用 modelItem.ModelId
-        var modelName = modelItem.ModelId;
+        var client = new GatewayLLMClient(
+            gateway: _gateway,
+            appCallerCode: appCallerCode,
+            modelType: modelType,
+            platformId: modelItem.PlatformId,
+            platformName: null,  // Gateway 会在调度时获取
+            enablePromptCache: enablePromptCache,
+            maxTokens: maxTokens,
+            temperature: 0.2);
 
-        if (platformType == "anthropic" || apiUrl.Contains("anthropic.com"))
-        {
-            return new ClaudeClient(
-                httpClient,
-                apiKey,
-                modelName,
-                maxTokens,
-                0.2,
-                enablePromptCache,
-                _claudeLogger,
-                _logWriter,
-                _ctxAccessor,
-                platformId,
-                platformName);
-        }
-
-        var chatEndpointOrPath = apiUrlTrim.EndsWith("#", StringComparison.Ordinal)
-            ? apiUrlTrim.TrimEnd('#')
-            : (apiUrlTrim.EndsWith("/", StringComparison.Ordinal) ? "chat/completions" : "v1/chat/completions");
-
-        return new OpenAIClient(
-            httpClient,
-            apiKey,
-            modelName,
-            maxTokens,
-            0.2,
-            enablePromptCache,
-            _logWriter,
-            _ctxAccessor,
-            chatEndpointOrPath,
-            platformId,
-            platformName);
+        return Task.FromResult<ILLMClient>(client);
     }
 
     private async Task<ModelSchedulerConfig> GetConfigAsync(CancellationToken ct)

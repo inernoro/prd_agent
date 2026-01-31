@@ -305,13 +305,188 @@ public class LlmGateway : ILlmGateway
     }
 
     /// <inheritdoc />
-    public async Task<ImageGenGatewayResponse> GenerateImageAsync(
-        ImageGenGatewayRequest request,
-        CancellationToken ct = default)
+    public async Task<GatewayRawResponse> SendRawAsync(GatewayRawRequest request, CancellationToken ct = default)
     {
-        // TODO: 实现图片生成
-        // 当前先返回未实现错误，后续迁移 OpenAIImageClient 逻辑
-        throw new NotImplementedException("图片生成功能正在迁移中");
+        var startedAt = DateTime.UtcNow;
+        string? logId = null;
+        ModelResolutionResult? resolution = null;
+
+        try
+        {
+            // 1. 模型调度
+            resolution = await _modelResolver.ResolveAsync(
+                request.AppCallerCode, request.ModelType, null, ct);
+
+            if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
+            {
+                return GatewayRawResponse.Fail("MODEL_NOT_FOUND",
+                    resolution.ErrorMessage ?? "未找到可用模型", 404);
+            }
+
+            var gatewayResolution = resolution.ToGatewayResolution();
+
+            // 2. 构建 endpoint
+            var baseUrl = resolution.ApiUrl!.TrimEnd('/');
+            var endpoint = string.IsNullOrWhiteSpace(request.EndpointPath)
+                ? $"{baseUrl}/v1/chat/completions"
+                : $"{baseUrl}{(request.EndpointPath.StartsWith("/") ? "" : "/")}{request.EndpointPath}";
+
+            // 3. 构建 HTTP 请求
+            HttpRequestMessage httpRequest;
+            string requestBodyForLog;
+
+            if (request.IsMultipart)
+            {
+                // multipart/form-data 请求
+                var multipartContent = new MultipartFormDataContent();
+
+                // 添加 model 字段
+                multipartContent.Add(new StringContent(resolution.ActualModel), "model");
+
+                // 添加其他字段
+                if (request.MultipartFields != null)
+                {
+                    foreach (var (key, value) in request.MultipartFields)
+                    {
+                        if (key != "model") // model 已经添加
+                        {
+                            multipartContent.Add(new StringContent(value?.ToString() ?? ""), key);
+                        }
+                    }
+                }
+
+                // 添加文件
+                if (request.MultipartFiles != null)
+                {
+                    foreach (var (fieldName, fileInfo) in request.MultipartFiles)
+                    {
+                        var fileContent = new ByteArrayContent(fileInfo.Content);
+                        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(fileInfo.MimeType);
+                        multipartContent.Add(fileContent, fieldName, fileInfo.FileName);
+                    }
+                }
+
+                httpRequest = new HttpRequestMessage(new HttpMethod(request.HttpMethod), endpoint)
+                {
+                    Content = multipartContent
+                };
+                requestBodyForLog = "[multipart/form-data]";
+            }
+            else
+            {
+                // JSON 请求
+                var requestBody = request.RequestBody ?? new JsonObject();
+                requestBody["model"] = resolution.ActualModel;
+
+                var jsonContent = requestBody.ToJsonString();
+                httpRequest = new HttpRequestMessage(new HttpMethod(request.HttpMethod), endpoint)
+                {
+                    Content = new StringContent(jsonContent, System.Text.Encoding.UTF8, "application/json")
+                };
+                requestBodyForLog = jsonContent;
+            }
+
+            // 4. 设置请求头
+            if (!string.IsNullOrWhiteSpace(resolution.ApiKey))
+            {
+                httpRequest.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", resolution.ApiKey);
+            }
+
+            if (request.ExtraHeaders != null)
+            {
+                foreach (var (key, value) in request.ExtraHeaders)
+                {
+                    httpRequest.Headers.TryAddWithoutValidation(key, value);
+                }
+            }
+
+            // 5. 写入日志（开始）
+            logId = await StartRawLogAsync(request, gatewayResolution, endpoint, requestBodyForLog, startedAt, ct);
+
+            // 6. 发送请求
+            var httpClient = _httpClientFactory.CreateClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
+
+            _logger.LogInformation(
+                "[LlmGateway.SendRaw] 发送请求\n" +
+                "  AppCallerCode: {AppCallerCode}\n" +
+                "  ActualModel: {ActualModel}\n" +
+                "  Platform: {Platform}\n" +
+                "  Endpoint: {Endpoint}\n" +
+                "  IsMultipart: {IsMultipart}",
+                request.AppCallerCode,
+                resolution.ActualModel,
+                resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+                endpoint,
+                request.IsMultipart);
+
+            var response = await httpClient.SendAsync(httpRequest, ct);
+            var responseBody = await response.Content.ReadAsStringAsync(ct);
+
+            var endedAt = DateTime.UtcNow;
+            var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;
+
+            // 7. 更新健康状态
+            if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+            {
+                if (response.IsSuccessStatusCode)
+                {
+                    await _modelResolver.RecordSuccessAsync(resolution, ct);
+                }
+                else
+                {
+                    await _modelResolver.RecordFailureAsync(resolution, ct);
+                }
+            }
+
+            // 8. 写入日志（完成）
+            await FinishRawLogAsync(logId, (int)response.StatusCode, responseBody, durationMs, ct);
+
+            // 9. 返回响应
+            var responseHeaders = new Dictionary<string, string>();
+            foreach (var header in response.Headers)
+            {
+                responseHeaders[header.Key] = string.Join(", ", header.Value);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorMsg = TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}";
+                return new GatewayRawResponse
+                {
+                    Success = false,
+                    StatusCode = (int)response.StatusCode,
+                    Content = responseBody,
+                    ResponseHeaders = responseHeaders,
+                    ErrorCode = "LLM_ERROR",
+                    ErrorMessage = errorMsg,
+                    Resolution = gatewayResolution,
+                    DurationMs = durationMs,
+                    LogId = logId
+                };
+            }
+
+            return new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = (int)response.StatusCode,
+                Content = responseBody,
+                ResponseHeaders = responseHeaders,
+                Resolution = gatewayResolution,
+                DurationMs = durationMs,
+                LogId = logId
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[LlmGateway.SendRaw] 请求失败");
+            if (logId != null)
+            {
+                _logWriter?.MarkError(logId, ex.Message);
+            }
+            return GatewayRawResponse.Fail("GATEWAY_ERROR", ex.Message);
+        }
     }
 
     /// <inheritdoc />
@@ -485,6 +660,108 @@ public class LlmGateway : ILlmGateway
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[LlmGateway] 完成流式日志失败");
+        }
+    }
+
+    private async Task<string?> StartRawLogAsync(
+        GatewayRawRequest request,
+        GatewayModelResolution resolution,
+        string endpoint,
+        string requestBodyForLog,
+        DateTime startedAt,
+        CancellationToken ct)
+    {
+        if (_logWriter == null) return null;
+
+        try
+        {
+            var redactedBody = request.IsMultipart
+                ? requestBodyForLog
+                : LlmLogRedactor.RedactJson(requestBodyForLog);
+
+            return await _logWriter.StartAsync(
+                new LlmLogStart(
+                    RequestId: request.Context?.RequestId ?? Guid.NewGuid().ToString("N"),
+                    Provider: resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+                    Model: resolution.ActualModel,
+                    ApiBase: new Uri(endpoint).GetLeftPart(UriPartial.Authority),
+                    Path: new Uri(endpoint).AbsolutePath.TrimStart('/'),
+                    HttpMethod: request.HttpMethod,
+                    RequestHeadersRedacted: new Dictionary<string, string>
+                    {
+                        ["content-type"] = request.IsMultipart ? "multipart/form-data" : "application/json"
+                    },
+                    RequestBodyRedacted: redactedBody,
+                    RequestBodyHash: LlmLogRedactor.Sha256Hex(redactedBody),
+                    QuestionText: request.Context?.QuestionText,
+                    SystemPromptChars: request.Context?.SystemPromptChars,
+                    SystemPromptHash: null,
+                    SystemPromptText: request.Context?.SystemPromptText,
+                    MessageCount: null,
+                    GroupId: request.Context?.GroupId,
+                    SessionId: request.Context?.SessionId,
+                    UserId: request.Context?.UserId,
+                    ViewRole: request.Context?.ViewRole,
+                    DocumentChars: request.Context?.DocumentChars,
+                    DocumentHash: request.Context?.DocumentHash,
+                    UserPromptChars: request.Context?.QuestionText?.Length,
+                    StartedAt: startedAt,
+                    RequestType: request.ModelType,
+                    RequestPurpose: request.AppCallerCode,
+                    PlatformId: resolution.ActualPlatformId,
+                    PlatformName: resolution.ActualPlatformName,
+                    ModelResolutionType: resolution.ResolutionType,
+                    ModelGroupId: resolution.ModelGroupId,
+                    ModelGroupName: resolution.ModelGroupName),
+                ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[LlmGateway] 写入 Raw 日志失败");
+            return null;
+        }
+    }
+
+    private async Task FinishRawLogAsync(
+        string? logId,
+        int statusCode,
+        string responseBody,
+        long durationMs,
+        CancellationToken ct)
+    {
+        if (_logWriter == null || logId == null) return;
+
+        try
+        {
+            var status = statusCode >= 200 && statusCode < 300 ? "succeeded" : "failed";
+            var answerText = responseBody.Length > 10000
+                ? responseBody.Substring(0, 10000) + "...[truncated]"
+                : responseBody;
+
+            _logWriter.MarkDone(
+                logId,
+                new LlmLogDone(
+                    StatusCode: statusCode,
+                    ResponseHeaders: new Dictionary<string, string>
+                    {
+                        ["content-type"] = "application/json"
+                    },
+                    InputTokens: null,
+                    OutputTokens: null,
+                    CacheCreationInputTokens: null,
+                    CacheReadInputTokens: null,
+                    TokenUsageSource: "missing",
+                    ImageSuccessCount: null,
+                    AnswerText: answerText,
+                    AssembledTextChars: responseBody.Length,
+                    AssembledTextHash: LlmLogRedactor.Sha256Hex(responseBody),
+                    Status: status,
+                    EndedAt: DateTime.UtcNow,
+                    DurationMs: durationMs));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[LlmGateway] 完成 Raw 日志失败");
         }
     }
 

@@ -191,48 +191,136 @@ public class GatewayRequestContext
 }
 
 /// <summary>
-/// 图片生成专用请求扩展
+/// 原始 HTTP 请求（用于图片生成等复杂场景）
+/// Gateway 负责：模型调度 + model 字段替换 + HTTP 发送 + 日志 + 健康管理
+/// 调用方负责：构建请求体（业务逻辑如尺寸适配、水印等）
 /// </summary>
-public class ImageGenGatewayRequest : GatewayRequest
+public class GatewayRawRequest
 {
     /// <summary>
-    /// 提示词
+    /// 应用调用标识（必填）
     /// </summary>
-    public required string Prompt { get; init; }
+    public required string AppCallerCode { get; init; }
 
     /// <summary>
-    /// 生成数量
+    /// 模型类型（必填）：generation / vision / chat / intent
     /// </summary>
-    public int N { get; init; } = 1;
+    public required string ModelType { get; init; }
 
     /// <summary>
-    /// 尺寸（如 1024x1024）
+    /// 自定义 endpoint 路径（如 "/v1/images/generations"）
+    /// 如果不指定，使用平台默认的 endpoint
     /// </summary>
-    public string? Size { get; init; }
+    public string? EndpointPath { get; init; }
 
     /// <summary>
-    /// 响应格式（url 或 b64_json）
+    /// 请求体（JSON 格式）
+    /// Gateway 会替换其中的 "model" 字段为实际调度的模型
     /// </summary>
-    public string? ResponseFormat { get; init; }
+    public JsonObject? RequestBody { get; init; }
 
     /// <summary>
-    /// 参考图 Base64（用于 img2img）
+    /// 是否为 multipart/form-data 请求（如 img2img）
     /// </summary>
-    public string? InitImageBase64 { get; init; }
+    public bool IsMultipart { get; init; }
 
     /// <summary>
-    /// 多图参考列表（用于 Vision API 生图）
+    /// multipart 表单数据（如果 IsMultipart = true）
+    /// Gateway 会在其中添加 "model" 字段
     /// </summary>
-    public List<ImageRefItem>? ImageRefs { get; init; }
+    public Dictionary<string, object>? MultipartFields { get; init; }
 
     /// <summary>
-    /// 应用标识（用于水印配置）
+    /// multipart 文件数据
+    /// Key: 字段名, Value: (文件名, 内容, MIME类型)
     /// </summary>
-    public string? AppKey { get; init; }
+    public Dictionary<string, (string FileName, byte[] Content, string MimeType)>? MultipartFiles { get; init; }
+
+    /// <summary>
+    /// HTTP 方法（默认 POST）
+    /// </summary>
+    public string HttpMethod { get; init; } = "POST";
+
+    /// <summary>
+    /// 额外的请求头
+    /// </summary>
+    public Dictionary<string, string>? ExtraHeaders { get; init; }
+
+    /// <summary>
+    /// 请求超时（秒），图片生成建议 600
+    /// </summary>
+    public int TimeoutSeconds { get; init; } = 120;
+
+    /// <summary>
+    /// 请求上下文（用于日志）
+    /// </summary>
+    public GatewayRequestContext? Context { get; init; }
 }
 
 /// <summary>
-/// 图片参考项
+/// 原始 HTTP 响应
+/// </summary>
+public class GatewayRawResponse
+{
+    /// <summary>
+    /// 是否成功
+    /// </summary>
+    public bool Success { get; init; }
+
+    /// <summary>
+    /// HTTP 状态码
+    /// </summary>
+    public int StatusCode { get; init; }
+
+    /// <summary>
+    /// 响应内容（原始字符串）
+    /// </summary>
+    public string? Content { get; init; }
+
+    /// <summary>
+    /// 响应头
+    /// </summary>
+    public Dictionary<string, string>? ResponseHeaders { get; init; }
+
+    /// <summary>
+    /// 错误码
+    /// </summary>
+    public string? ErrorCode { get; init; }
+
+    /// <summary>
+    /// 错误消息
+    /// </summary>
+    public string? ErrorMessage { get; init; }
+
+    /// <summary>
+    /// 模型调度信息
+    /// </summary>
+    public GatewayModelResolution? Resolution { get; init; }
+
+    /// <summary>
+    /// 请求耗时（毫秒）
+    /// </summary>
+    public long DurationMs { get; init; }
+
+    /// <summary>
+    /// 日志 ID
+    /// </summary>
+    public string? LogId { get; init; }
+
+    public static GatewayRawResponse Fail(string errorCode, string errorMessage, int statusCode = 500)
+    {
+        return new GatewayRawResponse
+        {
+            Success = false,
+            ErrorCode = errorCode,
+            ErrorMessage = errorMessage,
+            StatusCode = statusCode
+        };
+    }
+}
+
+/// <summary>
+/// 图片参考项（用于多图 Vision 生图）
 /// </summary>
 public class ImageRefItem
 {
