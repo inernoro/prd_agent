@@ -1,7 +1,6 @@
-using System.Text;
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using PrdAgent.Core.Interfaces;
-using PrdAgent.Core.Models;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -24,14 +23,6 @@ public class GatewayLLMClient : ILLMClient
     /// <summary>
     /// 创建基于 Gateway 的 LLM 客户端
     /// </summary>
-    /// <param name="gateway">LLM Gateway</param>
-    /// <param name="appCallerCode">应用调用标识（如 "prd-agent.chat::chat"）</param>
-    /// <param name="modelType">模型类型（chat/vision/intent/generation）</param>
-    /// <param name="platformId">平台 ID（可选，用于日志）</param>
-    /// <param name="platformName">平台名称（可选，用于日志）</param>
-    /// <param name="enablePromptCache">是否启用 Prompt Cache</param>
-    /// <param name="maxTokens">最大 Token 数</param>
-    /// <param name="temperature">温度参数</param>
     public GatewayLLMClient(
         ILlmGateway gateway,
         string appCallerCode,
@@ -52,62 +43,39 @@ public class GatewayLLMClient : ILLMClient
         _temperature = temperature;
     }
 
-    /// <inheritdoc />
-    public string? PlatformId => _platformId;
+    /// <summary>AppCallerCode（用于测试断言）</summary>
+    public string AppCallerCode => _appCallerCode;
+
+    /// <summary>ModelType（用于测试断言）</summary>
+    public string ModelType => _modelType;
+
+    /// <summary>MaxTokens（用于测试断言）</summary>
+    public int MaxTokens => _maxTokens;
+
+    /// <summary>Temperature（用于测试断言）</summary>
+    public double Temperature => _temperature;
+
+    /// <summary>EnablePromptCache（用于测试断言）</summary>
+    public bool EnablePromptCache => _enablePromptCache;
 
     /// <inheritdoc />
-    public string? PlatformName => _platformName;
+    public string Provider => "Gateway";
 
     /// <inheritdoc />
-    public async Task<string> StreamGenerateAsync(
+    public IAsyncEnumerable<LLMStreamChunk> StreamGenerateAsync(
         string systemPrompt,
         List<LLMMessage> messages,
-        Action<string> onChunk,
-        CancellationToken ct)
+        CancellationToken cancellationToken = default)
     {
-        var requestBody = BuildRequestBody(systemPrompt, messages);
-
-        var request = new GatewayRequest
-        {
-            AppCallerCode = _appCallerCode,
-            ModelType = _modelType,
-            RequestBody = requestBody,
-            EnablePromptCache = _enablePromptCache,
-            TimeoutSeconds = 120,
-            Context = new GatewayRequestContext
-            {
-                QuestionText = messages.LastOrDefault(m => m.Role == "user")?.Content,
-                SystemPromptChars = systemPrompt?.Length,
-                SystemPromptText = systemPrompt?.Length > 500
-                    ? systemPrompt.Substring(0, 500) + "..."
-                    : systemPrompt
-            }
-        };
-
-        var result = new StringBuilder();
-
-        await foreach (var chunk in _gateway.StreamAsync(request, ct))
-        {
-            if (chunk.Type == GatewayChunkType.Error)
-            {
-                throw new InvalidOperationException(chunk.Error ?? "Gateway 返回错误");
-            }
-
-            if (!string.IsNullOrEmpty(chunk.Content))
-            {
-                result.Append(chunk.Content);
-                onChunk(chunk.Content);
-            }
-        }
-
-        return result.ToString();
+        return StreamGenerateAsync(systemPrompt, messages, _enablePromptCache, cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<string> GenerateAsync(
+    public async IAsyncEnumerable<LLMStreamChunk> StreamGenerateAsync(
         string systemPrompt,
         List<LLMMessage> messages,
-        CancellationToken ct)
+        bool enablePromptCache,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var requestBody = BuildRequestBody(systemPrompt, messages);
 
@@ -116,7 +84,7 @@ public class GatewayLLMClient : ILLMClient
             AppCallerCode = _appCallerCode,
             ModelType = _modelType,
             RequestBody = requestBody,
-            EnablePromptCache = _enablePromptCache,
+            EnablePromptCache = enablePromptCache,
             TimeoutSeconds = 120,
             Context = new GatewayRequestContext
             {
@@ -128,15 +96,42 @@ public class GatewayLLMClient : ILLMClient
             }
         };
 
-        var response = await _gateway.SendAsync(request, ct);
-
-        if (!response.Success)
+        await foreach (var chunk in _gateway.StreamAsync(request, cancellationToken))
         {
-            throw new InvalidOperationException(response.ErrorMessage ?? $"Gateway 返回错误: {response.ErrorCode}");
-        }
+            if (chunk.Type == GatewayChunkType.Error)
+            {
+                yield return new LLMStreamChunk
+                {
+                    Type = "error",
+                    ErrorMessage = chunk.Error ?? "Gateway 返回错误"
+                };
+                yield break;
+            }
 
-        // 解析响应内容
-        return ExtractContentFromResponse(response.Content);
+            if (chunk.Type == GatewayChunkType.Start)
+            {
+                yield return new LLMStreamChunk { Type = "start" };
+            }
+            else if (chunk.Type == GatewayChunkType.Content && !string.IsNullOrEmpty(chunk.Content))
+            {
+                yield return new LLMStreamChunk
+                {
+                    Type = "delta",
+                    Content = chunk.Content
+                };
+            }
+            else if (chunk.Type == GatewayChunkType.Done)
+            {
+                yield return new LLMStreamChunk
+                {
+                    Type = "done",
+                    InputTokens = chunk.InputTokens,
+                    OutputTokens = chunk.OutputTokens,
+                    CacheCreationInputTokens = chunk.CacheCreationInputTokens,
+                    CacheReadInputTokens = chunk.CacheReadInputTokens
+                };
+            }
+        }
     }
 
     /// <summary>
@@ -161,12 +156,11 @@ public class GatewayLLMClient : ILLMClient
         {
             var msgObj = new JsonObject
             {
-                ["role"] = msg.Role,
-                ["content"] = msg.Content
+                ["role"] = msg.Role
             };
 
-            // 处理图片（Vision API）
-            if (msg.ImageUrls?.Count > 0)
+            // 处理附件（图片/文档）
+            if (msg.Attachments?.Count > 0)
             {
                 var contentArray = new JsonArray();
 
@@ -180,20 +174,24 @@ public class GatewayLLMClient : ILLMClient
                     });
                 }
 
-                // 添加图片
-                foreach (var imageUrl in msg.ImageUrls)
+                // 添加图片附件
+                foreach (var attachment in msg.Attachments.Where(a => a.Type == "image"))
                 {
                     contentArray.Add(new JsonObject
                     {
                         ["type"] = "image_url",
                         ["image_url"] = new JsonObject
                         {
-                            ["url"] = imageUrl
+                            ["url"] = attachment.Url
                         }
                     });
                 }
 
                 msgObj["content"] = contentArray;
+            }
+            else
+            {
+                msgObj["content"] = msg.Content;
             }
 
             messagesArray.Add(msgObj);
@@ -205,43 +203,5 @@ public class GatewayLLMClient : ILLMClient
             ["max_tokens"] = _maxTokens,
             ["temperature"] = _temperature
         };
-    }
-
-    /// <summary>
-    /// 从响应中提取内容
-    /// </summary>
-    private static string ExtractContentFromResponse(string? responseContent)
-    {
-        if (string.IsNullOrWhiteSpace(responseContent))
-            return string.Empty;
-
-        try
-        {
-            var json = JsonNode.Parse(responseContent);
-
-            // OpenAI 格式
-            var choices = json?["choices"]?.AsArray();
-            if (choices?.Count > 0)
-            {
-                var content = choices[0]?["message"]?["content"]?.GetValue<string>();
-                if (!string.IsNullOrEmpty(content))
-                    return content;
-            }
-
-            // Claude 格式
-            var claudeContent = json?["content"]?.AsArray();
-            if (claudeContent?.Count > 0)
-            {
-                var text = claudeContent[0]?["text"]?.GetValue<string>();
-                if (!string.IsNullOrEmpty(text))
-                    return text;
-            }
-        }
-        catch
-        {
-            // 解析失败返回原始内容
-        }
-
-        return responseContent ?? string.Empty;
     }
 }

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway.Adapters;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
