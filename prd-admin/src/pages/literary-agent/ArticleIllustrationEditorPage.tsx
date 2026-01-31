@@ -40,6 +40,7 @@ import { useDebounce } from '@/hooks/useDebounce';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
+import { cn } from '@/lib/cn';
 import type { Model } from '@/types/admin';
 import type { ImageGenPlanItem } from '@/services/contracts/imageGen';
 
@@ -62,22 +63,22 @@ type MarkerRunItem = {
 };
 
 const PRD_MD_STYLE = `
-  .prd-md { font-size: 13px; line-height: 1.65; color: var(--text-secondary); white-space: normal; word-break: break-word; }
-  .prd-md h1,.prd-md h2,.prd-md h3 { color: var(--text-primary); font-weight: 700; margin: 14px 0 8px; }
-  .prd-md h1 { font-size: 18px; }
-  .prd-md h2 { font-size: 16px; }
-  .prd-md h3 { font-size: 14px; }
-  .prd-md p { margin: 8px 0; }
-  .prd-md ul,.prd-md ol { margin: 8px 0; padding-left: 18px; }
-  .prd-md li { margin: 4px 0; }
-  .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 12px 0; }
-  .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
+  .prd-md { font-size: 14px; line-height: 1.72; color: var(--text-secondary); white-space: normal; word-break: break-word; }
+  .prd-md h1,.prd-md h2,.prd-md h3 { color: var(--text-primary); font-weight: 700; margin: 16px 0 10px; }
+  .prd-md h1 { font-size: 20px; letter-spacing: 0.2px; }
+  .prd-md h2 { font-size: 17px; }
+  .prd-md h3 { font-size: 15px; }
+  .prd-md p { margin: 10px 0; }
+  .prd-md ul,.prd-md ol { margin: 10px 0; padding-left: 18px; }
+  .prd-md li { margin: 6px 0; }
+  .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 14px 0; }
+  .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
   .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
   .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
   .prd-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 12px; overflow: auto; }
   .prd-md pre code { background: transparent; border: 0; padding: 0; }
-  .prd-md table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-  .prd-md th,.prd-md td { border: 1px solid rgba(255,255,255,0.10); padding: 6px 8px; vertical-align: top; }
+  .prd-md table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  .prd-md th,.prd-md td { border: 1px solid rgba(255,255,255,0.10); padding: 7px 9px; vertical-align: top; }
   .prd-md th { color: var(--text-primary); background: rgba(255,255,255,0.03); }
   .prd-md .prd-md-marker {
     background: rgba(245, 158, 11, 0.22);
@@ -1624,6 +1625,27 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     { key: 2, label: '配图标记' },
   ];
 
+  const panelCardStyle: React.CSSProperties = {
+    background: 'var(--panel)',
+    border: '1px solid var(--border-default)',
+    boxShadow: 'var(--shadow-card)',
+  };
+
+  const PanelCard = ({ className, children }: { className?: string; children: React.ReactNode }) => (
+    <GlassCard
+      variant="subtle"
+      padding="sm"
+      className={cn('rounded-[16px]', className)}
+      style={panelCardStyle}
+    >
+      {children}
+    </GlassCard>
+  );
+
+  const configPillBaseClass =
+    'flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors hover:bg-white/10 min-w-0 flex-1';
+  const configPillTextClass = 'text-[11px] truncate';
+
   const handleStepClick = async (stepKey: number) => {
     const targetPhase = stepKey as WorkflowPhase;
     if (targetPhase === phase || isBusy) return;
@@ -1827,14 +1849,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       {/* 右侧：工作台 */}
       <div className="w-96 flex flex-col gap-3">
         {/* 顶部：工作流进度 + 配置折叠区 */}
-        <div
-          className="rounded-[16px] p-3"
-          style={{
-            background: 'linear-gradient(180deg, rgba(18, 18, 22, 0.85) 0%, rgba(12, 12, 15, 0.92) 100%)',
-            border: '1px solid rgba(255, 255, 255, 0.12)',
-            boxShadow: '0 8px 32px -4px rgba(0, 0, 0, 0.35), 0 4px 16px -2px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-          }}
-        >
+        <PanelCard>
           <WorkflowProgressBar
             steps={phaseSteps}
             currentStep={phase}
@@ -1859,14 +1874,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           )}
 
           {/* 配置区 - 单行布局：齿轮 | 三个配置项 | 配置按钮 */}
-          <div className="mt-3 pt-3 border-t flex items-center gap-2" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+          <div className="mt-3 pt-3 border-t flex items-center gap-2" style={{ borderColor: 'var(--border-subtle)' }}>
             <Settings size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
             
             {/* 三个配置项 */}
             <div className="flex items-center gap-1.5 flex-1 min-w-0">
               {/* 提示词 */}
               <div
-                className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors hover:bg-white/10 min-w-0 flex-1"
+                className={configPillBaseClass}
                 style={{ background: 'rgba(147, 197, 253, 0.08)', border: '1px solid rgba(147, 197, 253, 0.15)' }}
                 onClick={() => {
                   if (selectedPrompt) handleEditPrompt(selectedPrompt);
@@ -1874,14 +1889,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 }}
                 title={selectedPrompt?.title || '未选择提示词'}
               >
-                <FileText size={11} style={{ color: '#93C5FD', flexShrink: 0 }} />
-                <span className="text-[10px] truncate" style={{ color: selectedPrompt ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                <FileText size={12} style={{ color: '#93C5FD', flexShrink: 0 }} />
+                <span className={configPillTextClass} style={{ color: selectedPrompt ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                   {selectedPrompt?.title || '提示词'}
                 </span>
               </div>
               {/* 风格图 */}
               <div
-                className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors hover:bg-white/10 min-w-0 flex-1"
+                className={configPillBaseClass}
                 style={{ 
                   background: referenceImageConfigs.find(c => c.isActive) ? 'rgba(192, 132, 252, 0.08)' : 'rgba(255,255,255,0.03)', 
                   border: referenceImageConfigs.find(c => c.isActive) ? '1px solid rgba(192, 132, 252, 0.15)' : '1px solid rgba(255,255,255,0.08)' 
@@ -1897,14 +1912,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 }}
                 title={referenceImageConfigs.find(c => c.isActive)?.name || '未选择风格图'}
               >
-                <ImageIcon size={11} style={{ color: referenceImageConfigs.find(c => c.isActive) ? '#C084FC' : '#9CA3AF', flexShrink: 0 }} />
-                <span className="text-[10px] truncate" style={{ color: referenceImageConfigs.find(c => c.isActive) ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                <ImageIcon size={12} style={{ color: referenceImageConfigs.find(c => c.isActive) ? '#C084FC' : '#9CA3AF', flexShrink: 0 }} />
+                <span className={configPillTextClass} style={{ color: referenceImageConfigs.find(c => c.isActive) ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                   {referenceImageConfigs.find(c => c.isActive)?.name || '风格图'}
                 </span>
               </div>
               {/* 水印 */}
               <div
-                className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors hover:bg-white/10 min-w-0 flex-1"
+                className={configPillBaseClass}
                 style={{ 
                   background: watermarkStatus.enabled ? 'rgba(251, 191, 36, 0.08)' : 'rgba(255,255,255,0.03)', 
                   border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid rgba(255,255,255,0.08)' 
@@ -1915,8 +1930,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 }}
                 title={watermarkStatus.enabled ? (watermarkStatus.name || '已启用水印') : '未启用水印'}
               >
-                <Sparkles size={11} style={{ color: watermarkStatus.enabled ? '#FBBF24' : '#9CA3AF', flexShrink: 0 }} />
-                <span className="text-[10px] truncate" style={{ color: watermarkStatus.enabled ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                <Sparkles size={12} style={{ color: watermarkStatus.enabled ? '#FBBF24' : '#9CA3AF', flexShrink: 0 }} />
+                <span className={configPillTextClass} style={{ color: watermarkStatus.enabled ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                   {watermarkStatus.enabled ? (watermarkStatus.name || '水印') : '水印'}
                 </span>
               </div>
@@ -1925,26 +1940,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             {/* 配置按钮 */}
             <button
               type="button"
-              className="text-[10px] px-2 py-1 rounded-md hover:bg-white/10 transition-colors flex-shrink-0"
-              style={{ color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.08)' }}
+              className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors flex-shrink-0 border"
+              style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
               onClick={() => setPromptPreviewOpen(true)}
               title="打开全部配置"
             >
               配置
             </button>
           </div>
-        </div>
+        </PanelCard>
 
         {/* 配图标记列表 */}
         {phase === 2 && (
-          <div
-            className="flex-1 min-h-0 flex flex-col rounded-[16px] p-3"
-            style={{
-              background: 'linear-gradient(180deg, rgba(18, 18, 22, 0.85) 0%, rgba(12, 12, 15, 0.92) 100%)',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
-              boxShadow: '0 8px 32px -4px rgba(0, 0, 0, 0.35), 0 4px 16px -2px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-            }}
-          >
+          <PanelCard className="flex-1 min-h-0 flex flex-col">
             {/* 紧凑标题栏 */}
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
@@ -1960,9 +1968,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   disabled={isBusy || !imageGenModel || markerRunItems.filter(x => x.status !== 'done' && x.status !== 'running').length === 0}
                   onClick={handleBatchGenerate}
                   title="生成未完成的配图"
-                  className="h-6 px-2 text-[10px]"
                 >
-                  <Sparkles size={10} />
+                  <Sparkles size={12} />
                   生成
                 </Button>
                 <Button
@@ -2063,9 +2070,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       }
                     }}
                     title="下载所有已生成的图片（ZIP 格式）"
-                    className="h-6 px-2 text-[10px]"
                   >
-                    <DownloadCloud size={10} />
+                    <DownloadCloud size={12} />
                     下载
                   </Button>
               </div>
@@ -2311,7 +2317,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             <div className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
               点击“一键生图”将按顺序逐条解析 JSON 并生成图片；也可在单条卡片内编辑后重生成
             </div>
-          </div>
+          </PanelCard>
         )}
       </div>
 

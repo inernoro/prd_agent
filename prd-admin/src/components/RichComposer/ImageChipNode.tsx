@@ -260,7 +260,6 @@ function ImageChipComponent({
 }
 
 export function $createImageChipNode(payload: ImageChipPayload): ImageChipNode {
-  console.log('[ImageChipNode] $createImageChipNode called', { payload, ready: payload.ready });
   return $applyNodeReplacement(
     new ImageChipNode(payload.canvasKey, payload.refId, payload.src, payload.label, payload.ready)
   );

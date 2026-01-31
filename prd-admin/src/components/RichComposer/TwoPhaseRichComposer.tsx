@@ -95,20 +95,17 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
 
     // 使用 useEffect 监听 pendingChipKeys 变化，通知外部（避免在 setState 内调用 setState）
     useEffect(() => {
-      console.log('[TwoPhaseRichComposer] pendingChipKeys changed, notifying parent:', [...pendingChipKeys]);
       onPendingKeysChange?.(pendingChipKeys);
     }, [pendingChipKeys, onPendingKeysChange]);
 
     // 更新 pending keys
     const updatePendingKeys = useCallback((keys: Set<string>) => {
-      console.log('[TwoPhaseRichComposer] updatePendingKeys called', { keys: [...keys] });
       setPendingChipKeys(keys);
     }, []);
 
     // 预选图片（两阶段第一步）
     // replace: true（默认）= 替换现有 pending；false = 累加到现有 pending
     const preselectImage = useCallback((option: ImageOption, opts?: { replace?: boolean }) => {
-      console.log('[TwoPhaseRichComposer] preselectImage called', { option, opts, composerRef: composerRef.current });
       const composer = composerRef.current;
       if (!composer) {
         console.warn('[TwoPhaseRichComposer] preselectImage: composer is null!');
@@ -119,33 +116,25 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
 
       // 如果点击的是同一张图片（已经是 pending），不做任何操作
       if (pendingChipKeys.has(option.key)) {
-        console.log('[TwoPhaseRichComposer] preselectImage: already pending, skip');
         return;
       }
-
-      console.log('[TwoPhaseRichComposer] preselectImage: inserting chip', { replace, currentPending: [...pendingChipKeys] });
       if (replace) {
         // 移除所有现有的 pending chips（替换逻辑）
         pendingChipKeys.forEach((key) => {
-          console.log('[TwoPhaseRichComposer] removing old pending chip:', key);
           composer.removeChipByKey(key);
         });
         // 插入新的 pending chip（灰色，不传 ready），preserveFocus: true 保持画布焦点
-        console.log('[TwoPhaseRichComposer] inserting new pending chip:', option.key);
         composer.insertImageChip(option, { preserveFocus: true });
         updatePendingKeys(new Set([option.key]));
       } else {
         // 累加模式：保留现有 pending，添加新的，preserveFocus: true 保持画布焦点
-        console.log('[TwoPhaseRichComposer] accumulating pending chip:', option.key);
         composer.insertImageChip(option, { preserveFocus: true });
         updatePendingKeys(new Set([...pendingChipKeys, option.key]));
       }
-      console.log('[TwoPhaseRichComposer] preselectImage done');
     }, [pendingChipKeys, updatePendingKeys]);
 
     // 确认 pending chips（灰→蓝）
     const confirmPending = useCallback(() => {
-      console.log('[TwoPhaseRichComposer] confirmPending called, pendingChipKeys:', [...pendingChipKeys]);
       const composer = composerRef.current;
       if (!composer) {
         console.warn('[TwoPhaseRichComposer] confirmPending: composer is null!');
@@ -153,11 +142,8 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
       }
 
       if (pendingChipKeys.size > 0) {
-        console.log('[TwoPhaseRichComposer] confirmPending: marking chips ready');
         composer.markChipsReady();
         updatePendingKeys(new Set());
-      } else {
-        console.log('[TwoPhaseRichComposer] confirmPending: no pending chips');
       }
     }, [pendingChipKeys, updatePendingKeys]);
 
@@ -170,7 +156,6 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
       const composer = composerRef.current;
       if (!composer) return;
 
-      console.log('[TwoPhaseRichComposer] clearPending called, pendingKeys:', [...pendingChipKeysRef.current]);
       // 使用 ref 获取最新的 pendingChipKeys，避免闭包捕获旧值
       pendingChipKeysRef.current.forEach((key) => {
         composer.removeChipByKey(key);
@@ -180,7 +165,6 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
 
     // 点击输入框容器时确认 pending chips
     const handleContainerClick = useCallback(() => {
-      console.log('[TwoPhaseRichComposer] handleContainerClick called');
       confirmPending();
       composerRef.current?.focus();
     }, [confirmPending]);

@@ -192,19 +192,3 @@ export function cleanOldFormatMarkers(text: string): string {
   return text.replace(OLD_FORMAT_REGEX, '').trim();
 }
 
-/**
- * 用于调试：打印解析结果
- */
-export function debugResolveResult(result: ImageRefResolveResult): void {
-  console.group('[ImageRefResolver] 解析结果');
-  console.log('ok:', result.ok);
-  console.log('cleanText:', result.cleanText);
-  console.log('refs:', result.refs);
-  if (result.warnings.length > 0) {
-    console.warn('warnings:', result.warnings);
-  }
-  if (result.errors.length > 0) {
-    console.error('errors:', result.errors);
-  }
-  console.groupEnd();
-}

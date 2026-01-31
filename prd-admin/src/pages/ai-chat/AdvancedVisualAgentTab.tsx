@@ -1026,7 +1026,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [pendingChipKeys, setPendingChipKeys] = useState<Set<string>>(new Set());
   const isPendingKey = (k: string) => pendingChipKeys.has(k);
   const handlePendingKeysChange = useCallback((keys: Set<string>) => {
-    console.log('[AdvancedVisualAgentTab] handlePendingKeysChange called, keys:', [...keys]);
     setPendingChipKeys(keys);
   }, []);
 
@@ -1571,21 +1570,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   // 清空选中（四个球 + chip 一起清除）
   const clearSelection = useCallback(() => {
-    console.log('[SelectionManager] clear');
     setSelectedKeys([]);
     richComposerRef.current?.clearPending();
   }, []);
 
   // 设置选中（替换模式，自动同步 chip）
   const setSelection = useCallback((keys: string[]) => {
-    console.log('[SelectionManager] set', keys);
     setSelectedKeys(keys);
     syncChipsToSelection(keys);
   }, [syncChipsToSelection]);
 
   // 添加选中（追加模式，自动同步 chip）
   const addSelection = useCallback((keys: string[]) => {
-    console.log('[SelectionManager] add', keys);
     const currentKeys = selectedKeysRef.current;
     const newKeys = [...new Set([...currentKeys, ...keys])];
     setSelectedKeys(newKeys);
@@ -1594,7 +1590,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   // 移除选中（自动同步 chip）
   const removeSelection = useCallback((keys: string[]) => {
-    console.log('[SelectionManager] remove', keys);
     const currentKeys = selectedKeysRef.current;
     const removeSet = new Set(keys);
     const newKeys = currentKeys.filter(k => !removeSet.has(k));
@@ -1604,7 +1599,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   // 设置选中但不同步 chip（仅用于非图片类型）
   const setSelectionWithoutChip = useCallback((keys: string[]) => {
-    console.log('[SelectionManager] setWithoutChip', keys);
     setSelectedKeys(keys);
     // 不同步 chip - 用于 generator/shape/text 等非图片类型
   }, []);
@@ -3520,11 +3514,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
    * 点击画布图片 → 使用统一方法同时更新 selectedKeys 和 pending chips
    */
   const handleCanvasImagePreselect = useCallback((it: CanvasImageItem) => {
-    console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect called', { key: it.key });
-    
     const kind = it.kind ?? 'image';
     if (kind !== 'image' || !it.src) {
-      console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect: not a valid image, skip');
       return;
     }
 
@@ -3533,7 +3524,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     
     // 使用统一方法同时更新四个球和 chip
     updateSelectionWithChips([it.key], 'replace');
-    console.log('[AdvancedVisualAgentTab] handleCanvasImagePreselect done');
   }, [ensureRefIdForKey, updateSelectionWithChips]);
 
   // 富文本编辑器发送（入口1）
@@ -4718,11 +4708,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       e.preventDefault();
                     }}
                     onClick={(e) => {
-                      console.log('[Canvas] onClick triggered', { key: it.key, kind, src: it.src, effectiveTool });
                       focusStage();
                       e.stopPropagation();
                       if (effectiveTool === 'hand') {
-                        console.log('[Canvas] effectiveTool is hand, return');
                         return;
                       }
                       // 注意：由于 onPointerDown 中的 e.preventDefault()，onClick 实际上不会触发
@@ -4768,12 +4756,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       }
                       // 普通点击图片：两阶段预选
                       if (kind === 'image' && it.src) {
-                        console.log('[Canvas] calling handleCanvasImagePreselect for:', it.key);
                         handleCanvasImagePreselect(it);
                         return;
                       }
                       // 其他类型（shape/text 等）：仅选中
-                      console.log('[Canvas] fallback to setSelectionWithoutChip');
                       setSelectionWithoutChip([it.key]);
                     }}
                     title={it.prompt}

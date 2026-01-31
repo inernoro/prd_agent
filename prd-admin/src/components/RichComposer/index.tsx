@@ -149,14 +149,11 @@ function EditorInner({
         editor.focus();
       },
       insertImageChip: (option: ImageOption, opts?: { ready?: boolean; preserveFocus?: boolean }) => {
-        console.log('[RichComposer] insertImageChip called', { option, opts, ready: opts?.ready });
-        
         // 保存当前焦点元素（用于 preserveFocus 模式）
         const prevActiveElement = opts?.preserveFocus ? document.activeElement as HTMLElement | null : null;
         
         editor.update(() => {
           const root = $getRoot();
-          console.log('[RichComposer] creating chip with ready =', opts?.ready);
           const chipNode = $createImageChipNode({
             canvasKey: option.key,
             refId: option.refId,
