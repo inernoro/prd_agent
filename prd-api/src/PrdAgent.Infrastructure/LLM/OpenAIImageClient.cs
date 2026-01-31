@@ -1268,7 +1268,7 @@ public class OpenAIImageClient
                 return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "Vision API 响应无效（无内容）");
             }
 
-            // 解析响应中的图片（可能是 base64 或 URL）
+            // 解析响应中的图片（可能是 base64、URL 或 Markdown 格式）
             var images = new List<ImageGenImage>();
             if (responseContent.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
             {
@@ -1285,7 +1285,17 @@ public class OpenAIImageClient
                 images.Add(new ImageGenImage
                 {
                     Index = 0,
-                    Url = responseContent
+                    Url = responseContent.Trim()
+                });
+            }
+            else if (TryExtractMarkdownImageUrl(responseContent, out var mdUrl))
+            {
+                // Markdown 图片格式: ![alt](url)
+                _logger.LogInformation("[Vision API] 解析到 Markdown 图片格式，提取 URL: {Url}", mdUrl);
+                images.Add(new ImageGenImage
+                {
+                    Index = 0,
+                    Url = mdUrl
                 });
             }
             else
@@ -1389,6 +1399,26 @@ public class OpenAIImageClient
         }
 
         return content;
+    }
+
+    /// <summary>
+    /// 尝试从 Markdown 图片格式中提取 URL
+    /// 支持格式: ![alt](url) 或 ![](url)
+    /// </summary>
+    private static bool TryExtractMarkdownImageUrl(string content, out string url)
+    {
+        url = string.Empty;
+        if (string.IsNullOrWhiteSpace(content)) return false;
+
+        // 匹配 Markdown 图片格式: ![任意文本](URL)
+        var match = Regex.Match(content, @"!\[.*?\]\((https?://[^\s\)]+)\)");
+        if (match.Success && match.Groups.Count > 1)
+        {
+            url = match.Groups[1].Value.Trim();
+            return !string.IsNullOrEmpty(url);
+        }
+
+        return false;
     }
 
     private async Task<(string? apiUrl, string? apiKey, string? platformType)> ResolveApiConfigForModelAsync(
