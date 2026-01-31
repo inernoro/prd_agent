@@ -13,11 +13,11 @@
   box-shadow: none !important;
 }
 
-/* Admin 通用输入控件：柔和边框 + 暗底微混色 + 统一交互态 */
+/* Admin 通用输入控件：柔和边框 + 半透明暗底 + 统一交互态 */
 .prd-field {
-  background: rgba(7, 7, 8, 1);
+  background: rgba(255, 255, 255, 0.05);
   color: var(--text-primary);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
   caret-color: rgba(214, 178, 106, 0.85);
   transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;

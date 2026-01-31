@@ -210,7 +210,7 @@ public class LlmLogsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(sessionId)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.SessionId, sessionId);
         if (!string.IsNullOrWhiteSpace(userId)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.UserId, userId);
         if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Status, status);
-        if (!string.IsNullOrWhiteSpace(requestPurpose)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.RequestPurpose, requestPurpose);
+        if (!string.IsNullOrWhiteSpace(requestPurpose)) filter &= Builders<LlmRequestLog>.Filter.Regex(x => x.RequestPurpose, new BsonRegularExpression($"^{Regex.Escape(requestPurpose)}", "i"));
 
         var total = await _db.LlmRequestLogs.CountDocumentsAsync(filter);
         var rawItems = await _db.LlmRequestLogs.Find(filter)
@@ -322,7 +322,7 @@ public class LlmLogsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(model)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Model, model);
         if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Status, status);
         if (!string.IsNullOrWhiteSpace(platformId)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.PlatformId, platformId);
-        if (!string.IsNullOrWhiteSpace(requestPurpose)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.RequestPurpose, requestPurpose);
+        if (!string.IsNullOrWhiteSpace(requestPurpose)) filter &= Builders<LlmRequestLog>.Filter.Regex(x => x.RequestPurpose, new BsonRegularExpression($"^{Regex.Escape(requestPurpose)}", "i"));
 
         // 用聚合管道避免把大量日志拉回内存
         var matchDoc = filter.Render(new RenderArgs<LlmRequestLog>(

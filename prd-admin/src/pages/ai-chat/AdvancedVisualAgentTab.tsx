@@ -2070,23 +2070,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           setNextRefId(maxRef + 1);
         }
         canvasBootedRef.current = true;
+        // 修复：初始化时不自动选中第一张图片，而是清空选中
+        clearSelectionWithChips();
+
         if (items.length > 0) {
-          // 画布初始化时，如果当前没有选中，则选中第一张图片并同步 chip
-          const currentSelected = selectedKeysRef.current;
-          if (currentSelected.length === 0) {
-            const firstItem = items[0];
-            // 确保有 refId（使用 items 中的数据，因为 canvas 状态可能还未更新）
-            const refId = firstItem.refId ?? 1;
-            setSelectedKeys([firstItem.key]);
-            // 同步插入 chip
-            richComposerRef.current?.clearPending();
-            if ((firstItem.kind ?? 'image') === 'image' && firstItem.src) {
-              richComposerRef.current?.insertImageChip(
-                { key: firstItem.key, refId, src: firstItem.src, label: firstItem.prompt || `img${refId}` },
-                { preserveFocus: true }
-              );
-            }
-          }
           requestAnimationFrame(() => {
             const ae = document.activeElement as HTMLElement | null;
             const tag = (ae?.tagName ?? '').toLowerCase();
@@ -2098,8 +2085,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             if (isEditable) return;
             focusStage();
           });
-        } else {
-          clearSelectionWithChips();
         }
       };
 
@@ -4671,6 +4656,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       e.stopPropagation();
 
                       // Cmd/Ctrl + 点击：直接插入就绪的 @imgN 引用（跳过两阶段，不同步 pending chip）
+                      // 2026-01-31: 先暂时这样，以后单击+选中，则是选中画面的元素，而非选中
+                      /*
                       if (kind === 'image' && (e.metaKey || e.ctrlKey)) {
                         // 只更新四个球，不影响 pending chip（因为这是直接插入确认的引用）
                         const currentKeys = selectedKeysRef.current;
@@ -4683,9 +4670,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         // 不启动拖拽
                         return;
                       }
+                      */
 
                       // 确定本次拖拽涉及的选中集合（按 Figma：未选中则先选中）
-                      const shift = e.shiftKey;
+                      // 将 Ctrl/Cmd 映射为 Shift 功能（多选）
+                      const shift = e.shiftKey || e.metaKey || e.ctrlKey;
                       const wasSelected = selectedKeys.includes(it.key);
                       let nextKeys: string[];
                       
@@ -4754,6 +4743,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         return;
                       }
                       // Cmd/Ctrl + 点击：直接插入就绪的 @imgN 引用（跳过两阶段）
+                      // 2026-01-31: 先暂时这样，以后单击+选中，则是选中画面的元素，而非选中
+                      /*
                       if (kind === 'image' && (e.metaKey || e.ctrlKey)) {
                         const currentKeys = selectedKeysRef.current;
                         if (!currentKeys.includes(it.key)) {
@@ -4764,8 +4755,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         focusComposer();
                         return;
                       }
-                      // Shift 点击：多选
-                      if (e.shiftKey) {
+                      */
+                      // Shift (或 Ctrl/Cmd) 点击：多选
+                      if (e.shiftKey || e.metaKey || e.ctrlKey) {
                         const alreadySelected = selectedKeys.includes(it.key);
                         if (alreadySelected) {
                           removeSelection([it.key]);
@@ -7101,7 +7093,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     <DropdownMenu.Trigger asChild>
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
+                        className="inline-flex items-center gap-1 rounded-full px-2 h-7 text-[11px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
                         style={{
                           background: 'rgba(99, 102, 241, 0.12)',
                           border: '1px solid rgba(99, 102, 241, 0.35)',
@@ -7611,7 +7603,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         onOpenChange={setShowLogs}
         title="LLM 调用日志 (Visual Agent)"
         maxWidth={1200}
-        contentStyle={{ height: '80vh', padding: 0 }}
+        contentStyle={{ height: '80vh' }}
         content={
           <LlmLogsPanel
             embedded

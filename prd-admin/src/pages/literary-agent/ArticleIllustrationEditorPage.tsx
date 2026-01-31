@@ -109,10 +109,26 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewIndex, setImagePreviewIndex] = useState(0);
   const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
+  const [pendingWatermarkEdit, setPendingWatermarkEdit] = useState(false); // 用于延迟触发水印编辑
   const handleWatermarkStatusChange = useCallback((status: { hasActiveConfig: boolean; activeId?: string; activeName?: string }) => {
     setWatermarkStatus({ enabled: status.hasActiveConfig, name: status.activeName ?? null });
   }, []);
+  // 配置弹窗内的水印面板 ref（唯一实例，避免状态不同步）
   const watermarkPanelRef = useRef<WatermarkSettingsPanelHandle | null>(null);
+
+  // 当配置弹窗打开且有待处理的水印编辑时，触发编辑
+  useEffect(() => {
+    if (promptPreviewOpen && pendingWatermarkEdit) {
+      // 延迟以确保 WatermarkSettingsPanel 完全挂载并设置 ref
+      const timer = setTimeout(() => {
+        if (watermarkPanelRef.current) {
+          watermarkPanelRef.current.editCurrentSpec();
+        }
+        setPendingWatermarkEdit(false);
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [promptPreviewOpen, pendingWatermarkEdit]);
 
   // 风格图/参考图配置（新的多配置模型）
   const [referenceImageConfigs, setReferenceImageConfigs] = useState<ReferenceImageConfig[]>([]);
@@ -133,6 +149,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 生图模型（自动选择 isImageGen=true 的最优先）
   const [imageGenModel, setImageGenModel] = useState<Model | null>(null);
+  const [mainModel, setMainModel] = useState<Model | null>(null); // 用于生成标记的模型
   const [imageGenModelError, setImageGenModelError] = useState<string | null>(null);
 
   // 右侧每条配图的运行状态（逐条 parse + gen）
@@ -190,15 +207,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       if (list.length === 0) {
         setImageGenModel(null);
         setImageGenModelError('未找到启用的生图模型（请在「模型管理」里设置 isImageGen）');
-        return;
+      } else {
+        list.sort((a, b) => {
+          const ap = typeof a.priority === 'number' ? a.priority : 1e9;
+          const bp = typeof b.priority === 'number' ? b.priority : 1e9;
+          if (ap !== bp) return ap - bp;
+          return String(a.modelName || a.name || '').localeCompare(String(b.modelName || b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
+        });
+        setImageGenModel(list[0] ?? null);
       }
-      list.sort((a, b) => {
-        const ap = typeof a.priority === 'number' ? a.priority : 1e9;
-        const bp = typeof b.priority === 'number' ? b.priority : 1e9;
-        if (ap !== bp) return ap - bp;
-        return String(a.modelName || a.name || '').localeCompare(String(b.modelName || b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
-      });
-      setImageGenModel(list[0] ?? null);
+
+      // 获取主模型（用于生成标记）
+      const mainList = (res.data ?? []).filter((m) => Boolean(m.enabled) && Boolean(m.isMain));
+      setMainModel(mainList[0] ?? null);
     })();
     return () => {
       cancelled = true;
@@ -1224,8 +1245,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setArticleWithImages('');
 
     try {
-      // 并行发起所有生图任务
-      const ordered = [...markerRunItemsRef.current].sort((a, b) => a.markerIndex - b.markerIndex);
+      // 并行发起所有生图任务：仅针对未完成（失败或未开始）的项目
+      const ordered = [...markerRunItemsRef.current]
+        .sort((a, b) => a.markerIndex - b.markerIndex)
+        .filter(it => it.status !== 'done' && it.status !== 'running');
+      
+      if (ordered.length === 0) {
+        toast.info('没有需要生成的配图');
+        setGenerating(false);
+        return;
+      }
+
       const results = await Promise.allSettled(
         ordered.map(it => runSingleMarker(it.markerIndex))
       );
@@ -1608,13 +1638,56 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       {/* 左侧：文章编辑器 */}
       <div className="flex-1 min-w-0 flex flex-col gap-4">
         <GlassCard glow className="flex-1 min-h-0 flex flex-col">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <FileText size={16} style={{ color: 'var(--text-primary)' }} />
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                {uploadedFileName || '文章内容'}
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <FileText size={16} style={{ color: 'var(--text-primary)' }} />
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {uploadedFileName || '文章内容'}
+                </div>
+              </div>
+              
+              {/* 模型信息展示 - 紧凑设计 */}
+              <div className="flex items-center gap-2">
+                {mainModel && (
+                  <div
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-[6px] border transition-colors hover:bg-white/5"
+                    style={{
+                      background: 'rgba(59, 130, 246, 0.05)',
+                      borderColor: 'rgba(59, 130, 246, 0.15)',
+                    }}
+                    title="标记生成使用的主模型"
+                  >
+                    <Sparkles size={11} style={{ color: '#60A5FA' }} />
+                    <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>标记</span>
+                    <span className="text-[10px] font-medium" style={{ color: 'rgba(255,255,255,0.9)' }}>
+                      {mainModel.modelName || mainModel.name}
+                    </span>
+                  </div>
+                )}
+                {imageGenModel ? (
+                  <div
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-[6px] border transition-colors hover:bg-white/5"
+                    style={{
+                      background: 'rgba(139, 92, 246, 0.05)',
+                      borderColor: 'rgba(139, 92, 246, 0.15)',
+                    }}
+                    title="配图生成使用的绘图模型"
+                  >
+                    <Sparkles size={11} style={{ color: '#A78BFA' }} />
+                    <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>生图</span>
+                    <span className="text-[10px] font-medium" style={{ color: 'rgba(255,255,255,0.9)' }}>
+                      {imageGenModel.modelName || imageGenModel.name}
+                    </span>
+                  </div>
+                ) : imageGenModelError ? (
+                  <div className="text-[10px] px-2 py-1 rounded-[6px] border border-red-500/20 text-red-400 bg-red-500/5">
+                    生图模型不可用
+                  </div>
+                ) : null}
               </div>
             </div>
+
             <div className="flex items-center gap-2">
               {phase === 0 && uploadedFileName && ( // Upload
                 <Button size="sm" variant="primary" onClick={handleEnterPreview}>
@@ -1626,52 +1699,73 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           </div>
 
           {/* 配置状态栏：系统提示词 + 风格图 + 水印 */}
-          <div className="mb-3">
-            <div className="mt-2 rounded-[12px] px-2 py-2 flex items-center gap-2 flex-wrap" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
-              {/* 系统提示词配置项 */}
+          <div className="mb-2">
+            <div className="rounded-[10px] py-1.5 flex items-center gap-2 flex-wrap">
+              {/* 系统提示词配置项 - 点击直接编辑 */}
               <div
-                className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg font-medium shrink-0"
+                className="flex items-center gap-1.5 px-2 py-1 rounded-[6px] border transition-all hover:bg-white/10 cursor-pointer active:scale-[0.98]"
                 style={{
-                  background: 'rgba(147, 197, 253, 0.08)',
-                  border: '1px solid rgba(147, 197, 253, 0.2)',
-                  color: 'rgba(147, 197, 253, 0.9)',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  borderColor: 'rgba(255, 255, 255, 0.08)',
                 }}
+                onClick={() => {
+                  if (selectedPrompt) {
+                    handleEditPrompt(selectedPrompt);
+                  } else {
+                    setPromptPreviewOpen(true);
+                  }
+                }}
+                title={selectedPrompt ? '点击编辑提示词' : '点击选择提示词'}
               >
-                <FileText size={12} />
-                <span style={{ color: 'var(--text-muted)' }}>提示词:</span>
-                <span style={{ color: 'var(--text-primary)' }}>
+                <FileText size={11} style={{ color: '#93C5FD' }} />
+                <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>提示词</span>
+                <span className="text-[10px] font-medium" style={{ color: 'var(--text-primary)' }}>
                   {selectedPrompt?.title || '未选择'}
                 </span>
               </div>
 
-              {/* 风格图配置项 */}
+              {/* 风格图配置项 - 点击直接编辑 */}
               <div
-                className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg font-medium shrink-0"
+                className="flex items-center gap-1.5 px-2 py-1 rounded-[6px] border transition-all hover:bg-white/10 cursor-pointer active:scale-[0.98]"
                 style={{
                   background: referenceImageConfigs.find(c => c.isActive) ? 'rgba(168, 85, 247, 0.08)' : 'rgba(255, 255, 255, 0.03)',
-                  border: referenceImageConfigs.find(c => c.isActive) ? '1px solid rgba(168, 85, 247, 0.2)' : '1px solid rgba(255, 255, 255, 0.08)',
-                  color: referenceImageConfigs.find(c => c.isActive) ? 'rgba(168, 85, 247, 0.9)' : 'var(--text-muted)',
+                  borderColor: referenceImageConfigs.find(c => c.isActive) ? 'rgba(168, 85, 247, 0.2)' : 'rgba(255, 255, 255, 0.08)',
                 }}
+                onClick={() => {
+                  const activeRefConfig = referenceImageConfigs.find(c => c.isActive);
+                  if (activeRefConfig) {
+                    setEditingRefConfig({ ...activeRefConfig });
+                    setEditingRefConfigOpen(true);
+                  } else {
+                    setPromptPreviewOpen(true);
+                  }
+                }}
+                title={referenceImageConfigs.find(c => c.isActive) ? '点击编辑风格图' : '点击选择风格图'}
               >
-                <ImageIcon size={12} />
-                <span style={{ color: 'var(--text-muted)' }}>风格图:</span>
-                <span style={{ color: referenceImageConfigs.find(c => c.isActive) ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                <ImageIcon size={11} style={{ color: referenceImageConfigs.find(c => c.isActive) ? '#C084FC' : '#9CA3AF' }} />
+                <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>风格图</span>
+                <span className="text-[10px] font-medium" style={{ color: referenceImageConfigs.find(c => c.isActive) ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                   {referenceImageConfigs.find(c => c.isActive)?.name || '未选择'}
                 </span>
               </div>
 
-              {/* 水印配置项 */}
+              {/* 水印配置项 - 点击直接编辑 */}
               <div
-                className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg font-medium shrink-0"
+                className="flex items-center gap-1.5 px-2 py-1 rounded-[6px] border transition-all hover:bg-white/10 cursor-pointer active:scale-[0.98]"
                 style={{
                   background: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.08)' : 'rgba(255, 255, 255, 0.03)',
-                  border: watermarkStatus.enabled ? '1px solid rgba(245, 158, 11, 0.2)' : '1px solid rgba(255, 255, 255, 0.08)',
-                  color: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.9)' : 'var(--text-muted)',
+                  borderColor: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255, 255, 255, 0.08)',
                 }}
+                onClick={() => {
+                  // 先打开配置弹窗，然后通过 useEffect 延迟触发水印编辑
+                  setPendingWatermarkEdit(true);
+                  setPromptPreviewOpen(true);
+                }}
+                title={watermarkStatus.enabled ? '点击编辑水印' : '点击新建水印'}
               >
-                <Sparkles size={12} />
-                <span style={{ color: 'var(--text-muted)' }}>水印:</span>
-                <span style={{ color: watermarkStatus.enabled ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                <Sparkles size={11} style={{ color: watermarkStatus.enabled ? '#FBBF24' : '#9CA3AF' }} />
+                <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>水印</span>
+                <span className="text-[10px] font-medium" style={{ color: watermarkStatus.enabled ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                   {watermarkStatus.enabled ? (watermarkStatus.name || '默认水印') : '未启用'}
                 </span>
               </div>
@@ -1681,11 +1775,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <div className="shrink-0">
                 <Button
                   size="xs"
-                  variant="secondary"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs hover:bg-white/5"
                   onClick={() => setPromptPreviewOpen(true)}
                   title="管理配置"
                 >
-                  <Eye size={12} />
+                  <Eye size={12} className="mr-1.5 opacity-70" />
                   配置
                 </Button>
               </div>
@@ -1783,12 +1878,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
             {/* 预览阶段：渲染原文（不提供手动编辑入口） */}
             {phase === 1 && ( // Editing
-              <div className="p-4 pt-10 relative">
-                {!isDragging && (
-                  <div className="absolute top-2 left-2 text-[10px] px-2 py-1 rounded font-semibold" style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.7)', border: '1px solid rgba(147, 197, 253, 0.2)' }}>
-                    正文
-                  </div>
-                )}
+              <div className="p-4 relative">
                 <div className="prd-md">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
@@ -1810,12 +1900,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
             {/* 标记生成中/完成/生图等阶段：显示 markdown 预览（流式更新） */}
             {phase === 2 && ( // MarkersGenerated
-              <div className="p-4 pt-10 relative">
-                {!isDragging && (
-                  <div className="absolute top-2 left-2 text-[10px] px-2 py-1 rounded font-semibold" style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.7)', border: '1px solid rgba(147, 197, 253, 0.2)' }}>
-                    正文
-                  </div>
-                )}
+              <div className="p-4 relative">
                 <div className="prd-md">
                   <ReactMarkdown
                     key="article-preview-main"
@@ -1889,108 +1974,120 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                   配图标记列表
                 </div>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={markerRunItems.filter(x => x.status === 'done').length === 0}
-                  onClick={async () => {
-                    try {
-                      const JSZip = (await import('jszip')).default;
-                      const zip = new JSZip();
-                      
-                      const doneItems = markerRunItems.filter(x => x.status === 'done' && (x.assetUrl || x.url || x.base64));
-                      
-                      if (doneItems.length === 0) {
-                        toast.warning('无可下载图片', '还没有已完成的配图');
-                        return;
-                      }
-                      
-                      let successCount = 0;
-                      for (const item of doneItems) {
-                        const src = item.assetUrl || item.url || (item.base64?.startsWith('data:') ? item.base64 : `data:image/png;base64,${item.base64}`) || '';
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    disabled={isBusy || !imageGenModel || markerRunItems.filter(x => x.status !== 'done' && x.status !== 'running').length === 0}
+                    onClick={handleBatchGenerate}
+                    title="生成所有未完成（失败或未生成）的配图"
+                  >
+                    <Sparkles size={14} />
+                    生成未完成
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={markerRunItems.filter(x => x.status === 'done').length === 0}
+                    onClick={async () => {
+                      try {
+                        const JSZip = (await import('jszip')).default;
+                        const zip = new JSZip();
                         
-                        if (!src) {
-                          console.warn(`配图 ${item.markerIndex + 1} 没有图片数据`);
-                          continue;
+                        const doneItems = markerRunItems.filter(x => x.status === 'done' && (x.assetUrl || x.url || x.base64));
+                        
+                        if (doneItems.length === 0) {
+                          toast.warning('无可下载图片', '还没有已完成的配图');
+                          return;
                         }
                         
-                        try {
-                          let blob: Blob;
+                        let successCount = 0;
+                        for (const item of doneItems) {
+                          const src = item.assetUrl || item.url || (item.base64?.startsWith('data:') ? item.base64 : `data:image/png;base64,${item.base64}`) || '';
                           
-                          // 如果是 data URL（base64），直接转换为 blob
-                          if (src.startsWith('data:')) {
-                            const response = await fetch(src);
-                            blob = await response.blob();
-                          } else {
-                            // 对于外部 URL，使用 Image + Canvas 方式绕过 CORS
-                            blob = await new Promise<Blob>((resolve, reject) => {
-                              const img = new Image();
-                              img.crossOrigin = 'anonymous'; // 尝试启用 CORS
-                              
-                              img.onload = () => {
-                                try {
-                                  // 创建 canvas 并绘制图片
-                                  const canvas = document.createElement('canvas');
-                                  canvas.width = img.naturalWidth;
-                                  canvas.height = img.naturalHeight;
-                                  const ctx = canvas.getContext('2d');
-                                  if (!ctx) {
-                                    reject(new Error('无法创建 canvas context'));
-                                    return;
-                                  }
-                                  ctx.drawImage(img, 0, 0);
-                                  
-                                  // 转换为 blob
-                                  canvas.toBlob((b) => {
-                                    if (b) {
-                                      resolve(b);
-                                    } else {
-                                      reject(new Error('Canvas toBlob 失败'));
-                                    }
-                                  }, 'image/png');
-                                } catch (error) {
-                                  reject(error);
-                                }
-                              };
-                              
-                              img.onerror = () => {
-                                reject(new Error('图片加载失败'));
-                              };
-                              
-                              img.src = src;
-                            });
+                          if (!src) {
+                            console.warn(`配图 ${item.markerIndex + 1} 没有图片数据`);
+                            continue;
                           }
                           
-                          zip.file(`配图-${item.markerIndex + 1}.png`, blob);
-                          successCount++;
-                        } catch (error) {
-                          console.error(`Failed to download image ${item.markerIndex + 1}:`, error);
+                          try {
+                            let blob: Blob;
+                            
+                            // 如果是 data URL（base64），直接转换为 blob
+                            if (src.startsWith('data:')) {
+                              const response = await fetch(src);
+                              blob = await response.blob();
+                            } else {
+                              // 对于外部 URL，使用 Image + Canvas 方式绕过 CORS
+                              blob = await new Promise<Blob>((resolve, reject) => {
+                                const img = new Image();
+                                img.crossOrigin = 'anonymous'; // 尝试启用 CORS
+                                
+                                img.onload = () => {
+                                  try {
+                                    // 创建 canvas 并绘制图片
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = img.naturalWidth;
+                                    canvas.height = img.naturalHeight;
+                                    const ctx = canvas.getContext('2d');
+                                    if (!ctx) {
+                                      reject(new Error('无法创建 canvas context'));
+                                      return;
+                                    }
+                                    ctx.drawImage(img, 0, 0);
+                                    
+                                    // 转换为 blob
+                                    canvas.toBlob((b) => {
+                                      if (b) {
+                                        resolve(b);
+                                      } else {
+                                        reject(new Error('Canvas toBlob 失败'));
+                                      }
+                                    }, 'image/png');
+                                  } catch (error) {
+                                    reject(error);
+                                  }
+                                };
+                                
+                                img.onerror = () => {
+                                  reject(new Error('图片加载失败'));
+                                };
+                                
+                                img.src = src;
+                              });
+                            }
+                            
+                            zip.file(`配图-${item.markerIndex + 1}.png`, blob);
+                            successCount++;
+                          } catch (error) {
+                            console.error(`Failed to download image ${item.markerIndex + 1}:`, error);
+                          }
                         }
+                        
+                        if (successCount === 0) {
+                          toast.error('下载失败', '所有图片下载失败，可能是跨域限制导致');
+                          return;
+                        }
+                        
+                        const content = await zip.generateAsync({ type: 'blob' });
+                        const link = document.createElement('a');
+                        link.href = URL.createObjectURL(content);
+                        link.download = `配图-${new Date().getTime()}.zip`;
+                        link.click();
+                        URL.revokeObjectURL(link.href);
+                        
+                        toast.success('下载完成', `已打包 ${successCount} 张图片${successCount < doneItems.length ? `（${doneItems.length - successCount} 张失败）` : ''}`);
+                      } catch (error) {
+                        console.error('Batch download failed:', error);
+                        toast.error('下载失败', '批量下载图片时出错');
                       }
-                      
-                      if (successCount === 0) {
-                        toast.error('下载失败', '所有图片下载失败，可能是跨域限制导致');
-                        return;
-                      }
-                      
-                      const content = await zip.generateAsync({ type: 'blob' });
-                      const link = document.createElement('a');
-                      link.href = URL.createObjectURL(content);
-                      link.download = `配图-${new Date().getTime()}.zip`;
-                      link.click();
-                      URL.revokeObjectURL(link.href);
-                      
-                      toast.success('下载完成', `已打包 ${successCount} 张图片${successCount < doneItems.length ? `（${doneItems.length - successCount} 张失败）` : ''}`);
-                    } catch (error) {
-                      console.error('Batch download failed:', error);
-                      toast.error('下载失败', '批量下载图片时出错');
-                    }
-                  }}
-                  title="下载所有已生成的图片（ZIP 格式）"
-                >
-                  <DownloadCloud size={14} />
-                  下载全部
-                </Button>
+                    }}
+                    title="下载所有已生成的图片（ZIP 格式）"
+                  >
+                    <DownloadCloud size={14} />
+                    下载全部图片
+                  </Button>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <div className="flex-1 h-2 rounded-full" style={{ background: 'rgba(255,255,255,0.05)' }}>
@@ -2007,25 +2104,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </div>
               </div>
             </div>
-            {imageGenModel ? (
-              <div className="mb-3 flex items-center gap-2">
-                <div 
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium"
-                  style={{
-                    background: 'rgba(139, 92, 246, 0.12)',
-                    border: '1px solid rgba(139, 92, 246, 0.24)',
-                    color: 'rgba(139, 92, 246, 0.95)',
-                  }}
-                >
-                  <Sparkles size={14} />
-                  <span>生图模型：{imageGenModel.modelName}</span>
-                </div>
-              </div>
-            ) : imageGenModelError ? (
-              <div className="mb-3 text-xs" style={{ color: 'rgba(239,68,68,0.92)' }}>
-                生图模型不可用：{imageGenModelError}
-              </div>
-            ) : null}
+            {/* 已移动到左侧顶部：生图模型显示 */}
 
             <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-2">
               {markerRunItems.map((it, idx) => {
@@ -2508,7 +2587,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   variant="secondary"
                   onClick={() => {
                     handleCreatePrompt();
-                    setPromptPreviewOpen(false);
+                    // 不关闭配置管理弹窗，新建完成后仍可继续配置
                   }}
                 >
                   <Plus size={12} />
@@ -2634,7 +2713,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   variant="secondary"
                                   onClick={() => {
                                     setSelectedPrompt(prompt);
-                                    setPromptPreviewOpen(false);
+                                    // 不关闭配置管理弹窗，选择后仍可继续配置其他项
                                   }}
                                 >
                                   <Check size={12} />
@@ -2660,7 +2739,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 variant="secondary"
                                 onClick={() => {
                                   handleEditPrompt(prompt);
-                                  setPromptPreviewOpen(false);
+                                  // 不关闭配置管理弹窗，编辑完成后仍可继续配置
                                 }}
                               >
                                 <Edit2 size={12} />

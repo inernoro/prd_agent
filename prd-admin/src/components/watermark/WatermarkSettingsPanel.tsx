@@ -186,7 +186,7 @@ function useFontFace(font: WatermarkFontInfo | null | undefined, enabled: boolea
 }
 
 type WatermarkStatus = { hasActiveConfig: boolean; activeId?: string; activeName?: string };
-export type WatermarkSettingsPanelHandle = { addSpec: () => void };
+export type WatermarkSettingsPanelHandle = { addSpec: () => void; editCurrentSpec: () => void };
 type WatermarkSettingsPanelProps = {
   /** 当前应用的 appKey，用于绑定/解绑水印 */
   appKey: string;
@@ -568,7 +568,17 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
     addSpec: () => {
       void handleAddConfig();
     },
-  }), [handleAddConfig]);
+    editCurrentSpec: () => {
+      if (activeConfig) {
+        setDraftConfig({ ...activeConfig });
+        setIsNewConfig(false);
+        setEditorOpen(true);
+      } else {
+        // 如果没有激活的配置，则新建一个
+        void handleAddConfig();
+      }
+    },
+  }), [handleAddConfig, activeConfig]);
 
   if (loading) {
     return (
