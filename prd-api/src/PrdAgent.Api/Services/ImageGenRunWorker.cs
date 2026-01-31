@@ -330,6 +330,19 @@ public class ImageGenRunWorker : BackgroundService
 
                         _logger.LogInformation("[ImageGenRunWorker Debug] Calling GenerateAsync with appKey={AppKey}", run.AppKey ?? "(null)");
 
+                        // 调试日志：打印发送给生图模型的完整 prompt
+                        _logger.LogInformation(
+                            "[生图请求] RunId={RunId}\n" +
+                            "  原始Prompt: {OriginalPrompt}\n" +
+                            "  最终Prompt: {FinalPrompt}\n" +
+                            "  有参考图: {HasInitImage}\n" +
+                            "  图片引用数: {ImageRefCount}",
+                            run.Id,
+                            curPrompt,
+                            finalPrompt,
+                            initImageBase64 != null,
+                            run.ImageRefs?.Count ?? 0);
+
                         // 使用增强后的 prompt（多图场景）或原始 prompt（单图/纯文本场景）
                         var res = await imageClient.GenerateAsync(
                             finalPrompt,
