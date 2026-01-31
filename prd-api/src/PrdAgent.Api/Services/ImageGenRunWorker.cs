@@ -227,6 +227,10 @@ public class ImageGenRunWorker : BackgroundService
                         var finalPrompt = curPrompt;
                         var multiImageService = scope.ServiceProvider.GetRequiredService<IMultiImageDomainService>();
 
+                        // 已加载的图片引用列表（用于 Vision API 多图场景）
+                        var loadedImageRefs = new List<Core.Models.MultiImage.ImageRefData>();
+                        var isMultiImageVisionMode = false;
+
                         // 1. 如果有 ImageRefs（新架构），使用 MultiImageDomainService 处理
                         if (run.ImageRefs != null && run.ImageRefs.Count > 0)
                         {
@@ -247,30 +251,53 @@ public class ImageGenRunWorker : BackgroundService
                                     curPrompt.Length > 50 ? curPrompt[..50] + "..." : curPrompt,
                                     finalPrompt.Length > 100 ? finalPrompt[..100] + "..." : finalPrompt);
 
-                                // 加载第一张图作为 initImage（目前 OpenAIImageClient 只支持单图）
-                                var firstRef = parseResult.ResolvedRefs.FirstOrDefault();
-                                if (firstRef != null && !string.IsNullOrWhiteSpace(firstRef.AssetSha256))
+                                // 加载所有引用的图片
+                                foreach (var resolvedRef in parseResult.ResolvedRefs.OrderBy(r => r.OccurrenceOrder))
                                 {
-                                    var sha = firstRef.AssetSha256.Trim().ToLowerInvariant();
-                                    if (sha.Length == 64 && Regex.IsMatch(sha, "^[0-9a-f]{64}$"))
+                                    if (string.IsNullOrWhiteSpace(resolvedRef.AssetSha256)) continue;
+
+                                    var sha = resolvedRef.AssetSha256.Trim().ToLowerInvariant();
+                                    if (sha.Length != 64 || !Regex.IsMatch(sha, "^[0-9a-f]{64}$")) continue;
+
+                                    var found = await assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                                    if (found != null && found.Value.bytes.Length > 0)
                                     {
-                                        var found = await assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                                        if (found != null && found.Value.bytes.Length > 0)
+                                        var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
+                                        var b64 = Convert.ToBase64String(found.Value.bytes);
+                                        var dataUrl = $"data:{mime};base64,{b64}";
+
+                                        loadedImageRefs.Add(new Core.Models.MultiImage.ImageRefData
                                         {
-                                            var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
-                                            var b64 = Convert.ToBase64String(found.Value.bytes);
-                                            initImageBase64 = $"data:{mime};base64,{b64}";
-                                            _logger.LogDebug("[多图处理] 使用第一张图 @img{RefId} 作为参考图", firstRef.RefId);
-                                        }
+                                            RefId = resolvedRef.RefId,
+                                            Base64 = dataUrl,
+                                            MimeType = mime,
+                                            Label = resolvedRef.Label,
+                                            Role = resolvedRef.Role
+                                        });
+
+                                        _logger.LogDebug("[多图处理] 已加载图片 @img{RefId}: {Label} ({Size} bytes)",
+                                            resolvedRef.RefId, resolvedRef.Label, found.Value.bytes.Length);
+                                    }
+                                    else
+                                    {
+                                        _logger.LogWarning("[多图处理] 无法加载图片 @img{RefId}: sha={Sha}", resolvedRef.RefId, sha);
                                     }
                                 }
 
-                                // 记录多图信息（为后续完整多图支持做准备）
-                                if (parseResult.ResolvedRefs.Count > 1)
+                                // 判断是否使用 Vision API（多图模式）
+                                if (loadedImageRefs.Count > 1)
                                 {
+                                    isMultiImageVisionMode = true;
                                     _logger.LogInformation(
-                                        "[多图处理] 检测到多图场景，当前仅使用第一张。引用列表: {Refs}",
-                                        string.Join(", ", parseResult.ResolvedRefs.Select(r => $"@img{r.RefId}:{r.Label}")));
+                                        "[多图处理] 启用 Vision API 多图模式，共 {Count} 张图片: {Refs}",
+                                        loadedImageRefs.Count,
+                                        string.Join(", ", loadedImageRefs.Select(r => $"@img{r.RefId}:{r.Label}")));
+                                }
+                                else if (loadedImageRefs.Count == 1)
+                                {
+                                    // 单图模式：使用传统 img2img
+                                    initImageBase64 = loadedImageRefs[0].Base64;
+                                    _logger.LogDebug("[多图处理] 单图模式，使用 @img{RefId} 作为参考图", loadedImageRefs[0].RefId);
                                 }
                             }
 
@@ -336,26 +363,54 @@ public class ImageGenRunWorker : BackgroundService
                             "  原始Prompt: {OriginalPrompt}\n" +
                             "  最终Prompt: {FinalPrompt}\n" +
                             "  有参考图: {HasInitImage}\n" +
-                            "  图片引用数: {ImageRefCount}",
+                            "  图片引用数: {ImageRefCount}\n" +
+                            "  多图Vision模式: {IsVisionMode}\n" +
+                            "  已加载图片数: {LoadedCount}",
                             run.Id,
                             curPrompt,
                             finalPrompt,
                             initImageBase64 != null,
-                            run.ImageRefs?.Count ?? 0);
+                            run.ImageRefs?.Count ?? 0,
+                            isMultiImageVisionMode,
+                            loadedImageRefs.Count);
 
-                        // 使用增强后的 prompt（多图场景）或原始 prompt（单图/纯文本场景）
-                        var res = await imageClient.GenerateAsync(
-                            finalPrompt,
-                            n: 1,
-                            size: reqSize,
-                            responseFormat: run.ResponseFormat,
-                            ct,
-                            modelId: requestedModelId,
-                            platformId: run.PlatformId,
-                            modelName: run.ModelId,
-                            initImageBase64: initImageBase64,
-                            initImageProvided: initImageBase64 != null,
-                            appKey: run.AppKey);
+                        // 根据图片数量选择 API：
+                        // - 0张：文生图（GenerateAsync）
+                        // - 1张：图生图（GenerateAsync with initImageBase64）
+                        // - 2+张：多图Vision API（GenerateWithVisionAsync）
+                        ApiResponse<ImageGenResult> res;
+                        if (isMultiImageVisionMode && loadedImageRefs.Count > 1)
+                        {
+                            _logger.LogInformation(
+                                "[多图Vision] 使用 Vision API 发送 {Count} 张图片到模型",
+                                loadedImageRefs.Count);
+
+                            res = await imageClient.GenerateWithVisionAsync(
+                                finalPrompt,
+                                loadedImageRefs,
+                                reqSize,
+                                ct,
+                                modelId: requestedModelId,
+                                platformId: run.PlatformId,
+                                modelName: run.ModelId,
+                                appKey: run.AppKey);
+                        }
+                        else
+                        {
+                            // 使用传统 API（文生图或单图图生图）
+                            res = await imageClient.GenerateAsync(
+                                finalPrompt,
+                                n: 1,
+                                size: reqSize,
+                                responseFormat: run.ResponseFormat,
+                                ct,
+                                modelId: requestedModelId,
+                                platformId: run.PlatformId,
+                                modelName: run.ModelId,
+                                initImageBase64: initImageBase64,
+                                initImageProvided: initImageBase64 != null,
+                                appKey: run.AppKey);
+                        }
 
                         if (!res.Success || res.Data == null)
                         {

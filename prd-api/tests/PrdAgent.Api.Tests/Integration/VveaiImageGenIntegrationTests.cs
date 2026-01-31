@@ -746,6 +746,258 @@ url
         Log("\n【通过】风格迁移生图成功!");
     }
 
+    /// <summary>
+    /// 测试7: Vision API 多图生成 - 使用 /v1/chat/completions 发送多张图片
+    /// 这是新架构支持的真正多图模式
+    /// </summary>
+    [Fact]
+    public async Task 多图VisionAPI_发送多张真实图片()
+    {
+        if (string.IsNullOrWhiteSpace(_apiKey))
+        {
+            Log("[跳过] VVEAI_API_KEY 未设置，请设置环境变量后运行此测试");
+            return;
+        }
+
+        Log("\n" + new string('=', 80));
+        Log("【测试】Vision API 多图生成 - /v1/chat/completions");
+        Log(new string('=', 80));
+
+        Log("\n【场景说明】");
+        Log("  用户输入: @img16@img17 把这两张图融合成一张");
+        Log("  新架构: 使用 Vision API 发送所有图片到模型");
+        Log("  端点: /v1/chat/completions (而非 /v1/images/edits)");
+
+        // 创建两张测试图片
+        var testImage1Base64 = CreateTestImageBase64();
+        var testImage2Base64 = CreateTestImageBase64_Variant();
+
+        Log("\n【已加载的图片】");
+        Log($"  @img16 (风格参考图): {testImage1Base64.Length} chars base64");
+        Log($"  @img17 (目标图片): {testImage2Base64.Length} chars base64");
+
+        // 增强后的提示词
+        var enhancedPrompt = @"@img16@img17 把这两张图融合成一张
+
+【图片对照表】
+@img16 对应 风格参考图
+@img17 对应 目标图片";
+
+        Log("\n【增强后的提示词】");
+        Log(new string('-', 40));
+        Log(enhancedPrompt);
+        Log(new string('-', 40));
+
+        // 构建 Vision API 请求
+        var endpoint = $"{_baseUrl.TrimEnd('/')}/v1/chat/completions";
+
+        // 构建 messages 数组 (Vision API 格式)
+        var requestBody = new
+        {
+            model = "nano-banana-pro",
+            messages = new[]
+            {
+                new
+                {
+                    role = "user",
+                    content = new object[]
+                    {
+                        new { type = "text", text = enhancedPrompt },
+                        new
+                        {
+                            type = "image_url",
+                            image_url = new { url = $"data:image/png;base64,{testImage1Base64}" }
+                        },
+                        new
+                        {
+                            type = "image_url",
+                            image_url = new { url = $"data:image/png;base64,{testImage2Base64}" }
+                        }
+                    }
+                }
+            },
+            max_tokens = 4096
+        };
+
+        var requestJson = JsonSerializer.Serialize(requestBody, new JsonSerializerOptions { WriteIndented = true });
+
+        Log($"\n【请求地址】POST {endpoint}");
+        Log($"\n【请求体 - Vision API 格式】");
+        Log(new string('-', 40));
+        // 由于 base64 太长，只显示结构
+        Log($@"{{
+  ""model"": ""nano-banana-pro"",
+  ""messages"": [
+    {{
+      ""role"": ""user"",
+      ""content"": [
+        {{ ""type"": ""text"", ""text"": ""{enhancedPrompt.Split('\n')[0]}..."" }},
+        {{ ""type"": ""image_url"", ""image_url"": {{ ""url"": ""data:image/png;base64,<{testImage1Base64.Length} chars>"" }} }},
+        {{ ""type"": ""image_url"", ""image_url"": {{ ""url"": ""data:image/png;base64,<{testImage2Base64.Length} chars>"" }} }}
+      ]
+    }}
+  ],
+  ""max_tokens"": 4096
+}}");
+        Log(new string('-', 40));
+
+        _httpClient.DefaultRequestHeaders.Clear();
+        _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+
+        var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
+        var startTime = DateTime.Now;
+
+        Log($"\n【发送中】{startTime:HH:mm:ss.fff}...");
+        Log("  正在发送 2 张图片 + 增强提示词给大模型 (Vision API)...");
+
+        var response = await _httpClient.PostAsync(endpoint, content);
+        var elapsed = DateTime.Now - startTime;
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        Log($"\n【响应状态】{(int)response.StatusCode} {response.StatusCode}");
+        Log($"【耗时】{elapsed.TotalSeconds:F2} 秒");
+        Log($"\n【响应体】");
+        Log(FormatJson(responseBody));
+
+        if (!response.IsSuccessStatusCode)
+        {
+            Log("\n【说明】");
+            Log("  如果返回错误，可能是:");
+            Log("  1. 该模型不支持 Vision API 格式");
+            Log("  2. 图片格式/大小不符合要求");
+            Log("  3. API 配额不足");
+        }
+        else
+        {
+            Log("\n【通过】Vision API 多图生成成功!");
+            Log("  ✅ 两张图片都已发送给大模型");
+            Log("  ✅ 模型能够同时看到所有参考图");
+        }
+    }
+
+    /// <summary>
+    /// 测试8: Vision API 请求格式文档（无需 API Key）
+    /// </summary>
+    [Fact]
+    public void VisionAPI_请求格式详解()
+    {
+        Log("\n" + new string('=', 80));
+        Log("【详解】Vision API 多图请求格式");
+        Log(new string('=', 80));
+
+        Log("\n【与传统 img2img 的区别】");
+        Log("  传统 img2img (/v1/images/edits):");
+        Log("    - 只能发送 1 张参考图");
+        Log("    - 使用 multipart/form-data 格式");
+        Log("    - 参考图作为二进制文件上传");
+        Log("");
+        Log("  Vision API (/v1/chat/completions):");
+        Log("    - 可以发送 1-6 张图片");
+        Log("    - 使用 application/json 格式");
+        Log("    - 图片作为 data URL (base64) 嵌入请求");
+
+        Log("\n【Vision API 请求结构】");
+        Log(new string('-', 40));
+        Log(@"{
+  ""model"": ""nano-banana-pro"",
+  ""messages"": [
+    {
+      ""role"": ""user"",
+      ""content"": [
+        {
+          ""type"": ""text"",
+          ""text"": ""@img16@img17 把这两张图融合成一张\n\n【图片对照表】\n@img16 对应 风格参考图\n@img17 对应 目标图片""
+        },
+        {
+          ""type"": ""image_url"",
+          ""image_url"": {
+            ""url"": ""data:image/jpeg;base64,/9j/4AAQ...""  // @img16 的 base64
+          }
+        },
+        {
+          ""type"": ""image_url"",
+          ""image_url"": {
+            ""url"": ""data:image/jpeg;base64,/9j/4BBR...""  // @img17 的 base64
+          }
+        }
+      ]
+    }
+  ],
+  ""max_tokens"": 4096
+}");
+        Log(new string('-', 40));
+
+        Log("\n【Worker 处理流程 (新架构)】");
+        Log("  1. MultiImageDomainService.ParsePromptRefs() 解析 @imgN");
+        Log("  2. 遍历所有 resolvedRefs，从 COS 加载每张图片");
+        Log("  3. BuildFinalPromptAsync() 生成增强提示词");
+        Log("  4. 判断图片数量:");
+        Log("     - 0 张: 文生图 (/v1/images/generations)");
+        Log("     - 1 张: 图生图 (/v1/images/edits)");
+        Log("     - 2+ 张: Vision API (/v1/chat/completions)");
+        Log("  5. 调用 GenerateWithVisionAsync() 发送多图请求");
+
+        Log("\n【关键代码路径】");
+        Log("  OpenAIImageClient.GenerateWithVisionAsync()");
+        Log("    → BuildVisionContent() 构建 messages 数组");
+        Log("    → POST /v1/chat/completions");
+        Log("    → 解析响应中的图片数据");
+
+        Log("\n【限制】");
+        Log("  - 最多 6 张图片 (nanobanana 限制)");
+        Log("  - 单张图片最大 20MB");
+        Log("  - 超时时间: 120 秒 (多图处理需要更长时间)");
+
+        Log("\n【通过】Vision API 格式详解完成!");
+    }
+
+    /// <summary>
+    /// 创建第二张测试图片 (与第一张略有不同)
+    /// </summary>
+    private static string CreateTestImageBase64_Variant()
+    {
+        using var ms = new MemoryStream();
+
+        byte[] pngHeader = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+        ms.Write(pngHeader);
+
+        var ihdr = CreatePngChunk("IHDR", new byte[] {
+            0x00, 0x00, 0x00, 0x64, // width: 100
+            0x00, 0x00, 0x00, 0x64, // height: 100
+            0x08,                   // bit depth: 8
+            0x02,                   // color type: RGB
+            0x00, 0x00, 0x00
+        });
+        ms.Write(ihdr);
+
+        // 创建不同的渐变色 (蓝绿色调)
+        var imageData = CreateVariantImageData(100, 100);
+        var idat = CreatePngChunk("IDAT", Compress(imageData));
+        ms.Write(idat);
+
+        var iend = CreatePngChunk("IEND", Array.Empty<byte>());
+        ms.Write(iend);
+
+        return Convert.ToBase64String(ms.ToArray());
+    }
+
+    private static byte[] CreateVariantImageData(int width, int height)
+    {
+        var data = new List<byte>();
+        for (int y = 0; y < height; y++)
+        {
+            data.Add(0); // filter: none
+            for (int x = 0; x < width; x++)
+            {
+                // 蓝绿渐变
+                data.Add(128);                       // R
+                data.Add((byte)(x * 255 / width));   // G
+                data.Add((byte)(y * 255 / height));  // B
+            }
+        }
+        return data.ToArray();
+    }
+
     private static string FormatJson(string json)
     {
         try
