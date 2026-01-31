@@ -4,6 +4,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -27,10 +28,12 @@ public class LlmLogsController : ControllerBase
     }
 
     private readonly MongoDbContext _db;
+    private readonly IAssetStorage _assetStorage;
 
-    public LlmLogsController(MongoDbContext db)
+    public LlmLogsController(MongoDbContext db, IAssetStorage assetStorage)
     {
         _db = db;
+        _assetStorage = assetStorage;
     }
 
     private static string TruncatePreview(string? s, int maxChars)
@@ -299,6 +302,139 @@ public class LlmLogsController : ControllerBase
         if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
 
         return Ok(ApiResponse<LlmRequestLog>.Ok(log));
+    }
+
+    /// <summary>
+    /// 生成可重放的 curl 命令（用于 Vision API 多图请求）
+    /// 通过 SHA256 从 COS 获取图片数据，构建完整请求
+    /// </summary>
+    [HttpGet("{id}/replay-curl")]
+    public async Task<IActionResult> ReplayCurl(string id)
+    {
+        var log = await _db.LlmRequestLogs.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
+
+        // 只支持 vision-multi-image 类型
+        if (log.RequestType != "visionImageGen")
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_TYPE", "仅支持 Vision API 多图请求的 curl 重放"));
+        }
+
+        try
+        {
+            // 解析存储的请求体
+            if (string.IsNullOrWhiteSpace(log.RequestBodyRedacted))
+            {
+                return BadRequest(ApiResponse<object>.Fail("NO_REQUEST_BODY", "请求体为空"));
+            }
+
+            using var doc = JsonDocument.Parse(log.RequestBodyRedacted);
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("model", out var modelEl) ||
+                !root.TryGetProperty("prompt", out var promptEl) ||
+                !root.TryGetProperty("image_refs", out var imageRefsEl))
+            {
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "请求体格式不符合 Vision API 格式"));
+            }
+
+            var model = modelEl.GetString() ?? string.Empty;
+            var prompt = promptEl.GetString() ?? string.Empty;
+
+            // 构建 Vision API 请求内容
+            var contentItems = new List<object>
+            {
+                new { type = "text", text = prompt }
+            };
+
+            // 从 COS 加载图片
+            var imageErrors = new List<string>();
+            foreach (var imgRef in imageRefsEl.EnumerateArray())
+            {
+                if (!imgRef.TryGetProperty("sha256", out var sha256El))
+                {
+                    imageErrors.Add("缺少 sha256");
+                    continue;
+                }
+
+                var sha256 = sha256El.GetString()?.Trim().ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64)
+                {
+                    imageErrors.Add($"无效的 sha256: {sha256}");
+                    continue;
+                }
+
+                var mime = "image/png";
+                if (imgRef.TryGetProperty("mime", out var mimeEl))
+                {
+                    mime = mimeEl.GetString() ?? "image/png";
+                }
+
+                // 从 COS 获取图片
+                var found = await _assetStorage.TryReadByShaAsync(
+                    sha256,
+                    HttpContext.RequestAborted,
+                    domain: AppDomainPaths.DomainVisualAgent,
+                    type: AppDomainPaths.TypeImg);
+
+                if (found == null)
+                {
+                    imageErrors.Add($"无法从 COS 加载图片: {sha256}");
+                    continue;
+                }
+
+                var base64 = Convert.ToBase64String(found.Value.bytes);
+                var dataUrl = $"data:{mime};base64,{base64}";
+
+                contentItems.Add(new
+                {
+                    type = "image_url",
+                    image_url = new { url = dataUrl }
+                });
+            }
+
+            // 构建完整请求体
+            var fullRequest = new
+            {
+                model = model,
+                max_tokens = 4096,
+                messages = new[]
+                {
+                    new
+                    {
+                        role = "user",
+                        content = contentItems
+                    }
+                }
+            };
+
+            var requestJson = JsonSerializer.Serialize(fullRequest, new JsonSerializerOptions
+            {
+                WriteIndented = false
+            });
+
+            // 构建 curl 命令
+            var endpoint = $"{log.ApiBase?.TrimEnd('/')}/{log.Path?.TrimStart('/')}";
+            var curlCommand = $"curl -X POST \"{endpoint}\" \\\n" +
+                              $"  -H \"Content-Type: application/json\" \\\n" +
+                              $"  -H \"Authorization: Bearer YOUR_API_KEY\" \\\n" +
+                              $"  -d '{requestJson}'";
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                curl = curlCommand,
+                endpoint = endpoint,
+                model = model,
+                imageCount = contentItems.Count - 1, // 减去 text 项
+                imageErrors = imageErrors.Count > 0 ? imageErrors : null,
+                requestBodyLength = requestJson.Length,
+                warning = imageErrors.Count > 0 ? "部分图片加载失败，curl 可能不完整" : null
+            }));
+        }
+        catch (JsonException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail("JSON_PARSE_ERROR", $"解析请求体失败: {ex.Message}"));
+        }
     }
 
     /// <summary>

@@ -1191,7 +1191,7 @@ public class OpenAIImageClient
         string? logId = null;
         if (_logWriter != null)
         {
-            // 构建日志用的请求体（不含完整 base64）
+            // 构建日志用的请求体（不含完整 base64，但包含 sha256 用于 curl 重放）
             var logRequestBody = JsonSerializer.Serialize(new
             {
                 model = effectiveModelName,
@@ -1203,9 +1203,10 @@ public class OpenAIImageClient
                     ref_id = img.RefId,
                     label = img.Label,
                     mime = img.MimeType,
+                    sha256 = img.Sha256,
                     base64_length = img.Base64.Length
                 }),
-                prompt_preview = prompt.Length > 500 ? prompt[..500] + "..." : prompt,
+                prompt = prompt, // 完整 prompt 用于重放
                 request_type = "vision-multi-image"
             });
             var reqLogJson = LlmLogRedactor.RedactJson(logRequestBody);

@@ -272,7 +272,8 @@ public class ImageGenRunWorker : BackgroundService
                                             Base64 = dataUrl,
                                             MimeType = mime,
                                             Label = resolvedRef.Label,
-                                            Role = resolvedRef.Role
+                                            Role = resolvedRef.Role,
+                                            Sha256 = sha // 用于日志和 curl 重放
                                         });
 
                                         _logger.LogDebug("[多图处理] 已加载图片 @img{RefId}: {Label} ({Size} bytes)",

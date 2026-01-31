@@ -190,4 +190,9 @@ public class ImageRefData
     /// 可选：图片角色
     /// </summary>
     public string? Role { get; set; }
+
+    /// <summary>
+    /// 图片 SHA256（用于从 COS 重新获取图片以支持 curl 重放）
+    /// </summary>
+    public string? Sha256 { get; set; }
 }
