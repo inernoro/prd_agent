@@ -19,6 +19,11 @@ public interface IAssetStorage
     /// 按 sha256 删除底层对象（若实现支持）。
     /// </summary>
     Task DeleteByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null);
+
+    /// <summary>
+    /// 按 sha256 和 mime 类型构建公开访问 URL（不下载文件）。
+    /// </summary>
+    string? TryBuildUrlBySha(string sha256, string mime, string? domain = null, string? type = null);
 }
 
 

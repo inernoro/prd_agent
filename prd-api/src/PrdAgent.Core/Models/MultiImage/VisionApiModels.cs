@@ -195,4 +195,9 @@ public class ImageRefData
     /// 图片 SHA256（用于从 COS 重新获取图片以支持 curl 重放）
     /// </summary>
     public string? Sha256 { get; set; }
+
+    /// <summary>
+    /// COS 存储 URL（用于日志显示参考图，不含签名）
+    /// </summary>
+    public string? CosUrl { get; set; }
 }

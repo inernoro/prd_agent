@@ -265,6 +265,8 @@ public class ImageGenRunWorker : BackgroundService
                                         var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
                                         var b64 = Convert.ToBase64String(found.Value.bytes);
                                         var dataUrl = $"data:{mime};base64,{b64}";
+                                        // 构建 COS URL 用于日志显示参考图
+                                        var cosUrl = assetStorage.TryBuildUrlBySha(sha, mime, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
 
                                         loadedImageRefs.Add(new Core.Models.MultiImage.ImageRefData
                                         {
@@ -273,7 +275,8 @@ public class ImageGenRunWorker : BackgroundService
                                             MimeType = mime,
                                             Label = resolvedRef.Label,
                                             Role = resolvedRef.Role,
-                                            Sha256 = sha // 用于日志和 curl 重放
+                                            Sha256 = sha,
+                                            CosUrl = cosUrl
                                         });
 
                                         _logger.LogDebug("[多图处理] 已加载图片 @img{RefId}: {Label} ({Size} bytes)",

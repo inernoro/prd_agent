@@ -331,66 +331,130 @@ public class LlmLogsController : ControllerBase
             using var doc = JsonDocument.Parse(log.RequestBodyRedacted);
             var root = doc.RootElement;
 
-            if (!root.TryGetProperty("model", out var modelEl) ||
-                !root.TryGetProperty("prompt", out var promptEl) ||
-                !root.TryGetProperty("image_refs", out var imageRefsEl))
+            if (!root.TryGetProperty("model", out var modelEl))
+            {
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "请求体缺少 model 字段"));
+            }
+            var model = modelEl.GetString() ?? string.Empty;
+
+            // 新格式：messages[].content[] (贴近真实 Vision API 格式)
+            // 旧格式：image_refs[] + prompt (扁平格式，兼容历史日志)
+            var contentItems = new List<object>();
+            var imageErrors = new List<string>();
+            string? prompt = null;
+
+            if (root.TryGetProperty("messages", out var messagesEl) && messagesEl.ValueKind == JsonValueKind.Array)
+            {
+                // 新格式：从 messages[0].content[] 中提取
+                foreach (var msg in messagesEl.EnumerateArray())
+                {
+                    if (!msg.TryGetProperty("content", out var contentEl) || contentEl.ValueKind != JsonValueKind.Array)
+                        continue;
+
+                    foreach (var item in contentEl.EnumerateArray())
+                    {
+                        if (!item.TryGetProperty("type", out var typeEl)) continue;
+                        var itemType = typeEl.GetString();
+
+                        if (itemType == "text" && item.TryGetProperty("text", out var textEl))
+                        {
+                            prompt = textEl.GetString();
+                            contentItems.Add(new { type = "text", text = prompt });
+                        }
+                        else if (itemType == "image_url" && item.TryGetProperty("image_url", out var imgUrlEl))
+                        {
+                            // 从 image_url.sha256 获取 SHA256，重新加载图片
+                            if (!imgUrlEl.TryGetProperty("sha256", out var sha256El))
+                            {
+                                imageErrors.Add("图片缺少 sha256");
+                                continue;
+                            }
+
+                            var sha256 = sha256El.GetString()?.Trim().ToLowerInvariant();
+                            if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64)
+                            {
+                                imageErrors.Add($"无效的 sha256: {sha256}");
+                                continue;
+                            }
+
+                            // 从 COS 加载图片
+                            var found = await _assetStorage.TryReadByShaAsync(
+                                sha256,
+                                HttpContext.RequestAborted,
+                                domain: AppDomainPaths.DomainVisualAgent,
+                                type: AppDomainPaths.TypeImg);
+
+                            if (found == null)
+                            {
+                                imageErrors.Add($"无法从 COS 加载图片: {sha256}");
+                                continue;
+                            }
+
+                            var base64 = Convert.ToBase64String(found.Value.bytes);
+                            var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime;
+                            var dataUrl = $"data:{mime};base64,{base64}";
+
+                            contentItems.Add(new
+                            {
+                                type = "image_url",
+                                image_url = new { url = dataUrl }
+                            });
+                        }
+                    }
+                }
+            }
+            else if (root.TryGetProperty("image_refs", out var imageRefsEl) && root.TryGetProperty("prompt", out var promptEl))
+            {
+                // 旧格式：兼容历史日志
+                prompt = promptEl.GetString() ?? string.Empty;
+                contentItems.Add(new { type = "text", text = prompt });
+
+                foreach (var imgRef in imageRefsEl.EnumerateArray())
+                {
+                    if (!imgRef.TryGetProperty("sha256", out var sha256El))
+                    {
+                        imageErrors.Add("缺少 sha256");
+                        continue;
+                    }
+
+                    var sha256 = sha256El.GetString()?.Trim().ToLowerInvariant();
+                    if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64)
+                    {
+                        imageErrors.Add($"无效的 sha256: {sha256}");
+                        continue;
+                    }
+
+                    var mime = "image/png";
+                    if (imgRef.TryGetProperty("mime", out var mimeEl))
+                    {
+                        mime = mimeEl.GetString() ?? "image/png";
+                    }
+
+                    var found = await _assetStorage.TryReadByShaAsync(
+                        sha256,
+                        HttpContext.RequestAborted,
+                        domain: AppDomainPaths.DomainVisualAgent,
+                        type: AppDomainPaths.TypeImg);
+
+                    if (found == null)
+                    {
+                        imageErrors.Add($"无法从 COS 加载图片: {sha256}");
+                        continue;
+                    }
+
+                    var base64 = Convert.ToBase64String(found.Value.bytes);
+                    var dataUrl = $"data:{mime};base64,{base64}";
+
+                    contentItems.Add(new
+                    {
+                        type = "image_url",
+                        image_url = new { url = dataUrl }
+                    });
+                }
+            }
+            else
             {
                 return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "请求体格式不符合 Vision API 格式"));
-            }
-
-            var model = modelEl.GetString() ?? string.Empty;
-            var prompt = promptEl.GetString() ?? string.Empty;
-
-            // 构建 Vision API 请求内容
-            var contentItems = new List<object>
-            {
-                new { type = "text", text = prompt }
-            };
-
-            // 从 COS 加载图片
-            var imageErrors = new List<string>();
-            foreach (var imgRef in imageRefsEl.EnumerateArray())
-            {
-                if (!imgRef.TryGetProperty("sha256", out var sha256El))
-                {
-                    imageErrors.Add("缺少 sha256");
-                    continue;
-                }
-
-                var sha256 = sha256El.GetString()?.Trim().ToLowerInvariant();
-                if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64)
-                {
-                    imageErrors.Add($"无效的 sha256: {sha256}");
-                    continue;
-                }
-
-                var mime = "image/png";
-                if (imgRef.TryGetProperty("mime", out var mimeEl))
-                {
-                    mime = mimeEl.GetString() ?? "image/png";
-                }
-
-                // 从 COS 获取图片
-                var found = await _assetStorage.TryReadByShaAsync(
-                    sha256,
-                    HttpContext.RequestAborted,
-                    domain: AppDomainPaths.DomainVisualAgent,
-                    type: AppDomainPaths.TypeImg);
-
-                if (found == null)
-                {
-                    imageErrors.Add($"无法从 COS 加载图片: {sha256}");
-                    continue;
-                }
-
-                var base64 = Convert.ToBase64String(found.Value.bytes);
-                var dataUrl = $"data:{mime};base64,{base64}";
-
-                contentItems.Add(new
-                {
-                    type = "image_url",
-                    image_url = new { url = dataUrl }
-                });
             }
 
             // 构建完整请求体

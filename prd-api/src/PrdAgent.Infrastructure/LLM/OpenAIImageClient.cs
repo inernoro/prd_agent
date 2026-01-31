@@ -1108,6 +1108,10 @@ public class OpenAIImageClient
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
 
         // 解析模型和平台配置
+        // 优先级：
+        // 1. 如果 platformId + modelName 都提供了（由 SmartModelScheduler 解析），直接使用平台配置
+        // 2. 如果只有 modelId，尝试作为数据库 ID 查询
+        // 3. 回退到默认 IsImageGen 模型
         var requestedModelId = (modelId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(requestedModelId)) requestedModelId = null;
         var requestedPlatformId = (platformId ?? string.Empty).Trim();
@@ -1115,71 +1119,74 @@ public class OpenAIImageClient
         var requestedModelName = (modelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(requestedModelName)) requestedModelName = null;
 
-        LLMModel? model = null;
-        LLMPlatform? platform = null;
-        if (!string.IsNullOrWhiteSpace(requestedModelId))
-        {
-            model = await _db.LLMModels.Find(m => m.Id == requestedModelId && m.Enabled).FirstOrDefaultAsync(ct);
-            if (model == null && !string.IsNullOrWhiteSpace(requestedPlatformId))
-            {
-                platform = await _db.LLMPlatforms.Find(p => p.Id == requestedPlatformId && p.Enabled).FirstOrDefaultAsync(ct);
-                if (platform == null)
-                {
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "指定的平台不存在或未启用");
-                }
-                requestedModelName ??= requestedModelId;
-            }
-            else if (model == null)
-            {
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "指定的模型不存在或未启用");
-            }
-        }
-        else
-        {
-            model = await _db.LLMModels.Find(m => m.IsImageGen && m.Enabled).FirstOrDefaultAsync(ct);
-        }
-
-        if (model == null && platform == null)
-        {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "未配置可用的生图模型");
-        }
-
         var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-        string? apiUrl;
-        string? apiKey;
-        string effectiveModelName;
+        string? apiUrl = null;
+        string? apiKey = null;
+        string? effectiveModelName = null;
         string? platformIdForLog = null;
         string? platformNameForLog = null;
 
-        if (model != null)
+        // 优先路径：如果 platformId 和 modelName 都已提供（来自 SmartModelScheduler 解析）
+        // 直接使用平台配置 + modelName，不再重新查询 LLMModels
+        if (!string.IsNullOrWhiteSpace(requestedPlatformId) && !string.IsNullOrWhiteSpace(requestedModelName))
         {
-            var cfg = await ResolveApiConfigForModelAsync(model, jwtSecret, ct);
-            apiUrl = cfg.apiUrl;
-            apiKey = cfg.apiKey;
-            effectiveModelName = model.ModelName;
-            platformIdForLog = model.PlatformId;
-            if (!string.IsNullOrWhiteSpace(model.PlatformId))
+            var platform = await _db.LLMPlatforms.Find(p => p.Id == requestedPlatformId && p.Enabled).FirstOrDefaultAsync(ct);
+            if (platform != null)
             {
-                var plt = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync(ct);
-                platformNameForLog = plt?.Name;
-            }
-        }
-        else
-        {
-            apiUrl = platform!.ApiUrl;
-            apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
-            effectiveModelName = requestedModelName ?? string.Empty;
-            platformIdForLog = platform.Id;
-            platformNameForLog = platform.Name;
-            if (string.IsNullOrWhiteSpace(effectiveModelName))
-            {
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "未提供 modelName");
+                apiUrl = platform.ApiUrl;
+                apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+                effectiveModelName = requestedModelName;
+                platformIdForLog = platform.Id;
+                platformNameForLog = platform.Name;
+                _logger.LogDebug("[Vision API] 使用调度器解析结果: platformId={PlatformId}, modelName={ModelName}",
+                    requestedPlatformId, requestedModelName);
             }
         }
 
-        if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
+        // 回退路径 1：通过 modelId 查询 LLMModels 数据库
+        if (string.IsNullOrWhiteSpace(apiUrl) && !string.IsNullOrWhiteSpace(requestedModelId))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "Vision API 配置不完整");
+            var model = await _db.LLMModels.Find(m => m.Id == requestedModelId && m.Enabled).FirstOrDefaultAsync(ct);
+            if (model != null)
+            {
+                var cfg = await ResolveApiConfigForModelAsync(model, jwtSecret, ct);
+                apiUrl = cfg.apiUrl;
+                apiKey = cfg.apiKey;
+                effectiveModelName = model.ModelName;
+                platformIdForLog = model.PlatformId;
+                if (!string.IsNullOrWhiteSpace(model.PlatformId))
+                {
+                    var plt = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync(ct);
+                    platformNameForLog = plt?.Name;
+                }
+                _logger.LogDebug("[Vision API] 通过 modelId 查询: modelId={ModelId}, modelName={ModelName}",
+                    requestedModelId, effectiveModelName);
+            }
+        }
+
+        // 回退路径 2：使用默认的 IsImageGen 模型
+        if (string.IsNullOrWhiteSpace(apiUrl))
+        {
+            var defaultModel = await _db.LLMModels.Find(m => m.IsImageGen && m.Enabled).FirstOrDefaultAsync(ct);
+            if (defaultModel != null)
+            {
+                var cfg = await ResolveApiConfigForModelAsync(defaultModel, jwtSecret, ct);
+                apiUrl = cfg.apiUrl;
+                apiKey = cfg.apiKey;
+                effectiveModelName = defaultModel.ModelName;
+                platformIdForLog = defaultModel.PlatformId;
+                if (!string.IsNullOrWhiteSpace(defaultModel.PlatformId))
+                {
+                    var plt = await _db.LLMPlatforms.Find(p => p.Id == defaultModel.PlatformId).FirstOrDefaultAsync(ct);
+                    platformNameForLog = plt?.Name;
+                }
+                _logger.LogWarning("[Vision API] 使用默认模型回退: modelName={ModelName}（调度器解析可能失败）", effectiveModelName);
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(effectiveModelName))
+        {
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "未配置可用的生图模型或 Vision API 配置不完整");
         }
 
         // 构建端点 URL（使用 chat/completions）
@@ -1191,23 +1198,40 @@ public class OpenAIImageClient
         string? logId = null;
         if (_logWriter != null)
         {
-            // 构建日志用的请求体（不含完整 base64，但包含 sha256 用于 curl 重放）
+            // 构建日志用的请求体（贴近真实 Vision API 格式，但用 COS URL 替代 base64）
+            // 每个图片包含 ref(@imgN)、label 便于识别
+            var logContentItems = new List<object>
+            {
+                new { type = "text", text = prompt }
+            };
+            foreach (var (img, idx) in imageRefs.Select((x, i) => (x, i)))
+            {
+                logContentItems.Add(new
+                {
+                    type = "image_url",
+                    position = idx + 1,
+                    @ref = $"@img{img.RefId}",
+                    label = img.Label,
+                    image_url = new
+                    {
+                        url = img.CosUrl ?? $"[sha256:{img.Sha256}]",
+                        sha256 = img.Sha256,
+                        base64_length = img.Base64.Length
+                    }
+                });
+            }
             var logRequestBody = JsonSerializer.Serialize(new
             {
                 model = effectiveModelName,
                 max_tokens = 4096,
-                image_count = imageRefs.Count,
-                image_refs = imageRefs.Select((img, idx) => new
+                messages = new[]
                 {
-                    position = idx + 1,
-                    ref_id = img.RefId,
-                    label = img.Label,
-                    mime = img.MimeType,
-                    sha256 = img.Sha256,
-                    base64_length = img.Base64.Length
-                }),
-                prompt = prompt, // 完整 prompt 用于重放
-                request_type = "vision-multi-image"
+                    new
+                    {
+                        role = "user",
+                        content = logContentItems
+                    }
+                }
             });
             var reqLogJson = LlmLogRedactor.RedactJson(logRequestBody);
 
