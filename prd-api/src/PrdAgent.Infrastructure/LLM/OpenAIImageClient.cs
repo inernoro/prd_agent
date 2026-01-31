@@ -483,6 +483,19 @@ public class OpenAIImageClient
                     {
                         reqJsonInner = JsonSerializer.Serialize((OpenAIImageRequest)reqObj, OpenAIImageJsonContext.Default.OpenAIImageRequest);
                     }
+
+                    // === [DEBUG] Log the full request being sent to image generation API (nanobanana) ===
+                    _logger.LogInformation(
+                        "[OpenAIImageClient] Sending request to image gen API:\n" +
+                        "  Endpoint: {Endpoint}\n" +
+                        "  Model: {Model}\n" +
+                        "  Provider: {Provider}\n" +
+                        "  RequestBody: {RequestBody}",
+                        targetUriInner.ToString(),
+                        effectiveModelName,
+                        providerForLog,
+                        reqJsonInner);
+
                     var contentInner = new StringContent(reqJsonInner, Encoding.UTF8, "application/json");
                     return await httpClient.PostAsync(targetUriInner, contentInner, token);
                 }
@@ -557,6 +570,21 @@ public class OpenAIImageClient
                         _logger.LogWarning("Unexpected reqObj type for image edit: {Type}", reqObj.GetType().Name);
                         break;
                 }
+
+                // === [DEBUG] Log the img2img request being sent to image generation API ===
+                _logger.LogInformation(
+                    "[OpenAIImageClient] Sending img2img request to image gen API:\n" +
+                    "  Endpoint: {Endpoint}\n" +
+                    "  Model: {Model}\n" +
+                    "  Provider: {Provider}\n" +
+                    "  Prompt: {Prompt}\n" +
+                    "  InitImage Size: {ImageSize} bytes\n" +
+                    "  RequestType: multipart/form-data (img2img)",
+                    targetUriInner.ToString(),
+                    effectiveModelName,
+                    providerForLog,
+                    prompt.Length > 200 ? prompt[..200] + "..." : prompt,
+                    imgBytes.Length);
 
                 return await httpClient.PostAsync(targetUriInner, mp, token);
             }

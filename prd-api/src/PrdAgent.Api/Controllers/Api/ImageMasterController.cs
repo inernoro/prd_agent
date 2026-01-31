@@ -1222,6 +1222,39 @@ public class ImageMasterController : ControllerBase
         try
         {
             var adminId = GetAdminId();
+
+            // === [DEBUG] Log incoming request body from frontend ===
+            var imageRefsDebug = request?.ImageRefs != null && request.ImageRefs.Count > 0
+                ? string.Join(", ", request.ImageRefs.Select(r =>
+                    $"@img{r.RefId}:{r.Label}(sha={r.AssetSha256?[..Math.Min(8, r.AssetSha256?.Length ?? 0)]}...)"))
+                : "(none)";
+            _logger.LogInformation(
+                "[CreateWorkspaceImageGenRun] Incoming Request:\n" +
+                "  TraceId: {TraceId}\n" +
+                "  WorkspaceId: {WorkspaceId}\n" +
+                "  AdminId: {AdminId}\n" +
+                "  Prompt: {Prompt}\n" +
+                "  TargetKey: {TargetKey}\n" +
+                "  ConfigModelId: {ConfigModelId}\n" +
+                "  PlatformId: {PlatformId}\n" +
+                "  ModelId: {ModelId}\n" +
+                "  Size: {Size}\n" +
+                "  InitImageAssetSha256: {InitSha}\n" +
+                "  ImageRefs Count: {ImageRefsCount}\n" +
+                "  ImageRefs: {ImageRefs}",
+                traceId,
+                id,
+                adminId,
+                request?.Prompt,
+                request?.TargetKey,
+                request?.ConfigModelId,
+                request?.PlatformId,
+                request?.ModelId,
+                request?.Size,
+                request?.InitImageAssetSha256,
+                request?.ImageRefs?.Count ?? 0,
+                imageRefsDebug);
+
             var wid = (id ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
 
