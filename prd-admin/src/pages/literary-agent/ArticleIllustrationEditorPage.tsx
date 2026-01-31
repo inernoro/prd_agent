@@ -28,7 +28,7 @@ import {
   activateReferenceImageConfig,
   deactivateReferenceImageConfig,
 } from '@/services';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Eye, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
@@ -1638,6 +1638,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       {/* 左侧：文章编辑器 */}
       <div className="flex-1 min-w-0 flex flex-col gap-4">
         <GlassCard glow className="flex-1 min-h-0 flex flex-col">
+          {/* 精简头部：标题 + 模型信息 */}
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
@@ -1648,142 +1649,41 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
               
               {/* 模型信息展示 - 紧凑设计 */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 {mainModel && (
                   <div
-                    className="flex items-center gap-1.5 px-2 py-1 rounded-[6px] border transition-colors hover:bg-white/5"
-                    style={{
-                      background: 'rgba(59, 130, 246, 0.05)',
-                      borderColor: 'rgba(59, 130, 246, 0.15)',
-                    }}
-                    title="标记生成使用的主模型"
+                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
+                    style={{ background: 'rgba(59, 130, 246, 0.1)', color: '#60A5FA' }}
+                    title="标记生成模型"
                   >
-                    <Sparkles size={11} style={{ color: '#60A5FA' }} />
-                    <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>标记</span>
-                    <span className="text-[10px] font-medium" style={{ color: 'rgba(255,255,255,0.9)' }}>
-                      {mainModel.modelName || mainModel.name}
-                    </span>
+                    <Sparkles size={10} />
+                    {mainModel.modelName || mainModel.name}
                   </div>
                 )}
                 {imageGenModel ? (
                   <div
-                    className="flex items-center gap-1.5 px-2 py-1 rounded-[6px] border transition-colors hover:bg-white/5"
-                    style={{
-                      background: 'rgba(139, 92, 246, 0.05)',
-                      borderColor: 'rgba(139, 92, 246, 0.15)',
-                    }}
-                    title="配图生成使用的绘图模型"
+                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
+                    style={{ background: 'rgba(139, 92, 246, 0.1)', color: '#A78BFA' }}
+                    title="生图模型"
                   >
-                    <Sparkles size={11} style={{ color: '#A78BFA' }} />
-                    <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>生图</span>
-                    <span className="text-[10px] font-medium" style={{ color: 'rgba(255,255,255,0.9)' }}>
-                      {imageGenModel.modelName || imageGenModel.name}
-                    </span>
+                    <Sparkles size={10} />
+                    {imageGenModel.modelName || imageGenModel.name}
                   </div>
                 ) : imageGenModelError ? (
-                  <div className="text-[10px] px-2 py-1 rounded-[6px] border border-red-500/20 text-red-400 bg-red-500/5">
-                    生图模型不可用
+                  <div className="text-[10px] px-1.5 py-0.5 rounded text-red-400 bg-red-500/10">
+                    生图不可用
                   </div>
                 ) : null}
               </div>
             </div>
 
             <div className="flex items-center gap-2">
-              {phase === 0 && uploadedFileName && ( // Upload
+              {phase === 0 && uploadedFileName && (
                 <Button size="sm" variant="primary" onClick={handleEnterPreview}>
                   <Edit2 size={14} />
                   进入预览
                 </Button>
               )}
-            </div>
-          </div>
-
-          {/* 配置状态栏：系统提示词 + 风格图 + 水印 */}
-          <div className="mb-2">
-            <div className="rounded-[10px] py-1.5 flex items-center gap-2 flex-wrap">
-              {/* 系统提示词配置项 - 点击直接编辑 */}
-              <div
-                className="flex items-center gap-1.5 px-2 py-1 rounded-[6px] border transition-all hover:bg-white/10 cursor-pointer active:scale-[0.98]"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.03)',
-                  borderColor: 'rgba(255, 255, 255, 0.08)',
-                }}
-                onClick={() => {
-                  if (selectedPrompt) {
-                    handleEditPrompt(selectedPrompt);
-                  } else {
-                    setPromptPreviewOpen(true);
-                  }
-                }}
-                title={selectedPrompt ? '点击编辑提示词' : '点击选择提示词'}
-              >
-                <FileText size={11} style={{ color: '#93C5FD' }} />
-                <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>提示词</span>
-                <span className="text-[10px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                  {selectedPrompt?.title || '未选择'}
-                </span>
-              </div>
-
-              {/* 风格图配置项 - 点击直接编辑 */}
-              <div
-                className="flex items-center gap-1.5 px-2 py-1 rounded-[6px] border transition-all hover:bg-white/10 cursor-pointer active:scale-[0.98]"
-                style={{
-                  background: referenceImageConfigs.find(c => c.isActive) ? 'rgba(168, 85, 247, 0.08)' : 'rgba(255, 255, 255, 0.03)',
-                  borderColor: referenceImageConfigs.find(c => c.isActive) ? 'rgba(168, 85, 247, 0.2)' : 'rgba(255, 255, 255, 0.08)',
-                }}
-                onClick={() => {
-                  const activeRefConfig = referenceImageConfigs.find(c => c.isActive);
-                  if (activeRefConfig) {
-                    setEditingRefConfig({ ...activeRefConfig });
-                    setEditingRefConfigOpen(true);
-                  } else {
-                    setPromptPreviewOpen(true);
-                  }
-                }}
-                title={referenceImageConfigs.find(c => c.isActive) ? '点击编辑风格图' : '点击选择风格图'}
-              >
-                <ImageIcon size={11} style={{ color: referenceImageConfigs.find(c => c.isActive) ? '#C084FC' : '#9CA3AF' }} />
-                <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>风格图</span>
-                <span className="text-[10px] font-medium" style={{ color: referenceImageConfigs.find(c => c.isActive) ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {referenceImageConfigs.find(c => c.isActive)?.name || '未选择'}
-                </span>
-              </div>
-
-              {/* 水印配置项 - 点击直接编辑 */}
-              <div
-                className="flex items-center gap-1.5 px-2 py-1 rounded-[6px] border transition-all hover:bg-white/10 cursor-pointer active:scale-[0.98]"
-                style={{
-                  background: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.08)' : 'rgba(255, 255, 255, 0.03)',
-                  borderColor: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255, 255, 255, 0.08)',
-                }}
-                onClick={() => {
-                  // 先打开配置弹窗，然后通过 useEffect 延迟触发水印编辑
-                  setPendingWatermarkEdit(true);
-                  setPromptPreviewOpen(true);
-                }}
-                title={watermarkStatus.enabled ? '点击编辑水印' : '点击新建水印'}
-              >
-                <Sparkles size={11} style={{ color: watermarkStatus.enabled ? '#FBBF24' : '#9CA3AF' }} />
-                <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>水印</span>
-                <span className="text-[10px] font-medium" style={{ color: watermarkStatus.enabled ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {watermarkStatus.enabled ? (watermarkStatus.name || '默认水印') : '未启用'}
-                </span>
-              </div>
-              
-              {/* 按钮 */}
-              <div className="flex-1" />
-              <div className="shrink-0">
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  className="h-7 px-2 text-xs hover:bg-white/5"
-                  onClick={() => setPromptPreviewOpen(true)}
-                  title="管理配置"
-                >
-                  <Eye size={12} className="mr-1.5 opacity-70" />
-                  配置
-                </Button>
-              </div>
             </div>
           </div>
 
@@ -1925,10 +1825,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       </div>
 
       {/* 右侧：工作台 */}
-      <div className="w-96 flex flex-col gap-4">
-        {/* 顶部操作按钮 - 使用普通 div 避免 backdrop-filter 与按钮阴影的渲染冲突 */}
+      <div className="w-96 flex flex-col gap-3">
+        {/* 顶部：工作流进度 + 配置折叠区 */}
         <div
-          className="rounded-[16px] p-4"
+          className="rounded-[16px] p-3"
           style={{
             background: 'linear-gradient(180deg, rgba(18, 18, 22, 0.85) 0%, rgba(12, 12, 15, 0.92) 100%)',
             border: '1px solid rgba(255, 255, 255, 0.12)',
@@ -1957,39 +1857,119 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               {isBusy ? '生成中...' : activeButton.label}
             </Button>
           )}
+
+          {/* 配置区 - 单行布局：齿轮 | 三个配置项 | 配置按钮 */}
+          <div className="mt-3 pt-3 border-t flex items-center gap-2" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+            <Settings size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+            
+            {/* 三个配置项 */}
+            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+              {/* 提示词 */}
+              <div
+                className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors hover:bg-white/10 min-w-0 flex-1"
+                style={{ background: 'rgba(147, 197, 253, 0.08)', border: '1px solid rgba(147, 197, 253, 0.15)' }}
+                onClick={() => {
+                  if (selectedPrompt) handleEditPrompt(selectedPrompt);
+                  else setPromptPreviewOpen(true);
+                }}
+                title={selectedPrompt?.title || '未选择提示词'}
+              >
+                <FileText size={11} style={{ color: '#93C5FD', flexShrink: 0 }} />
+                <span className="text-[10px] truncate" style={{ color: selectedPrompt ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  {selectedPrompt?.title || '提示词'}
+                </span>
+              </div>
+              {/* 风格图 */}
+              <div
+                className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors hover:bg-white/10 min-w-0 flex-1"
+                style={{ 
+                  background: referenceImageConfigs.find(c => c.isActive) ? 'rgba(192, 132, 252, 0.08)' : 'rgba(255,255,255,0.03)', 
+                  border: referenceImageConfigs.find(c => c.isActive) ? '1px solid rgba(192, 132, 252, 0.15)' : '1px solid rgba(255,255,255,0.08)' 
+                }}
+                onClick={() => {
+                  const activeRefConfig = referenceImageConfigs.find(c => c.isActive);
+                  if (activeRefConfig) {
+                    setEditingRefConfig({ ...activeRefConfig });
+                    setEditingRefConfigOpen(true);
+                  } else {
+                    setPromptPreviewOpen(true);
+                  }
+                }}
+                title={referenceImageConfigs.find(c => c.isActive)?.name || '未选择风格图'}
+              >
+                <ImageIcon size={11} style={{ color: referenceImageConfigs.find(c => c.isActive) ? '#C084FC' : '#9CA3AF', flexShrink: 0 }} />
+                <span className="text-[10px] truncate" style={{ color: referenceImageConfigs.find(c => c.isActive) ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  {referenceImageConfigs.find(c => c.isActive)?.name || '风格图'}
+                </span>
+              </div>
+              {/* 水印 */}
+              <div
+                className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors hover:bg-white/10 min-w-0 flex-1"
+                style={{ 
+                  background: watermarkStatus.enabled ? 'rgba(251, 191, 36, 0.08)' : 'rgba(255,255,255,0.03)', 
+                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid rgba(255,255,255,0.08)' 
+                }}
+                onClick={() => {
+                  setPendingWatermarkEdit(true);
+                  setPromptPreviewOpen(true);
+                }}
+                title={watermarkStatus.enabled ? (watermarkStatus.name || '已启用水印') : '未启用水印'}
+              >
+                <Sparkles size={11} style={{ color: watermarkStatus.enabled ? '#FBBF24' : '#9CA3AF', flexShrink: 0 }} />
+                <span className="text-[10px] truncate" style={{ color: watermarkStatus.enabled ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  {watermarkStatus.enabled ? (watermarkStatus.name || '水印') : '水印'}
+                </span>
+              </div>
+            </div>
+
+            {/* 配置按钮 */}
+            <button
+              type="button"
+              className="text-[10px] px-2 py-1 rounded-md hover:bg-white/10 transition-colors flex-shrink-0"
+              style={{ color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.08)' }}
+              onClick={() => setPromptPreviewOpen(true)}
+              title="打开全部配置"
+            >
+              配置
+            </button>
+          </div>
         </div>
 
-        {/* 配图标记列表（含生图结果/重生成） - 使用普通 div 避免 backdrop-filter 渲染冲突 */}
-        {phase === 2 && ( // MarkersGenerated
+        {/* 配图标记列表 */}
+        {phase === 2 && (
           <div
-            className="flex-1 min-h-0 flex flex-col rounded-[16px] p-4"
+            className="flex-1 min-h-0 flex flex-col rounded-[16px] p-3"
             style={{
               background: 'linear-gradient(180deg, rgba(18, 18, 22, 0.85) 0%, rgba(12, 12, 15, 0.92) 100%)',
               border: '1px solid rgba(255, 255, 255, 0.12)',
               boxShadow: '0 8px 32px -4px rgba(0, 0, 0, 0.35), 0 4px 16px -2px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
             }}
           >
-            <div className="mb-3">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  配图标记列表
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    disabled={isBusy || !imageGenModel || markerRunItems.filter(x => x.status !== 'done' && x.status !== 'running').length === 0}
-                    onClick={handleBatchGenerate}
-                    title="生成所有未完成（失败或未生成）的配图"
-                  >
-                    <Sparkles size={14} />
-                    生成未完成
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={markerRunItems.filter(x => x.status === 'done').length === 0}
-                    onClick={async () => {
+            {/* 紧凑标题栏 */}
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>配图标记</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
+                  {markerRunItems.filter(x => x.status === 'done').length}/{markerRunItems.length}
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button
+                  size="xs"
+                  variant="primary"
+                  disabled={isBusy || !imageGenModel || markerRunItems.filter(x => x.status !== 'done' && x.status !== 'running').length === 0}
+                  onClick={handleBatchGenerate}
+                  title="生成未完成的配图"
+                  className="h-6 px-2 text-[10px]"
+                >
+                  <Sparkles size={10} />
+                  生成
+                </Button>
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  disabled={markerRunItems.filter(x => x.status === 'done').length === 0}
+                  onClick={async () => {
                       try {
                         const JSZip = (await import('jszip')).default;
                         const zip = new JSZip();
@@ -2083,28 +2063,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       }
                     }}
                     title="下载所有已生成的图片（ZIP 格式）"
+                    className="h-6 px-2 text-[10px]"
                   >
-                    <DownloadCloud size={14} />
-                    下载全部图片
+                    <DownloadCloud size={10} />
+                    下载
                   </Button>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="flex-1 h-2 rounded-full" style={{ background: 'rgba(255,255,255,0.05)' }}>
-                  <div 
-                    className="h-full rounded-full transition-all duration-300" 
-                    style={{ 
-                      width: `${markerRunItems.length > 0 ? (markerRunItems.filter(x => x.status === 'done').length / markerRunItems.length * 100) : 0}%`,
-                      background: 'linear-gradient(90deg, rgba(34, 197, 94, 0.8), rgba(34, 197, 94, 0.6))'
-                    }}
-                  />
-                </div>
-                <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                  {markerRunItems.filter(x => x.status === 'done').length}/{markerRunItems.length}
-                </div>
               </div>
             </div>
-            {/* 已移动到左侧顶部：生图模型显示 */}
 
             <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-2">
               {markerRunItems.map((it, idx) => {
