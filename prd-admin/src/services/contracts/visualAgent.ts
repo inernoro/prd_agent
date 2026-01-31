@@ -170,7 +170,24 @@ export type CreateWorkspaceImageGenRunInput = {
   modelId?: string;
   size?: string;
   responseFormat?: 'url' | 'b64_json';
+  /** 单图场景向后兼容 */
   initImageAssetSha256?: string;
+  /** 多图引用列表（新架构） */
+  imageRefs?: ImageRefForBackend[];
+};
+
+/** 图片引用（发送给后端） */
+export type ImageRefForBackend = {
+  /** 引用 ID，对应 @img1, @img2 中的数字 */
+  refId: number;
+  /** 图片资产 SHA256 */
+  assetSha256: string;
+  /** 图片 URL（备用） */
+  url: string;
+  /** 用户标签 */
+  label: string;
+  /** 可选角色 */
+  role?: 'target' | 'reference' | 'style' | 'background';
 };
 
 export type CreateWorkspaceImageGenRunContract = (args: {

@@ -1296,6 +1296,20 @@ public class ImageMasterController : ControllerBase
                 h: request?.H,
                 ct: ct);
 
+            // 转换多图引用（新架构）
+            List<PrdAgent.Core.Models.MultiImage.ImageRefInput>? imageRefs = null;
+            if (request?.ImageRefs != null && request.ImageRefs.Count > 0)
+            {
+                imageRefs = request.ImageRefs.Select(dto => new PrdAgent.Core.Models.MultiImage.ImageRefInput
+                {
+                    RefId = dto.RefId,
+                    AssetSha256 = (dto.AssetSha256 ?? string.Empty).Trim().ToLowerInvariant(),
+                    Url = dto.Url ?? string.Empty,
+                    Label = dto.Label ?? string.Empty,
+                    Role = dto.Role
+                }).ToList();
+            }
+
             var run = new ImageGenRun
             {
                 OwnerAdminId = adminId,
@@ -1319,6 +1333,7 @@ public class ImageMasterController : ControllerBase
                 WorkspaceId = wid,
                 TargetCanvasKey = targetKey,
                 InitImageAssetSha256 = initSha,
+                ImageRefs = imageRefs, // 多图引用（新架构）
                 TargetX = request?.X,
                 TargetY = request?.Y,
                 TargetW = request?.W,
@@ -2317,7 +2332,48 @@ public class CreateWorkspaceImageGenRunRequest
     public string? Size { get; set; }
     public string? ResponseFormat { get; set; } // url | b64_json
 
+    /// <summary>
+    /// 单图场景向后兼容（被 ImageRefs 取代）
+    /// </summary>
     public string? InitImageAssetSha256 { get; set; }
+
+    /// <summary>
+    /// 多图引用列表（新架构）。
+    /// 前端传递 @imgN 对应的图片列表。
+    /// 示例：[{"refId": 1, "assetSha256": "abc...", "url": "...", "label": "风格图"}]
+    /// </summary>
+    public List<ImageRefInputDto>? ImageRefs { get; set; }
+}
+
+/// <summary>
+/// 图片引用输入 DTO
+/// </summary>
+public class ImageRefInputDto
+{
+    /// <summary>
+    /// 引用 ID，对应前端的 @img1, @img2 中的数字
+    /// </summary>
+    public int RefId { get; set; }
+
+    /// <summary>
+    /// 图片资产 SHA256（用于从 COS 读取原图）
+    /// </summary>
+    public string AssetSha256 { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 图片 URL（展示用，或作为 AssetSha256 的备用）
+    /// </summary>
+    public string Url { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 用户给图片的标签/描述
+    /// </summary>
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 可选：图片角色
+    /// </summary>
+    public string? Role { get; set; }
 }
 
 public class CreateSessionRequest

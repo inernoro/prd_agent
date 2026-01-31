@@ -1,4 +1,5 @@
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models.MultiImage;
 
 namespace PrdAgent.Core.Models;
 
@@ -107,8 +108,15 @@ public class ImageGenRun
 
     /// <summary>
     /// 可选：ImageMaster 场景下，用于图生图的首帧资产 sha256（服务端读取，不依赖前端长连接）。
+    /// 单图场景向后兼容使用。
     /// </summary>
     public string? InitImageAssetSha256 { get; set; }
+
+    /// <summary>
+    /// 多图引用列表（新架构：支持多图参考）。
+    /// 前端传递的 @imgN 引用映射到具体的图片资产。
+    /// </summary>
+    public List<ImageRefInput>? ImageRefs { get; set; }
 
     /// <summary>
     /// 可选：ImageMaster 场景下，为了在“任务创建后即使前端关闭也能恢复占位”，服务端可写入占位位置信息。

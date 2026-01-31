@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Models.MultiImage;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -221,17 +222,76 @@ public class ImageGenRunWorker : BackgroundService
 
                         var requestedModelId = !string.IsNullOrWhiteSpace(run.ConfigModelId) ? run.ConfigModelId : run.ModelId;
 
-                        // ImageMaster：支持“首帧资产 sha”图生图（服务端读取；前端可关闭页面）
+                        // 多图处理：解析 @imgN 引用，构建增强 prompt，加载图片
                         string? initImageBase64 = null;
-                        var initSha = (run.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
-                        if (!string.IsNullOrWhiteSpace(initSha) && initSha.Length == 64 && Regex.IsMatch(initSha, "^[0-9a-f]{64}$"))
+                        var finalPrompt = curPrompt;
+                        var multiImageService = scope.ServiceProvider.GetRequiredService<IMultiImageDomainService>();
+
+                        // 1. 如果有 ImageRefs（新架构），使用 MultiImageDomainService 处理
+                        if (run.ImageRefs != null && run.ImageRefs.Count > 0)
                         {
-                            var found = await assetStorage.TryReadByShaAsync(initSha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                            if (found != null && found.Value.bytes.Length > 0)
+                            var parseResult = multiImageService.ParsePromptRefs(curPrompt, run.ImageRefs);
+
+                            if (parseResult.IsValid && parseResult.ResolvedRefs.Count > 0)
                             {
-                                var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
-                                var b64 = Convert.ToBase64String(found.Value.bytes);
-                                initImageBase64 = $"data:{mime};base64,{b64}";
+                                // 构建增强 prompt（包含图片对照表）
+                                finalPrompt = await multiImageService.BuildFinalPromptAsync(
+                                    curPrompt,
+                                    parseResult.ResolvedRefs,
+                                    ct);
+
+                                _logger.LogInformation(
+                                    "[多图处理] RunId={RunId}, 引用数={RefCount}, 原始Prompt=\"{Original}\", 增强Prompt=\"{Enhanced}\"",
+                                    run.Id,
+                                    parseResult.ResolvedRefs.Count,
+                                    curPrompt.Length > 50 ? curPrompt[..50] + "..." : curPrompt,
+                                    finalPrompt.Length > 100 ? finalPrompt[..100] + "..." : finalPrompt);
+
+                                // 加载第一张图作为 initImage（目前 OpenAIImageClient 只支持单图）
+                                var firstRef = parseResult.ResolvedRefs.FirstOrDefault();
+                                if (firstRef != null && !string.IsNullOrWhiteSpace(firstRef.AssetSha256))
+                                {
+                                    var sha = firstRef.AssetSha256.Trim().ToLowerInvariant();
+                                    if (sha.Length == 64 && Regex.IsMatch(sha, "^[0-9a-f]{64}$"))
+                                    {
+                                        var found = await assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                                        if (found != null && found.Value.bytes.Length > 0)
+                                        {
+                                            var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
+                                            var b64 = Convert.ToBase64String(found.Value.bytes);
+                                            initImageBase64 = $"data:{mime};base64,{b64}";
+                                            _logger.LogDebug("[多图处理] 使用第一张图 @img{RefId} 作为参考图", firstRef.RefId);
+                                        }
+                                    }
+                                }
+
+                                // 记录多图信息（为后续完整多图支持做准备）
+                                if (parseResult.ResolvedRefs.Count > 1)
+                                {
+                                    _logger.LogInformation(
+                                        "[多图处理] 检测到多图场景，当前仅使用第一张。引用列表: {Refs}",
+                                        string.Join(", ", parseResult.ResolvedRefs.Select(r => $"@img{r.RefId}:{r.Label}")));
+                                }
+                            }
+
+                            if (parseResult.Warnings.Count > 0)
+                            {
+                                _logger.LogWarning("[多图处理] 解析警告: {Warnings}", string.Join("; ", parseResult.Warnings));
+                            }
+                        }
+                        // 2. 回退：使用 InitImageAssetSha256（单图兼容）
+                        else
+                        {
+                            var initSha = (run.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
+                            if (!string.IsNullOrWhiteSpace(initSha) && initSha.Length == 64 && Regex.IsMatch(initSha, "^[0-9a-f]{64}$"))
+                            {
+                                var found = await assetStorage.TryReadByShaAsync(initSha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                                if (found != null && found.Value.bytes.Length > 0)
+                                {
+                                    var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
+                                    var b64 = Convert.ToBase64String(found.Value.bytes);
+                                    initImageBase64 = $"data:{mime};base64,{b64}";
+                                }
                             }
                         }
 
@@ -270,8 +330,9 @@ public class ImageGenRunWorker : BackgroundService
 
                         _logger.LogInformation("[ImageGenRunWorker Debug] Calling GenerateAsync with appKey={AppKey}", run.AppKey ?? "(null)");
 
+                        // 使用增强后的 prompt（多图场景）或原始 prompt（单图/纯文本场景）
                         var res = await imageClient.GenerateAsync(
-                            curPrompt,
+                            finalPrompt,
                             n: 1,
                             size: reqSize,
                             responseFormat: run.ResponseFormat,
