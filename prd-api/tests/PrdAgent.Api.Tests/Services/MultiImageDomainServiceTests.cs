@@ -342,4 +342,250 @@ public class MultiImageDomainServiceTests
     }
 
     #endregion
+
+    #region 端到端详细流程测试（带完整日志输出）
+
+    /// <summary>
+    /// 端到端测试：模拟真实的多图请求流程，打印所有环节
+    /// 运行命令: dotnet test --filter "EndToEnd_MultiImage_FullFlowWithLogging" --logger "console;verbosity=detailed"
+    /// </summary>
+    [Fact]
+    public async Task EndToEnd_MultiImage_FullFlowWithLogging()
+    {
+        Console.WriteLine("\n" + new string('=', 80));
+        Console.WriteLine("【多图参考功能端到端测试】");
+        Console.WriteLine(new string('=', 80));
+
+        // ========== 1. 模拟前端输入 ==========
+        Console.WriteLine("\n【步骤1】模拟前端输入");
+        Console.WriteLine(new string('-', 40));
+
+        var userPrompt = "@img16@img17 把这两张图融合成一张";
+        var imageRefs = new List<ImageRefInput>
+        {
+            new()
+            {
+                RefId = 16,
+                AssetSha256 = "ae7a4a315940b54d4b07112a8188966268c386de38abe8bbbd457fa294cbf649",
+                Url = "https://example.com/style-ref.jpg",
+                Label = "风格参考图"
+            },
+            new()
+            {
+                RefId = 17,
+                AssetSha256 = "b2c3d4e5f678901234567890abcdef1234567890abcdef1234567890abcdef12",
+                Url = "https://example.com/target.jpg",
+                Label = "目标图片"
+            }
+        };
+
+        Console.WriteLine($"用户输入 Prompt: \"{userPrompt}\"");
+        Console.WriteLine($"前端传递的 imageRefs ({imageRefs.Count} 张):");
+        foreach (var img in imageRefs)
+        {
+            Console.WriteLine($"  - @img{img.RefId}: {img.Label}");
+            Console.WriteLine($"    SHA256: {img.AssetSha256}");
+            Console.WriteLine($"    URL: {img.Url}");
+        }
+
+        // ========== 2. 解析 @imgN 引用 ==========
+        Console.WriteLine("\n【步骤2】解析 @imgN 引用 (MultiImageDomainService.ParsePromptRefs)");
+        Console.WriteLine(new string('-', 40));
+
+        var parseResult = _service.ParsePromptRefs(userPrompt, imageRefs);
+
+        Console.WriteLine($"解析结果:");
+        Console.WriteLine($"  IsValid: {parseResult.IsValid}");
+        Console.WriteLine($"  IsMultiImage: {parseResult.IsMultiImage}");
+        Console.WriteLine($"  IsSingleImage: {parseResult.IsSingleImage}");
+        Console.WriteLine($"  IsTextOnly: {parseResult.IsTextOnly}");
+        Console.WriteLine($"  原始 Prompt: \"{parseResult.OriginalPrompt}\"");
+        Console.WriteLine($"  提到的 RefIds (按出现顺序): [{string.Join(", ", parseResult.MentionedRefIds)}]");
+        Console.WriteLine($"  解析出的图片引用 ({parseResult.ResolvedRefs.Count} 张):");
+        foreach (var r in parseResult.ResolvedRefs)
+        {
+            Console.WriteLine($"    - @img{r.RefId}: {r.Label} (出现顺序: {r.OccurrenceOrder})");
+            Console.WriteLine($"      SHA256: {r.AssetSha256}");
+        }
+        if (parseResult.Warnings.Count > 0)
+        {
+            Console.WriteLine($"  警告: {string.Join("; ", parseResult.Warnings)}");
+        }
+        if (parseResult.Errors.Count > 0)
+        {
+            Console.WriteLine($"  错误: {string.Join("; ", parseResult.Errors)}");
+        }
+
+        // ========== 3. 意图分析（规则匹配） ==========
+        Console.WriteLine("\n【步骤3】意图分析 (MultiImageDomainService.TryMatchByRules)");
+        Console.WriteLine(new string('-', 40));
+
+        var intentResult = _service.TryMatchByRules(userPrompt, parseResult.ResolvedRefs);
+
+        Console.WriteLine($"意图分析结果:");
+        Console.WriteLine($"  Success: {intentResult?.Success}");
+        Console.WriteLine($"  Confidence: {intentResult?.Confidence}");
+        Console.WriteLine($"  ImageRefCount: {intentResult?.ImageRefCount}");
+        Console.WriteLine($"  原始 Prompt: \"{intentResult?.OriginalPrompt}\"");
+
+        // ========== 4. 构建最终 Prompt ==========
+        Console.WriteLine("\n【步骤4】构建最终 Prompt (MultiImageDomainService.BuildFinalPromptAsync)");
+        Console.WriteLine(new string('-', 40));
+
+        var finalPrompt = await _service.BuildFinalPromptAsync(userPrompt, parseResult.ResolvedRefs);
+
+        Console.WriteLine($"最终发送给生图模型的 Prompt:");
+        Console.WriteLine(new string('-', 40));
+        Console.WriteLine(finalPrompt);
+        Console.WriteLine(new string('-', 40));
+
+        // ========== 5. 模拟 Worker 处理 ==========
+        Console.WriteLine("\n【步骤5】模拟 Worker 处理逻辑");
+        Console.WriteLine(new string('-', 40));
+
+        var firstRef = parseResult.ResolvedRefs.FirstOrDefault();
+        Console.WriteLine($"选择第一张图作为 initImage:");
+        Console.WriteLine($"  RefId: @img{firstRef?.RefId}");
+        Console.WriteLine($"  Label: {firstRef?.Label}");
+        Console.WriteLine($"  SHA256: {firstRef?.AssetSha256}");
+        Console.WriteLine($"  (Worker 会从 COS 读取此 SHA256 对应的图片作为参考图)");
+
+        // ========== 6. 模拟发送给生图 API ==========
+        Console.WriteLine("\n【步骤6】模拟发送给生图 API (OpenAIImageClient.GenerateAsync)");
+        Console.WriteLine(new string('-', 40));
+
+        Console.WriteLine($"请求参数:");
+        Console.WriteLine($"  prompt: \"{finalPrompt.Replace("\n", "\\n")}\"");
+        Console.WriteLine($"  initImageBase64: data:image/png;base64,<{firstRef?.AssetSha256}对应的图片>");
+        Console.WriteLine($"  initImageProvided: true");
+        Console.WriteLine($"  size: 1024x1024");
+        Console.WriteLine($"  responseFormat: url");
+
+        // ========== 验证 ==========
+        Console.WriteLine("\n【验证】");
+        Console.WriteLine(new string('-', 40));
+
+        parseResult.IsValid.ShouldBeTrue();
+        parseResult.IsMultiImage.ShouldBeTrue();
+        intentResult.ShouldNotBeNull();
+        intentResult!.Success.ShouldBeTrue();
+        finalPrompt.ShouldContain("图片对照表");
+        finalPrompt.ShouldContain("@img16 对应 风格参考图");
+        finalPrompt.ShouldContain("@img17 对应 目标图片");
+
+        Console.WriteLine("✅ 所有断言通过!");
+
+        Console.WriteLine("\n" + new string('=', 80));
+        Console.WriteLine("【测试完成】");
+        Console.WriteLine(new string('=', 80) + "\n");
+    }
+
+    /// <summary>
+    /// 端到端测试：单图场景
+    /// 运行命令: dotnet test --filter "EndToEnd_SingleImage_FullFlowWithLogging" --logger "console;verbosity=detailed"
+    /// </summary>
+    [Fact]
+    public async Task EndToEnd_SingleImage_FullFlowWithLogging()
+    {
+        Console.WriteLine("\n" + new string('=', 80));
+        Console.WriteLine("【单图参考功能端到端测试】");
+        Console.WriteLine(new string('=', 80));
+
+        // ========== 1. 模拟前端输入 ==========
+        Console.WriteLine("\n【步骤1】模拟前端输入");
+        Console.WriteLine(new string('-', 40));
+
+        var userPrompt = "@img1 把背景换成蓝天白云";
+        var imageRefs = new List<ImageRefInput>
+        {
+            new()
+            {
+                RefId = 1,
+                AssetSha256 = "abc123def456789012345678901234567890123456789012345678901234abcd",
+                Url = "https://example.com/product.jpg",
+                Label = "产品图片"
+            }
+        };
+
+        Console.WriteLine($"用户输入 Prompt: \"{userPrompt}\"");
+        Console.WriteLine($"前端传递的 imageRefs ({imageRefs.Count} 张):");
+        foreach (var img in imageRefs)
+        {
+            Console.WriteLine($"  - @img{img.RefId}: {img.Label}");
+            Console.WriteLine($"    SHA256: {img.AssetSha256}");
+        }
+
+        // ========== 2. 解析 ==========
+        Console.WriteLine("\n【步骤2】解析 @imgN 引用");
+        Console.WriteLine(new string('-', 40));
+
+        var parseResult = _service.ParsePromptRefs(userPrompt, imageRefs);
+        Console.WriteLine($"  IsValid: {parseResult.IsValid}");
+        Console.WriteLine($"  IsSingleImage: {parseResult.IsSingleImage}");
+        Console.WriteLine($"  解析出 {parseResult.ResolvedRefs.Count} 张图片引用");
+
+        // ========== 3. 构建最终 Prompt ==========
+        Console.WriteLine("\n【步骤3】构建最终 Prompt");
+        Console.WriteLine(new string('-', 40));
+
+        var finalPrompt = await _service.BuildFinalPromptAsync(userPrompt, parseResult.ResolvedRefs);
+
+        Console.WriteLine($"单图场景，保留原始 Prompt:");
+        Console.WriteLine($"  \"{finalPrompt}\"");
+
+        // ========== 验证 ==========
+        Console.WriteLine("\n【验证】");
+        Console.WriteLine(new string('-', 40));
+
+        parseResult.IsValid.ShouldBeTrue();
+        parseResult.IsSingleImage.ShouldBeTrue();
+        finalPrompt.ShouldBe(userPrompt); // 单图场景保留原始 prompt
+
+        Console.WriteLine("✅ 所有断言通过!");
+        Console.WriteLine("\n" + new string('=', 80) + "\n");
+    }
+
+    /// <summary>
+    /// 端到端测试：风格迁移场景
+    /// 运行命令: dotnet test --filter "EndToEnd_StyleTransfer_FullFlowWithLogging" --logger "console;verbosity=detailed"
+    /// </summary>
+    [Fact]
+    public async Task EndToEnd_StyleTransfer_FullFlowWithLogging()
+    {
+        Console.WriteLine("\n" + new string('=', 80));
+        Console.WriteLine("【风格迁移场景端到端测试】");
+        Console.WriteLine(new string('=', 80));
+
+        var userPrompt = "把 @img1 的风格应用到 @img2";
+        var imageRefs = new List<ImageRefInput>
+        {
+            new() { RefId = 1, AssetSha256 = "style_sha256_64chars_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Label = "梵高星空.jpg" },
+            new() { RefId = 2, AssetSha256 = "target_sha256_64chars_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Label = "我的照片.jpg" }
+        };
+
+        Console.WriteLine($"\n用户输入: \"{userPrompt}\"");
+        Console.WriteLine($"图片列表:");
+        foreach (var img in imageRefs)
+            Console.WriteLine($"  @img{img.RefId}: {img.Label}");
+
+        var parseResult = _service.ParsePromptRefs(userPrompt, imageRefs);
+        Console.WriteLine($"\n解析结果: 识别到 {parseResult.ResolvedRefs.Count} 张图片");
+        Console.WriteLine($"  按出现顺序: @img{parseResult.ResolvedRefs[0].RefId} → @img{parseResult.ResolvedRefs[1].RefId}");
+
+        var finalPrompt = await _service.BuildFinalPromptAsync(userPrompt, parseResult.ResolvedRefs);
+
+        Console.WriteLine($"\n最终 Prompt:");
+        Console.WriteLine(new string('-', 40));
+        Console.WriteLine(finalPrompt);
+        Console.WriteLine(new string('-', 40));
+
+        parseResult.IsMultiImage.ShouldBeTrue();
+        finalPrompt.ShouldContain("图片对照表");
+        finalPrompt.ShouldContain("@img1 对应 梵高星空.jpg");
+        finalPrompt.ShouldContain("@img2 对应 我的照片.jpg");
+
+        Console.WriteLine("\n✅ 测试通过!\n");
+    }
+
+    #endregion
 }
