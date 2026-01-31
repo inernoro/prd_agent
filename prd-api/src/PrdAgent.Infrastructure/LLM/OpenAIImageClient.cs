@@ -1182,6 +1182,72 @@ public class OpenAIImageClient
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "Vision API 配置不完整");
         }
 
+        // 构建端点 URL（使用 chat/completions）
+        var endpoint = OpenAICompatUrl.BuildEndpoint(apiUrl, "chat/completions");
+        Uri? endpointUri = null;
+        try { endpointUri = new Uri(endpoint); } catch { /* 忽略解析失败 */ }
+
+        // 数据库日志记录
+        string? logId = null;
+        if (_logWriter != null)
+        {
+            // 构建日志用的请求体（不含完整 base64）
+            var logRequestBody = JsonSerializer.Serialize(new
+            {
+                model = effectiveModelName,
+                max_tokens = 4096,
+                image_count = imageRefs.Count,
+                image_refs = imageRefs.Select((img, idx) => new
+                {
+                    position = idx + 1,
+                    ref_id = img.RefId,
+                    label = img.Label,
+                    mime = img.MimeType,
+                    base64_length = img.Base64.Length
+                }),
+                prompt_preview = prompt.Length > 500 ? prompt[..500] + "..." : prompt,
+                request_type = "vision-multi-image"
+            });
+            var reqLogJson = LlmLogRedactor.RedactJson(logRequestBody);
+
+            logId = await _logWriter.StartAsync(
+                new LlmLogStart(
+                    RequestId: requestId,
+                    Provider: "openai-vision",
+                    Model: effectiveModelName,
+                    ApiBase: endpointUri != null && endpointUri.IsAbsoluteUri ? $"{endpointUri.Scheme}://{endpointUri.Host}/" : null,
+                    Path: endpointUri != null && endpointUri.IsAbsoluteUri ? endpointUri.AbsolutePath.TrimStart('/') : "v1/chat/completions",
+                    HttpMethod: "POST",
+                    RequestHeadersRedacted: new Dictionary<string, string>
+                    {
+                        ["content-type"] = "application/json",
+                        ["Authorization"] = $"Bearer {LlmLogRedactor.RedactApiKey(apiKey)}"
+                    },
+                    RequestBodyRedacted: reqLogJson,
+                    RequestBodyHash: LlmLogRedactor.Sha256Hex(reqLogJson),
+                    QuestionText: prompt.Trim(),
+                    SystemPromptChars: null,
+                    SystemPromptHash: null,
+                    SystemPromptText: null,
+                    MessageCount: imageRefs.Count,
+                    GroupId: ctx?.GroupId,
+                    SessionId: ctx?.SessionId,
+                    UserId: ctx?.UserId,
+                    ViewRole: ctx?.ViewRole,
+                    DocumentChars: null,
+                    DocumentHash: null,
+                    UserPromptChars: prompt.Trim().Length,
+                    StartedAt: startedAt,
+                    RequestType: "visionImageGen",
+                    RequestPurpose: ctx?.RequestPurpose ?? "prd-agent-web::vision-image-gen",
+                    PlatformId: platformIdForLog,
+                    PlatformName: platformNameForLog,
+                    ModelResolutionType: ctx?.ModelResolutionType,
+                    ModelGroupId: ctx?.ModelGroupId,
+                    ModelGroupName: ctx?.ModelGroupName),
+                ct);
+        }
+
         // 构建 Vision API 请求
         var visionRequest = new Core.Models.MultiImage.VisionRequest
         {
@@ -1207,23 +1273,60 @@ public class OpenAIImageClient
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         });
 
-        // 日志：记录发送给 Vision API 的请求
+        // 构建清晰的请求日志（不含 base64，便于调试）
+        var imageOrderLog = new StringBuilder();
+        imageOrderLog.AppendLine($"  图片总数: {imageRefs.Count}");
+        imageOrderLog.AppendLine("  图片顺序 (与 Vision API content 数组顺序一致):");
+        for (int i = 0; i < imageRefs.Count; i++)
+        {
+            var img = imageRefs[i];
+            var base64Preview = img.Base64.Length > 50 ? img.Base64[..50] + "..." : img.Base64;
+            imageOrderLog.AppendLine($"    [{i + 1}] @img{img.RefId} = \"{img.Label}\" ({img.MimeType}, {img.Base64.Length} chars)");
+        }
+
+        // 构建可读的请求结构（不含完整 base64）
+        var prettyRequest = new
+        {
+            model = effectiveModelName,
+            max_tokens = 4096,
+            messages = new[]
+            {
+                new
+                {
+                    role = "user",
+                    content_structure = new object[]
+                    {
+                        new { type = "text", text_preview = prompt.Length > 300 ? prompt[..300] + "..." : prompt }
+                    }.Concat(imageRefs.Select((img, idx) => (object)new
+                    {
+                        type = "image_url",
+                        position = idx + 1,
+                        ref_id = $"@img{img.RefId}",
+                        label = img.Label,
+                        mime = img.MimeType,
+                        base64_length = img.Base64.Length
+                    })).ToArray()
+                }
+            }
+        };
+        var prettyRequestJson = JsonSerializer.Serialize(prettyRequest, new JsonSerializerOptions { WriteIndented = true });
+
         _logger.LogInformation(
-            "[OpenAIImageClient] Sending Vision API request (multi-image):\n" +
+            "\n========== [Vision API 多图请求] ==========\n" +
+            "【基本信息】\n" +
             "  Endpoint: {Endpoint}\n" +
             "  Model: {Model}\n" +
             "  Platform: {Platform}\n" +
-            "  ImageCount: {ImageCount}\n" +
-            "  ImageRefs: {ImageRefs}\n" +
-            "  Prompt: {Prompt}\n" +
-            "  RequestBody (truncated): {RequestBody}",
+            "\n【图片映射关系】\n{ImageOrder}" +
+            "\n【发送给大模型的提示词】\n{Prompt}\n" +
+            "\n【请求结构 (不含 base64)】\n{PrettyRequest}\n" +
+            "============================================",
             endpoint,
             effectiveModelName,
             platformNameForLog ?? platformIdForLog ?? "unknown",
-            imageRefs.Count,
-            string.Join(", ", imageRefs.Select(r => $"@img{r.RefId}:{r.Label}")),
-            prompt.Length > 200 ? prompt[..200] + "..." : prompt,
-            requestJson.Length > 1000 ? requestJson[..1000] + "..." : requestJson);
+            imageOrderLog.ToString(),
+            prompt,
+            prettyRequestJson);
 
         try
         {
@@ -1244,11 +1347,11 @@ public class OpenAIImageClient
 
             if (!resp.IsSuccessStatusCode)
             {
-                if (TryExtractUpstreamErrorMessage(respBody, out var errMsg))
-                {
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, $"Vision API 错误: {errMsg}");
-                }
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, $"Vision API 请求失败: {resp.StatusCode}");
+                var errorMsg = TryExtractUpstreamErrorMessage(respBody, out var errMsg)
+                    ? $"Vision API 错误: {errMsg}"
+                    : $"Vision API 请求失败: {resp.StatusCode}";
+                _logWriter?.MarkError(logId, errorMsg, (int)resp.StatusCode);
+                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, errorMsg);
             }
 
             // 解析响应
@@ -1259,12 +1362,14 @@ public class OpenAIImageClient
 
             if (visionResp?.Choices == null || visionResp.Choices.Count == 0)
             {
+                _logWriter?.MarkError(logId, "Vision API 响应无效（无 choices）");
                 return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "Vision API 响应无效（无 choices）");
             }
 
             var responseContent = visionResp.Choices[0].Message?.Content;
             if (string.IsNullOrWhiteSpace(responseContent))
             {
+                _logWriter?.MarkError(logId, "Vision API 响应无效（无内容）");
                 return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "Vision API 响应无效（无内容）");
             }
 
@@ -1323,28 +1428,59 @@ public class OpenAIImageClient
                     else
                     {
                         // 响应可能是文本描述而非图片
+                        var errMsg = $"Vision API 响应不包含图片数据: {(responseContent.Length > 100 ? responseContent[..100] + "..." : responseContent)}";
                         _logger.LogWarning("[Vision API] 响应不包含图片数据，可能是文本响应: {Content}",
                             responseContent.Length > 200 ? responseContent[..200] + "..." : responseContent);
-                        return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
-                            $"Vision API 响应不包含图片数据: {(responseContent.Length > 100 ? responseContent[..100] + "..." : responseContent)}");
+                        _logWriter?.MarkError(logId, errMsg);
+                        return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, errMsg);
                     }
                 }
                 catch
                 {
                     // 非 JSON 格式，可能是纯文本响应
+                    var errMsg = $"Vision API 响应格式不支持: {(responseContent.Length > 100 ? responseContent[..100] + "..." : responseContent)}";
                     _logger.LogWarning("[Vision API] 无法解析响应为图片: {Content}",
                         responseContent.Length > 200 ? responseContent[..200] + "..." : responseContent);
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
-                        $"Vision API 响应格式不支持: {(responseContent.Length > 100 ? responseContent[..100] + "..." : responseContent)}");
+                    _logWriter?.MarkError(logId, errMsg);
+                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, errMsg);
                 }
             }
+
+            var endedAt = DateTime.UtcNow;
+            var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;
 
             _logger.LogInformation(
                 "[OpenAIImageClient] Vision API 生成成功:\n" +
                 "  ImageCount: {ImageCount}\n" +
                 "  Duration: {Duration}ms",
                 images.Count,
-                (DateTime.UtcNow - startedAt).TotalMilliseconds);
+                durationMs);
+
+            // 记录成功日志
+            if (logId != null)
+            {
+                var resultUrl = images.FirstOrDefault()?.Url ?? images.FirstOrDefault()?.Base64?[..Math.Min(100, images.FirstOrDefault()?.Base64?.Length ?? 0)];
+                _logWriter?.MarkDone(
+                    logId,
+                    new LlmLogDone(
+                        StatusCode: (int)resp.StatusCode,
+                        ResponseHeaders: new Dictionary<string, string>
+                        {
+                            ["content-type"] = resp.Content.Headers.ContentType?.ToString() ?? "application/json"
+                        },
+                        InputTokens: null,
+                        OutputTokens: null,
+                        CacheCreationInputTokens: null,
+                        CacheReadInputTokens: null,
+                        TokenUsageSource: "missing",
+                        ImageSuccessCount: images.Count,
+                        AnswerText: $"[Vision API 生成成功] {images.Count} 张图片, URL: {resultUrl}",
+                        AssembledTextChars: respBody.Length,
+                        AssembledTextHash: LlmLogRedactor.Sha256Hex(respBody),
+                        Status: "succeeded",
+                        EndedAt: endedAt,
+                        DurationMs: durationMs));
+            }
 
             return ApiResponse<ImageGenResult>.Ok(new ImageGenResult
             {
@@ -1359,16 +1495,19 @@ public class OpenAIImageClient
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "[Vision API] 网络请求失败");
+            _logWriter?.MarkError(logId, $"Vision API 网络请求失败: {ex.Message}");
             return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
         }
         catch (TaskCanceledException ex) when (ex.CancellationToken == ct)
         {
             _logger.LogWarning("[Vision API] 请求被取消");
+            _logWriter?.MarkError(logId, "Vision API 请求被取消");
             return ApiResponse<ImageGenResult>.Fail("CANCELLED", "请求被取消");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[Vision API] 未知错误");
+            _logWriter?.MarkError(logId, $"Vision API 未知错误: {ex.Message}");
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INTERNAL_ERROR, ex.Message);
         }
     }
@@ -1386,8 +1525,8 @@ public class OpenAIImageClient
             new Core.Models.MultiImage.VisionTextContent { Text = prompt }
         };
 
-        // 按 RefId 顺序添加图片（与 prompt 中的 @imgN 对应）
-        foreach (var imgRef in imageRefs.OrderBy(r => r.RefId))
+        // 按传入顺序添加图片（调用方已按 OccurrenceOrder 排序，与【图片对照表】一致）
+        foreach (var imgRef in imageRefs)
         {
             content.Add(new Core.Models.MultiImage.VisionImageContent
             {

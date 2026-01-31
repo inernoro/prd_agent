@@ -18,8 +18,8 @@ public class MultiImageDomainService : IMultiImageDomainService
 {
     private readonly ILogger<MultiImageDomainService> _logger;
 
-    // 匹配 @imgN 格式（N 为 1-99 的数字）
-    private static readonly Regex ImageRefPattern = new(@"@img(\d{1,2})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    // 匹配 @imgN 格式（N 为 1-6 位数字，支持 @img1 到 @img999999）
+    private static readonly Regex ImageRefPattern = new(@"@img(\d{1,6})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     public MultiImageDomainService(ILogger<MultiImageDomainService> logger)
     {
