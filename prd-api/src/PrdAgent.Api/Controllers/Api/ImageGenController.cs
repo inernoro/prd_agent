@@ -127,7 +127,7 @@ public class ImageGenController : ControllerBase
         try
         {
             var appCallerCode = "prd-agent-web::image-gen.plan";
-            var llmClient = await _gateway.CreateClient(appCallerCode, "intent");
+            var llmClient = _gateway.CreateClient(appCallerCode, "intent");
             var requestContext = new LlmRequestContext(
                 RequestId: Guid.NewGuid().ToString("N"),
                 GroupId: null,
@@ -634,7 +634,7 @@ public class ImageGenController : ControllerBase
         try
         {
             var appCallerCode = "prd-agent-web::image-gen.extract-style";
-            var llmClient = await _gateway.CreateClient(appCallerCode, "vision");
+            var llmClient = _gateway.CreateClient(appCallerCode, "vision");
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: Guid.NewGuid().ToString("N"),
                 GroupId: null,

@@ -1036,7 +1036,10 @@ public class ImageGenRunWorker : BackgroundService
 
                 if (resolved != null)
                 {
-                    resolutionType = resolved.ResolutionType;
+                    if (Enum.TryParse<ModelResolutionType>(resolved.ResolutionType, out var parsedType))
+                    {
+                        resolutionType = parsedType;
+                    }
                     modelGroupId = resolved.ModelGroupId;
                     modelGroupName = resolved.ModelGroupName;
                     resolvedPlatformId = resolved.ActualPlatformId;
