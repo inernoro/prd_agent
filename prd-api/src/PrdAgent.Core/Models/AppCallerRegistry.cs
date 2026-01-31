@@ -171,6 +171,17 @@ public static class VisualAgent
         public const string Describe = "visual-agent.image.describe::vision";
     }
 
+    public static class Workspace
+    {
+        [AppCallerMetadata(
+            "工作区标题生成",
+            "根据提示词生成工作区标题",
+            ModelTypes = new[] { ModelTypes.Intent },
+            Category = "Workspace"
+        )]
+        public const string Title = "visual-agent.workspace-title::intent";
+    }
+
     public static class Compose
     {
         [AppCallerMetadata(
@@ -311,7 +322,7 @@ public static class OpenPlatform
 public static class Admin
 {
     public const string AppName = "PRD Agent Web";
-    
+
     public static class Lab
     {
         [AppCallerMetadata(
@@ -321,7 +332,7 @@ public static class Admin
             Category = "Testing"
         )]
         public const string Chat = "prd-agent-web.lab::chat";
-        
+
         [AppCallerMetadata(
             "实验室-视觉测试",
             "实验室功能的视觉模型测试",
@@ -329,7 +340,7 @@ public static class Admin
             Category = "Testing"
         )]
         public const string Vision = "prd-agent-web.lab::vision";
-        
+
         [AppCallerMetadata(
             "实验室-生成测试",
             "实验室功能的生成模型测试",
@@ -337,6 +348,41 @@ public static class Admin
             Category = "Testing"
         )]
         public const string Generation = "prd-agent-web.lab::generation";
+    }
+
+    public static class ImageGen
+    {
+        [AppCallerMetadata(
+            "图片生成规划",
+            "根据文档内容规划需要生成的图片",
+            ModelTypes = new[] { ModelTypes.Intent },
+            Category = "ImageGen"
+        )]
+        public const string Plan = "prd-agent-web.image-gen.plan::intent";
+
+        [AppCallerMetadata(
+            "图片生成",
+            "单张图片生成",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "ImageGen"
+        )]
+        public const string Generate = "prd-agent-web.image-gen.generate::generation";
+
+        [AppCallerMetadata(
+            "批量图片生成",
+            "批量生成多张图片",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "ImageGen"
+        )]
+        public const string BatchGenerate = "prd-agent-web.image-gen.batch-generate::generation";
+
+        [AppCallerMetadata(
+            "图片风格提取",
+            "从参考图片提取风格描述",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "ImageGen"
+        )]
+        public const string ExtractStyle = "prd-agent-web.image-gen.extract-style::vision";
     }
 }
 }

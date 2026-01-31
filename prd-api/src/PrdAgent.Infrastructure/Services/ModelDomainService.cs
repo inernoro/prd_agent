@@ -173,7 +173,7 @@ public class ModelDomainService : IModelDomainService
         if (safePrompt.Length > 200)
             safePrompt = safePrompt[..200];
 
-        var appCallerCode = "prd-agent-web::visual-agent.workspace-title";
+        var appCallerCode = "visual-agent.workspace-title::intent";
         var llmClient = _gateway.CreateClient(appCallerCode, "intent");
 
         var requestId = Guid.NewGuid().ToString("N");

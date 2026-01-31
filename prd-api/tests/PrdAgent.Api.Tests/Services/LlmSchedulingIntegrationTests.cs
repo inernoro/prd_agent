@@ -137,7 +137,7 @@ public class LlmSchedulingIntegrationTests
                 throw new InvalidOperationException("无法解析 imageGen 模型 platformId/modelId");
             }
             var directError = await TryCallAsync(() => CallImageGenGenerateAsync(httpAdmin, imageGenModel.PlatformId!, imageGenModel.ModelName, $"direct-{Guid.NewGuid():N}"));
-            var (directLog, directLogError) = await TryWaitLogAsync(httpAdmin, "prd-agent-web::image-gen.generate", startDirect, logTimeout);
+            var (directLog, directLogError) = await TryWaitLogAsync(httpAdmin, "prd-agent-web.image-gen.generate::generation", startDirect, logTimeout);
             if (directLog != null)
             {
                 directLog.ModelResolutionType.ShouldBe(ModelResolutionType.DirectModel.ToString());
@@ -145,13 +145,13 @@ public class LlmSchedulingIntegrationTests
             }
             else
             {
-                results.Add(new CaseResult("image-gen.generate / 直连", "prd-agent-web::image-gen.generate", "DirectModel", "MISSING_LOG", null, null, directError ?? directLogError));
+                results.Add(new CaseResult("image-gen.generate / 直连", "prd-agent-web.image-gen.generate::generation", "DirectModel", "MISSING_LOG", null, null, directError ?? directLogError));
             }
 
             // D) image-gen.plan（意图模型）
             var startPlan = DateTime.UtcNow;
             var planError = await TryCallAsync(() => CallImageGenPlanAsync(httpAdmin, $"plan-{Guid.NewGuid():N}"));
-            var (planLog, planLogError) = await TryWaitLogAsync(httpAdmin, "prd-agent-web::image-gen.plan", startPlan, logTimeout);
+            var (planLog, planLogError) = await TryWaitLogAsync(httpAdmin, "prd-agent-web.image-gen.plan::intent", startPlan, logTimeout);
             if (planLog != null)
             {
                 planLog.ModelResolutionType.ShouldNotBeNull();
@@ -159,13 +159,13 @@ public class LlmSchedulingIntegrationTests
             }
             else
             {
-                results.Add(new CaseResult("image-gen.plan", "prd-agent-web::image-gen.plan", "Any", "MISSING_LOG", null, null, planError ?? planLogError));
+                results.Add(new CaseResult("image-gen.plan", "prd-agent-web.image-gen.plan::intent", "Any", "MISSING_LOG", null, null, planError ?? planLogError));
             }
 
             // E) image-gen.batch-generate
             var startBatch = DateTime.UtcNow;
             var batchError = await TryCallAsync(() => CallImageGenBatchAsync(httpAdmin, imageGenModel.PlatformId!, imageGenModel.ModelName, $"batch-{Guid.NewGuid():N}"));
-            var (batchLog, batchLogError) = await TryWaitLogAsync(httpAdmin, "prd-agent-web::image-gen.batch-generate", startBatch, logTimeout);
+            var (batchLog, batchLogError) = await TryWaitLogAsync(httpAdmin, "prd-agent-web.image-gen.batch-generate::generation", startBatch, logTimeout);
             if (batchLog != null)
             {
                 batchLog.ModelResolutionType.ShouldNotBeNull();
@@ -173,7 +173,7 @@ public class LlmSchedulingIntegrationTests
             }
             else
             {
-                results.Add(new CaseResult("image-gen.batch-generate", "prd-agent-web::image-gen.batch-generate", "Any", "MISSING_LOG", null, null, batchError ?? batchLogError));
+                results.Add(new CaseResult("image-gen.batch-generate", "prd-agent-web.image-gen.batch-generate::generation", "Any", "MISSING_LOG", null, null, batchError ?? batchLogError));
             }
 
             // F) open-platform proxy
@@ -284,7 +284,7 @@ public class LlmSchedulingIntegrationTests
             // L) image-master generate title（工作区标题）
             var startTitle = DateTime.UtcNow;
             var titleError = await TryCallAsync(() => CallWorkspaceTitleAsync(httpAdmin, workspaceId, "城市夜景，赛博朋克风格"));
-            var (titleLog, titleLogError) = await TryWaitLogAsync(httpAdmin, "prd-agent-web::visual-agent.workspace-title", startTitle, logTimeout);
+            var (titleLog, titleLogError) = await TryWaitLogAsync(httpAdmin, "visual-agent.workspace-title::intent", startTitle, logTimeout);
             if (titleLog != null)
             {
                 titleLog.ModelResolutionType.ShouldNotBeNull();
@@ -292,7 +292,7 @@ public class LlmSchedulingIntegrationTests
             }
             else
             {
-                results.Add(new CaseResult("workspace title", "prd-agent-web::visual-agent.workspace-title", "Any", "MISSING_LOG", null, null, titleError ?? titleLogError));
+                results.Add(new CaseResult("workspace title", "visual-agent.workspace-title::intent", "Any", "MISSING_LOG", null, null, titleError ?? titleLogError));
             }
 
             // M) group name suggest（由创建群触发）

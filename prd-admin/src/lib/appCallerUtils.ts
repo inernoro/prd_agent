@@ -319,9 +319,10 @@ export function getFeatureDescriptionFromRequestPurpose(requestPurpose: string |
     'prd-agent-web.lab::vision': '管理后台：实验室视觉测试',
     'prd-agent-web.lab::generation': '管理后台：实验室生图测试',
     'prd-agent-web::model-lab.run': '管理后台：模型实验室',
-    'prd-agent-web::image-gen.plan': '管理后台：图片生成规划',
-    'prd-agent-web::image-gen.generate': '管理后台：图片生成',
-    'prd-agent-web::image-gen.batch-generate': '管理后台：批量图片生成',
+    'prd-agent-web.image-gen.plan::intent': '管理后台：图片生成规划',
+    'prd-agent-web.image-gen.generate::generation': '管理后台：图片生成',
+    'prd-agent-web.image-gen.batch-generate::generation': '管理后台：批量图片生成',
+    'prd-agent-web.image-gen.extract-style::vision': '管理后台：图片风格提取',
     'prd-agent-web::image-gen.run': '管理后台：图片生成任务',
   };
 
@@ -460,6 +461,10 @@ export function getFeatureDescription(parsed: ParsedAppCallerKey): string {
       'lab::chat': '对话测试',
       'lab::vision': '视觉测试',
       'lab::generation': '生图测试',
+      'image-gen.plan::intent': '图片生成规划',
+      'image-gen.generate::generation': '图片生成',
+      'image-gen.batch-generate::generation': '批量图片生成',
+      'image-gen.extract-style::vision': '图片风格提取',
     },
   };
   

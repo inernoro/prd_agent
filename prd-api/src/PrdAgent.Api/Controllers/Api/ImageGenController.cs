@@ -126,7 +126,7 @@ public class ImageGenController : ControllerBase
 
         try
         {
-            var appCallerCode = "prd-agent-web::image-gen.plan";
+            var appCallerCode = "prd-agent-web.image-gen.plan::intent";
             var llmClient = _gateway.CreateClient(appCallerCode, "intent");
             var requestContext = new LlmRequestContext(
                 RequestId: Guid.NewGuid().ToString("N"),
@@ -233,7 +233,7 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
         var modelName = (request?.ModelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
-        var appCallerCode = "prd-agent-web::image-gen.generate";
+        var appCallerCode = "prd-agent-web.image-gen.generate::generation";
         GatewayModelResolution? resolved = null;
         if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
         {
@@ -633,7 +633,7 @@ public class ImageGenController : ControllerBase
 
         try
         {
-            var appCallerCode = "prd-agent-web::image-gen.extract-style";
+            var appCallerCode = "prd-agent-web.image-gen.extract-style::vision";
             var llmClient = _gateway.CreateClient(appCallerCode, "vision");
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: Guid.NewGuid().ToString("N"),
@@ -730,7 +730,7 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
         var modelName = (request?.ModelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
-        var appCallerCode = "prd-agent-web::image-gen.batch-generate";
+        var appCallerCode = "prd-agent-web.image-gen.batch-generate::generation";
         GatewayModelResolution? resolved = null;
         if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
         {
