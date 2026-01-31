@@ -9,7 +9,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
-using static PrdAgent.Core.Models.AppCallerRegistry;
+using AppCallerRegistry = PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Infrastructure.Services;
 
@@ -173,7 +173,7 @@ public class ModelDomainService : IModelDomainService
         if (safePrompt.Length > 200)
             safePrompt = safePrompt[..200];
 
-        var appCallerCode = VisualAgent.Workspace.Title;
+        var appCallerCode = AppCallerRegistry.VisualAgent.Workspace.Title;
         var llmClient = _gateway.CreateClient(appCallerCode, "intent");
 
         var requestId = Guid.NewGuid().ToString("N");
