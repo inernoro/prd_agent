@@ -428,9 +428,15 @@ export function getFeatureDescription(parsed: ParsedAppCallerKey): string {
       'preview-ask.section::chat': '预览章节问答',
     },
     'visual-agent': {
-      'image::generation': '生成图片',
+      'image.text2img::generation': '文生图',
+      'image.img2img::generation': '图生图（单图参考）',
+      'image.vision::generation': '多图参考生成',
       'image::vision': '图片分析',
       'image::chat': '创意对话',
+      'image.describe::vision': '图片描述提取',
+      'workspace-title::intent': '工作区标题生成',
+      'compose::vision': '多图组合意图',
+      'compose::generation': '多图组合生成',
     },
     'literary-agent': {
       'content::chat': '内容生成',

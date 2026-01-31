@@ -1362,7 +1362,7 @@ public class ImageMasterController : ControllerBase
                 LastSeq = 0,
                 IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
                 CreatedAt = DateTime.UtcNow,
-                AppCallerCode = AppCallerRegistry.VisualAgent.Image.Generation,
+                AppCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img, // 默认文生图，Worker 会根据参考图动态调整
                 AppKey = AppKey, // 硬编码视觉创作的应用标识
                 WorkspaceId = wid,
                 TargetCanvasKey = targetKey,

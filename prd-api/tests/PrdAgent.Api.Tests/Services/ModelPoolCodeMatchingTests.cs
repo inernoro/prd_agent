@@ -31,7 +31,7 @@ public class ModelPoolCodeMatchingTests
     public async Task GetModelGroupsForApp_ShouldReturnBoundPools()
     {
         // Arrange - 使用 AppCallerRegistry 常量
-        var appCallerCode = AppCallerRegistry.VisualAgent.Image.Generation;
+        var appCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img;  // 默认文生图
         var modelType = "generation";
 
         // Act
@@ -120,7 +120,7 @@ public class ModelPoolCodeMatchingTests
     public async Task CreateImageGenRun_ShouldUseSelectedModelPool()
     {
         // 先获取可用的模型池 - 使用 AppCallerRegistry 常量
-        var appCallerCode = Uri.EscapeDataString(AppCallerRegistry.VisualAgent.Image.Generation);
+        var appCallerCode = Uri.EscapeDataString(AppCallerRegistry.VisualAgent.Image.Text2Img);
         var poolsResponse = await _client.GetAsync(
             $"/api/mds/model-groups/for-app?appCallerCode={appCallerCode}&modelType=generation");
         var poolsContent = await poolsResponse.Content.ReadAsStringAsync();

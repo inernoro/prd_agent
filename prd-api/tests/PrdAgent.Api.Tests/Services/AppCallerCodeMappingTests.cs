@@ -6,11 +6,11 @@ namespace PrdAgent.Api.Tests.Services;
 /// <summary>
 /// AppCallerCode 映射测试（CI 可运行）
 /// 验证：不同 appKey 映射到正确的 AppCallerCode
-/// 
+///
 /// 背景：文学创作和视觉创作使用不同的 AppCallerCode 命名：
-/// - visual-agent -> visual-agent.image::generation
+/// - visual-agent -> visual-agent.image.text2img::generation (默认文生图)
 /// - literary-agent -> literary-agent.illustration::generation（注意是 illustration，不是 image）
-/// 
+///
 /// 如果映射错误，会导致模型池匹配失败。
 /// </summary>
 public class AppCallerCodeMappingTests
@@ -25,25 +25,25 @@ public class AppCallerCodeMappingTests
 
         return appKey switch
         {
-            "visual-agent" => AppCallerRegistry.VisualAgent.Image.Generation,
+            "visual-agent" => AppCallerRegistry.VisualAgent.Image.Text2Img,  // 默认文生图
             "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Generation,
             _ => $"{appKey}.image::generation"
         };
     }
 
     [Fact]
-    public void VisualAgent_ShouldMapTo_VisualAgentImageGeneration()
+    public void VisualAgent_ShouldMapTo_VisualAgentText2Img()
     {
         // Arrange
         var appKey = "visual-agent";
-        var expectedCode = "visual-agent.image::generation";
+        var expectedCode = "visual-agent.image.text2img::generation";
 
         // Act
         var actualCode = ResolveAppCallerCode(appKey);
 
         // Assert
         Assert.Equal(expectedCode, actualCode);
-        Assert.Equal(AppCallerRegistry.VisualAgent.Image.Generation, actualCode);
+        Assert.Equal(AppCallerRegistry.VisualAgent.Image.Text2Img, actualCode);
     }
 
     [Fact]

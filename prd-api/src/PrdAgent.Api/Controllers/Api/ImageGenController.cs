@@ -16,6 +16,7 @@ using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services.VisualAgent;
 using System.Text.RegularExpressions;
 using PrdAgent.Core.Security;
+using static PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -126,7 +127,7 @@ public class ImageGenController : ControllerBase
 
         try
         {
-            var appCallerCode = "prd-agent-web.image-gen.plan::intent";
+            var appCallerCode = Admin.ImageGen.Plan;
             var llmClient = _gateway.CreateClient(appCallerCode, "intent");
             var requestContext = new LlmRequestContext(
                 RequestId: Guid.NewGuid().ToString("N"),
@@ -233,7 +234,7 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
         var modelName = (request?.ModelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
-        var appCallerCode = "prd-agent-web.image-gen.generate::generation";
+        var appCallerCode = Admin.ImageGen.Generate;
         GatewayModelResolution? resolved = null;
         if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
         {
@@ -633,7 +634,7 @@ public class ImageGenController : ControllerBase
 
         try
         {
-            var appCallerCode = "prd-agent-web.image-gen.extract-style::vision";
+            var appCallerCode = Admin.ImageGen.ExtractStyle;
             var llmClient = _gateway.CreateClient(appCallerCode, "vision");
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: Guid.NewGuid().ToString("N"),
@@ -730,7 +731,7 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
         var modelName = (request?.ModelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
-        var appCallerCode = "prd-agent-web.image-gen.batch-generate::generation";
+        var appCallerCode = Admin.ImageGen.BatchGenerate;
         GatewayModelResolution? resolved = null;
         if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
         {
@@ -1031,8 +1032,8 @@ public class ImageGenController : ControllerBase
         {
             resolvedAppCallerCode = appKey switch
             {
-                "visual-agent" => AppCallerRegistry.VisualAgent.Image.Generation,      // visual-agent.image::generation
-                "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Generation, // literary-agent.illustration::generation
+                "visual-agent" => VisualAgent.Image.Text2Img,  // 默认使用文生图，后续根据参考图切换
+                "literary-agent" => LiteraryAgent.Illustration.Generation,
                 _ => $"{appKey}.image::generation" // 其他应用回退默认命名
             };
         }
