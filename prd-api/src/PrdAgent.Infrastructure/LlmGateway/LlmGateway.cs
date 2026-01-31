@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway.Adapters;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
@@ -571,7 +572,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     RequestPurpose: request.AppCallerCode,
                     PlatformId: resolution.ActualPlatformId,
                     PlatformName: resolution.ActualPlatformName,
-                    ModelResolutionType: resolution.ResolutionType,
+                    ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
                     ModelGroupName: resolution.ModelGroupName),
                 ct);
@@ -712,7 +713,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     RequestPurpose: request.AppCallerCode,
                     PlatformId: resolution.ActualPlatformId,
                     PlatformName: resolution.ActualPlatformName,
-                    ModelResolutionType: resolution.ResolutionType,
+                    ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
                     ModelGroupName: resolution.ModelGroupName),
                 ct);
@@ -783,6 +784,21 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // ignore
         }
         return null;
+    }
+
+    private static ModelResolutionType? ParseResolutionType(string? resolutionType)
+    {
+        if (string.IsNullOrWhiteSpace(resolutionType))
+            return null;
+
+        return resolutionType switch
+        {
+            "DedicatedPool" => ModelResolutionType.DedicatedPool,
+            "DefaultPool" => ModelResolutionType.DefaultPool,
+            "DirectModel" => ModelResolutionType.DirectModel,
+            "Legacy" => ModelResolutionType.Legacy,
+            _ => null
+        };
     }
 
     #endregion

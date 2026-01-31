@@ -139,11 +139,15 @@ public class ModelResolutionResult
     {
         return new GatewayModelResolution
         {
+            Success = Success,
+            ErrorMessage = ErrorMessage,
             ResolutionType = ResolutionType,
             ExpectedModel = ExpectedModel,
             ActualModel = ActualModel ?? string.Empty,
             ActualPlatformId = ActualPlatformId ?? string.Empty,
             ActualPlatformName = ActualPlatformName,
+            PlatformType = PlatformType,
+            ApiUrl = ApiUrl,
             ModelGroupId = ModelGroupId,
             ModelGroupName = ModelGroupName,
             ModelGroupCode = ModelGroupCode,

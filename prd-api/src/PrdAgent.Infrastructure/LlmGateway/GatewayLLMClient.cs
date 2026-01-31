@@ -112,7 +112,7 @@ public class GatewayLLMClient : ILLMClient
             {
                 yield return new LLMStreamChunk { Type = "start" };
             }
-            else if (chunk.Type == GatewayChunkType.Content && !string.IsNullOrEmpty(chunk.Content))
+            else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
             {
                 yield return new LLMStreamChunk
                 {
@@ -125,10 +125,10 @@ public class GatewayLLMClient : ILLMClient
                 yield return new LLMStreamChunk
                 {
                     Type = "done",
-                    InputTokens = chunk.InputTokens,
-                    OutputTokens = chunk.OutputTokens,
-                    CacheCreationInputTokens = chunk.CacheCreationInputTokens,
-                    CacheReadInputTokens = chunk.CacheReadInputTokens
+                    InputTokens = chunk.TokenUsage?.InputTokens,
+                    OutputTokens = chunk.TokenUsage?.OutputTokens,
+                    CacheCreationInputTokens = chunk.TokenUsage?.CacheCreationInputTokens,
+                    CacheReadInputTokens = chunk.TokenUsage?.CacheReadInputTokens
                 };
             }
         }

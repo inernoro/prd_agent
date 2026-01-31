@@ -91,6 +91,16 @@ public class GatewayResponse
 public class GatewayModelResolution
 {
     /// <summary>
+    /// 调度是否成功
+    /// </summary>
+    public bool Success { get; init; }
+
+    /// <summary>
+    /// 错误消息（调度失败时）
+    /// </summary>
+    public string? ErrorMessage { get; init; }
+
+    /// <summary>
     /// 调度类型
     /// DedicatedPool: 专属模型池
     /// DefaultPool: 默认模型池
@@ -118,6 +128,16 @@ public class GatewayModelResolution
     /// 实际使用的平台名称
     /// </summary>
     public string? ActualPlatformName { get; init; }
+
+    /// <summary>
+    /// 平台类型（openai, claude 等）
+    /// </summary>
+    public string? PlatformType { get; init; }
+
+    /// <summary>
+    /// API URL
+    /// </summary>
+    public string? ApiUrl { get; init; }
 
     /// <summary>
     /// 模型池 ID（如果通过模型池调度）
