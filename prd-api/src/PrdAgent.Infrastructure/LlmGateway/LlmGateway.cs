@@ -5,13 +5,14 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway.Adapters;
+using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
 /// <summary>
 /// LLM Gateway 核心实现 - 所有大模型调用的守门员
 /// </summary>
-public class LlmGateway : ILlmGateway
+public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 {
     private readonly IModelResolver _modelResolver;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -781,6 +782,28 @@ public class LlmGateway : ILlmGateway
             // ignore
         }
         return null;
+    }
+
+    #endregion
+
+    #region CreateClient
+
+    /// <inheritdoc />
+    public Core.Interfaces.ILLMClient CreateClient(
+        string appCallerCode,
+        string modelType,
+        int maxTokens = 4096,
+        double temperature = 0.2)
+    {
+        return new GatewayLLMClient(
+            gateway: this,
+            appCallerCode: appCallerCode,
+            modelType: modelType,
+            platformId: null,
+            platformName: null,
+            enablePromptCache: true,
+            maxTokens: maxTokens,
+            temperature: temperature);
     }
 
     #endregion

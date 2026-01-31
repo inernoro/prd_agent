@@ -231,7 +231,7 @@ public class ModelPoolSchedulingTests
     }
 
     /// <summary>
-    /// 模拟 SmartModelScheduler.SelectBestModelFromGroup 的逻辑
+    /// 模拟 LlmGateway 中 ModelResolver 的模型选择逻辑
     /// </summary>
     private static ModelGroupItem? SelectBestModel(ModelGroup group)
     {

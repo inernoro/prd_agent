@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.OpenPlatform;
 
@@ -26,7 +27,7 @@ public class OpenPlatformChatController : ControllerBase
     private readonly ISessionService _sessionService;
     private readonly IGroupService _groupService;
     private readonly IOpenPlatformService _openPlatformService;
-    private readonly ISmartModelScheduler _modelScheduler;
+    private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IIdGenerator _idGenerator;
     private readonly ILogger<OpenPlatformChatController> _logger;
@@ -36,7 +37,7 @@ public class OpenPlatformChatController : ControllerBase
         ISessionService sessionService,
         IGroupService groupService,
         IOpenPlatformService openPlatformService,
-        ISmartModelScheduler modelScheduler,
+        ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         IIdGenerator idGenerator,
         ILogger<OpenPlatformChatController> logger)
@@ -45,7 +46,7 @@ public class OpenPlatformChatController : ControllerBase
         _sessionService = sessionService;
         _groupService = groupService;
         _openPlatformService = openPlatformService;
-        _modelScheduler = modelScheduler;
+        _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _idGenerator = idGenerator;
         _logger = logger;
@@ -768,7 +769,7 @@ public class OpenPlatformChatController : ControllerBase
             var systemPrompt = "You are a helpful AI assistant.";
 
             var appCallerCode = "open-platform-agent.proxy::chat";
-            var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "chat", cancellationToken);
+            var llmClient = _gateway.CreateClient(appCallerCode, "chat");
             // 设置 LLM 请求上下文（确保日志中显示正确的请求类型和来源）
             using var _scope = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: requestId,
@@ -780,15 +781,12 @@ public class OpenPlatformChatController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: null,
                 RequestType: "reasoning",
-                RequestPurpose: appCallerCode,
-                ModelResolutionType: scheduledResult.ResolutionType,
-                ModelGroupId: scheduledResult.ModelGroupId,
-                ModelGroupName: scheduledResult.ModelGroupName));
+                RequestPurpose: appCallerCode));
 
             var isFirstChunk = true;
 
             // 调用主模型
-            await foreach (var chunk in scheduledResult.Client.StreamGenerateAsync(
+            await foreach (var chunk in llmClient.StreamGenerateAsync(
                 systemPrompt,
                 llmMessages,
                 cancellationToken))
@@ -950,7 +948,7 @@ public class OpenPlatformChatController : ControllerBase
             var systemPrompt = "You are a helpful AI assistant.";
 
             var appCallerCode = "open-platform-agent.proxy::chat";
-            var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "chat", cancellationToken);
+            var llmClient = _gateway.CreateClient(appCallerCode, "chat");
             // 设置 LLM 请求上下文（确保日志中显示正确的请求类型和来源）
             using var _scope = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: requestId,
@@ -962,13 +960,10 @@ public class OpenPlatformChatController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: null,
                 RequestType: "reasoning",
-                RequestPurpose: appCallerCode,
-                ModelResolutionType: scheduledResult.ResolutionType,
-                ModelGroupId: scheduledResult.ModelGroupId,
-                ModelGroupName: scheduledResult.ModelGroupName));
+                RequestPurpose: appCallerCode));
 
             // 调用主模型
-            await foreach (var chunk in scheduledResult.Client.StreamGenerateAsync(
+            await foreach (var chunk in llmClient.StreamGenerateAsync(
                 systemPrompt,
                 llmMessages,
                 cancellationToken))

@@ -19,6 +19,7 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using PrdAgent.Core.Security;
+using PrdAgent.Core.Interfaces.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -39,7 +40,7 @@ public class ImageMasterController : ControllerBase
     private readonly ICacheManager _cache;
     private readonly ILogger<ImageMasterController> _logger;
     private readonly IModelDomainService _modelDomain;
-    private readonly ISmartModelScheduler _modelScheduler;
+    private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IImageDescriptionService _imageDescriptionService;
 
@@ -67,7 +68,7 @@ public class ImageMasterController : ControllerBase
         ICacheManager cache,
         ILogger<ImageMasterController> logger,
         IModelDomainService modelDomain,
-        ISmartModelScheduler modelScheduler,
+        ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         IImageDescriptionService imageDescriptionService)
     {
@@ -77,7 +78,7 @@ public class ImageMasterController : ControllerBase
         _cache = cache;
         _logger = logger;
         _modelDomain = modelDomain;
-        _modelScheduler = modelScheduler;
+        _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _imageDescriptionService = imageDescriptionService;
     }
@@ -1967,7 +1968,7 @@ public class ImageMasterController : ControllerBase
         try
         {
             var appCallerCode = AppCallerRegistry.LiteraryAgent.Content.Chat;
-            var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "chat", ct);
+            var llmClient = _gateway.CreateClient(appCallerCode, "chat");
             var requestId = Guid.NewGuid().ToString("N");
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: requestId,
@@ -1979,13 +1980,10 @@ public class ImageMasterController : ControllerBase
                 DocumentHash: Sha256Hex(articleContent),
                 SystemPromptRedacted: "[LITERARY_ARTICLE_MARKERS]",
                 RequestType: "chat",
-                RequestPurpose: appCallerCode,
-                ModelResolutionType: scheduledResult.ResolutionType,
-                ModelGroupId: scheduledResult.ModelGroupId,
-                ModelGroupName: scheduledResult.ModelGroupName));
+                RequestPurpose: appCallerCode));
 
             // 调用主模型 LLM
-            var client = scheduledResult.Client;
+            var client = llmClient;
             var systemPrompt = userInstruction;
             var userPrompt = articleContent;
 

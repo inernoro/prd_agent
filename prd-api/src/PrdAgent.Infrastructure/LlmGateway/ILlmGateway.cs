@@ -66,6 +66,21 @@ public interface ILlmGateway
         string appCallerCode,
         string modelType,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// 创建 LLM 客户端（用于流式对话等场景）
+    /// 这是一个简单的工厂方法，返回的客户端内部通过 Gateway 发送所有请求
+    /// </summary>
+    /// <param name="appCallerCode">应用调用标识（如 "prd-agent.chat::chat"）</param>
+    /// <param name="modelType">模型类型（chat/vision/intent/generation）</param>
+    /// <param name="maxTokens">最大 Token 数（默认 4096）</param>
+    /// <param name="temperature">温度参数（默认 0.2）</param>
+    /// <returns>LLM 客户端实例</returns>
+    Core.Interfaces.ILLMClient CreateClient(
+        string appCallerCode,
+        string modelType,
+        int maxTokens = 4096,
+        double temperature = 0.2);
 }
 
 /// <summary>

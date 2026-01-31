@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Core.Services;
@@ -11,7 +12,7 @@ namespace PrdAgent.Core.Services;
 /// </summary>
 public class ChatService : IChatService
 {
-    private readonly ISmartModelScheduler _modelScheduler;
+    private readonly ILlmGateway _gateway;
     private readonly ISessionService _sessionService;
     private readonly IDocumentService _documentService;
     private readonly ICacheManager _cache;
@@ -32,7 +33,7 @@ public class ChatService : IChatService
     private const string ModelType = "chat";
 
     public ChatService(
-        ISmartModelScheduler modelScheduler,
+        ILlmGateway gateway,
         ISessionService sessionService,
         IDocumentService documentService,
         ICacheManager cache,
@@ -46,7 +47,7 @@ public class ChatService : IChatService
         ILLMRequestContextAccessor llmRequestContext,
         IIdGenerator idGenerator)
     {
-        _modelScheduler = modelScheduler;
+        _gateway = gateway;
         _sessionService = sessionService;
         _documentService = documentService;
         _cache = cache;
@@ -226,9 +227,8 @@ public class ChatService : IChatService
         string? terminatedErrorMessage = null;
         var isFirstDelta = true; // 标记是否为第一个 delta（用于隐藏加载动画）
 
-        // 通过 SmartModelScheduler 获取专属模型客户端（支持专属模型配置）
-        var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(AppCallerCode, ModelType, cancellationToken);
-        var llmClient = scheduledResult.Client;
+        // 通过 Gateway 创建 LLM 客户端（Gateway 内部处理模型调度和日志）
+        var llmClient = _gateway.CreateClient(AppCallerCode, ModelType);
 
         var llmRequestId = Guid.NewGuid().ToString();
         using var scope = _llmRequestContext.BeginScope(new LlmRequestContext(
@@ -241,10 +241,7 @@ public class ChatService : IChatService
             DocumentHash: docHash,
             SystemPromptRedacted: systemPromptRedacted,
             RequestType: "reasoning",
-            RequestPurpose: AppCallerCode,
-            ModelResolutionType: scheduledResult.ResolutionType,
-            ModelGroupId: scheduledResult.ModelGroupId,
-            ModelGroupName: scheduledResult.ModelGroupName));
+            RequestPurpose: AppCallerCode));
 
         // 检查用户消息是否已存在（CreateRun 可能已创建）
         Message userMessage;

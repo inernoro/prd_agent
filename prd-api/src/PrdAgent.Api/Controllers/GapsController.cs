@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using static PrdAgent.Core.Models.AppCallerRegistry;
@@ -21,7 +22,7 @@ public class GapsController : ControllerBase
     private readonly IUserService _userService;
     private readonly IDocumentService _documentService;
     private readonly IGroupService _groupService;
-    private readonly ISmartModelScheduler _modelScheduler;
+    private readonly ILlmGateway _gateway;
     private readonly IPromptManager _promptManager;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<GapsController> _logger;
@@ -39,7 +40,7 @@ public class GapsController : ControllerBase
         IUserService userService,
         IDocumentService documentService,
         IGroupService groupService,
-        ISmartModelScheduler modelScheduler,
+        ILlmGateway gateway,
         IPromptManager promptManager,
         ILLMRequestContextAccessor llmRequestContext,
         ILogger<GapsController> logger)
@@ -48,7 +49,7 @@ public class GapsController : ControllerBase
         _userService = userService;
         _documentService = documentService;
         _groupService = groupService;
-        _modelScheduler = modelScheduler;
+        _gateway = gateway;
         _promptManager = promptManager;
         _llmRequestContext = llmRequestContext;
         _logger = logger;
@@ -134,7 +135,7 @@ public class GapsController : ControllerBase
 
         // 使用AI生成报告
         var userId = GetUserId(User);
-        var detector = new AIGapDetector(_modelScheduler, _llmRequestContext, _promptManager);
+        var detector = new AIGapDetector(_gateway, _llmRequestContext, _promptManager);
         var report = await detector.GenerateSummaryReportAsync(
             document.RawContent ?? string.Empty,
             gaps,

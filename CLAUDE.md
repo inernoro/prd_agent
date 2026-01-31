@@ -206,7 +206,7 @@ prd_agent/
 | **App Identity** | Controller 硬编码 `appKey`，不由前端传递 |
 | **RBAC** | `SystemRole` + `AdminPermissionCatalog` (60+ permissions) + `AdminPermissionMiddleware` |
 | **Watermark** | appKey 绑定 + 字体管理 + SixLabors.ImageSharp 渲染 |
-| **Smart Scheduler** | `ModelGroup` + `SmartModelScheduler` + 健康评分 + 降级 |
+| **LLM Gateway** | `ILlmGateway` + `ModelResolver` + 三级调度 + 健康管理 |
 
 ### 功能注册表
 
@@ -221,7 +221,7 @@ prd_agent/
 | 速率限制 | ✅ DONE | RedisRateLimitService (Lua 滑动窗口) |
 | 液态玻璃主题 | ✅ DONE | themeStore, GlassCard, ThemeSkinEditor |
 | Open Platform | ✅ DONE | OpenPlatformChatController, LLMAppCaller |
-| 模型组/调度器 | ✅ DONE | ModelGroupsController, SmartModelScheduler |
+| 模型组/Gateway | ✅ DONE | ModelGroupsController, LlmGateway, ModelResolver |
 | 桌面自动更新 | ✅ DONE | tauri.conf.json updater, updater.rs |
 | PRD 评论 | ✅ DONE | PrdCommentsController, PrdCommentsPanel |
 | 内容缺失检测 | ✅ DONE | GapsController, GapDetectionService |
@@ -267,6 +267,7 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 | 直接 SSE 流 | Run/Worker + afterSeq 重连 |
 | GuideController | 已删除 |
 | IEEE 830-1998 | ISO/IEC/IEEE 29148:2018 |
+| SmartModelScheduler | ILlmGateway + ModelResolver |
 
 ### 交叉校验检查点
 

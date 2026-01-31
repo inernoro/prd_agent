@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Infrastructure.Services.VisualAgent;
@@ -35,12 +36,12 @@ public interface IImageDescriptionService
 public class ImageDescriptionService : IImageDescriptionService
 {
     private readonly MongoDbContext _db;
-    private readonly ISmartModelScheduler _modelScheduler;
+    private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<ImageDescriptionService> _logger;
 
-    private const string SystemPrompt =
+    private const string VlmSystemPrompt =
         "你是图片描述专家。请用简洁的中文描述这张图片的核心内容。\n" +
         "要求：\n" +
         "- 描述主体对象（是什么、颜色、姿态、特征）\n" +
@@ -52,13 +53,13 @@ public class ImageDescriptionService : IImageDescriptionService
 
     public ImageDescriptionService(
         MongoDbContext db,
-        ISmartModelScheduler modelScheduler,
+        ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         IAssetStorage assetStorage,
         ILogger<ImageDescriptionService> logger)
     {
         _db = db;
-        _modelScheduler = modelScheduler;
+        _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _assetStorage = assetStorage;
         _logger = logger;
@@ -115,7 +116,7 @@ public class ImageDescriptionService : IImageDescriptionService
 
         // 3. 调用 VLM 提取描述
         var appCallerCode = AppCallerRegistry.VisualAgent.Image.Describe;
-        var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "vision", ct);
+        var llmClient = _gateway.CreateClient(appCallerCode, "vision");
 
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"),
@@ -127,12 +128,7 @@ public class ImageDescriptionService : IImageDescriptionService
             DocumentHash: null,
             SystemPromptRedacted: "[IMAGE_DESCRIBE]",
             RequestType: "vision",
-            RequestPurpose: appCallerCode,
-            ModelResolutionType: scheduledResult.ResolutionType,
-            ModelGroupId: scheduledResult.ModelGroupId,
-            ModelGroupName: scheduledResult.ModelGroupName));
-
-        var client = scheduledResult.Client;
+            RequestPurpose: appCallerCode));
 
         var msg = new LLMMessage
         {
@@ -149,7 +145,7 @@ public class ImageDescriptionService : IImageDescriptionService
             }
         };
 
-        var raw = await CollectToTextAsync(client, SystemPrompt, new List<LLMMessage> { msg }, ct);
+        var raw = await CollectToTextAsync(llmClient, VlmSystemPrompt, new List<LLMMessage> { msg }, ct);
         var description = NormalizeDescription(raw);
 
         if (string.IsNullOrWhiteSpace(description))
@@ -158,8 +154,8 @@ public class ImageDescriptionService : IImageDescriptionService
             return null;
         }
 
-        // 4. 更新数据库
-        var modelId = scheduledResult.ModelGroupName ?? "unknown";
+        // 4. 更新数据库（modelId 由 Gateway 内部处理，这里仅记录 appCallerCode）
+        var modelId = appCallerCode;
         await _db.ImageAssets.UpdateOneAsync(
             x => x.Id == assetId,
             Builders<ImageAsset>.Update

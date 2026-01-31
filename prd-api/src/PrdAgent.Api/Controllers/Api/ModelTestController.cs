@@ -5,6 +5,7 @@ using PrdAgent.Api.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -19,16 +20,16 @@ namespace PrdAgent.Api.Controllers.Api;
 public class ModelTestController : ControllerBase
 {
     private readonly MongoDbContext _db;
-    private readonly ISmartModelScheduler _scheduler;
+    private readonly IModelResolver _modelResolver;
     private readonly ILogger<ModelTestController> _logger;
 
     public ModelTestController(
         MongoDbContext db,
-        ISmartModelScheduler scheduler,
+        IModelResolver modelResolver,
         ILogger<ModelTestController> logger)
     {
         _db = db;
-        _scheduler = scheduler;
+        _modelResolver = modelResolver;
         _logger = logger;
     }
 
@@ -162,12 +163,15 @@ public class ModelTestController : ControllerBase
         // 模拟连续失败
         for (int i = 0; i < request.FailureCount; i++)
         {
-            await _scheduler.RecordCallResultAsync(
-                request.GroupId,
-                request.ModelId,
-                request.PlatformId,
-                false,
-                "模拟故障");
+            var resolution = new ModelResolutionResult
+            {
+                Success = true,
+                ResolutionType = "DedicatedPool",
+                ActualModel = request.ModelId,
+                ActualPlatformId = request.PlatformId,
+                ModelGroupId = request.GroupId
+            };
+            await _modelResolver.RecordFailureAsync(resolution);
         }
 
         _logger.LogInformation(
@@ -213,11 +217,15 @@ public class ModelTestController : ControllerBase
         // 模拟连续成功
         for (int i = 0; i < request.SuccessCount; i++)
         {
-            await _scheduler.RecordCallResultAsync(
-                request.GroupId,
-                request.ModelId,
-                request.PlatformId,
-                true);
+            var resolution = new ModelResolutionResult
+            {
+                Success = true,
+                ResolutionType = "DedicatedPool",
+                ActualModel = request.ModelId,
+                ActualPlatformId = request.PlatformId,
+                ModelGroupId = request.GroupId
+            };
+            await _modelResolver.RecordSuccessAsync(resolution);
         }
 
         _logger.LogInformation(
@@ -241,17 +249,30 @@ public class ModelTestController : ControllerBase
 
     /// <summary>
     /// 执行健康检查（手动触发）
+    /// 注：健康状态由 Gateway 内部自动管理，此 API 仅返回当前状态
     /// </summary>
     [HttpPost("health-check")]
     public async Task<IActionResult> TriggerHealthCheck()
     {
-        _logger.LogInformation("手动触发健康检查");
+        _logger.LogInformation("手动触发健康检查（查询当前状态）");
 
-        await _scheduler.HealthCheckAsync();
+        // 获取所有模型组的健康状态摘要
+        var groups = await _db.ModelGroups.Find(_ => true).ToListAsync();
+        var summary = groups.Select(g => new
+        {
+            groupId = g.Id,
+            groupName = g.Name,
+            modelType = g.ModelType,
+            healthyCount = g.Models.Count(m => m.HealthStatus == ModelHealthStatus.Healthy),
+            degradedCount = g.Models.Count(m => m.HealthStatus == ModelHealthStatus.Degraded),
+            unavailableCount = g.Models.Count(m => m.HealthStatus == ModelHealthStatus.Unavailable),
+            totalCount = g.Models.Count
+        }).ToList();
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            message = "健康检查已执行"
+            message = "健康状态查询完成",
+            groups = summary
         }));
     }
 

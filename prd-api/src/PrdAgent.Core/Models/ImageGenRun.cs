@@ -85,7 +85,7 @@ public class ImageGenRun
 
     /// <summary>
     /// AppCallerCode（如 "visual-agent.image::generation"）。
-    /// 用于 SmartModelScheduler 获取模型池绑定、日志记录。
+    /// 用于 LLM Gateway 获取模型池绑定、日志记录。
     /// 数据库字段名: "AppCallerCode"（已从旧字段 "Purpose" 迁移）
     /// </summary>
     public string? AppCallerCode { get; set; }

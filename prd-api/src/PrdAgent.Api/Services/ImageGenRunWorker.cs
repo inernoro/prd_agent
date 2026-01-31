@@ -6,6 +6,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.MultiImage;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.Interfaces;
 
@@ -1008,12 +1009,12 @@ public class ImageGenRunWorker : BackgroundService
             try
             {
                 using var scope = _scopeFactory.CreateScope();
-                var scheduler = scope.ServiceProvider.GetRequiredService<ISmartModelScheduler>();
-                
+                var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
+
                 // 查询 AppCaller 绑定的模型池（简化日志）
                 var appCaller = await _db.LLMAppCallers.Find(a => a.AppCode == appCallerCode).FirstOrDefaultAsync(ct);
                 var requirement = appCaller?.ModelRequirements.FirstOrDefault(r => r.ModelType == "generation");
-                
+
                 // 获取所有绑定的模型池 code 列表
                 var boundPoolCodes = new List<string>();
                 if (requirement?.ModelGroupIds != null && requirement.ModelGroupIds.Count > 0)
@@ -1024,22 +1025,22 @@ public class ImageGenRunWorker : BackgroundService
                         if (grp != null) boundPoolCodes.Add(grp.Code ?? grp.Name);
                     }
                 }
-                
+
                 _logger.LogInformation(
                     "[生图模型匹配] 可选模型池({Count}个): [{PoolCodes}]",
                     boundPoolCodes.Count, string.Join(", ", boundPoolCodes));
-                
+
                 // 传递用户期望的模型池 code
                 var expectedModelCode = frontendExpectedModelId;
-                var resolved = await scheduler.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct);
+                var resolved = await gateway.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct);
 
                 if (resolved != null)
                 {
                     resolutionType = resolved.ResolutionType;
                     modelGroupId = resolved.ModelGroupId;
                     modelGroupName = resolved.ModelGroupName;
-                    resolvedPlatformId = resolved.PlatformId;
-                    resolvedModelId = resolved.ModelId;
+                    resolvedPlatformId = resolved.ActualPlatformId;
+                    resolvedModelId = resolved.ActualModel;
                 }
             }
             catch (Exception ex)

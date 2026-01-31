@@ -5,6 +5,7 @@ using PrdAgent.Api.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -19,13 +20,13 @@ namespace PrdAgent.Api.Controllers.Api;
 public class AppCallersController : ControllerBase
 {
     private readonly MongoDbContext _db;
-    private readonly ISmartModelScheduler _scheduler;
+    private readonly ILlmGateway _gateway;
     private readonly ILogger<AppCallersController> _logger;
 
-    public AppCallersController(MongoDbContext db, ISmartModelScheduler scheduler, ILogger<AppCallersController> logger)
+    public AppCallersController(MongoDbContext db, ILlmGateway gateway, ILogger<AppCallersController> logger)
     {
         _db = db;
-        _scheduler = scheduler;
+        _gateway = gateway;
         _logger = logger;
     }
 
@@ -294,9 +295,9 @@ public class AppCallersController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("INVALID_PARAMS", "appCallerCode 和 modelType 不能为空"));
         }
 
-        var result = await _scheduler.ResolveModelAsync(appCallerCode, modelType, ct);
+        var result = await _gateway.ResolveModelAsync(appCallerCode, modelType, null, ct);
 
-        return Ok(ApiResponse<ResolvedModelInfo?>.Ok(result));
+        return Ok(ApiResponse<GatewayModelResolution?>.Ok(result));
     }
 
     /// <summary>
@@ -309,16 +310,16 @@ public class AppCallersController : ControllerBase
     {
         if (request.Items == null || request.Items.Count == 0)
         {
-            return Ok(ApiResponse<Dictionary<string, ResolvedModelInfo?>>.Ok(new Dictionary<string, ResolvedModelInfo?>()));
+            return Ok(ApiResponse<Dictionary<string, GatewayModelResolution?>>.Ok(new Dictionary<string, GatewayModelResolution?>()));
         }
 
-        var results = new Dictionary<string, ResolvedModelInfo?>();
+        var results = new Dictionary<string, GatewayModelResolution?>();
 
         // 并行解析所有模型
         var tasks = request.Items.Select(async item =>
         {
             var key = $"{item.AppCallerCode}::{item.ModelType}";
-            var result = await _scheduler.ResolveModelAsync(item.AppCallerCode, item.ModelType, ct);
+            var result = await _gateway.ResolveModelAsync(item.AppCallerCode, item.ModelType, null, ct);
             return (key, result);
         });
 
@@ -329,7 +330,7 @@ public class AppCallersController : ControllerBase
             results[key] = result;
         }
 
-        return Ok(ApiResponse<Dictionary<string, ResolvedModelInfo?>>.Ok(results));
+        return Ok(ApiResponse<Dictionary<string, GatewayModelResolution?>>.Ok(results));
     }
 }
 
