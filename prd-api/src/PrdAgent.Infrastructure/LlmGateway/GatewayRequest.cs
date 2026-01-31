@@ -26,6 +26,7 @@ public class GatewayRequest
     /// 期望的模型名称（可选）
     /// 仅作为调度提示，实际使用的模型由调度器决定
     /// 会记录在日志中用于分析期望与实际的差异
+    /// 如果不提供，会自动从 RequestBody["model"] 中提取
     /// </summary>
     public string? ExpectedModel { get; init; }
 
@@ -34,6 +35,50 @@ public class GatewayRequest
     /// Gateway 会自动替换其中的 "model" 字段
     /// </summary>
     public JsonObject? RequestBody { get; init; }
+
+    /// <summary>
+    /// 获取有效的期望模型名称
+    /// 优先级：ExpectedModel > RequestBody["model"] > RequestBodyRaw["model"]
+    /// </summary>
+    public string? GetEffectiveExpectedModel()
+    {
+        // 1. 显式指定的 ExpectedModel 优先
+        if (!string.IsNullOrWhiteSpace(ExpectedModel))
+            return ExpectedModel.Trim();
+
+        // 2. 从 RequestBody 提取
+        if (RequestBody != null &&
+            RequestBody.TryGetPropertyValue("model", out var modelNode) &&
+            modelNode != null)
+        {
+            var model = modelNode.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(model))
+                return model.Trim();
+        }
+
+        // 3. 从 RequestBodyRaw 提取
+        if (!string.IsNullOrWhiteSpace(RequestBodyRaw))
+        {
+            try
+            {
+                var parsed = JsonNode.Parse(RequestBodyRaw);
+                if (parsed is JsonObject obj &&
+                    obj.TryGetPropertyValue("model", out var rawModelNode) &&
+                    rawModelNode != null)
+                {
+                    var model = rawModelNode.GetValue<string>();
+                    if (!string.IsNullOrWhiteSpace(model))
+                        return model.Trim();
+                }
+            }
+            catch
+            {
+                // 解析失败忽略
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// 请求体原始 JSON 字符串（与 RequestBody 二选一）

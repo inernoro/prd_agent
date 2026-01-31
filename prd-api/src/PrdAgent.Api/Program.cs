@@ -140,6 +140,9 @@ builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 // 智能模型调度器（新架构：应用身份识别 + 分组化配置 + 智能降权）
 builder.Services.AddScoped<ISmartModelScheduler, SmartModelScheduler>();
 
+// 模型调度执行器（从 LlmGateway 分离出来，支持单元测试 Mock）
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
 
