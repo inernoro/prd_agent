@@ -101,6 +101,24 @@ type PromptTemplate = {
   order?: number;
 };
 
+// 将 PanelCard 移到组件外部定义，避免每次渲染时重新创建组件导致子组件卸载/重新挂载
+const panelCardStyle: React.CSSProperties = {
+  background: 'var(--panel)',
+  border: '1px solid var(--border-default)',
+  boxShadow: 'var(--shadow-card)',
+};
+
+const PanelCard = ({ className, children }: { className?: string; children: React.ReactNode }) => (
+  <GlassCard
+    variant="subtle"
+    padding="sm"
+    className={cn('rounded-[16px]', className)}
+    style={panelCardStyle}
+  >
+    {children}
+  </GlassCard>
+);
+
 export default function ArticleIllustrationEditorPage({ workspaceId }: { workspaceId: string }) {
   const [articleContent, setArticleContent] = useState('');
   const [articleWithMarkers, setArticleWithMarkers] = useState('');
@@ -1666,23 +1684,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     { key: 1, label: '预览' },
     { key: 2, label: '配图标记' },
   ];
-
-  const panelCardStyle: React.CSSProperties = {
-    background: 'var(--panel)',
-    border: '1px solid var(--border-default)',
-    boxShadow: 'var(--shadow-card)',
-  };
-
-  const PanelCard = ({ className, children }: { className?: string; children: React.ReactNode }) => (
-    <GlassCard
-      variant="subtle"
-      padding="sm"
-      className={cn('rounded-[16px]', className)}
-      style={panelCardStyle}
-    >
-      {children}
-    </GlassCard>
-  );
 
   const configPillBaseClass =
     'flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors hover:bg-white/10 min-w-0 flex-1';
