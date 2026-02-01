@@ -208,9 +208,10 @@ public class OpenAIImageClient
         var imageGenTimeoutSeconds = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
         imageGenTimeoutSeconds = Math.Clamp(imageGenTimeoutSeconds, 60, 3600);
 
-        // 解析 endpoint 用于构建 GatewayRawRequest
-        Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri);
-        var endpointPath = endpointUri?.AbsolutePath ?? endpoint;
+        // 使用能力路径作为 EndpointPath（Gateway 会自动拼接 baseUrl + 版本前缀）
+        // 注意：不能从 endpoint URL 中提取路径，因为那样会导致版本前缀重复
+        // 例如：baseUrl=/api/v3 + endpointPath=/api/v3/images/generations → /api/v3/api/v3/images/generations
+        var endpointPath = initImageBase64 == null ? "images/generations" : "images/edits";
 
         var providerForLog = platformAdapter.ProviderNameForLog;
         

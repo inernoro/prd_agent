@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -31,8 +32,11 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
             var requestBodyRaw = start.RequestBodyRedacted ?? string.Empty;
             var requestBodyChars = requestBodyRaw.Length;
             var requestBodyMaxChars = LlmLogLimits.GetRequestBodyMaxChars(settings);
-            var requestBodyStored = Truncate(requestBodyRaw, requestBodyMaxChars);
-            var requestBodyTruncated = requestBodyChars > requestBodyMaxChars;
+
+            // 先对 JSON 中每个值进行截断（超过 100 字符的值），再整体截断
+            var requestBodyTrimmed = TruncateJsonStringValues(requestBodyRaw, maxValueLength: 100);
+            var requestBodyStored = Truncate(requestBodyTrimmed, requestBodyMaxChars);
+            var requestBodyTruncated = requestBodyChars > requestBodyStored.Length;
 
             var log = new LlmRequestLog
             {
@@ -108,6 +112,58 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         if (string.IsNullOrEmpty(s)) return s;
         if (s.Length <= max) return s;
         return s[..max] + "...[TRUNCATED]";
+    }
+
+    /// <summary>
+    /// 截断 JSON 字符串中超过指定长度的值（两个双引号之间的内容）
+    /// 不做 JSON 反序列化，直接用正则匹配处理
+    /// </summary>
+    /// <param name="json">原始 JSON 字符串</param>
+    /// <param name="maxValueLength">每个值的最大字符数（默认 100）</param>
+    /// <returns>截断后的 JSON 字符串</returns>
+    private static string TruncateJsonStringValues(string json, int maxValueLength = 100)
+    {
+        if (string.IsNullOrEmpty(json)) return json;
+        if (maxValueLength <= 0) return json;
+
+        // 匹配 JSON 字符串值："..."
+        // 需要处理转义字符，如 \" 不应该被当作结束引号
+        // 正则：匹配双引号开始，然后是非双引号或转义序列的字符，最后是双引号结束
+        var pattern = @"""((?:[^""\\]|\\.)*)""";
+
+        return Regex.Replace(json, pattern, match =>
+        {
+            var fullMatch = match.Value;      // 包含引号的完整匹配
+            var content = match.Groups[1].Value; // 引号内的内容
+
+            // 如果内容长度超过限制，截断并添加标记
+            if (content.Length > maxValueLength)
+            {
+                // 截取前 maxValueLength 个字符，注意要处理可能截断转义序列的情况
+                var truncated = SafeTruncateJsonString(content, maxValueLength);
+                return $"\"{truncated}...[{content.Length - maxValueLength} chars trimmed]\"";
+            }
+
+            return fullMatch;
+        });
+    }
+
+    /// <summary>
+    /// 安全截断 JSON 字符串内容，避免截断转义序列
+    /// </summary>
+    private static string SafeTruncateJsonString(string content, int maxLength)
+    {
+        if (content.Length <= maxLength) return content;
+
+        var result = content[..maxLength];
+
+        // 如果以反斜杠结尾，可能截断了转义序列，回退一个字符
+        if (result.EndsWith('\\'))
+        {
+            result = result[..^1];
+        }
+
+        return result;
     }
 
     private static string Sha256Hex(string input)
