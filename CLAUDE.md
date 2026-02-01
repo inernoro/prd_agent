@@ -65,6 +65,244 @@ public async Task<IActionResult> CreateImageGenRun([FromBody] Request request)
 
 ---
 
+## LLM Gateway 统一调用规则
+
+**核心原则**：所有大模型调用必须通过 `ILlmGateway` 守门员接口，禁止直接调用底层 LLM 客户端。
+
+### 为什么需要 Gateway
+
+1. **统一模型调度**：根据 AppCallerCode 自动匹配模型池，无需手动解析
+2. **统一日志记录**：自动记录期望模型 vs 实际模型、Token 使用量、响应时间
+3. **统一健康管理**：自动更新模型健康状态（成功恢复 / 失败降权）
+4. **未来可扩展**：Gateway 模块可独立部署，成为模型调度中心
+
+### 使用方式
+
+```csharp
+// ✅ 正确做法：通过 Gateway 调用
+public class MyService
+{
+    private readonly ILlmGateway _gateway;
+
+    public async Task<string> ProcessAsync(string prompt, CancellationToken ct)
+    {
+        var request = new GatewayRequest
+        {
+            AppCallerCode = "my-app.feature::chat",  // 必填
+            ModelType = "chat",                       // 必填
+            ExpectedModel = "gpt-4o",                 // 可选，仅作为调度提示
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = prompt }
+                }
+            }
+        };
+
+        // 非流式
+        var response = await _gateway.SendAsync(request, ct);
+        return response.Content;
+
+        // 流式
+        await foreach (var chunk in _gateway.StreamAsync(request, ct))
+        {
+            yield return chunk.Content;
+        }
+    }
+}
+```
+
+```csharp
+// ❌ 错误做法：直接调用底层客户端
+public class MyService
+{
+    private readonly OpenAIClient _client;  // 不要这样做！
+
+    public async Task ProcessAsync()
+    {
+        // 绕过 Gateway = 绕过调度 + 绕过日志 + 绕过健康管理
+        await _client.StreamGenerateAsync(...);  // 禁止！
+    }
+}
+```
+
+### Gateway 核心文件
+
+| 文件 | 用途 |
+|------|------|
+| `ILlmGateway.cs` | 接口定义 |
+| `LlmGateway.cs` | 核心实现（调度 + 日志 + 健康管理） |
+| `GatewayRequest.cs` | 请求模型 |
+| `GatewayResponse.cs` | 响应模型（包含调度信息） |
+| `Adapters/*.cs` | 平台适配器（OpenAI、Claude 等） |
+
+### AppCallerCode 命名规范
+
+格式：`{app-key}.{feature}::{model-type}`
+
+| 示例 | 说明 |
+|------|------|
+| `visual-agent.image.vision::generation` | 视觉代理 - 多图生成 |
+| `visual-agent.image.text2img::generation` | 视觉代理 - 文生图 |
+| `prd-agent.chat::chat` | PRD 代理 - 对话 |
+| `defect-agent.analyze::intent` | 缺陷代理 - 意图识别 |
+
+### 模型调度优先级
+
+1. **专属模型池**：AppCallerCode 绑定的 ModelGroupIds
+2. **默认模型池**：ModelType 对应的 IsDefaultForType 池
+3. **传统配置**：IsMain / IsIntent / IsVision / IsImageGen 标记
+
+### 日志记录字段
+
+Gateway 自动记录以下信息到 `llm_request_logs`：
+
+| 字段 | 说明 |
+|------|------|
+| `RequestPurpose` | AppCallerCode（用于过滤特定应用的日志） |
+| `ModelResolutionType` | 调度来源（DedicatedPool / DefaultPool / Legacy） |
+| `ModelGroupId` / `ModelGroupName` | 使用的模型池 |
+| `Model` | 实际使用的模型名称 |
+
+---
+
+## 前端架构原则
+
+**核心原则**：前端仅作为指令发送者与状态观察者，所有业务逻辑与状态流转必须在后端形成完整闭环，前端不得维护或修改任何中间态。
+
+### 规则说明
+
+1. **单一数据源原则**
+   - 所有业务数据的描述信息（如 displayName、中文解释）必须在后端维护
+   - 前端禁止维护任何业务数据映射表（如 AppCallerCode → 中文名 的字典）
+   - 如果前端需要显示数据描述，必须由后端 API 返回
+
+2. **日志自包含原则**
+   - 日志保存的是历史切片，未来可追溯，不依赖当前数据
+   - 日志写入时需一次性存储所有解释信息（如 `RequestPurposeDisplayName`）
+   - 查询日志时直接展示存储的信息，不做二次解析
+
+3. **前端职责边界**
+   - ✅ 发送原子化指令（API 调用）
+   - ✅ 展示后端返回的结果
+   - ✅ UI 展示逻辑（图标、颜色、布局）
+   - ✅ 纯 UI 分组/排序（不涉及业务含义）
+   - ❌ 维护业务数据映射
+   - ❌ 解析后端数据生成业务描述
+   - ❌ 持有任何业务中间状态
+
+### 示例
+
+```typescript
+// ✅ 正确做法：直接使用后端返回的 displayName
+<div>{item.displayName || item.id}</div>
+
+// 下拉选项使用后端返回的 { value, displayName } 结构
+options={metaItems.map(item => ({
+  value: item.value,
+  label: item.displayName
+}))}
+```
+
+```typescript
+// ❌ 错误做法：前端维护映射表
+const appNameMap = {
+  'prd-agent-desktop': '桌面端',
+  'visual-agent': '视觉创作',
+  // ...
+};
+<div>{appNameMap[item.appCode] || item.appCode}</div>
+```
+
+### 关键实现
+
+| 场景 | 后端职责 | 前端职责 |
+|------|----------|----------|
+| AppCallerCode 显示 | `AppCallerRegistry` 维护 displayName，写入日志/API 返回 | 直接显示 `displayName` 字段 |
+| 日志 requestPurpose | 写入时保存 `RequestPurposeDisplayName` | 显示 `requestPurposeDisplayName` |
+| 元数据下拉选项 | API 返回 `{ value, displayName }` 数组 | 使用 `value` 作为值，`displayName` 作为标签 |
+
+---
+
+## 服务器权威性设计
+
+**核心原则**：服务器端任务一旦启动，只有显式的用户主动取消请求才能中断，客户端被动断开连接不应取消服务器处理。
+
+### 规则说明
+
+1. **主动取消 vs 被动断开**
+   - **主动取消**：用户点击"取消"按钮，触发显式取消 API → 允许取消服务器任务
+   - **被动断开**：用户关闭页面、切换路由、网络中断、浏览器刷新 → 不应取消服务器任务
+
+2. **为什么需要这样设计**
+   - 服务器端任务（如 LLM 调用、数据持久化）应该完整执行
+   - 用户被动断开时，服务器已消耗资源，应该让任务完成并保存结果
+   - 用户重新连接时可以查看已完成的结果
+
+3. **实现方式**
+
+   对于 SSE 流式响应场景：
+   - 服务器核心处理（LLM 调用、数据库操作）使用 `CancellationToken.None`
+   - SSE 写入操作捕获异常但不中断处理
+   - 只有收到显式取消 API 时才真正取消任务
+
+### 适用场景
+
+| 场景 | 处理方式 |
+|------|----------|
+| 文学创作标记生成 | LLM + 数据库用 `CancellationToken.None`，SSE 写入捕获异常 |
+| 图片生成任务 | 任务入队后与连接解耦，Worker 独立处理 |
+| 对话 Run/Worker | 已通过 Run/Worker 模式实现连接解耦 |
+
+### 示例
+
+```csharp
+// ✅ 正确做法：服务器权威性设计
+public async Task StreamGenerateAsync(CancellationToken clientCt)
+{
+    // SSE 响应头
+    Response.ContentType = "text/event-stream";
+
+    // LLM 调用不使用客户端 CancellationToken
+    await foreach (var chunk in client.StreamGenerateAsync(prompt, messages, false, CancellationToken.None))
+    {
+        // SSE 写入捕获异常，客户端断开时不中断处理
+        try
+        {
+            await Response.WriteAsync($"data: {chunk}\n\n");
+            await Response.Body.FlushAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // 客户端已断开，但继续处理 LLM 响应
+        }
+        catch (ObjectDisposedException)
+        {
+            // 连接已关闭，但继续处理
+        }
+    }
+
+    // 数据库操作不使用客户端 CancellationToken
+    await _db.SaveAsync(result, CancellationToken.None);
+}
+```
+
+```csharp
+// ❌ 错误做法：直接传递客户端 CancellationToken
+public async Task StreamGenerateAsync(CancellationToken ct)
+{
+    // 客户端关闭页面会导致整个处理被取消
+    await foreach (var chunk in client.StreamGenerateAsync(prompt, messages, false, ct))
+    {
+        await Response.WriteAsync($"data: {chunk}\n\n", ct);  // 会抛 OperationCanceledException
+    }
+    await _db.SaveAsync(result, ct);  // 可能不会执行
+}
+```
+
+---
+
 ## Codebase Skill（代码库快照 — 供 AI 增量维护用）
 
 > **最后更新**：2026-01-25 | **总提交数**：111 | **文档版本**：SRS v3.0, PRD v2.0
@@ -104,7 +342,7 @@ prd_agent/
 | **App Identity** | Controller 硬编码 `appKey`，不由前端传递 |
 | **RBAC** | `SystemRole` + `AdminPermissionCatalog` (60+ permissions) + `AdminPermissionMiddleware` |
 | **Watermark** | appKey 绑定 + 字体管理 + SixLabors.ImageSharp 渲染 |
-| **Smart Scheduler** | `ModelGroup` + `SmartModelScheduler` + 健康评分 + 降级 |
+| **LLM Gateway** | `ILlmGateway` + `ModelResolver` + 三级调度 + 健康管理 |
 
 ### 功能注册表
 
@@ -119,7 +357,7 @@ prd_agent/
 | 速率限制 | ✅ DONE | RedisRateLimitService (Lua 滑动窗口) |
 | 液态玻璃主题 | ✅ DONE | themeStore, GlassCard, ThemeSkinEditor |
 | Open Platform | ✅ DONE | OpenPlatformChatController, LLMAppCaller |
-| 模型组/调度器 | ✅ DONE | ModelGroupsController, SmartModelScheduler |
+| 模型组/Gateway | ✅ DONE | ModelGroupsController, LlmGateway, ModelResolver |
 | 桌面自动更新 | ✅ DONE | tauri.conf.json updater, updater.rs |
 | PRD 评论 | ✅ DONE | PrdCommentsController, PrdCommentsPanel |
 | 内容缺失检测 | ✅ DONE | GapsController, GapDetectionService |
@@ -165,6 +403,7 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 | 直接 SSE 流 | Run/Worker + afterSeq 重连 |
 | GuideController | 已删除 |
 | IEEE 830-1998 | ISO/IEC/IEEE 29148:2018 |
+| SmartModelScheduler | ILlmGateway + ModelResolver |
 
 ### 交叉校验检查点
 

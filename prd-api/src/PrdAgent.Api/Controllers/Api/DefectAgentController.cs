@@ -5,6 +5,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Security.Claims;
 using System.Text;
@@ -22,14 +23,14 @@ public class DefectAgentController : ControllerBase
 {
     private const string AppKey = "defect-agent";
     private readonly MongoDbContext _db;
-    private readonly ISmartModelScheduler _scheduler;
+    private readonly ILlmGateway _gateway;
     private readonly ILogger<DefectAgentController> _logger;
     private readonly IAssetStorage _assetStorage;
 
-    public DefectAgentController(MongoDbContext db, ISmartModelScheduler scheduler, ILogger<DefectAgentController> logger, IAssetStorage assetStorage)
+    public DefectAgentController(MongoDbContext db, ILlmGateway gateway, ILogger<DefectAgentController> logger, IAssetStorage assetStorage)
     {
         _db = db;
-        _scheduler = scheduler;
+        _gateway = gateway;
         _logger = logger;
         _assetStorage = assetStorage;
     }
@@ -1435,7 +1436,7 @@ public class DefectAgentController : ControllerBase
             }
 
             // 获取 LLM 客户端（使用注册的 AppCallerCode）
-            var client = await _scheduler.GetClientAsync(AppCallerRegistry.DefectAgent.Polish.Chat, "chat", ct);
+            var client = _gateway.CreateClient(AppCallerRegistry.DefectAgent.Polish.Chat, "chat");
 
             // 调用 LLM
             var messages = new List<LLMMessage>

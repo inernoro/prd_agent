@@ -19,6 +19,7 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using PrdAgent.Core.Security;
+using PrdAgent.Core.Interfaces.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -39,7 +40,7 @@ public class ImageMasterController : ControllerBase
     private readonly ICacheManager _cache;
     private readonly ILogger<ImageMasterController> _logger;
     private readonly IModelDomainService _modelDomain;
-    private readonly ISmartModelScheduler _modelScheduler;
+    private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IImageDescriptionService _imageDescriptionService;
 
@@ -67,7 +68,7 @@ public class ImageMasterController : ControllerBase
         ICacheManager cache,
         ILogger<ImageMasterController> logger,
         IModelDomainService modelDomain,
-        ISmartModelScheduler modelScheduler,
+        ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         IImageDescriptionService imageDescriptionService)
     {
@@ -77,7 +78,7 @@ public class ImageMasterController : ControllerBase
         _cache = cache;
         _logger = logger;
         _modelDomain = modelDomain;
-        _modelScheduler = modelScheduler;
+        _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _imageDescriptionService = imageDescriptionService;
     }
@@ -1222,6 +1223,39 @@ public class ImageMasterController : ControllerBase
         try
         {
             var adminId = GetAdminId();
+
+            // === [DEBUG] Log incoming request body from frontend ===
+            var imageRefsDebug = request?.ImageRefs != null && request.ImageRefs.Count > 0
+                ? string.Join(", ", request.ImageRefs.Select(r =>
+                    $"@img{r.RefId}:{r.Label}(sha={r.AssetSha256?[..Math.Min(8, r.AssetSha256?.Length ?? 0)]}...)"))
+                : "(none)";
+            _logger.LogInformation(
+                "[CreateWorkspaceImageGenRun] Incoming Request:\n" +
+                "  TraceId: {TraceId}\n" +
+                "  WorkspaceId: {WorkspaceId}\n" +
+                "  AdminId: {AdminId}\n" +
+                "  Prompt: {Prompt}\n" +
+                "  TargetKey: {TargetKey}\n" +
+                "  ConfigModelId: {ConfigModelId}\n" +
+                "  PlatformId: {PlatformId}\n" +
+                "  ModelId: {ModelId}\n" +
+                "  Size: {Size}\n" +
+                "  InitImageAssetSha256: {InitSha}\n" +
+                "  ImageRefs Count: {ImageRefsCount}\n" +
+                "  ImageRefs: {ImageRefs}",
+                traceId,
+                id,
+                adminId,
+                request?.Prompt,
+                request?.TargetKey,
+                request?.ConfigModelId,
+                request?.PlatformId,
+                request?.ModelId,
+                request?.Size,
+                request?.InitImageAssetSha256,
+                request?.ImageRefs?.Count ?? 0,
+                imageRefsDebug);
+
             var wid = (id ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
 
@@ -1296,6 +1330,20 @@ public class ImageMasterController : ControllerBase
                 h: request?.H,
                 ct: ct);
 
+            // 转换多图引用（新架构）
+            List<PrdAgent.Core.Models.MultiImage.ImageRefInput>? imageRefs = null;
+            if (request?.ImageRefs != null && request.ImageRefs.Count > 0)
+            {
+                imageRefs = request.ImageRefs.Select(dto => new PrdAgent.Core.Models.MultiImage.ImageRefInput
+                {
+                    RefId = dto.RefId,
+                    AssetSha256 = (dto.AssetSha256 ?? string.Empty).Trim().ToLowerInvariant(),
+                    Url = dto.Url ?? string.Empty,
+                    Label = dto.Label ?? string.Empty,
+                    Role = dto.Role
+                }).ToList();
+            }
+
             var run = new ImageGenRun
             {
                 OwnerAdminId = adminId,
@@ -1314,11 +1362,12 @@ public class ImageMasterController : ControllerBase
                 LastSeq = 0,
                 IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
                 CreatedAt = DateTime.UtcNow,
-                AppCallerCode = AppCallerRegistry.VisualAgent.Image.Generation,
+                AppCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img, // 默认文生图，Worker 会根据参考图动态调整
                 AppKey = AppKey, // 硬编码视觉创作的应用标识
                 WorkspaceId = wid,
                 TargetCanvasKey = targetKey,
                 InitImageAssetSha256 = initSha,
+                ImageRefs = imageRefs, // 多图引用（新架构）
                 TargetX = request?.X,
                 TargetY = request?.Y,
                 TargetW = request?.W,
@@ -1919,7 +1968,7 @@ public class ImageMasterController : ControllerBase
         try
         {
             var appCallerCode = AppCallerRegistry.LiteraryAgent.Content.Chat;
-            var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "chat", ct);
+            var llmClient = _gateway.CreateClient(appCallerCode, "chat");
             var requestId = Guid.NewGuid().ToString("N");
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: requestId,
@@ -1931,13 +1980,10 @@ public class ImageMasterController : ControllerBase
                 DocumentHash: Sha256Hex(articleContent),
                 SystemPromptRedacted: "[LITERARY_ARTICLE_MARKERS]",
                 RequestType: "chat",
-                RequestPurpose: appCallerCode,
-                ModelResolutionType: scheduledResult.ResolutionType,
-                ModelGroupId: scheduledResult.ModelGroupId,
-                ModelGroupName: scheduledResult.ModelGroupName));
+                RequestPurpose: appCallerCode));
 
             // 调用主模型 LLM
-            var client = scheduledResult.Client;
+            var client = llmClient;
             var systemPrompt = userInstruction;
             var userPrompt = articleContent;
 
@@ -1946,21 +1992,54 @@ public class ImageMasterController : ControllerBase
                 new() { Role = "user", Content = userPrompt }
             };
 
+            // 服务器权威性设计：LLM 调用使用 CancellationToken.None，确保客户端被动断开不会中断处理
+            // 只有显式取消 API 才能中断任务
             var fullResponse = new StringBuilder();
-            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, false, ct))
+            var clientDisconnected = false;
+            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
             {
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {
                     fullResponse.Append(chunk.Content);
-                    var eventData = JsonSerializer.Serialize(new { type = "delta", text = chunk.Content }, JsonOptions);
-                    await Response.WriteAsync($"data: {eventData}\n\n", ct);
-                    await Response.Body.FlushAsync(ct);
+
+                    // SSE 写入捕获异常：客户端断开时不中断 LLM 处理
+                    if (!clientDisconnected)
+                    {
+                        try
+                        {
+                            var eventData = JsonSerializer.Serialize(new { type = "delta", text = chunk.Content }, JsonOptions);
+                            await Response.WriteAsync($"data: {eventData}\n\n");
+                            await Response.Body.FlushAsync();
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            clientDisconnected = true;
+                            _logger.LogDebug("GenerateArticleMarkers: 客户端已断开，继续处理 LLM 响应");
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            clientDisconnected = true;
+                            _logger.LogDebug("GenerateArticleMarkers: 连接已关闭，继续处理 LLM 响应");
+                        }
+                        catch (Exception ex) when (ex.InnerException is OperationCanceledException)
+                        {
+                            clientDisconnected = true;
+                            _logger.LogDebug("GenerateArticleMarkers: 客户端已断开（内部取消），继续处理 LLM 响应");
+                        }
+                    }
                 }
                 else if (chunk.Type == "error")
                 {
-                    var errorData = JsonSerializer.Serialize(new { type = "error", message = chunk.ErrorMessage }, JsonOptions);
-                    await Response.WriteAsync($"data: {errorData}\n\n", ct);
-                    await Response.Body.FlushAsync(ct);
+                    if (!clientDisconnected)
+                    {
+                        try
+                        {
+                            var errorData = JsonSerializer.Serialize(new { type = "error", message = chunk.ErrorMessage }, JsonOptions);
+                            await Response.WriteAsync($"data: {errorData}\n\n");
+                            await Response.Body.FlushAsync();
+                        }
+                        catch { /* 客户端已断开，忽略 */ }
+                    }
                     return;
                 }
             }
@@ -1979,19 +2058,20 @@ public class ImageMasterController : ControllerBase
             }
 
             // 清空后续阶段：清旧图片资产，重置 images 进度
-            var oldAssets = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null).ToListAsync(ct);
+            // 服务器权威性设计：数据库操作使用 CancellationToken.None，确保数据完整持久化
+            var oldAssets = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null).ToListAsync(CancellationToken.None);
             if (oldAssets.Count > 0)
             {
-                await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null, ct);
+                await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null, CancellationToken.None);
                 // best-effort 删除底层文件（按 sha 引用计数）
                 foreach (var a in oldAssets)
                 {
                     try
                     {
-                        var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
+                        var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: CancellationToken.None);
                         if (remain <= 0)
                         {
-                            await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                            await _assetStorage.DeleteByShaAsync(a.Sha256, CancellationToken.None, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
                         }
                     }
                     catch
@@ -2012,6 +2092,7 @@ public class ImageMasterController : ControllerBase
                 UpdatedAt = now
             };
 
+            // 服务器权威性设计：数据库更新使用 CancellationToken.None
             await _db.ImageMasterWorkspaces.UpdateOneAsync(
                 x => x.Id == wid,
                 Builders<ImageMasterWorkspace>.Update
@@ -2019,19 +2100,39 @@ public class ImageMasterController : ControllerBase
                     .Set(x => x.ArticleWorkflow, newWorkflow)
                     .Set(x => x.ArticleWorkflowHistory, history)
                     .Set(x => x.UpdatedAt, now),
-                cancellationToken: ct);
+                cancellationToken: CancellationToken.None);
 
-            // 发送完成事件
-            var doneData = JsonSerializer.Serialize(new { type = "done", fullText = generatedContent }, JsonOptions);
-            await Response.WriteAsync($"data: {doneData}\n\n", ct);
-            await Response.Body.FlushAsync(ct);
+            _logger.LogInformation("GenerateArticleMarkers completed for workspace {WorkspaceId}, markers: {MarkerCount}, clientDisconnected: {ClientDisconnected}",
+                wid, extractedMarkers.Count, clientDisconnected);
+
+            // 发送完成事件（如果客户端仍连接）
+            if (!clientDisconnected)
+            {
+                try
+                {
+                    var doneData = JsonSerializer.Serialize(new { type = "done", fullText = generatedContent }, JsonOptions);
+                    await Response.WriteAsync($"data: {doneData}\n\n");
+                    await Response.Body.FlushAsync();
+                }
+                catch
+                {
+                    // 客户端已断开，但数据已保存，任务完成
+                }
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "GenerateArticleMarkers failed for workspace {WorkspaceId}", wid);
-            var errorData = JsonSerializer.Serialize(new { type = "error", message = "生成失败" }, JsonOptions);
-            await Response.WriteAsync($"data: {errorData}\n\n", ct);
-            await Response.Body.FlushAsync(ct);
+            try
+            {
+                var errorData = JsonSerializer.Serialize(new { type = "error", message = "生成失败" }, JsonOptions);
+                await Response.WriteAsync($"data: {errorData}\n\n");
+                await Response.Body.FlushAsync();
+            }
+            catch
+            {
+                // 客户端已断开，忽略
+            }
         }
     }
 
@@ -2317,7 +2418,48 @@ public class CreateWorkspaceImageGenRunRequest
     public string? Size { get; set; }
     public string? ResponseFormat { get; set; } // url | b64_json
 
+    /// <summary>
+    /// 单图场景向后兼容（被 ImageRefs 取代）
+    /// </summary>
     public string? InitImageAssetSha256 { get; set; }
+
+    /// <summary>
+    /// 多图引用列表（新架构）。
+    /// 前端传递 @imgN 对应的图片列表。
+    /// 示例：[{"refId": 1, "assetSha256": "abc...", "url": "...", "label": "风格图"}]
+    /// </summary>
+    public List<ImageRefInputDto>? ImageRefs { get; set; }
+}
+
+/// <summary>
+/// 图片引用输入 DTO
+/// </summary>
+public class ImageRefInputDto
+{
+    /// <summary>
+    /// 引用 ID，对应前端的 @img1, @img2 中的数字
+    /// </summary>
+    public int RefId { get; set; }
+
+    /// <summary>
+    /// 图片资产 SHA256（用于从 COS 读取原图）
+    /// </summary>
+    public string AssetSha256 { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 图片 URL（展示用，或作为 AssetSha256 的备用）
+    /// </summary>
+    public string Url { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 用户给图片的标签/描述
+    /// </summary>
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 可选：图片角色
+    /// </summary>
+    public string? Role { get; set; }
 }
 
 public class CreateSessionRequest

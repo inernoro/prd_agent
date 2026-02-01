@@ -195,7 +195,7 @@ public class ClaudeClient : ILLMClient
                     content = new object[] { new { type = "text", text = RedactPrdContextForLog(m.Content, ctx?.RequestPurpose) } }
                 }).ToArray()
             };
-            var reqLogJson = LlmLogRedactor.RedactJson(JsonSerializer.Serialize(reqRedacted));
+            var reqLogJson = LlmLogRedactor.RedactJson(JsonSerializer.Serialize(reqRedacted, LlmLogRedactor.LogSerializerOptions));
 
             var headers = new Dictionary<string, string>
             {

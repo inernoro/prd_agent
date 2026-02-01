@@ -6,6 +6,8 @@ using PrdAgent.Api.Models.Requests;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.LlmGateway;
+using static PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -18,16 +20,16 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("prompts", AdminPermissionCatalog.PromptsRead, WritePermission = AdminPermissionCatalog.PromptsWrite)]
 public class PromptsOptimizeController : ControllerBase
 {
-    private readonly ISmartModelScheduler _modelScheduler;
+    private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<PromptsOptimizeController> _logger;
 
     public PromptsOptimizeController(
-        ISmartModelScheduler modelScheduler,
+        ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         ILogger<PromptsOptimizeController> logger)
     {
-        _modelScheduler = modelScheduler;
+        _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
@@ -97,8 +99,8 @@ public class PromptsOptimizeController : ControllerBase
 
         try
         {
-            var appCallerCode = "admin.prompts.optimize";
-            var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "chat", cancellationToken);
+            var appCallerCode = Admin.Prompts.Optimize;
+            var llmClient = _gateway.CreateClient(appCallerCode, "chat");
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: Guid.NewGuid().ToString("N"),
                 GroupId: null,
@@ -109,10 +111,7 @@ public class PromptsOptimizeController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: "[PROMPTS_OPTIMIZE]",
                 RequestType: "reasoning",
-                RequestPurpose: appCallerCode,
-                ModelResolutionType: scheduledResult.ResolutionType,
-                ModelGroupId: scheduledResult.ModelGroupId,
-                ModelGroupName: scheduledResult.ModelGroupName));
+                RequestPurpose: appCallerCode));
             // start
             var startData = JsonSerializer.Serialize(
                 new PromptOptimizeStreamEvent { Type = "start" },
@@ -121,7 +120,7 @@ public class PromptsOptimizeController : ControllerBase
             await Response.WriteAsync($"data: {startData}\n\n", cancellationToken);
             await Response.Body.FlushAsync(cancellationToken);
 
-            await foreach (var chunk in scheduledResult.Client.StreamGenerateAsync(systemPrompt, messages, cancellationToken))
+            await foreach (var chunk in llmClient.StreamGenerateAsync(systemPrompt, messages, cancellationToken))
             {
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {

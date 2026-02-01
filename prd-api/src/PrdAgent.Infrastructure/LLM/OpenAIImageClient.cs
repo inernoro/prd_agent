@@ -17,6 +17,7 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.LLM.Adapters;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -28,34 +29,34 @@ namespace PrdAgent.Infrastructure.LLM;
 public class OpenAIImageClient
 {
     private readonly MongoDbContext _db;
+    private readonly ILlmGateway _gateway;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private readonly ILogger<OpenAIImageClient> _logger;
     private readonly IAssetStorage _assetStorage;
     private readonly WatermarkRenderer _watermarkRenderer;
     private readonly WatermarkFontRegistry _fontRegistry;
-    private readonly ILlmRequestLogWriter? _logWriter;
     private readonly ILLMRequestContextAccessor? _ctxAccessor;
 
     public OpenAIImageClient(
         MongoDbContext db,
+        ILlmGateway gateway,
         IHttpClientFactory httpClientFactory,
         IConfiguration config,
         ILogger<OpenAIImageClient> logger,
         IAssetStorage assetStorage,
         WatermarkRenderer watermarkRenderer,
         WatermarkFontRegistry fontRegistry,
-        ILlmRequestLogWriter? logWriter = null,
         ILLMRequestContextAccessor? ctxAccessor = null)
     {
         _db = db;
+        _gateway = gateway;
         _httpClientFactory = httpClientFactory;
         _config = config;
         _logger = logger;
         _assetStorage = assetStorage;
         _watermarkRenderer = watermarkRenderer;
         _fontRegistry = fontRegistry;
-        _logWriter = logWriter;
         _ctxAccessor = ctxAccessor;
     }
 
@@ -81,102 +82,33 @@ public class OpenAIImageClient
         if (n <= 0) n = 1;
         if (n > 20) n = 20;
 
-        // 日志上下文：若上游未设置 scope，则使用默认值兜底（仍保证“任何生图调用都有日志”）
+        // 日志上下文：若上游未设置 scope，则使用默认值兜底
         var ctx = _ctxAccessor?.Current;
         var requestId = (ctx?.RequestId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
-        var startedAt = DateTime.UtcNow;
-        string? logId = null;
 
-        // 选择生图模型（支持按请求指定；支持“平台回退调用”）
-        var requestedModelId = (modelId ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(requestedModelId)) requestedModelId = null;
-        var requestedPlatformId = (platformId ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(requestedPlatformId)) requestedPlatformId = null;
-        var requestedModelName = (modelName ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(requestedModelName)) requestedModelName = null;
+        // 构建 appCallerCode 用于 Gateway 模型调度
+        // 格式: "{app-key}.image.{feature}::generation"
+        var appKeyForCode = string.IsNullOrWhiteSpace(appKey) ? "prd-agent" : appKey.Trim();
+        var feature = string.IsNullOrWhiteSpace(initImageBase64) ? "text2img" : "img2img";
+        var appCallerCode = $"{appKeyForCode}.image.{feature}::generation";
 
-        LLMModel? model = null;
-        LLMPlatform? platform = null;
-        if (!string.IsNullOrWhiteSpace(requestedModelId))
+        // 通过 Gateway 解析模型调度（获取平台信息用于适配器选择）
+        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct);
+        if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
-            // 1) 优先：按“已配置模型 id”命中
-            model = await _db.LLMModels.Find(m => m.Id == requestedModelId && m.Enabled).FirstOrDefaultAsync(ct);
-
-            // 2) 回退：如果没命中配置模型，允许把 modelId 当成“模型名”，并通过 platformId 解析平台配置
-            if (model == null && !string.IsNullOrWhiteSpace(requestedPlatformId))
-            {
-                platform = await _db.LLMPlatforms.Find(p => p.Id == requestedPlatformId && p.Enabled).FirstOrDefaultAsync(ct);
-                if (platform == null)
-                {
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "指定的平台不存在或未启用");
-                }
-                requestedModelName ??= requestedModelId; // modelId 兜底当作 modelName
-            }
-            else if (model == null)
-            {
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "指定的模型不存在或未启用");
-            }
-        }
-        else
-        {
-            model = await _db.LLMModels.Find(m => m.IsImageGen && m.Enabled).FirstOrDefaultAsync(ct);
-        }
-        if (model == null && platform == null)
-        {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "未配置可用的生图模型（请在模型管理中设置“生图”）");
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
+                resolution.ErrorMessage ?? "未配置可用的生图模型（请在模型管理中设置 生图）");
         }
 
-        var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-        string? apiUrl;
-        string? apiKey;
-        string? platformType;
-        string effectiveModelName;
-        string? platformIdForLog = null;
-        string? platformNameForLog = null;
-        if (model != null)
-        {
-            var cfg = await ResolveApiConfigForModelAsync(model, jwtSecret, ct);
-            apiUrl = cfg.apiUrl;
-            apiKey = cfg.apiKey;
-            platformType = cfg.platformType;
-            effectiveModelName = model.ModelName;
-            platformIdForLog = model.PlatformId;
-            // 查询平台名称用于日志
-            if (!string.IsNullOrWhiteSpace(model.PlatformId))
-            {
-                var plt = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync(ct);
-                platformNameForLog = plt?.Name;
-            }
-        }
-        else
-        {
-            // 平台回退调用：直接用平台 API 配置 + 指定 modelName
-            apiUrl = platform!.ApiUrl;
-            apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
-            platformType = platform.PlatformType?.ToLowerInvariant();
-            effectiveModelName = requestedModelName ?? string.Empty;
-            platformIdForLog = platform.Id;
-            platformNameForLog = platform.Name;
-            if (string.IsNullOrWhiteSpace(effectiveModelName))
-            {
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "未提供 modelName（平台回退调用需要 modelName）");
-            }
-        }
-
-        // 开发期 stub：允许 apiKey 为空（Stub 不做鉴权），避免测试时误报“配置不完整”
-        if (!string.IsNullOrWhiteSpace(apiUrl) && string.IsNullOrWhiteSpace(apiKey) && IsLocalStubApi(apiUrl))
-        {
-            apiKey = "stub";
-        }
-
-        if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
-        {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图模型 API 配置不完整");
-        }
+        var apiUrl = resolution.ApiUrl;
+        var effectiveModelName = resolution.ActualModel!;
+        var platformIdForLog = resolution.ActualPlatformId;
+        var platformNameForLog = resolution.ActualPlatformName;
 
         // 验证 apiUrl 必须是有效的 HTTP(S) URL，避免 file:// 等无效协议
-        if (!Uri.TryCreate(apiUrl, UriKind.Absolute, out var apiUrlUri) ||
+        if (string.IsNullOrWhiteSpace(apiUrl) ||
+            !Uri.TryCreate(apiUrl, UriKind.Absolute, out var apiUrlUri) ||
             (apiUrlUri.Scheme != Uri.UriSchemeHttp && apiUrlUri.Scheme != Uri.UriSchemeHttps))
         {
             _logger.LogError("生图模型 API URL 无效（非 HTTP(S) 协议）: {ApiUrl}", apiUrl);
@@ -184,6 +116,7 @@ public class OpenAIImageClient
         }
 
         // Anthropic 不支持 images endpoint；避免误配后 500
+        var platformType = resolution.PlatformType?.ToLowerInvariant();
         if (string.Equals(platformType, "anthropic", StringComparison.OrdinalIgnoreCase) ||
             apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase))
         {
@@ -194,14 +127,11 @@ public class OpenAIImageClient
         var platformAdapter = ImageGenPlatformAdapterFactory.GetAdapter(apiUrl, effectiveModelName);
         var isVolces = platformAdapter.PlatformType == "volces"; // 保留兼容变量
         initImageBase64 = string.IsNullOrWhiteSpace(initImageBase64) ? null : initImageBase64.Trim();
-        // 说明：某些路径（如 Volces 降级）会把 initImageBase64 清空，但我们仍希望日志能追溯“用户是否提供过参考图”
-        var initImageProvidedForLog = initImageProvided || initImageBase64 != null;
         if (!platformAdapter.SupportsImageToImage && initImageBase64 != null)
         {
             // 平台不支持图生图，降级为文生图
             initImageBase64 = null;
         }
-        var initImageUsedForCall = initImageBase64 != null;
         var endpoint = initImageBase64 == null 
             ? platformAdapter.GetGenerationsEndpoint(apiUrl) 
             : platformAdapter.GetEditsEndpoint(apiUrl);
@@ -240,7 +170,7 @@ public class OpenAIImageClient
         }
 
         // 非 Volces 且无适配器：尝试命中"允许尺寸白名单"缓存，避免先 400 再重试
-        var capsKey = BuildCapsKey(requestedModelId, requestedPlatformId, requestedModelName, effectiveModelName);
+        var capsKey = BuildCapsKey(null, platformIdForLog, null, effectiveModelName);
         if (!isVolces && adapterConfig == null)
         {
             var caps = await TryGetSizeCapsAsync(capsKey, ct);
@@ -274,22 +204,14 @@ public class OpenAIImageClient
             }
         }
 
-        var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
-        // 生图请求通常比文本推理慢很多（部分平台可达 60s+），因此单独放大超时。
-        // 默认 600s，可通过配置 LLM:ImageGenTimeoutSeconds 覆盖；不影响文本/意图等默认 60s。
+        // 生图请求超时配置（默认 600s，可通过配置 LLM:ImageGenTimeoutSeconds 覆盖）
         var imageGenTimeoutSeconds = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
         imageGenTimeoutSeconds = Math.Clamp(imageGenTimeoutSeconds, 60, 3600);
-        httpClient.Timeout = TimeSpan.FromSeconds(imageGenTimeoutSeconds);
 
-        // Authorization 头不允许多值：覆盖写法
-        httpClient.DefaultRequestHeaders.Remove("Authorization");
-        httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-
-        // 允许 endpoint 为绝对 URL；否则以 BaseAddress 拼接
-        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri))
-        {
-            httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/').TrimEnd('#') + "/");
-        }
+        // 使用能力路径作为 EndpointPath（Gateway 会自动拼接 baseUrl + 版本前缀）
+        // 注意：不能从 endpoint URL 中提取路径，因为那样会导致版本前缀重复
+        // 例如：baseUrl=/api/v3 + endpointPath=/api/v3/images/generations → /api/v3/api/v3/images/generations
+        var endpointPath = initImageBase64 == null ? "images/generations" : "images/edits";
 
         var providerForLog = platformAdapter.ProviderNameForLog;
         
@@ -357,256 +279,178 @@ public class OpenAIImageClient
             }
         }
 
-        // 写入 LLM 请求日志（生图）
-        if (_logWriter != null)
-        {
-            // 记录请求体：包含参考图 COS URL（若有），便于日志页 curl 复制和调试
-            string reqRawJson;
-            if (initImageUsedForCall)
-            {
-                // 图生图请求的日志序列化
-                var editSize = reqObj switch
-                {
-                    VolcesImageEditRequest ver => ver.Size,
-                    Adapters.VolcesImageEditRequest ver2 => ver2.Size,
-                    OpenAIImageEditRequest oer => oer.Size,
-                    Adapters.OpenAIImageEditRequest oer2 => oer2.Size,
-                    Dictionary<string, object> dict => dict.TryGetValue("size", out var s) ? s?.ToString() : null,
-                    _ => null
-                };
-                var editRespFormat = reqObj switch
-                {
-                    VolcesImageEditRequest ver => ver.ResponseFormat,
-                    Adapters.VolcesImageEditRequest ver2 => ver2.ResponseFormat,
-                    OpenAIImageEditRequest oer => oer.ResponseFormat,
-                    Adapters.OpenAIImageEditRequest oer2 => oer2.ResponseFormat,
-                    Dictionary<string, object> dict => dict.TryGetValue("response_format", out var rf) ? rf?.ToString() : null,
-                    _ => null
-                };
-                reqRawJson = JsonSerializer.Serialize(new
-                {
-                    model = effectiveModelName,
-                    prompt = prompt.Trim(),
-                    n,
-                    size = editSize,
-                    responseFormat = editRespFormat,
-                    initImageProvided = initImageProvidedForLog,
-                    initImageUsed = true,
-                    image = initImageCosUrl
-                });
-            }
-            else
-            {
-                // 文生图请求：适配器总是返回 Dictionary<string, object>
-                if (reqObj is Dictionary<string, object> reqDict)
-                {
-                    var logDict = new Dictionary<string, object>(reqDict)
-                    {
-                        ["initImageProvided"] = initImageProvidedForLog,
-                        ["initImageUsed"] = false
-                    };
-                    reqRawJson = JsonSerializer.Serialize(logDict);
-                }
-                else
-                {
-                    // Fallback: 序列化未知对象类型
-                    reqRawJson = JsonSerializer.Serialize(new
-                    {
-                        reqObj,
-                        initImageProvided = initImageProvidedForLog,
-                        initImageUsed = false
-                    });
-                }
-            }
-            var reqLogJson = LlmLogRedactor.RedactJson(reqRawJson);
-            logId = await _logWriter.StartAsync(
-                new LlmLogStart(
-                    RequestId: requestId,
-                    Provider: providerForLog,
-                    Model: effectiveModelName,
-                    ApiBase: endpointUri != null && endpointUri.IsAbsoluteUri ? $"{endpointUri.Scheme}://{endpointUri.Host}/" : httpClient.BaseAddress?.ToString(),
-                    Path: endpointUri != null && endpointUri.IsAbsoluteUri ? endpointUri.AbsolutePath.TrimStart('/') : endpoint.TrimStart('/'),
-                    HttpMethod: "POST",
-                    RequestHeadersRedacted: new Dictionary<string, string>
-                    {
-                        ["content-type"] = initImageBase64 == null ? "application/json" : "multipart/form-data",
-                        // 统一使用标准 Header 名，避免某些 curl 生成/回放工具把不同大小写当作"两个头"
-                        // 部分脱敏，保留前后4字符便于调试
-                        ["Authorization"] = $"Bearer {LlmLogRedactor.RedactApiKey(apiKey)}"
-                    },
-                    RequestBodyRedacted: reqLogJson,
-                    RequestBodyHash: LlmLogRedactor.Sha256Hex(reqLogJson),
-                    QuestionText: prompt.Trim(),
-                    SystemPromptChars: null,
-                    SystemPromptHash: null,
-                    SystemPromptText: null,
-                    MessageCount: null,
-                    GroupId: ctx?.GroupId,
-                    SessionId: ctx?.SessionId,
-                    UserId: ctx?.UserId,
-                    ViewRole: ctx?.ViewRole,
-                    DocumentChars: null,
-                    DocumentHash: null,
-                    UserPromptChars: prompt.Trim().Length,
-                    StartedAt: startedAt,
-                    RequestType: (ctx?.RequestType ?? "imageGen"),
-                    RequestPurpose: (ctx?.RequestPurpose ?? "prd-agent-web::image-gen.generate"),
-                    PlatformId: platformIdForLog,
-                    PlatformName: platformNameForLog,
-                    ModelResolutionType: ctx?.ModelResolutionType,
-                    ModelGroupId: ctx?.ModelGroupId,
-                    ModelGroupName: ctx?.ModelGroupName),
-                ct);
-        }
-
-        HttpResponseMessage resp;
+        // 通过 Gateway 发送请求（Gateway 负责：模型调度、HTTP 请求、日志记录、健康管理）
+        // 构建 GatewayRawRequest
+        GatewayRawResponse gatewayResp;
         try
         {
-            async Task<HttpResponseMessage> SendOnceAsync(CancellationToken token)
+            // 定义发送函数（支持重试）
+            async Task<GatewayRawResponse> SendViaGatewayAsync(CancellationToken token)
             {
-                var targetUriInner = endpointUri != null && endpointUri.IsAbsoluteUri
-                    ? endpointUri
-                    : new Uri(endpoint.TrimStart('/'), UriKind.Relative);
                 if (initImageBase64 == null)
                 {
-                    // reqObj 可能是 Dictionary<string, object>（文生图）或类型化对象
-                    string reqJsonInner;
+                    // 文生图请求（JSON）
+                    JsonObject requestBody;
                     if (reqObj is Dictionary<string, object> dictReq)
                     {
-                        reqJsonInner = JsonSerializer.Serialize(dictReq);
-                    }
-                    else if (isVolces)
-                    {
-                        reqJsonInner = JsonSerializer.Serialize((VolcesImageRequest)reqObj, VolcesImageJsonContext.Default.VolcesImageRequest);
+                        requestBody = new JsonObject();
+                        foreach (var (key, value) in dictReq)
+                        {
+                            requestBody[key] = JsonValue.Create(value);
+                        }
                     }
                     else
                     {
-                        reqJsonInner = JsonSerializer.Serialize((OpenAIImageRequest)reqObj, OpenAIImageJsonContext.Default.OpenAIImageRequest);
+                        // Fallback: 序列化后再解析
+                        var jsonStr = JsonSerializer.Serialize(reqObj);
+                        requestBody = JsonNode.Parse(jsonStr)?.AsObject() ?? new JsonObject();
                     }
-                    var contentInner = new StringContent(reqJsonInner, Encoding.UTF8, "application/json");
-                    return await httpClient.PostAsync(targetUriInner, contentInner, token);
-                }
 
-                if (!TryDecodeDataUrlOrBase64(initImageBase64, out var imgBytes, out var imgMime))
-                {
-                    return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                    _logger.LogInformation(
+                        "[OpenAIImageClient] Sending request via Gateway:\n" +
+                        "  AppCallerCode: {AppCallerCode}\n" +
+                        "  EndpointPath: {EndpointPath}\n" +
+                        "  Model: {Model}\n" +
+                        "  Provider: {Provider}",
+                        appCallerCode,
+                        endpointPath,
+                        effectiveModelName,
+                        providerForLog);
+
+                    var gatewayRequest = new GatewayRawRequest
                     {
-                        Content = new StringContent("{\"error\":{\"message\":\"initImageBase64 无效\"}}", Encoding.UTF8, "application/json")
+                        AppCallerCode = appCallerCode,
+                        ModelType = "generation",
+                        EndpointPath = endpointPath,
+                        RequestBody = requestBody,
+                        IsMultipart = false,
+                        TimeoutSeconds = imageGenTimeoutSeconds,
+                        Context = new GatewayRequestContext
+                        {
+                            RequestId = requestId,
+                            SessionId = ctx?.SessionId,
+                            GroupId = ctx?.GroupId,
+                            UserId = ctx?.UserId,
+                            ViewRole = ctx?.ViewRole,
+                            QuestionText = prompt.Trim()
+                        }
                     };
+
+                    return await _gateway.SendRawAsync(gatewayRequest, token);
                 }
-                if (imgBytes.Length > 10 * 1024 * 1024)
+                else
                 {
-                    return new HttpResponseMessage(HttpStatusCode.RequestEntityTooLarge)
+                    // 图生图请求（multipart/form-data）
+                    if (!TryDecodeDataUrlOrBase64(initImageBase64, out var imgBytes, out var imgMime))
                     {
-                        Content = new StringContent("{\"error\":{\"message\":\"initImageBase64 图片过大（上限 10MB）\"}}", Encoding.UTF8, "application/json")
+                        return GatewayRawResponse.Fail("INVALID_FORMAT", "initImageBase64 无效", 400);
+                    }
+                    if (imgBytes.Length > 10 * 1024 * 1024)
+                    {
+                        return GatewayRawResponse.Fail("INVALID_FORMAT", "initImageBase64 图片过大（上限 10MB）", 413);
+                    }
+
+                    // 构建 multipart 字段
+                    var multipartFields = new Dictionary<string, object>();
+                    switch (reqObj)
+                    {
+                        case Adapters.VolcesImageEditRequest ver:
+                            multipartFields["prompt"] = ver.Prompt ?? string.Empty;
+                            multipartFields["n"] = ver.N;
+                            if (!string.IsNullOrWhiteSpace(ver.Size)) multipartFields["size"] = ver.Size;
+                            if (!string.IsNullOrWhiteSpace(ver.ResponseFormat)) multipartFields["response_format"] = ver.ResponseFormat;
+                            if (ver.Watermark.HasValue) multipartFields["watermark"] = ver.Watermark.Value ? "true" : "false";
+                            break;
+                        case Adapters.OpenAIImageEditRequest oer:
+                            multipartFields["prompt"] = oer.Prompt ?? string.Empty;
+                            multipartFields["n"] = oer.N;
+                            if (!string.IsNullOrWhiteSpace(oer.Size)) multipartFields["size"] = oer.Size;
+                            if (!string.IsNullOrWhiteSpace(oer.ResponseFormat)) multipartFields["response_format"] = oer.ResponseFormat;
+                            break;
+                        case VolcesImageEditRequest ver:
+                            multipartFields["prompt"] = ver.Prompt ?? string.Empty;
+                            multipartFields["n"] = ver.N;
+                            if (!string.IsNullOrWhiteSpace(ver.Size)) multipartFields["size"] = ver.Size;
+                            if (!string.IsNullOrWhiteSpace(ver.ResponseFormat)) multipartFields["response_format"] = ver.ResponseFormat;
+                            if (ver.Watermark.HasValue) multipartFields["watermark"] = ver.Watermark.Value ? "true" : "false";
+                            break;
+                        case OpenAIImageEditRequest oer:
+                            multipartFields["prompt"] = oer.Prompt ?? string.Empty;
+                            multipartFields["n"] = oer.N;
+                            if (!string.IsNullOrWhiteSpace(oer.Size)) multipartFields["size"] = oer.Size;
+                            if (!string.IsNullOrWhiteSpace(oer.ResponseFormat)) multipartFields["response_format"] = oer.ResponseFormat;
+                            break;
+                        default:
+                            _logger.LogWarning("Unexpected reqObj type for image edit: {Type}", reqObj.GetType().Name);
+                            break;
+                    }
+
+                    var multipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+                    {
+                        ["image"] = ("init.png", imgBytes, string.IsNullOrWhiteSpace(imgMime) ? "image/png" : imgMime)
                     };
-                }
 
-                var mp = new MultipartFormDataContent();
-                var imgContent = new ByteArrayContent(imgBytes);
-                imgContent.Headers.ContentType = new MediaTypeHeaderValue(string.IsNullOrWhiteSpace(imgMime) ? "image/png" : imgMime);
-                mp.Add(imgContent, "image", "init.png");
+                    _logger.LogInformation(
+                        "[OpenAIImageClient] Sending img2img request via Gateway:\n" +
+                        "  AppCallerCode: {AppCallerCode}\n" +
+                        "  EndpointPath: {EndpointPath}\n" +
+                        "  Model: {Model}\n" +
+                        "  Provider: {Provider}\n" +
+                        "  InitImage Size: {ImageSize} bytes",
+                        appCallerCode,
+                        endpointPath,
+                        effectiveModelName,
+                        providerForLog,
+                        imgBytes.Length);
 
-                // 图生图请求：从 reqObj 提取字段构建 multipart/form-data
-                // 支持适配器返回的类型或旧的强类型对象
-                void AddEditField(string name, string? value)
-                {
-                    if (!string.IsNullOrWhiteSpace(value))
-                        mp.Add(new StringContent(value), name);
-                }
-                void AddEditFieldInt(string name, int value) => mp.Add(new StringContent(value.ToString()), name);
-                void AddEditFieldBool(string name, bool? value)
-                {
-                    if (value.HasValue)
-                        mp.Add(new StringContent(value.Value ? "true" : "false"), name);
-                }
+                    var gatewayRequest = new GatewayRawRequest
+                    {
+                        AppCallerCode = appCallerCode,
+                        ModelType = "generation",
+                        EndpointPath = endpointPath,
+                        IsMultipart = true,
+                        MultipartFields = multipartFields,
+                        MultipartFiles = multipartFiles,
+                        TimeoutSeconds = imageGenTimeoutSeconds,
+                        Context = new GatewayRequestContext
+                        {
+                            RequestId = requestId,
+                            SessionId = ctx?.SessionId,
+                            GroupId = ctx?.GroupId,
+                            UserId = ctx?.UserId,
+                            ViewRole = ctx?.ViewRole,
+                            QuestionText = prompt.Trim()
+                        }
+                    };
 
-                switch (reqObj)
-                {
-                    case Adapters.VolcesImageEditRequest ver:
-                        AddEditField("model", ver.Model);
-                        AddEditField("prompt", ver.Prompt);
-                        AddEditFieldInt("n", ver.N);
-                        AddEditField("size", ver.Size);
-                        AddEditField("response_format", ver.ResponseFormat);
-                        AddEditFieldBool("watermark", ver.Watermark);
-                        break;
-                    case Adapters.OpenAIImageEditRequest oer:
-                        AddEditField("model", oer.Model);
-                        AddEditField("prompt", oer.Prompt);
-                        AddEditFieldInt("n", oer.N);
-                        AddEditField("size", oer.Size);
-                        AddEditField("response_format", oer.ResponseFormat);
-                        break;
-                    case VolcesImageEditRequest ver:
-                        AddEditField("model", ver.Model);
-                        AddEditField("prompt", ver.Prompt);
-                        AddEditFieldInt("n", ver.N);
-                        AddEditField("size", ver.Size);
-                        AddEditField("response_format", ver.ResponseFormat);
-                        AddEditFieldBool("watermark", ver.Watermark);
-                        break;
-                    case OpenAIImageEditRequest oer:
-                        AddEditField("model", oer.Model);
-                        AddEditField("prompt", oer.Prompt);
-                        AddEditFieldInt("n", oer.N);
-                        AddEditField("size", oer.Size);
-                        AddEditField("response_format", oer.ResponseFormat);
-                        break;
-                    default:
-                        _logger.LogWarning("Unexpected reqObj type for image edit: {Type}", reqObj.GetType().Name);
-                        break;
+                    return await _gateway.SendRawAsync(gatewayRequest, token);
                 }
-
-                return await httpClient.PostAsync(targetUriInner, mp, token);
             }
 
-            resp = await SendOnceAsync(ct);
+            gatewayResp = await SendViaGatewayAsync(ct);
 
             // 平台特定的尺寸错误处理：使用适配器自动修正
-            if (initImageBase64 == null && resp.StatusCode == HttpStatusCode.BadRequest)
+            if (initImageBase64 == null && gatewayResp.StatusCode == 400)
             {
-                var firstBody = await resp.Content.ReadAsStringAsync(ct);
-                if (TryExtractUpstreamErrorMessage(firstBody ?? string.Empty, out var errMsg))
+                var firstBody = gatewayResp.Content ?? string.Empty;
+                if (TryExtractUpstreamErrorMessage(firstBody, out var errMsg))
                 {
                     var currentSize = GetCurrentRequestedSizeForRetry(reqObj, initImageBase64);
                     var suggestedSize = platformAdapter.HandleSizeError(errMsg, currentSize);
-                    
+
                     if (!string.IsNullOrEmpty(suggestedSize))
                     {
                         SetRequestedSizeForRetry(reqObj, initImageBase64, suggestedSize);
-                        resp.Dispose();
-                        resp = await SendOnceAsync(ct);
+                        gatewayResp = await SendViaGatewayAsync(ct);
                     }
-                    else
-                    {
-                        // 兜底：把第一次 body 还回去，下面统一处理
-                        resp.Dispose();
-                        resp = new HttpResponseMessage(HttpStatusCode.BadRequest)
-                        {
-                            Content = new StringContent(firstBody ?? string.Empty, Encoding.UTF8, "application/json"),
-                            RequestMessage = httpClient.BaseAddress != null ? new HttpRequestMessage(HttpMethod.Post, httpClient.BaseAddress) : null
-                        };
-                    }
-                }
-                else
-                {
-                    // 无法提取错误消息时，也需要把 body 还回去（避免后续重复读取空内容）
-                    resp.Dispose();
-                    resp = new HttpResponseMessage(HttpStatusCode.BadRequest)
-                    {
-                        Content = new StringContent(firstBody ?? string.Empty, Encoding.UTF8, "application/json"),
-                        RequestMessage = httpClient.BaseAddress != null ? new HttpRequestMessage(HttpMethod.Post, httpClient.BaseAddress) : null
-                    };
                 }
             }
 
-            // 非 Volces：某些 OpenAI 兼容网关会对 size 采用“白名单尺寸”校验（例如 1664*928,...），
-            // 若命中该错误则自动从错误文案中提取允许尺寸，按目标比例选最近尺寸并重试一次。
-            if (!isVolces && resp.StatusCode == HttpStatusCode.BadRequest)
+            // 非 Volces：某些 OpenAI 兼容网关会对 size 采用"白名单尺寸"校验
+            if (!isVolces && gatewayResp.StatusCode == 400)
             {
-                var firstBody = await resp.Content.ReadAsStringAsync(ct);
-                if (TryExtractUpstreamErrorMessage(firstBody ?? string.Empty, out var errMsg2) &&
+                var firstBody = gatewayResp.Content ?? string.Empty;
+                if (TryExtractUpstreamErrorMessage(firstBody, out var errMsg2) &&
                     LooksLikeAllowedSizeWhitelistError(errMsg2) &&
                     TryParseAllowedSizes(errMsg2, out var allowed) &&
                     allowed.Count > 0)
@@ -625,115 +469,39 @@ public class OpenAIImageClient
 
                     var currentSize = GetCurrentRequestedSizeForRetry(reqObj, initImageBase64);
                     var target = TryParseSize(currentSize, out var tw, out var th) ? new Size2D(tw, th) : (Size2D?)null;
-                    target ??= new Size2D(1024, 1024); // prefer_medium 兜底
+                    target ??= new Size2D(1024, 1024);
                     var chosen = ChooseClosestAllowedSize(target, allowed);
                     var chosenStr = $"{chosen.W}x{chosen.H}";
                     if (!string.Equals(NormalizeSizeString(currentSize), NormalizeSizeString(chosenStr), StringComparison.OrdinalIgnoreCase))
                     {
-                        // 将第一次响应“还回去”给统一处理前，先尝试一次自动修正重试
                         SetRequestedSizeForRetry(reqObj, initImageBase64, chosenStr);
-                        // 注意：不能用 MarkError 写“尺寸替换”，否则会把日志状态置为 failed 并写入 Error 字段。
-                        // 真实的“本次替换信息”会在 MarkDone 的 AnswerText（summary）与 API meta 中落库/返回。
-                        resp.Dispose();
-                        resp = await SendOnceAsync(ct);
+                        gatewayResp = await SendViaGatewayAsync(ct);
                     }
-                    else
-                    {
-                        // 兜底：把第一次 body 还回去，下面统一处理
-                        resp.Dispose();
-                        resp = new HttpResponseMessage(HttpStatusCode.BadRequest)
-                        {
-                            Content = new StringContent(firstBody ?? string.Empty, Encoding.UTF8, "application/json"),
-                            RequestMessage = httpClient.BaseAddress != null ? new HttpRequestMessage(HttpMethod.Post, httpClient.BaseAddress) : null
-                        };
-                    }
-                }
-                else
-                {
-                    // 兜底：把第一次 body 还回去，下面统一处理
-                    resp.Dispose();
-                    resp = new HttpResponseMessage(HttpStatusCode.BadRequest)
-                    {
-                        Content = new StringContent(firstBody ?? string.Empty, Encoding.UTF8, "application/json"),
-                        RequestMessage = httpClient.BaseAddress != null ? new HttpRequestMessage(HttpMethod.Post, httpClient.BaseAddress) : null
-                    };
                 }
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Image generate request failed");
-            if (logId != null)
-            {
-                _logWriter?.MarkError(logId, $"Image generate request failed: {ex.Message}");
-            }
             return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
         }
 
-        if (logId != null)
+        // 处理响应（Gateway 已处理日志记录）
+        var body = gatewayResp.Content ?? string.Empty;
+        if (!gatewayResp.Success)
         {
-            // 此时已拿到响应头，视为“首字节”已到达
-            _logWriter?.MarkFirstByte(logId, DateTime.UtcNow);
-        }
+            _logger.LogWarning("Image generate failed: HTTP {Status} (body chars={Chars})", gatewayResp.StatusCode, body.Length);
 
-        var body = await resp.Content.ReadAsStringAsync(ct);
-        if (!resp.IsSuccessStatusCode)
-        {
-            // 注意：下游可能返回带签名的 URL（query 中含签名/credential 等敏感信息），避免写入日志
-            _logger.LogWarning("Image generate failed: HTTP {Status} (body chars={Chars})", (int)resp.StatusCode, body?.Length ?? 0);
-            if (logId != null)
-            {
-                var endedAt = DateTime.UtcNow;
-                var respContentType = resp.Content.Headers.ContentType?.MediaType;
-                var bodyPreview = RedactAndTruncateResponseBody(body ?? string.Empty, respContentType);
-                string? upstreamMessage = null;
-                if (TryExtractUpstreamErrorMessage(body ?? string.Empty, out var em)) upstreamMessage = em;
-                var answerObj = new
-                {
-                    error = new
-                    {
-                        message = $"Image generate failed: HTTP {(int)resp.StatusCode}",
-                        statusCode = (int)resp.StatusCode,
-                        contentType = respContentType,
-                        upstreamMessage,
-                        bodyPreview
-                    }
-                };
-                var answerText = JsonSerializer.Serialize(answerObj);
-                _logWriter?.MarkDone(
-                    logId,
-                    new LlmLogDone(
-                        StatusCode: (int)resp.StatusCode,
-                        ResponseHeaders: new Dictionary<string, string>
-                        {
-                            ["content-type"] = resp.Content.Headers.ContentType?.ToString() ?? "application/json"
-                        },
-                        InputTokens: null,
-                        OutputTokens: null,
-                        CacheCreationInputTokens: null,
-                        CacheReadInputTokens: null,
-                        TokenUsageSource: "missing",
-                        ImageSuccessCount: 0,
-                        AnswerText: answerText,
-                        AssembledTextChars: answerText.Length,
-                        AssembledTextHash: LlmLogRedactor.Sha256Hex(answerText),
-                        Status: "failed",
-                        EndedAt: endedAt,
-                        DurationMs: (long)(endedAt - startedAt).TotalMilliseconds));
-
-                // 保留 Error 字段用于列表页快速查看
-                _logWriter?.MarkError(logId, $"Image generate failed: HTTP {(int)resp.StatusCode}", (int)resp.StatusCode);
-            }
             // 对 400/422 等参数类错误尽量返回 INVALID_FORMAT，便于前端直接提示用户
-            if ((int)resp.StatusCode >= 400 && (int)resp.StatusCode < 500)
+            if (gatewayResp.StatusCode >= 400 && gatewayResp.StatusCode < 500)
             {
-                var msg = TryExtractUpstreamErrorMessage(body ?? string.Empty, out var em2) ? em2 : $"生图失败：HTTP {(int)resp.StatusCode}";
+                var msg = TryExtractUpstreamErrorMessage(body, out var em2) ? em2 : $"生图失败：HTTP {gatewayResp.StatusCode}";
                 return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, msg);
             }
-            // 5xx：优先透出上游错误（含 request id），便于定位“token/鉴权”类问题
-            var msg5xx = TryExtractUpstreamErrorMessage(body ?? string.Empty, out var em3)
+            // 5xx：优先透出上游错误（含 request id），便于定位"token/鉴权"类问题
+            var msg5xx = TryExtractUpstreamErrorMessage(body, out var em3)
                 ? $"生图失败：{em3}"
-                : $"生图失败：HTTP {(int)resp.StatusCode}";
+                : $"生图失败：HTTP {gatewayResp.StatusCode}";
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, msg5xx);
         }
 
@@ -885,97 +653,7 @@ public class OpenAIImageClient
                 cosInfos.Add(new { index = images[i].Index, url = stored.Url, sha256 = stored.Sha256, mime = stored.Mime, sizeBytes = stored.SizeBytes });
             }
 
-            if (logId != null)
-            {
-                var endedAt = DateTime.UtcNow;
-                    var respContentType = resp.Content.Headers.ContentType?.MediaType;
-                // 从请求对象中提取 responseFormat 和 size 用于日志
-                string? responseFormatForLog = null;
-                string? sizeForLog = null;
-                if (reqObj is Dictionary<string, object> logDict)
-                {
-                    responseFormatForLog = logDict.TryGetValue("response_format", out var rf) ? rf?.ToString() : null;
-                    sizeForLog = logDict.TryGetValue("size", out var sz) ? sz?.ToString() : null;
-                }
-                else
-                {
-                    // Fallback: 兼容强类型对象
-                    responseFormatForLog = reqObj switch
-                    {
-                        Adapters.VolcesImageEditRequest ver => ver.ResponseFormat,
-                        Adapters.OpenAIImageEditRequest oer => oer.ResponseFormat,
-                        VolcesImageRequest vr => vr.ResponseFormat,
-                        OpenAIImageRequest orr => orr.ResponseFormat,
-                        VolcesImageEditRequest ver => ver.ResponseFormat,
-                        OpenAIImageEditRequest oer => oer.ResponseFormat,
-                        _ => null
-                    };
-                    sizeForLog = reqObj switch
-                    {
-                        Adapters.VolcesImageEditRequest ver => ver.Size,
-                        Adapters.OpenAIImageEditRequest oer => oer.Size,
-                        VolcesImageRequest vr => vr.Size,
-                        OpenAIImageRequest orr => orr.Size,
-                        VolcesImageEditRequest ver => ver.Size,
-                        OpenAIImageEditRequest oer => oer.Size,
-                        _ => null
-                    };
-                }
-                var effectiveSizeNormForLog = NormalizeSizeString(sizeForLog);
-                var sizeAdjustedForLog = !string.IsNullOrWhiteSpace(requestedSizeNorm) &&
-                                         !string.IsNullOrWhiteSpace(effectiveSizeNormForLog) &&
-                                         !string.Equals(requestedSizeNorm, effectiveSizeNormForLog, StringComparison.OrdinalIgnoreCase);
-                var ratioAdjustedForLog = IsRatioAdjusted(requestedSizeNorm, effectiveSizeNormForLog, threshold: 0.02);
-                var sizeAdjustmentNote = (sizeAdjustedForLog && !string.IsNullOrWhiteSpace(requestedSizeRaw) && !string.IsNullOrWhiteSpace(sizeForLog))
-                    ? $"本次尺寸替换：{requestedSizeRaw} -> {sizeForLog}"
-                    : null;
-                    var upstreamBodyPreview = RedactAndTruncateSuccessResponseBody(body ?? string.Empty, respContentType);
-                var summary = new
-                {
-                    images = images.Count,
-                    responseFormat = responseFormatForLog,
-                    size = sizeForLog,
-                    requestedSize = requestedSizeRaw,
-                    effectiveSize = sizeForLog,
-                    sizeAdjusted = sizeAdjustedForLog,
-                    ratioAdjusted = ratioAdjustedForLog,
-                    sizeAdjustmentNote,
-                    allowedSizes = allowedSizesForLog,
-                    initImageProvided = initImageProvidedForLog,
-                    initImageUsed = initImageUsedForCall,
-                        upstreamBodyPreview,
-                        upstreamBodyPreviewHash = LlmLogRedactor.Sha256Hex(upstreamBodyPreview),
-                        upstreamBodyChars = body?.Length ?? 0,
-                        upstreamContentType = respContentType,
-                    // 不记录 base64 内容；仅记录是否返回
-                    hasBase64 = false,
-                    hasUrl = images.Any(x => !string.IsNullOrWhiteSpace(x.Url)),
-                    cos = cosInfos.Take(10).ToArray(),
-                    revisedPrompt = images.FirstOrDefault()?.RevisedPrompt
-                };
-                var answerText = JsonSerializer.Serialize(summary);
-                var hash = LlmLogRedactor.Sha256Hex(answerText);
-                _logWriter?.MarkDone(
-                    logId,
-                    new LlmLogDone(
-                        StatusCode: (int)resp.StatusCode,
-                        ResponseHeaders: new Dictionary<string, string>
-                        {
-                            ["content-type"] = resp.Content.Headers.ContentType?.ToString() ?? "application/json"
-                        },
-                        InputTokens: null,
-                        OutputTokens: null,
-                        CacheCreationInputTokens: null,
-                        CacheReadInputTokens: null,
-                        TokenUsageSource: "missing",
-                        ImageSuccessCount: images.Count,
-                        AnswerText: answerText,
-                        AssembledTextChars: answerText.Length,
-                        AssembledTextHash: hash,
-                        Status: "succeeded",
-                        EndedAt: endedAt,
-                        DurationMs: (long)(endedAt - startedAt).TotalMilliseconds));
-            }
+            // Gateway 已处理日志记录，无需手动记录
 
             var finalSize = GetCurrentRequestedSizeForRetry(reqObj, initImageBase64);
             var effectiveSize = string.IsNullOrWhiteSpace(finalSize) ? null : finalSize.Trim();
@@ -1003,58 +681,430 @@ public class OpenAIImageClient
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Image generate parse failed");
-            if (logId != null)
-            {
-                var endedAt = DateTime.UtcNow;
-                var answerText = JsonSerializer.Serialize(new { error = new { message = "Image generate parse failed" } });
-                _logWriter?.MarkDone(
-                    logId,
-                    new LlmLogDone(
-                        StatusCode: (int)resp.StatusCode,
-                        ResponseHeaders: new Dictionary<string, string>
-                        {
-                            ["content-type"] = resp.Content.Headers.ContentType?.ToString() ?? "application/json"
-                        },
-                        InputTokens: null,
-                        OutputTokens: null,
-                        CacheCreationInputTokens: null,
-                        CacheReadInputTokens: null,
-                        TokenUsageSource: "missing",
-                        ImageSuccessCount: 0,
-                        AnswerText: answerText,
-                        AssembledTextChars: answerText.Length,
-                        AssembledTextHash: LlmLogRedactor.Sha256Hex(answerText),
-                        Status: "failed",
-                        EndedAt: endedAt,
-                        DurationMs: (long)(endedAt - startedAt).TotalMilliseconds));
-                _logWriter?.MarkError(logId, "Image generate parse failed");
-            }
+            // Gateway 已处理日志记录
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图响应解析失败");
         }
     }
 
-    private async Task<(string? apiUrl, string? apiKey, string? platformType)> ResolveApiConfigForModelAsync(
-        LLMModel model,
-        string jwtSecret,
-        CancellationToken ct)
+    /// <summary>
+    /// 使用 Vision API 生成图片（支持多图参考）
+    /// 通过 /v1/chat/completions 端点，发送多张图片给支持 Vision 的模型
+    /// </summary>
+    /// <param name="prompt">用户提示词（包含 @imgN 引用）</param>
+    /// <param name="imageRefs">已加载的图片引用列表（按出现顺序）</param>
+    /// <param name="size">期望尺寸（如 1024x1024）</param>
+    /// <param name="ct">取消令牌</param>
+    /// <param name="modelId">模型 ID（可选）</param>
+    /// <param name="platformId">平台 ID（可选）</param>
+    /// <param name="modelName">模型名称（平台回退时使用）</param>
+    /// <param name="appKey">应用标识</param>
+    /// <returns>生成结果</returns>
+    public async Task<ApiResponse<ImageGenResult>> GenerateWithVisionAsync(
+        string prompt,
+        List<Core.Models.MultiImage.ImageRefData> imageRefs,
+        string? size,
+        CancellationToken ct,
+        string? modelId = null,
+        string? platformId = null,
+        string? modelName = null,
+        string? appKey = null)
     {
-        string? apiUrl = model.ApiUrl;
-        string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, jwtSecret);
-        string? platformType = null;
-
-        if (model.PlatformId != null)
+        if (string.IsNullOrWhiteSpace(prompt))
         {
-            var platform = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync(ct);
-            platformType = platform?.PlatformType?.ToLowerInvariant();
-            if (platform != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
-            {
-                apiUrl ??= platform.ApiUrl;
-                apiKey ??= ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
-            }
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空");
         }
 
-        return (apiUrl, apiKey, platformType);
+        if (imageRefs == null || imageRefs.Count == 0)
+        {
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "imageRefs 不能为空（Vision API 需要至少一张图片）");
+        }
+
+        // Vision API 限制：最多 6 张图片
+        const int MaxImages = 6;
+        if (imageRefs.Count > MaxImages)
+        {
+            _logger.LogWarning("[Vision API] 图片数量超过限制({Max}张)，将只使用前{Max}张", MaxImages, MaxImages);
+            imageRefs = imageRefs.Take(MaxImages).ToList();
+        }
+
+        var ctx = _ctxAccessor?.Current;
+        var requestId = (ctx?.RequestId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
+
+        // 构建 appCallerCode 用于 Gateway 模型调度
+        var appKeyForCode = string.IsNullOrWhiteSpace(appKey) ? "prd-agent" : appKey.Trim();
+        var appCallerCode = $"{appKeyForCode}.image.vision::generation";
+
+        // 通过 Gateway 解析模型调度
+        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct);
+        if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
+        {
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
+                resolution.ErrorMessage ?? "未配置可用的 Vision 生图模型");
+        }
+
+        var effectiveModelName = resolution.ActualModel!;
+        var platformIdForLog = resolution.ActualPlatformId;
+        var platformNameForLog = resolution.ActualPlatformName;
+
+        // 构建 Vision API 请求
+        var visionRequest = new Core.Models.MultiImage.VisionRequest
+        {
+            Model = effectiveModelName,
+            MaxTokens = 4096,
+            Messages = new List<Core.Models.MultiImage.VisionMessage>
+            {
+                new()
+                {
+                    Role = "user",
+                    Content = BuildVisionContent(prompt, imageRefs)
+                }
+            }
+        };
+
+        // 序列化请求体
+        var requestJson = JsonSerializer.Serialize(visionRequest, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        });
+
+        // 构建清晰的请求日志（不含 base64，便于调试）
+        var imageOrderLog = new StringBuilder();
+        imageOrderLog.AppendLine($"  图片总数: {imageRefs.Count}");
+        imageOrderLog.AppendLine("  图片顺序 (与 Vision API content 数组顺序一致):");
+        for (int i = 0; i < imageRefs.Count; i++)
+        {
+            var img = imageRefs[i];
+            var base64Preview = img.Base64.Length > 50 ? img.Base64[..50] + "..." : img.Base64;
+            imageOrderLog.AppendLine($"    [{i + 1}] @img{img.RefId} = \"{img.Label}\" ({img.MimeType}, {img.Base64.Length} chars)");
+        }
+
+        // 构建可读的请求结构（不含完整 base64）
+        var prettyRequest = new
+        {
+            model = effectiveModelName,
+            max_tokens = 4096,
+            messages = new[]
+            {
+                new
+                {
+                    role = "user",
+                    content_structure = new object[]
+                    {
+                        new { type = "text", text_preview = prompt.Length > 300 ? prompt[..300] + "..." : prompt }
+                    }.Concat(imageRefs.Select((img, idx) => (object)new
+                    {
+                        type = "image_url",
+                        position = idx + 1,
+                        ref_id = $"@img{img.RefId}",
+                        label = img.Label,
+                        mime = img.MimeType,
+                        base64_length = img.Base64.Length
+                    })).ToArray()
+                }
+            }
+        };
+        var prettyRequestJson = JsonSerializer.Serialize(prettyRequest, new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        });
+
+        _logger.LogInformation(
+            "\n========== [Vision API 多图请求] ==========\n" +
+            "【基本信息】\n" +
+            "  AppCallerCode: {AppCallerCode}\n" +
+            "  Model: {Model}\n" +
+            "  Platform: {Platform}\n" +
+            "\n【图片映射关系】\n{ImageOrder}" +
+            "\n【发送给大模型的提示词】\n{Prompt}\n" +
+            "\n【请求结构 (不含 base64)】\n{PrettyRequest}\n" +
+            "============================================",
+            appCallerCode,
+            effectiveModelName,
+            platformNameForLog ?? platformIdForLog ?? "unknown",
+            imageOrderLog.ToString(),
+            prompt,
+            prettyRequestJson);
+
+        try
+        {
+            // 构建 Gateway 请求 - 使用 SendRawAsync 发送到 chat/completions
+            var requestBody = JsonNode.Parse(requestJson)?.AsObject() ?? new JsonObject();
+            var gatewayRequest = new GatewayRawRequest
+            {
+                AppCallerCode = appCallerCode,
+                ModelType = "generation",
+                EndpointPath = "/v1/chat/completions",
+                RequestBody = requestBody,
+                IsMultipart = false,
+                TimeoutSeconds = 120,
+                Context = new GatewayRequestContext
+                {
+                    RequestId = requestId,
+                    SessionId = ctx?.SessionId,
+                    GroupId = ctx?.GroupId,
+                    UserId = ctx?.UserId,
+                    ViewRole = ctx?.ViewRole,
+                    QuestionText = prompt.Trim()
+                }
+            };
+
+            var gatewayResp = await _gateway.SendRawAsync(gatewayRequest, ct);
+            var respBody = gatewayResp.Content ?? string.Empty;
+
+            _logger.LogInformation(
+                "[OpenAIImageClient] Vision API response:\n" +
+                "  StatusCode: {StatusCode}\n" +
+                "  ResponseBody (truncated): {ResponseBody}",
+                gatewayResp.StatusCode,
+                respBody.Length > 500 ? respBody[..500] + "..." : respBody);
+
+            if (!gatewayResp.Success)
+            {
+                var errorMsg = TryExtractUpstreamErrorMessage(respBody, out var errMsg)
+                    ? $"Vision API 错误: {errMsg}"
+                    : $"Vision API 请求失败: {gatewayResp.StatusCode}";
+                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, errorMsg);
+            }
+
+            // 解析响应
+            var visionResp = JsonSerializer.Deserialize<Core.Models.MultiImage.VisionResponse>(respBody, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (visionResp?.Choices == null || visionResp.Choices.Count == 0)
+            {
+                // Gateway 已处理日志
+                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "Vision API 响应无效（无 choices）");
+            }
+
+            var responseContent = visionResp.Choices[0].Message?.Content;
+            if (string.IsNullOrWhiteSpace(responseContent))
+            {
+                // Gateway 已处理日志
+                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "Vision API 响应无效（无内容）");
+            }
+
+            // 解析响应中的图片（可能是 base64、URL 或 Markdown 格式）
+            var images = new List<ImageGenImage>();
+            if (responseContent.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+            {
+                // Base64 格式
+                images.Add(new ImageGenImage
+                {
+                    Index = 0,
+                    Base64 = responseContent
+                });
+            }
+            else if (responseContent.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            {
+                // URL 格式
+                images.Add(new ImageGenImage
+                {
+                    Index = 0,
+                    Url = responseContent.Trim()
+                });
+            }
+            else if (TryExtractMarkdownImageUrl(responseContent, out var mdUrl))
+            {
+                // Markdown 图片格式: ![alt](url)
+                _logger.LogInformation("[Vision API] 解析到 Markdown 图片格式，提取 URL: {Url}", mdUrl);
+                images.Add(new ImageGenImage
+                {
+                    Index = 0,
+                    Url = mdUrl
+                });
+            }
+            else
+            {
+                // 尝试从 JSON 响应中提取图片
+                try
+                {
+                    var jsonNode = JsonNode.Parse(responseContent);
+                    if (jsonNode?["url"] != null)
+                    {
+                        images.Add(new ImageGenImage
+                        {
+                            Index = 0,
+                            Url = jsonNode["url"]?.GetValue<string>()
+                        });
+                    }
+                    else if (jsonNode?["b64_json"] != null)
+                    {
+                        images.Add(new ImageGenImage
+                        {
+                            Index = 0,
+                            Base64 = $"data:image/png;base64,{jsonNode["b64_json"]?.GetValue<string>()}"
+                        });
+                    }
+                    else
+                    {
+                        // 响应可能是文本描述而非图片
+                        var errMsg = $"Vision API 响应不包含图片数据: {(responseContent.Length > 100 ? responseContent[..100] + "..." : responseContent)}";
+                        _logger.LogWarning("[Vision API] 响应不包含图片数据，可能是文本响应: {Content}",
+                            responseContent.Length > 200 ? responseContent[..200] + "..." : responseContent);
+                        // Gateway 已处理日志
+                        return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, errMsg);
+                    }
+                }
+                catch
+                {
+                    // 非 JSON 格式，可能是纯文本响应
+                    var errMsg = $"Vision API 响应格式不支持: {(responseContent.Length > 100 ? responseContent[..100] + "..." : responseContent)}";
+                    _logger.LogWarning("[Vision API] 无法解析响应为图片: {Content}",
+                        responseContent.Length > 200 ? responseContent[..200] + "..." : responseContent);
+                    // Gateway 已处理日志
+                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, errMsg);
+                }
+            }
+
+            _logger.LogInformation(
+                "[OpenAIImageClient] Vision API 生成成功:\n" +
+                "  ImageCount: {ImageCount}\n" +
+                "  Duration: {Duration}ms",
+                images.Count,
+                gatewayResp.DurationMs);
+
+            // 处理图片结果：保存到 COS 并获取稳定 URL
+            var watermarkConfig = string.IsNullOrWhiteSpace(appKey) ? null : await TryGetWatermarkConfigAsync(appKey, ct);
+            var cosInfos = new List<object>();
+
+            for (var i = 0; i < images.Count; i++)
+            {
+                byte[]? bytes = null;
+                var outMime = "image/png";
+
+                if (!string.IsNullOrWhiteSpace(images[i].Base64))
+                {
+                    if (TryDecodeDataUrlOrBase64(images[i].Base64!, out var decoded, out var decodedMime))
+                    {
+                        bytes = decoded;
+                        if (!string.IsNullOrWhiteSpace(decodedMime)) outMime = decodedMime;
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(images[i].Url))
+                {
+                    var dl = await TryDownloadImageBytesAsync(images[i].Url!, ct);
+                    if (dl.bytes != null && dl.bytes.Length > 0)
+                    {
+                        bytes = dl.bytes;
+                        if (!string.IsNullOrWhiteSpace(dl.mime)) outMime = dl.mime!;
+                    }
+                }
+
+                if (bytes == null || bytes.Length == 0) continue;
+
+                // 1. 原图保存到 visual-agent 目录
+                var stored = await _assetStorage.SaveAsync(bytes, outMime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+
+                // 2. 默认展示原图 URL
+                var displayUrl = stored.Url;
+
+                // 3. 如果有水印配置，生成水印图
+                if (watermarkConfig != null)
+                {
+                    try
+                    {
+                        var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, watermarkConfig, ct);
+                        var watermarkedStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct, domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
+                        displayUrl = watermarkedStored.Url;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "[Vision API] Failed to apply watermark. Using original image.");
+                    }
+                }
+
+                // 更新图片对象
+                images[i].Url = displayUrl;
+                images[i].Base64 = null;
+                images[i].OriginalUrl = stored.Url;
+                images[i].OriginalSha256 = stored.Sha256;
+
+                cosInfos.Add(new { index = i, url = stored.Url, sha256 = stored.Sha256, mime = stored.Mime, sizeBytes = stored.SizeBytes });
+            }
+
+            // Gateway 已处理日志记录
+
+            return ApiResponse<ImageGenResult>.Ok(new ImageGenResult
+            {
+                Images = images,
+                Meta = new ImageGenResultMeta
+                {
+                    RequestedSize = size,
+                    EffectiveSize = size
+                }
+            });
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "[Vision API] 网络请求失败");
+            return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
+        }
+        catch (TaskCanceledException ex) when (ex.CancellationToken == ct)
+        {
+            _logger.LogWarning("[Vision API] 请求被取消");
+            return ApiResponse<ImageGenResult>.Fail("CANCELLED", "请求被取消");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Vision API] 未知错误");
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INTERNAL_ERROR, ex.Message);
+        }
     }
+
+    /// <summary>
+    /// 构建 Vision API 的 content 数组（text + 多个 image_url）
+    /// </summary>
+    private static List<Core.Models.MultiImage.VisionContentItem> BuildVisionContent(
+        string prompt,
+        List<Core.Models.MultiImage.ImageRefData> imageRefs)
+    {
+        var content = new List<Core.Models.MultiImage.VisionContentItem>
+        {
+            // 首先添加文本提示词
+            new Core.Models.MultiImage.VisionTextContent { Text = prompt }
+        };
+
+        // 按传入顺序添加图片（调用方已按 OccurrenceOrder 排序，与【图片对照表】一致）
+        foreach (var imgRef in imageRefs)
+        {
+            content.Add(new Core.Models.MultiImage.VisionImageContent
+            {
+                ImageUrl = new Core.Models.MultiImage.VisionImageUrl
+                {
+                    Url = imgRef.Base64 // 完整格式：data:mime;base64,...
+                }
+            });
+        }
+
+        return content;
+    }
+
+    /// <summary>
+    /// 尝试从 Markdown 图片格式中提取 URL
+    /// 支持格式: ![alt](url) 或 ![](url)
+    /// </summary>
+    private static bool TryExtractMarkdownImageUrl(string content, out string url)
+    {
+        url = string.Empty;
+        if (string.IsNullOrWhiteSpace(content)) return false;
+
+        // 匹配 Markdown 图片格式: ![任意文本](URL)
+        var match = Regex.Match(content, @"!\[.*?\]\((https?://[^\s\)]+)\)");
+        if (match.Success && match.Groups.Count > 1)
+        {
+            url = match.Groups[1].Value.Trim();
+            return !string.IsNullOrEmpty(url);
+        }
+
+        return false;
+    }
+
+    // ResolveApiConfigForModelAsync 已移除 - 现在通过 Gateway 统一解析模型
 
     /// <summary>
     /// 兼容 apiUrl（与 OpenAICompatUrl 规则一致）：
@@ -1409,7 +1459,11 @@ public class OpenAIImageClient
                 if (node != null)
                 {
                     RedactImageResponseNode(node);
-                    var s0 = node.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+                    var s0 = node.ToJsonString(new JsonSerializerOptions
+                    {
+                        WriteIndented = false,
+                        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                    });
                     s0 = LlmLogRedactor.RedactJson(s0);
                     s0 = RedactSignedUrls(s0);
                     var maxChars0 = 24000; // 成功响应可比 error 多留一些字段，便于排查

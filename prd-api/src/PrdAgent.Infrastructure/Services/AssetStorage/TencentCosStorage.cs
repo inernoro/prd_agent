@@ -441,6 +441,22 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         }
     }
 
+    /// <summary>
+    /// 按 sha256 和 mime 类型构建公开访问 URL（不下载文件）。
+    /// </summary>
+    public string? TryBuildUrlBySha(string sha256, string mime, string? domain = null, string? type = null)
+    {
+        if (_disposed) return null;
+        var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(sha) || sha.Length < 16) return null;
+
+        var d = string.IsNullOrWhiteSpace(domain) ? AppDomainPaths.DomainVisualAgent : AppDomainPaths.NormDomain(domain);
+        var t = string.IsNullOrWhiteSpace(type) ? AppDomainPaths.TypeImg : AppDomainPaths.NormType(type);
+        var ext = MimeToExt(mime);
+        var key = BuildObjectKey(d, t, sha, ext);
+        return BuildPublicUrl(key);
+    }
+
     private static bool LooksLikeNotFound(CosServerException ex)
     {
         // SDK 版本差异较大：避免引用不确定的 statusCode 属性名，退化为字符串判断，确保可编译/可运行。

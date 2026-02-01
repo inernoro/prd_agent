@@ -122,6 +122,18 @@ public class LocalAssetStorage : IAssetStorage
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// 按 sha256 和 mime 类型构建本地访问 URL。
+    /// 本地存储返回相对路径，通过 image-master 文件读取接口访问。
+    /// </summary>
+    public string? TryBuildUrlBySha(string sha256, string mime, string? domain = null, string? type = null)
+    {
+        var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(sha) || sha.Length < 16) return null;
+        var ext = MimeToExt(mime ?? "image/png");
+        return $"/api/v1/admin/image-master/assets/file/{sha}.{ext}";
+    }
+
     private static string Sha256Hex(byte[] bytes)
     {
         using var sha = SHA256.Create();

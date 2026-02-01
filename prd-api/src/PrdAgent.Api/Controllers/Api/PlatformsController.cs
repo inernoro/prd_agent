@@ -8,10 +8,12 @@ using PrdAgent.Core.Security;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.LlmGateway;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using static PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -30,11 +32,11 @@ public class PlatformsController : ControllerBase
     private readonly ICacheManager _cache;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IModelDomainService _modelDomainService;
-    private readonly ISmartModelScheduler _modelScheduler;
+    private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _ctxAccessor;
     private readonly ILlmRequestLogWriter _logWriter;
     private readonly IIdGenerator _idGenerator;
-    
+
     // v2：不再返回预设(demo)模型列表；同时通过升级 key 前缀避免旧缓存继续生效
     private const string ModelsCacheKeyPrefix = "platform:models:v2:";
     private static readonly TimeSpan ModelsCacheExpiry = TimeSpan.FromHours(24);
@@ -47,7 +49,7 @@ public class PlatformsController : ControllerBase
         ICacheManager cache,
         IHttpClientFactory httpClientFactory,
         IModelDomainService modelDomainService,
-        ISmartModelScheduler modelScheduler,
+        ILlmGateway gateway,
         ILLMRequestContextAccessor ctxAccessor,
         ILlmRequestLogWriter logWriter,
         IIdGenerator idGenerator)
@@ -58,7 +60,7 @@ public class PlatformsController : ControllerBase
         _cache = cache;
         _httpClientFactory = httpClientFactory;
         _modelDomainService = modelDomainService;
-        _modelScheduler = modelScheduler;
+        _gateway = gateway;
         _ctxAccessor = ctxAccessor;
         _logWriter = logWriter;
         _idGenerator = idGenerator;
@@ -382,8 +384,8 @@ public class PlatformsController : ControllerBase
 
         // 2) 调用主模型进行分类（可能需要分片）
         var providerId = (string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId!).Trim().ToLowerInvariant();
-        var appCallerCode = "admin.platforms.reclassify";
-        var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "chat", ct);
+        var appCallerCode = Admin.Platforms.Reclassify;
+        var llmClient = _gateway.CreateClient(appCallerCode, "chat");
 
         var requestId = Guid.NewGuid().ToString("N");
         using var _ = _ctxAccessor.BeginScope(new LlmRequestContext(
@@ -396,10 +398,7 @@ public class PlatformsController : ControllerBase
             DocumentHash: null,
             SystemPromptRedacted: "[MODEL_RECLASSIFY]",
             RequestType: "reasoning",
-            RequestPurpose: appCallerCode,
-            ModelResolutionType: scheduledResult.ResolutionType,
-            ModelGroupId: scheduledResult.ModelGroupId,
-            ModelGroupName: scheduledResult.ModelGroupName));
+            RequestPurpose: appCallerCode));
 
         var results = new List<ModelClassifyResult>();
         const int chunkSize = 180;
@@ -408,7 +407,7 @@ public class PlatformsController : ControllerBase
             var chunk = available.Skip(i).Take(chunkSize).ToList();
             try
             {
-                var chunkRes = await ClassifyAvailableModelsAsync(scheduledResult.Client, providerId, platform.PlatformType, chunk, ct);
+                var chunkRes = await ClassifyAvailableModelsAsync(llmClient, providerId, platform.PlatformType, chunk, ct);
                 results.AddRange(chunkRes);
             }
             catch (ModelReclassifyParseException ex)

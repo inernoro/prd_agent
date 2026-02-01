@@ -8,7 +8,8 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
-using static PrdAgent.Core.Models.AppCallerRegistry;
+using PrdAgent.Infrastructure.LlmGateway;
+using AppCallerRegistry = PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Infrastructure.Services;
 
@@ -20,7 +21,7 @@ public class ModelDomainService : IModelDomainService
     private readonly IConfiguration _config;
     private readonly ILlmRequestLogWriter _logWriter;
     private readonly ILLMRequestContextAccessor _ctxAccessor;
-    private readonly ISmartModelScheduler _modelScheduler;
+    private readonly ILlmGateway _gateway;
     private readonly ILogger<ClaudeClient> _claudeLogger;
 
     public ModelDomainService(
@@ -29,7 +30,7 @@ public class ModelDomainService : IModelDomainService
         IConfiguration config,
         ILlmRequestLogWriter logWriter,
         ILLMRequestContextAccessor ctxAccessor,
-        ISmartModelScheduler modelScheduler,
+        ILlmGateway gateway,
         ILogger<ClaudeClient> claudeLogger)
     {
         _db = db;
@@ -37,7 +38,7 @@ public class ModelDomainService : IModelDomainService
         _config = config;
         _logWriter = logWriter;
         _ctxAccessor = ctxAccessor;
-        _modelScheduler = modelScheduler;
+        _gateway = gateway;
         _claudeLogger = claudeLogger;
     }
 
@@ -112,8 +113,8 @@ public class ModelDomainService : IModelDomainService
         var fallbackName = GroupNameHeuristics.Suggest(fileName, safeSnippet, maxLen: 20);
 
         // 使用意图模型（不存在则回退主模型）
-        var appCallerCode = Desktop.GroupName.SuggestIntent;
-        var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "intent", ct);
+        var appCallerCode = AppCallerRegistry.Desktop.GroupName.SuggestIntent;
+        var llmClient = _gateway.CreateClient(appCallerCode, "intent");
 
         var requestId = Guid.NewGuid().ToString("N");
         using var _ = _ctxAccessor.BeginScope(new LlmRequestContext(
@@ -127,10 +128,7 @@ public class ModelDomainService : IModelDomainService
             // 展示给管理后台/日志的 system（脱敏版）：不要再用占位符，避免误导排障
             SystemPromptRedacted: "意图：根据文件名与PRD片段输出群组名称（只输出名称，不追问）",
             RequestType: "intent",
-            RequestPurpose: appCallerCode,
-            ModelResolutionType: scheduledResult.ResolutionType,
-            ModelGroupId: scheduledResult.ModelGroupId,
-            ModelGroupName: scheduledResult.ModelGroupName));
+            RequestPurpose: appCallerCode));
 
         var systemPrompt =
             "你是PRD Agent的意图模型。\n" +
@@ -153,8 +151,8 @@ public class ModelDomainService : IModelDomainService
             new() { Role = "user", Content = userContent }
         };
 
-        // 该意图属于“短文本提取”，禁用 prompt cache 可显著降低“错误复用/误命中”带来的离谱输出风险
-        var text = await CollectToTextAsync(scheduledResult.Client, systemPrompt, messages, enablePromptCache: false, ct);
+        // 该意图属于"短文本提取"，禁用 prompt cache 可显著降低"错误复用/误命中"带来的离谱输出风险
+        var text = await CollectToTextAsync(llmClient, systemPrompt, messages, enablePromptCache: false, ct);
         var name = NormalizeName(text);
         if (string.IsNullOrWhiteSpace(name) || !LooksLikeAName(name))
         {
@@ -175,8 +173,8 @@ public class ModelDomainService : IModelDomainService
         if (safePrompt.Length > 200)
             safePrompt = safePrompt[..200];
 
-        var appCallerCode = "prd-agent-web::visual-agent.workspace-title";
-        var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "intent", ct);
+        var appCallerCode = AppCallerRegistry.VisualAgent.Workspace.Title;
+        var llmClient = _gateway.CreateClient(appCallerCode, "intent");
 
         var requestId = Guid.NewGuid().ToString("N");
         using var _ = _ctxAccessor.BeginScope(new LlmRequestContext(
@@ -189,10 +187,7 @@ public class ModelDomainService : IModelDomainService
             DocumentHash: null,
             SystemPromptRedacted: "意图：根据用户图像生成提示词生成工作区标题（5-20字）",
             RequestType: "intent",
-            RequestPurpose: appCallerCode,
-            ModelResolutionType: scheduledResult.ResolutionType,
-            ModelGroupId: scheduledResult.ModelGroupId,
-            ModelGroupName: scheduledResult.ModelGroupName));
+            RequestPurpose: appCallerCode));
 
         var systemPrompt =
             "你是视觉创作工作区的命名助手。\n" +
@@ -209,7 +204,7 @@ public class ModelDomainService : IModelDomainService
             new() { Role = "user", Content = $"用户提示词：{safePrompt}" }
         };
 
-        var text = await CollectToTextAsync(scheduledResult.Client, systemPrompt, messages, enablePromptCache: false, ct);
+        var text = await CollectToTextAsync(llmClient, systemPrompt, messages, enablePromptCache: false, ct);
         var title = NormalizeName(text);
         if (string.IsNullOrWhiteSpace(title) || !LooksLikeAName(title) || title.Length > 20)
         {

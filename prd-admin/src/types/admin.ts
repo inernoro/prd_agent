@@ -111,6 +111,8 @@ export type LlmRequestLogListItem = {
   requestType?: string | null;
   /** 这次调用的用途：如 chat.sendMessage / previewAsk.section / imageGen.generate */
   requestPurpose?: string | null;
+  /** RequestPurpose 的中文显示名（日志写入时一次性保存，确保日志自包含） */
+  requestPurposeDisplayName?: string | null;
   status: string;
   startedAt: string;
   firstByteAt?: string | null;
@@ -137,6 +139,8 @@ export type LlmRequestLog = {
   viewRole?: string | null;
   requestType?: string | null;
   requestPurpose?: string | null;
+  /** RequestPurpose 的中文显示名（日志写入时一次性保存，确保日志自包含） */
+  requestPurposeDisplayName?: string | null;
   provider: string;
   model: string;
   apiBase?: string | null;

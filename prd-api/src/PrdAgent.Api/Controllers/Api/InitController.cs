@@ -192,14 +192,20 @@ public class InitController : ControllerBase
     /// 初始化应用（全删全插策略）
     /// 策略：
     /// 1. 删除所有 IsSystemDefault=true 的应用
-    /// 2. 从代码注册表重新插入最新的系统默认应用
-    /// 3. 保留 IsSystemDefault=false 的用户自定义应用
+    /// 2. 删除不在注册表中的孤儿应用（旧格式 AppCode）
+    /// 3. 从代码注册表重新插入最新的系统默认应用
+    /// 4. 清理悬挂的模型池绑定关系
     /// </summary>
     [HttpPost("default-apps")]
     public async Task<IActionResult> InitDefaultApps()
     {
         var deleted = new List<string>();
+        var orphanDeleted = new List<string>();
         var created = new List<string>();
+
+        // 从注册表获取最新定义
+        var definitions = AppCallerRegistrationService.GetAllDefinitions();
+        var registeredAppCodes = definitions.Select(d => d.AppCode).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // 步骤 1：删除所有系统默认应用
         var systemDefaultApps = await _db.LLMAppCallers
@@ -213,8 +219,20 @@ public class InitController : ControllerBase
             _logger.LogInformation("删除系统默认应用: {AppCode}", app.AppCode);
         }
 
-        // 步骤 2：从注册表获取最新定义
-        var definitions = AppCallerRegistrationService.GetAllDefinitions();
+        // 步骤 2：删除不在注册表中的孤儿应用（旧格式或已废弃的 AppCode）
+        // 注意：这会删除所有不在注册表中的应用，包括历史遗留的旧格式应用
+        var allApps = await _db.LLMAppCallers.Find(_ => true).ToListAsync();
+        foreach (var app in allApps)
+        {
+            // 如果不在注册表中，则删除（无论是什么类型）
+            if (!registeredAppCodes.Contains(app.AppCode))
+            {
+                await _db.LLMAppCallers.DeleteOneAsync(a => a.Id == app.Id);
+                orphanDeleted.Add(app.AppCode);
+                _logger.LogInformation("删除孤儿应用: {AppCode} (IsSystemDefault={IsSystemDefault})",
+                    app.AppCode, app.IsSystemDefault);
+            }
+        }
 
         // 步骤 3：重新插入系统默认应用
         foreach (var def in definitions)
@@ -251,8 +269,9 @@ public class InitController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             deleted,
+            orphanDeleted,
             created,
-            message = $"删除 {deleted.Count} 个旧应用，创建 {created.Count} 个新应用"
+            message = $"删除 {deleted.Count} 个旧应用，清理 {orphanDeleted.Count} 个孤儿应用，创建 {created.Count} 个新应用"
         }));
     }
     

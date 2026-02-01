@@ -111,17 +111,35 @@ public static class Desktop
 public static class VisualAgent
 {
     public const string AppName = "Visual Agent";
-    
+
     public static class Image
     {
+        // 已移除通用的 Generation，请使用具体的 Text2Img / Img2Img / VisionGen
+
         [AppCallerMetadata(
-            "图片生成",
-            "根据描述生成图片",
+            "文生图",
+            "纯文本描述生成图片（无参考图）",
             ModelTypes = new[] { ModelTypes.ImageGen },
             Category = "Image"
         )]
-        public const string Generation = "visual-agent.image::generation";
-        
+        public const string Text2Img = "visual-agent.image.text2img::generation";
+
+        [AppCallerMetadata(
+            "图生图（单图参考）",
+            "单图参考生成（传统 img2img）",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Image"
+        )]
+        public const string Img2Img = "visual-agent.image.img2img::generation";
+
+        [AppCallerMetadata(
+            "多图参考生成",
+            "多图参考生成（Vision API）",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Image"
+        )]
+        public const string VisionGen = "visual-agent.image.vision::generation";
+
         [AppCallerMetadata(
             "图片分析",
             "分析图片内容",
@@ -129,7 +147,7 @@ public static class VisualAgent
             Category = "Image"
         )]
         public const string Vision = "visual-agent.image::vision";
-        
+
         [AppCallerMetadata(
             "创意对话",
             "与AI讨论创意想法",
@@ -145,6 +163,17 @@ public static class VisualAgent
             Category = "Image"
         )]
         public const string Describe = "visual-agent.image.describe::vision";
+    }
+
+    public static class Workspace
+    {
+        [AppCallerMetadata(
+            "工作区标题生成",
+            "根据提示词生成工作区标题",
+            ModelTypes = new[] { ModelTypes.Intent },
+            Category = "Workspace"
+        )]
+        public const string Title = "visual-agent.workspace-title::intent";
     }
 
     public static class Compose
@@ -164,6 +193,41 @@ public static class VisualAgent
             Category = "Compose"
         )]
         public const string Generation = "visual-agent.compose::generation";
+    }
+
+    public static class ImageGen
+    {
+        [AppCallerMetadata(
+            "图片生成规划",
+            "根据文档内容规划需要生成的图片",
+            ModelTypes = new[] { ModelTypes.Intent },
+            Category = "ImageGen"
+        )]
+        public const string Plan = "visual-agent.image-gen.plan::intent";
+
+        [AppCallerMetadata(
+            "图片生成",
+            "单张图片生成",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "ImageGen"
+        )]
+        public const string Generate = "visual-agent.image-gen.generate::generation";
+
+        [AppCallerMetadata(
+            "批量图片生成",
+            "批量生成多张图片",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "ImageGen"
+        )]
+        public const string BatchGenerate = "visual-agent.image-gen.batch-generate::generation";
+
+        [AppCallerMetadata(
+            "图片风格提取",
+            "从参考图片提取风格描述",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "ImageGen"
+        )]
+        public const string ExtractStyle = "visual-agent.image-gen.extract-style::vision";
     }
 }
 
@@ -287,7 +351,7 @@ public static class OpenPlatform
 public static class Admin
 {
     public const string AppName = "PRD Agent Web";
-    
+
     public static class Lab
     {
         [AppCallerMetadata(
@@ -297,7 +361,7 @@ public static class Admin
             Category = "Testing"
         )]
         public const string Chat = "prd-agent-web.lab::chat";
-        
+
         [AppCallerMetadata(
             "实验室-视觉测试",
             "实验室功能的视觉模型测试",
@@ -305,7 +369,7 @@ public static class Admin
             Category = "Testing"
         )]
         public const string Vision = "prd-agent-web.lab::vision";
-        
+
         [AppCallerMetadata(
             "实验室-生成测试",
             "实验室功能的生成模型测试",
@@ -313,6 +377,39 @@ public static class Admin
             Category = "Testing"
         )]
         public const string Generation = "prd-agent-web.lab::generation";
+    }
+
+    public static class ModelLab
+    {
+        [AppCallerMetadata(
+            "模型实验室-运行测试",
+            "模型实验室功能的测试运行",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Testing"
+        )]
+        public const string Run = "prd-agent-web.model-lab.run::chat";
+    }
+
+    public static class Platforms
+    {
+        [AppCallerMetadata(
+            "模型重分类",
+            "使用 AI 对平台可用模型进行分类",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Management"
+        )]
+        public const string Reclassify = "prd-agent-web.platforms.reclassify::chat";
+    }
+
+    public static class Prompts
+    {
+        [AppCallerMetadata(
+            "提示词优化",
+            "使用 AI 优化提示词模板",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Management"
+        )]
+        public const string Optimize = "prd-agent-web.prompts.optimize::chat";
     }
 }
 }

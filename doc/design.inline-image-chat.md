@@ -623,37 +623,76 @@ const sendText = async (rawText: string) => {
 
 | 步骤 | 内容 | 状态 |
 |------|------|------|
-| 1 | 完成 Step 3（并行对比新旧解析器） | ⏳ 待开始 |
-| 2 | 后端新增 `analyze-intent` 端点 | ⏳ 待开始 |
-| 3 | 注册 `visual-intent-analyzer` Agent | ⏳ 待开始 |
-| 4 | 前端判断 refs.length，条件调用 | ⏳ 待开始 |
-| 5 | 测试：单图/双图/多图场景 | ⏳ 待开始 |
+| 1 | 完成 Step 3（并行对比新旧解析器） | ✅ 已完成 |
+| 2 | 后端创建 `MultiImageDomainService` | ✅ 已完成 |
+| 3 | 后端 Controller/Worker 支持 `imageRefs` 参数 | ✅ 已完成 |
+| 4 | 前端传递 `imageRefs` 数组 | ✅ 已完成 |
+| 5 | 测试：单图/双图/多图场景 | ⏳ 待测试 |
 
-### 11.6 Agent Prompt 模板（草案）
+### 11.6 后端多图处理架构（已实现）
 
 ```
-你是一个视觉创作意图分析助手。
-
-用户输入: "{text}"
-引用的图片:
-{imageRefs.map(r => `- @img${r.refId}: ${r.label}`).join('\n')}
-
-请分析用户的意图，返回 JSON 格式：
-{
-  "action": "blend|replace|style_transfer|composite|generate",
-  "target": { "refId": N } 或 null,
-  "references": [{ "refId": N }, ...],
-  "styleRef": { "refId": N } 或 null,
-  "enhancedPrompt": "更清晰的指令描述",
-  "confidence": 0.0-1.0
-}
-
-规则：
-1. 如果用户说"把A换成B"，A是target，B是reference
-2. 如果用户说"A的风格+B的内容"，A是styleRef，B是target
-3. 如果只是"融合/合成"，第一张是target，其余是reference
-4. enhancedPrompt 要比原文更清晰，明确指出每张图的作用
+┌─────────────────────────────────────────────────────────────────┐
+│                        多图处理流程                               │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   前端                          后端                             │
+│   ──────                        ──────                          │
+│   用户输入: "@img16@img17"       Controller:                     │
+│   imageRefs: [                   - 接收 imageRefs 数组           │
+│     {refId:16, sha256:...},      - 存入 ImageGenRun             │
+│     {refId:17, sha256:...}                                      │
+│   ]                                     ↓                       │
+│                                  Worker:                        │
+│                                  - MultiImageDomainService      │
+│                                  - 解析 @imgN 引用               │
+│                                  - 构建增强 prompt               │
+│                                  - 加载图片资产                   │
+│                                  - 调用生图 API                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+### 11.7 Agent Prompt 模板（修订版）
+
+**设计原则变更**：不返回 JSON，直接返回可用的 prompt
+
+```
+你是一个视觉创作助手。用户在对话框中输入了包含图片引用的请求。
+
+【用户输入】
+{用户原始 prompt}
+
+【图片对照表】
+- @img1 → 图片URL: {url1}, 标签: {label1}
+- @img2 → 图片URL: {url2}, 标签: {label2}
+...
+
+【你的任务】
+将用户的描述中的 @imgN 标记替换为对图片的清晰描述，使生图模型能准确理解每张图片的作用。
+保留用户的原始意图和措辞，不要过度解释或改写。
+
+【输出】
+直接输出处理后的提示词，不要输出 JSON 或其他格式。
+```
+
+**示例**：
+- 用户输入: `把 @img1 的风格应用到 @img2`
+- 输出: `把第一张图（风景背景.jpg）的风格应用到第二张图（产品图.jpg）`
+
+### 11.8 关键文件清单
+
+| 文件 | 用途 | 状态 |
+|------|------|------|
+| `PrdAgent.Core/Models/MultiImage/ImageRefInput.cs` | 图片引用输入模型 | ✅ 新增 |
+| `PrdAgent.Core/Models/MultiImage/MultiImageParseResult.cs` | 解析结果模型 | ✅ 新增 |
+| `PrdAgent.Core/Interfaces/IMultiImageDomainService.cs` | 领域服务接口 | ✅ 新增 |
+| `PrdAgent.Infrastructure/Services/MultiImageDomainService.cs` | 领域服务实现 | ✅ 新增 |
+| `PrdAgent.Api.Tests/Services/MultiImageDomainServiceTests.cs` | 单元测试 | ✅ 新增 |
+| `PrdAgent.Core/Models/ImageGenRun.cs` | 添加 ImageRefs 字段 | ✅ 修改 |
+| `PrdAgent.Api/Controllers/Api/ImageMasterController.cs` | 接收 imageRefs | ✅ 修改 |
+| `PrdAgent.Api/Services/ImageGenRunWorker.cs` | 处理多图 | ✅ 修改 |
+| `prd-admin/src/services/contracts/visualAgent.ts` | 前端类型定义 | ✅ 修改 |
+| `prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx` | 传递 imageRefs | ✅ 修改 |
 
 ---
 
@@ -760,6 +799,9 @@ for (const para of root.getChildren()) {
 
 | 日期 | 变更内容 | 作者 |
 |------|----------|------|
+| 2026-01-31 | 实现多图后端架构：MultiImageDomainService + Worker 处理 | AI Assistant |
+| 2026-01-31 | 实现前端 imageRefs 传递：Controller DTO + 前端请求构建 | AI Assistant |
+| 2026-01-31 | 修订意图分析 Prompt：不返回 JSON，直接输出可用提示词 | AI Assistant |
 | 2026-01-29 | 添加技术经验沉淀（第十三章） | AI Assistant |
 | 2026-01-29 | 重构 chip 状态 API：pending → ready | AI Assistant |
 | 2026-01-29 | 添加合并计划书和多图 AI 交互计划书 | AI Assistant |

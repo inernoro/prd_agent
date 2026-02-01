@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Infrastructure.Services.VisualAgent;
 
@@ -74,12 +75,12 @@ public interface IMultiImageComposeService
 public class MultiImageComposeService : IMultiImageComposeService
 {
     private readonly MongoDbContext _db;
-    private readonly ISmartModelScheduler _modelScheduler;
+    private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IImageDescriptionService _imageDescriptionService;
     private readonly ILogger<MultiImageComposeService> _logger;
 
-    private const string SystemPrompt =
+    private const string VlmSystemPrompt =
         "# Role\n" +
         "你是 AI 绘画指令编译器，具备视觉理解能力。\n\n" +
         "# Input\n" +
@@ -99,13 +100,13 @@ public class MultiImageComposeService : IMultiImageComposeService
 
     public MultiImageComposeService(
         MongoDbContext db,
-        ISmartModelScheduler modelScheduler,
+        ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         IImageDescriptionService imageDescriptionService,
         ILogger<MultiImageComposeService> logger)
     {
         _db = db;
-        _modelScheduler = modelScheduler;
+        _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _imageDescriptionService = imageDescriptionService;
         _logger = logger;
@@ -189,7 +190,7 @@ public class MultiImageComposeService : IMultiImageComposeService
 
         // 4. 调用 VLM
         var appCallerCode = AppCallerRegistry.VisualAgent.Compose.Intent;
-        var scheduledResult = await _modelScheduler.GetClientWithGroupInfoAsync(appCallerCode, "vision", ct);
+        var llmClient = _gateway.CreateClient(appCallerCode, "vision");
 
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"),
@@ -201,12 +202,7 @@ public class MultiImageComposeService : IMultiImageComposeService
             DocumentHash: null,
             SystemPromptRedacted: "[MULTI_IMAGE_COMPOSE]",
             RequestType: "vision",
-            RequestPurpose: appCallerCode,
-            ModelResolutionType: scheduledResult.ResolutionType,
-            ModelGroupId: scheduledResult.ModelGroupId,
-            ModelGroupName: scheduledResult.ModelGroupName));
-
-        var client = scheduledResult.Client;
+            RequestPurpose: appCallerCode));
 
         var msg = new LLMMessage
         {
@@ -219,7 +215,7 @@ public class MultiImageComposeService : IMultiImageComposeService
             "Sending compose request with {ImageCount} images to VLM",
             attachments.Count);
 
-        var generatedPrompt = await CollectToTextAsync(client, SystemPrompt, new List<LLMMessage> { msg }, ct);
+        var generatedPrompt = await CollectToTextAsync(llmClient, VlmSystemPrompt, new List<LLMMessage> { msg }, ct);
         generatedPrompt = NormalizePrompt(generatedPrompt);
 
         _logger.LogInformation(
@@ -229,7 +225,7 @@ public class MultiImageComposeService : IMultiImageComposeService
         return new ComposeIntentResult
         {
             GeneratedPrompt = generatedPrompt,
-            ModelId = scheduledResult.ModelGroupName,
+            ModelId = appCallerCode, // Gateway 内部处理实际模型选择
             ImageDescriptions = descriptionInfos
         };
     }

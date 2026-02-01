@@ -137,10 +137,17 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISystemPromptService, Prd
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 
-// 智能模型调度器（新架构：应用身份识别 + 分组化配置 + 智能降权）
-builder.Services.AddScoped<ISmartModelScheduler, SmartModelScheduler>();
+// 模型调度执行器（支持单元测试 Mock）
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 
-// OpenAI 兼容 Images API（用于“生图模型”）
+// LLM Gateway 统一守门员（所有大模型调用必须通过此接口）
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+
+// 注册 Core 层的 ILlmGateway 接口（同一实例）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>(sp =>
+    (PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway)sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>());
+
+// OpenAI 兼容 Images API（用于"生图模型"）
 builder.Services.AddScoped<OpenAIImageClient>();
 builder.Services.AddSingleton<WatermarkFontRegistry>();
 builder.Services.AddSingleton<WatermarkRenderer>();
@@ -148,6 +155,9 @@ builder.Services.AddSingleton<WatermarkRenderer>();
 // Visual Agent 多图组合服务（图片描述提取 + 多图意图解析）
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.VisualAgent.IImageDescriptionService, PrdAgent.Infrastructure.Services.VisualAgent.ImageDescriptionService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.VisualAgent.IMultiImageComposeService, PrdAgent.Infrastructure.Services.VisualAgent.MultiImageComposeService>();
+
+// 多图领域服务（解析 @imgN 引用 + 意图分析）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IMultiImageDomainService, PrdAgent.Infrastructure.Services.MultiImageDomainService>();
 
 // 生图后台任务执行器（可断线继续）
 builder.Services.AddHostedService<ImageGenRunWorker>();
@@ -771,7 +781,7 @@ builder.Services.AddScoped<IGapDetectionService>(sp =>
 
 builder.Services.AddScoped<IChatService>(sp =>
 {
-    var modelScheduler = sp.GetRequiredService<ISmartModelScheduler>();
+    var gateway = sp.GetRequiredService<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>();
     var sessionService = sp.GetRequiredService<ISessionService>();
     var documentService = sp.GetRequiredService<IDocumentService>();
     var cache = sp.GetRequiredService<ICacheManager>();
@@ -784,19 +794,19 @@ builder.Services.AddScoped<IChatService>(sp =>
     var groupHub = sp.GetRequiredService<IGroupMessageStreamHub>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var idGenerator = sp.GetRequiredService<IIdGenerator>();
-    return new ChatService(modelScheduler, sessionService, documentService, cache, promptManager, promptService, systemPromptService, userService, messageRepo, groupSeq, groupHub, llmCtx, idGenerator);
+    return new ChatService(gateway, sessionService, documentService, cache, promptManager, promptService, systemPromptService, userService, messageRepo, groupSeq, groupHub, llmCtx, idGenerator);
 });
 
 builder.Services.AddScoped<IPreviewAskService>(sp =>
 {
-    var modelScheduler = sp.GetRequiredService<ISmartModelScheduler>();
+    var gateway = sp.GetRequiredService<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>();
     var sessionService = sp.GetRequiredService<ISessionService>();
     var documentService = sp.GetRequiredService<IDocumentService>();
     var promptManager = sp.GetRequiredService<IPromptManager>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var settingsService = sp.GetRequiredService<IAppSettingsService>();
     var systemPromptService = sp.GetRequiredService<PrdAgent.Core.Interfaces.ISystemPromptService>();
-    return new PreviewAskService(modelScheduler, sessionService, documentService, promptManager, llmCtx, settingsService, systemPromptService);
+    return new PreviewAskService(gateway, sessionService, documentService, promptManager, llmCtx, settingsService, systemPromptService);
 });
 
 // 引导讲解体系已删除（去阶段化）

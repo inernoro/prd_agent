@@ -350,7 +350,7 @@ public class ModelGroupsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("INVALID_MODEL_TYPE", $"无效的模型类型: {request.ModelType}"));
         }
 
-        // 检查是否已存在同类型的默认分组
+        // 如果要设为默认，先取消同类型的其他默认分组
         if (request.IsDefaultForType)
         {
             var existingDefault = await _db.ModelGroups
@@ -359,9 +359,16 @@ public class ModelGroupsController : ControllerBase
 
             if (existingDefault != null)
             {
-                return BadRequest(ApiResponse<object>.Fail(
-                    "DEFAULT_GROUP_EXISTS",
-                    $"该类型已存在默认分组: {existingDefault.Name}"));
+                // 自动取消旧的默认分组
+                await _db.ModelGroups.UpdateOneAsync(
+                    g => g.Id == existingDefault.Id,
+                    Builders<ModelGroup>.Update
+                        .Set(g => g.IsDefaultForType, false)
+                        .Set(g => g.UpdatedAt, DateTime.UtcNow));
+
+                _logger.LogInformation(
+                    "自动取消旧默认分组: {OldGroupId} ({OldGroupName})，新默认将是: {NewGroupName}",
+                    existingDefault.Id, existingDefault.Name, request.Name);
             }
         }
 
@@ -439,28 +446,34 @@ public class ModelGroupsController : ControllerBase
             group.Models = request.Models;
         }
 
-        // 更新默认分组标记
+        // 更新默认分组标记（自动取消旧默认）
         if (request.IsDefaultForType.HasValue && request.IsDefaultForType.Value != group.IsDefaultForType)
         {
             if (request.IsDefaultForType.Value)
             {
-                // 检查是否已存在其他默认分组
+                // 自动取消同类型的其他默认分组
                 var existingDefault = await _db.ModelGroups
                     .Find(g => g.ModelType == group.ModelType && g.IsDefaultForType && g.Id != id)
                     .FirstOrDefaultAsync();
 
                 if (existingDefault != null)
                 {
-                    return BadRequest(ApiResponse<object>.Fail(
-                        "DEFAULT_GROUP_EXISTS",
-                        $"该类型已存在默认分组: {existingDefault.Name}"));
+                    await _db.ModelGroups.UpdateOneAsync(
+                        g => g.Id == existingDefault.Id,
+                        Builders<ModelGroup>.Update
+                            .Set(g => g.IsDefaultForType, false)
+                            .Set(g => g.UpdatedAt, DateTime.UtcNow));
+
+                    _logger.LogInformation(
+                        "自动取消旧默认分组: {OldGroupId} ({OldGroupName})，新默认将是: {GroupName}",
+                        existingDefault.Id, existingDefault.Name, group.Name);
                 }
             }
 
             group.IsDefaultForType = request.IsDefaultForType.Value;
         }
 
-        // 如果修改了类型且当前为默认分组，需要验证新类型是否已有默认分组
+        // 如果修改了类型且当前为默认分组，自动取消新类型的其他默认分组
         if (!string.IsNullOrWhiteSpace(request.ModelType) && group.IsDefaultForType)
         {
             var existingDefault = await _db.ModelGroups
@@ -469,9 +482,15 @@ public class ModelGroupsController : ControllerBase
 
             if (existingDefault != null)
             {
-                return BadRequest(ApiResponse<object>.Fail(
-                    "DEFAULT_GROUP_EXISTS",
-                    $"该类型已存在默认分组: {existingDefault.Name}"));
+                await _db.ModelGroups.UpdateOneAsync(
+                    g => g.Id == existingDefault.Id,
+                    Builders<ModelGroup>.Update
+                        .Set(g => g.IsDefaultForType, false)
+                        .Set(g => g.UpdatedAt, DateTime.UtcNow));
+
+                _logger.LogInformation(
+                    "更改类型后自动取消旧默认分组: {OldGroupId} ({OldGroupName})",
+                    existingDefault.Id, existingDefault.Name);
             }
         }
 
@@ -514,6 +533,111 @@ public class ModelGroupsController : ControllerBase
         _logger.LogInformation("删除模型分组: {GroupId}", id);
 
         return Ok(ApiResponse<object>.Ok(new { id }));
+    }
+
+    /// <summary>
+    /// 重置模型池中指定模型的健康状态
+    /// </summary>
+    /// <param name="id">模型池 ID</param>
+    /// <param name="modelId">模型 ID（ModelGroupItem.ModelId）</param>
+    [HttpPost("{id}/models/{modelId}/reset-health")]
+    public async Task<IActionResult> ResetModelHealth(string id, string modelId)
+    {
+        var group = await _db.ModelGroups.Find(g => g.Id == id).FirstOrDefaultAsync();
+
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("MODEL_GROUP_NOT_FOUND", "模型分组不存在"));
+        }
+
+        var model = group.Models?.FirstOrDefault(m => m.ModelId == modelId);
+        if (model == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("MODEL_NOT_FOUND", $"模型 {modelId} 不在该分组中"));
+        }
+
+        var oldStatus = model.HealthStatus;
+
+        // 重置健康状态
+        var filter = Builders<ModelGroup>.Filter.And(
+            Builders<ModelGroup>.Filter.Eq(g => g.Id, id),
+            Builders<ModelGroup>.Filter.ElemMatch(g => g.Models, m => m.ModelId == modelId));
+
+        var update = Builders<ModelGroup>.Update
+            .Set("Models.$.HealthStatus", ModelHealthStatus.Healthy)
+            .Set("Models.$.ConsecutiveFailures", 0)
+            .Set("Models.$.ConsecutiveSuccesses", 0)
+            .Set("Models.$.LastSuccessAt", DateTime.UtcNow);
+
+        var result = await _db.ModelGroups.UpdateOneAsync(filter, update);
+
+        if (result.ModifiedCount == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail("UPDATE_FAILED", "更新失败"));
+        }
+
+        _logger.LogInformation(
+            "重置模型健康状态: GroupId={GroupId}, ModelId={ModelId}, OldStatus={Old}, NewStatus=Healthy",
+            id, modelId, oldStatus);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            groupId = id,
+            modelId,
+            oldStatus = oldStatus.ToString(),
+            newStatus = "Healthy"
+        }));
+    }
+
+    /// <summary>
+    /// 批量重置模型池中所有模型的健康状态
+    /// </summary>
+    [HttpPost("{id}/reset-all-health")]
+    public async Task<IActionResult> ResetAllModelsHealth(string id)
+    {
+        var group = await _db.ModelGroups.Find(g => g.Id == id).FirstOrDefaultAsync();
+
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("MODEL_GROUP_NOT_FOUND", "模型分组不存在"));
+        }
+
+        if (group.Models == null || group.Models.Count == 0)
+        {
+            return Ok(ApiResponse<object>.Ok(new { groupId = id, resetCount = 0 }));
+        }
+
+        // 重置所有模型的健康状态
+        var resetModels = group.Models.Select(m => new ModelGroupItem
+        {
+            ModelId = m.ModelId,
+            PlatformId = m.PlatformId,
+            Priority = m.Priority,
+            HealthStatus = ModelHealthStatus.Healthy,
+            ConsecutiveFailures = 0,
+            ConsecutiveSuccesses = 0,
+            LastSuccessAt = DateTime.UtcNow,
+            LastFailedAt = m.LastFailedAt,
+            EnablePromptCache = m.EnablePromptCache,
+            MaxTokens = m.MaxTokens
+        }).ToList();
+
+        var update = Builders<ModelGroup>.Update
+            .Set(g => g.Models, resetModels)
+            .Set(g => g.UpdatedAt, DateTime.UtcNow);
+
+        await _db.ModelGroups.UpdateOneAsync(g => g.Id == id, update);
+
+        _logger.LogInformation(
+            "批量重置模型健康状态: GroupId={GroupId}, ResetCount={Count}",
+            id, resetModels.Count);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            groupId = id,
+            resetCount = resetModels.Count,
+            models = resetModels.Select(m => new { m.ModelId, newStatus = "Healthy" })
+        }));
     }
 }
 

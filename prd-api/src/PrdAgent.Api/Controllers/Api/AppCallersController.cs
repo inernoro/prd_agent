@@ -5,6 +5,7 @@ using PrdAgent.Api.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -19,13 +20,13 @@ namespace PrdAgent.Api.Controllers.Api;
 public class AppCallersController : ControllerBase
 {
     private readonly MongoDbContext _db;
-    private readonly ISmartModelScheduler _scheduler;
+    private readonly ILlmGateway _gateway;
     private readonly ILogger<AppCallersController> _logger;
 
-    public AppCallersController(MongoDbContext db, ISmartModelScheduler scheduler, ILogger<AppCallersController> logger)
+    public AppCallersController(MongoDbContext db, ILlmGateway gateway, ILogger<AppCallersController> logger)
     {
         _db = db;
-        _scheduler = scheduler;
+        _gateway = gateway;
         _logger = logger;
     }
 
@@ -294,9 +295,9 @@ public class AppCallersController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("INVALID_PARAMS", "appCallerCode 和 modelType 不能为空"));
         }
 
-        var result = await _scheduler.ResolveModelAsync(appCallerCode, modelType, ct);
+        var result = await _gateway.ResolveModelAsync(appCallerCode, modelType, null, ct);
 
-        return Ok(ApiResponse<ResolvedModelInfo?>.Ok(result));
+        return Ok(ApiResponse<GatewayModelResolution?>.Ok(result));
     }
 
     /// <summary>
@@ -309,17 +310,18 @@ public class AppCallersController : ControllerBase
     {
         if (request.Items == null || request.Items.Count == 0)
         {
-            return Ok(ApiResponse<Dictionary<string, ResolvedModelInfo?>>.Ok(new Dictionary<string, ResolvedModelInfo?>()));
+            return Ok(ApiResponse<Dictionary<string, ResolvedModelInfoDto?>>.Ok(new Dictionary<string, ResolvedModelInfoDto?>()));
         }
 
-        var results = new Dictionary<string, ResolvedModelInfo?>();
+        var results = new Dictionary<string, ResolvedModelInfoDto?>();
 
         // 并行解析所有模型
         var tasks = request.Items.Select(async item =>
         {
             var key = $"{item.AppCallerCode}::{item.ModelType}";
-            var result = await _scheduler.ResolveModelAsync(item.AppCallerCode, item.ModelType, ct);
-            return (key, result);
+            var result = await _gateway.ResolveModelAsync(item.AppCallerCode, item.ModelType, null, ct);
+            var dto = MapToResolvedModelInfo(result);
+            return (key, dto);
         });
 
         var resolvedItems = await Task.WhenAll(tasks);
@@ -329,7 +331,55 @@ public class AppCallersController : ControllerBase
             results[key] = result;
         }
 
-        return Ok(ApiResponse<Dictionary<string, ResolvedModelInfo?>>.Ok(results));
+        return Ok(ApiResponse<Dictionary<string, ResolvedModelInfoDto?>>.Ok(results));
+    }
+
+    /// <summary>
+    /// 将 GatewayModelResolution 转换为前端期望的 ResolvedModelInfo 格式
+    /// </summary>
+    private static ResolvedModelInfoDto? MapToResolvedModelInfo(GatewayModelResolution? resolution)
+    {
+        if (resolution == null || !resolution.Success)
+        {
+            return null;
+        }
+
+        // 根据 ResolutionType 判断来源
+        var source = resolution.ResolutionType switch
+        {
+            "Legacy" => "legacy",
+            "DirectModel" => "legacy",
+            _ => "pool"
+        };
+
+        return new ResolvedModelInfoDto
+        {
+            Source = source,
+            ModelGroupId = resolution.ModelGroupId,
+            ModelGroupName = resolution.ModelGroupName,
+            IsDefaultForType = resolution.ResolutionType == "DefaultPool",
+            PlatformId = resolution.ActualPlatformId,
+            PlatformName = resolution.ActualPlatformName ?? "",
+            ModelId = resolution.ActualModel,
+            ModelDisplayName = resolution.ActualModel, // 暂时使用模型名作为显示名
+            HealthStatus = resolution.HealthStatus ?? "Unknown",
+            Stats = null, // 统计数据单独获取
+            // 降级/回退信息
+            IsFallback = resolution.IsFallback,
+            FallbackReason = resolution.FallbackReason,
+            ConfiguredPool = resolution.IsFallback ? new ConfiguredPoolInfo
+            {
+                PoolId = resolution.OriginalPoolId,
+                PoolName = resolution.OriginalPoolName,
+                Models = resolution.OriginalModels?.Select(m => new ConfiguredModelInfo
+                {
+                    ModelId = m.ModelId,
+                    PlatformId = m.PlatformId,
+                    HealthStatus = m.HealthStatus,
+                    IsAvailable = m.IsAvailable
+                }).ToList()
+            } : null
+        };
     }
 }
 
@@ -369,4 +419,84 @@ public class ResolveModelItem
     public string AppCallerCode { get; set; } = string.Empty;
     /// <summary>模型类型</summary>
     public string ModelType { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 模型解析结果 DTO（匹配前端 ResolvedModelInfo 接口）
+/// </summary>
+public class ResolvedModelInfoDto
+{
+    /// <summary>模型来源：pool（模型池）、legacy（传统配置）</summary>
+    public string Source { get; set; } = "pool";
+
+    /// <summary>模型池ID（如果来自模型池）</summary>
+    public string? ModelGroupId { get; set; }
+
+    /// <summary>模型池名称（如果来自模型池）</summary>
+    public string? ModelGroupName { get; set; }
+
+    /// <summary>是否为该类型的默认模型池</summary>
+    public bool IsDefaultForType { get; set; }
+
+    /// <summary>平台ID</summary>
+    public string PlatformId { get; set; } = string.Empty;
+
+    /// <summary>平台名称</summary>
+    public string PlatformName { get; set; } = string.Empty;
+
+    /// <summary>模型ID（实际调用名）</summary>
+    public string ModelId { get; set; } = string.Empty;
+
+    /// <summary>模型显示名称</summary>
+    public string? ModelDisplayName { get; set; }
+
+    /// <summary>健康状态</summary>
+    public string HealthStatus { get; set; } = "Unknown";
+
+    /// <summary>统计数据（暂为 null，单独获取）</summary>
+    public object? Stats { get; set; }
+
+    // ========== 降级/回退信息 ==========
+
+    /// <summary>是否发生了降级/回退</summary>
+    public bool IsFallback { get; set; }
+
+    /// <summary>降级原因描述（如果 IsFallback=true）</summary>
+    public string? FallbackReason { get; set; }
+
+    /// <summary>原始配置的模型池信息（降级前）</summary>
+    public ConfiguredPoolInfo? ConfiguredPool { get; set; }
+}
+
+/// <summary>
+/// 配置的模型池信息（用于展示降级前的预期值）
+/// </summary>
+public class ConfiguredPoolInfo
+{
+    /// <summary>模型池 ID</summary>
+    public string? PoolId { get; set; }
+
+    /// <summary>模型池名称</summary>
+    public string? PoolName { get; set; }
+
+    /// <summary>模型池中的模型列表</summary>
+    public List<ConfiguredModelInfo>? Models { get; set; }
+}
+
+/// <summary>
+/// 配置的模型信息
+/// </summary>
+public class ConfiguredModelInfo
+{
+    /// <summary>模型 ID</summary>
+    public string ModelId { get; set; } = string.Empty;
+
+    /// <summary>平台 ID</summary>
+    public string PlatformId { get; set; } = string.Empty;
+
+    /// <summary>健康状态</summary>
+    public string HealthStatus { get; set; } = "Unknown";
+
+    /// <summary>是否可用</summary>
+    public bool IsAvailable { get; set; }
 }

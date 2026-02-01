@@ -59,4 +59,13 @@ public class VisualAgentPreferences
 
     /// <summary>用户手动选择的模型 ID（仅当 ModelAuto=false 时有效）</summary>
     public string? ModelId { get; set; }
+
+    /// <summary>
+    /// 生成类型筛选（默认 'all' 显示所有类型的模型）
+    /// 可选值：all | text2img | img2img | vision
+    /// </summary>
+    public string? GenerationType { get; set; }
+
+    /// <summary>是否启用直连模式（跳过 prompt 解析，默认 true）</summary>
+    public bool DirectPrompt { get; set; } = true;
 }

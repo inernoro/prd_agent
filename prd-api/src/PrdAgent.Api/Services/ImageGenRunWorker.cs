@@ -3,8 +3,10 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Models.MultiImage;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.Interfaces;
 
@@ -221,36 +223,141 @@ public class ImageGenRunWorker : BackgroundService
 
                         var requestedModelId = !string.IsNullOrWhiteSpace(run.ConfigModelId) ? run.ConfigModelId : run.ModelId;
 
-                        // ImageMaster：支持“首帧资产 sha”图生图（服务端读取；前端可关闭页面）
+                        // 多图处理：解析 @imgN 引用，构建增强 prompt，加载图片
                         string? initImageBase64 = null;
-                        var initSha = (run.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
-                        if (!string.IsNullOrWhiteSpace(initSha) && initSha.Length == 64 && Regex.IsMatch(initSha, "^[0-9a-f]{64}$"))
+                        var finalPrompt = curPrompt;
+                        var multiImageService = scope.ServiceProvider.GetRequiredService<IMultiImageDomainService>();
+
+                        // 已加载的图片引用列表（用于 Vision API 多图场景）
+                        var loadedImageRefs = new List<Core.Models.MultiImage.ImageRefData>();
+                        var isMultiImageVisionMode = false;
+
+                        // 1. 如果有 ImageRefs（新架构），使用 MultiImageDomainService 处理
+                        if (run.ImageRefs != null && run.ImageRefs.Count > 0)
                         {
-                            var found = await assetStorage.TryReadByShaAsync(initSha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                            if (found != null && found.Value.bytes.Length > 0)
+                            var parseResult = multiImageService.ParsePromptRefs(curPrompt, run.ImageRefs);
+
+                            if (parseResult.IsValid && parseResult.ResolvedRefs.Count > 0)
                             {
-                                var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
-                                var b64 = Convert.ToBase64String(found.Value.bytes);
-                                initImageBase64 = $"data:{mime};base64,{b64}";
+                                // 构建增强 prompt（包含图片对照表）
+                                finalPrompt = await multiImageService.BuildFinalPromptAsync(
+                                    curPrompt,
+                                    parseResult.ResolvedRefs,
+                                    ct);
+
+                                _logger.LogInformation(
+                                    "[多图处理] RunId={RunId}, 引用数={RefCount}, 原始Prompt=\"{Original}\", 增强Prompt=\"{Enhanced}\"",
+                                    run.Id,
+                                    parseResult.ResolvedRefs.Count,
+                                    curPrompt.Length > 50 ? curPrompt[..50] + "..." : curPrompt,
+                                    finalPrompt.Length > 100 ? finalPrompt[..100] + "..." : finalPrompt);
+
+                                // 加载所有引用的图片
+                                foreach (var resolvedRef in parseResult.ResolvedRefs.OrderBy(r => r.OccurrenceOrder))
+                                {
+                                    if (string.IsNullOrWhiteSpace(resolvedRef.AssetSha256)) continue;
+
+                                    var sha = resolvedRef.AssetSha256.Trim().ToLowerInvariant();
+                                    if (sha.Length != 64 || !Regex.IsMatch(sha, "^[0-9a-f]{64}$")) continue;
+
+                                    var found = await assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                                    if (found != null && found.Value.bytes.Length > 0)
+                                    {
+                                        var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
+                                        var b64 = Convert.ToBase64String(found.Value.bytes);
+                                        var dataUrl = $"data:{mime};base64,{b64}";
+                                        // 构建 COS URL 用于日志显示参考图
+                                        var cosUrl = assetStorage.TryBuildUrlBySha(sha, mime, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+
+                                        loadedImageRefs.Add(new Core.Models.MultiImage.ImageRefData
+                                        {
+                                            RefId = resolvedRef.RefId,
+                                            Base64 = dataUrl,
+                                            MimeType = mime,
+                                            Label = resolvedRef.Label,
+                                            Role = resolvedRef.Role,
+                                            Sha256 = sha,
+                                            CosUrl = cosUrl
+                                        });
+
+                                        _logger.LogDebug("[多图处理] 已加载图片 @img{RefId}: {Label} ({Size} bytes)",
+                                            resolvedRef.RefId, resolvedRef.Label, found.Value.bytes.Length);
+                                    }
+                                    else
+                                    {
+                                        _logger.LogWarning("[多图处理] 无法加载图片 @img{RefId}: sha={Sha}", resolvedRef.RefId, sha);
+                                    }
+                                }
+
+                                // 判断是否使用 Vision API（多图模式）
+                                if (loadedImageRefs.Count > 1)
+                                {
+                                    isMultiImageVisionMode = true;
+                                    _logger.LogInformation(
+                                        "[多图处理] 启用 Vision API 多图模式，共 {Count} 张图片: {Refs}",
+                                        loadedImageRefs.Count,
+                                        string.Join(", ", loadedImageRefs.Select(r => $"@img{r.RefId}:{r.Label}")));
+                                }
+                                else if (loadedImageRefs.Count == 1)
+                                {
+                                    // 单图模式：使用传统 img2img
+                                    initImageBase64 = loadedImageRefs[0].Base64;
+                                    _logger.LogDebug("[多图处理] 单图模式，使用 @img{RefId} 作为参考图", loadedImageRefs[0].RefId);
+                                }
+                            }
+
+                            if (parseResult.Warnings.Count > 0)
+                            {
+                                _logger.LogWarning("[多图处理] 解析警告: {Warnings}", string.Join("; ", parseResult.Warnings));
+                            }
+                        }
+                        // 2. 回退：使用 InitImageAssetSha256（单图兼容）
+                        else
+                        {
+                            var initSha = (run.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
+                            if (!string.IsNullOrWhiteSpace(initSha) && initSha.Length == 64 && Regex.IsMatch(initSha, "^[0-9a-f]{64}$"))
+                            {
+                                var found = await assetStorage.TryReadByShaAsync(initSha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                                if (found != null && found.Value.bytes.Length > 0)
+                                {
+                                    var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
+                                    var b64 = Convert.ToBase64String(found.Value.bytes);
+                                    initImageBase64 = $"data:{mime};base64,{b64}";
+                                }
                             }
                         }
 
                         _logger.LogInformation("[ImageGenRunWorker Debug] Run {RunId}: AppKey={AppKey}, UserId={UserId}, AppCallerCode={AppCallerCode}",
                             run.Id, run.AppKey ?? "(null)", run.OwnerAdminId, run.AppCallerCode ?? "(null)");
 
-                        // AppCallerCode: 优先使用 run.AppCallerCode（已在 ResolveModelGroupAsync 中正确设置）
-                        // 这里仅用于 LlmRequestContext 日志记录，保持与调度逻辑一致的映射
-                        var appCallerCode = run.AppCallerCode;
-                        if (string.IsNullOrWhiteSpace(appCallerCode) && !string.IsNullOrWhiteSpace(run.AppKey))
+                        // AppCallerCode: 根据生成模式选择正确的 code
+                        // - text2img: 纯文本生成（无参考图）
+                        // - img2img: 单图参考生成
+                        // - vision: 多图 Vision API 生成
+                        string appCallerCode;
+                        if (run.AppKey == "visual-agent")
                         {
-                            appCallerCode = run.AppKey switch
+                            if (isMultiImageVisionMode && loadedImageRefs.Count > 1)
                             {
-                                "visual-agent" => AppCallerRegistry.VisualAgent.Image.Generation,
-                                "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Generation,
-                                _ => $"{run.AppKey}.image::generation"
-                            };
+                                appCallerCode = AppCallerRegistry.VisualAgent.Image.VisionGen;  // 多图 Vision
+                            }
+                            else if (initImageBase64 != null || loadedImageRefs.Count == 1)
+                            {
+                                appCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img;   // 单图 img2img
+                            }
+                            else
+                            {
+                                appCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img;  // 纯文本生成
+                            }
                         }
-                        appCallerCode ??= AppCallerRegistry.Admin.Lab.Generation; // 最终回退到实验室生成
+                        else if (run.AppKey == "literary-agent")
+                        {
+                            appCallerCode = AppCallerRegistry.LiteraryAgent.Illustration.Generation;
+                        }
+                        else
+                        {
+                            appCallerCode = run.AppCallerCode ?? AppCallerRegistry.Admin.Lab.Generation;
+                        }
 
                         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                             RequestId: $"{run.Id}-{curItemIndex}-{imageIndex}",
@@ -270,18 +377,60 @@ public class ImageGenRunWorker : BackgroundService
 
                         _logger.LogInformation("[ImageGenRunWorker Debug] Calling GenerateAsync with appKey={AppKey}", run.AppKey ?? "(null)");
 
-                        var res = await imageClient.GenerateAsync(
+                        // 调试日志：打印发送给生图模型的完整 prompt
+                        _logger.LogInformation(
+                            "[生图请求] RunId={RunId}\n" +
+                            "  原始Prompt: {OriginalPrompt}\n" +
+                            "  最终Prompt: {FinalPrompt}\n" +
+                            "  有参考图: {HasInitImage}\n" +
+                            "  图片引用数: {ImageRefCount}\n" +
+                            "  多图Vision模式: {IsVisionMode}\n" +
+                            "  已加载图片数: {LoadedCount}",
+                            run.Id,
                             curPrompt,
-                            n: 1,
-                            size: reqSize,
-                            responseFormat: run.ResponseFormat,
-                            ct,
-                            modelId: requestedModelId,
-                            platformId: run.PlatformId,
-                            modelName: run.ModelId,
-                            initImageBase64: initImageBase64,
-                            initImageProvided: initImageBase64 != null,
-                            appKey: run.AppKey);
+                            finalPrompt,
+                            initImageBase64 != null,
+                            run.ImageRefs?.Count ?? 0,
+                            isMultiImageVisionMode,
+                            loadedImageRefs.Count);
+
+                        // 根据图片数量选择 API：
+                        // - 0张：文生图（GenerateAsync）
+                        // - 1张：图生图（GenerateAsync with initImageBase64）
+                        // - 2+张：多图Vision API（GenerateWithVisionAsync）
+                        ApiResponse<ImageGenResult> res;
+                        if (isMultiImageVisionMode && loadedImageRefs.Count > 1)
+                        {
+                            _logger.LogInformation(
+                                "[多图Vision] 使用 Vision API 发送 {Count} 张图片到模型",
+                                loadedImageRefs.Count);
+
+                            res = await imageClient.GenerateWithVisionAsync(
+                                finalPrompt,
+                                loadedImageRefs,
+                                reqSize,
+                                ct,
+                                modelId: requestedModelId,
+                                platformId: run.PlatformId,
+                                modelName: run.ModelId,
+                                appKey: run.AppKey);
+                        }
+                        else
+                        {
+                            // 使用传统 API（文生图或单图图生图）
+                            res = await imageClient.GenerateAsync(
+                                finalPrompt,
+                                n: 1,
+                                size: reqSize,
+                                responseFormat: run.ResponseFormat,
+                                ct,
+                                modelId: requestedModelId,
+                                platformId: run.PlatformId,
+                                modelName: run.ModelId,
+                                initImageBase64: initImageBase64,
+                                initImageProvided: initImageBase64 != null,
+                                appKey: run.AppKey);
+                        }
 
                         if (!res.Success || res.Data == null)
                         {
@@ -766,12 +915,25 @@ public class ImageGenRunWorker : BackgroundService
         var frontendExpectedModelId = run.ModelId;
         var frontendExpectedConfigModelId = run.ConfigModelId;
         
-        // 简洁日志：记录输入参数（包含用户 prompt）
+        // 详细日志：记录输入参数（包含图片引用数量）
         var firstPrompt = run.Items?.FirstOrDefault()?.Prompt ?? "";
         var promptPreview = firstPrompt.Length > 30 ? firstPrompt.Substring(0, 30) + "..." : firstPrompt;
+        var imageRefCount = run.ImageRefs?.Count ?? 0;
+        var hasInitImage = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256);
+
         _logger.LogInformation(
-            "[生图模型匹配] 开始 | RunId={RunId} | 期望={ExpectedCode} | Prompt=\"{Prompt}\"",
-            run.Id, frontendExpectedModelId ?? "(随机)", promptPreview);
+            "[生图模型匹配] ====== 开始 ======\n" +
+            "  RunId: {RunId}\n" +
+            "  AppKey: {AppKey}\n" +
+            "  ImageRefs数量: {ImageRefCount}\n" +
+            "  HasInitImage: {HasInitImage}\n" +
+            "  前端期望ModelId: {ExpectedModelId}\n" +
+            "  前端期望PlatformId: {ExpectedPlatformId}\n" +
+            "  前端ConfigModelId: {ConfigModelId}\n" +
+            "  Prompt: \"{Prompt}\"",
+            run.Id, run.AppKey ?? "(null)", imageRefCount, hasInitImage,
+            frontendExpectedModelId ?? "(null)", frontendExpectedPlatformId ?? "(null)",
+            frontendExpectedConfigModelId ?? "(null)", promptPreview);
 
         // 如果已经有模型解析类型信息，跳过
         if (run.ModelResolutionType.HasValue)
@@ -789,17 +951,55 @@ public class ImageGenRunWorker : BackgroundService
         string? resolvedModelId = null;
 
         // 通过 AppCaller 从模型池中选择模型（唯一方式）
-        // 注意：不同应用的 appCallerCode 命名不同，必须映射到 AppCallerRegistry 中定义的值
+        // 根据生成模式选择正确的 AppCallerCode：
+        // - text2img: 纯文本生成（无参考图）
+        // - img2img: 单图参考生成
+        // - vision: 多图 Vision API 生成
         var appCallerCode = run.AppCallerCode;
         if (string.IsNullOrWhiteSpace(appCallerCode) && !string.IsNullOrWhiteSpace(run.AppKey))
         {
-            // 根据 appKey 映射到 AppCallerRegistry 中定义的正确 appCallerCode
-            appCallerCode = run.AppKey switch
+            if (run.AppKey == "visual-agent")
             {
-                "visual-agent" => AppCallerRegistry.VisualAgent.Image.Generation,      // visual-agent.image::generation
-                "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Generation, // literary-agent.illustration::generation
-                _ => $"{run.AppKey}.image::generation" // 其他应用回退默认命名
-            };
+                // 重新获取（避免用外层变量）
+                var refCount = run.ImageRefs?.Count ?? 0;
+                var hasInit = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256);
+
+                if (refCount > 1)
+                {
+                    appCallerCode = AppCallerRegistry.VisualAgent.Image.VisionGen;  // 多图 Vision
+                    _logger.LogInformation(
+                        "[生图模型匹配] 选择 VisionGen 模式\n" +
+                        "  原因: ImageRefs.Count={RefCount} > 1\n" +
+                        "  AppCallerCode: {AppCallerCode}",
+                        refCount, appCallerCode);
+                }
+                else if (refCount == 1 || hasInit)
+                {
+                    appCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img;   // 单图 img2img
+                    _logger.LogInformation(
+                        "[生图模型匹配] 选择 Img2Img 模式\n" +
+                        "  原因: ImageRefs.Count={RefCount}, HasInitImage={HasInit}\n" +
+                        "  AppCallerCode: {AppCallerCode}",
+                        refCount, hasInit, appCallerCode);
+                }
+                else
+                {
+                    appCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img;  // 纯文本生成
+                    _logger.LogInformation(
+                        "[生图模型匹配] 选择 Text2Img 模式\n" +
+                        "  原因: 无参考图 (ImageRefs.Count={RefCount}, HasInitImage={HasInit})\n" +
+                        "  AppCallerCode: {AppCallerCode}",
+                        refCount, hasInit, appCallerCode);
+                }
+            }
+            else if (run.AppKey == "literary-agent")
+            {
+                appCallerCode = AppCallerRegistry.LiteraryAgent.Illustration.Generation;
+            }
+            else
+            {
+                appCallerCode = $"{run.AppKey}.image::generation"; // 其他应用回退默认命名
+            }
         }
         
         // 简洁：不再单独打印 AppCallerCode
@@ -809,12 +1009,12 @@ public class ImageGenRunWorker : BackgroundService
             try
             {
                 using var scope = _scopeFactory.CreateScope();
-                var scheduler = scope.ServiceProvider.GetRequiredService<ISmartModelScheduler>();
-                
+                var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
+
                 // 查询 AppCaller 绑定的模型池（简化日志）
                 var appCaller = await _db.LLMAppCallers.Find(a => a.AppCode == appCallerCode).FirstOrDefaultAsync(ct);
                 var requirement = appCaller?.ModelRequirements.FirstOrDefault(r => r.ModelType == "generation");
-                
+
                 // 获取所有绑定的模型池 code 列表
                 var boundPoolCodes = new List<string>();
                 if (requirement?.ModelGroupIds != null && requirement.ModelGroupIds.Count > 0)
@@ -825,22 +1025,25 @@ public class ImageGenRunWorker : BackgroundService
                         if (grp != null) boundPoolCodes.Add(grp.Code ?? grp.Name);
                     }
                 }
-                
+
                 _logger.LogInformation(
                     "[生图模型匹配] 可选模型池({Count}个): [{PoolCodes}]",
                     boundPoolCodes.Count, string.Join(", ", boundPoolCodes));
-                
+
                 // 传递用户期望的模型池 code
                 var expectedModelCode = frontendExpectedModelId;
-                var resolved = await scheduler.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct);
+                var resolved = await gateway.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct);
 
                 if (resolved != null)
                 {
-                    resolutionType = resolved.ResolutionType;
+                    if (Enum.TryParse<ModelResolutionType>(resolved.ResolutionType, out var parsedType))
+                    {
+                        resolutionType = parsedType;
+                    }
                     modelGroupId = resolved.ModelGroupId;
                     modelGroupName = resolved.ModelGroupName;
-                    resolvedPlatformId = resolved.PlatformId;
-                    resolvedModelId = resolved.ModelId;
+                    resolvedPlatformId = resolved.ActualPlatformId;
+                    resolvedModelId = resolved.ActualModel;
                 }
             }
             catch (Exception ex)
@@ -859,19 +1062,26 @@ public class ImageGenRunWorker : BackgroundService
             && (string.Equals(frontendExpectedModelId, modelGroupName, StringComparison.OrdinalIgnoreCase)
                 || string.IsNullOrWhiteSpace(modelGroupName));
         
-        // 一行简洁日志：用户期望 -> 匹配模型池 -> 实际模型
+        // 详细日志：显示完整的匹配结果
         _logger.LogInformation(
-            "[生图模型匹配] 完成 | 期望={Expected} | 匹配池={MatchedPool} | 实际模型={ActualModel} | 匹配{MatchResult}",
-            frontendExpectedModelId ?? "(随机)",
+            "[生图模型匹配] ====== 完成 ======\n" +
+            "  AppCallerCode (用于匹配): {AppCallerCode}\n" +
+            "  ResolutionType: {ResolutionType}\n" +
+            "  匹配到的模型池ID: {ModelGroupId}\n" +
+            "  匹配到的模型池名称: {ModelGroupName}\n" +
+            "  最终PlatformId: {FinalPlatformId}\n" +
+            "  最终ModelId: {FinalModelId}\n" +
+            "  调度器返回结果: {HasResult}\n" +
+            "  期望vs实际: {Expected} -> {Actual}",
+            appCallerCode ?? "(null)",
+            resolutionType,
+            modelGroupId ?? "(无)",
             modelGroupName ?? "(无)",
-            finalModelId ?? "(未知)",
-            isPoolMatched || string.IsNullOrWhiteSpace(frontendExpectedModelId) ? "成功" : "失败");
-        
-        // 匹配失败时打印警告
-        if (!string.IsNullOrWhiteSpace(frontendExpectedModelId) && !isPoolMatched && !string.IsNullOrWhiteSpace(modelGroupName))
-        {
-            _logger.LogWarning("[生图模型匹配] 匹配失败: 期望={Expected}, 实际={Actual}", frontendExpectedModelId, modelGroupName);
-        }
+            finalPlatformId ?? "(null)",
+            finalModelId ?? "(null)",
+            hasSchedulerResult ? "是" : "否",
+            frontendExpectedModelId ?? "(随机)",
+            modelGroupName ?? "(使用前端指定)");
 
         // 更新 Run 对象和数据库
         var updateDef = Builders<ImageGenRun>.Update

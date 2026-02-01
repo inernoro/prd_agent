@@ -203,31 +203,50 @@ public class VolcesPlatformAdapter : IImageGenPlatformAdapter
                 return raw;
             }
 
-            // 规则一：以 / 结尾
-            if (raw.EndsWith("/", StringComparison.Ordinal))
+            // 获取 scheme + host 部分
+            var schemeAndHost = $"{u.Scheme}://{u.Host}";
+            if (!u.IsDefaultPort)
             {
-                if (path.Contains("/api/v3", StringComparison.OrdinalIgnoreCase))
-                {
-                    return raw.TrimEnd('/') + "/" + cap;
-                }
-                return raw.TrimEnd('/') + "/api/v3/" + cap;
+                schemeAndHost += $":{u.Port}";
             }
 
-            // 若 baseUrl 已包含 /api/v3，则直接拼接
-            if (path.Contains("/api/v3", StringComparison.OrdinalIgnoreCase))
+            // 检测并移除路径中重复的 /api/v3 前缀
+            // 例如：/api/v3/api/v3 → /api/v3
+            var normalizedPath = path;
+            while (normalizedPath.Contains("/api/v3/api/v3", StringComparison.OrdinalIgnoreCase))
             {
-                return raw.TrimEnd('/') + "/" + cap;
+                normalizedPath = normalizedPath.Replace("/api/v3/api/v3", "/api/v3", StringComparison.OrdinalIgnoreCase);
             }
+
+            // 若路径已包含 /api/v3，直接拼接能力路径
+            if (normalizedPath.Contains("/api/v3", StringComparison.OrdinalIgnoreCase))
+            {
+                // 确保路径以 /api/v3 结尾（移除后续多余部分）
+                var apiV3Index = normalizedPath.IndexOf("/api/v3", StringComparison.OrdinalIgnoreCase);
+                var basePath = normalizedPath.Substring(0, apiV3Index + 7); // "/api/v3" 长度是 7
+                return $"{schemeAndHost}{basePath}/{cap}";
+            }
+
+            // 否则补上 /api/v3
+            return $"{schemeAndHost}{normalizedPath}/api/v3/{cap}";
         }
 
-        // 规则一：以 / 结尾（无法解析为绝对 URL 的兜底逻辑）
-        if (raw.EndsWith("/", StringComparison.Ordinal))
+        // 兜底：无法解析为 URI 时的简单处理
+        // 移除可能存在的重复 /api/v3
+        var cleanedRaw = raw.TrimEnd('/');
+        if (cleanedRaw.Contains("/api/v3/api/v3", StringComparison.OrdinalIgnoreCase))
         {
-            return raw.TrimEnd('/') + "/api/v3/" + cap;
+            cleanedRaw = cleanedRaw.Replace("/api/v3/api/v3", "/api/v3", StringComparison.OrdinalIgnoreCase);
         }
 
-        // Volces：否则默认补上 /api/v3
-        return raw.TrimEnd('/') + "/api/v3/" + cap;
+        if (cleanedRaw.Contains("/api/v3", StringComparison.OrdinalIgnoreCase))
+        {
+            // 已有 /api/v3，直接拼接
+            return cleanedRaw + "/" + cap;
+        }
+
+        // 补上 /api/v3
+        return cleanedRaw + "/api/v3/" + cap;
     }
 }
 

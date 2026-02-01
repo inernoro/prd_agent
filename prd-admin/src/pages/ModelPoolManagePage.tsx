@@ -179,6 +179,8 @@ export function ModelPoolManagePage() {
           name: poolForm.name,
           code: poolForm.code,
           priority: poolForm.priority,
+          modelType: poolForm.modelType,
+          isDefaultForType: poolForm.isDefaultForType,
           description: poolForm.description,
           models: poolForm.models,
         });
@@ -437,8 +439,6 @@ export function ModelPoolManagePage() {
                   <Select
                     value={poolForm.modelType}
                     onChange={(e) => setPoolForm({ ...poolForm, modelType: e.target.value })}
-                    disabled={!!editingPool}
-                    style={{ opacity: editingPool ? 0.6 : 1 }}
                   >
                     {MODEL_TYPES.map((type) => (
                       <option key={type.value} value={type.value}>
@@ -476,10 +476,9 @@ export function ModelPoolManagePage() {
                       id="isDefaultForType"
                       checked={poolForm.isDefaultForType}
                       onChange={(e) => setPoolForm({ ...poolForm, isDefaultForType: e.target.checked })}
-                      disabled={!!editingPool}
                       className="h-4 w-4 rounded"
                     />
-                    <label htmlFor="isDefaultForType" className="text-[13px]" style={{ color: 'var(--text-secondary)', opacity: editingPool ? 0.6 : 1 }}>
+                    <label htmlFor="isDefaultForType" className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
                       设为默认
                     </label>
                   </div>

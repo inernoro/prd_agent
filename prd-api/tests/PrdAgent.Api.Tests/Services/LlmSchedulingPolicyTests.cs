@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using Shouldly;
@@ -14,11 +15,11 @@ namespace PrdAgent.Api.Tests.Services;
 public class LlmSchedulingPolicyTests
 {
     [Fact]
-    public async Task AIGapDetector_AnalyzeQuestion_UsesSchedulerAndWritesContext()
+    public async Task AIGapDetector_AnalyzeQuestion_UsesGatewayAndWritesContext()
     {
         var ctx = new LLMRequestContextAccessor();
-        var scheduler = new FakeScheduler(ctx, ModelResolutionType.DefaultPool, "group-1", "Default Pool");
-        var detector = new AIGapDetector(scheduler, ctx, new FakePromptManager());
+        var gateway = new FakeGateway(ctx);
+        var detector = new AIGapDetector(gateway, ctx, new FakePromptManager());
 
         var result = await detector.AnalyzeQuestionAsync(
             prdContent: "doc",
@@ -29,23 +30,20 @@ public class LlmSchedulingPolicyTests
             viewRole: "ADMIN",
             cancellationToken: CancellationToken.None);
 
-        scheduler.LastAppCallerCode.ShouldBe(Desktop.Gap.DetectionChat);
-        scheduler.LastModelType.ShouldBe("chat");
-        scheduler.CapturedContext.ShouldNotBeNull();
-        scheduler.CapturedContext!.RequestPurpose.ShouldBe(Desktop.Gap.DetectionChat);
-        scheduler.CapturedContext!.ModelResolutionType.ShouldBe(ModelResolutionType.DefaultPool);
-        scheduler.CapturedContext!.ModelGroupId.ShouldBe("group-1");
-        scheduler.CapturedContext!.ModelGroupName.ShouldBe("Default Pool");
+        gateway.LastAppCallerCode.ShouldBe(Desktop.Gap.DetectionChat);
+        gateway.LastModelType.ShouldBe("chat");
+        gateway.CapturedContext.ShouldNotBeNull();
+        gateway.CapturedContext!.RequestPurpose.ShouldBe(Desktop.Gap.DetectionChat);
         result.ShouldNotBeNull();
         result!.HasGap.ShouldBeFalse();
     }
 
     [Fact]
-    public async Task AIGapDetector_GenerateSummaryReport_UsesSchedulerAndWritesContext()
+    public async Task AIGapDetector_GenerateSummaryReport_UsesGatewayAndWritesContext()
     {
         var ctx = new LLMRequestContextAccessor();
-        var scheduler = new FakeScheduler(ctx, ModelResolutionType.DedicatedPool, "group-9", "Dedicated Pool");
-        var detector = new AIGapDetector(scheduler, ctx, new FakePromptManager());
+        var gateway = new FakeGateway(ctx);
+        var detector = new AIGapDetector(gateway, ctx, new FakePromptManager());
 
         var report = await detector.GenerateSummaryReportAsync(
             prdContent: "doc",
@@ -55,65 +53,27 @@ public class LlmSchedulingPolicyTests
             viewRole: "ADMIN",
             cancellationToken: CancellationToken.None);
 
-        scheduler.LastAppCallerCode.ShouldBe(Desktop.Gap.SummarizationChat);
-        scheduler.LastModelType.ShouldBe("chat");
-        scheduler.CapturedContext.ShouldNotBeNull();
-        scheduler.CapturedContext!.RequestPurpose.ShouldBe(Desktop.Gap.SummarizationChat);
-        scheduler.CapturedContext!.ModelResolutionType.ShouldBe(ModelResolutionType.DedicatedPool);
-        scheduler.CapturedContext!.ModelGroupId.ShouldBe("group-9");
-        scheduler.CapturedContext!.ModelGroupName.ShouldBe("Dedicated Pool");
+        gateway.LastAppCallerCode.ShouldBe(Desktop.Gap.SummarizationChat);
+        gateway.LastModelType.ShouldBe("chat");
+        gateway.CapturedContext.ShouldNotBeNull();
+        gateway.CapturedContext!.RequestPurpose.ShouldBe(Desktop.Gap.SummarizationChat);
         report.ShouldBe("report");
     }
 
-    private sealed class FakeScheduler : ISmartModelScheduler
+    private sealed class FakeGateway : ILlmGateway
     {
         private readonly ILLMRequestContextAccessor _ctx;
-        private readonly ModelResolutionType _resolutionType;
-        private readonly string _groupId;
-        private readonly string _groupName;
 
-        public FakeScheduler(ILLMRequestContextAccessor ctx, ModelResolutionType resolutionType, string groupId, string groupName)
+        public FakeGateway(ILLMRequestContextAccessor ctx)
         {
             _ctx = ctx;
-            _resolutionType = resolutionType;
-            _groupId = groupId;
-            _groupName = groupName;
         }
 
         public string? LastAppCallerCode { get; private set; }
         public string? LastModelType { get; private set; }
         public LlmRequestContext? CapturedContext { get; private set; }
 
-        public Task<ILLMClient> GetClientAsync(string appCallerCode, string modelType, CancellationToken ct = default)
-        {
-            return Task.FromResult<ILLMClient>(CreateClient(appCallerCode, modelType));
-        }
-
-        public Task<ScheduledClientResult> GetClientWithGroupInfoAsync(string appCallerCode, string modelType, CancellationToken ct = default)
-        {
-            var client = CreateClient(appCallerCode, modelType);
-            var result = new ScheduledClientResult(client, _resolutionType, _groupId, _groupName);
-            return Task.FromResult(result);
-        }
-
-        public Task RecordCallResultAsync(string groupId, string modelId, string platformId, bool success, string? error = null, CancellationToken ct = default)
-            => Task.CompletedTask;
-
-        public Task HealthCheckAsync(CancellationToken ct = default) => Task.CompletedTask;
-
-        public Task<LLMAppCaller> GetOrCreateAppCallerAsync(string appCallerCode, CancellationToken ct = default)
-            => Task.FromResult(new LLMAppCaller { AppCode = appCallerCode });
-
-        public Task<ModelGroup?> GetModelGroupForAppAsync(string appCallerCode, string modelType, CancellationToken ct = default)
-            => Task.FromResult<ModelGroup?>(null);
-
-        public Task<ResolvedModelInfo?> ResolveModelAsync(string appCallerCode, string modelType, CancellationToken ct = default)
-            => Task.FromResult<ResolvedModelInfo?>(null);
-
-        public Task<ResolvedModelInfo?> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModelCode, CancellationToken ct = default)
-            => Task.FromResult<ResolvedModelInfo?>(null);
-
-        private ILLMClient CreateClient(string appCallerCode, string modelType)
+        public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2)
         {
             LastAppCallerCode = appCallerCode;
             LastModelType = modelType;

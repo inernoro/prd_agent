@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
@@ -9,7 +10,19 @@ namespace PrdAgent.Infrastructure.LLM;
 internal static class LlmLogRedactor
 {
     /// <summary>
-    /// 仅对“密钥/令牌/密码/授权”等敏感字段做打码。
+    /// 日志序列化选项：不转义中文字符
+    /// 使用 UnsafeRelaxedJsonEscaping 保留原始中文，避免 \uXXXX 转义
+    /// 这样日志可读性更好，复制 curl 到 Postman 也不会出现双重转义问题
+    /// </summary>
+    public static readonly JsonSerializerOptions LogSerializerOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
+
+    /// <summary>
+    /// 仅对"密钥/令牌/密码/授权"等敏感字段做打码。
     ///
     /// 说明：
     /// - 业务排障需要更完整的 SSE/响应内容；因此不再对 content/text/data 做通用脱敏。
@@ -36,7 +49,13 @@ internal static class LlmLogRedactor
         {
             using var doc = JsonDocument.Parse(json);
             using var ms = new MemoryStream();
-            using (var writer = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = false }))
+            // 使用 UnsafeRelaxedJsonEscaping 保留原始中文字符，避免 \uXXXX 转义
+            // 这样日志可读性更好，复制 curl 到 Postman 也不会出现双重转义问题
+            using (var writer = new Utf8JsonWriter(ms, new JsonWriterOptions
+            {
+                Indented = false,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            }))
             {
                 WriteElement(writer, doc.RootElement);
             }
