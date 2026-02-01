@@ -305,10 +305,33 @@ public async Task StreamGenerateAsync(CancellationToken ct)
 
 ## Codebase Skill（代码库快照 — 供 AI 增量维护用）
 
-> **最后更新**：2026-01-25 | **总提交数**：111 | **文档版本**：SRS v3.0, PRD v2.0
+> **最后更新**：2026-02-01 | **总提交数**：156 | **文档版本**：SRS v3.0, PRD v2.0
 >
 > **用途**：AI 在后续会话中读取此段落即可跳过全盘扫描，仅对增量变更进行定点校验。
 > **维护规则**：每次代码结构性变更（新增模块、重命名、废弃功能）后，需同步更新此段落。
+
+### 本周进展 (2026-01-20 ~ 2026-02-01)
+
+| 功能 | 状态 | 说明 |
+|------|:----:|------|
+| LLM Gateway 架构 | ✅ | 三级调度、健康管理、统一日志 |
+| 缺陷管理 Agent | ✅ | AI 审核、状态机、前后端完整实现 |
+| 文学创作 Agent 增强 | ✅ | 图片生成、下载功能优化 |
+| 多图 Vision API | ⚠️ | 核心逻辑完成，缺集成测试 |
+| 代码审计报告 | ✅ | 识别 25 个问题，制定修复计划 |
+
+### 已知技术债务 (P0)
+
+| 问题 | 文件 | 说明 |
+|------|------|------|
+| ImageGenController appKey 未硬编码 | `Controllers/Api/ImageGenController.cs:1027-1033` | 从请求读取而非硬编码 |
+| 前端业务映射表 | `lib/appCallerUtils.ts:199-246` | 违反单一数据源原则 |
+| 前端菜单定义 | `lib/authzMenuMapping.ts:16-100` | 应由后端返回 |
+| GuideOutlineItem 未清理 | `Core/Models/GuideOutlineItem.cs` | 废弃代码残留 |
+| Mutex unwrap | `prd-desktop/commands/session.rs:22-51` | 可能导致 panic |
+
+**详细审计报告**: `doc/audit.code-review-2026-02.md`
+**项目全景指南**: `doc/guide.project-handbook.md`
 
 ### 项目结构
 
