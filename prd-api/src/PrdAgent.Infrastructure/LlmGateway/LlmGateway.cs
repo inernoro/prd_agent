@@ -266,7 +266,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 // 解析 SSE 数据
                 var chunk = adapter.ParseStreamChunk(data);
-                if (chunk == null) continue;
+                if (chunk == null)
+                {
+                    // 调试：记录无法解析的 SSE 数据（仅记录前 200 字符）
+                    var dataPreview = data.Length > 200 ? data[..200] + "..." : data;
+                    _logger.LogDebug("[LlmGateway] ParseStreamChunk returned null for data: {DataPreview}", dataPreview);
+                    continue;
+                }
 
                 if (!string.IsNullOrEmpty(chunk.Content))
                 {
@@ -298,6 +304,17 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var endedAt = DateTime.UtcNow;
             var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;
             var assembledText = textBuilder.ToString();
+
+            // 调试：如果没有拼接到内容，记录警告
+            if (string.IsNullOrEmpty(assembledText) && tokenUsage?.OutputTokens > 0)
+            {
+                _logger.LogWarning(
+                    "[LlmGateway] 流式响应 OutputTokens={OutputTokens} 但 AssembledText 为空，" +
+                    "可能是 SSE 格式不兼容。AppCallerCode: {AppCallerCode}, Model: {Model}",
+                    tokenUsage.OutputTokens,
+                    request.AppCallerCode,
+                    resolution?.ActualModel);
+            }
 
             await FinishStreamLogAsync(logId, assembledText, tokenUsage, durationMs, ct);
         }
