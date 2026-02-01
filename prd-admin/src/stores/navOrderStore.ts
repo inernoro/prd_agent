@@ -30,11 +30,29 @@ export const useNavOrderStore = create<NavOrderState>()(
         try {
           const res = await getUserPreferences();
           if (res.success && res.data) {
-            set({ navOrder: res.data.navOrder ?? [], loaded: true });
+            const serverOrder = res.data.navOrder ?? [];
+            const localOrder = get().navOrder;
+            
+            // 如果后端有数据，使用后端数据
+            if (serverOrder.length > 0) {
+              set({ navOrder: serverOrder, loaded: true });
+            } else if (localOrder.length > 0) {
+              // 后端无数据但本地有数据：保持本地数据，并尝试同步到后端
+              console.info('[navOrderStore] 后端无导航顺序，使用本地缓存并同步到后端');
+              set({ loaded: true });
+              // 异步同步本地数据到后端（不阻塞）
+              updateNavOrder(localOrder).catch((err) => {
+                console.error('[navOrderStore] 同步本地顺序到后端失败:', err);
+              });
+            } else {
+              // 两边都没数据
+              set({ loaded: true });
+            }
           } else {
             set({ loaded: true });
           }
-        } catch {
+        } catch (err) {
+          console.error('[navOrderStore] 加载导航顺序失败:', err);
           set({ loaded: true });
         }
       },
@@ -49,9 +67,12 @@ export const useNavOrderStore = create<NavOrderState>()(
           if (state.saving) return;
           set({ saving: true });
           try {
-            await updateNavOrder(state.navOrder);
-          } catch {
-            // 静默失败，本地顺序仍然生效
+            const res = await updateNavOrder(state.navOrder);
+            if (!res.success) {
+              console.error('[navOrderStore] 保存导航顺序失败:', res.error);
+            }
+          } catch (err) {
+            console.error('[navOrderStore] 保存导航顺序异常:', err);
           } finally {
             set({ saving: false });
           }
