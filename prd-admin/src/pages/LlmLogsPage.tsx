@@ -1293,12 +1293,12 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                         <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                           {it.requestPurposeDisplayName || it.requestPurpose || '未知'}
                         </div>
-                        {/* 原始 requestPurpose（appCallerCode） */}
+                        {/* appCallerCode */}
                         {it.requestPurpose && (
                           <span
                             className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0"
                             style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
-                            title={`requestPurpose: ${it.requestPurpose}`}
+                            title={`appCallerCode: ${it.requestPurpose}`}
                           >
                             <AppCallerKeyIcon size={10} className="opacity-60" />
                             {it.requestPurpose}
@@ -1631,7 +1631,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                     { k: 'status', v: detail.status || '—' },
                     { k: 'requestId', v: detail.requestId || '—' },
                     { k: 'requestType', v: detail.requestType || '—' },
-                    { k: 'requestPurpose', v: detail.requestPurpose || '—' },
+                    { k: 'appCallerCode', v: detail.requestPurpose || '—' },
                     { k: 'groupId', v: detail.groupId || '—' },
                     { k: 'sessionId', v: detail.sessionId || '—' },
                     { k: 'startedAt', v: formatLocalTime(detail.startedAt) },

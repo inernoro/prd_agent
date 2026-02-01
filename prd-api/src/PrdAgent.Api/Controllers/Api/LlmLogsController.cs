@@ -144,20 +144,30 @@ public class LlmLogsController : ControllerBase
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var requestPurposeValues = (await _db.LlmRequestLogs
-                .Distinct(x => x.RequestPurpose, Builders<LlmRequestLog>.Filter.Empty)
-                .ToListAsync())
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        // 聚合获取所有 RequestPurpose 及其存储的 DisplayName
+        // 优先使用日志中存储的 displayName（自包含），其次使用注册表，最后使用原始值
+        var requestPurposeAggregation = await _db.LlmRequestLogs
+            .Aggregate()
+            .Match(Builders<LlmRequestLog>.Filter.Ne(x => x.RequestPurpose, null))
+            .Group(x => x.RequestPurpose, g => new
+            {
+                Value = g.Key,
+                StoredDisplayName = g.First().RequestPurposeDisplayName
+            })
+            .ToListAsync();
 
-        // 返回 { value, displayName } 对象数组，displayName 从 AppCallerRegistry 获取
-        var requestPurposes = requestPurposeValues.Select(rp => new
-        {
-            value = rp,
-            displayName = AppCallerRegistrationService.FindByAppCode(rp!)?.DisplayName ?? rp
-        }).ToArray();
+        var requestPurposes = requestPurposeAggregation
+            .Where(x => !string.IsNullOrWhiteSpace(x.Value))
+            .Select(x => new
+            {
+                value = x.Value,
+                // 优先级：存储的 DisplayName > 注册表查询 > 原始值
+                displayName = !string.IsNullOrWhiteSpace(x.StoredDisplayName)
+                    ? x.StoredDisplayName
+                    : AppCallerRegistrationService.FindByAppCode(x.Value!)?.DisplayName ?? x.Value
+            })
+            .OrderBy(x => x.displayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
         var statuses = new[] { "running", "succeeded", "failed", "cancelled" };
 

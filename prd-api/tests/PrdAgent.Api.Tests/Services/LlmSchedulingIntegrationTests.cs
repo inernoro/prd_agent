@@ -137,7 +137,7 @@ public class LlmSchedulingIntegrationTests
                 throw new InvalidOperationException("无法解析 imageGen 模型 platformId/modelId");
             }
             var directError = await TryCallAsync(() => CallImageGenGenerateAsync(httpAdmin, imageGenModel.PlatformId!, imageGenModel.ModelName, $"direct-{Guid.NewGuid():N}"));
-            var (directLog, directLogError) = await TryWaitLogAsync(httpAdmin, "prd-agent-web.image-gen.generate::generation", startDirect, logTimeout);
+            var (directLog, directLogError) = await TryWaitLogAsync(httpAdmin, "visual-agent.image-gen.generate::generation", startDirect, logTimeout);
             if (directLog != null)
             {
                 directLog.ModelResolutionType.ShouldBe(ModelResolutionType.DirectModel.ToString());
@@ -145,13 +145,13 @@ public class LlmSchedulingIntegrationTests
             }
             else
             {
-                results.Add(new CaseResult("image-gen.generate / 直连", "prd-agent-web.image-gen.generate::generation", "DirectModel", "MISSING_LOG", null, null, directError ?? directLogError));
+                results.Add(new CaseResult("image-gen.generate / 直连", "visual-agent.image-gen.generate::generation", "DirectModel", "MISSING_LOG", null, null, directError ?? directLogError));
             }
 
             // D) image-gen.plan（意图模型）
             var startPlan = DateTime.UtcNow;
             var planError = await TryCallAsync(() => CallImageGenPlanAsync(httpAdmin, $"plan-{Guid.NewGuid():N}"));
-            var (planLog, planLogError) = await TryWaitLogAsync(httpAdmin, "prd-agent-web.image-gen.plan::intent", startPlan, logTimeout);
+            var (planLog, planLogError) = await TryWaitLogAsync(httpAdmin, "visual-agent.image-gen.plan::intent", startPlan, logTimeout);
             if (planLog != null)
             {
                 planLog.ModelResolutionType.ShouldNotBeNull();
@@ -159,13 +159,13 @@ public class LlmSchedulingIntegrationTests
             }
             else
             {
-                results.Add(new CaseResult("image-gen.plan", "prd-agent-web.image-gen.plan::intent", "Any", "MISSING_LOG", null, null, planError ?? planLogError));
+                results.Add(new CaseResult("image-gen.plan", "visual-agent.image-gen.plan::intent", "Any", "MISSING_LOG", null, null, planError ?? planLogError));
             }
 
             // E) image-gen.batch-generate
             var startBatch = DateTime.UtcNow;
             var batchError = await TryCallAsync(() => CallImageGenBatchAsync(httpAdmin, imageGenModel.PlatformId!, imageGenModel.ModelName, $"batch-{Guid.NewGuid():N}"));
-            var (batchLog, batchLogError) = await TryWaitLogAsync(httpAdmin, "prd-agent-web.image-gen.batch-generate::generation", startBatch, logTimeout);
+            var (batchLog, batchLogError) = await TryWaitLogAsync(httpAdmin, "visual-agent.image-gen.batch-generate::generation", startBatch, logTimeout);
             if (batchLog != null)
             {
                 batchLog.ModelResolutionType.ShouldNotBeNull();
@@ -173,7 +173,7 @@ public class LlmSchedulingIntegrationTests
             }
             else
             {
-                results.Add(new CaseResult("image-gen.batch-generate", "prd-agent-web.image-gen.batch-generate::generation", "Any", "MISSING_LOG", null, null, batchError ?? batchLogError));
+                results.Add(new CaseResult("image-gen.batch-generate", "visual-agent.image-gen.batch-generate::generation", "Any", "MISSING_LOG", null, null, batchError ?? batchLogError));
             }
 
             // F) open-platform proxy

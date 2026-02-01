@@ -366,15 +366,40 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var baseUrl = resolution.ApiUrl!.TrimEnd('/');
                 var endpointPath = request.EndpointPath;
 
-                // 智能处理版本号冲突：如果 baseUrl 已包含版本号且 endpointPath 以 /v1 开头
-                // 例如：baseUrl=/api/v3, endpointPath=/v1/chat/completions -> /api/v3/chat/completions
-                if (System.Text.RegularExpressions.Regex.IsMatch(baseUrl, @"/(api/)?v\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
-                    && endpointPath.StartsWith("/v1/", StringComparison.OrdinalIgnoreCase))
-                {
-                    endpointPath = endpointPath[3..]; // 移除 "/v1"
-                }
+                // 检测 baseUrl 是否已包含版本号
+                var hasVersionSuffix = System.Text.RegularExpressions.Regex.IsMatch(
+                    baseUrl, @"/(api/)?v\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
-                endpoint = $"{baseUrl}{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
+                if (hasVersionSuffix)
+                {
+                    // baseUrl 已有版本号（如 /api/v3）
+                    // 如果 endpointPath 以 /v1 开头，移除它避免重复
+                    if (endpointPath.StartsWith("/v1/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        endpointPath = endpointPath[3..]; // 移除 "/v1"
+                    }
+                    else if (endpointPath.StartsWith("v1/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        endpointPath = endpointPath[2..]; // 移除 "v1"
+                    }
+                    endpoint = $"{baseUrl}{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
+                }
+                else
+                {
+                    // baseUrl 没有版本号（如 https://api.vveai.com）
+                    // 需要添加 /v1 前缀
+                    if (endpointPath.StartsWith("/v1/", StringComparison.OrdinalIgnoreCase) ||
+                        endpointPath.StartsWith("v1/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // endpointPath 已包含 v1，直接拼接
+                        endpoint = $"{baseUrl}{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
+                    }
+                    else
+                    {
+                        // endpointPath 不包含版本号，添加 /v1
+                        endpoint = $"{baseUrl}/v1{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
+                    }
+                }
             }
 
             // 3. 构建 HTTP 请求

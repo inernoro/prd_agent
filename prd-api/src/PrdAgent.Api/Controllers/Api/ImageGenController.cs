@@ -127,7 +127,7 @@ public class ImageGenController : ControllerBase
 
         try
         {
-            var appCallerCode = Admin.ImageGen.Plan;
+            var appCallerCode = VisualAgent.ImageGen.Plan;
             var llmClient = _gateway.CreateClient(appCallerCode, "intent");
             var requestContext = new LlmRequestContext(
                 RequestId: Guid.NewGuid().ToString("N"),
@@ -234,7 +234,7 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
         var modelName = (request?.ModelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
-        var appCallerCode = Admin.ImageGen.Generate;
+        var appCallerCode = VisualAgent.ImageGen.Generate;
         GatewayModelResolution? resolved = null;
         if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
         {
@@ -634,7 +634,7 @@ public class ImageGenController : ControllerBase
 
         try
         {
-            var appCallerCode = Admin.ImageGen.ExtractStyle;
+            var appCallerCode = VisualAgent.ImageGen.ExtractStyle;
             var llmClient = _gateway.CreateClient(appCallerCode, "vision");
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: Guid.NewGuid().ToString("N"),
@@ -731,7 +731,7 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
         var modelName = (request?.ModelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
-        var appCallerCode = Admin.ImageGen.BatchGenerate;
+        var appCallerCode = VisualAgent.ImageGen.BatchGenerate;
         GatewayModelResolution? resolved = null;
         if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
         {
