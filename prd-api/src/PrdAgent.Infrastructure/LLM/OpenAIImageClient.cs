@@ -805,7 +805,11 @@ public class OpenAIImageClient
                 }
             }
         };
-        var prettyRequestJson = JsonSerializer.Serialize(prettyRequest, new JsonSerializerOptions { WriteIndented = true });
+        var prettyRequestJson = JsonSerializer.Serialize(prettyRequest, new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        });
 
         _logger.LogInformation(
             "\n========== [Vision API 多图请求] ==========\n" +
@@ -1455,7 +1459,11 @@ public class OpenAIImageClient
                 if (node != null)
                 {
                     RedactImageResponseNode(node);
-                    var s0 = node.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+                    var s0 = node.ToJsonString(new JsonSerializerOptions
+                    {
+                        WriteIndented = false,
+                        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                    });
                     s0 = LlmLogRedactor.RedactJson(s0);
                     s0 = RedactSignedUrls(s0);
                     var maxChars0 = 24000; // 成功响应可比 error 多留一些字段，便于排查

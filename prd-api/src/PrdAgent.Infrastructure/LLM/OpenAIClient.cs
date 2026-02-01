@@ -163,7 +163,7 @@ public class OpenAIClient : ILLMClient
                 })).ToArray()
             };
 
-            var reqLogJson = LlmLogRedactor.RedactJson(JsonSerializer.Serialize(reqForLog));
+            var reqLogJson = LlmLogRedactor.RedactJson(JsonSerializer.Serialize(reqForLog, LlmLogRedactor.LogSerializerOptions));
             var (apiBaseForLog, pathForLog) = OpenAICompatUrl.SplitApiBaseAndPath(_chatCompletionsEndpointOrPath, _httpClient.BaseAddress);
             logId = await _logWriter.StartAsync(
                 new LlmLogStart(
