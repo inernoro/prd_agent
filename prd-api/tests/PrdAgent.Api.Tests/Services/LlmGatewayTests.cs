@@ -190,7 +190,7 @@ public class LlmGatewayTests
         // Assert
         Assert.Equal("chat", ModelTypes.Chat);
         Assert.Equal("vision", ModelTypes.Vision);
-        Assert.Equal("generation", ModelTypes.Generation);
+        Assert.Equal("generation", ModelTypes.ImageGen);
         Assert.Equal("intent", ModelTypes.Intent);
     }
 

@@ -229,7 +229,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 yield return GatewayStreamChunk.Fail(errorMsg);
 
                 // 更新日志状态为失败
-                _logWriter?.MarkError(logId, errorMsg, (int)response.StatusCode);
+                if (logId != null)
+                {
+                    _logWriter?.MarkError(logId, errorMsg, (int)response.StatusCode);
+                }
 
                 if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
                 {
@@ -264,7 +267,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (firstByteAt == null)
                 {
                     firstByteAt = DateTime.UtcNow;
-                    _logWriter?.MarkFirstByte(logId, firstByteAt.Value);
+                    if (logId != null)
+                    {
+                        _logWriter?.MarkFirstByte(logId, firstByteAt.Value);
+                    }
                 }
 
                 // 解析 SSE 数据

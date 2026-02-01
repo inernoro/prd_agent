@@ -355,27 +355,27 @@ public class OpenAIImageClient
                     switch (reqObj)
                     {
                         case Adapters.VolcesImageEditRequest ver:
-                            multipartFields["prompt"] = ver.Prompt;
+                            multipartFields["prompt"] = ver.Prompt ?? string.Empty;
                             multipartFields["n"] = ver.N;
                             if (!string.IsNullOrWhiteSpace(ver.Size)) multipartFields["size"] = ver.Size;
                             if (!string.IsNullOrWhiteSpace(ver.ResponseFormat)) multipartFields["response_format"] = ver.ResponseFormat;
                             if (ver.Watermark.HasValue) multipartFields["watermark"] = ver.Watermark.Value ? "true" : "false";
                             break;
                         case Adapters.OpenAIImageEditRequest oer:
-                            multipartFields["prompt"] = oer.Prompt;
+                            multipartFields["prompt"] = oer.Prompt ?? string.Empty;
                             multipartFields["n"] = oer.N;
                             if (!string.IsNullOrWhiteSpace(oer.Size)) multipartFields["size"] = oer.Size;
                             if (!string.IsNullOrWhiteSpace(oer.ResponseFormat)) multipartFields["response_format"] = oer.ResponseFormat;
                             break;
                         case VolcesImageEditRequest ver:
-                            multipartFields["prompt"] = ver.Prompt;
+                            multipartFields["prompt"] = ver.Prompt ?? string.Empty;
                             multipartFields["n"] = ver.N;
                             if (!string.IsNullOrWhiteSpace(ver.Size)) multipartFields["size"] = ver.Size;
                             if (!string.IsNullOrWhiteSpace(ver.ResponseFormat)) multipartFields["response_format"] = ver.ResponseFormat;
                             if (ver.Watermark.HasValue) multipartFields["watermark"] = ver.Watermark.Value ? "true" : "false";
                             break;
                         case OpenAIImageEditRequest oer:
-                            multipartFields["prompt"] = oer.Prompt;
+                            multipartFields["prompt"] = oer.Prompt ?? string.Empty;
                             multipartFields["n"] = oer.N;
                             if (!string.IsNullOrWhiteSpace(oer.Size)) multipartFields["size"] = oer.Size;
                             if (!string.IsNullOrWhiteSpace(oer.ResponseFormat)) multipartFields["response_format"] = oer.ResponseFormat;
