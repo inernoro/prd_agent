@@ -225,6 +225,84 @@ const appNameMap = {
 
 ---
 
+## 服务器权威性设计
+
+**核心原则**：服务器端任务一旦启动，只有显式的用户主动取消请求才能中断，客户端被动断开连接不应取消服务器处理。
+
+### 规则说明
+
+1. **主动取消 vs 被动断开**
+   - **主动取消**：用户点击"取消"按钮，触发显式取消 API → 允许取消服务器任务
+   - **被动断开**：用户关闭页面、切换路由、网络中断、浏览器刷新 → 不应取消服务器任务
+
+2. **为什么需要这样设计**
+   - 服务器端任务（如 LLM 调用、数据持久化）应该完整执行
+   - 用户被动断开时，服务器已消耗资源，应该让任务完成并保存结果
+   - 用户重新连接时可以查看已完成的结果
+
+3. **实现方式**
+
+   对于 SSE 流式响应场景：
+   - 服务器核心处理（LLM 调用、数据库操作）使用 `CancellationToken.None`
+   - SSE 写入操作捕获异常但不中断处理
+   - 只有收到显式取消 API 时才真正取消任务
+
+### 适用场景
+
+| 场景 | 处理方式 |
+|------|----------|
+| 文学创作标记生成 | LLM + 数据库用 `CancellationToken.None`，SSE 写入捕获异常 |
+| 图片生成任务 | 任务入队后与连接解耦，Worker 独立处理 |
+| 对话 Run/Worker | 已通过 Run/Worker 模式实现连接解耦 |
+
+### 示例
+
+```csharp
+// ✅ 正确做法：服务器权威性设计
+public async Task StreamGenerateAsync(CancellationToken clientCt)
+{
+    // SSE 响应头
+    Response.ContentType = "text/event-stream";
+
+    // LLM 调用不使用客户端 CancellationToken
+    await foreach (var chunk in client.StreamGenerateAsync(prompt, messages, false, CancellationToken.None))
+    {
+        // SSE 写入捕获异常，客户端断开时不中断处理
+        try
+        {
+            await Response.WriteAsync($"data: {chunk}\n\n");
+            await Response.Body.FlushAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // 客户端已断开，但继续处理 LLM 响应
+        }
+        catch (ObjectDisposedException)
+        {
+            // 连接已关闭，但继续处理
+        }
+    }
+
+    // 数据库操作不使用客户端 CancellationToken
+    await _db.SaveAsync(result, CancellationToken.None);
+}
+```
+
+```csharp
+// ❌ 错误做法：直接传递客户端 CancellationToken
+public async Task StreamGenerateAsync(CancellationToken ct)
+{
+    // 客户端关闭页面会导致整个处理被取消
+    await foreach (var chunk in client.StreamGenerateAsync(prompt, messages, false, ct))
+    {
+        await Response.WriteAsync($"data: {chunk}\n\n", ct);  // 会抛 OperationCanceledException
+    }
+    await _db.SaveAsync(result, ct);  // 可能不会执行
+}
+```
+
+---
+
 ## Codebase Skill（代码库快照 — 供 AI 增量维护用）
 
 > **最后更新**：2026-01-25 | **总提交数**：111 | **文档版本**：SRS v3.0, PRD v2.0

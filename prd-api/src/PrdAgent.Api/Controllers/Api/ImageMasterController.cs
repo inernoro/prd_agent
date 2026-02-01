@@ -1992,21 +1992,54 @@ public class ImageMasterController : ControllerBase
                 new() { Role = "user", Content = userPrompt }
             };
 
+            // 服务器权威性设计：LLM 调用使用 CancellationToken.None，确保客户端被动断开不会中断处理
+            // 只有显式取消 API 才能中断任务
             var fullResponse = new StringBuilder();
-            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, false, ct))
+            var clientDisconnected = false;
+            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
             {
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {
                     fullResponse.Append(chunk.Content);
-                    var eventData = JsonSerializer.Serialize(new { type = "delta", text = chunk.Content }, JsonOptions);
-                    await Response.WriteAsync($"data: {eventData}\n\n", ct);
-                    await Response.Body.FlushAsync(ct);
+
+                    // SSE 写入捕获异常：客户端断开时不中断 LLM 处理
+                    if (!clientDisconnected)
+                    {
+                        try
+                        {
+                            var eventData = JsonSerializer.Serialize(new { type = "delta", text = chunk.Content }, JsonOptions);
+                            await Response.WriteAsync($"data: {eventData}\n\n");
+                            await Response.Body.FlushAsync();
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            clientDisconnected = true;
+                            _logger.LogDebug("GenerateArticleMarkers: 客户端已断开，继续处理 LLM 响应");
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            clientDisconnected = true;
+                            _logger.LogDebug("GenerateArticleMarkers: 连接已关闭，继续处理 LLM 响应");
+                        }
+                        catch (Exception ex) when (ex.InnerException is OperationCanceledException)
+                        {
+                            clientDisconnected = true;
+                            _logger.LogDebug("GenerateArticleMarkers: 客户端已断开（内部取消），继续处理 LLM 响应");
+                        }
+                    }
                 }
                 else if (chunk.Type == "error")
                 {
-                    var errorData = JsonSerializer.Serialize(new { type = "error", message = chunk.ErrorMessage }, JsonOptions);
-                    await Response.WriteAsync($"data: {errorData}\n\n", ct);
-                    await Response.Body.FlushAsync(ct);
+                    if (!clientDisconnected)
+                    {
+                        try
+                        {
+                            var errorData = JsonSerializer.Serialize(new { type = "error", message = chunk.ErrorMessage }, JsonOptions);
+                            await Response.WriteAsync($"data: {errorData}\n\n");
+                            await Response.Body.FlushAsync();
+                        }
+                        catch { /* 客户端已断开，忽略 */ }
+                    }
                     return;
                 }
             }
@@ -2025,19 +2058,20 @@ public class ImageMasterController : ControllerBase
             }
 
             // 清空后续阶段：清旧图片资产，重置 images 进度
-            var oldAssets = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null).ToListAsync(ct);
+            // 服务器权威性设计：数据库操作使用 CancellationToken.None，确保数据完整持久化
+            var oldAssets = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null).ToListAsync(CancellationToken.None);
             if (oldAssets.Count > 0)
             {
-                await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null, ct);
+                await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null, CancellationToken.None);
                 // best-effort 删除底层文件（按 sha 引用计数）
                 foreach (var a in oldAssets)
                 {
                     try
                     {
-                        var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
+                        var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: CancellationToken.None);
                         if (remain <= 0)
                         {
-                            await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                            await _assetStorage.DeleteByShaAsync(a.Sha256, CancellationToken.None, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
                         }
                     }
                     catch
@@ -2058,6 +2092,7 @@ public class ImageMasterController : ControllerBase
                 UpdatedAt = now
             };
 
+            // 服务器权威性设计：数据库更新使用 CancellationToken.None
             await _db.ImageMasterWorkspaces.UpdateOneAsync(
                 x => x.Id == wid,
                 Builders<ImageMasterWorkspace>.Update
@@ -2065,19 +2100,39 @@ public class ImageMasterController : ControllerBase
                     .Set(x => x.ArticleWorkflow, newWorkflow)
                     .Set(x => x.ArticleWorkflowHistory, history)
                     .Set(x => x.UpdatedAt, now),
-                cancellationToken: ct);
+                cancellationToken: CancellationToken.None);
 
-            // 发送完成事件
-            var doneData = JsonSerializer.Serialize(new { type = "done", fullText = generatedContent }, JsonOptions);
-            await Response.WriteAsync($"data: {doneData}\n\n", ct);
-            await Response.Body.FlushAsync(ct);
+            _logger.LogInformation("GenerateArticleMarkers completed for workspace {WorkspaceId}, markers: {MarkerCount}, clientDisconnected: {ClientDisconnected}",
+                wid, extractedMarkers.Count, clientDisconnected);
+
+            // 发送完成事件（如果客户端仍连接）
+            if (!clientDisconnected)
+            {
+                try
+                {
+                    var doneData = JsonSerializer.Serialize(new { type = "done", fullText = generatedContent }, JsonOptions);
+                    await Response.WriteAsync($"data: {doneData}\n\n");
+                    await Response.Body.FlushAsync();
+                }
+                catch
+                {
+                    // 客户端已断开，但数据已保存，任务完成
+                }
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "GenerateArticleMarkers failed for workspace {WorkspaceId}", wid);
-            var errorData = JsonSerializer.Serialize(new { type = "error", message = "生成失败" }, JsonOptions);
-            await Response.WriteAsync($"data: {errorData}\n\n", ct);
-            await Response.Body.FlushAsync(ct);
+            try
+            {
+                var errorData = JsonSerializer.Serialize(new { type = "error", message = "生成失败" }, JsonOptions);
+                await Response.WriteAsync($"data: {errorData}\n\n");
+                await Response.Body.FlushAsync();
+            }
+            catch
+            {
+                // 客户端已断开，忽略
+            }
         }
     }
 
