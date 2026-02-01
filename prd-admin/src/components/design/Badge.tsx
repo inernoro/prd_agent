@@ -8,7 +8,7 @@ export function Badge({
   size = 'default',
 }: {
   children: React.ReactNode;
-  variant?: 'subtle' | 'discount' | 'new' | 'featured' | 'success';
+  variant?: 'subtle' | 'discount' | 'new' | 'featured' | 'success' | 'danger' | 'warning';
   className?: string;
   icon?: React.ReactNode;
   size?: 'default' | 'sm';
@@ -39,11 +39,23 @@ export function Badge({
                 border: '1px solid rgba(34,197,94,0.28)',
                 color: 'rgba(34,197,94,0.95)',
               }
-            : {
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.12)',
-                color: 'var(--text-secondary)',
-              };
+            : variant === 'danger'
+              ? {
+                  background: 'rgba(239,68,68,0.12)',
+                  border: '1px solid rgba(239,68,68,0.28)',
+                  color: 'rgba(239,68,68,0.95)',
+                }
+              : variant === 'warning'
+                ? {
+                    background: 'rgba(245,158,11,0.12)',
+                    border: '1px solid rgba(245,158,11,0.28)',
+                    color: 'rgba(245,158,11,0.95)',
+                  }
+                : {
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    color: 'var(--text-secondary)',
+                  };
 
   const sizeCls = size === 'sm' ? 'px-1.5 py-0.5 text-[10px] gap-1' : 'px-2.5 py-1 text-[11px] gap-1.5';
 

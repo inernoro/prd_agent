@@ -1,5 +1,5 @@
 import { api } from '@/services/api';
-import { apiRequest } from '@/services/apiClient';
+import { apiRequest } from './apiClient';
 import type {
   GetCollectionMappingsContract,
   GetCollectionDataContract,
