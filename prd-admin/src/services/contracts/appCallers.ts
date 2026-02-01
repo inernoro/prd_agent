@@ -27,6 +27,32 @@ export interface ResolvedModelStats {
 }
 
 /**
+ * 配置的模型信息（用于展示降级前的预期值）
+ */
+export interface ConfiguredModelInfo {
+  /** 模型 ID */
+  modelId: string;
+  /** 平台 ID */
+  platformId: string;
+  /** 健康状态 */
+  healthStatus: string;
+  /** 是否可用 */
+  isAvailable: boolean;
+}
+
+/**
+ * 配置的模型池信息（降级前）
+ */
+export interface ConfiguredPoolInfo {
+  /** 模型池 ID */
+  poolId: string | null;
+  /** 模型池名称 */
+  poolName: string | null;
+  /** 模型列表 */
+  models: ConfiguredModelInfo[] | null;
+}
+
+/**
  * 模型解析结果（后端统一返回）
  */
 export interface ResolvedModelInfo {
@@ -50,6 +76,14 @@ export interface ResolvedModelInfo {
   healthStatus: string;
   /** 统计数据（appCallerCode + model 组合的近 7 天统计） */
   stats: ResolvedModelStats | null;
+
+  // ========== 降级/回退信息 ==========
+  /** 是否发生了降级/回退 */
+  isFallback?: boolean;
+  /** 降级原因描述 */
+  fallbackReason?: string | null;
+  /** 原始配置的模型池信息（降级前） */
+  configuredPool?: ConfiguredPoolInfo | null;
 }
 
 export interface IAppCallersService {

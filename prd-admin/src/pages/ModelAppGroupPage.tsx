@@ -37,6 +37,7 @@ import type {
 import type { Platform } from '@/types/admin';
 import {
   Activity,
+  AlertTriangle,
   Box,
   ChevronDown,
   ChevronRight,
@@ -1210,18 +1211,58 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                           // 使用后端返回的统计数据（基于 appCallerCode + model 组合）
                                           const defaultStats = resolvedModel.stats;
                                           const defaultStatus = HEALTH_STATUS_MAP[resolvedModel.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
+                                          const isFallback = resolvedModel.isFallback;
+                                          const configuredPool = resolvedModel.configuredPool;
                                           return (
-                                            <div
-                                              className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors"
-                                              style={{ background: 'rgba(255, 255, 255, 0.02)' }}
-                                              onMouseEnter={(e) => {
-                                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
-                                              }}
-                                              onMouseLeave={(e) => {
-                                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)';
-                                              }}
-                                              title={resolvedModel.source === 'legacy' ? '使用传统配置的单模型' : resolvedModel.modelGroupName ? `使用默认模型池：${resolvedModel.modelGroupName}` : '使用默认模型池'}
-                                            >
+                                            <div className="space-y-1">
+                                              {/* 降级警告条 - 显示原始配置 */}
+                                              {isFallback && configuredPool && (
+                                                <div
+                                                  className="flex items-start gap-2 py-1.5 px-2 rounded-lg text-[11px]"
+                                                  style={{
+                                                    background: 'rgba(251, 191, 36, 0.08)',
+                                                    border: '1px dashed rgba(251, 191, 36, 0.3)',
+                                                  }}
+                                                >
+                                                  <AlertTriangle size={12} className="shrink-0 mt-0.5" style={{ color: 'rgba(251, 191, 36, 0.9)' }} />
+                                                  <div className="min-w-0 flex-1">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                      <span style={{ color: 'rgba(251, 191, 36, 0.9)' }}>
+                                                        模型池降级
+                                                      </span>
+                                                      <span style={{ color: 'var(--text-muted)' }}>
+                                                        配置: {configuredPool.poolName || '(未知)'}
+                                                      </span>
+                                                      {configuredPool.models?.map((m, i) => (
+                                                        <span
+                                                          key={i}
+                                                          className="inline-flex items-center gap-1 px-1 py-0.5 rounded"
+                                                          style={{
+                                                            background: m.isAvailable ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                                            color: m.isAvailable ? 'rgba(34, 197, 94, 0.8)' : 'rgba(239, 68, 68, 0.8)',
+                                                            textDecoration: m.isAvailable ? 'none' : 'line-through',
+                                                          }}
+                                                        >
+                                                          {m.modelId}
+                                                          <span className="text-[9px]">({m.healthStatus})</span>
+                                                        </span>
+                                                      ))}
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                              )}
+                                              {/* 实际使用的模型 */}
+                                              <div
+                                                className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors"
+                                                style={{ background: isFallback ? 'rgba(34, 197, 94, 0.05)' : 'rgba(255, 255, 255, 0.02)' }}
+                                                onMouseEnter={(e) => {
+                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.1)' : 'rgba(255, 255, 255, 0.06)';
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.05)' : 'rgba(255, 255, 255, 0.02)';
+                                                }}
+                                                title={isFallback ? `降级回退：${resolvedModel.fallbackReason || ''}` : resolvedModel.source === 'legacy' ? '使用传统配置的单模型' : resolvedModel.modelGroupName ? `使用默认模型池：${resolvedModel.modelGroupName}` : '使用默认模型池'}
+                                              >
                                               {/* 序号 */}
                                               <span className="text-[10px] font-medium w-5 text-center shrink-0" style={{ color: 'var(--text-muted)' }}>
                                                 1
@@ -1291,6 +1332,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                   <Eye size={11} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
                                                 </button>
                                               </div>
+                                            </div>
                                             </div>
                                           );
                                         })()
