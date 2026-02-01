@@ -423,6 +423,18 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 > **核心原则**：AI 在云端开发时无法交互式调试，必须依赖测试来验证代码正确性。
 > **详细文档**：参见 [TESTING.md](./TESTING.md)
 
+### 云端环境实测能力
+
+| 测试类型 | 命令 | 云端可用 |
+|---------|------|---------|
+| 前端单元测试 | `cd prd-admin && pnpm test` | ✅ 可用 |
+| TypeScript 检查 | `cd prd-admin && pnpm tsc` | ✅ 可用 |
+| ESLint 检查 | `cd prd-admin && pnpm lint` | ✅ 可用 |
+| 后端单元测试 | `cd prd-api && dotnet test` | ❌ 网络限制 |
+| E2E 测试 | `pnpm test:e2e` | ❌ 网络限制 |
+
+**云端 AI 必做**：前端改动必须跑 `pnpm test` 确认通过后再提交。
+
 ### 测试金字塔
 
 ```
