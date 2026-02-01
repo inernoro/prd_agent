@@ -29,6 +29,12 @@ public class OpenAIPlatformAdapter : IImageGenPlatformAdapter
 
     /// <summary>
     /// 构建 OpenAI 兼容端点路径
+    /// 支持以下场景：
+    /// 1. 无路径：补上 /v1
+    /// 2. 已有 /v1：直接拼接能力路径
+    /// 3. 已有完整路径（如 /api/v1/open-platform）：保留并拼接能力路径
+    /// 4. # 结尾：强制使用原地址
+    /// 5. 重复路径（如 /v1/v1）：去重后拼接
     /// </summary>
     private static string BuildOpenAIEndpoint(string baseUrl, string capabilityPath)
     {
@@ -54,15 +60,44 @@ public class OpenAIPlatformAdapter : IImageGenPlatformAdapter
                 return raw;
             }
 
-            // 若已包含 /v1（作为 base），则直接拼接能力路径
-            if (path.Contains("/v1", StringComparison.OrdinalIgnoreCase))
+            // 获取 scheme + host 部分
+            var schemeAndHost = $"{u.Scheme}://{u.Host}";
+            if (!u.IsDefaultPort)
             {
-                return raw.TrimEnd('/') + "/" + cap;
+                schemeAndHost += $":{u.Port}";
             }
+
+            // 检测并移除路径中重复的 /v1/v1 前缀
+            var normalizedPath = path;
+            while (normalizedPath.Contains("/v1/v1", StringComparison.OrdinalIgnoreCase))
+            {
+                normalizedPath = normalizedPath.Replace("/v1/v1", "/v1", StringComparison.OrdinalIgnoreCase);
+            }
+
+            // 若路径已包含 /v1，直接拼接能力路径
+            if (normalizedPath.Contains("/v1", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{schemeAndHost}{normalizedPath}/{cap}";
+            }
+
+            // 否则补上 /v1
+            return $"{schemeAndHost}{normalizedPath}/v1/{cap}";
         }
 
-        // 默认补上 /v1
-        return raw.TrimEnd('/') + "/v1/" + cap;
+        // 兜底：无法解析为 URI 时的简单处理
+        var cleanedRaw = raw.TrimEnd('/');
+        // 移除可能存在的重复 /v1
+        if (cleanedRaw.Contains("/v1/v1", StringComparison.OrdinalIgnoreCase))
+        {
+            cleanedRaw = cleanedRaw.Replace("/v1/v1", "/v1", StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (cleanedRaw.Contains("/v1", StringComparison.OrdinalIgnoreCase))
+        {
+            return cleanedRaw + "/" + cap;
+        }
+
+        return cleanedRaw + "/v1/" + cap;
     }
 
     public object BuildGenerationRequest(
