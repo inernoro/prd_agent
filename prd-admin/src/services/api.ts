@@ -306,6 +306,23 @@ export const api = {
         deactivate: (id: string) => `/api/literary-agent/config/reference-images/${id}/deactivate`,
         active: () => '/api/literary-agent/config/reference-images/active',
       },
+      /** 获取文生图模型池（无参考图场景） */
+      modelsText2Img: () => '/api/literary-agent/config/models/text2img',
+      /** 获取图生图模型池（有风格参考图场景） */
+      modelsImg2Img: () => '/api/literary-agent/config/models/img2img',
+      /** 获取所有模型池（文生图 + 图生图），一次性返回 */
+      modelsAll: () => '/api/literary-agent/config/models/all',
+      /** 兼容旧接口，根据是否有参考图自动选择 */
+      modelsImageGen: () => '/api/literary-agent/config/models/image-gen',
+    },
+    /** 文学创作图片生成（应用身份隔离） */
+    imageGen: {
+      runs: {
+        create: () => '/api/literary-agent/image-gen/runs',
+        byId: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}`,
+        stream: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}/stream`,
+        cancel: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}/cancel`,
+      },
     },
   },
 

@@ -74,6 +74,13 @@ public class ImageGenController : ControllerBase
         ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
         ?? "unknown";
 
+    private static bool IsRegisteredImageGenAppCaller(string? appCallerCode)
+    {
+        if (string.IsNullOrWhiteSpace(appCallerCode)) return false;
+        var def = AppCallerRegistrationService.FindByAppCode(appCallerCode);
+        return def != null && def.ModelTypes.Contains(ModelTypes.ImageGen);
+    }
+
     /// <summary>
     /// 批量生图：先用意图模型解析“将生成多少张 + 每张的 prompt”
     /// </summary>
@@ -357,7 +364,7 @@ public class ImageGenController : ControllerBase
             RequestType: "imageGen",
             RequestPurpose: appCallerCode));
 
-        var res = await _imageClient.GenerateAsync(prompt, n, size, responseFormat, ct, modelId, platformId, modelName, initImageBase64, initImageProvided);
+        var res = await _imageClient.GenerateAsync(prompt, n, size, responseFormat, ct, appCallerCode, modelId, platformId, modelName, initImageBase64, initImageProvided);
         if (!res.Success)
         {
             // 将 LLM_ERROR 映射为 502，其他保持 400
@@ -488,7 +495,7 @@ public class ImageGenController : ControllerBase
             RequestType: "imageGen",
             RequestPurpose: appCallerCode));
 
-        var res = await _imageClient.GenerateAsync(intentResult.GeneratedPrompt, n: 1, size, responseFormat, ct, modelId, platformId);
+        var res = await _imageClient.GenerateAsync(intentResult.GeneratedPrompt, n: 1, size, responseFormat, ct, appCallerCode, modelId, platformId);
         if (!res.Success)
         {
             var code = res.Error?.Code ?? ErrorCodes.INTERNAL_ERROR;
@@ -831,7 +838,7 @@ public class ImageGenController : ControllerBase
                                 RequestType: "imageGen",
                                 RequestPurpose: appCallerCode));
 
-                            var res = await _imageClient.GenerateAsync(currentPrompt, n: 1, currentSize, responseFormat, cancellationToken, modelId, platformId, modelName);
+                            var res = await _imageClient.GenerateAsync(currentPrompt, n: 1, currentSize, responseFormat, cancellationToken, appCallerCode, modelId, platformId, modelName);
                             
                             await writeLock.WaitAsync(cancellationToken);
                             try
@@ -1026,24 +1033,44 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(appKey)) appKey = null;
 
         // 模型池调度逻辑统一在 ImageGenRunWorker 中处理
-        // 根据 appKey 映射到 AppCallerRegistry 中定义的正确 appCallerCode
-        string? resolvedAppCallerCode = null;
-        if (!string.IsNullOrWhiteSpace(appKey))
+        // 只允许已注册的 AppCallerCode（禁止拼接/隐式生成）
+        var resolvedAppCallerCode = (request?.AppCallerCode ?? string.Empty).Trim();
+        
+        // 参考图/底图 SHA256（提前检查，用于决定 appCallerCode）
+        var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
+        
+        // 文学创作场景：检查是否有激活的参考图配置
+        bool hasActiveReferenceImage = false;
+        if (string.Equals(appKey, "literary-agent", StringComparison.OrdinalIgnoreCase) && initImageAssetSha256 == null)
         {
-            resolvedAppCallerCode = appKey switch
+            var activeRefConfig = await _db.ReferenceImageConfigs
+                .Find(x => x.AppKey == "literary-agent" && x.IsActive)
+                .FirstOrDefaultAsync(ct);
+            hasActiveReferenceImage = activeRefConfig != null && !string.IsNullOrWhiteSpace(activeRefConfig.ImageSha256);
+        }
+        
+        if (string.IsNullOrWhiteSpace(resolvedAppCallerCode))
+        {
+            if (string.Equals(appKey, "visual-agent", StringComparison.OrdinalIgnoreCase))
             {
-                "visual-agent" => VisualAgent.Image.Text2Img,  // 默认使用文生图，后续根据参考图切换
-                "literary-agent" => LiteraryAgent.Illustration.Generation,
-                _ => $"{appKey}.image::generation" // 其他应用回退默认命名
-            };
+                resolvedAppCallerCode = VisualAgent.Image.Text2Img; // 默认文生图，后续根据参考图切换
+            }
+            else if (string.Equals(appKey, "literary-agent", StringComparison.OrdinalIgnoreCase))
+            {
+                // 根据是否有参考图选择 Text2Img 或 Img2Img
+                resolvedAppCallerCode = (initImageAssetSha256 != null || hasActiveReferenceImage)
+                    ? LiteraryAgent.Illustration.Img2Img
+                    : LiteraryAgent.Illustration.Text2Img;
+            }
+        }
+        if (!IsRegisteredImageGenAppCaller(resolvedAppCallerCode))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "appCallerCode 未注册或不支持 imageGen"));
         }
 
         // 文学创作场景：关联的配图标记索引
         var articleMarkerIndex = request?.ArticleMarkerIndex;
-
-        // 参考图/底图 SHA256
-        var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
 
         // 参考图风格提示词（用于追加到生图 prompt）
         string? referenceImagePrompt = null;
@@ -1500,6 +1527,12 @@ public class CreateImageGenRunRequest
     /// 可选：应用标识（如 "literary-agent"）。用于水印等功能的隔离。
     /// </summary>
     public string? AppKey { get; set; }
+
+    /// <summary>
+    /// 必填：已注册的 AppCallerCode（禁止拼接/隐式生成）。
+    /// 为空时仅允许 visual-agent / literary-agent 走默认注册值。
+    /// </summary>
+    public string? AppCallerCode { get; set; }
 
     /// <summary>
     /// 可选：文学创作场景下，关联的配图标记索引。

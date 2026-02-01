@@ -124,7 +124,9 @@ public class RequestResponseLoggingMiddleware
 
         // 两阶段存储：生成唯一 logId，提取请求上下文
         var logId = Guid.NewGuid().ToString("N");
-        var requestCtx = shouldPersistApiLog ? ExtractRequestContext(context, requestBodyCapture) : null;
+        var requestCtx = shouldPersistApiLog
+            ? ExtractRequestContext(context, requestBodyCapture, resolvedUserId, tokenInfo.ClientType, tokenInfo.SessionKey)
+            : null;
         CancellationTokenSource? preInsertCts = null;
 
         // 统一前缀通过 Serilog LogContext 注入，避免各处重复拼接前缀
@@ -389,14 +391,14 @@ public class RequestResponseLoggingMiddleware
         return display;
     }
 
-    private static (string? UserId, string? DisplayName, string? Username) TryReadTokenInfo(HttpContext context)
+    private static (string? UserId, string? DisplayName, string? Username, string? ClientType, string? SessionKey) TryReadTokenInfo(HttpContext context)
     {
         var auth = context.Request.Headers.Authorization.ToString();
         if (string.IsNullOrWhiteSpace(auth) || !auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-            return (null, null, null);
+            return (null, null, null, null, null);
 
         var token = auth["Bearer ".Length..].Trim();
-        if (string.IsNullOrWhiteSpace(token)) return (null, null, null);
+        if (string.IsNullOrWhiteSpace(token)) return (null, null, null, null, null);
 
         try
         {
@@ -404,11 +406,13 @@ public class RequestResponseLoggingMiddleware
             var userId = jwt.Claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Sub)?.Value;
             var displayName = jwt.Claims.FirstOrDefault(c => c.Type == "displayName")?.Value;
             var username = jwt.Claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.UniqueName)?.Value;
-            return (userId, displayName, username);
+            var clientType = jwt.Claims.FirstOrDefault(c => c.Type == "clientType")?.Value;
+            var sessionKey = jwt.Claims.FirstOrDefault(c => c.Type == "sessionKey")?.Value;
+            return (userId, displayName, username, clientType, sessionKey);
         }
         catch
         {
-            return (null, null, null);
+            return (null, null, null, null, null);
         }
     }
 
@@ -668,7 +672,12 @@ public class RequestResponseLoggingMiddleware
     /// <summary>
     /// 提取请求的元数据（用于预插入和完整插入共享）
     /// </summary>
-    private ApiRequestLogContext ExtractRequestContext(HttpContext context, CapturedRequestBody? requestBodyCapture)
+    private ApiRequestLogContext ExtractRequestContext(
+        HttpContext context,
+        CapturedRequestBody? requestBodyCapture,
+        string resolvedUserId,
+        string? tokenClientType,
+        string? tokenSessionKey)
     {
         var path = context.Request.Path.Value ?? "";
         var query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : "";
@@ -676,13 +685,13 @@ public class RequestResponseLoggingMiddleware
         var protocol = context.Request.Protocol;
         var absoluteUrl = BuildAbsoluteUrl(context, path, query);
         var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        var userId = context.User?.FindFirst("sub")?.Value ?? "anonymous";
+        var userId = string.IsNullOrWhiteSpace(resolvedUserId) ? "anonymous" : resolvedUserId;
         var ua = context.Request.Headers.UserAgent.ToString();
 
         var clientType = context.Request.Headers["X-Client"].ToString();
         if (string.IsNullOrWhiteSpace(clientType))
         {
-            clientType = context.User?.FindFirst("clientType")?.Value ?? string.Empty;
+            clientType = context.User?.FindFirst("clientType")?.Value ?? tokenClientType ?? string.Empty;
             if (string.IsNullOrWhiteSpace(clientType))
             {
                 var authType = context.User?.FindFirst("authType")?.Value ?? string.Empty;
@@ -695,7 +704,10 @@ public class RequestResponseLoggingMiddleware
         }
         if (string.IsNullOrWhiteSpace(clientType)) clientType = "unknown";
         var clientId = context.Request.Headers["X-Client-Id"].ToString();
-        if (string.IsNullOrWhiteSpace(clientId)) clientId = null;
+        if (string.IsNullOrWhiteSpace(clientId))
+        {
+            clientId = string.IsNullOrWhiteSpace(tokenSessionKey) ? null : tokenSessionKey;
+        }
         var appId = context.User?.FindFirst("appId")?.Value;
         if (string.IsNullOrWhiteSpace(appId)) appId = null;
         var appName = context.User?.FindFirst("appName")?.Value;

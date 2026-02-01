@@ -67,16 +67,26 @@ public class OpenAIImageClient
         string? size,
         string? responseFormat,
         CancellationToken ct,
+        string appCallerCode,
         string? modelId = null,
         string? platformId = null,
         string? modelName = null,
         string? initImageBase64 = null,
-        bool initImageProvided = false,
-        string? appKey = null)
+        bool initImageProvided = false)
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空");
+        }
+        if (string.IsNullOrWhiteSpace(appCallerCode))
+        {
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "appCallerCode 不能为空");
+        }
+
+        var appDef = AppCallerRegistrationService.FindByAppCode(appCallerCode);
+        if (appDef == null || !appDef.ModelTypes.Contains(ModelTypes.ImageGen))
+        {
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "appCallerCode 未注册或不支持 imageGen");
         }
 
         if (n <= 0) n = 1;
@@ -86,12 +96,6 @@ public class OpenAIImageClient
         var ctx = _ctxAccessor?.Current;
         var requestId = (ctx?.RequestId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
-
-        // 构建 appCallerCode 用于 Gateway 模型调度
-        // 格式: "{app-key}.image.{feature}::generation"
-        var appKeyForCode = string.IsNullOrWhiteSpace(appKey) ? "prd-agent" : appKey.Trim();
-        var feature = string.IsNullOrWhiteSpace(initImageBase64) ? "text2img" : "img2img";
-        var appCallerCode = $"{appKeyForCode}.image.{feature}::generation";
 
         // 通过 Gateway 解析模型调度（获取平台信息用于适配器选择）
         var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct);
@@ -567,8 +571,9 @@ public class OpenAIImageClient
             // 兼容：若下游只返回 url（或你希望统一给前端 base64），则后端自动下载转成 dataURL/base64
             // 强约束：不把 base64 写入 Mongo；输出统一 re-host 到 COS（返回稳定 URL）
 
-            // 根据调用方传入的 appKey 查找水印配置（不传则不打水印）
-            var watermarkConfig = string.IsNullOrWhiteSpace(appKey) ? null : await TryGetWatermarkConfigAsync(appKey, ct);
+            // 根据 appCallerCode 解析 appKey 查找水印配置（不传则不打水印）
+            var appKeyForWatermark = TryResolveAppKeyFromAppCallerCode(appCallerCode);
+            var watermarkConfig = string.IsNullOrWhiteSpace(appKeyForWatermark) ? null : await TryGetWatermarkConfigAsync(appKeyForWatermark, ct);
             _logger.LogInformation("ImageGen watermark config resolved: {HasWatermark}", watermarkConfig != null);
             var cosInfos = new List<object>();
             for (var i = 0; i < images.Count; i++)
@@ -694,24 +699,34 @@ public class OpenAIImageClient
     /// <param name="imageRefs">已加载的图片引用列表（按出现顺序）</param>
     /// <param name="size">期望尺寸（如 1024x1024）</param>
     /// <param name="ct">取消令牌</param>
+    /// <param name="appCallerCode">已注册的 AppCallerCode</param>
     /// <param name="modelId">模型 ID（可选）</param>
     /// <param name="platformId">平台 ID（可选）</param>
     /// <param name="modelName">模型名称（平台回退时使用）</param>
-    /// <param name="appKey">应用标识</param>
     /// <returns>生成结果</returns>
     public async Task<ApiResponse<ImageGenResult>> GenerateWithVisionAsync(
         string prompt,
         List<Core.Models.MultiImage.ImageRefData> imageRefs,
         string? size,
         CancellationToken ct,
+        string appCallerCode,
         string? modelId = null,
         string? platformId = null,
-        string? modelName = null,
-        string? appKey = null)
+        string? modelName = null)
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空");
+        }
+        if (string.IsNullOrWhiteSpace(appCallerCode))
+        {
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "appCallerCode 不能为空");
+        }
+
+        var appDef = AppCallerRegistrationService.FindByAppCode(appCallerCode);
+        if (appDef == null || !appDef.ModelTypes.Contains(ModelTypes.ImageGen))
+        {
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "appCallerCode 未注册或不支持 imageGen");
         }
 
         if (imageRefs == null || imageRefs.Count == 0)
@@ -730,10 +745,6 @@ public class OpenAIImageClient
         var ctx = _ctxAccessor?.Current;
         var requestId = (ctx?.RequestId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
-
-        // 构建 appCallerCode 用于 Gateway 模型调度
-        var appKeyForCode = string.IsNullOrWhiteSpace(appKey) ? "prd-agent" : appKey.Trim();
-        var appCallerCode = $"{appKeyForCode}.image.vision::generation";
 
         // 通过 Gateway 解析模型调度
         var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct);
@@ -969,7 +980,8 @@ public class OpenAIImageClient
                 gatewayResp.DurationMs);
 
             // 处理图片结果：保存到 COS 并获取稳定 URL
-            var watermarkConfig = string.IsNullOrWhiteSpace(appKey) ? null : await TryGetWatermarkConfigAsync(appKey, ct);
+            var appKeyForWatermark = TryResolveAppKeyFromAppCallerCode(appCallerCode);
+            var watermarkConfig = string.IsNullOrWhiteSpace(appKeyForWatermark) ? null : await TryGetWatermarkConfigAsync(appKeyForWatermark, ct);
             var cosInfos = new List<object>();
 
             for (var i = 0; i < images.Count; i++)
@@ -1166,6 +1178,15 @@ public class OpenAIImageClient
         {
             return false;
         }
+    }
+
+    private static string? TryResolveAppKeyFromAppCallerCode(string appCallerCode)
+    {
+        var raw = (appCallerCode ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var idx = raw.IndexOf('.');
+        var appKey = idx > 0 ? raw[..idx] : raw;
+        return string.IsNullOrWhiteSpace(appKey) ? null : appKey;
     }
 
     /// <summary>

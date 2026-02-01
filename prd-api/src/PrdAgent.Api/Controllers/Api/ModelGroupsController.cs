@@ -26,6 +26,13 @@ public class ModelGroupsController : ControllerBase
         _logger = logger;
     }
 
+    private static bool IsRegisteredAppCallerForType(string appCallerCode, string modelType)
+    {
+        if (string.IsNullOrWhiteSpace(appCallerCode) || string.IsNullOrWhiteSpace(modelType)) return false;
+        var def = AppCallerRegistrationService.FindByAppCode(appCallerCode);
+        return def != null && def.ModelTypes.Contains(modelType);
+    }
+
     /// <summary>
     /// 获取模型分组列表
     /// </summary>
@@ -70,7 +77,7 @@ public class ModelGroupsController : ControllerBase
     /// 按应用标识获取模型池列表（互斥优先级：专属池 > 默认池 > 默认生图）
     /// 只返回最高优先级来源的模型池，不同来源不会同时返回
     /// </summary>
-    /// <param name="appCallerCode">应用标识（如 visual-agent.image::generation）</param>
+    /// <param name="appCallerCode">应用标识（如 visual-agent.image.text2img::generation）</param>
     /// <param name="modelType">模型类型（如 generation）</param>
     [HttpGet("for-app")]
     public async Task<IActionResult> GetModelGroupsForApp(
@@ -80,6 +87,10 @@ public class ModelGroupsController : ControllerBase
         if (string.IsNullOrWhiteSpace(modelType))
         {
             return BadRequest(ApiResponse<object>.Fail("INVALID_MODEL_TYPE", "modelType 不能为空"));
+        }
+        if (!string.IsNullOrWhiteSpace(appCallerCode) && !IsRegisteredAppCallerForType(appCallerCode, modelType))
+        {
+            return BadRequest(ApiResponse<object>.Fail("APP_CODE_NOT_REGISTERED", "appCallerCode 未注册或不支持该 modelType"));
         }
 
         var result = new List<ModelGroupForAppResponse>();

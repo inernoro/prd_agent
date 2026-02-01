@@ -134,3 +134,104 @@ export type DeactivateReferenceImageConfigContract = (input: {
 export type GetActiveReferenceImageConfigContract = () => Promise<ApiResponse<{
   config: ReferenceImageConfig | null;
 }>>;
+
+// ========== 模型查询 API（无参数，内部硬编码 appCallerCode）==========
+
+/**
+ * 模型池中的模型项
+ */
+export interface LiteraryAgentModelPoolItem {
+  modelId: string;
+  platformId: string;
+  priority: number;
+  healthStatus: string;
+}
+
+/**
+ * 文学创作可用的模型池
+ */
+export interface LiteraryAgentModelPool {
+  id: string;
+  name: string;
+  code: string;
+  priority: number;
+  modelType: string;
+  isDefaultForType: boolean;
+  description?: string | null;
+  models: LiteraryAgentModelPoolItem[];
+  /** 解析类型：DedicatedPool(专属池)、DefaultPool(默认池)、DirectModel(传统配置) */
+  resolutionType: string;
+  /** 是否为该应用的专属模型池 */
+  isDedicated: boolean;
+  /** 是否为该类型的默认模型池 */
+  isDefault: boolean;
+  /** 是否为传统配置模型 */
+  isLegacy: boolean;
+}
+
+/**
+ * 获取文学创作配图生成可用的模型池列表（无参数）
+ * 兼容旧接口，根据是否有参考图自动选择 appCallerCode
+ */
+export type GetLiteraryAgentImageGenModelsContract = () => Promise<ApiResponse<LiteraryAgentModelPool[]>>;
+
+/**
+ * 获取所有模型池（文生图 + 图生图）的响应
+ */
+export interface LiteraryAgentAllModelsResponse {
+  text2img: {
+    appCallerCode: string;
+    pools: LiteraryAgentModelPool[];
+  };
+  img2img: {
+    appCallerCode: string;
+    pools: LiteraryAgentModelPool[];
+  };
+}
+
+/**
+ * 获取所有配图模型池（文生图 + 图生图），一次性返回
+ * 前端可用于同时显示两个模型状态
+ */
+export type GetLiteraryAgentAllModelsContract = () => Promise<ApiResponse<LiteraryAgentAllModelsResponse>>;
+
+// ========== 图片生成 API（应用身份隔离）==========
+
+import type { ImageGenRunStreamEvent, CreateImageGenRunInput } from './imageGen';
+
+/**
+ * 创建文学创作图片生成任务
+ * 内部硬编码 appKey = "literary-agent"
+ */
+export type CreateLiteraryAgentImageGenRunContract = (params: {
+  input: CreateImageGenRunInput;
+  idempotencyKey?: string;
+}) => Promise<ApiResponse<{ runId: string }>>;
+
+/**
+ * 取消文学创作图片生成任务
+ */
+export type CancelLiteraryAgentImageGenRunContract = (params: {
+  runId: string;
+}) => Promise<ApiResponse<boolean>>;
+
+/**
+ * SSE 流式获取文学创作图片生成任务事件
+ */
+export type StreamLiteraryAgentImageGenRunContract = (params: {
+  runId: string;
+  afterSeq?: number;
+  onEvent: (evt: ImageGenRunStreamEvent) => void;
+  signal: AbortSignal;
+}) => Promise<ApiResponse<true>>;
+
+/**
+ * 带重试的 SSE 流式获取
+ */
+export type StreamLiteraryAgentImageGenRunWithRetryContract = (params: {
+  runId: string;
+  afterSeq?: number;
+  onEvent: (evt: ImageGenRunStreamEvent) => void;
+  signal: AbortSignal;
+  maxAttempts?: number;
+}) => Promise<ApiResponse<true>>;

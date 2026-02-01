@@ -155,6 +155,11 @@ import type {
   ActivateReferenceImageConfigContract,
   DeactivateReferenceImageConfigContract,
   GetActiveReferenceImageConfigContract,
+  GetLiteraryAgentImageGenModelsContract,
+  GetLiteraryAgentAllModelsContract,
+  CreateLiteraryAgentImageGenRunContract,
+  CancelLiteraryAgentImageGenRunContract,
+  StreamLiteraryAgentImageGenRunWithRetryContract,
 } from '@/services/contracts/literaryAgentConfig';
 import type {
   ListDefectTemplatesContract,
@@ -381,6 +386,11 @@ import {
   activateReferenceImageConfigReal,
   deactivateReferenceImageConfigReal,
   getActiveReferenceImageConfigReal,
+  getLiteraryAgentImageGenModelsReal,
+  getLiteraryAgentAllModelsReal,
+  createLiteraryAgentImageGenRunReal,
+  cancelLiteraryAgentImageGenRunReal,
+  streamLiteraryAgentImageGenRunWithRetryReal,
 } from '@/services/real/literaryAgentConfig';
 import {
   listDefectTemplatesReal,
@@ -646,6 +656,11 @@ export const deleteReferenceImageConfig: DeleteReferenceImageConfigContract = wi
 export const activateReferenceImageConfig: ActivateReferenceImageConfigContract = withAuth(activateReferenceImageConfigReal);
 export const deactivateReferenceImageConfig: DeactivateReferenceImageConfigContract = withAuth(deactivateReferenceImageConfigReal);
 export const getActiveReferenceImageConfig: GetActiveReferenceImageConfigContract = withAuth(getActiveReferenceImageConfigReal);
+export const getLiteraryAgentImageGenModels: GetLiteraryAgentImageGenModelsContract = withAuth(getLiteraryAgentImageGenModelsReal);
+export const getLiteraryAgentAllModels: GetLiteraryAgentAllModelsContract = withAuth(getLiteraryAgentAllModelsReal);
+export const createLiteraryAgentImageGenRun: CreateLiteraryAgentImageGenRunContract = withAuth(createLiteraryAgentImageGenRunReal);
+export const cancelLiteraryAgentImageGenRun: CancelLiteraryAgentImageGenRunContract = withAuth(cancelLiteraryAgentImageGenRunReal);
+export const streamLiteraryAgentImageGenRunWithRetry: StreamLiteraryAgentImageGenRunWithRetryContract = withAuth(streamLiteraryAgentImageGenRunWithRetryReal);
 
 // Defect Agent
 export const listDefectTemplates: ListDefectTemplatesContract = withAuth(listDefectTemplatesReal);

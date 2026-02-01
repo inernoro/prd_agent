@@ -27,6 +27,11 @@ public class AppSettings
     public int? JsonFallbackMaxChars { get; set; }
 
     /// <summary>
+    /// 是否保存出站日志的完整内容（默认 false，仅保存哈希）
+    /// </summary>
+    public bool EnableOutboundApiLogFull { get; set; } = false;
+
+    /// <summary>
     /// Desktop 客户端显示名称（用于登录页/窗口标题等）
     /// </summary>
     public string? DesktopName { get; set; }

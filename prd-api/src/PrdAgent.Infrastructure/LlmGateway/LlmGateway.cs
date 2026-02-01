@@ -21,6 +21,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly ILogger<LlmGateway> _logger;
     private readonly ILlmRequestLogWriter? _logWriter;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
+    private const string InvalidAppCallerErrorCode = "APP_CALLER_INVALID";
 
     public LlmGateway(
         IModelResolver modelResolver,
@@ -46,6 +47,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// <inheritdoc />
     public async Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
     {
+        if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
+        {
+            return GatewayResponse.Fail(InvalidAppCallerErrorCode, error, 400);
+        }
+
         var startedAt = DateTime.UtcNow;
         string? logId = null;
         ModelResolutionResult? resolution = null;
@@ -162,6 +168,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayRequest request,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
+        if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
+        {
+            yield return GatewayStreamChunk.Fail($"{InvalidAppCallerErrorCode}: {error}");
+            yield break;
+        }
+
         var startedAt = DateTime.UtcNow;
         string? logId = null;
         DateTime? firstByteAt = null;
@@ -339,6 +351,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// <inheritdoc />
     public async Task<GatewayRawResponse> SendRawAsync(GatewayRawRequest request, CancellationToken ct = default)
     {
+        if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
+        {
+            return GatewayRawResponse.Fail(InvalidAppCallerErrorCode, error, 400);
+        }
+
         var startedAt = DateTime.UtcNow;
         string? logId = null;
         ModelResolutionResult? resolution = null;
@@ -573,6 +590,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string? expectedModel = null,
         CancellationToken ct = default)
     {
+        if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
+        {
+            return new GatewayModelResolution
+            {
+                Success = false,
+                ErrorMessage = error,
+                ResolutionType = "NotFound"
+            };
+        }
+
         var result = await _modelResolver.ResolveAsync(appCallerCode, modelType, expectedModel, ct);
         return result.ToGatewayResolution();
     }
@@ -583,6 +610,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string modelType,
         CancellationToken ct = default)
     {
+        if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
+        {
+            _logger.LogWarning("[LlmGateway] Invalid appCallerCode for GetAvailablePoolsAsync: {Error}", error);
+            return new List<AvailableModelPool>();
+        }
+
         return await _modelResolver.GetAvailablePoolsAsync(appCallerCode, modelType, ct);
     }
 
@@ -886,6 +919,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         int maxTokens = 4096,
         double temperature = 0.2)
     {
+        if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
+        {
+            throw new InvalidOperationException($"{InvalidAppCallerErrorCode}: {error}");
+        }
+
         return new GatewayLLMClient(
             gateway: this,
             appCallerCode: appCallerCode,
@@ -895,6 +933,39 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             enablePromptCache: true,
             maxTokens: maxTokens,
             temperature: temperature);
+    }
+
+    private static bool TryValidateAppCaller(string appCallerCode, string modelType, out string error)
+    {
+        var code = (appCallerCode ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            error = "appCallerCode 不能为空";
+            return false;
+        }
+
+        var type = (modelType ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(type))
+        {
+            error = "modelType 不能为空";
+            return false;
+        }
+
+        var def = AppCallerRegistrationService.FindByAppCode(code);
+        if (def == null)
+        {
+            error = $"appCallerCode 未注册: {code}";
+            return false;
+        }
+
+        if (def.ModelTypes == null || !def.ModelTypes.Contains(type))
+        {
+            error = $"appCallerCode 与 modelType 不匹配: {code} -> {type}";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
     }
 
     #endregion

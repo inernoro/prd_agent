@@ -45,6 +45,7 @@ public class SettingsController : ControllerBase
             errorMaxChars = settings.ErrorMaxChars ?? LlmLogLimits.DefaultErrorMaxChars,
             httpLogBodyMaxChars = settings.HttpLogBodyMaxChars ?? LlmLogLimits.DefaultHttpLogBodyMaxChars,
             jsonFallbackMaxChars = settings.JsonFallbackMaxChars ?? LlmLogLimits.DefaultJsonFallbackMaxChars,
+            settings.EnableOutboundApiLogFull,
             settings.UpdatedAt
         }));
     }
@@ -69,6 +70,7 @@ public class SettingsController : ControllerBase
             update = update.Set(s => s.HttpLogBodyMaxChars, request.HttpLogBodyMaxChars);
         if (request.JsonFallbackMaxChars.HasValue)
             update = update.Set(s => s.JsonFallbackMaxChars, request.JsonFallbackMaxChars);
+        update = update.Set(s => s.EnableOutboundApiLogFull, request.EnableOutboundApiLogFull);
 
         var options = new UpdateOptions { IsUpsert = true };
         await _db.AppSettings.UpdateOneAsync(s => s.Id == "global", update, options);
@@ -84,7 +86,8 @@ public class SettingsController : ControllerBase
             answerMaxChars = request.AnswerMaxChars ?? LlmLogLimits.DefaultAnswerMaxChars,
             errorMaxChars = request.ErrorMaxChars ?? LlmLogLimits.DefaultErrorMaxChars,
             httpLogBodyMaxChars = request.HttpLogBodyMaxChars ?? LlmLogLimits.DefaultHttpLogBodyMaxChars,
-            jsonFallbackMaxChars = request.JsonFallbackMaxChars ?? LlmLogLimits.DefaultJsonFallbackMaxChars
+            jsonFallbackMaxChars = request.JsonFallbackMaxChars ?? LlmLogLimits.DefaultJsonFallbackMaxChars,
+            request.EnableOutboundApiLogFull
         }));
     }
 }
@@ -97,6 +100,7 @@ public class UpdateLlmSettingsRequest
     public int? ErrorMaxChars { get; set; }
     public int? HttpLogBodyMaxChars { get; set; }
     public int? JsonFallbackMaxChars { get; set; }
+    public bool EnableOutboundApiLogFull { get; set; } = false;
 }
 
 

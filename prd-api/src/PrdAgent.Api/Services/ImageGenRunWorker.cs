@@ -25,6 +25,31 @@ public class ImageGenRunWorker : BackgroundService
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
+    private static bool IsRegisteredImageGenAppCaller(string? appCallerCode)
+    {
+        if (string.IsNullOrWhiteSpace(appCallerCode)) return false;
+        var def = AppCallerRegistrationService.FindByAppCode(appCallerCode);
+        return def != null && def.ModelTypes.Contains(ModelTypes.ImageGen);
+    }
+
+    private static string? ResolveImageGenAppCallerCode(ImageGenRun run, bool isVisionMode, int imageRefCount, bool hasInitImage)
+    {
+        if (string.Equals(run.AppKey, "visual-agent", StringComparison.OrdinalIgnoreCase))
+        {
+            if (isVisionMode && imageRefCount > 1) return AppCallerRegistry.VisualAgent.Image.VisionGen;
+            if (hasInitImage || imageRefCount == 1) return AppCallerRegistry.VisualAgent.Image.Img2Img;
+            return AppCallerRegistry.VisualAgent.Image.Text2Img;
+        }
+        if (string.Equals(run.AppKey, "literary-agent", StringComparison.OrdinalIgnoreCase))
+        {
+            // 根据是否有参考图选择 Text2Img 或 Img2Img
+            if (hasInitImage) return AppCallerRegistry.LiteraryAgent.Illustration.Img2Img;
+            return AppCallerRegistry.LiteraryAgent.Illustration.Text2Img;
+        }
+
+        return string.IsNullOrWhiteSpace(run.AppCallerCode) ? null : run.AppCallerCode;
+    }
+
     public ImageGenRunWorker(
         MongoDbContext db,
         IServiceScopeFactory scopeFactory,
@@ -130,7 +155,18 @@ public class ImageGenRunWorker : BackgroundService
         }
 
         // 模型池调度：统一在 Worker 中处理，确保所有来源的 Run 都能正确关联模型池
-        await ResolveModelGroupAsync(run, ct);
+        var preRefCount = run.ImageRefs?.Count ?? 0;
+        var preHasInit = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256);
+        var preIsVision = preRefCount > 1;
+        var preAppCallerCode = ResolveImageGenAppCallerCode(run, preIsVision, preRefCount, preHasInit);
+        if (!IsRegisteredImageGenAppCaller(preAppCallerCode))
+        {
+            var msg = "appCallerCode 未注册或缺失，已拒绝执行生图";
+            await AppendEventAsync(run, "run", new { type = "error", errorCode = ErrorCodes.INVALID_FORMAT, errorMessage = msg }, ct);
+            await MarkRunFailedSafeAsync(run.Id, ErrorCodes.INVALID_FORMAT, msg, ct);
+            return;
+        }
+        await ResolveModelGroupAsync(run, preAppCallerCode!, ct);
 
         var items = run.Items ?? new List<ImageGenRunPlanItem>();
         if (items.Count == 0)
@@ -330,34 +366,20 @@ public class ImageGenRunWorker : BackgroundService
                         _logger.LogInformation("[ImageGenRunWorker Debug] Run {RunId}: AppKey={AppKey}, UserId={UserId}, AppCallerCode={AppCallerCode}",
                             run.Id, run.AppKey ?? "(null)", run.OwnerAdminId, run.AppCallerCode ?? "(null)");
 
-                        // AppCallerCode: 根据生成模式选择正确的 code
-                        // - text2img: 纯文本生成（无参考图）
-                        // - img2img: 单图参考生成
-                        // - vision: 多图 Vision API 生成
-                        string appCallerCode;
-                        if (run.AppKey == "visual-agent")
+                        // AppCallerCode：仅允许已注册的 code（禁止拼接/隐式生成）
+                        var resolvedAppCallerCode = ResolveImageGenAppCallerCode(
+                            run,
+                            isMultiImageVisionMode,
+                            loadedImageRefs.Count,
+                            initImageBase64 != null);
+                        if (!IsRegisteredImageGenAppCaller(resolvedAppCallerCode))
                         {
-                            if (isMultiImageVisionMode && loadedImageRefs.Count > 1)
-                            {
-                                appCallerCode = AppCallerRegistry.VisualAgent.Image.VisionGen;  // 多图 Vision
-                            }
-                            else if (initImageBase64 != null || loadedImageRefs.Count == 1)
-                            {
-                                appCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img;   // 单图 img2img
-                            }
-                            else
-                            {
-                                appCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img;  // 纯文本生成
-                            }
+                            var msg = "appCallerCode 未注册或缺失，已拒绝执行生图";
+                            await AppendEventAsync(run, "run", new { type = "error", errorCode = ErrorCodes.INVALID_FORMAT, errorMessage = msg }, ct);
+                            await MarkRunFailedSafeAsync(run.Id, ErrorCodes.INVALID_FORMAT, msg, ct);
+                            return;
                         }
-                        else if (run.AppKey == "literary-agent")
-                        {
-                            appCallerCode = AppCallerRegistry.LiteraryAgent.Illustration.Generation;
-                        }
-                        else
-                        {
-                            appCallerCode = run.AppCallerCode ?? AppCallerRegistry.Admin.Lab.Generation;
-                        }
+                        var appCallerCode = resolvedAppCallerCode!;
 
                         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                             RequestId: $"{run.Id}-{curItemIndex}-{imageIndex}",
@@ -375,7 +397,7 @@ public class ImageGenRunWorker : BackgroundService
                             ModelGroupId: run.ModelGroupId,
                             ModelGroupName: run.ModelGroupName));
 
-                        _logger.LogInformation("[ImageGenRunWorker Debug] Calling GenerateAsync with appKey={AppKey}", run.AppKey ?? "(null)");
+                        _logger.LogInformation("[ImageGenRunWorker Debug] Calling GenerateAsync with appCallerCode={AppCallerCode}", appCallerCode);
 
                         // 调试日志：打印发送给生图模型的完整 prompt
                         _logger.LogInformation(
@@ -410,10 +432,10 @@ public class ImageGenRunWorker : BackgroundService
                                 loadedImageRefs,
                                 reqSize,
                                 ct,
+                                appCallerCode,
                                 modelId: requestedModelId,
                                 platformId: run.PlatformId,
-                                modelName: run.ModelId,
-                                appKey: run.AppKey);
+                                modelName: run.ModelId);
                         }
                         else
                         {
@@ -424,12 +446,12 @@ public class ImageGenRunWorker : BackgroundService
                                 size: reqSize,
                                 responseFormat: run.ResponseFormat,
                                 ct,
+                                appCallerCode,
                                 modelId: requestedModelId,
                                 platformId: run.PlatformId,
                                 modelName: run.ModelId,
                                 initImageBase64: initImageBase64,
-                                initImageProvided: initImageBase64 != null,
-                                appKey: run.AppKey);
+                                initImageProvided: initImageBase64 != null);
                         }
 
                         if (!res.Success || res.Data == null)
@@ -908,7 +930,7 @@ public class ImageGenRunWorker : BackgroundService
     /// 模型池调度：统一在 Worker 中处理，确保所有来源的 Run 都能正确关联模型池
     /// 仅通过 AppCaller 绑定关系查询模型池，不进行 platformId+modelId 反查
     /// </summary>
-    private async Task ResolveModelGroupAsync(ImageGenRun run, CancellationToken ct)
+    private async Task ResolveModelGroupAsync(ImageGenRun run, string appCallerCode, CancellationToken ct)
     {
         // 保存前端期望的模型信息（用于日志对比）
         var frontendExpectedPlatformId = run.PlatformId;
@@ -950,106 +972,49 @@ public class ImageGenRunWorker : BackgroundService
         string? resolvedPlatformId = null;
         string? resolvedModelId = null;
 
-        // 通过 AppCaller 从模型池中选择模型（唯一方式）
-        // 根据生成模式选择正确的 AppCallerCode：
-        // - text2img: 纯文本生成（无参考图）
-        // - img2img: 单图参考生成
-        // - vision: 多图 Vision API 生成
-        var appCallerCode = run.AppCallerCode;
-        if (string.IsNullOrWhiteSpace(appCallerCode) && !string.IsNullOrWhiteSpace(run.AppKey))
+        try
         {
-            if (run.AppKey == "visual-agent")
-            {
-                // 重新获取（避免用外层变量）
-                var refCount = run.ImageRefs?.Count ?? 0;
-                var hasInit = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256);
+            using var scope = _scopeFactory.CreateScope();
+            var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
 
-                if (refCount > 1)
+            // 查询 AppCaller 绑定的模型池（简化日志）
+            var appCaller = await _db.LLMAppCallers.Find(a => a.AppCode == appCallerCode).FirstOrDefaultAsync(ct);
+            var requirement = appCaller?.ModelRequirements.FirstOrDefault(r => r.ModelType == "generation");
+
+            // 获取所有绑定的模型池 code 列表
+            var boundPoolCodes = new List<string>();
+            if (requirement?.ModelGroupIds != null && requirement.ModelGroupIds.Count > 0)
+            {
+                foreach (var gid in requirement.ModelGroupIds)
                 {
-                    appCallerCode = AppCallerRegistry.VisualAgent.Image.VisionGen;  // 多图 Vision
-                    _logger.LogInformation(
-                        "[生图模型匹配] 选择 VisionGen 模式\n" +
-                        "  原因: ImageRefs.Count={RefCount} > 1\n" +
-                        "  AppCallerCode: {AppCallerCode}",
-                        refCount, appCallerCode);
-                }
-                else if (refCount == 1 || hasInit)
-                {
-                    appCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img;   // 单图 img2img
-                    _logger.LogInformation(
-                        "[生图模型匹配] 选择 Img2Img 模式\n" +
-                        "  原因: ImageRefs.Count={RefCount}, HasInitImage={HasInit}\n" +
-                        "  AppCallerCode: {AppCallerCode}",
-                        refCount, hasInit, appCallerCode);
-                }
-                else
-                {
-                    appCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img;  // 纯文本生成
-                    _logger.LogInformation(
-                        "[生图模型匹配] 选择 Text2Img 模式\n" +
-                        "  原因: 无参考图 (ImageRefs.Count={RefCount}, HasInitImage={HasInit})\n" +
-                        "  AppCallerCode: {AppCallerCode}",
-                        refCount, hasInit, appCallerCode);
+                    var grp = await _db.ModelGroups.Find(g => g.Id == gid).FirstOrDefaultAsync(ct);
+                    if (grp != null) boundPoolCodes.Add(grp.Code ?? grp.Name);
                 }
             }
-            else if (run.AppKey == "literary-agent")
+
+            _logger.LogInformation(
+                "[生图模型匹配] 可选模型池({Count}个): [{PoolCodes}]",
+                boundPoolCodes.Count, string.Join(", ", boundPoolCodes));
+
+            // 传递用户期望的模型池 code
+            var expectedModelCode = frontendExpectedModelId;
+            var resolved = await gateway.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct);
+
+            if (resolved != null)
             {
-                appCallerCode = AppCallerRegistry.LiteraryAgent.Illustration.Generation;
-            }
-            else
-            {
-                appCallerCode = $"{run.AppKey}.image::generation"; // 其他应用回退默认命名
+                if (Enum.TryParse<ModelResolutionType>(resolved.ResolutionType, out var parsedType))
+                {
+                    resolutionType = parsedType;
+                }
+                modelGroupId = resolved.ModelGroupId;
+                modelGroupName = resolved.ModelGroupName;
+                resolvedPlatformId = resolved.ActualPlatformId;
+                resolvedModelId = resolved.ActualModel;
             }
         }
-        
-        // 简洁：不再单独打印 AppCallerCode
-
-        if (!string.IsNullOrWhiteSpace(appCallerCode))
+        catch (Exception ex)
         {
-            try
-            {
-                using var scope = _scopeFactory.CreateScope();
-                var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
-
-                // 查询 AppCaller 绑定的模型池（简化日志）
-                var appCaller = await _db.LLMAppCallers.Find(a => a.AppCode == appCallerCode).FirstOrDefaultAsync(ct);
-                var requirement = appCaller?.ModelRequirements.FirstOrDefault(r => r.ModelType == "generation");
-
-                // 获取所有绑定的模型池 code 列表
-                var boundPoolCodes = new List<string>();
-                if (requirement?.ModelGroupIds != null && requirement.ModelGroupIds.Count > 0)
-                {
-                    foreach (var gid in requirement.ModelGroupIds)
-                    {
-                        var grp = await _db.ModelGroups.Find(g => g.Id == gid).FirstOrDefaultAsync(ct);
-                        if (grp != null) boundPoolCodes.Add(grp.Code ?? grp.Name);
-                    }
-                }
-
-                _logger.LogInformation(
-                    "[生图模型匹配] 可选模型池({Count}个): [{PoolCodes}]",
-                    boundPoolCodes.Count, string.Join(", ", boundPoolCodes));
-
-                // 传递用户期望的模型池 code
-                var expectedModelCode = frontendExpectedModelId;
-                var resolved = await gateway.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct);
-
-                if (resolved != null)
-                {
-                    if (Enum.TryParse<ModelResolutionType>(resolved.ResolutionType, out var parsedType))
-                    {
-                        resolutionType = parsedType;
-                    }
-                    modelGroupId = resolved.ModelGroupId;
-                    modelGroupName = resolved.ModelGroupName;
-                    resolvedPlatformId = resolved.ActualPlatformId;
-                    resolvedModelId = resolved.ActualModel;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "[视觉创作-专属模型匹配] 通过 AppCaller 获取模型池失败: appCallerCode={AppCallerCode}，将使用前端指定的模型", appCallerCode);
-            }
+            _logger.LogWarning(ex, "[视觉创作-专属模型匹配] 通过 AppCaller 获取模型池失败: appCallerCode={AppCallerCode}，将使用前端指定的模型", appCallerCode);
         }
 
         // 最终结果

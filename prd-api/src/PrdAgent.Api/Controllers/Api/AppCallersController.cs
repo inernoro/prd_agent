@@ -30,6 +30,19 @@ public class AppCallersController : ControllerBase
         _logger = logger;
     }
 
+    private static bool IsRegisteredAppCaller(string appCallerCode)
+    {
+        if (string.IsNullOrWhiteSpace(appCallerCode)) return false;
+        return AppCallerRegistrationService.FindByAppCode(appCallerCode) != null;
+    }
+
+    private static bool IsRegisteredAppCallerForType(string appCallerCode, string modelType)
+    {
+        if (string.IsNullOrWhiteSpace(appCallerCode) || string.IsNullOrWhiteSpace(modelType)) return false;
+        var def = AppCallerRegistrationService.FindByAppCode(appCallerCode);
+        return def != null && def.ModelTypes.Contains(modelType);
+    }
+
     /// <summary>
     /// 获取应用列表
     /// </summary>
@@ -78,6 +91,11 @@ public class AppCallersController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> CreateAppCaller([FromBody] CreateAppCallerRequest request)
     {
+        if (!IsRegisteredAppCaller(request.AppCode))
+        {
+            return BadRequest(ApiResponse<object>.Fail("APP_CODE_NOT_REGISTERED", "appCallerCode 未注册（请先在 AppCallerRegistry 中登记）"));
+        }
+
         // 检查 appCode 是否已存在
         var existing = await _db.LLMAppCallers.Find(a => a.AppCode == request.AppCode).FirstOrDefaultAsync();
 
@@ -116,6 +134,10 @@ public class AppCallersController : ControllerBase
         if (app == null)
         {
             return NotFound(ApiResponse<object>.Fail("APP_CALLER_NOT_FOUND", "应用不存在"));
+        }
+        if (!IsRegisteredAppCaller(app.AppCode))
+        {
+            return BadRequest(ApiResponse<object>.Fail("APP_CODE_NOT_REGISTERED", "appCallerCode 未注册（请先在 AppCallerRegistry 中登记）"));
         }
 
         // 更新基本信息
@@ -261,6 +283,10 @@ public class AppCallersController : ControllerBase
         {
             return NotFound(ApiResponse<object>.Fail("APP_CALLER_NOT_FOUND", "应用不存在"));
         }
+        if (!IsRegisteredAppCallerForType(app.AppCode, modelType))
+        {
+            return BadRequest(ApiResponse<object>.Fail("APP_CODE_NOT_REGISTERED", "appCallerCode 未注册或不支持该 modelType"));
+        }
 
         var requirement = app.ModelRequirements.FirstOrDefault(r => r.ModelType == modelType);
         if (requirement == null)
@@ -294,6 +320,10 @@ public class AppCallersController : ControllerBase
         {
             return BadRequest(ApiResponse<object>.Fail("INVALID_PARAMS", "appCallerCode 和 modelType 不能为空"));
         }
+        if (!IsRegisteredAppCallerForType(appCallerCode, modelType))
+        {
+            return BadRequest(ApiResponse<object>.Fail("APP_CODE_NOT_REGISTERED", "appCallerCode 未注册或不支持该 modelType"));
+        }
 
         var result = await _gateway.ResolveModelAsync(appCallerCode, modelType, null, ct);
 
@@ -311,6 +341,10 @@ public class AppCallersController : ControllerBase
         if (request.Items == null || request.Items.Count == 0)
         {
             return Ok(ApiResponse<Dictionary<string, ResolvedModelInfoDto?>>.Ok(new Dictionary<string, ResolvedModelInfoDto?>()));
+        }
+        if (request.Items.Any(x => !IsRegisteredAppCallerForType(x.AppCallerCode, x.ModelType)))
+        {
+            return BadRequest(ApiResponse<object>.Fail("APP_CODE_NOT_REGISTERED", "包含未注册或 modelType 不匹配的 appCallerCode"));
         }
 
         var results = new Dictionary<string, ResolvedModelInfoDto?>();

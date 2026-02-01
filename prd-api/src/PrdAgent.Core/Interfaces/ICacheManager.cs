@@ -64,4 +64,9 @@ public static class CacheKeys
 
     public static string ForAuthTokenVersion(string userId, string clientType)
         => $"{AuthTokenVersion}{userId}:{clientType}";
+
+    // 绑定会话与客户端（防止同账号滥用 clientId 读取他人日志）
+    public const string AuthClientBinding = "auth:client:";
+    public static string ForAuthClientBinding(string userId, string clientType, string sessionKey)
+        => $"{AuthClientBinding}{userId}:{clientType}:{sessionKey}";
 }

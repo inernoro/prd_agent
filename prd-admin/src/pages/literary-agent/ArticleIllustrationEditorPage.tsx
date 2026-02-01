@@ -5,12 +5,12 @@ import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import {
-  createImageGenRun,
+  createLiteraryAgentImageGenRun,
   generateArticleMarkers,
   getVisualAgentWorkspaceDetail,
   getModels,
   planImageGen,
-  streamImageGenRunWithRetry,
+  streamLiteraryAgentImageGenRunWithRetry,
   updateVisualAgentWorkspace,
   updateArticleMarker,
   uploadVisualAgentWorkspaceAsset,
@@ -27,7 +27,9 @@ import {
   deleteReferenceImageConfig,
   activateReferenceImageConfig,
   deactivateReferenceImageConfig,
+  getLiteraryAgentAllModels,
 } from '@/services';
+import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
 import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -148,10 +150,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 提取的标记列表
   const [markers, setMarkers] = useState<ArticleMarker[]>([]);
 
-  // 生图模型（自动选择 isImageGen=true 的最优先）
+  // 生图模型（区分文生图和图生图两种场景）
   const [imageGenModel, setImageGenModel] = useState<Model | null>(null);
   const [mainModel, setMainModel] = useState<Model | null>(null); // 用于生成标记的模型
   const [imageGenModelError, setImageGenModelError] = useState<string | null>(null);
+  // 文生图模型池（无参考图）
+  const [text2ImgPool, setText2ImgPool] = useState<LiteraryAgentModelPool | null>(null);
+  // 图生图模型池（有风格参考图）
+  const [img2ImgPool, setImg2ImgPool] = useState<LiteraryAgentModelPool | null>(null);
 
   // 右侧每条配图的运行状态（逐条 parse + gen）
   const [markerRunItems, setMarkerRunItems] = useState<MarkerRunItem[]>([]);
@@ -192,40 +198,74 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId]);
 
-  // 自动选择生图模型（参照实验室：自动用系统启用的 isImageGen 模型）
+  // 自动选择生图模型（区分文生图和图生图两种场景）
+  // 后端 API 一次性返回两种场景的模型池
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       setImageGenModelError(null);
-      const res = await getModels();
+      setText2ImgPool(null);
+      setImg2ImgPool(null);
+
+      // 并行加载：所有模型池 + 全局模型列表
+      const [allPoolsRes, modelsRes] = await Promise.all([
+        getLiteraryAgentAllModels().catch(() => ({ success: false, data: null as LiteraryAgentAllModelsResponse | null })),
+        getModels(),
+      ]);
       if (cancelled) return;
-      if (!res.success) {
-        setImageGenModel(null);
-        setImageGenModelError(res.error?.message || '加载生图模型失败');
-        return;
+
+      // 解析两种场景的模型池
+      if (allPoolsRes.success && allPoolsRes.data) {
+        const t2iPools = allPoolsRes.data.text2img?.pools ?? [];
+        const i2iPools = allPoolsRes.data.img2img?.pools ?? [];
+        
+        // 查找专属模型池（isDedicated=true），否则用第一个
+        const t2iPool = t2iPools.find((p) => p.isDedicated) ?? t2iPools[0] ?? null;
+        const i2iPool = i2iPools.find((p) => p.isDedicated) ?? i2iPools[0] ?? null;
+        
+        setText2ImgPool(t2iPool);
+        setImg2ImgPool(i2iPool);
       }
-      const list = (res.data ?? []).filter((m) => Boolean(m.enabled) && Boolean(m.isImageGen));
-      if (list.length === 0) {
+
+      if (!modelsRes.success) {
         setImageGenModel(null);
-        setImageGenModelError('未找到启用的生图模型（请在「模型管理」里设置 isImageGen）');
-      } else {
-        list.sort((a, b) => {
-          const ap = typeof a.priority === 'number' ? a.priority : 1e9;
-          const bp = typeof b.priority === 'number' ? b.priority : 1e9;
-          if (ap !== bp) return ap - bp;
-          return String(a.modelName || a.name || '').localeCompare(String(b.modelName || b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
-        });
-        setImageGenModel(list[0] ?? null);
+        setImageGenModelError(modelsRes.error?.message || '加载生图模型失败');
+        return;
       }
 
       // 获取主模型（用于生成标记）
-      const mainList = (res.data ?? []).filter((m) => Boolean(m.enabled) && Boolean(m.isMain));
+      const mainList = (modelsRes.data ?? []).filter((m) => Boolean(m.enabled) && Boolean(m.isMain));
       setMainModel(mainList[0] ?? null);
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  // 根据是否有激活的参考图，决定当前使用哪个模型池来显示 imageGenModel
+  useEffect(() => {
+    const hasActiveRefImage = referenceImageConfigs.some((c) => c.isActive);
+    const pool = hasActiveRefImage ? img2ImgPool : text2ImgPool;
+
+    // 更新 imageGenModel 用于生图时的校验
+    if (pool && pool.models && pool.models.length > 0) {
+      const sortedPoolModels = [...pool.models].sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
+      const topPoolModel = sortedPoolModels[0];
+      setImageGenModel({
+        id: `pool-${pool.id}-${topPoolModel.modelId}`,
+        name: pool.name || topPoolModel.modelId,
+        modelName: topPoolModel.modelId,
+        platformId: topPoolModel.platformId,
+        enabled: true,
+        isImageGen: true,
+      } as Model);
+    } else {
+      setImageGenModel(null);
+      if (!text2ImgPool && !img2ImgPool) {
+        setImageGenModelError('未找到启用的生图模型（请绑定专属模型池）');
+      }
+    }
+  }, [referenceImageConfigs, text2ImgPool, img2ImgPool]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1058,9 +1098,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       )
     );
     const idem = `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const created = await createImageGenRun({
+    const created = await createLiteraryAgentImageGenRun({
       input: {
-        configModelId: imageGenModel.id,
+        // 不需要传模型信息，后端会根据 appCallerCode 从绑定的模型池自动解析
         items: [{ prompt: plannedPrompt, count: 1, size: plannedSize }],
         size: plannedSize,
         responseFormat: 'url',  // 使用 URL 格式，后端会自动保存到 COS
@@ -1095,7 +1135,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     let gotBase64: string | null = null;
     let gotUrl: string | null = null;
     const ac = genAbortRef.current;
-    const res = await streamImageGenRunWithRetry({
+    const res = await streamLiteraryAgentImageGenRunWithRetry({
       runId,
       afterSeq: 0,
       maxAttempts: 20,
@@ -1682,20 +1722,58 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     {mainModel.modelName || mainModel.name}
                   </div>
                 )}
-                {imageGenModel ? (
+                {/* 文生图模型 */}
+                {text2ImgPool ? (
                   <div
                     className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
-                    style={{ background: 'rgba(139, 92, 246, 0.1)', color: '#A78BFA' }}
-                    title="生图模型"
+                    style={{ 
+                      background: !referenceImageConfigs.some(c => c.isActive) ? 'rgba(34, 197, 94, 0.15)' : 'rgba(139, 92, 246, 0.1)', 
+                      color: !referenceImageConfigs.some(c => c.isActive) ? '#4ADE80' : '#A78BFA' 
+                    }}
+                    title={`文生图${text2ImgPool.isDedicated ? '(专属)' : ''}: ${text2ImgPool.name}`}
                   >
-                    <Sparkles size={10} />
-                    {imageGenModel.modelName || imageGenModel.name}
+                    {text2ImgPool.isDedicated && (
+                      <span className="text-[8px] px-1 py-0.5 rounded bg-green-500/20 text-green-400 mr-0.5">
+                        专
+                      </span>
+                    )}
+                    <span className="text-[8px] opacity-60 mr-0.5">T2I</span>
+                    {text2ImgPool.models?.[0]?.modelId || text2ImgPool.code || '?'}
                   </div>
-                ) : imageGenModelError ? (
+                ) : (
+                  <div className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-500/10" title="文生图模型未配置">
+                    <span className="text-[8px] opacity-60 mr-0.5">T2I</span>-
+                  </div>
+                )}
+                {/* 图生图模型 */}
+                {img2ImgPool ? (
+                  <div
+                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
+                    style={{ 
+                      background: referenceImageConfigs.some(c => c.isActive) ? 'rgba(34, 197, 94, 0.15)' : 'rgba(139, 92, 246, 0.1)', 
+                      color: referenceImageConfigs.some(c => c.isActive) ? '#4ADE80' : '#A78BFA' 
+                    }}
+                    title={`图生图${img2ImgPool.isDedicated ? '(专属)' : ''}: ${img2ImgPool.name}`}
+                  >
+                    {img2ImgPool.isDedicated && (
+                      <span className="text-[8px] px-1 py-0.5 rounded bg-green-500/20 text-green-400 mr-0.5">
+                        专
+                      </span>
+                    )}
+                    <span className="text-[8px] opacity-60 mr-0.5">I2I</span>
+                    {img2ImgPool.models?.[0]?.modelId || img2ImgPool.code || '?'}
+                  </div>
+                ) : (
+                  <div className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-500/10" title="图生图模型未配置">
+                    <span className="text-[8px] opacity-60 mr-0.5">I2I</span>-
+                  </div>
+                )}
+                {/* 生图错误提示 */}
+                {imageGenModelError && !text2ImgPool && !img2ImgPool && (
                   <div className="text-[10px] px-1.5 py-0.5 rounded text-red-400 bg-red-500/10">
                     生图不可用
                   </div>
-                ) : null}
+                )}
               </div>
             </div>
 

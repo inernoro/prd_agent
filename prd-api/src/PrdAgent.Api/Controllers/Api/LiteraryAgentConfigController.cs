@@ -41,10 +41,209 @@ public class LiteraryAgentConfigController : ControllerBase
         _logger = logger;
     }
 
+    // 硬编码的 appCallerCode（应用身份隔离原则）
+    private static class AppCallerCodes
+    {
+        /// <summary>文学创作配图-文生图（无参考图）</summary>
+        public const string Text2Img = "literary-agent.illustration.text2img::generation";
+        
+        /// <summary>文学创作配图-图生图（有风格参考图）</summary>
+        public const string Img2Img = "literary-agent.illustration.img2img::generation";
+    }
+
     private string GetAdminId()
         => User.FindFirst("sub")?.Value
            ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
            ?? "unknown";
+
+    #region 模型查询（无参数，内部硬编码 appCallerCode）
+
+    /// <summary>
+    /// 获取文学创作"文生图"可用的模型池列表（无参考图场景）
+    /// 内部使用硬编码的 appCallerCode: literary-agent.illustration.text2img::generation
+    /// </summary>
+    [HttpGet("models/text2img")]
+    public async Task<IActionResult> GetText2ImgModels(CancellationToken ct)
+    {
+        return await GetModelsForAppCallerCode(AppCallerCodes.Text2Img, ct);
+    }
+
+    /// <summary>
+    /// 获取文学创作"图生图"可用的模型池列表（有风格参考图场景）
+    /// 内部使用硬编码的 appCallerCode: literary-agent.illustration.img2img::generation
+    /// </summary>
+    [HttpGet("models/img2img")]
+    public async Task<IActionResult> GetImg2ImgModels(CancellationToken ct)
+    {
+        return await GetModelsForAppCallerCode(AppCallerCodes.Img2Img, ct);
+    }
+
+    /// <summary>
+    /// 获取配图生成可用的模型池（兼容旧接口，根据是否有激活的参考图自动选择）
+    /// </summary>
+    [HttpGet("models/image-gen")]
+    public async Task<IActionResult> GetImageGenModels(CancellationToken ct)
+    {
+        // 检查是否有激活的参考图配置
+        var hasActiveRefImage = await _db.ReferenceImageConfigs
+            .Find(x => x.AppKey == AppKey && x.IsActive)
+            .AnyAsync(ct);
+
+        // 有参考图用 img2img，没有用 text2img
+        var appCallerCode = hasActiveRefImage ? AppCallerCodes.Img2Img : AppCallerCodes.Text2Img;
+        return await GetModelsForAppCallerCode(appCallerCode, ct);
+    }
+
+    /// <summary>
+    /// 获取两种场景的模型池（文生图 + 图生图）
+    /// 前端可一次性获取，用于同时显示两个模型状态
+    /// </summary>
+    [HttpGet("models/all")]
+    public async Task<IActionResult> GetAllImageGenModels(CancellationToken ct)
+    {
+        var text2imgTask = GetModelPoolsForAppCallerCode(AppCallerCodes.Text2Img, ct);
+        var img2imgTask = GetModelPoolsForAppCallerCode(AppCallerCodes.Img2Img, ct);
+
+        await Task.WhenAll(text2imgTask, img2imgTask);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            text2img = new
+            {
+                appCallerCode = AppCallerCodes.Text2Img,
+                pools = text2imgTask.Result
+            },
+            img2img = new
+            {
+                appCallerCode = AppCallerCodes.Img2Img,
+                pools = img2imgTask.Result
+            }
+        }));
+    }
+
+    /// <summary>
+    /// 通用方法：根据 appCallerCode 获取模型池列表
+    /// </summary>
+    private async Task<IActionResult> GetModelsForAppCallerCode(string appCallerCode, CancellationToken ct)
+    {
+        var result = await GetModelPoolsForAppCallerCode(appCallerCode, ct);
+        return Ok(ApiResponse<List<ModelPoolForAppResponse>>.Ok(result));
+    }
+
+    /// <summary>
+    /// 通用方法：根据 appCallerCode 获取模型池列表（内部使用）
+    /// </summary>
+    private async Task<List<ModelPoolForAppResponse>> GetModelPoolsForAppCallerCode(string appCallerCode, CancellationToken ct)
+    {
+        const string modelType = "generation";
+        var result = new List<ModelPoolForAppResponse>();
+
+        // Step 1: 查找专属模型池（最高优先级）
+        var app = await _db.LLMAppCallers.Find(a => a.AppCode == appCallerCode).FirstOrDefaultAsync(ct);
+        if (app != null)
+        {
+            var requirement = app.ModelRequirements.FirstOrDefault(r => r.ModelType == modelType);
+            if (requirement != null && requirement.ModelGroupIds.Count > 0)
+            {
+                var dedicatedGroups = await _db.ModelGroups
+                    .Find(g => requirement.ModelGroupIds.Contains(g.Id))
+                    .SortBy(g => g.Priority)
+                    .ThenBy(g => g.CreatedAt)
+                    .ToListAsync(ct);
+
+                if (dedicatedGroups.Count > 0)
+                {
+                    foreach (var group in dedicatedGroups)
+                    {
+                        result.Add(MapToResponse(group, "DedicatedPool", isDedicated: true));
+                    }
+                    return result;
+                }
+            }
+        }
+
+        // Step 2: 查找默认模型池
+        var defaultGroups = await _db.ModelGroups
+            .Find(g => g.ModelType == modelType && g.IsDefaultForType)
+            .SortBy(g => g.Priority)
+            .ThenBy(g => g.CreatedAt)
+            .ToListAsync(ct);
+
+        if (defaultGroups.Count > 0)
+        {
+            foreach (var group in defaultGroups)
+            {
+                result.Add(MapToResponse(group, "DefaultPool", isDefault: true));
+            }
+            return result;
+        }
+
+        // Step 3: 传统配置（isImageGen）
+        var legacyModel = await _db.LLMModels
+            .Find(m => m.IsImageGen && m.Enabled)
+            .FirstOrDefaultAsync(ct);
+
+        if (legacyModel != null)
+        {
+            result.Add(new ModelPoolForAppResponse
+            {
+                Id = $"legacy-{legacyModel.Id}",
+                Name = $"默认生图 - {legacyModel.Name}",
+                Code = legacyModel.ModelName,
+                Priority = 1,
+                ModelType = modelType,
+                IsDefaultForType = false,
+                Models = new List<ModelPoolItemResponse>
+                {
+                    new()
+                    {
+                        ModelId = legacyModel.ModelName,
+                        PlatformId = legacyModel.PlatformId ?? string.Empty,
+                        Priority = 1,
+                        HealthStatus = "Healthy"
+                    }
+                },
+                ResolutionType = "DirectModel",
+                IsDedicated = false,
+                IsDefault = false,
+                IsLegacy = true
+            });
+        }
+
+        return result;
+    }
+
+    private static ModelPoolForAppResponse MapToResponse(
+        ModelGroup group,
+        string resolutionType,
+        bool isDedicated = false,
+        bool isDefault = false,
+        bool isLegacy = false)
+    {
+        return new ModelPoolForAppResponse
+        {
+            Id = group.Id,
+            Name = group.Name,
+            Code = group.Code,
+            Priority = group.Priority,
+            ModelType = group.ModelType,
+            IsDefaultForType = group.IsDefaultForType,
+            Description = group.Description,
+            Models = group.Models?.Select(m => new ModelPoolItemResponse
+            {
+                ModelId = m.ModelId,
+                PlatformId = m.PlatformId,
+                Priority = m.Priority,
+                HealthStatus = m.HealthStatus.ToString()
+            }).ToList() ?? new List<ModelPoolItemResponse>(),
+            ResolutionType = resolutionType,
+            IsDedicated = isDedicated,
+            IsDefault = isDefault,
+            IsLegacy = isLegacy
+        };
+    }
+
+    #endregion
 
     #region 底图配置 CRUD
 
@@ -562,4 +761,39 @@ public class UpdateLiteraryAgentConfigRequest
 {
     public string? ReferenceImageSha256 { get; set; }
     public string? ReferenceImageUrl { get; set; }
+}
+
+/// <summary>
+/// 应用模型池响应（简化版，用于应用内部查询）
+/// </summary>
+public class ModelPoolForAppResponse
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Code { get; set; } = string.Empty;
+    public int Priority { get; set; }
+    public string ModelType { get; set; } = string.Empty;
+    public bool IsDefaultForType { get; set; }
+    public string? Description { get; set; }
+    public List<ModelPoolItemResponse> Models { get; set; } = new();
+
+    /// <summary>解析类型：DedicatedPool(专属池)、DefaultPool(默认池)、DirectModel(传统配置)</summary>
+    public string ResolutionType { get; set; } = string.Empty;
+    /// <summary>是否为该应用的专属模型池</summary>
+    public bool IsDedicated { get; set; }
+    /// <summary>是否为该类型的默认模型池</summary>
+    public bool IsDefault { get; set; }
+    /// <summary>是否为传统配置模型</summary>
+    public bool IsLegacy { get; set; }
+}
+
+/// <summary>
+/// 模型池中的模型项响应
+/// </summary>
+public class ModelPoolItemResponse
+{
+    public string ModelId { get; set; } = string.Empty;
+    public string PlatformId { get; set; } = string.Empty;
+    public int Priority { get; set; }
+    public string HealthStatus { get; set; } = "Healthy";
 }

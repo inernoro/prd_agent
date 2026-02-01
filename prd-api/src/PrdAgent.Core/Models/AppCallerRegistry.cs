@@ -260,12 +260,20 @@ public static class LiteraryAgent
     public static class Illustration
     {
         [AppCallerMetadata(
-            "配图生成",
-            "为内容生成配图",
+            "配图-文生图",
+            "纯文本描述生成配图（无参考图）",
             ModelTypes = new[] { ModelTypes.ImageGen },
             Category = "Illustration"
         )]
-        public const string Generation = "literary-agent.illustration::generation";
+        public const string Text2Img = "literary-agent.illustration.text2img::generation";
+
+        [AppCallerMetadata(
+            "配图-图生图",
+            "使用风格参考图生成配图",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Illustration"
+        )]
+        public const string Img2Img = "literary-agent.illustration.img2img::generation";
     }
 }
 

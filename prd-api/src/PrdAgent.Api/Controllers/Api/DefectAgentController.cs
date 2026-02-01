@@ -26,13 +26,21 @@ public class DefectAgentController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILogger<DefectAgentController> _logger;
     private readonly IAssetStorage _assetStorage;
+    private readonly ICacheManager _cache;
+    private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
-    public DefectAgentController(MongoDbContext db, ILlmGateway gateway, ILogger<DefectAgentController> logger, IAssetStorage assetStorage)
+    public DefectAgentController(
+        MongoDbContext db,
+        ILlmGateway gateway,
+        ILogger<DefectAgentController> logger,
+        IAssetStorage assetStorage,
+        ICacheManager cache)
     {
         _db = db;
         _gateway = gateway;
         _logger = logger;
         _assetStorage = assetStorage;
+        _cache = cache;
     }
 
     private string GetUserId()
@@ -65,6 +73,45 @@ public class DefectAgentController : ControllerBase
         if (!string.IsNullOrEmpty(defect.AssigneeId) && defect.AssigneeId == userId)
             return DefectUnreadBy.Reporter;
         return null;
+    }
+
+    private string? GetSessionKey()
+        => User.FindFirst("sessionKey")?.Value;
+
+    private string? GetClientType()
+        => User.FindFirst("clientType")?.Value;
+
+    private async Task<string?> ResolveBoundClientIdAsync(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var clientType = GetClientType() ?? "unknown";
+        var sessionKey = GetSessionKey();
+        var headerClientId = (Request.Headers["X-Client-Id"].ToString() ?? "").Trim();
+        var clientId = string.IsNullOrWhiteSpace(headerClientId) ? sessionKey : headerClientId;
+        if (string.IsNullOrWhiteSpace(clientId)) return null;
+
+        if (!string.IsNullOrWhiteSpace(userId) &&
+            !string.IsNullOrWhiteSpace(clientType) &&
+            !string.IsNullOrWhiteSpace(sessionKey))
+        {
+            var key = CacheKeys.ForAuthClientBinding(userId, clientType, sessionKey);
+            try
+            {
+                var bound = await _cache.GetAsync<string>(key);
+                if (!string.IsNullOrWhiteSpace(bound))
+                {
+                    return string.Equals(bound, clientId, StringComparison.Ordinal) ? clientId : null;
+                }
+
+                await _cache.SetAsync(key, clientId, ClientBindingTtl);
+            }
+            catch
+            {
+                // 绑定缓存不可用时，退化为仅使用 clientId
+            }
+        }
+
+        return clientId;
     }
 
     #region 模板管理
@@ -607,7 +654,8 @@ public class DefectAgentController : ControllerBase
         defect.UpdatedAt = DateTime.UtcNow;
 
         // 自动采集用户 API 日志作为附件
-        await CollectUserApiLogsAsync(defect, userId, ct);
+        var clientId = await ResolveBoundClientIdAsync(ct);
+        await CollectUserApiLogsAsync(defect, userId, clientId, ct);
 
         await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
 
@@ -1083,11 +1131,16 @@ public class DefectAgentController : ControllerBase
     public async Task<IActionResult> PreviewApiLogs(CancellationToken ct)
     {
         var userId = GetUserId();
+        var clientId = await ResolveBoundClientIdAsync(ct);
+        if (string.IsNullOrWhiteSpace(clientId))
+        {
+            return Ok(ApiResponse<object>.Ok(new { totalCount = 0, errorCount = 0, items = Array.Empty<object>() }));
+        }
 
         // 查询用户最近 10 分钟内的请求日志（最多 20 条）
         var tenMinutesAgo = DateTime.UtcNow.AddMinutes(-10);
         var recentLogs = await _db.ApiRequestLogs
-            .Find(x => x.UserId == userId && x.StartedAt >= tenMinutesAgo)
+            .Find(x => x.UserId == userId && x.ClientId == clientId && x.StartedAt >= tenMinutesAgo)
             .SortByDescending(x => x.StartedAt)
             .Limit(20)
             .ToListAsync(ct);
@@ -1239,14 +1292,20 @@ public class DefectAgentController : ControllerBase
     /// <summary>
     /// 自动采集用户 API 日志作为缺陷附件
     /// </summary>
-    private async Task CollectUserApiLogsAsync(DefectReport defect, string userId, CancellationToken ct)
+    private async Task CollectUserApiLogsAsync(DefectReport defect, string userId, string? clientId, CancellationToken ct)
     {
         try
         {
+            if (string.IsNullOrWhiteSpace(clientId))
+            {
+                _logger.LogDebug("[{AppKey}] Skip API logs: clientId missing for user {UserId}", AppKey, userId);
+                return;
+            }
+
             // 1. 查询用户最近 10 分钟内的请求日志（最多 20 条）
             var tenMinutesAgo = DateTime.UtcNow.AddMinutes(-10);
             var recentLogs = await _db.ApiRequestLogs
-                .Find(x => x.UserId == userId && x.StartedAt >= tenMinutesAgo)
+                .Find(x => x.UserId == userId && x.ClientId == clientId && x.StartedAt >= tenMinutesAgo)
                 .SortByDescending(x => x.StartedAt)
                 .Limit(20)
                 .ToListAsync(ct);
