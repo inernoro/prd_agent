@@ -49,6 +49,11 @@ public sealed class NullAssetStorage : IAssetStorage
     {
         return Task.CompletedTask;
     }
+
+    public string? TryBuildUrlBySha(string sha256, string mime, string? domain = null, string? type = null)
+    {
+        return null;
+    }
 }
 
 public sealed class EmptyWatermarkFontAssetSource : IWatermarkFontAssetSource

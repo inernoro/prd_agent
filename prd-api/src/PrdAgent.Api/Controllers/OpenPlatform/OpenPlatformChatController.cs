@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
-using static PrdAgent.Core.Models.AppCallerRegistry;
+using AppCallerRegistry = PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Api.Controllers.OpenPlatform;
 
@@ -769,7 +769,7 @@ public class OpenPlatformChatController : ControllerBase
             // 使用简单的系统提示
             var systemPrompt = "You are a helpful AI assistant.";
 
-            var appCallerCode = OpenPlatform.Proxy.Chat;
+            var appCallerCode = AppCallerRegistry.OpenPlatform.Proxy.Chat;
             var llmClient = _gateway.CreateClient(appCallerCode, "chat");
             // 设置 LLM 请求上下文（确保日志中显示正确的请求类型和来源）
             using var _scope = _llmRequestContext.BeginScope(new LlmRequestContext(
@@ -948,7 +948,7 @@ public class OpenPlatformChatController : ControllerBase
             // 使用简单的系统提示
             var systemPrompt = "You are a helpful AI assistant.";
 
-            var appCallerCode = OpenPlatform.Proxy.Chat;
+            var appCallerCode = AppCallerRegistry.OpenPlatform.Proxy.Chat;
             var llmClient = _gateway.CreateClient(appCallerCode, "chat");
             // 设置 LLM 请求上下文（确保日志中显示正确的请求类型和来源）
             using var _scope = _llmRequestContext.BeginScope(new LlmRequestContext(

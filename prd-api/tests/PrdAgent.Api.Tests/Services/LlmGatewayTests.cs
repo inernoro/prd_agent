@@ -1,5 +1,5 @@
 using PrdAgent.Core.Interfaces;
-using PrdAgent.Core.Interfaces.LlmGateway;
+using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using Xunit;
@@ -80,8 +80,8 @@ public class LlmGatewayTests
         var gateway = CreateTestGateway();
 
         // Assert
+        Assert.IsAssignableFrom<CoreGateway.ILlmGateway>(gateway);
         Assert.IsAssignableFrom<ILlmGateway>(gateway);
-        Assert.IsAssignableFrom<Infrastructure.LlmGateway.ILlmGateway>(gateway);
     }
 
     [Fact]
@@ -91,8 +91,8 @@ public class LlmGatewayTests
         var gateway = CreateTestGateway();
 
         // Act
-        var coreGateway = (ILlmGateway)gateway;
-        var infraGateway = (Infrastructure.LlmGateway.ILlmGateway)gateway;
+        var coreGateway = (CoreGateway.ILlmGateway)gateway;
+        var infraGateway = (ILlmGateway)gateway;
 
         // Assert - 应该是同一个实例
         Assert.Same(coreGateway, infraGateway);
