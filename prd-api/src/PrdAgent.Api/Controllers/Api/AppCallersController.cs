@@ -310,17 +310,18 @@ public class AppCallersController : ControllerBase
     {
         if (request.Items == null || request.Items.Count == 0)
         {
-            return Ok(ApiResponse<Dictionary<string, GatewayModelResolution?>>.Ok(new Dictionary<string, GatewayModelResolution?>()));
+            return Ok(ApiResponse<Dictionary<string, ResolvedModelInfoDto?>>.Ok(new Dictionary<string, ResolvedModelInfoDto?>()));
         }
 
-        var results = new Dictionary<string, GatewayModelResolution?>();
+        var results = new Dictionary<string, ResolvedModelInfoDto?>();
 
         // 并行解析所有模型
         var tasks = request.Items.Select(async item =>
         {
             var key = $"{item.AppCallerCode}::{item.ModelType}";
             var result = await _gateway.ResolveModelAsync(item.AppCallerCode, item.ModelType, null, ct);
-            return (key, result);
+            var dto = MapToResolvedModelInfo(result);
+            return (key, dto);
         });
 
         var resolvedItems = await Task.WhenAll(tasks);
@@ -330,7 +331,40 @@ public class AppCallersController : ControllerBase
             results[key] = result;
         }
 
-        return Ok(ApiResponse<Dictionary<string, GatewayModelResolution?>>.Ok(results));
+        return Ok(ApiResponse<Dictionary<string, ResolvedModelInfoDto?>>.Ok(results));
+    }
+
+    /// <summary>
+    /// 将 GatewayModelResolution 转换为前端期望的 ResolvedModelInfo 格式
+    /// </summary>
+    private static ResolvedModelInfoDto? MapToResolvedModelInfo(GatewayModelResolution? resolution)
+    {
+        if (resolution == null || !resolution.Success)
+        {
+            return null;
+        }
+
+        // 根据 ResolutionType 判断来源
+        var source = resolution.ResolutionType switch
+        {
+            "Legacy" => "legacy",
+            "DirectModel" => "legacy",
+            _ => "pool"
+        };
+
+        return new ResolvedModelInfoDto
+        {
+            Source = source,
+            ModelGroupId = resolution.ModelGroupId,
+            ModelGroupName = resolution.ModelGroupName,
+            IsDefaultForType = resolution.ResolutionType == "DefaultPool",
+            PlatformId = resolution.ActualPlatformId,
+            PlatformName = resolution.ActualPlatformName ?? "",
+            ModelId = resolution.ActualModel,
+            ModelDisplayName = resolution.ActualModel, // 暂时使用模型名作为显示名
+            HealthStatus = resolution.HealthStatus ?? "Unknown",
+            Stats = null // 统计数据单独获取
+        };
     }
 }
 
@@ -370,4 +404,40 @@ public class ResolveModelItem
     public string AppCallerCode { get; set; } = string.Empty;
     /// <summary>模型类型</summary>
     public string ModelType { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 模型解析结果 DTO（匹配前端 ResolvedModelInfo 接口）
+/// </summary>
+public class ResolvedModelInfoDto
+{
+    /// <summary>模型来源：pool（模型池）、legacy（传统配置）</summary>
+    public string Source { get; set; } = "pool";
+
+    /// <summary>模型池ID（如果来自模型池）</summary>
+    public string? ModelGroupId { get; set; }
+
+    /// <summary>模型池名称（如果来自模型池）</summary>
+    public string? ModelGroupName { get; set; }
+
+    /// <summary>是否为该类型的默认模型池</summary>
+    public bool IsDefaultForType { get; set; }
+
+    /// <summary>平台ID</summary>
+    public string PlatformId { get; set; } = string.Empty;
+
+    /// <summary>平台名称</summary>
+    public string PlatformName { get; set; } = string.Empty;
+
+    /// <summary>模型ID（实际调用名）</summary>
+    public string ModelId { get; set; } = string.Empty;
+
+    /// <summary>模型显示名称</summary>
+    public string? ModelDisplayName { get; set; }
+
+    /// <summary>健康状态</summary>
+    public string HealthStatus { get; set; } = "Unknown";
+
+    /// <summary>统计数据（暂为 null，单独获取）</summary>
+    public object? Stats { get; set; }
 }
