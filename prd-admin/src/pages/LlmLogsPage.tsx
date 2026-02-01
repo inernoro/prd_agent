@@ -8,10 +8,10 @@ import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
-import type { LlmLogsMetaUser } from '@/services/contracts/llmLogs';
+import type { LlmLogsMetaUser, LlmLogsMetaRequestPurpose } from '@/services/contracts/llmLogs';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
-import { getFeatureDescriptionFromRequestPurpose, AppCallerKeyIcon } from '@/lib/appCallerUtils';
+import { AppCallerKeyIcon } from '@/lib/appCallerUtils';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -746,7 +746,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
   const [qRequestPurpose, setQRequestPurpose] = useState(() => defaultAppKey ?? searchParams.get('requestPurpose') ?? '');
 
   const [metaModels, setMetaModels] = useState<string[]>([]);
-  const [metaRequestPurposes, setMetaRequestPurposes] = useState<string[]>([]);
+  const [metaRequestPurposes, setMetaRequestPurposes] = useState<LlmLogsMetaRequestPurpose[]>([]);
   const [metaStatuses, setMetaStatuses] = useState<string[]>(['running', 'succeeded', 'failed', 'cancelled']);
   const [metaUsers, setMetaUsers] = useState<LlmLogsMetaUser[]>([]);
 
@@ -1191,7 +1191,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
             onValueChange={setQRequestPurpose}
             options={[
               { value: '', label: '应用' },
-              ...metaRequestPurposes.map((rp) => ({ value: rp, label: getFeatureDescriptionFromRequestPurpose(rp) })),
+              ...metaRequestPurposes.map((rp) => ({ value: rp.value, label: rp.displayName })),
             ]}
             placeholder="应用"
             leftIcon={<Zap size={16} />}
@@ -1289,9 +1289,9 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                       {/* 第一部分：状态 + 应用信息 + appCallerCode */}
                       <div className="flex items-center gap-2 min-w-0">
                         {statusBadge(it.status)}
-                        {/* 功能描述（中文标题） */}
+                        {/* 功能描述（中文标题）- 直接使用后端返回的 displayName */}
                         <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {getFeatureDescriptionFromRequestPurpose(it.requestPurpose)}
+                          {it.requestPurposeDisplayName || it.requestPurpose || '未知'}
                         </div>
                         {/* 原始 requestPurpose（appCallerCode） */}
                         {it.requestPurpose && (

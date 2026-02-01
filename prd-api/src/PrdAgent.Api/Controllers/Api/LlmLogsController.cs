@@ -144,13 +144,20 @@ public class LlmLogsController : ControllerBase
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var requestPurposes = (await _db.LlmRequestLogs
+        var requestPurposeValues = (await _db.LlmRequestLogs
                 .Distinct(x => x.RequestPurpose, Builders<LlmRequestLog>.Filter.Empty)
                 .ToListAsync())
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+
+        // 返回 { value, displayName } 对象数组，displayName 从 AppCallerRegistry 获取
+        var requestPurposes = requestPurposeValues.Select(rp => new
+        {
+            value = rp,
+            displayName = AppCallerRegistrationService.FindByAppCode(rp!)?.DisplayName ?? rp
+        }).ToArray();
 
         var statuses = new[] { "running", "succeeded", "failed", "cancelled" };
 
@@ -240,6 +247,7 @@ public class LlmLogsController : ControllerBase
                 x.ViewRole,
                 x.RequestType,
                 x.RequestPurpose,
+                x.RequestPurposeDisplayName,
                 x.Status,
                 x.StartedAt,
                 x.FirstByteAt,
@@ -276,6 +284,7 @@ public class LlmLogsController : ControllerBase
             x.ViewRole,
             x.RequestType,
             x.RequestPurpose,
+            x.RequestPurposeDisplayName,
             x.Status,
             x.StartedAt,
             x.FirstByteAt,

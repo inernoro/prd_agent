@@ -23,10 +23,15 @@ export type LlmLogsListData = {
   pageSize: number;
 };
 
+export type LlmLogsMetaRequestPurpose = {
+  value: string;
+  displayName: string;
+};
+
 export type LlmLogsMetaData = {
   providers: string[];
   models: string[];
-  requestPurposes: string[];
+  requestPurposes: LlmLogsMetaRequestPurpose[];
   statuses: string[];
   users?: LlmLogsMetaUser[];
 };

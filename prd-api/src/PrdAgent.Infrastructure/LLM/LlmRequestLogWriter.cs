@@ -44,6 +44,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 ViewRole = start.ViewRole,
                 RequestType = start.RequestType,
                 RequestPurpose = start.RequestPurpose,
+                RequestPurposeDisplayName = GetDisplayName(start.RequestPurpose),
                 Provider = start.Provider,
                 Model = start.Model,
                 ApiBase = start.ApiBase,
@@ -114,6 +115,16 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         var bytes = Encoding.UTF8.GetBytes(input ?? string.Empty);
         var hash = SHA256.HashData(bytes);
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// 从 AppCallerRegistry 获取 AppCallerCode 的中文显示名
+    /// </summary>
+    private static string? GetDisplayName(string? requestPurpose)
+    {
+        if (string.IsNullOrWhiteSpace(requestPurpose)) return null;
+        var def = AppCallerRegistrationService.FindByAppCode(requestPurpose);
+        return def?.DisplayName;
     }
 }
 

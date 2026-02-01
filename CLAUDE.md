@@ -167,6 +167,64 @@ Gateway 自动记录以下信息到 `llm_request_logs`：
 
 ---
 
+## 前端架构原则
+
+**核心原则**：前端仅作为指令发送者与状态观察者，所有业务逻辑与状态流转必须在后端形成完整闭环，前端不得维护或修改任何中间态。
+
+### 规则说明
+
+1. **单一数据源原则**
+   - 所有业务数据的描述信息（如 displayName、中文解释）必须在后端维护
+   - 前端禁止维护任何业务数据映射表（如 AppCallerCode → 中文名 的字典）
+   - 如果前端需要显示数据描述，必须由后端 API 返回
+
+2. **日志自包含原则**
+   - 日志保存的是历史切片，未来可追溯，不依赖当前数据
+   - 日志写入时需一次性存储所有解释信息（如 `RequestPurposeDisplayName`）
+   - 查询日志时直接展示存储的信息，不做二次解析
+
+3. **前端职责边界**
+   - ✅ 发送原子化指令（API 调用）
+   - ✅ 展示后端返回的结果
+   - ✅ UI 展示逻辑（图标、颜色、布局）
+   - ✅ 纯 UI 分组/排序（不涉及业务含义）
+   - ❌ 维护业务数据映射
+   - ❌ 解析后端数据生成业务描述
+   - ❌ 持有任何业务中间状态
+
+### 示例
+
+```typescript
+// ✅ 正确做法：直接使用后端返回的 displayName
+<div>{item.displayName || item.id}</div>
+
+// 下拉选项使用后端返回的 { value, displayName } 结构
+options={metaItems.map(item => ({
+  value: item.value,
+  label: item.displayName
+}))}
+```
+
+```typescript
+// ❌ 错误做法：前端维护映射表
+const appNameMap = {
+  'prd-agent-desktop': '桌面端',
+  'visual-agent': '视觉创作',
+  // ...
+};
+<div>{appNameMap[item.appCode] || item.appCode}</div>
+```
+
+### 关键实现
+
+| 场景 | 后端职责 | 前端职责 |
+|------|----------|----------|
+| AppCallerCode 显示 | `AppCallerRegistry` 维护 displayName，写入日志/API 返回 | 直接显示 `displayName` 字段 |
+| 日志 requestPurpose | 写入时保存 `RequestPurposeDisplayName` | 显示 `requestPurposeDisplayName` |
+| 元数据下拉选项 | API 返回 `{ value, displayName }` 数组 | 使用 `value` 作为值，`displayName` 作为标签 |
+
+---
+
 ## Codebase Skill（代码库快照 — 供 AI 增量维护用）
 
 > **最后更新**：2026-01-25 | **总提交数**：111 | **文档版本**：SRS v3.0, PRD v2.0

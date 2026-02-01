@@ -58,7 +58,6 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import {
   groupAppCallers,
-  getFeatureDescription,
   getModelTypeDisplayName,
   getModelTypeIcon,
   normalizeModelType,
@@ -1084,8 +1083,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                       const actualModelType = req?.modelType || featureItem.parsed.modelType;
                       const ModelTypeIcon = getModelTypeIcon(actualModelType);
                       const modelTypeLabel = getModelTypeDisplayName(actualModelType);
-                      // 优先使用数据库的 displayName，回退到前端解析
-                      const featureDescription = featureItem.displayName || getFeatureDescription(featureItem.parsed);
+                      // 使用数据库的 displayName（单一数据源原则：后端 AppCallerRegistry 是唯一数据源）
+                      const featureDescription = featureItem.displayName || featureItem.appCallerKey;
 
                       // 判断是否使用默认模型池（未绑定专属模型池）
                       const isDefaultGroup = boundGroups.length === 0;
