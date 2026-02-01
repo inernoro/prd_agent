@@ -113,7 +113,7 @@ public class ModelDomainService : IModelDomainService
         var fallbackName = GroupNameHeuristics.Suggest(fileName, safeSnippet, maxLen: 20);
 
         // 使用意图模型（不存在则回退主模型）
-        var appCallerCode = Desktop.GroupName.SuggestIntent;
+        var appCallerCode = AppCallerRegistry.Desktop.GroupName.SuggestIntent;
         var llmClient = _gateway.CreateClient(appCallerCode, "intent");
 
         var requestId = Guid.NewGuid().ToString("N");
