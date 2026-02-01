@@ -430,10 +430,42 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 | 前端单元测试 | `cd prd-admin && pnpm test` | ✅ 可用 |
 | TypeScript 检查 | `cd prd-admin && pnpm tsc` | ✅ 可用 |
 | ESLint 检查 | `cd prd-admin && pnpm lint` | ✅ 可用 |
-| 后端单元测试 | `cd prd-api && dotnet test` | ❌ 网络限制 |
+| 后端单元测试 | `cd prd-api && dotnet test` | ⚠️ 需安装 SDK |
 | E2E 测试 | `pnpm test:e2e` | ❌ 网络限制 |
 
 **云端 AI 必做**：前端改动必须跑 `pnpm test` 确认通过后再提交。
+
+### 技能：安装 .NET SDK（dotnet 不可用时执行）
+
+当执行 `dotnet` 命令报错 `command not found` 时，执行以下步骤：
+
+```bash
+# 步骤 1：下载并执行官方安装脚本
+curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+chmod +x /tmp/dotnet-install.sh
+/tmp/dotnet-install.sh --channel 8.0 --install-dir ~/.dotnet
+
+# 步骤 2：添加到 PATH（当前会话）
+export PATH="$HOME/.dotnet:$PATH"
+
+# 步骤 3：验证安装
+dotnet --version   # 应输出 8.0.x
+```
+
+**注意事项**：
+- SDK 可以安装成功（Microsoft CDN 可访问）
+- `dotnet restore` 可能失败（NuGet 网络受限）
+- 如果项目已有 `obj/` 目录（本地 restore 过），可直接 `dotnet build --no-restore`
+
+### 技能：前端依赖安装（node_modules 不存在时执行）
+
+当 `pnpm test` 报错找不到依赖时：
+
+```bash
+cd prd-admin && pnpm install
+```
+
+pnpm 源通常可访问，依赖安装应能成功。
 
 ### 测试金字塔
 
