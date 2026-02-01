@@ -150,9 +150,22 @@ public class ModelResolver : IModelResolver
         // ========== 第六步：从模型池中选择最佳模型 ==========
         foreach (var group in candidateGroups)
         {
+            // 诊断：模型池内容
+            _logger.LogInformation(
+                "[ModelResolver] 检查模型池 {PoolName}: 模型数={Count}, 模型列表=[{Models}]",
+                group.Name,
+                group.Models?.Count ?? 0,
+                string.Join(", ", group.Models?.Select(m =>
+                    $"{m.ModelId}(Health={m.HealthStatus}, Platform={m.PlatformId})") ?? Array.Empty<string>()));
+
             var selectedModel = SelectBestModel(group);
             if (selectedModel == null)
+            {
+                _logger.LogWarning(
+                    "[ModelResolver] 模型池 {PoolName} 中无可用模型（全部 Unavailable 或为空）",
+                    group.Name);
                 continue;
+            }
 
             var platform = await _db.LLMPlatforms
                 .Find(p => p.Id == selectedModel.PlatformId && p.Enabled)
@@ -160,9 +173,15 @@ public class ModelResolver : IModelResolver
 
             if (platform == null)
             {
+                // 诊断：平台查找失败
+                var platformById = await _db.LLMPlatforms
+                    .Find(p => p.Id == selectedModel.PlatformId)
+                    .FirstOrDefaultAsync(ct);
+
                 _logger.LogWarning(
-                    "[ModelResolver] 模型池 {PoolName} 中的模型 {ModelId} 平台不可用",
-                    group.Name, selectedModel.ModelId);
+                    "[ModelResolver] 模型池 {PoolName} 中的模型 {ModelId} 平台不可用: PlatformId={PlatformId}, Exists={Exists}, Enabled={Enabled}",
+                    group.Name, selectedModel.ModelId, selectedModel.PlatformId,
+                    platformById != null, platformById?.Enabled);
                 continue;
             }
 
