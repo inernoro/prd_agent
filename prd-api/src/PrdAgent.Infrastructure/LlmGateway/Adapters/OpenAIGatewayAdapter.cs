@@ -17,10 +17,23 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
     {
         var baseUrl = apiBase.TrimEnd('/');
 
-        // 移除可能的路径后缀
-        if (baseUrl.EndsWith("/v1"))
-            baseUrl = baseUrl[..^3];
+        // 检测 baseUrl 是否已包含版本号
+        // 支持的格式: /v1, /v2, /v3, /api/v1, /api/v2, /api/v3 等
+        var hasVersionSuffix = System.Text.RegularExpressions.Regex.IsMatch(
+            baseUrl, @"/(api/)?v\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
+        // 如果已包含版本号，直接拼接能力路径
+        if (hasVersionSuffix)
+        {
+            return modelType.ToLowerInvariant() switch
+            {
+                "generation" => $"{baseUrl}/images/generations",
+                "embedding" => $"{baseUrl}/embeddings",
+                _ => $"{baseUrl}/chat/completions"
+            };
+        }
+
+        // 标准 OpenAI 格式：添加 /v1 前缀
         return modelType.ToLowerInvariant() switch
         {
             "generation" => $"{baseUrl}/v1/images/generations",

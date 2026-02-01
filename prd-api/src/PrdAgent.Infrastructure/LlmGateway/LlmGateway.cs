@@ -228,6 +228,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var errorMsg = TryExtractErrorMessage(errorBody) ?? $"HTTP {(int)response.StatusCode}";
                 yield return GatewayStreamChunk.Fail(errorMsg);
 
+                // 更新日志状态为失败
+                _logWriter?.MarkError(logId, errorMsg, (int)response.StatusCode);
+
                 if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
                 {
                     await _modelResolver.RecordFailureAsync(resolution, ct);
@@ -320,7 +323,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
         finally
         {
-            // 确保日志在异常情况下也能关闭
+            // 注意：对于流式响应，正常情况下日志会在行 319 的 FinishStreamLogAsync 中更新
+            // 这里不需要额外处理，因为：
+            // 1. HTTP 失败时，已在行 232 调用 MarkError
+            // 2. 异常情况会被调用方捕获，调用方负责处理日志
         }
     }
 
@@ -345,11 +351,31 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var gatewayResolution = resolution.ToGatewayResolution();
 
-            // 2. 构建 endpoint
-            var baseUrl = resolution.ApiUrl!.TrimEnd('/');
-            var endpoint = string.IsNullOrWhiteSpace(request.EndpointPath)
-                ? $"{baseUrl}/v1/chat/completions"
-                : $"{baseUrl}{(request.EndpointPath.StartsWith("/") ? "" : "/")}{request.EndpointPath}";
+            // 2. 选择适配器并构建 endpoint
+            var adapter = GetAdapter(resolution.PlatformType);
+            string endpoint;
+            if (string.IsNullOrWhiteSpace(request.EndpointPath))
+            {
+                // 使用适配器构建默认 endpoint（处理不同平台的 URL 格式）
+                endpoint = adapter?.BuildEndpoint(resolution.ApiUrl!, request.ModelType)
+                    ?? $"{resolution.ApiUrl!.TrimEnd('/')}/v1/chat/completions";
+            }
+            else
+            {
+                // 使用自定义 endpoint path
+                var baseUrl = resolution.ApiUrl!.TrimEnd('/');
+                var endpointPath = request.EndpointPath;
+
+                // 智能处理版本号冲突：如果 baseUrl 已包含版本号且 endpointPath 以 /v1 开头
+                // 例如：baseUrl=/api/v3, endpointPath=/v1/chat/completions -> /api/v3/chat/completions
+                if (System.Text.RegularExpressions.Regex.IsMatch(baseUrl, @"/(api/)?v\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                    && endpointPath.StartsWith("/v1/", StringComparison.OrdinalIgnoreCase))
+                {
+                    endpointPath = endpointPath[3..]; // 移除 "/v1"
+                }
+
+                endpoint = $"{baseUrl}{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
+            }
 
             // 3. 构建 HTTP 请求
             HttpRequestMessage httpRequest;
