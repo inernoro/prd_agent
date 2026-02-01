@@ -206,13 +206,54 @@ public class ModelResolver : IModelResolver
                 resolutionType, expectedModel, selectedModel, group, platform, apiKey);
         }
 
-        // 所有模型池都没有可用模型
+        // ========== 第七步：模型池全部不可用，回退到传统配置 ==========
+        _logger.LogInformation(
+            "[ModelResolver] 模型池内所有模型不可用，尝试回退传统配置: AppCallerCode={Code}, ModelType={Type}",
+            appCallerCode, modelType);
+
+        var fallbackLegacyModel = await FindLegacyModelAsync(modelType, ct);
+
+        _logger.LogInformation(
+            "[ModelResolver] 传统配置回退查找: ModelType={Type}, Found={Found}, ModelName={Name}, PlatformId={PlatformId}",
+            modelType, fallbackLegacyModel != null, fallbackLegacyModel?.Name, fallbackLegacyModel?.PlatformId);
+
+        if (fallbackLegacyModel != null)
+        {
+            var fallbackPlatform = await _db.LLMPlatforms
+                .Find(p => p.Id == fallbackLegacyModel.PlatformId && p.Enabled)
+                .FirstOrDefaultAsync(ct);
+
+            if (fallbackPlatform != null)
+            {
+                var apiKey = string.IsNullOrEmpty(fallbackPlatform.ApiKeyEncrypted)
+                    ? null
+                    : ApiKeyCrypto.Decrypt(fallbackPlatform.ApiKeyEncrypted, jwtSecret);
+
+                _logger.LogInformation(
+                    "[ModelResolver] 回退到传统配置模型: ModelType={Type}, Model={Model}, Platform={Platform}",
+                    modelType, fallbackLegacyModel.ModelName, fallbackPlatform.Name);
+
+                return ModelResolutionResult.FromLegacy(expectedModel, fallbackLegacyModel, fallbackPlatform, apiKey);
+            }
+            else
+            {
+                var platformById = await _db.LLMPlatforms
+                    .Find(p => p.Id == fallbackLegacyModel.PlatformId)
+                    .FirstOrDefaultAsync(ct);
+
+                _logger.LogWarning(
+                    "[ModelResolver] 传统配置平台查找失败: PlatformId={PlatformId}, Exists={Exists}, Enabled={Enabled}",
+                    fallbackLegacyModel.PlatformId, platformById != null, platformById?.Enabled);
+            }
+        }
+
+        // 所有模型池都没有可用模型，传统配置也没有
         _logger.LogWarning(
-            "[ModelResolver] 模型池内所有模型不可用: AppCallerCode={Code}, ModelType={Type}",
+            "[ModelResolver] 所有调度方式均失败: AppCallerCode={Code}, ModelType={Type}",
             appCallerCode, modelType);
 
         return ModelResolutionResult.NotFound(expectedModel,
-            "模型池内所有模型不可用或平台配置错误");
+            "模型池内所有模型不可用且传统配置也未找到");
     }
 
     /// <inheritdoc />
