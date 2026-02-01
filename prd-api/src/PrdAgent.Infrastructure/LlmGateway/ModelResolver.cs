@@ -96,11 +96,30 @@ public class ModelResolver : IModelResolver
         if (candidateGroups == null || candidateGroups.Count == 0)
         {
             var legacyModel = await FindLegacyModelAsync(modelType, ct);
+
+            _logger.LogInformation(
+                "[ModelResolver] 查找传统配置: ModelType={Type}, Found={Found}, ModelName={Name}, PlatformId={PlatformId}",
+                modelType, legacyModel != null, legacyModel?.Name, legacyModel?.PlatformId);
+
             if (legacyModel != null)
             {
                 var platform = await _db.LLMPlatforms
                     .Find(p => p.Id == legacyModel.PlatformId && p.Enabled)
                     .FirstOrDefaultAsync(ct);
+
+                if (platform == null)
+                {
+                    // 诊断：平台未找到的原因
+                    var platformById = await _db.LLMPlatforms
+                        .Find(p => p.Id == legacyModel.PlatformId)
+                        .FirstOrDefaultAsync(ct);
+
+                    _logger.LogWarning(
+                        "[ModelResolver] 传统配置平台查找失败: PlatformId={PlatformId}, PlatformExists={Exists}, PlatformEnabled={Enabled}",
+                        legacyModel.PlatformId,
+                        platformById != null,
+                        platformById?.Enabled);
+                }
 
                 if (platform != null)
                 {
@@ -341,7 +360,7 @@ public class ModelResolver : IModelResolver
 
     private async Task<LLMModel?> FindLegacyModelAsync(string modelType, CancellationToken ct)
     {
-        return modelType.ToLowerInvariant() switch
+        LLMModel? result = modelType.ToLowerInvariant() switch
         {
             "chat" => await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct),
             "intent" => await _db.LLMModels.Find(m => m.IsIntent && m.Enabled).FirstOrDefaultAsync(ct),
@@ -349,6 +368,22 @@ public class ModelResolver : IModelResolver
             "generation" => await _db.LLMModels.Find(m => m.IsImageGen && m.Enabled).FirstOrDefaultAsync(ct),
             _ => null
         };
+
+        // Debug: 如果未找到 generation 模型，额外查询诊断
+        if (result == null && modelType.ToLowerInvariant() == "generation")
+        {
+            var allImageGenModels = await _db.LLMModels
+                .Find(m => m.IsImageGen)
+                .ToListAsync(ct);
+
+            _logger.LogWarning(
+                "[ModelResolver] 未找到启用的 generation 模型。" +
+                "IsImageGen=true 的模型共 {Count} 个: {Models}",
+                allImageGenModels.Count,
+                string.Join(", ", allImageGenModels.Select(m => $"{m.Name}(Enabled={m.Enabled}, PlatformId={m.PlatformId})")));
+        }
+
+        return result;
     }
 
     private async Task<AvailableModelPool> MapToAvailablePoolAsync(

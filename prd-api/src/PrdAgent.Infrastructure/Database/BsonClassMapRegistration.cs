@@ -33,6 +33,8 @@ public static class BsonClassMapRegistration
             RegisterContentGap();
             RegisterAttachment();
             RegisterLLMConfig();
+            RegisterLLMPlatform();
+            RegisterLLMModel();
             RegisterAppSettings();
             RegisterPromptSettings();
             RegisterLlmRequestLog();
@@ -364,13 +366,41 @@ public static class BsonClassMapRegistration
     private static void RegisterLLMConfig()
     {
         if (BsonClassMap.IsClassMapRegistered(typeof(LLMConfig))) return;
-        
+
         BsonClassMap.RegisterClassMap<LLMConfig>(cm =>
         {
             cm.AutoMap();
             cm.MapIdMember(c => c.Id)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+        });
+    }
+
+    private static void RegisterLLMPlatform()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(LLMPlatform))) return;
+
+        BsonClassMap.RegisterClassMap<LLMPlatform>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(p => p.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterLLMModel()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(LLMModel))) return;
+
+        BsonClassMap.RegisterClassMap<LLMModel>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(m => m.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
         });
     }
 
