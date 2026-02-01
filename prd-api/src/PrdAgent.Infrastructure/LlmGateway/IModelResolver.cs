@@ -132,6 +132,33 @@ public class ModelResolutionResult
         string.IsNullOrWhiteSpace(ExpectedModel) ||
         string.Equals(ExpectedModel, ActualModel, StringComparison.OrdinalIgnoreCase);
 
+    // ========== 降级/回退信息 ==========
+
+    /// <summary>
+    /// 是否发生了降级/回退
+    /// </summary>
+    public bool IsFallback { get; init; }
+
+    /// <summary>
+    /// 降级原因描述
+    /// </summary>
+    public string? FallbackReason { get; init; }
+
+    /// <summary>
+    /// 原始配置的模型池 ID（降级前）
+    /// </summary>
+    public string? OriginalPoolId { get; init; }
+
+    /// <summary>
+    /// 原始配置的模型池名称（降级前）
+    /// </summary>
+    public string? OriginalPoolName { get; init; }
+
+    /// <summary>
+    /// 原始配置的模型列表（包含健康状态）
+    /// </summary>
+    public List<OriginalModelInfo>? OriginalModels { get; init; }
+
     /// <summary>
     /// 转换为 GatewayModelResolution（用于响应）
     /// </summary>
@@ -152,7 +179,20 @@ public class ModelResolutionResult
             ModelGroupName = ModelGroupName,
             ModelGroupCode = ModelGroupCode,
             ModelPriority = ModelPriority,
-            HealthStatus = HealthStatus
+            HealthStatus = HealthStatus,
+            // 降级信息
+            IsFallback = IsFallback,
+            FallbackReason = FallbackReason,
+            OriginalPoolId = OriginalPoolId,
+            OriginalPoolName = OriginalPoolName,
+            OriginalModels = OriginalModels?.Select(m => new OriginalModelDto
+            {
+                ModelId = m.ModelId,
+                PlatformId = m.PlatformId,
+                HealthStatus = m.HealthStatus,
+                IsAvailable = m.IsAvailable,
+                ConsecutiveFailures = m.ConsecutiveFailures
+            }).ToList()
         };
     }
 
@@ -295,4 +335,25 @@ public class ModelResolutionPlan
     /// 选择该模型的原因
     /// </summary>
     public string SelectionReason { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// 原始配置的模型信息（用于展示降级前的状态）
+/// </summary>
+public class OriginalModelInfo
+{
+    /// <summary>模型 ID</summary>
+    public string ModelId { get; init; } = string.Empty;
+
+    /// <summary>平台 ID</summary>
+    public string PlatformId { get; init; } = string.Empty;
+
+    /// <summary>健康状态</summary>
+    public string HealthStatus { get; init; } = string.Empty;
+
+    /// <summary>是否可用</summary>
+    public bool IsAvailable { get; init; }
+
+    /// <summary>连续失败次数</summary>
+    public int ConsecutiveFailures { get; init; }
 }

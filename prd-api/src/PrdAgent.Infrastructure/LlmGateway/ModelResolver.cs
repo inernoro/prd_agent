@@ -207,9 +207,28 @@ public class ModelResolver : IModelResolver
         }
 
         // ========== 第七步：模型池全部不可用，回退到传统配置 ==========
-        _logger.LogInformation(
-            "[ModelResolver] 模型池内所有模型不可用，尝试回退传统配置: AppCallerCode={Code}, ModelType={Type}",
-            appCallerCode, modelType);
+        // 收集原始模型池信息用于返回
+        var originalPool = candidateGroups.FirstOrDefault();
+        var originalModels = originalPool?.Models?.Select(m => new OriginalModelInfo
+        {
+            ModelId = m.ModelId,
+            PlatformId = m.PlatformId,
+            HealthStatus = m.HealthStatus.ToString(),
+            IsAvailable = m.HealthStatus != ModelHealthStatus.Unavailable,
+            ConsecutiveFailures = m.ConsecutiveFailures
+        }).ToList();
+
+        _logger.LogWarning(
+            "[ModelResolver] ╔══════════════════════════════════════════════════════════╗\n" +
+            "[ModelResolver] ║  ⚠️  模型池降级回退                                       ║\n" +
+            "[ModelResolver] ╠══════════════════════════════════════════════════════════╣\n" +
+            "[ModelResolver] ║  AppCallerCode: {AppCallerCode,-38} ║\n" +
+            "[ModelResolver] ║  ModelType: {ModelType,-42} ║\n" +
+            "[ModelResolver] ║  原始模型池: {PoolName,-40} ║\n" +
+            "[ModelResolver] ║  模型状态: {ModelStates,-42} ║\n" +
+            "[ModelResolver] ╚══════════════════════════════════════════════════════════╝",
+            appCallerCode, modelType, originalPool?.Name ?? "(无)",
+            string.Join(", ", originalModels?.Select(m => $"{m.ModelId}={m.HealthStatus}") ?? Array.Empty<string>()));
 
         var fallbackLegacyModel = await FindLegacyModelAsync(modelType, ct);
 
@@ -229,11 +248,30 @@ public class ModelResolver : IModelResolver
                     ? null
                     : ApiKeyCrypto.Decrypt(fallbackPlatform.ApiKeyEncrypted, jwtSecret);
 
-                _logger.LogInformation(
-                    "[ModelResolver] 回退到传统配置模型: ModelType={Type}, Model={Model}, Platform={Platform}",
-                    modelType, fallbackLegacyModel.ModelName, fallbackPlatform.Name);
+                _logger.LogWarning(
+                    "[ModelResolver] ║  ✅ 降级成功: 使用直连模型 {Model} @ {Platform,-24} ║",
+                    fallbackLegacyModel.ModelName, fallbackPlatform.Name);
 
-                return ModelResolutionResult.FromLegacy(expectedModel, fallbackLegacyModel, fallbackPlatform, apiKey);
+                // 返回带降级信息的结果
+                return new ModelResolutionResult
+                {
+                    Success = true,
+                    ResolutionType = "Legacy",
+                    ExpectedModel = expectedModel,
+                    ActualModel = fallbackLegacyModel.ModelName,
+                    ActualPlatformId = fallbackLegacyModel.PlatformId ?? string.Empty,
+                    ActualPlatformName = fallbackPlatform.Name,
+                    PlatformType = fallbackPlatform.PlatformType,
+                    ApiUrl = fallbackLegacyModel.ApiUrl ?? fallbackPlatform.ApiUrl,
+                    ApiKey = apiKey,
+                    HealthStatus = "Healthy",
+                    // 降级信息
+                    IsFallback = true,
+                    FallbackReason = $"模型池 '{originalPool?.Name}' 中所有模型不可用，回退到直连模型",
+                    OriginalPoolId = originalPool?.Id,
+                    OriginalPoolName = originalPool?.Name,
+                    OriginalModels = originalModels
+                };
             }
             else
             {

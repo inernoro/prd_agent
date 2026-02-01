@@ -534,6 +534,111 @@ public class ModelGroupsController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new { id }));
     }
+
+    /// <summary>
+    /// 重置模型池中指定模型的健康状态
+    /// </summary>
+    /// <param name="id">模型池 ID</param>
+    /// <param name="modelId">模型 ID（ModelGroupItem.ModelId）</param>
+    [HttpPost("{id}/models/{modelId}/reset-health")]
+    public async Task<IActionResult> ResetModelHealth(string id, string modelId)
+    {
+        var group = await _db.ModelGroups.Find(g => g.Id == id).FirstOrDefaultAsync();
+
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("MODEL_GROUP_NOT_FOUND", "模型分组不存在"));
+        }
+
+        var model = group.Models?.FirstOrDefault(m => m.ModelId == modelId);
+        if (model == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("MODEL_NOT_FOUND", $"模型 {modelId} 不在该分组中"));
+        }
+
+        var oldStatus = model.HealthStatus;
+
+        // 重置健康状态
+        var filter = Builders<ModelGroup>.Filter.And(
+            Builders<ModelGroup>.Filter.Eq(g => g.Id, id),
+            Builders<ModelGroup>.Filter.ElemMatch(g => g.Models, m => m.ModelId == modelId));
+
+        var update = Builders<ModelGroup>.Update
+            .Set("Models.$.HealthStatus", ModelHealthStatus.Healthy)
+            .Set("Models.$.ConsecutiveFailures", 0)
+            .Set("Models.$.ConsecutiveSuccesses", 0)
+            .Set("Models.$.LastSuccessAt", DateTime.UtcNow);
+
+        var result = await _db.ModelGroups.UpdateOneAsync(filter, update);
+
+        if (result.ModifiedCount == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail("UPDATE_FAILED", "更新失败"));
+        }
+
+        _logger.LogInformation(
+            "重置模型健康状态: GroupId={GroupId}, ModelId={ModelId}, OldStatus={Old}, NewStatus=Healthy",
+            id, modelId, oldStatus);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            groupId = id,
+            modelId,
+            oldStatus = oldStatus.ToString(),
+            newStatus = "Healthy"
+        }));
+    }
+
+    /// <summary>
+    /// 批量重置模型池中所有模型的健康状态
+    /// </summary>
+    [HttpPost("{id}/reset-all-health")]
+    public async Task<IActionResult> ResetAllModelsHealth(string id)
+    {
+        var group = await _db.ModelGroups.Find(g => g.Id == id).FirstOrDefaultAsync();
+
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("MODEL_GROUP_NOT_FOUND", "模型分组不存在"));
+        }
+
+        if (group.Models == null || group.Models.Count == 0)
+        {
+            return Ok(ApiResponse<object>.Ok(new { groupId = id, resetCount = 0 }));
+        }
+
+        // 重置所有模型的健康状态
+        var resetModels = group.Models.Select(m => new ModelGroupItem
+        {
+            ModelId = m.ModelId,
+            PlatformId = m.PlatformId,
+            Priority = m.Priority,
+            HealthStatus = ModelHealthStatus.Healthy,
+            ConsecutiveFailures = 0,
+            ConsecutiveSuccesses = 0,
+            LastSuccessAt = DateTime.UtcNow,
+            LastFailedAt = m.LastFailedAt,
+            EnablePromptCache = m.EnablePromptCache,
+            MaxTokens = m.MaxTokens
+        }).ToList();
+
+        var update = Builders<ModelGroup>.Update
+            .Set(g => g.Models, resetModels)
+            .Set(g => g.UpdatedAt, DateTime.UtcNow);
+
+        await _db.ModelGroups.UpdateOneAsync(g => g.Id == id, update);
+
+        _logger.LogInformation(
+            "批量重置模型健康状态: GroupId={GroupId}, ResetCount={Count}",
+            id, resetModels.Count);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            groupId = id,
+            resetCount = resetModels.Count,
+            models = resetModels.Select(m => new { m.ModelId, newStatus = "Healthy" })
+        }));
+    }
 }
 
 public class CreateModelGroupRequest

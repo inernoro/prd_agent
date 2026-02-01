@@ -363,7 +363,22 @@ public class AppCallersController : ControllerBase
             ModelId = resolution.ActualModel,
             ModelDisplayName = resolution.ActualModel, // 暂时使用模型名作为显示名
             HealthStatus = resolution.HealthStatus ?? "Unknown",
-            Stats = null // 统计数据单独获取
+            Stats = null, // 统计数据单独获取
+            // 降级/回退信息
+            IsFallback = resolution.IsFallback,
+            FallbackReason = resolution.FallbackReason,
+            ConfiguredPool = resolution.IsFallback ? new ConfiguredPoolInfo
+            {
+                PoolId = resolution.OriginalPoolId,
+                PoolName = resolution.OriginalPoolName,
+                Models = resolution.OriginalModels?.Select(m => new ConfiguredModelInfo
+                {
+                    ModelId = m.ModelId,
+                    PlatformId = m.PlatformId,
+                    HealthStatus = m.HealthStatus,
+                    IsAvailable = m.IsAvailable
+                }).ToList()
+            } : null
         };
     }
 }
@@ -440,4 +455,48 @@ public class ResolvedModelInfoDto
 
     /// <summary>统计数据（暂为 null，单独获取）</summary>
     public object? Stats { get; set; }
+
+    // ========== 降级/回退信息 ==========
+
+    /// <summary>是否发生了降级/回退</summary>
+    public bool IsFallback { get; set; }
+
+    /// <summary>降级原因描述（如果 IsFallback=true）</summary>
+    public string? FallbackReason { get; set; }
+
+    /// <summary>原始配置的模型池信息（降级前）</summary>
+    public ConfiguredPoolInfo? ConfiguredPool { get; set; }
+}
+
+/// <summary>
+/// 配置的模型池信息（用于展示降级前的预期值）
+/// </summary>
+public class ConfiguredPoolInfo
+{
+    /// <summary>模型池 ID</summary>
+    public string? PoolId { get; set; }
+
+    /// <summary>模型池名称</summary>
+    public string? PoolName { get; set; }
+
+    /// <summary>模型池中的模型列表</summary>
+    public List<ConfiguredModelInfo>? Models { get; set; }
+}
+
+/// <summary>
+/// 配置的模型信息
+/// </summary>
+public class ConfiguredModelInfo
+{
+    /// <summary>模型 ID</summary>
+    public string ModelId { get; set; } = string.Empty;
+
+    /// <summary>平台 ID</summary>
+    public string PlatformId { get; set; } = string.Empty;
+
+    /// <summary>健康状态</summary>
+    public string HealthStatus { get; set; } = "Unknown";
+
+    /// <summary>是否可用</summary>
+    public bool IsAvailable { get; set; }
 }

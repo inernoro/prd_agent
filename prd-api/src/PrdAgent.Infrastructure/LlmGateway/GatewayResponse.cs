@@ -170,6 +170,54 @@ public class GatewayModelResolution
     public bool MatchedExpectation =>
         string.IsNullOrWhiteSpace(ExpectedModel) ||
         string.Equals(ExpectedModel, ActualModel, StringComparison.OrdinalIgnoreCase);
+
+    // ========== 降级/回退信息 ==========
+
+    /// <summary>
+    /// 是否发生了降级/回退
+    /// </summary>
+    public bool IsFallback { get; init; }
+
+    /// <summary>
+    /// 降级原因描述
+    /// </summary>
+    public string? FallbackReason { get; init; }
+
+    /// <summary>
+    /// 原始配置的模型池 ID（降级前）
+    /// </summary>
+    public string? OriginalPoolId { get; init; }
+
+    /// <summary>
+    /// 原始配置的模型池名称（降级前）
+    /// </summary>
+    public string? OriginalPoolName { get; init; }
+
+    /// <summary>
+    /// 原始配置的模型列表（包含健康状态）
+    /// </summary>
+    public List<OriginalModelDto>? OriginalModels { get; init; }
+}
+
+/// <summary>
+/// 原始配置的模型 DTO
+/// </summary>
+public class OriginalModelDto
+{
+    /// <summary>模型 ID</summary>
+    public string ModelId { get; init; } = string.Empty;
+
+    /// <summary>平台 ID</summary>
+    public string PlatformId { get; init; } = string.Empty;
+
+    /// <summary>健康状态</summary>
+    public string HealthStatus { get; init; } = string.Empty;
+
+    /// <summary>是否可用</summary>
+    public bool IsAvailable { get; init; }
+
+    /// <summary>连续失败次数</summary>
+    public int ConsecutiveFailures { get; init; }
 }
 
 /// <summary>
