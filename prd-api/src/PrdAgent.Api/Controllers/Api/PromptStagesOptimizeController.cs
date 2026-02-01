@@ -7,6 +7,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.LlmGateway;
+using static PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -98,7 +99,7 @@ public class PromptsOptimizeController : ControllerBase
 
         try
         {
-            var appCallerCode = "admin.prompts.optimize";
+            var appCallerCode = Admin.Prompts.Optimize;
             var llmClient = _gateway.CreateClient(appCallerCode, "chat");
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: Guid.NewGuid().ToString("N"),

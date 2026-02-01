@@ -112,14 +112,19 @@ public class AppCallerCodeMappingTests
     /// 验证 AppCallerRegistry 中定义的常量值正确
     /// </summary>
     [Theory]
-    [InlineData("visual-agent.image::generation")]
+    [InlineData("visual-agent.image.text2img::generation")]
+    [InlineData("visual-agent.image.img2img::generation")]
+    [InlineData("visual-agent.image.vision::generation")]
     [InlineData("literary-agent.illustration::generation")]
     [InlineData("prd-agent-web.lab::generation")]
+    [InlineData("prd-agent-web.model-lab.run::chat")]
+    [InlineData("prd-agent-web.platforms.reclassify::chat")]
+    [InlineData("prd-agent-web.prompts.optimize::chat")]
     public void AppCallerRegistry_ShouldContainExpectedCodes(string expectedCode)
     {
         // 获取所有注册的 AppCaller 定义
         var definitions = AppCallerRegistrationService.GetAllDefinitions();
-        
+
         // Assert
         Assert.Contains(definitions, d => d.AppCode == expectedCode);
     }
@@ -154,10 +159,86 @@ public class AppCallerCodeMappingTests
     {
         // 文学创作使用 "illustration" 而不是 "image"
         // 因为文学创作的生图场景是"配图"，不是通用的"图片生成"
-        
+
         var literaryAgentCode = AppCallerRegistry.LiteraryAgent.Illustration.Generation;
-        
+
         Assert.Contains("illustration", literaryAgentCode);
         Assert.DoesNotContain(".image::", literaryAgentCode);
+    }
+
+    /// <summary>
+    /// 审计测试：确保所有注册的 AppCallerCode 都遵循标准格式
+    /// 格式：{app}.{feature}[.{subfeature}]...::modelType
+    /// </summary>
+    [Fact]
+    public void AllRegisteredAppCallerCodes_ShouldFollowStandardFormat()
+    {
+        var definitions = AppCallerRegistrationService.GetAllDefinitions();
+        var validModelTypes = new[] { "chat", "intent", "vision", "generation", "embedding", "rerank", "code", "long-context" };
+
+        foreach (var def in definitions)
+        {
+            // 1. 必须包含 ::
+            Assert.True(
+                def.AppCode.Contains("::"),
+                $"AppCallerCode '{def.AppCode}' 缺少 '::modelType' 后缀");
+
+            // 2. :: 后面必须是有效的 modelType
+            var parts = def.AppCode.Split("::");
+            Assert.Equal(2, parts.Length);
+
+            var modelType = parts[1];
+            Assert.True(
+                validModelTypes.Contains(modelType),
+                $"AppCallerCode '{def.AppCode}' 的 modelType '{modelType}' 不在有效列表中: [{string.Join(", ", validModelTypes)}]");
+
+            // 3. :: 前面必须是 app.feature 格式（至少包含一个点）
+            var pathPart = parts[0];
+            Assert.True(
+                pathPart.Contains('.'),
+                $"AppCallerCode '{def.AppCode}' 的路径部分 '{pathPart}' 应该是 'app.feature' 格式");
+
+            // 4. 不能以 :: 开头或以 . 开头
+            Assert.False(
+                def.AppCode.StartsWith("::") || def.AppCode.StartsWith("."),
+                $"AppCallerCode '{def.AppCode}' 格式不正确");
+        }
+    }
+
+    /// <summary>
+    /// 审计测试：确保每个 AppCallerCode 都有 DisplayName
+    /// </summary>
+    [Fact]
+    public void AllRegisteredAppCallerCodes_ShouldHaveDisplayName()
+    {
+        var definitions = AppCallerRegistrationService.GetAllDefinitions();
+
+        foreach (var def in definitions)
+        {
+            Assert.False(
+                string.IsNullOrWhiteSpace(def.DisplayName),
+                $"AppCallerCode '{def.AppCode}' 缺少 DisplayName");
+        }
+    }
+
+    /// <summary>
+    /// 审计测试：确保每个 AppCallerCode 的 ModelTypes 与 :: 后缀一致
+    /// </summary>
+    [Fact]
+    public void AllRegisteredAppCallerCodes_ModelTypesShouldMatchSuffix()
+    {
+        var definitions = AppCallerRegistrationService.GetAllDefinitions();
+
+        foreach (var def in definitions)
+        {
+            var parts = def.AppCode.Split("::");
+            if (parts.Length != 2) continue;
+
+            var suffixModelType = parts[1];
+
+            Assert.True(
+                def.ModelTypes.Contains(suffixModelType),
+                $"AppCallerCode '{def.AppCode}' 的 ModelTypes [{string.Join(", ", def.ModelTypes)}] 应该包含后缀 '{suffixModelType}'");
+        }
     }
 }

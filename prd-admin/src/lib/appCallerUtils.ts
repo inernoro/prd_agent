@@ -318,12 +318,16 @@ export function getFeatureDescriptionFromRequestPurpose(requestPurpose: string |
     'prd-agent-web.lab::chat': '管理后台：实验室对话测试',
     'prd-agent-web.lab::vision': '管理后台：实验室视觉测试',
     'prd-agent-web.lab::generation': '管理后台：实验室生图测试',
-    'prd-agent-web::model-lab.run': '管理后台：模型实验室',
+    'prd-agent-web.model-lab.run::chat': '管理后台：模型实验室运行测试',
     'prd-agent-web.image-gen.plan::intent': '管理后台：图片生成规划',
     'prd-agent-web.image-gen.generate::generation': '管理后台：图片生成',
     'prd-agent-web.image-gen.batch-generate::generation': '管理后台：批量图片生成',
     'prd-agent-web.image-gen.extract-style::vision': '管理后台：图片风格提取',
-    'prd-agent-web::image-gen.run': '管理后台：图片生成任务',
+    'prd-agent-web.platforms.reclassify::chat': '管理后台：模型重分类',
+    'prd-agent-web.prompts.optimize::chat': '管理后台：提示词优化',
+    // 兼容旧格式（历史日志）
+    'prd-agent-web::model-lab.run': '管理后台：模型实验室（旧格式）',
+    'prd-agent-web::image-gen.run': '管理后台：图片生成任务（旧格式）',
   };
 
   // 先检查完整 AppCallerCode 精确匹配
@@ -331,12 +335,14 @@ export function getFeatureDescriptionFromRequestPurpose(requestPurpose: string |
     return fullCodeMap[rp];
   }
 
-  // 精确匹配映射（用于不含 :: 的纯应用名）
+  // 精确匹配映射（用于不含 :: 的纯应用名或旧格式）
   const exactMap: Record<string, string> = {
     'visual-agent': '视觉创作',
     'literary-agent': '文学创作',
     'model-health-check': '模型健康检查',
-    'admin.platforms.reclassify': '管理后台：模型重分类',
+    // 兼容旧格式（历史日志）
+    'admin.platforms.reclassify': '管理后台：模型重分类（旧格式）',
+    'admin.prompts.optimize': '管理后台：提示词优化（旧格式）',
     'admin.platforms.fetch-models': '管理后台：拉取模型列表',
     'admin.platforms.available-models': '管理后台：查询可用模型',
     'admin.platforms.refresh-models': '管理后台：刷新模型列表',
@@ -471,6 +477,9 @@ export function getFeatureDescription(parsed: ParsedAppCallerKey): string {
       'image-gen.generate::generation': '图片生成',
       'image-gen.batch-generate::generation': '批量图片生成',
       'image-gen.extract-style::vision': '图片风格提取',
+      'model-lab.run::chat': '模型实验室-运行测试',
+      'platforms.reclassify::chat': '模型重分类',
+      'prompts.optimize::chat': '提示词优化',
     },
   };
   

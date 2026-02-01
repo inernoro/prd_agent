@@ -378,6 +378,39 @@ public static class Admin
         )]
         public const string ExtractStyle = "prd-agent-web.image-gen.extract-style::vision";
     }
+
+    public static class ModelLab
+    {
+        [AppCallerMetadata(
+            "模型实验室-运行测试",
+            "模型实验室功能的测试运行",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Testing"
+        )]
+        public const string Run = "prd-agent-web.model-lab.run::chat";
+    }
+
+    public static class Platforms
+    {
+        [AppCallerMetadata(
+            "模型重分类",
+            "使用 AI 对平台可用模型进行分类",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Management"
+        )]
+        public const string Reclassify = "prd-agent-web.platforms.reclassify::chat";
+    }
+
+    public static class Prompts
+    {
+        [AppCallerMetadata(
+            "提示词优化",
+            "使用 AI 优化提示词模板",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Management"
+        )]
+        public const string Optimize = "prd-agent-web.prompts.optimize::chat";
+    }
 }
 }
 

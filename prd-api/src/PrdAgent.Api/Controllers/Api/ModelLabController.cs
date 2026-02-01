@@ -11,6 +11,7 @@ using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.Prompts.Templates;
+using static PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -593,7 +594,7 @@ public class ModelLabController : ControllerBase
         var messages = new List<LLMMessage> { new() { Role = "user", Content = prompt } };
 
         var requestType = effective.Suite == ModelLabSuite.Intent ? "intent" : "reasoning";
-        var appCallerCode = "prd-agent-web::model-lab.run";
+        var appCallerCode = Admin.ModelLab.Run;
         var repeatN = Math.Max(1, effective.Params.RepeatN);
 
         // repeatN > 1 时：每次请求都作为独立 item 回显（前端按 itemId 渲染为独立 block）

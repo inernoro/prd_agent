@@ -13,6 +13,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using static PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -383,7 +384,7 @@ public class PlatformsController : ControllerBase
 
         // 2) 调用主模型进行分类（可能需要分片）
         var providerId = (string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId!).Trim().ToLowerInvariant();
-        var appCallerCode = "admin.platforms.reclassify";
+        var appCallerCode = Admin.Platforms.Reclassify;
         var llmClient = _gateway.CreateClient(appCallerCode, "chat");
 
         var requestId = Guid.NewGuid().ToString("N");
