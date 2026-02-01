@@ -415,3 +415,97 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 4. **DB→数据字典**：MongoDbContext 集合 → rule.data-dictionary.md 有记录
 5. **目录结构→文档**：实际目录 → SRS 目录结构图一致
 6. **未实现标注**：文档中描述但代码不存在的功能 → 必须标注 ⚠️ 状态
+
+---
+
+## AI 测试规范（云端开发必读）
+
+> **核心原则**：AI 在云端开发时无法交互式调试，必须依赖测试来验证代码正确性。
+> **详细文档**：参见 [TESTING.md](./TESTING.md)
+
+### 测试金字塔
+
+```
+     E2E Tests (Playwright)      ← 页面流程验证
+    ─────────────────────────
+   Contract Tests (xUnit)        ← 前后端接口契约 [重点]
+  ───────────────────────────
+ Unit Tests (xUnit/Vitest)       ← 业务逻辑验证
+```
+
+### AI 必须遵守的测试规则
+
+| 场景 | 规则 |
+|------|------|
+| 新增功能 | 必须同时新增测试 |
+| 修复 Bug | 先写失败测试，再修复 |
+| 重构代码 | 先跑测试确保绿灯 |
+| 提交代码 | 必须先跑 `dotnet test` |
+
+### 快速命令
+
+```bash
+# 后端测试
+cd prd-api && dotnet test                              # 全部测试
+dotnet test --filter "Category=Contract"               # 契约测试
+dotnet test --filter "ClassName~LlmGateway"            # 特定模块
+
+# 前端测试
+cd prd-admin && pnpm test                              # 单元测试
+pnpm test:e2e                                          # E2E 测试
+```
+
+### 契约测试目录
+
+```
+prd-api/tests/PrdAgent.Api.Tests/
+├── Contract/                     # 契约测试
+│   ├── Requests/                 # 请求格式验证
+│   ├── Responses/                # 响应格式验证
+│   └── Flows/                    # 流程契约验证
+├── Integration/                  # 集成测试
+│   └── FrontendSimulationTests.cs
+└── Services/                     # 服务单元测试
+```
+
+### 测试标记（Trait）
+
+| 标记 | 用途 | 运行命令 |
+|------|------|----------|
+| `Category=Contract` | 前后端契约测试 | `dotnet test --filter "Category=Contract"` |
+| `Category=Fast` | 快速测试（无外部依赖） | `dotnet test --filter "Category=Fast"` |
+| `Category=Integration` | 需要数据库/网络 | `dotnet test --filter "Category=Integration"` |
+
+### 测试文件命名
+
+- 后端：`{被测类}Tests.cs`（如 `LlmGatewayTests.cs`）
+- 前端：`{模块名}.test.ts`（如 `themeSystem.test.ts`）
+- E2E：`{页面/流程}.spec.ts`（如 `visual-agent.spec.ts`）
+
+### AI 开发工作流检查清单
+
+```
+□ 1. 读取相关测试文件，理解现有测试
+□ 2. 运行现有测试确认绿灯基线
+□ 3. 如果是新功能，先创建测试
+□ 4. 编写/修改代码
+□ 5. 运行测试确认通过
+□ 6. 提交代码
+```
+
+### 测试驱动开发示例
+
+```csharp
+// 1. 先写失败测试
+[Fact]
+public void ResolveModel_WithNewFeature_ShouldWork()
+{
+    var resolver = new ModelResolver(...);
+    var result = resolver.Resolve("new-app.feature::chat");
+    Assert.Equal("expected-model", result.ModelId);  // 此时会失败
+}
+
+// 2. 实现功能使测试通过
+// 3. 运行 dotnet test 确认
+// 4. 提交代码
+```
