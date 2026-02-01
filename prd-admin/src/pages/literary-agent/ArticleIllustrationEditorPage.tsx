@@ -948,7 +948,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           String(it.assetUrl || it.url || '').trim() ||
           (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
 
-        if (url && it.status === 'done') {
+        // 如果有图片 URL，优先显示图片（无论是 done 还是 running 重新生成中）
+        if (url) {
           changed = true;
           patches.push({
             start: m.startPos,
@@ -959,7 +960,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
 
         // "立刻插入"：无图时点击生成后，生成中也会在对应 marker 行下方插入占位提示
-        // 注意：只有在 running 状态时才插入提示，parsing 和 parsed 状态不插入（意图解析是静默的）
+        // 注意：只有在 running 状态且没有旧图时才插入提示
         const isGenerating = it.status === 'running';
         if (isGenerating) {
           changed = true;
@@ -1092,9 +1093,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     // 2) 创建 run（传入 workspaceId，后端会自动保存到 COS）
+    // 注意：重新生成时保留旧的图片 URL，这样预览中会继续显示旧图，直到新图生成完成
     setMarkerRunItems((prev) =>
       prev.map((x) =>
-        x.markerIndex === markerIndex ? { ...x, status: 'running', base64: null, url: null, assetUrl: null } : x
+        x.markerIndex === markerIndex ? { ...x, status: 'running' } : x
       )
     );
     const idem = `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -2318,12 +2320,23 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             }}
                             onClick={async () => {
                               try {
+                                // 使用 fetch + blob 方式下载，避免跨域问题导致打开而不是下载
+                                const response = await fetch(src);
+                                const blob = await response.blob();
+                                const blobUrl = URL.createObjectURL(blob);
+                                const link = document.createElement('a');
+                                link.href = blobUrl;
+                                link.download = `配图-${idx + 1}.png`;
+                                link.click();
+                                URL.revokeObjectURL(blobUrl);
+                              } catch (error) {
+                                console.error('Download failed:', error);
+                                // 如果 fetch 失败（可能是跨域），尝试直接下载
                                 const link = document.createElement('a');
                                 link.href = src;
                                 link.download = `配图-${idx + 1}.png`;
+                                link.target = '_blank';
                                 link.click();
-                              } catch (error) {
-                                console.error('Download failed:', error);
                               }
                             }}
                             title="下载图片"
