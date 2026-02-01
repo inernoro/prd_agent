@@ -2,6 +2,7 @@ using PrdAgent.Core.Interfaces;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Adapters;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -191,6 +192,67 @@ public class LlmGatewayTests
         Assert.Equal("vision", ModelTypes.Vision);
         Assert.Equal("generation", ModelTypes.Generation);
         Assert.Equal("intent", ModelTypes.Intent);
+    }
+
+    #endregion
+
+    #region OpenAIGatewayAdapter.BuildEndpoint Tests
+
+    [Theory]
+    // 标准 OpenAI 格式（无版本后缀）
+    [InlineData("https://api.openai.com", "chat", "https://api.openai.com/v1/chat/completions")]
+    [InlineData("https://api.openai.com/", "chat", "https://api.openai.com/v1/chat/completions")]
+    [InlineData("https://api.deepseek.com", "chat", "https://api.deepseek.com/v1/chat/completions")]
+    [InlineData("https://api.openai.com", "generation", "https://api.openai.com/v1/images/generations")]
+    [InlineData("https://api.openai.com", "embedding", "https://api.openai.com/v1/embeddings")]
+    [InlineData("https://api.openai.com", "intent", "https://api.openai.com/v1/chat/completions")]
+    // 火山引擎格式（/api/v3 后缀）
+    [InlineData("https://ark.cn-beijing.volces.com/api/v3", "chat", "https://ark.cn-beijing.volces.com/api/v3/chat/completions")]
+    [InlineData("https://ark.cn-beijing.volces.com/api/v3/", "chat", "https://ark.cn-beijing.volces.com/api/v3/chat/completions")]
+    [InlineData("https://ark.cn-beijing.volces.com/api/v3", "intent", "https://ark.cn-beijing.volces.com/api/v3/chat/completions")]
+    [InlineData("https://ark.cn-beijing.volces.com/api/v3", "generation", "https://ark.cn-beijing.volces.com/api/v3/images/generations")]
+    // /v1 后缀
+    [InlineData("https://api.example.com/v1", "chat", "https://api.example.com/v1/chat/completions")]
+    [InlineData("https://api.example.com/v1/", "chat", "https://api.example.com/v1/chat/completions")]
+    // /v2 后缀
+    [InlineData("https://api.example.com/v2", "chat", "https://api.example.com/v2/chat/completions")]
+    [InlineData("https://api.example.com/api/v2", "chat", "https://api.example.com/api/v2/chat/completions")]
+    public void BuildEndpoint_ShouldHandleVersionSuffixCorrectly(string apiBase, string modelType, string expected)
+    {
+        // Arrange
+        var adapter = new OpenAIGatewayAdapter();
+
+        // Act
+        var result = adapter.BuildEndpoint(apiBase, modelType);
+
+        // Assert
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void BuildEndpoint_Volces_ShouldNotDuplicateVersionPath()
+    {
+        // 回归测试：确保火山引擎不会产生 /api/v3/v1/chat/completions
+        var adapter = new OpenAIGatewayAdapter();
+        var baseUrl = "https://ark.cn-beijing.volces.com/api/v3";
+
+        var endpoint = adapter.BuildEndpoint(baseUrl, "chat");
+
+        Assert.Equal("https://ark.cn-beijing.volces.com/api/v3/chat/completions", endpoint);
+        Assert.DoesNotContain("/v1/", endpoint);
+    }
+
+    [Fact]
+    public void BuildEndpoint_OpenAI_ShouldAddV1Prefix()
+    {
+        // 标准 OpenAI 应该添加 /v1 前缀
+        var adapter = new OpenAIGatewayAdapter();
+        var baseUrl = "https://api.openai.com";
+
+        var endpoint = adapter.BuildEndpoint(baseUrl, "chat");
+
+        Assert.Equal("https://api.openai.com/v1/chat/completions", endpoint);
+        Assert.Contains("/v1/", endpoint);
     }
 
     #endregion
