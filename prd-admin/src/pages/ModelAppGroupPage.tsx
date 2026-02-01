@@ -1080,9 +1080,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                       const boundGroups = boundGroupIds
                         .map(id => modelGroups.find(g => g.id === id))
                         .filter((g): g is ModelGroup => !!g);
-                      const ModelTypeIcon = getModelTypeIcon(featureItem.parsed.modelType);
-                      const modelTypeLabel = getModelTypeDisplayName(featureItem.parsed.modelType);
-                      const featureDescription = getFeatureDescription(featureItem.parsed);
+                      // 优先使用数据库的 modelType，回退到 AppCode 解析
+                      const actualModelType = req?.modelType || featureItem.parsed.modelType;
+                      const ModelTypeIcon = getModelTypeIcon(actualModelType);
+                      const modelTypeLabel = getModelTypeDisplayName(actualModelType);
+                      // 优先使用数据库的 displayName，回退到前端解析
+                      const featureDescription = featureItem.displayName || getFeatureDescription(featureItem.parsed);
 
                       // 判断是否使用默认模型池（未绑定专属模型池）
                       const isDefaultGroup = boundGroups.length === 0;
