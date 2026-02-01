@@ -96,13 +96,26 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
                 finishReason = fr.GetString();
             }
 
-            // 提取 delta 内容
+            // 提取 delta 内容（优先使用 delta.content，备选 message.content）
             string? content = null;
             if (choice.TryGetProperty("delta", out var delta) &&
                 delta.TryGetProperty("content", out var contentEl) &&
                 contentEl.ValueKind == JsonValueKind.String)
             {
                 content = contentEl.GetString();
+            }
+            // 某些 OpenAI 兼容 API 可能使用 message.content 而不是 delta.content
+            else if (choice.TryGetProperty("message", out var message) &&
+                message.TryGetProperty("content", out var msgContentEl) &&
+                msgContentEl.ValueKind == JsonValueKind.String)
+            {
+                content = msgContentEl.GetString();
+            }
+            // 还有一些 API 可能直接在 choice 下有 text 字段
+            else if (choice.TryGetProperty("text", out var textEl) &&
+                textEl.ValueKind == JsonValueKind.String)
+            {
+                content = textEl.GetString();
             }
 
             // 检查 usage（可能在最后一个 chunk）
