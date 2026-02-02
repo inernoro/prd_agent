@@ -46,7 +46,7 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
       }
     `;
 
-    // Optimized fragment shader
+    // Optimized fragment shader (WebGL 1.0 compatible)
     const fragmentSource = `
       precision mediump float;
 
@@ -56,6 +56,12 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
 
       float random(vec2 p) {
         return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+      }
+
+      vec3 getStarColor(float r) {
+        if (r < 0.33) return vec3(0.96, 0.89, 0.72);  // gold core
+        if (r < 0.66) return vec3(0.84, 0.70, 0.42);  // gold mid
+        return vec3(0.55, 0.23, 0.93);                 // purple accent
       }
 
       void main() {
@@ -69,16 +75,9 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
 
         vec3 col = vec3(0.0);
 
-        // Gold color palette
-        vec3 colors[3];
-        colors[0] = vec3(0.96, 0.89, 0.72);  // gold core
-        colors[1] = vec3(0.84, 0.70, 0.42);  // gold mid
-        colors[2] = vec3(0.55, 0.23, 0.93);  // purple accent
-
-        const float layers = float(${layers});
-        float layerStep = 1.0 / layers;
-
-        for (float layer = 0.0; layer < 1.0; layer += layerStep) {
+        // Unrolled loop for WebGL 1.0 compatibility (${layers} layers)
+        for (int i = 0; i < ${layers}; i++) {
+          float layer = float(i) / float(${layers});
           float depth = fract(layer + t * 0.1);
           vec2 uv = (center - gl_FragCoord.xy / resolution.x) * rot;
           uv *= mix(scale, 2.0, depth);
@@ -86,7 +85,6 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
           vec2 gridId = floor(uv);
           vec2 gridUv = fract(uv) - 0.5;
 
-          // Only check current cell (no neighbor search = big perf win)
           vec2 seed = gridId + layer * 100.0;
           float rand = random(seed);
           vec2 offset = vec2(random(seed + 1.0), random(seed + 2.0)) - 0.5;
@@ -96,17 +94,11 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
           float pulse = 0.5 + 0.5 * sin(rand * 20.0 + time * 2.0);
           float brightness = depth * pulse * 0.015 / (dist * dist + 0.001);
 
-          // Color selection
-          int colorIdx = int(mod(rand * 10.0, 3.0));
-          vec3 starColor = colors[colorIdx];
-
-          col += starColor * brightness * 0.4;
+          col += getStarColor(rand) * brightness * 0.4;
         }
 
-        // Simple tone mapping
         col = col / (col + 0.5);
 
-        // Vignette
         vec2 vUv = gl_FragCoord.xy / resolution - 0.5;
         float vig = 1.0 - dot(vUv, vUv) * 0.8;
         col *= vig;
