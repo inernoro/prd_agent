@@ -913,7 +913,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     #region CreateClient
 
     /// <inheritdoc />
-    public Core.Interfaces.ILLMClient CreateClient(
+    public ILLMClient CreateClient(
         string appCallerCode,
         string modelType,
         int maxTokens = 4096,
