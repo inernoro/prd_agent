@@ -566,7 +566,198 @@ LLM 返回了有语法错误的代码
 
 ---
 
-## 九、相关资源
+## 九、应用迁移指南
+
+> 当实验室功能验证成熟后，如何将其提升为独立应用。
+
+### 迁移时机判断
+
+| 信号 | 说明 |
+|------|------|
+| 用户反馈正向 | 实验功能得到用户认可，有实际使用需求 |
+| 功能稳定 | 核心功能稳定运行，无重大 Bug |
+| 需要独立权限 | 需要单独的访问控制或计费 |
+| 需要数据持久化 | 需要保存用户作品、历史记录等 |
+| 需要专属配置 | 需要独立的水印、限额、模型配置等 |
+
+### 迁移架构对比
+
+```
+实验室阶段（当前）                      独立应用阶段（迁移后）
+─────────────────                      ─────────────────────
+
+prd-admin/                              prd-admin/
+└── pages/                              ├── pages/
+    └── lab-remotion/  ← 实验室子目录       │   └── video-agent/  ← 独立页面目录
+        ├── RemotionLabTab.tsx              │       ├── index.tsx
+        ├── templates/                      │       ├── WorkspacePage.tsx
+        ├── components/                     │       ├── templates/
+        └── lib/                            │       ├── components/
+                                            │       └── lib/
+无后端                                  prd-api/
+                                        └── src/
+                                            ├── PrdAgent.Api/
+                                            │   └── Controllers/
+                                            │       └── VideoAgentController.cs
+                                            └── PrdAgent.Infrastructure/
+                                                └── Services/
+                                                    └── VideoGenService.cs
+
+无数据库                                MongoDB 集合
+                                        ├── video_agent_workspaces
+                                        ├── video_agent_projects
+                                        └── video_agent_renders
+```
+
+### 迁移步骤清单
+
+#### 阶段 1：注册应用身份
+
+```csharp
+// 1. 在 CLAUDE.md 中注册 appKey
+| 视频创作 Agent | `video-agent` | Remotion 视频创作工作区 |
+
+// 2. 创建 Controller（硬编码 appKey）
+[ApiController]
+[Route("api/video-agent")]
+public class VideoAgentController : ControllerBase
+{
+    private const string AppKey = "video-agent";  // 硬编码，不由前端传递
+
+    [HttpPost("projects")]
+    public async Task<IActionResult> CreateProject(...)
+    {
+        // 使用 AppKey 调用服务
+    }
+}
+```
+
+#### 阶段 2：设计数据模型
+
+```csharp
+// 项目模型
+public class VideoProject
+{
+    public ObjectId Id { get; set; }
+    public string UserId { get; set; }
+    public string Name { get; set; }
+    public string TemplateKey { get; set; }      // 使用的模板
+    public JsonDocument Parameters { get; set; } // 模板参数
+    public string? CustomCode { get; set; }      // AI 生成的代码
+    public VideoConfig Config { get; set; }      // 视频配置
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+// 渲染任务模型
+public class VideoRenderJob
+{
+    public ObjectId Id { get; set; }
+    public ObjectId ProjectId { get; set; }
+    public string Status { get; set; }  // pending, rendering, completed, failed
+    public string? OutputUrl { get; set; }
+    public string? ErrorMessage { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+```
+
+#### 阶段 3：迁移前端代码
+
+```
+# 1. 创建独立页面目录
+mkdir -p prd-admin/src/pages/video-agent
+
+# 2. 复制并重构代码
+cp -r prd-admin/src/pages/lab-remotion/* prd-admin/src/pages/video-agent/
+
+# 3. 重命名入口文件
+mv video-agent/RemotionLabTab.tsx video-agent/index.tsx
+
+# 4. 更新路由
+# router.tsx 中添加:
+{ path: '/video-agent', element: <VideoAgentPage /> }
+```
+
+#### 阶段 4：添加数据持久化
+
+```typescript
+// services/videoAgentService.ts
+export const videoAgentService = {
+  // 项目管理
+  createProject: (data: CreateProjectRequest) =>
+    api.post('/api/video-agent/projects', data),
+
+  getProjects: () =>
+    api.get('/api/video-agent/projects'),
+
+  updateProject: (id: string, data: UpdateProjectRequest) =>
+    api.put(`/api/video-agent/projects/${id}`, data),
+
+  // 渲染管理
+  requestRender: (projectId: string, format: 'mp4' | 'gif') =>
+    api.post(`/api/video-agent/projects/${projectId}/render`, { format }),
+
+  getRenderStatus: (jobId: string) =>
+    api.get(`/api/video-agent/render-jobs/${jobId}`),
+};
+```
+
+#### 阶段 5：配置权限与水印
+
+```csharp
+// 1. 添加权限目录
+public static class AdminPermissionCatalog
+{
+    // 视频代理权限
+    public const string VideoAgentRead = "video-agent.read";
+    public const string VideoAgentWrite = "video-agent.write";
+    public const string VideoAgentRender = "video-agent.render";
+}
+
+// 2. 配置水印（如需要）
+// 在 watermark_configs 集合中添加 appKey = "video-agent" 的配置
+```
+
+#### 阶段 6：注册到 LLM Gateway
+
+```csharp
+// AppCallerCode 命名
+"video-agent.ai-gen::generation"  // AI 生成动画代码
+
+// 在 llm_app_callers 集合中注册
+{
+  "appCallerCode": "video-agent.ai-gen::generation",
+  "displayName": "视频代理 - AI 生成",
+  "modelType": "chat",
+  "modelGroupIds": ["default-chat-pool"]
+}
+```
+
+### 迁移检查清单
+
+| 检查项 | 说明 | 状态 |
+|--------|------|------|
+| appKey 注册 | CLAUDE.md 中添加应用标识 | ☐ |
+| Controller 创建 | 硬编码 appKey 的 API 入口 | ☐ |
+| 数据模型定义 | MongoDB 集合与 C# 模型 | ☐ |
+| 前端页面迁移 | 独立路由与页面组件 | ☐ |
+| 权限配置 | AdminPermissionCatalog 注册 | ☐ |
+| LLM Gateway | AppCallerCode 注册 | ☐ |
+| 水印配置 | 按需配置 appKey 绑定 | ☐ |
+| 侧边栏入口 | 添加独立导航项 | ☐ |
+| 文档更新 | 更新 Codebase Skill 段落 | ☐ |
+
+### 参考实现
+
+| 应用 | 参考文件 | 说明 |
+|------|----------|------|
+| **VisualAgent** | `VisualAgentController.cs` | 图片生成的 Controller 模式 |
+| **LiteraryAgent** | `LiteraryAgentController.cs` | 文学创作的 SSE 流式模式 |
+| **DefectAgent** | `DefectAgentController.cs` | 缺陷管理的完整 CRUD |
+
+---
+
+## 十、相关资源
 
 - [Remotion 官方文档](https://www.remotion.dev/docs/)
 - [Remotion Player API](https://www.remotion.dev/docs/player)
@@ -575,10 +766,11 @@ LLM 返回了有语法错误的代码
 
 ---
 
-## 变更记录
+## 十一、变更记录
 
 | 日期 | 版本 | 变更内容 |
 |------|------|----------|
 | 2026-02-02 | v1.0 | 初始版本：预设模板 + AI 生成模式 |
 | 2026-02-02 | v1.1 | 新增 4 个模板 (Matrix/Glitch/Typewriter/BarChart) + Monaco Editor 代码编辑器 |
 | 2026-02-02 | v1.2 | 添加用户故事章节（预设模板流程、AI 生成流程、错误处理流程） |
+| 2026-02-02 | v1.3 | 添加应用迁移指南（从实验室提升为独立应用的完整流程） |
