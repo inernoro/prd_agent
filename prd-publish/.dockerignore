@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log
+pnpm-lock.yaml
+.env
+.env.*
+!.env.example
+data/
+tests/
+coverage/
+.git
+.gitignore
+*.md
+Dockerfile
+docker-compose*.yml

@@ -1,0 +1,107 @@
+# Docker Compose for prd-publish + prd-executor
+# Usage: docker-compose -f docker-compose.publish.yml up -d
+
+version: '3.8'
+
+services:
+  # Redis - Message Queue
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - publish-net
+
+  # MongoDB - Job Logs
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: prd_executor
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - publish-net
+
+  # prd-executor - Command Execution Service
+  executor:
+    build:
+      context: ./prd-executor
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3940:3940"
+    environment:
+      - NODE_ENV=production
+      - API_PORT=3940
+      - API_HOST=0.0.0.0
+      - REDIS_URL=redis://redis:6379
+      - MONGO_URL=mongodb://mongodb:27017
+      - MONGO_DB=prd_executor
+      - QUEUE_ENABLED=true
+      - CONCURRENCY_MAX=3
+      - LOGS_DIR=/app/logs
+    volumes:
+      - executor-logs:/app/logs
+      # Mount host directories for deployment scripts access
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - publish-net
+
+  # prd-publish - Version Management Service
+  publish:
+    build:
+      context: ./prd-publish
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3939:3939"
+    environment:
+      - NODE_ENV=production
+      - PUBLISH_PORT=3939
+      - PUBLISH_HOST=0.0.0.0
+      - PUBLISH_PASSWORD=${PUBLISH_PASSWORD:-}
+      - EXECUTOR_MODE=http
+      - EXECUTOR_URL=http://executor:3940
+      # Or use Redis mode:
+      # - EXECUTOR_MODE=redis
+      # - REDIS_URL=redis://redis:6379
+    volumes:
+      - publish-data:/app/data
+      # Mount target repository (configure as needed)
+      - ${REPO_PATH:-./}:/repo:ro
+    depends_on:
+      - executor
+    networks:
+      - publish-net
+
+volumes:
+  redis-data:
+  mongo-data:
+  executor-logs:
+  publish-data:
+
+networks:
+  publish-net:
+    driver: bridge

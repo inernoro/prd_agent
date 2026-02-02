@@ -31,6 +31,9 @@ RUN mkdir -p /data
 ENV NODE_ENV=production
 ENV PUBLISH_PORT=3939
 ENV PUBLISH_HOST=0.0.0.0
+# Executor integration (optional)
+ENV EXECUTOR_MODE=local
+ENV EXECUTOR_URL=http://localhost:3940
 
 EXPOSE 3939
 

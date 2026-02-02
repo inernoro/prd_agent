@@ -26,7 +26,9 @@
     "dotenv": "^16.3.1",
     "cors": "^2.8.5",
     "helmet": "^7.1.0",
-    "express-rate-limit": "^7.1.5"
+    "express-rate-limit": "^7.1.5",
+    "ioredis": "^5.3.2",
+    "uuid": "^9.0.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",
