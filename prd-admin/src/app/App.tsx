@@ -27,7 +27,7 @@ import { ToastContainer } from '@/components/ui/Toast';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!isAuthenticated) return <Navigate to="/landing" replace />;
   return <>{children}</>;
 }
 
@@ -213,7 +213,7 @@ export default function App() {
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>
 
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/landing" replace />} />
       </Routes>
     </>
   );
