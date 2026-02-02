@@ -240,7 +240,7 @@ export function StarfieldBackground({ className, themeColor }: StarfieldBackgrou
       if (elapsed < frameInterval) return;
 
       lastFrameRef.current = timestamp - (elapsed % frameInterval);
-      timeRef.current += 0.033;
+      timeRef.current += 0.022; // Slowed down by 1/3
 
       gl.uniform1f(timeHandle, timeRef.current);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);

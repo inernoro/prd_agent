@@ -17,8 +17,8 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
 
   return (
     <section className={cn('relative min-h-screen flex flex-col', className)}>
-      {/* Uniform overlay for text readability (background is global) */}
-      <div className="absolute inset-0 pointer-events-none bg-[#030305]/20" />
+      {/* Semi-transparent overlay for text readability (background is global) */}
+      <div className="absolute inset-0 pointer-events-none bg-[#030305]/40" />
 
       {/* Main content - centered */}
       <div className="flex-1 flex items-center justify-center relative z-10">

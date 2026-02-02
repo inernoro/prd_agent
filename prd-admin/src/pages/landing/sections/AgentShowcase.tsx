@@ -669,8 +669,8 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
 
   return (
     <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
-      {/* Uniform semi-transparent overlay - no vignette to avoid empty look */}
-      <div className="absolute inset-0 pointer-events-none bg-[#050508]/20" />
+      {/* Semi-transparent overlay for content readability */}
+      <div className="absolute inset-0 pointer-events-none bg-[#050508]/50" />
 
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">
@@ -706,9 +706,9 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
         </div>
 
         {/* Main showcase area */}
-        <div className="grid lg:grid-cols-2 gap-8 lg:gap-12 items-center">
+        <div className="grid lg:grid-cols-2 gap-8 lg:gap-16 items-center">
           {/* Left: Info */}
-          <div className="order-2 lg:order-1">
+          <div className="order-2 lg:order-1 lg:pl-4">
             <div
               className={cn(
                 'inline-block px-3 py-1 rounded-full text-xs font-medium mb-4 bg-gradient-to-r',
@@ -757,7 +757,7 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
           </div>
 
           {/* Right: Mockup */}
-          <div className="order-1 lg:order-2">
+          <div className="order-1 lg:order-2 lg:pr-4">
             <div
               className="relative aspect-[4/3] rounded-2xl overflow-hidden border border-white/10"
               style={{
