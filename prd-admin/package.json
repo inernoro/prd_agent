@@ -24,6 +24,7 @@
     "@radix-ui/react-tooltip": "^1.1.8",
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
+    "@remotion/player": "^4.0.417",
     "@tailwindcss/vite": "^4.1.17",
     "clsx": "^2.1.1",
     "dayjs": "^1.11.13",
@@ -38,6 +39,7 @@
     "react-router-dom": "^7.0.1",
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
+    "remotion": "^4.0.417",
     "tailwind-merge": "^2.6.0",
     "three": "^0.175.0",
     "zustand": "^5.0.1"
