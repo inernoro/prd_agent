@@ -28,10 +28,19 @@ import {
   activateReferenceImageConfig,
   deactivateReferenceImageConfig,
   getLiteraryAgentAllModels,
+  // 海鲜市场 API
+  listLiteraryPromptsMarketplace,
+  forkLiteraryPrompt,
+  listReferenceImageConfigsMarketplace,
+  forkReferenceImageConfig,
+  listWatermarksMarketplace,
+  forkWatermark,
 } from '@/services';
-import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings } from 'lucide-react';
+import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse, MarketplaceReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, Hand, TrendingUp, Clock, Search } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
+import type { MarketplaceLiteraryPrompt } from '@/services/contracts/literaryPrompts';
+import type { MarketplaceWatermarkConfig } from '@/services/contracts/watermark';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
@@ -159,7 +168,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const editRefImageInputRef = useRef<HTMLInputElement | null>(null);
   const [editingRefConfig, setEditingRefConfig] = useState<ReferenceImageConfig | null>(null);
   const [editingRefConfigOpen, setEditingRefConfigOpen] = useState(false);
-  
+
+  // 海鲜市场状态
+  const [configViewMode, setConfigViewMode] = useState<'mine' | 'marketplace'>('mine');
+  const [marketplaceSearchKeyword, setMarketplaceSearchKeyword] = useState('');
+  const [marketplaceSortBy, setMarketplaceSortBy] = useState<'hot' | 'new'>('hot');
+  const [marketplacePrompts, setMarketplacePrompts] = useState<MarketplaceLiteraryPrompt[]>([]);
+  const [marketplaceRefImages, setMarketplaceRefImages] = useState<MarketplaceReferenceImageConfig[]>([]);
+  const [marketplaceWatermarks, setMarketplaceWatermarks] = useState<MarketplaceWatermarkConfig[]>([]);
+  const [marketplaceLoading, setMarketplaceLoading] = useState(false);
+
   // 文件上传相关状态
   const [uploadedFileName, setUploadedFileName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -321,6 +339,36 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   useEffect(() => {
     void loadReferenceImageConfigs();
   }, [loadReferenceImageConfigs]);
+
+  // 加载海鲜市场数据
+  const loadMarketplaceData = useCallback(async () => {
+    setMarketplaceLoading(true);
+    try {
+      const [promptsRes, refImagesRes, watermarksRes] = await Promise.all([
+        listLiteraryPromptsMarketplace({ keyword: marketplaceSearchKeyword || undefined, sort: marketplaceSortBy }),
+        listReferenceImageConfigsMarketplace({ keyword: marketplaceSearchKeyword || undefined, sort: marketplaceSortBy }),
+        listWatermarksMarketplace({ keyword: marketplaceSearchKeyword || undefined, sort: marketplaceSortBy }),
+      ]);
+      if (promptsRes.success && promptsRes.data) {
+        setMarketplacePrompts(promptsRes.data.items);
+      }
+      if (refImagesRes.success && refImagesRes.data) {
+        setMarketplaceRefImages(refImagesRes.data.items);
+      }
+      if (watermarksRes.success && watermarksRes.data) {
+        setMarketplaceWatermarks(watermarksRes.data.items);
+      }
+    } finally {
+      setMarketplaceLoading(false);
+    }
+  }, [marketplaceSearchKeyword, marketplaceSortBy]);
+
+  // 当切换到海鲜市场视图或搜索/排序变化时加载数据
+  useEffect(() => {
+    if (promptPreviewOpen && configViewMode === 'marketplace') {
+      void loadMarketplaceData();
+    }
+  }, [promptPreviewOpen, configViewMode, loadMarketplaceData]);
 
   async function loadWorkspace() {
     try {
@@ -2631,14 +2679,44 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       {/* 系统提示词、底图与水印配置对话框 */}
       <Dialog
         open={promptPreviewOpen}
-        onOpenChange={setPromptPreviewOpen}
+        onOpenChange={(open) => {
+          setPromptPreviewOpen(open);
+          if (!open) setConfigViewMode('mine'); // 关闭时重置为"我的"视图
+        }}
         title="配置管理"
         description="系统提示词、风格图与水印设置"
-        maxWidth={1400}
+        maxWidth={1500}
         contentClassName="overflow-hidden !p-4"
-        contentStyle={{ maxHeight: '70vh', height: '70vh' }}
+        contentStyle={{ maxHeight: '75vh', height: '75vh' }}
         content={
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-2 h-full min-h-0">
+          <div className="flex flex-col h-full min-h-0">
+            {/* Tab 切换 */}
+            <div className="flex items-center gap-2 mb-4 flex-shrink-0 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>
+              <button
+                type="button"
+                onClick={() => setConfigViewMode('mine')}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  configViewMode === 'mine' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
+                }`}
+              >
+                <User size={14} />
+                我的
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfigViewMode('marketplace')}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  configViewMode === 'marketplace' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
+                }`}
+              >
+                <Globe size={14} />
+                海鲜市场
+              </button>
+            </div>
+
+            {/* 我的配置视图 */}
+            {configViewMode === 'mine' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
             {/* 左侧：系统提示词 */}
             <div className="min-h-0 flex flex-col h-full">
               <div className="flex items-center justify-between mb-2">
@@ -3068,6 +3146,315 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <WatermarkSettingsPanel ref={watermarkPanelRef} appKey="literary-agent" onStatusChange={handleWatermarkStatusChange} hideAddButton />
               </div>
             </div>
+          </div>
+            )}
+
+            {/* 海鲜市场视图 */}
+            {configViewMode === 'marketplace' && (
+              <div className="flex flex-col h-full min-h-0 flex-1">
+                {/* 搜索和排序栏 */}
+                <div className="flex items-center gap-4 mb-4 flex-shrink-0">
+                  {/* 搜索框 */}
+                  <div className="relative flex-1 max-w-xs">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                    <input
+                      type="text"
+                      placeholder="搜索配置名称..."
+                      value={marketplaceSearchKeyword}
+                      onChange={(e) => setMarketplaceSearchKeyword(e.target.value)}
+                      className="w-full h-8 pl-9 pr-3 rounded-lg text-sm"
+                      style={{ background: 'var(--input-bg)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    />
+                  </div>
+                  {/* 排序 */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setMarketplaceSortBy('hot')}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        marketplaceSortBy === 'hot' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                      }`}
+                      style={{ color: marketplaceSortBy === 'hot' ? undefined : 'var(--text-muted)' }}
+                    >
+                      <TrendingUp size={12} />
+                      热门
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMarketplaceSortBy('new')}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        marketplaceSortBy === 'new' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                      }`}
+                      style={{ color: marketplaceSortBy === 'new' ? undefined : 'var(--text-muted)' }}
+                    >
+                      <Clock size={12} />
+                      最新
+                    </button>
+                  </div>
+                </div>
+
+                {marketplaceLoading ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0 overflow-auto">
+                    {/* 提示词列 */}
+                    <div className="min-h-0 flex flex-col">
+                      <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                        系统提示词
+                      </div>
+                      {marketplacePrompts.length === 0 ? (
+                        <div className="text-xs py-4 text-center" style={{ color: 'var(--text-muted)' }}>
+                          暂无公开的提示词
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-3 overflow-auto">
+                          {marketplacePrompts.map((prompt) => (
+                            <GlassCard key={prompt.id} className="p-0 overflow-hidden">
+                              <div className="flex flex-col">
+                                <div className="p-2 pb-1">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                                        {prompt.title}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span
+                                        className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1"
+                                        style={{ background: 'rgba(59, 130, 246, 0.12)', color: 'rgba(59, 130, 246, 0.95)', border: '1px solid rgba(59, 130, 246, 0.28)' }}
+                                        title="下载次数"
+                                      >
+                                        <Hand size={10} />
+                                        {prompt.forkCount}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div className="mt-1 flex items-center gap-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                    {prompt.ownerUserAvatar ? (
+                                      <img src={prompt.ownerUserAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
+                                    ) : (
+                                      <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
+                                        <User size={10} />
+                                      </div>
+                                    )}
+                                    <span>{prompt.ownerUserName || '未知用户'} 发布</span>
+                                  </div>
+                                </div>
+                                <div className="px-2 pb-1">
+                                  <div
+                                    className="overflow-hidden border rounded-[6px] p-2"
+                                    style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)', maxHeight: '80px' }}
+                                  >
+                                    <div className="text-[11px] line-clamp-3" style={{ color: 'var(--text-muted)' }}>
+                                      {prompt.content || '（内容为空）'}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="px-2 pb-2 pt-1">
+                                  <div className="flex justify-end">
+                                    <Button
+                                      size="xs"
+                                      variant="secondary"
+                                      onClick={async () => {
+                                        const res = await forkLiteraryPrompt({ id: prompt.id });
+                                        if (res.success) {
+                                          toast.success('下载成功，已添加到「我的」');
+                                          void loadMarketplaceData();
+                                          void loadLiteraryPrompts();
+                                        } else {
+                                          toast.error('下载失败', res.error?.message || '未知错误');
+                                        }
+                                      }}
+                                    >
+                                      <Hand size={12} />
+                                      免费下载
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                            </GlassCard>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 风格图列 */}
+                    <div className="min-h-0 flex flex-col border-l pl-4" style={{ borderColor: 'var(--border-subtle)' }}>
+                      <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                        风格图设置
+                      </div>
+                      {marketplaceRefImages.length === 0 ? (
+                        <div className="text-xs py-4 text-center" style={{ color: 'var(--text-muted)' }}>
+                          暂无公开的风格图
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-3 overflow-auto">
+                          {marketplaceRefImages.map((config) => (
+                            <GlassCard key={config.id} className="p-0 overflow-hidden">
+                              <div className="flex flex-col">
+                                <div className="p-2 pb-1">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                                        {config.name}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span
+                                        className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1"
+                                        style={{ background: 'rgba(59, 130, 246, 0.12)', color: 'rgba(59, 130, 246, 0.95)', border: '1px solid rgba(59, 130, 246, 0.28)' }}
+                                        title="下载次数"
+                                      >
+                                        <Hand size={10} />
+                                        {config.forkCount}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div className="mt-1 flex items-center gap-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                    {config.ownerUserAvatar ? (
+                                      <img src={config.ownerUserAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
+                                    ) : (
+                                      <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
+                                        <User size={10} />
+                                      </div>
+                                    )}
+                                    <span>{config.ownerUserName || '未知用户'} 发布</span>
+                                  </div>
+                                </div>
+                                <div className="px-2 pb-1">
+                                  <div
+                                    className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
+                                    style={{
+                                      background: config.imageUrl
+                                        ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
+                                        : 'rgba(255,255,255,0.02)',
+                                      height: '80px',
+                                    }}
+                                  >
+                                    {config.imageUrl ? (
+                                      <img src={config.imageUrl} alt={config.name} className="block max-w-full max-h-full object-contain" />
+                                    ) : (
+                                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="px-2 pb-2 pt-1">
+                                  <div className="flex justify-end">
+                                    <Button
+                                      size="xs"
+                                      variant="secondary"
+                                      onClick={async () => {
+                                        const res = await forkReferenceImageConfig({ id: config.id });
+                                        if (res.success) {
+                                          toast.success('下载成功，已添加到「我的」');
+                                          void loadMarketplaceData();
+                                          void loadReferenceImageConfigs();
+                                        } else {
+                                          toast.error('下载失败', res.error?.message || '未知错误');
+                                        }
+                                      }}
+                                    >
+                                      <Hand size={12} />
+                                      免费下载
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                            </GlassCard>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 水印列 */}
+                    <div className="min-h-0 flex flex-col border-l pl-4" style={{ borderColor: 'var(--border-subtle)' }}>
+                      <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                        水印设置
+                      </div>
+                      {marketplaceWatermarks.length === 0 ? (
+                        <div className="text-xs py-4 text-center" style={{ color: 'var(--text-muted)' }}>
+                          暂无公开的水印
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-3 overflow-auto">
+                          {marketplaceWatermarks.map((config) => (
+                            <GlassCard key={config.id} className="p-0 overflow-hidden">
+                              <div className="flex flex-col">
+                                <div className="p-2 pb-1">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                                        {config.name}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span
+                                        className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1"
+                                        style={{ background: 'rgba(59, 130, 246, 0.12)', color: 'rgba(59, 130, 246, 0.95)', border: '1px solid rgba(59, 130, 246, 0.28)' }}
+                                        title="下载次数"
+                                      >
+                                        <Hand size={10} />
+                                        {config.forkCount}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div className="mt-1 flex items-center gap-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                    {config.ownerUserAvatar ? (
+                                      <img src={config.ownerUserAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
+                                    ) : (
+                                      <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
+                                        <User size={10} />
+                                      </div>
+                                    )}
+                                    <span>{config.ownerUserName || '未知用户'} 发布</span>
+                                  </div>
+                                </div>
+                                <div className="px-2 pb-1">
+                                  <div
+                                    className="flex items-center justify-center overflow-hidden rounded-[6px] p-2"
+                                    style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)', height: '60px' }}
+                                  >
+                                    {config.previewUrl ? (
+                                      <img src={config.previewUrl} alt={config.name} className="max-h-full object-contain" />
+                                    ) : (
+                                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                        {config.text || '无预览'}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="px-2 pb-2 pt-1">
+                                  <div className="flex justify-end">
+                                    <Button
+                                      size="xs"
+                                      variant="secondary"
+                                      onClick={async () => {
+                                        const res = await forkWatermark({ id: config.id });
+                                        if (res.success) {
+                                          toast.success('下载成功，已添加到「我的」');
+                                          void loadMarketplaceData();
+                                        } else {
+                                          toast.error('下载失败', res.error?.message || '未知错误');
+                                        }
+                                      }}
+                                    >
+                                      <Hand size={12} />
+                                      免费下载
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                            </GlassCard>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         }
       />
