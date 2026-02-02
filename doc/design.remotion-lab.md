@@ -103,6 +103,10 @@
 | **文字揭示** | 逐词弹出动画 | 文字内容、颜色、背景色、字号 |
 | **Logo 动画** | 旋转光环 + 文字淡入 | Logo 文字、主色、副色、背景色 |
 | **粒子波浪** | 流动的粒子效果 | 粒子颜色、背景色、粒子数量、波浪速度 |
+| **Matrix 代码雨** | 黑客帝国风格代码雨 | 字符颜色、背景色、列数、速度 |
+| **故障文字** | Glitch 故障风格特效 | 文字内容、文字颜色、背景色、故障强度 |
+| **打字机** | 终端风格逐字打印 | 文字内容、文字颜色、背景色、打字速度 |
+| **柱状图** | 动态数据图表动画 | 标题、柱子颜色、背景色、文字颜色 |
 
 ### 模板规范
 
@@ -200,12 +204,17 @@ AI 生成的代码需遵循以下约束：
 prd-admin/src/pages/lab-remotion/
 ├── RemotionLabTab.tsx              # 主页面（模式切换）
 ├── components/
-│   └── AiGeneratorPanel.tsx        # AI 生成面板
+│   ├── AiGeneratorPanel.tsx        # AI 生成面板
+│   └── CodeEditor.tsx              # Monaco 代码编辑器
 ├── templates/
 │   ├── index.ts                    # 模板导出
 │   ├── TextReveal.tsx              # 文字揭示
 │   ├── LogoAnimation.tsx           # Logo 动画
-│   └── ParticleWave.tsx            # 粒子波浪
+│   ├── ParticleWave.tsx            # 粒子波浪
+│   ├── MatrixRain.tsx              # Matrix 代码雨
+│   ├── GlitchText.tsx              # 故障文字
+│   ├── Typewriter.tsx              # 打字机效果
+│   └── BarChart.tsx                # 柱状图动画
 └── lib/
     ├── babel-standalone.d.ts       # 类型声明
     ├── dynamicCompiler.ts          # 动态编译器
@@ -219,6 +228,7 @@ prd-admin/src/pages/lab-remotion/
 | `remotion` | ^4.0 | 核心框架 |
 | `@remotion/player` | ^4.0 | 浏览器预览播放器 |
 | `@babel/standalone` | ^7.29 | 浏览器内 JSX 编译 |
+| `@monaco-editor/react` | ^4.7 | 代码编辑器 |
 
 ### 视频配置
 
@@ -248,7 +258,7 @@ const VIDEO_CONFIG = {
 | 无外部依赖 | 不支持 Three.js、Lottie 等 | 预置常用库到作用域 |
 | 仅限预览 | 不支持导出 MP4 | 后端集成 FFmpeg |
 | LLM 质量不稳定 | 有时生成错误代码 | 优化 System Prompt |
-| 无代码编辑器 | 无法手动修改生成代码 | 集成 Monaco Editor |
+| ~~无代码编辑器~~ | ~~无法手动修改生成代码~~ | ✅ 已集成 Monaco Editor |
 
 ---
 
@@ -264,24 +274,27 @@ const VIDEO_CONFIG = {
 - [x] 实现 Remotion System Prompt
 - [x] 添加示例 Prompts
 - [x] 错误处理和重试机制
+- [x] 添加 Matrix 代码雨模板
+- [x] 添加 Glitch 故障文字模板
+- [x] 添加打字机效果模板
+- [x] 添加柱状图动画模板
+- [x] 集成 Monaco Editor 代码编辑器
+- [x] 代码高亮显示
+- [x] 代码复制功能
+- [x] 可编辑代码并重新运行
 
 ### 未来增强 📋
-
-- [ ] **更多预设模板**
-  - [ ] Matrix 代码雨
-  - [ ] Glitch 故障效果
-  - [ ] 数据图表动画
-  - [ ] 打字机效果
 
 - [ ] **AI 增强**
   - [ ] 优化 System Prompt 提高生成质量
   - [ ] 添加代码修复能力
   - [ ] 支持多轮对话调整效果
 
-- [ ] **编辑器增强**
-  - [ ] 集成 Monaco Editor
-  - [ ] 代码高亮显示
-  - [ ] 语法错误提示
+- [ ] **更多模板**
+  - [ ] 环形进度条
+  - [ ] 倒计时器
+  - [ ] 文字翻转效果
+  - [ ] 图片轮播
 
 - [ ] **导出功能** (需后端支持)
   - [ ] 导出 MP4 视频
@@ -292,6 +305,7 @@ const VIDEO_CONFIG = {
   - [ ] 时间轴编辑
   - [ ] 多场景切换
   - [ ] 音频同步
+  - [ ] 自定义视频尺寸和帧率
 
 ---
 
@@ -309,3 +323,4 @@ const VIDEO_CONFIG = {
 | 日期 | 版本 | 变更内容 |
 |------|------|----------|
 | 2026-02-02 | v1.0 | 初始版本：预设模板 + AI 生成模式 |
+| 2026-02-02 | v1.1 | 新增 4 个模板 (Matrix/Glitch/Typewriter/BarChart) + Monaco Editor 代码编辑器 |

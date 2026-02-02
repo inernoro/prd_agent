@@ -9,6 +9,14 @@ import {
   logoAnimationDefaults,
   ParticleWave,
   particleWaveDefaults,
+  MatrixRain,
+  matrixRainDefaults,
+  GlitchText,
+  glitchTextDefaults,
+  Typewriter,
+  typewriterDefaults,
+  BarChart,
+  barChartDefaults,
 } from './templates';
 import {
   Play,
@@ -20,6 +28,10 @@ import {
   Settings2,
   Wand2,
   LayoutTemplate,
+  Binary,
+  Zap,
+  Terminal,
+  BarChart3,
 } from 'lucide-react';
 import { AiGeneratorPanel } from './components/AiGeneratorPanel';
 import type { CompileResult } from './lib/dynamicCompiler';
@@ -28,7 +40,7 @@ import type { CompileResult } from './lib/dynamicCompiler';
 type LabMode = 'templates' | 'ai';
 
 // Template types
-type TemplateKey = 'textReveal' | 'logoAnimation' | 'particleWave';
+type TemplateKey = 'textReveal' | 'logoAnimation' | 'particleWave' | 'matrixRain' | 'glitchText' | 'typewriter' | 'barChart';
 
 interface TemplateConfig {
   key: TemplateKey;
@@ -93,6 +105,62 @@ const templates: TemplateConfig[] = [
       { key: 'waveSpeed', label: '波浪速度', type: 'range', min: 0.5, max: 3, step: 0.1 },
     ],
   },
+  {
+    key: 'matrixRain',
+    name: 'Matrix 代码雨',
+    description: '黑客帝国风格代码雨',
+    icon: <Binary size={18} />,
+    component: MatrixRain,
+    defaults: matrixRainDefaults,
+    fields: [
+      { key: 'charColor', label: '字符颜色', type: 'color' },
+      { key: 'backgroundColor', label: '背景颜色', type: 'color' },
+      { key: 'columnCount', label: '列数', type: 'range', min: 10, max: 50, step: 5 },
+      { key: 'speed', label: '速度', type: 'range', min: 0.5, max: 3, step: 0.1 },
+    ],
+  },
+  {
+    key: 'glitchText',
+    name: '故障文字',
+    description: 'Glitch 故障风格特效',
+    icon: <Zap size={18} />,
+    component: GlitchText,
+    defaults: glitchTextDefaults,
+    fields: [
+      { key: 'text', label: '文字内容', type: 'text' },
+      { key: 'textColor', label: '文字颜色', type: 'color' },
+      { key: 'backgroundColor', label: '背景颜色', type: 'color' },
+      { key: 'glitchIntensity', label: '故障强度', type: 'range', min: 0.5, max: 2, step: 0.1 },
+    ],
+  },
+  {
+    key: 'typewriter',
+    name: '打字机',
+    description: '终端风格逐字打印',
+    icon: <Terminal size={18} />,
+    component: Typewriter,
+    defaults: typewriterDefaults,
+    fields: [
+      { key: 'text', label: '文字内容', type: 'text' },
+      { key: 'textColor', label: '文字颜色', type: 'color' },
+      { key: 'backgroundColor', label: '背景颜色', type: 'color' },
+      { key: 'typingSpeed', label: '打字速度', type: 'range', min: 1, max: 6, step: 1 },
+    ],
+  },
+  {
+    key: 'barChart',
+    name: '柱状图',
+    description: '动态数据图表动画',
+    icon: <BarChart3 size={18} />,
+    component: BarChart,
+    defaults: barChartDefaults,
+    fields: [
+      { key: 'title', label: '标题', type: 'text' },
+      { key: 'barColor', label: '柱子颜色', type: 'color' },
+      { key: 'backgroundColor', label: '背景颜色', type: 'color' },
+      { key: 'textColor', label: '文字颜色', type: 'color' },
+    ],
+  },
 ];
 
 // Video config
@@ -136,6 +204,10 @@ export default function RemotionLabTab() {
     textReveal: { ...textRevealDefaults },
     logoAnimation: { ...logoAnimationDefaults },
     particleWave: { ...particleWaveDefaults },
+    matrixRain: { ...matrixRainDefaults },
+    glitchText: { ...glitchTextDefaults },
+    typewriter: { ...typewriterDefaults },
+    barChart: { ...barChartDefaults },
   });
 
   // AI mode state

@@ -1,10 +1,11 @@
 import { useState, useCallback, useRef } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { cn } from '@/lib/cn';
-import { Sparkles, Loader2, AlertCircle, Code2, Wand2 } from 'lucide-react';
+import { Sparkles, Loader2, AlertCircle, Wand2 } from 'lucide-react';
 import { runModelLabStream } from '@/services';
 import { REMOTION_SYSTEM_PROMPT, buildUserPrompt } from '../lib/remotionPrompt';
 import { compileRemotionCode, type CompileResult } from '../lib/dynamicCompiler';
+import { CodeEditor } from './CodeEditor';
 
 interface AiGeneratorPanelProps {
   onGenerated: (result: CompileResult) => void;
@@ -112,6 +113,21 @@ export function AiGeneratorPanel({ onGenerated, className }: AiGeneratorPanelPro
     }
   }, [generatedCode, streamingText, onGenerated]);
 
+  const handleCodeChange = useCallback((newCode: string) => {
+    setGeneratedCode(newCode);
+    setError(null);
+  }, []);
+
+  const handleRunCode = useCallback((code: string) => {
+    const result = compileRemotionCode(code);
+    if (result.success) {
+      setError(null);
+      onGenerated(result);
+    } else {
+      setError(result.error || '编译失败');
+    }
+  }, [onGenerated]);
+
   return (
     <div className={cn('flex flex-col gap-4', className)}>
       {/* Prompt 输入区 */}
@@ -188,20 +204,29 @@ export function AiGeneratorPanel({ onGenerated, className }: AiGeneratorPanelPro
         </GlassCard>
       )}
 
-      {/* 生成的代码预览 */}
+      {/* 生成的代码预览 / 编辑器 */}
       {(streamingText || generatedCode) && (
-        <GlassCard padding="none" className="flex-1 min-h-0 overflow-hidden">
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10">
-            <Code2 size={14} className="text-[var(--text-secondary)]" />
-            <span className="text-xs text-[var(--text-secondary)]">生成的代码</span>
-            {isGenerating && (
-              <Loader2 size={12} className="animate-spin text-purple-400 ml-auto" />
-            )}
-          </div>
-          <pre className="p-3 text-xs font-mono text-[var(--text-secondary)] overflow-auto max-h-[300px] whitespace-pre-wrap">
-            {generatedCode || streamingText}
-          </pre>
-        </GlassCard>
+        <div className="flex-1 min-h-0 flex flex-col">
+          {isGenerating ? (
+            <GlassCard padding="none" className="flex-1 overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10">
+                <Loader2 size={14} className="animate-spin text-purple-400" />
+                <span className="text-xs text-[var(--text-secondary)]">正在生成...</span>
+              </div>
+              <pre className="p-3 text-xs font-mono text-[var(--text-secondary)] overflow-auto max-h-[300px] whitespace-pre-wrap">
+                {streamingText}
+              </pre>
+            </GlassCard>
+          ) : (
+            <CodeEditor
+              code={generatedCode || streamingText}
+              onChange={handleCodeChange}
+              onRun={handleRunCode}
+              height={280}
+              className="flex-1"
+            />
+          )}
+        </div>
       )}
     </div>
   );
