@@ -669,13 +669,8 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
 
   return (
     <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
-      {/* Background is now global - only keep a subtle overlay */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background: 'radial-gradient(ellipse 100% 80% at 50% 50%, transparent 0%, rgba(5,5,8,0.4) 100%)',
-        }}
-      />
+      {/* Uniform semi-transparent overlay - no vignette to avoid empty look */}
+      <div className="absolute inset-0 pointer-events-none bg-[#050508]/20" />
 
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">
