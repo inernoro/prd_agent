@@ -6,33 +6,39 @@ interface StarfieldBackgroundProps {
 }
 
 /**
- * WebGL Starfield Background - Multi-layer parallax star animation
- * Adapted from thirdparty/ref/星空背景.html with gold color theme
+ * WebGL Starfield Background - Optimized for performance
+ * - 30fps cap (background doesn't need 60fps)
+ * - Reduced DPR (1.0 for background)
+ * - Simplified shader with fewer layers
  */
 export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const glRef = useRef<WebGLRenderingContext | null>(null);
-  const programRef = useRef<WebGLProgram | null>(null);
   const animationRef = useRef<number>(0);
   const timeRef = useRef<number>(0);
+  const lastFrameRef = useRef<number>(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Initialize WebGL
-    const gl = canvas.getContext('webgl');
+    const gl = canvas.getContext('webgl', {
+      alpha: false,
+      antialias: false,
+      depth: false,
+      stencil: false,
+      preserveDrawingBuffer: false,
+    });
     if (!gl) {
       console.error('WebGL not supported');
       return;
     }
-    glRef.current = gl;
 
-    // Detect mobile for performance adjustment
-    const isMobile = /Android|webOS|iPhone|BlackBerry|Windows Phone/i.test(navigator.userAgent);
-    const layers = isMobile ? 6 : 3;
+    // Performance settings
+    const isMobile = /Android|webOS|iPhone|iPad|BlackBerry|Windows Phone/i.test(navigator.userAgent);
+    const layers = isMobile ? 2 : 4; // Reduced layers
+    const targetFps = 30;
+    const frameInterval = 1000 / targetFps;
 
-    // Vertex shader
     const vertexSource = `
       attribute vec2 position;
       void main() {
@@ -40,128 +46,82 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
       }
     `;
 
-    // Fragment shader with gold-tinted starfield
+    // Optimized fragment shader
     const fragmentSource = `
-      precision highp float;
+      precision mediump float;
 
       uniform float width;
       uniform float height;
       uniform float time;
 
-      vec2 resolution;
-
-      float random(vec2 par) {
-        return fract(sin(dot(par.xy, vec2(12.9898, 78.233))) * 43758.5453);
-      }
-
-      vec2 random2(vec2 par) {
-        float rand = random(par);
-        return vec2(rand, random(par + rand));
-      }
-
-      float getGlow(float dist, float radius, float intensity) {
-        return pow(radius / dist, intensity);
+      float random(vec2 p) {
+        return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
       }
 
       void main() {
-        resolution = vec2(width, height);
-        float t = 1.0 + time * 0.05;
+        vec2 resolution = vec2(width, height);
+        float t = 1.0 + time * 0.03;
+        float scale = 24.0;
+        float rotAngle = time * -0.05;
+
+        mat2 rot = mat2(cos(rotAngle), -sin(rotAngle), sin(rotAngle), cos(rotAngle));
+        vec2 center = vec2(cos(t), sin(t)) * 0.15 + 0.5;
+
+        vec3 col = vec3(0.0);
+
+        // Gold color palette
+        vec3 colors[3];
+        colors[0] = vec3(0.96, 0.89, 0.72);  // gold core
+        colors[1] = vec3(0.84, 0.70, 0.42);  // gold mid
+        colors[2] = vec3(0.55, 0.23, 0.93);  // purple accent
+
         const float layers = float(${layers});
-        float scale = 32.0;
-        float depth;
-        float phase;
-        float rotationAngle = time * -0.08;
-        float size;
-        float glow;
-        const float del = 1.0 / layers;
+        float layerStep = 1.0 / layers;
 
-        vec2 uv;
-        vec2 fl;
-        vec2 local_uv;
-        vec2 index;
-        vec2 pos;
-        vec2 seed;
-        vec2 centre;
-        vec2 cell;
-        vec2 rot = vec2(cos(t), sin(t));
+        for (float layer = 0.0; layer < 1.0; layer += layerStep) {
+          float depth = fract(layer + t * 0.1);
+          vec2 uv = (center - gl_FragCoord.xy / resolution.x) * rot;
+          uv *= mix(scale, 2.0, depth);
 
-        mat2 rotation = mat2(
-          cos(rotationAngle), -sin(rotationAngle),
-          sin(rotationAngle), cos(rotationAngle)
-        );
+          vec2 gridId = floor(uv);
+          vec2 gridUv = fract(uv) - 0.5;
 
-        vec3 col = vec3(0);
-        vec3 tone;
+          // Only check current cell (no neighbor search = big perf win)
+          vec2 seed = gridId + layer * 100.0;
+          float rand = random(seed);
+          vec2 offset = vec2(random(seed + 1.0), random(seed + 2.0)) - 0.5;
+          offset *= 0.8;
 
-        // Gold-based color palette
-        vec3 goldCore = vec3(0.96, 0.89, 0.72);    // #f4e2b8
-        vec3 goldMid = vec3(0.84, 0.70, 0.42);     // #d6b26a
-        vec3 goldWarm = vec3(0.95, 0.84, 0.61);    // #f2d59b
-        vec3 purple = vec3(0.55, 0.23, 0.93);      // #8b3aed
-        vec3 blue = vec3(0.23, 0.51, 0.96);        // #3b82f6
+          float dist = length(gridUv - offset);
+          float pulse = 0.5 + 0.5 * sin(rand * 20.0 + time * 2.0);
+          float brightness = depth * pulse * 0.015 / (dist * dist + 0.001);
 
-        for (float i = 0.0; i <= 1.0; i += del) {
-          depth = fract(i + t);
-          centre = rot * 0.2 * depth + 0.5;
-          uv = centre - gl_FragCoord.xy / resolution.x;
-          uv *= rotation;
-          uv *= mix(scale, 0.0, depth);
-          fl = floor(uv);
-          local_uv = uv - fl - 0.5;
+          // Color selection
+          int colorIdx = int(mod(rand * 10.0, 3.0));
+          vec3 starColor = colors[colorIdx];
 
-          for (float j = -1.0; j <= 1.0; j++) {
-            for (float k = -1.0; k <= 1.0; k++) {
-              cell = vec2(j, k);
-              index = fl + cell;
-              seed = 128.0 * i + index;
-
-              pos = cell + 0.9 * (random2(seed) - 0.5);
-              phase = 128.0 * random(seed);
-
-              // Mix gold tones with occasional purple/blue accents
-              float colorSelect = random(seed + 0.5);
-              if (colorSelect < 0.5) {
-                tone = goldCore;
-              } else if (colorSelect < 0.75) {
-                tone = goldMid;
-              } else if (colorSelect < 0.88) {
-                tone = goldWarm;
-              } else if (colorSelect < 0.94) {
-                tone = purple;
-              } else {
-                tone = blue;
-              }
-
-              size = (0.1 + 0.5 + 0.5 * sin(phase * t)) * depth;
-              glow = size * getGlow(length(local_uv - pos), 0.09, 2.0);
-
-              // White core with colored glow
-              col += 5.0 * vec3(0.025 * glow) + tone * glow;
-            }
-          }
+          col += starColor * brightness * 0.4;
         }
 
-        // Tone mapping
-        col = 1.0 - exp(-col);
+        // Simple tone mapping
+        col = col / (col + 0.5);
 
-        // Add subtle vignette
-        vec2 vUv = gl_FragCoord.xy / resolution;
-        float vignette = 1.0 - length((vUv - 0.5) * 1.2);
-        vignette = smoothstep(0.0, 0.7, vignette);
-        col *= vignette * 0.9 + 0.1;
+        // Vignette
+        vec2 vUv = gl_FragCoord.xy / resolution - 0.5;
+        float vig = 1.0 - dot(vUv, vUv) * 0.8;
+        col *= vig;
 
         gl_FragColor = vec4(col, 1.0);
       }
     `;
 
-    // Compile shaders
     const compileShader = (source: string, type: number): WebGLShader | null => {
       const shader = gl.createShader(type);
       if (!shader) return null;
       gl.shaderSource(shader, source);
       gl.compileShader(shader);
       if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+        console.error('Shader error:', gl.getShaderInfoLog(shader));
         return null;
       }
       return shader;
@@ -171,7 +131,6 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
     const fragmentShader = compileShader(fragmentSource, gl.FRAGMENT_SHADER);
     if (!vertexShader || !fragmentShader) return;
 
-    // Create program
     const program = gl.createProgram();
     if (!program) return;
     gl.attachShader(program, vertexShader);
@@ -184,32 +143,23 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
     }
 
     gl.useProgram(program);
-    programRef.current = program;
 
-    // Set up geometry (full-screen quad)
-    const vertexData = new Float32Array([
-      -1.0, 1.0,
-      -1.0, -1.0,
-      1.0, 1.0,
-      1.0, -1.0,
-    ]);
-
+    const vertexData = new Float32Array([-1, 1, -1, -1, 1, 1, 1, -1]);
     const vertexBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, vertexData, gl.STATIC_DRAW);
 
     const positionHandle = gl.getAttribLocation(program, 'position');
     gl.enableVertexAttribArray(positionHandle);
-    gl.vertexAttribPointer(positionHandle, 2, gl.FLOAT, false, 2 * 4, 0);
+    gl.vertexAttribPointer(positionHandle, 2, gl.FLOAT, false, 0, 0);
 
-    // Get uniform locations
     const timeHandle = gl.getUniformLocation(program, 'time');
     const widthHandle = gl.getUniformLocation(program, 'width');
     const heightHandle = gl.getUniformLocation(program, 'height');
 
-    // Resize handler
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      // Use DPR of 1 for background (no need for retina)
+      const dpr = 1;
       canvas.width = window.innerWidth * dpr;
       canvas.height = window.innerHeight * dpr;
       canvas.style.width = `${window.innerWidth}px`;
@@ -222,16 +172,21 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
     resize();
     window.addEventListener('resize', resize);
 
-    // Animation loop
-    const dt = 0.015;
-    const draw = () => {
-      timeRef.current += dt;
+    // 30fps capped animation loop
+    const draw = (timestamp: number) => {
+      animationRef.current = requestAnimationFrame(draw);
+
+      const elapsed = timestamp - lastFrameRef.current;
+      if (elapsed < frameInterval) return;
+
+      lastFrameRef.current = timestamp - (elapsed % frameInterval);
+      timeRef.current += 0.033; // ~30fps time step
+
       gl.uniform1f(timeHandle, timeRef.current);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      animationRef.current = requestAnimationFrame(draw);
     };
 
-    draw();
+    animationRef.current = requestAnimationFrame(draw);
 
     return () => {
       cancelAnimationFrame(animationRef.current);
