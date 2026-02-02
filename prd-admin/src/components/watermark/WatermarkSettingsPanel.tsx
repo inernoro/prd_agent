@@ -1955,6 +1955,17 @@ function WatermarkPreview(props: {
   const maxX = Math.max(width - effectiveWidth, 0);
   const maxY = Math.max(canvasHeight - effectiveHeight, 0);
 
+  // 调试日志：追踪定位计算使用的尺寸
+  console.log('[WatermarkPosition]', {
+    effectiveWidth,
+    effectiveHeight,
+    watermarkSizeState: watermarkSize,
+    estimatedWidth,
+    pendingMeasure,
+    hasLastMeasured,
+    hideUntilMeasured,
+  });
+
   let positionX = 0;
   let positionY = 0;
   switch (spec.anchor) {
@@ -2016,6 +2027,15 @@ function WatermarkPreview(props: {
       // 直接测量 contentRef 的实际渲染尺寸，避免手动计算带来的 subpixel 误差
       // 这样可以确保定位计算使用的尺寸与浏览器实际渲染的尺寸完全一致
       const contentRect = contentRef.current?.getBoundingClientRect();
+
+      // 调试日志：追踪测量时机和结果
+      console.log('[WatermarkMeasure]', {
+        hasContentRef: !!contentRef.current,
+        contentRect: contentRect ? { width: contentRect.width, height: contentRect.height } : null,
+        fontReady,
+        measureSignature: measureSignature.slice(0, 30) + '...',
+      });
+
       if (!contentRect || !contentRect.width || !contentRect.height) return;
 
       // 使用 ceil 确保不会因为 subpixel 渲染导致边缘被截断
