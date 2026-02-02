@@ -33,7 +33,8 @@ public class WatermarkRenderer
 
         var format = Image.DetectFormat(inputBytes);
         using var image = Image.Load<Rgba32>(inputBytes);
-        var fontSize = WatermarkLayoutCalculator.CalculateScaledFontSize(config, image.Width);
+        var scale = WatermarkLayoutCalculator.CalculateScaleFactor(config, image.Width, image.Height);
+        var fontSize = WatermarkLayoutCalculator.CalculateScaledFontSize(config, image.Width, image.Height);
         var fontResolved = _fontRegistry.ResolveFont(config.FontKey, fontSize);
         var font = fontResolved.Font;
 
@@ -46,14 +47,23 @@ public class WatermarkRenderer
         var textHeight = textSize.Height;
         var textWidth = textSize.Width;
 
-        var gap = textHeight / 4d;
-        var iconWidth = config.IconEnabled ? textHeight + gap : 0d;
+        var baseGap = config.IconGapPx > 0 ? config.IconGapPx : config.FontSizePx / 4d;
+        var gap = baseGap * scale;
+        var iconScale = config.IconScale > 0 ? config.IconScale : 1d;
+        var iconSize = config.IconEnabled ? textHeight * iconScale : 0d;
+        var isVerticalIcon = string.Equals(config.IconPosition, "top", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(config.IconPosition, "bottom", StringComparison.OrdinalIgnoreCase);
         var padding = (config.BackgroundEnabled || config.BorderEnabled) ? textHeight * 0.3d : 0d;
         // 计算边框占用的额外空间（边框完全在外面）
-        var scale = image.Width / (double)config.BaseCanvasWidth;
         var borderExtra = config.BorderEnabled ? config.BorderWidth * scale * 2d : 0d;
-        var watermarkWidth = textWidth + iconWidth + padding * 2d + borderExtra;
-        var watermarkHeight = textHeight + padding * 2d + borderExtra;
+        var contentWidth = config.IconEnabled
+            ? (isVerticalIcon ? Math.Max(textWidth, iconSize) : textWidth + iconSize + gap)
+            : textWidth;
+        var contentHeight = config.IconEnabled
+            ? (isVerticalIcon ? textHeight + iconSize + gap : Math.Max(textHeight, iconSize))
+            : textHeight;
+        var watermarkWidth = contentWidth + padding * 2d + borderExtra;
+        var watermarkHeight = contentHeight + padding * 2d + borderExtra;
         var (watermarkLeft, watermarkTop) = WatermarkLayoutCalculator.CalculateWatermarkTopLeft(
             config,
             image.Width,
@@ -62,8 +72,52 @@ public class WatermarkRenderer
             watermarkHeight);
         // 内部元素需要偏移边框宽度
         var borderOffset = borderExtra / 2d;
-        var textLeft = (float)(watermarkLeft + iconWidth + padding + borderOffset);
-        var textTop = (float)(watermarkTop + padding + borderOffset);
+        var contentLeft = watermarkLeft + padding + borderOffset;
+        var contentTop = watermarkTop + padding + borderOffset;
+        var textLeft = (float)contentLeft;
+        var textTop = (float)contentTop;
+        var iconLeft = (float)contentLeft;
+        var iconTop = (float)contentTop;
+
+        if (config.IconEnabled)
+        {
+            if (isVerticalIcon)
+            {
+                var textOffsetX = (contentWidth - textWidth) / 2d;
+                var iconOffsetX = (contentWidth - iconSize) / 2d;
+                textLeft = (float)(contentLeft + textOffsetX);
+                iconLeft = (float)(contentLeft + iconOffsetX);
+
+                if (string.Equals(config.IconPosition, "top", StringComparison.OrdinalIgnoreCase))
+                {
+                    iconTop = (float)contentTop;
+                    textTop = (float)(contentTop + iconSize + gap);
+                }
+                else
+                {
+                    textTop = (float)contentTop;
+                    iconTop = (float)(contentTop + textHeight + gap);
+                }
+            }
+            else
+            {
+                var textOffsetY = (contentHeight - textHeight) / 2d;
+                var iconOffsetY = (contentHeight - iconSize) / 2d;
+                textTop = (float)(contentTop + textOffsetY);
+                iconTop = (float)(contentTop + iconOffsetY);
+
+                if (string.Equals(config.IconPosition, "right", StringComparison.OrdinalIgnoreCase))
+                {
+                    textLeft = (float)contentLeft;
+                    iconLeft = (float)(contentLeft + textWidth + gap);
+                }
+                else
+                {
+                    iconLeft = (float)contentLeft;
+                    textLeft = (float)(contentLeft + iconSize + gap);
+                }
+            }
+        }
 
         var textColor = ResolveColorHex(config.TextColor, config.Opacity);
         var borderColor = ResolveColorHex(config.BorderColor ?? config.TextColor, config.Opacity);
@@ -73,8 +127,9 @@ public class WatermarkRenderer
         {
             // 计算缩放后的圆角半径
             var scaledCornerRadius = (float)(config.CornerRadius * scale);
-            var hasRoundedCorner = scaledCornerRadius > 0;
-            var hasBackground = config.BackgroundEnabled || hasRoundedCorner;
+            var hasDecoration = config.BackgroundEnabled || config.BorderEnabled;
+            var hasRoundedCorner = scaledCornerRadius > 0 && hasDecoration;
+            var hasBackground = config.BackgroundEnabled;
 
             // 计算缩放后的边框宽度
             var scaledBorderWidth = (float)(config.BorderWidth * scale);
@@ -142,7 +197,7 @@ public class WatermarkRenderer
                 if (iconBytes != null && iconBytes.Length > 0)
                 {
                     using var icon = Image.Load<Rgba32>(iconBytes);
-                    var targetSize = (int)Math.Round(textHeight);
+                    var targetSize = (int)Math.Round(textHeight * iconScale);
                     if (targetSize > 0)
                     {
                         var iconScale = targetSize / (double)Math.Max(icon.Width, icon.Height);
@@ -161,8 +216,6 @@ public class WatermarkRenderer
                         canvas.Mutate(ctx => ctx.DrawImage(resized, new Point(dx, dy), 1f));
                         canvas.Mutate(ctx => ctx.Opacity((float)config.Opacity));
 
-                        var iconLeft = (float)(watermarkLeft + padding + borderOffset);
-                        var iconTop = (float)(watermarkTop + padding + borderOffset);
                         image.Mutate(ctx => ctx.DrawImage(canvas, new Point((int)iconLeft, (int)iconTop), 1f));
                     }
                 }

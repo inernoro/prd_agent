@@ -99,7 +99,7 @@ public class WatermarkRendererTests
         int width,
         int height)
     {
-        var fontSize = WatermarkLayoutCalculator.CalculateScaledFontSize(config, width);
+        var fontSize = WatermarkLayoutCalculator.CalculateScaledFontSize(config, width, height);
         var font = registry.ResolveFont(config.FontKey, fontSize).Font;
         var textOptions = new TextOptions(font)
         {

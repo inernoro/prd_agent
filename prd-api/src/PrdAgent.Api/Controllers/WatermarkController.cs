@@ -795,6 +795,8 @@ public class WatermarkController : ControllerBase
         var fontKey = _fontRegistry.NormalizeFontKey(request.FontKey ?? "default");
         var textColor = request.TextColor ?? "#FFFFFF";
 
+        var fontSize = request.FontSizePx ?? 28;
+        var defaultGap = Math.Max(0, Math.Round(fontSize / 4d, 2));
         return new WatermarkConfig
         {
             UserId = userId,
@@ -802,7 +804,7 @@ public class WatermarkController : ControllerBase
             AppKeys = new List<string>(),
             Text = request.Text ?? "米多AI生成",
             FontKey = fontKey,
-            FontSizePx = request.FontSizePx ?? 28,
+            FontSizePx = fontSize,
             Opacity = request.Opacity ?? 0.6,
             PositionMode = request.PositionMode ?? "pixel",
             Anchor = request.Anchor ?? "bottom-right",
@@ -810,6 +812,9 @@ public class WatermarkController : ControllerBase
             OffsetY = request.OffsetY ?? 24,
             IconEnabled = request.IconEnabled ?? false,
             IconImageRef = request.IconImageRef,
+            IconPosition = request.IconPosition ?? "left",
+            IconGapPx = request.IconGapPx ?? defaultGap,
+            IconScale = request.IconScale ?? 1,
             BorderEnabled = request.BorderEnabled ?? false,
             BorderColor = request.BorderColor,
             BorderWidth = request.BorderWidth ?? 2,
@@ -817,6 +822,7 @@ public class WatermarkController : ControllerBase
             RoundedBackgroundEnabled = request.RoundedBackgroundEnabled ?? false,
             CornerRadius = request.CornerRadius ?? 0,
             BaseCanvasWidth = request.BaseCanvasWidth ?? 320,
+            ScaleMode = request.ScaleMode ?? 0,
             TextColor = textColor,
             BackgroundColor = request.BackgroundColor ?? "#000000",
             PreviewBackgroundImageRef = request.PreviewBackgroundImageRef,
@@ -838,6 +844,9 @@ public class WatermarkController : ControllerBase
         if (request.OffsetY.HasValue) config.OffsetY = request.OffsetY.Value;
         if (request.IconEnabled.HasValue) config.IconEnabled = request.IconEnabled.Value;
         if (request.IconImageRef != null) config.IconImageRef = request.IconImageRef;
+        if (request.IconPosition != null) config.IconPosition = request.IconPosition;
+        if (request.IconGapPx.HasValue) config.IconGapPx = request.IconGapPx.Value;
+        if (request.IconScale.HasValue) config.IconScale = request.IconScale.Value;
         if (request.BorderEnabled.HasValue) config.BorderEnabled = request.BorderEnabled.Value;
         if (request.BorderColor != null) config.BorderColor = request.BorderColor;
         if (request.BorderWidth.HasValue) config.BorderWidth = request.BorderWidth.Value;
@@ -845,6 +854,7 @@ public class WatermarkController : ControllerBase
         if (request.RoundedBackgroundEnabled.HasValue) config.RoundedBackgroundEnabled = request.RoundedBackgroundEnabled.Value;
         if (request.CornerRadius.HasValue) config.CornerRadius = request.CornerRadius.Value;
         if (request.BaseCanvasWidth.HasValue) config.BaseCanvasWidth = request.BaseCanvasWidth.Value;
+        if (request.ScaleMode.HasValue) config.ScaleMode = request.ScaleMode.Value;
         if (request.TextColor != null) config.TextColor = request.TextColor;
         if (request.BackgroundColor != null) config.BackgroundColor = request.BackgroundColor;
         if (request.PreviewBackgroundImageRef != null) config.PreviewBackgroundImageRef = request.PreviewBackgroundImageRef;

@@ -18,6 +18,9 @@ export type WatermarkConfig = {
   offsetY: number;
   iconEnabled: boolean;
   iconImageRef?: string | null;
+  iconPosition?: 'left' | 'right' | 'top' | 'bottom';
+  iconGapPx?: number;
+  iconScale?: number;
   borderEnabled?: boolean;
   borderColor?: string | null;
   borderWidth?: number;
@@ -25,6 +28,7 @@ export type WatermarkConfig = {
   roundedBackgroundEnabled?: boolean;
   cornerRadius?: number;
   baseCanvasWidth: number;
+  scaleMode?: 0 | 1 | 2 | 3 | 4;
   textColor?: string | null;
   backgroundColor?: string | null;
   previewBackgroundImageRef?: string | null;
@@ -62,6 +66,9 @@ export type CreateWatermarkInput = {
   offsetY?: number;
   iconEnabled?: boolean;
   iconImageRef?: string | null;
+  iconPosition?: 'left' | 'right' | 'top' | 'bottom';
+  iconGapPx?: number;
+  iconScale?: number;
   borderEnabled?: boolean;
   borderColor?: string | null;
   borderWidth?: number;
@@ -69,6 +76,7 @@ export type CreateWatermarkInput = {
   roundedBackgroundEnabled?: boolean;
   cornerRadius?: number;
   baseCanvasWidth?: number;
+  scaleMode?: 0 | 1 | 2 | 3 | 4;
   textColor?: string | null;
   backgroundColor?: string | null;
   previewBackgroundImageRef?: string | null;

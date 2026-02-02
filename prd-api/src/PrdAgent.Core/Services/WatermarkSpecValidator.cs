@@ -10,10 +10,16 @@ public static class WatermarkSpecValidator
     public const int MaxFontSizePx = 512;
     public const int MinCanvasWidth = 64;
     public const int MaxCanvasWidth = 4096;
+    public const int MinScaleMode = 0;
+    public const int MaxScaleMode = 4;
     public const double MinCornerRadius = 0;
     public const double MaxCornerRadius = 100;
     public const double MinBorderWidth = 1;
     public const double MaxBorderWidth = 20;
+    public const double MinIconGapPx = 0;
+    public const double MaxIconGapPx = 200;
+    public const double MinIconScale = 0.2;
+    public const double MaxIconScale = 3;
 
     private static readonly Regex HexColorRegex = new("^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$", RegexOptions.Compiled);
     private static readonly HashSet<string> AllowedPositionModes = new(StringComparer.OrdinalIgnoreCase) { "pixel", "ratio" };
@@ -23,6 +29,13 @@ public static class WatermarkSpecValidator
         "top-right",
         "bottom-left",
         "bottom-right"
+    };
+    private static readonly HashSet<string> AllowedIconPositions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "left",
+        "right",
+        "top",
+        "bottom"
     };
 
     public static (bool ok, string? message) Validate(WatermarkConfig config, IReadOnlyCollection<string> allowedFontKeys)
@@ -67,9 +80,25 @@ public static class WatermarkSpecValidator
         {
             return (false, $"baseCanvasWidth 必须在 {MinCanvasWidth}-{MaxCanvasWidth} 范围内");
         }
+        if (config.ScaleMode < MinScaleMode || config.ScaleMode > MaxScaleMode)
+        {
+            return (false, $"scaleMode 必须在 {MinScaleMode}-{MaxScaleMode} 范围内");
+        }
         if (config.IconEnabled && string.IsNullOrWhiteSpace(config.IconImageRef))
         {
             return (false, "启用图标时必须提供 iconImageRef");
+        }
+        if (!string.IsNullOrWhiteSpace(config.IconPosition) && !AllowedIconPositions.Contains(config.IconPosition))
+        {
+            return (false, "iconPosition 必须为 left/right/top/bottom");
+        }
+        if (!double.IsFinite(config.IconGapPx) || config.IconGapPx < MinIconGapPx || config.IconGapPx > MaxIconGapPx)
+        {
+            return (false, $"iconGapPx 必须在 {MinIconGapPx}-{MaxIconGapPx} 范围内");
+        }
+        if (!double.IsFinite(config.IconScale) || config.IconScale < MinIconScale || config.IconScale > MaxIconScale)
+        {
+            return (false, $"iconScale 必须在 {MinIconScale}-{MaxIconScale} 范围内");
         }
         if (!string.IsNullOrWhiteSpace(config.TextColor) && !HexColorRegex.IsMatch(config.TextColor))
         {

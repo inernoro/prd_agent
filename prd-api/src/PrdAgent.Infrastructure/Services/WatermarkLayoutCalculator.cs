@@ -39,10 +39,28 @@ public static class WatermarkLayoutCalculator
         return (left, top);
     }
 
-    public static double CalculateScaledFontSize(WatermarkConfig config, int targetWidth)
+    public static double CalculateScaleFactor(WatermarkConfig config, int targetWidth, int targetHeight)
     {
-        var scale = config.BaseCanvasWidth > 0 ? targetWidth / (double)config.BaseCanvasWidth : 1d;
-        if (!double.IsFinite(scale) || scale <= 0) scale = 1d;
+        if (config.BaseCanvasWidth <= 0) return 1d;
+        if (config.ScaleMode == 0) return 1d;
+
+        var basis = config.ScaleMode switch
+        {
+            1 => Math.Max(targetWidth, targetHeight),
+            2 => Math.Min(targetWidth, targetHeight),
+            3 => targetWidth,
+            4 => targetHeight,
+            _ => targetWidth
+        };
+
+        var scale = basis / (double)config.BaseCanvasWidth;
+        if (!double.IsFinite(scale) || scale <= 0) return 1d;
+        return scale;
+    }
+
+    public static double CalculateScaledFontSize(WatermarkConfig config, int targetWidth, int targetHeight)
+    {
+        var scale = CalculateScaleFactor(config, targetWidth, targetHeight);
         return Math.Max(1d, config.FontSizePx * scale);
     }
 }
