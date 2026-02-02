@@ -1,5 +1,4 @@
 import { cn } from '@/lib/cn';
-import { BlackholeBackground } from '../components/BlackholeBackground';
 
 interface CtaFooterProps {
   className?: string;
@@ -10,11 +9,8 @@ interface CtaFooterProps {
 export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps) {
   return (
     <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
-      {/* Blackhole vortex background */}
-      <BlackholeBackground />
-
-      {/* Dark overlay for readability */}
-      <div className="absolute inset-0 bg-black/50" />
+      {/* Semi-transparent overlay to let global background show through */}
+      <div className="absolute inset-0 bg-[#050508]/50" />
 
       {/* Content */}
       <div className="relative z-10 max-w-4xl mx-auto px-6 text-center">

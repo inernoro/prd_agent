@@ -331,7 +331,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
         {/* Bento grid - improved layout */}
         <div className="grid grid-cols-1 md:grid-cols-6 gap-4 lg:gap-5">
           {/* Multi-model support - large card spanning 4 columns */}
-          <div className="md:col-span-4 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 lg:p-8 hover:border-blue-500/30 transition-all duration-500">
+          <div className="md:col-span-4 group relative overflow-hidden rounded-3xl border border-white/10 bg-[#0a0a0f]/70 p-6 lg:p-8 hover:border-blue-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -362,7 +362,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* Speed - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 hover:border-amber-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-[#0a0a0f]/70 p-6 hover:border-amber-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -382,7 +382,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* Security - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 hover:border-emerald-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-[#0a0a0f]/70 p-6 hover:border-emerald-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -402,7 +402,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* Private deployment - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 hover:border-purple-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-[#0a0a0f]/70 p-6 hover:border-purple-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -422,7 +422,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* API Platform - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 hover:border-rose-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-[#0a0a0f]/70 p-6 hover:border-rose-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -442,7 +442,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* Workflow - full width */}
-          <div className="md:col-span-6 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 lg:p-8 hover:border-amber-500/30 transition-all duration-500">
+          <div className="md:col-span-6 group relative overflow-hidden rounded-3xl border border-white/10 bg-[#0a0a0f]/70 p-6 lg:p-8 hover:border-amber-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
