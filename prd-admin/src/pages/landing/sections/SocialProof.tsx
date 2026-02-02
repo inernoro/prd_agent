@@ -1,12 +1,12 @@
 import { cn } from '@/lib/cn';
-import { GlassCard } from '@/components/design/GlassCard';
 import { CountUpNumber } from '../components/CountUpNumber';
+import { GlowOrb } from '../components/GlowOrb';
 
 interface Stat {
   value: number;
   suffix: string;
   label: string;
-  description: string;
+  gradient: string;
 }
 
 const stats: Stat[] = [
@@ -14,25 +14,25 @@ const stats: Stat[] = [
     value: 10000,
     suffix: '+',
     label: '活跃用户',
-    description: '来自各行业的创作者',
+    gradient: 'from-blue-500 to-cyan-500',
   },
   {
     value: 99.9,
     suffix: '%',
     label: '服务可用性',
-    description: '企业级稳定性保障',
+    gradient: 'from-emerald-500 to-teal-500',
   },
   {
     value: 50,
     suffix: 'ms',
     label: '平均响应',
-    description: '极致的用户体验',
+    gradient: 'from-yellow-500 to-orange-500',
   },
   {
     value: 1000000,
     suffix: '+',
     label: '累计调用',
-    description: '经过大规模验证',
+    gradient: 'from-purple-500 to-pink-500',
   },
 ];
 
@@ -40,27 +40,27 @@ interface Testimonial {
   content: string;
   author: string;
   role: string;
-  avatar: string;
+  company: string;
 }
 
 const testimonials: Testimonial[] = [
   {
-    content: '文学创作 Agent 极大提升了我们内容团队的效率，配图质量超出预期。',
+    content: '文学创作 Agent 极大提升了我们内容团队的效率，配图质量超出预期，平均每篇文章节省 2 小时配图时间。',
     author: '张明',
     role: '内容运营总监',
-    avatar: 'Z',
+    company: '某知名媒体',
   },
   {
-    content: 'PRD Agent 帮助我们快速理解和分析复杂的产品需求，节省了大量沟通成本。',
+    content: 'PRD Agent 帮助我们快速理解和分析复杂的产品需求，需求评审效率提升 40%，遗漏问题减少 60%。',
     author: '李华',
     role: '产品经理',
-    avatar: 'L',
+    company: '互联网大厂',
   },
   {
-    content: '视觉创作工作区的多模态能力让设计探索变得更加高效和有趣。',
+    content: '视觉创作工作区的多模态能力让设计探索变得更加高效，概念稿出图速度提升 5 倍，创意迭代更加顺畅。',
     author: '王芳',
     role: '设计主管',
-    avatar: 'W',
+    company: '设计工作室',
   },
 ];
 
@@ -70,55 +70,83 @@ interface SocialProofProps {
 
 export function SocialProof({ className }: SocialProofProps) {
   return (
-    <section className={cn('relative py-24 sm:py-32', className)}>
+    <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
       {/* Background */}
       <div className="absolute inset-0 bg-gradient-to-b from-[#050508] via-[#0a0a0f] to-[#050508]" />
 
+      {/* Decorative */}
+      <GlowOrb color="gold" size="lg" className="top-1/3 left-1/4 opacity-30" />
+
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">
+        {/* Section header */}
+        <div className="text-center mb-16">
+          <div className="inline-flex items-center gap-2 px-4 py-2 mb-6 rounded-full border border-white/10 bg-white/[0.03]">
+            <span className="text-sm text-white/50">数据说话</span>
+          </div>
+          <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-white/90 mb-4">
+            值得信赖的选择
+          </h2>
+          <p className="text-lg text-white/40 max-w-2xl mx-auto">
+            已有数千家企业选择我们，一起见证 AI 的力量
+          </p>
+        </div>
+
         {/* Stats grid */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-20">
           {stats.map((stat, idx) => (
-            <GlassCard
+            <div
               key={idx}
-              glow
-              variant="subtle"
-              padding="lg"
-              className="text-center"
+              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 lg:p-8 text-center hover:border-white/20 transition-all duration-500"
             >
-              <div className="text-3xl sm:text-4xl md:text-5xl font-bold mb-2">
-                <span
-                  style={{
-                    background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                    backgroundClip: 'text',
-                  }}
-                >
-                  <CountUpNumber
-                    end={stat.value}
-                    suffix={stat.suffix}
-                    duration={2500}
-                    decimals={stat.suffix === '%' ? 1 : 0}
-                  />
-                </span>
+              {/* Glow on hover */}
+              <div
+                className={cn(
+                  'absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500',
+                  'bg-gradient-to-b',
+                  stat.gradient
+                )}
+                style={{ opacity: 0 }}
+              />
+              <div
+                className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-32 rounded-full blur-3xl opacity-0 group-hover:opacity-30 transition-opacity duration-500"
+                style={{
+                  background: `linear-gradient(to bottom, ${stat.gradient.includes('blue') ? 'rgba(59,130,246,0.5)' : stat.gradient.includes('emerald') ? 'rgba(16,185,129,0.5)' : stat.gradient.includes('yellow') ? 'rgba(234,179,8,0.5)' : 'rgba(168,85,247,0.5)'}, transparent)`,
+                }}
+              />
+
+              <div className="relative z-10">
+                <div className="text-4xl sm:text-5xl lg:text-6xl font-bold mb-2">
+                  <span
+                    style={{
+                      background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+                      WebkitBackgroundClip: 'text',
+                      WebkitTextFillColor: 'transparent',
+                      backgroundClip: 'text',
+                    }}
+                  >
+                    <CountUpNumber
+                      end={stat.value}
+                      suffix={stat.suffix}
+                      duration={2500}
+                      decimals={stat.suffix === '%' ? 1 : 0}
+                    />
+                  </span>
+                </div>
+                <div className="text-sm lg:text-base font-medium text-white/60">
+                  {stat.label}
+                </div>
               </div>
-              <div className="text-base font-medium text-white/80 mb-1">
-                {stat.label}
-              </div>
-              <div className="text-xs text-white/40">
-                {stat.description}
-              </div>
-            </GlassCard>
+            </div>
           ))}
         </div>
 
-        {/* Section header */}
+        {/* Testimonials header */}
         <div className="text-center mb-12">
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-white/90 mb-4">
+          <h3 className="text-2xl sm:text-3xl font-bold text-white/90 mb-2">
             用户反馈
-          </h2>
-          <p className="text-lg text-white/50">
+          </h3>
+          <p className="text-white/40">
             听听他们怎么说
           </p>
         </div>
@@ -126,45 +154,61 @@ export function SocialProof({ className }: SocialProofProps) {
         {/* Testimonials */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {testimonials.map((testimonial, idx) => (
-            <GlassCard
+            <div
               key={idx}
-              padding="lg"
-              className="group"
+              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 lg:p-8 hover:border-white/20 transition-all duration-500"
             >
-              {/* Quote icon */}
-              <div className="mb-4">
-                <svg className="w-8 h-8 text-white/10" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z" />
-                </svg>
+              {/* Quote mark */}
+              <div className="absolute top-6 right-6 text-6xl font-serif text-white/5 leading-none">
+                "
               </div>
 
               {/* Content */}
-              <p className="text-white/70 leading-relaxed mb-6">
-                "{testimonial.content}"
-              </p>
+              <div className="relative z-10">
+                <p className="text-white/60 leading-relaxed mb-6 text-sm lg:text-base">
+                  "{testimonial.content}"
+                </p>
 
-              {/* Author */}
-              <div className="flex items-center gap-3">
-                <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold"
-                  style={{
-                    background: 'linear-gradient(135deg, #d6b26a 0%, #f2d59b 100%)',
-                    color: '#0b0b0d',
-                  }}
-                >
-                  {testimonial.avatar}
-                </div>
-                <div>
-                  <div className="text-sm font-medium text-white/80">
-                    {testimonial.author}
+                {/* Author */}
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
+                    style={{
+                      background: 'linear-gradient(135deg, #d6b26a 0%, #f2d59b 100%)',
+                      color: '#0b0b0d',
+                    }}
+                  >
+                    {testimonial.author[0]}
                   </div>
-                  <div className="text-xs text-white/40">
-                    {testimonial.role}
+                  <div>
+                    <div className="text-sm font-medium text-white/80">
+                      {testimonial.author}
+                    </div>
+                    <div className="text-xs text-white/40">
+                      {testimonial.role} · {testimonial.company}
+                    </div>
                   </div>
                 </div>
               </div>
-            </GlassCard>
+            </div>
           ))}
+        </div>
+
+        {/* Trust badges */}
+        <div className="mt-16 pt-16 border-t border-white/10">
+          <div className="text-center mb-8">
+            <p className="text-sm text-white/40">受到以下企业信赖</p>
+          </div>
+          <div className="flex items-center justify-center gap-8 lg:gap-16 flex-wrap opacity-40">
+            {['企业 A', '企业 B', '企业 C', '企业 D', '企业 E'].map((company) => (
+              <div
+                key={company}
+                className="text-lg font-semibold text-white/60"
+              >
+                {company}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </section>
