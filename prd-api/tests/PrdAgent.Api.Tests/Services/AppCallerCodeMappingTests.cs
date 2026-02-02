@@ -115,7 +115,8 @@ public class AppCallerCodeMappingTests
     [InlineData("visual-agent.image.text2img::generation")]
     [InlineData("visual-agent.image.img2img::generation")]
     [InlineData("visual-agent.image.vision::generation")]
-    [InlineData("literary-agent.illustration::generation")]
+    [InlineData("literary-agent.illustration.text2img::generation")]  // Corrected: use specific text2img code
+    [InlineData("literary-agent.illustration.img2img::generation")]   // Also verify img2img exists
     [InlineData("prd-agent-web.lab::generation")]
     [InlineData("prd-agent-web.model-lab.run::chat")]
     [InlineData("prd-agent-web.platforms.reclassify::chat")]
