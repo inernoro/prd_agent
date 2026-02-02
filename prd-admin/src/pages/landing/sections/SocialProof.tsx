@@ -93,7 +93,7 @@ export function SocialProof({ className }: SocialProofProps) {
           {stats.map((stat, idx) => (
             <div
               key={idx}
-              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-[#0a0a0f]/70 p-6 lg:p-8 text-center hover:border-white/20 transition-all duration-500"
+              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 lg:p-8 text-center hover:border-white/20 transition-all duration-500"
             >
               {/* Glow on hover */}
               <div
@@ -152,7 +152,7 @@ export function SocialProof({ className }: SocialProofProps) {
           {testimonials.map((testimonial, idx) => (
             <div
               key={idx}
-              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-[#0a0a0f]/70 p-6 lg:p-8 hover:border-white/20 transition-all duration-500"
+              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 lg:p-8 hover:border-white/20 transition-all duration-500"
             >
               {/* Quote mark */}
               <div className="absolute top-6 right-6 text-6xl font-serif text-white/5 leading-none">
