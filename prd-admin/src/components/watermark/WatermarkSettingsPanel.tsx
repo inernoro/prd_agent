@@ -1891,9 +1891,7 @@ function WatermarkPreview(props: {
       ].join('|'),
     [spec.text, spec.iconEnabled, spec.iconImageRef, spec.backgroundEnabled, spec.borderEnabled, borderWidth, fontFamily, fontSize, iconPosition, gap, iconSize]
   );
-  // 临时禁用缓存以排查问题：强制每次重新测量
-  const _cachedSize = watermarkSizeCache.get(measureSignature);
-  const cachedSize = false as const ? _cachedSize : undefined;
+  const cachedSize = watermarkSizeCache.get(measureSignature);
 
   useLayoutEffect(() => {
     if (cachedSize) {
@@ -1942,8 +1940,13 @@ function WatermarkPreview(props: {
   const estimatedBorderExtra = spec.borderEnabled ? borderWidth * 2 : 0;
   const estimatedWidth = estimatedContentWidth + decorationPadding * 2 + estimatedBorderExtra;
   const estimatedHeight = estimatedContentHeight + decorationPadding * 2 + estimatedBorderExtra;
-  const measuredWidth = watermarkSize.width || cachedSize?.width || estimatedWidth;
-  const measuredHeight = watermarkSize.height || cachedSize?.height || estimatedHeight;
+  // 关键修复：只有当 measuredSignature 匹配当前配置时，才使用 watermarkSize
+  // 否则可能是旧配置的尺寸（组件实例复用时 state 被保留）
+  const isWatermarkSizeValid = measuredSignature === measureSignature;
+  const validatedWidth = isWatermarkSizeValid ? watermarkSize.width : 0;
+  const validatedHeight = isWatermarkSizeValid ? watermarkSize.height : 0;
+  const measuredWidth = validatedWidth || cachedSize?.width || estimatedWidth;
+  const measuredHeight = validatedHeight || cachedSize?.height || estimatedHeight;
   const hasLastMeasured = lastMeasuredSizeRef.current.width > 0 && lastMeasuredSizeRef.current.height > 0;
   const pendingMeasure = measuredSignature !== measureSignature;
   const effectiveWidth = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.width : measuredWidth;
@@ -1959,6 +1962,8 @@ function WatermarkPreview(props: {
   console.log('[WatermarkPosition]', {
     effectiveWidth,
     effectiveHeight,
+    isWatermarkSizeValid,
+    validatedWidth,
     watermarkSizeState: watermarkSize,
     estimatedWidth,
     pendingMeasure,
