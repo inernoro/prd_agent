@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PRD Executor - Test Console</title>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --card: #12121a;
+      --border: #2a2a3a;
+      --text: #e0e0e0;
+      --muted: #888;
+      --accent: #6366f1;
+      --success: #10b981;
+      --error: #ef4444;
+      --warning: #f59e0b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'SF Mono', 'Consolas', monospace;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container { max-width: 1400px; margin: 0 auto; }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+      background: linear-gradient(90deg, var(--accent), #a855f7);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle { color: var(--muted); margin-bottom: 24px; font-size: 14px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .card-title {
+      font-size: 14px;
+      color: var(--accent);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-title::before { content: ''; width: 8px; height: 8px; background: var(--accent); border-radius: 50%; }
+    .form-group { margin-bottom: 16px; }
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+    }
+    input, textarea, select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    textarea { resize: vertical; min-height: 80px; }
+    .btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 14px;
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary { background: var(--border); }
+    .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+    .status-bar {
+      display: flex;
+      gap: 24px;
+      padding: 16px 20px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .status-item { display: flex; flex-direction: column; }
+    .status-label { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+    .status-value { font-size: 18px; font-weight: bold; }
+    .status-value.success { color: var(--success); }
+    .status-value.warning { color: var(--warning); }
+    .status-value.error { color: var(--error); }
+    .output {
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      font-size: 13px;
+      line-height: 1.6;
+      max-height: 400px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .output:empty::before {
+      content: '// Output will appear here...';
+      color: var(--muted);
+    }
+    .log-entry { margin-bottom: 4px; }
+    .log-entry.stdout { color: var(--text); }
+    .log-entry.stderr { color: var(--warning); }
+    .log-entry.error { color: var(--error); }
+    .log-entry.info { color: var(--accent); }
+    .log-entry.success { color: var(--success); }
+    .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+    .tab {
+      padding: 8px 16px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 13px;
+    }
+    .tab.active { background: var(--accent); border-color: var(--accent); color: white; }
+    .preset-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    .preset-btn {
+      padding: 6px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 12px;
+    }
+    .preset-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .job-list { margin-top: 16px; }
+    .job-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      background: var(--bg);
+      border-radius: 6px;
+      margin-bottom: 8px;
+    }
+    .job-id { font-size: 12px; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; }
+    .job-status {
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+    .job-status.completed { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+    .job-status.failed { background: rgba(239, 68, 68, 0.2); color: var(--error); }
+    .job-status.running { background: rgba(99, 102, 241, 0.2); color: var(--accent); }
+    .job-status.queued { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
+    .hidden { display: none !important; }
+    .mode-selector { margin-bottom: 20px; }
+    .mode-selector label { display: inline; margin-right: 16px; }
+    .mode-selector input[type="radio"] { width: auto; margin-right: 4px; }
+    .config-row { display: flex; gap: 12px; }
+    .config-row .form-group { flex: 1; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>PRD Executor</h1>
+    <p class="subtitle">Command Execution Test Console</p>
+
+    <!-- Mode Selector -->
+    <div class="card mode-selector">
+      <div class="card-title">Connection Mode</div>
+      <label><input type="radio" name="mode" value="local" checked> Local (Direct)</label>
+      <label><input type="radio" name="mode" value="http"> HTTP API</label>
+      <label><input type="radio" name="mode" value="redis"> Redis Stream</label>
+      <div class="config-row" style="margin-top: 16px;">
+        <div class="form-group">
+          <label>API URL</label>
+          <input type="text" id="apiUrl" value="http://localhost:3940" placeholder="http://localhost:3940">
+        </div>
+        <div class="form-group">
+          <label>Redis URL</label>
+          <input type="text" id="redisUrl" value="redis://localhost:6379" placeholder="redis://localhost:6379">
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="status-bar">
+      <div class="status-item">
+        <span class="status-label">Status</span>
+        <span class="status-value" id="statusConnection">-</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Active Workers</span>
+        <span class="status-value" id="statusWorkers">-</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Queued Jobs</span>
+        <span class="status-value" id="statusQueued">-</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Max Concurrency</span>
+        <span class="status-value" id="statusConcurrency">-</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Total Jobs</span>
+        <span class="status-value" id="statusTotal">-</span>
+      </div>
+      <button class="btn btn-secondary" onclick="refreshStatus()" style="margin-left: auto;">Refresh</button>
+    </div>
+
+    <div class="grid">
+      <!-- Left: Job Submission -->
+      <div class="card">
+        <div class="card-title">Submit Job</div>
+
+        <div class="preset-btns">
+          <button class="preset-btn" onclick="loadPreset('echo')">Echo Test</button>
+          <button class="preset-btn" onclick="loadPreset('sleep')">Sleep 5s</button>
+          <button class="preset-btn" onclick="loadPreset('ls')">List Files</button>
+          <button class="preset-btn" onclick="loadPreset('error')">Error Test</button>
+          <button class="preset-btn" onclick="loadPreset('long')">Long Output</button>
+          <button class="preset-btn" onclick="loadPreset('env')">Env Vars</button>
+        </div>
+
+        <div class="form-group">
+          <label>Command</label>
+          <input type="text" id="command" placeholder="echo" value="echo">
+        </div>
+        <div class="form-group">
+          <label>Arguments (JSON array)</label>
+          <input type="text" id="args" placeholder='["hello", "world"]' value='["Hello from PRD Executor!"]'>
+        </div>
+        <div class="form-group">
+          <label>Work Directory (optional)</label>
+          <input type="text" id="workDir" placeholder="/path/to/dir">
+        </div>
+        <div class="form-group">
+          <label>Environment Variables (JSON object)</label>
+          <input type="text" id="env" placeholder='{"KEY": "value"}' value="{}">
+        </div>
+        <div class="form-group">
+          <label>Timeout (ms)</label>
+          <input type="number" id="timeout" placeholder="60000" value="60000">
+        </div>
+        <div class="form-group">
+          <label>Callback URL (optional)</label>
+          <input type="text" id="callback" placeholder="http://example.com/callback">
+        </div>
+        <div class="btn-group">
+          <button class="btn" onclick="submitJob(false)" id="btnSubmit">Execute (Sync)</button>
+          <button class="btn btn-secondary" onclick="submitJob(true)" id="btnSubmitAsync">Execute (Async)</button>
+        </div>
+      </div>
+
+      <!-- Right: Output -->
+      <div class="card">
+        <div class="card-title">Output</div>
+        <div class="tabs">
+          <button class="tab active" onclick="switchTab('output')">Live Output</button>
+          <button class="tab" onclick="switchTab('response')">API Response</button>
+          <button class="tab" onclick="switchTab('jobs')">Job History</button>
+        </div>
+        <div id="tabOutput" class="output"></div>
+        <div id="tabResponse" class="output hidden"></div>
+        <div id="tabJobs" class="job-list hidden"></div>
+        <div class="btn-group" style="margin-top: 12px;">
+          <button class="btn btn-secondary" onclick="clearOutput()">Clear</button>
+          <button class="btn btn-secondary" onclick="loadJobs()">Load Jobs</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Config Panel -->
+    <div class="card" style="margin-top: 20px;">
+      <div class="card-title">Configuration</div>
+      <div class="config-row">
+        <div class="form-group">
+          <label>Max Concurrency</label>
+          <input type="number" id="configConcurrency" value="3" min="1" max="100">
+        </div>
+        <div class="form-group" style="display: flex; align-items: flex-end;">
+          <button class="btn" onclick="updateConcurrency()">Update</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let currentMode = 'local';
+    let currentTab = 'output';
+    let outputEl, responseEl, jobsEl;
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      outputEl = document.getElementById('tabOutput');
+      responseEl = document.getElementById('tabResponse');
+      jobsEl = document.getElementById('tabJobs');
+
+      // Mode selector
+      document.querySelectorAll('input[name="mode"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+          currentMode = e.target.value;
+          log('info', `Switched to ${currentMode.toUpperCase()} mode`);
+          refreshStatus();
+        });
+      });
+
+      refreshStatus();
+      setInterval(refreshStatus, 5000);
+    });
+
+    // API helpers
+    function getApiUrl() {
+      return document.getElementById('apiUrl').value || 'http://localhost:3940';
+    }
+
+    async function api(path, options = {}) {
+      const url = getApiUrl() + path;
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      });
+      return response.json();
+    }
+
+    // Logging
+    function log(type, message) {
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      outputEl.appendChild(entry);
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+
+    function clearOutput() {
+      outputEl.innerHTML = '';
+      responseEl.innerHTML = '';
+    }
+
+    // Tabs
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelector(`.tab:nth-child(${tab === 'output' ? 1 : tab === 'response' ? 2 : 3})`).classList.add('active');
+
+      outputEl.classList.toggle('hidden', tab !== 'output');
+      responseEl.classList.toggle('hidden', tab !== 'response');
+      jobsEl.classList.toggle('hidden', tab !== 'jobs');
+    }
+
+    // Status
+    async function refreshStatus() {
+      try {
+        const [statusRes, statsRes] = await Promise.all([
+          api('/status'),
+          api('/stats'),
+        ]);
+
+        if (statusRes.success) {
+          const data = statusRes.data;
+          document.getElementById('statusConnection').textContent = 'Connected';
+          document.getElementById('statusConnection').className = 'status-value success';
+          document.getElementById('statusWorkers').textContent = data.activeWorkers || 0;
+          document.getElementById('statusQueued').textContent = data.queuedJobs || 0;
+          document.getElementById('statusConcurrency').textContent = data.maxConcurrency || '-';
+        }
+
+        if (statsRes.success && statsRes.data) {
+          document.getElementById('statusTotal').textContent = statsRes.data.total || 0;
+        }
+      } catch (err) {
+        document.getElementById('statusConnection').textContent = 'Disconnected';
+        document.getElementById('statusConnection').className = 'status-value error';
+      }
+    }
+
+    // Submit job
+    async function submitJob(async_mode) {
+      const command = document.getElementById('command').value;
+      const argsStr = document.getElementById('args').value;
+      const workDir = document.getElementById('workDir').value;
+      const envStr = document.getElementById('env').value;
+      const timeout = parseInt(document.getElementById('timeout').value) || 60000;
+      const callback = document.getElementById('callback').value;
+
+      let args = [];
+      let env = {};
+      try {
+        if (argsStr) args = JSON.parse(argsStr);
+        if (envStr) env = JSON.parse(envStr);
+      } catch (e) {
+        log('error', `Invalid JSON: ${e.message}`);
+        return;
+      }
+
+      if (!command) {
+        log('error', 'Command is required');
+        return;
+      }
+
+      const job = {
+        command,
+        args,
+        env,
+        timeout,
+        source: 'test-console',
+      };
+      if (workDir) job.workDir = workDir;
+      if (callback) job.callback = callback;
+
+      log('info', `Submitting job: ${command} ${args.join(' ')}`);
+
+      const btn = async_mode ? document.getElementById('btnSubmitAsync') : document.getElementById('btnSubmit');
+      btn.disabled = true;
+
+      try {
+        const endpoint = async_mode ? '/jobs/async' : '/jobs';
+        const startTime = Date.now();
+        const result = await api(endpoint, {
+          method: 'POST',
+          body: JSON.stringify(job),
+        });
+
+        const duration = Date.now() - startTime;
+        responseEl.textContent = JSON.stringify(result, null, 2);
+
+        if (result.success) {
+          log('success', `Job ${result.jobId} ${async_mode ? 'submitted' : 'completed'} (${duration}ms)`);
+
+          if (!async_mode && result.result) {
+            const r = result.result;
+            if (r.stdout) {
+              r.stdout.split('\n').forEach(line => line && log('stdout', line));
+            }
+            if (r.stderr) {
+              r.stderr.split('\n').forEach(line => line && log('stderr', line));
+            }
+            log(r.success ? 'success' : 'error', `Exit code: ${r.exitCode}, Duration: ${r.duration}ms`);
+          }
+        } else {
+          log('error', `Failed: ${result.error}`);
+        }
+
+        refreshStatus();
+      } catch (err) {
+        log('error', `Request failed: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // Load jobs
+    async function loadJobs() {
+      try {
+        const result = await api('/jobs?limit=20');
+        if (result.success && result.data) {
+          const jobs = result.data.jobs || [];
+          jobsEl.innerHTML = jobs.map(job => `
+            <div class="job-item">
+              <span class="job-id" title="${job.jobId}">${job.jobId}</span>
+              <span>${job.command || '-'}</span>
+              <span class="job-status ${job.status || 'queued'}">${job.status || 'queued'}</span>
+              <button class="preset-btn" onclick="viewJob('${job.jobId}')">View</button>
+              <button class="preset-btn" onclick="cancelJob('${job.jobId}')">Cancel</button>
+            </div>
+          `).join('') || '<p style="color: var(--muted);">No jobs found</p>';
+        }
+      } catch (err) {
+        log('error', `Failed to load jobs: ${err.message}`);
+      }
+    }
+
+    // View job
+    async function viewJob(jobId) {
+      try {
+        const result = await api(`/jobs/${jobId}`);
+        responseEl.textContent = JSON.stringify(result, null, 2);
+        switchTab('response');
+      } catch (err) {
+        log('error', `Failed to view job: ${err.message}`);
+      }
+    }
+
+    // Cancel job
+    async function cancelJob(jobId) {
+      try {
+        const result = await api(`/jobs/${jobId}`, { method: 'DELETE' });
+        log(result.success ? 'success' : 'warning', result.message);
+        loadJobs();
+      } catch (err) {
+        log('error', `Failed to cancel job: ${err.message}`);
+      }
+    }
+
+    // Update concurrency
+    async function updateConcurrency() {
+      const max = parseInt(document.getElementById('configConcurrency').value);
+      if (!max || max < 1 || max > 100) {
+        log('error', 'Concurrency must be between 1 and 100');
+        return;
+      }
+      try {
+        const result = await api('/config/concurrency', {
+          method: 'PUT',
+          body: JSON.stringify({ max }),
+        });
+        if (result.success) {
+          log('success', `Concurrency updated to ${max}`);
+          refreshStatus();
+        } else {
+          log('error', result.error);
+        }
+      } catch (err) {
+        log('error', `Failed: ${err.message}`);
+      }
+    }
+
+    // Presets
+    const presets = {
+      echo: { command: 'echo', args: '["Hello from PRD Executor!"]' },
+      sleep: { command: 'sleep', args: '["5"]' },
+      ls: { command: 'ls', args: '["-la"]' },
+      error: { command: 'sh', args: '["-c", "echo error >&2; exit 1"]' },
+      long: { command: 'sh', args: '["-c", "for i in $(seq 1 50); do echo Line $i; done"]' },
+      env: { command: 'sh', args: '["-c", "echo MY_VAR=$MY_VAR"]', env: '{"MY_VAR": "test-value"}' },
+    };
+
+    function loadPreset(name) {
+      const preset = presets[name];
+      if (preset) {
+        document.getElementById('command').value = preset.command;
+        document.getElementById('args').value = preset.args;
+        if (preset.env) {
+          document.getElementById('env').value = preset.env;
+        } else {
+          document.getElementById('env').value = '{}';
+        }
+        log('info', `Loaded preset: ${name}`);
+      }
+    }
+  </script>
+</body>
+</html>

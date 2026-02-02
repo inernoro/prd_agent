@@ -1,6 +1,11 @@
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { config } from '../config.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 /**
  * HTTP API Receiver - accepts jobs via HTTP
@@ -8,7 +13,21 @@ import { config } from '../config.js';
 export function createHttpApi(executor) {
   const app = express();
 
+  // CORS for test console
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
   app.use(express.json());
+
+  // Serve static files (test console)
+  app.use(express.static(join(__dirname, '../../public')));
 
   /**
    * POST /jobs - Submit a new job

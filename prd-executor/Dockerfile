@@ -12,8 +12,9 @@ COPY package*.json ./
 # Install dependencies
 RUN npm ci --only=production
 
-# Copy source
+# Copy source and public files
 COPY src/ ./src/
+COPY public/ ./public/
 
 # Create logs directory
 RUN mkdir -p /app/logs
