@@ -625,32 +625,56 @@ function AgentMockup({ type, isActive }: { type: Agent['mockupType']; isActive: 
   return null;
 }
 
-interface AgentShowcaseProps {
-  className?: string;
+// Export agents for external use
+export { agents };
+
+// Parse rgba color string to RGB array
+export function parseGlowColor(glowColor: string): [number, number, number] {
+  const match = glowColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (match) {
+    return [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])];
+  }
+  return [214, 178, 106]; // default gold
 }
 
-export function AgentShowcase({ className }: AgentShowcaseProps) {
-  const [activeIndex, setActiveIndex] = useState(0);
+interface AgentShowcaseProps {
+  className?: string;
+  activeIndex?: number;
+  onIndexChange?: (index: number) => void;
+}
+
+export function AgentShowcase({ className, activeIndex: controlledIndex, onIndexChange }: AgentShowcaseProps) {
+  const [internalIndex, setInternalIndex] = useState(0);
+  const isControlled = controlledIndex !== undefined;
+  const activeIndex = isControlled ? controlledIndex : internalIndex;
+
+  const setActiveIndex = (index: number) => {
+    if (isControlled && onIndexChange) {
+      onIndexChange(index);
+    } else {
+      setInternalIndex(index);
+    }
+  };
 
   // Auto-rotate every 6 seconds
   useEffect(() => {
     const timer = setInterval(() => {
-      setActiveIndex((prev) => (prev + 1) % agents.length);
+      const nextIndex = (activeIndex + 1) % agents.length;
+      setActiveIndex(nextIndex);
     }, 6000);
     return () => clearInterval(timer);
-  }, []);
+  }, [activeIndex, isControlled]);
 
   const activeAgent = agents[activeIndex];
 
   return (
     <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
-      {/* Background */}
-      <div className="absolute inset-0 bg-[#050508]" />
-
-      {/* Dynamic glow based on active agent */}
+      {/* Background is now global - only keep a subtle overlay */}
       <div
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] rounded-full blur-[150px] transition-all duration-1000"
-        style={{ background: activeAgent.glowColor, opacity: 0.3 }}
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: 'radial-gradient(ellipse 100% 80% at 50% 50%, transparent 0%, rgba(5,5,8,0.4) 100%)',
+        }}
       />
 
       {/* Content */}

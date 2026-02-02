@@ -1,10 +1,11 @@
-import { useRef } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { HeroSection } from './sections/HeroSection';
-import { AgentShowcase } from './sections/AgentShowcase';
+import { AgentShowcase, agents, parseGlowColor } from './sections/AgentShowcase';
 import { FeatureBento } from './sections/FeatureBento';
 import { SocialProof } from './sections/SocialProof';
 import { CtaFooter } from './sections/CtaFooter';
+import { StarfieldBackground } from './components/StarfieldBackground';
 
 // MAP Logo component using official favicon
 function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
@@ -38,6 +39,31 @@ function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
 export default function LandingPage() {
   const navigate = useNavigate();
   const mainRef = useRef<HTMLDivElement>(null);
+  const [activeAgentIndex, setActiveAgentIndex] = useState(0);
+  const [isInShowcase, setIsInShowcase] = useState(false);
+
+  // Track scroll position to determine if we're in the showcase section
+  useEffect(() => {
+    const handleScroll = () => {
+      const showcase = document.getElementById('agent-showcase');
+      if (showcase) {
+        const rect = showcase.getBoundingClientRect();
+        const windowHeight = window.innerHeight;
+        // Consider "in showcase" when the section is more than 30% visible
+        const isVisible = rect.top < windowHeight * 0.7 && rect.bottom > windowHeight * 0.3;
+        setIsInShowcase(isVisible);
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll(); // Initial check
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Get current theme color based on scroll position
+  const themeColor = isInShowcase
+    ? parseGlowColor(agents[activeAgentIndex].glowColor)
+    : undefined; // undefined = use default random/gold color
 
   const handleGetStarted = () => {
     navigate('/login');
@@ -62,6 +88,11 @@ export default function LandingPage() {
         scrollBehavior: 'smooth',
       }}
     >
+      {/* Global animated background */}
+      <div className="fixed inset-0 z-0">
+        <StarfieldBackground themeColor={themeColor} />
+      </div>
+
       {/* Fixed navigation header */}
       <nav className="fixed top-0 left-0 right-0 z-50">
         <div
@@ -113,7 +144,10 @@ export default function LandingPage() {
 
       {/* Agent showcase */}
       <div id="agent-showcase">
-        <AgentShowcase />
+        <AgentShowcase
+          activeIndex={activeAgentIndex}
+          onIndexChange={setActiveAgentIndex}
+        />
       </div>
 
       {/* Feature bento grid */}

@@ -3,17 +3,21 @@ import { cn } from '@/lib/cn';
 
 interface StarfieldBackgroundProps {
   className?: string;
+  /** RGB color for theme tint, e.g. [168, 85, 247] for purple */
+  themeColor?: [number, number, number];
 }
 
 /**
  * WebGL Universe Background - Connected particles with depth layers
  * Adapted from 背景-粒子-我的宇宙.html, converted to WebGL 1.0
  */
-export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
+export function StarfieldBackground({ className, themeColor }: StarfieldBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>(0);
   const timeRef = useRef<number>(0);
   const lastFrameRef = useRef<number>(0);
+  const colorUniformRef = useRef<WebGLUniformLocation | null>(null);
+  const glRef = useRef<WebGLRenderingContext | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -48,6 +52,7 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
 
       uniform float iTime;
       uniform vec2 iResolution;
+      uniform vec3 uThemeColor; // RGB 0-1 range
 
       float N21(vec2 p) {
         p = fract(p * vec2(233.34, 851.73));
@@ -144,13 +149,16 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
           m += layer(uv * mix(10.0, 0.5, depth) + fi * 20.0) * fade;
         }
 
-        // Gold color theme instead of rainbow
-        vec3 goldBase = vec3(0.85, 0.65, 0.30);
-        vec3 goldBright = vec3(1.0, 0.90, 0.70);
-        vec3 purple = vec3(0.5, 0.3, 0.7);
+        // Use theme color if provided, otherwise use gold
+        vec3 defaultGold = vec3(0.85, 0.65, 0.30);
+        vec3 themeBase = length(uThemeColor) > 0.1 ? uThemeColor : defaultGold;
+
+        // Create color variations
+        vec3 themeBright = themeBase * 1.3;
+        vec3 themeDark = themeBase * 0.7;
 
         float colorMix = sin(iTime * 0.3) * 0.5 + 0.5;
-        vec3 baseColor = mix(goldBase, mix(goldBright, purple, 0.3), colorMix);
+        vec3 baseColor = mix(themeDark, themeBright, colorMix);
 
         vec3 col = (m - gradient.y * 0.5) * baseColor;
 
@@ -201,6 +209,16 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
 
     const timeHandle = gl.getUniformLocation(program, 'iTime');
     const resolutionHandle = gl.getUniformLocation(program, 'iResolution');
+    const colorHandle = gl.getUniformLocation(program, 'uThemeColor');
+    colorUniformRef.current = colorHandle;
+    glRef.current = gl;
+
+    // Set initial theme color
+    if (themeColor) {
+      gl.uniform3f(colorHandle, themeColor[0] / 255, themeColor[1] / 255, themeColor[2] / 255);
+    } else {
+      gl.uniform3f(colorHandle, 0, 0, 0); // Will use default gold in shader
+    }
 
     const resize = () => {
       const dpr = 1; // Keep DPR low for performance
@@ -239,6 +257,19 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
       gl.deleteBuffer(vertexBuffer);
     };
   }, []);
+
+  // Update theme color when it changes
+  useEffect(() => {
+    const gl = glRef.current;
+    const colorHandle = colorUniformRef.current;
+    if (gl && colorHandle) {
+      if (themeColor) {
+        gl.uniform3f(colorHandle, themeColor[0] / 255, themeColor[1] / 255, themeColor[2] / 255);
+      } else {
+        gl.uniform3f(colorHandle, 0, 0, 0);
+      }
+    }
+  }, [themeColor]);
 
   return (
     <canvas
