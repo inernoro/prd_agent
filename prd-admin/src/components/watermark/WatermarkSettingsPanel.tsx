@@ -1891,7 +1891,9 @@ function WatermarkPreview(props: {
       ].join('|'),
     [spec.text, spec.iconEnabled, spec.iconImageRef, spec.backgroundEnabled, spec.borderEnabled, borderWidth, fontFamily, fontSize, iconPosition, gap, iconSize]
   );
-  const cachedSize = watermarkSizeCache.get(measureSignature);
+  // 临时禁用缓存以排查问题：强制每次重新测量
+  const _cachedSize = watermarkSizeCache.get(measureSignature);
+  const cachedSize = false as const ? _cachedSize : undefined;
 
   useLayoutEffect(() => {
     if (cachedSize) {
