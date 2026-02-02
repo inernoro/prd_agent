@@ -28,7 +28,7 @@ export type WatermarkConfig = {
   roundedBackgroundEnabled?: boolean;
   cornerRadius?: number;
   baseCanvasWidth: number;
-  scaleMode?: 0 | 1 | 2 | 3 | 4;
+  adaptiveScaleMode?: 0 | 1 | 2 | 3 | 4;
   textColor?: string | null;
   backgroundColor?: string | null;
   previewBackgroundImageRef?: string | null;
@@ -76,7 +76,7 @@ export type CreateWatermarkInput = {
   roundedBackgroundEnabled?: boolean;
   cornerRadius?: number;
   baseCanvasWidth?: number;
-  scaleMode?: 0 | 1 | 2 | 3 | 4;
+  adaptiveScaleMode?: 0 | 1 | 2 | 3 | 4;
   textColor?: string | null;
   backgroundColor?: string | null;
   previewBackgroundImageRef?: string | null;

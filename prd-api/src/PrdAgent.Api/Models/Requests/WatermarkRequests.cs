@@ -26,7 +26,7 @@ public class CreateWatermarkRequest
     public bool? RoundedBackgroundEnabled { get; set; }
     public double? CornerRadius { get; set; }
     public int? BaseCanvasWidth { get; set; }
-    public int? ScaleMode { get; set; }
+    public int? AdaptiveScaleMode { get; set; }
     public string? TextColor { get; set; }
     public string? BackgroundColor { get; set; }
     public string? PreviewBackgroundImageRef { get; set; }
@@ -58,7 +58,7 @@ public class UpdateWatermarkRequest
     public bool? RoundedBackgroundEnabled { get; set; }
     public double? CornerRadius { get; set; }
     public int? BaseCanvasWidth { get; set; }
-    public int? ScaleMode { get; set; }
+    public int? AdaptiveScaleMode { get; set; }
     public string? TextColor { get; set; }
     public string? BackgroundColor { get; set; }
     public string? PreviewBackgroundImageRef { get; set; }

@@ -822,7 +822,7 @@ public class WatermarkController : ControllerBase
             RoundedBackgroundEnabled = request.RoundedBackgroundEnabled ?? false,
             CornerRadius = request.CornerRadius ?? 0,
             BaseCanvasWidth = request.BaseCanvasWidth ?? 320,
-            ScaleMode = request.ScaleMode ?? 0,
+            AdaptiveScaleMode = request.AdaptiveScaleMode ?? 0,
             TextColor = textColor,
             BackgroundColor = request.BackgroundColor ?? "#000000",
             PreviewBackgroundImageRef = request.PreviewBackgroundImageRef,
@@ -854,7 +854,7 @@ public class WatermarkController : ControllerBase
         if (request.RoundedBackgroundEnabled.HasValue) config.RoundedBackgroundEnabled = request.RoundedBackgroundEnabled.Value;
         if (request.CornerRadius.HasValue) config.CornerRadius = request.CornerRadius.Value;
         if (request.BaseCanvasWidth.HasValue) config.BaseCanvasWidth = request.BaseCanvasWidth.Value;
-        if (request.ScaleMode.HasValue) config.ScaleMode = request.ScaleMode.Value;
+        if (request.AdaptiveScaleMode.HasValue) config.AdaptiveScaleMode = request.AdaptiveScaleMode.Value;
         if (request.TextColor != null) config.TextColor = request.TextColor;
         if (request.BackgroundColor != null) config.BackgroundColor = request.BackgroundColor;
         if (request.PreviewBackgroundImageRef != null) config.PreviewBackgroundImageRef = request.PreviewBackgroundImageRef;

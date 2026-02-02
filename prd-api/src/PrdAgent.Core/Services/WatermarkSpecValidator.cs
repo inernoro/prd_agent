@@ -80,9 +80,9 @@ public static class WatermarkSpecValidator
         {
             return (false, $"baseCanvasWidth 必须在 {MinCanvasWidth}-{MaxCanvasWidth} 范围内");
         }
-        if (config.ScaleMode < MinScaleMode || config.ScaleMode > MaxScaleMode)
+        if (config.AdaptiveScaleMode < MinScaleMode || config.AdaptiveScaleMode > MaxScaleMode)
         {
-            return (false, $"scaleMode 必须在 {MinScaleMode}-{MaxScaleMode} 范围内");
+            return (false, $"adaptiveScaleMode 必须在 {MinScaleMode}-{MaxScaleMode} 范围内");
         }
         if (config.IconEnabled && string.IsNullOrWhiteSpace(config.IconImageRef))
         {

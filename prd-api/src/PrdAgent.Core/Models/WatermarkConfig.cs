@@ -123,9 +123,9 @@ public class WatermarkConfig
     public int BaseCanvasWidth { get; set; }
 
     /// <summary>
-    /// 缩放模式：0不缩放 1长边 2短边 3宽 4高
+    /// 自适应缩放模式：0不缩放 1长边 2短边 3宽 4高
     /// </summary>
-    public int ScaleMode { get; set; }
+    public int AdaptiveScaleMode { get; set; }
 
     /// <summary>
     /// 文字颜色

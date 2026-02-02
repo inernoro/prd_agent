@@ -42,9 +42,9 @@ public static class WatermarkLayoutCalculator
     public static double CalculateScaleFactor(WatermarkConfig config, int targetWidth, int targetHeight)
     {
         if (config.BaseCanvasWidth <= 0) return 1d;
-        if (config.ScaleMode == 0) return 1d;
+        if (config.AdaptiveScaleMode == 0) return 1d;
 
-        var basis = config.ScaleMode switch
+        var basis = config.AdaptiveScaleMode switch
         {
             1 => Math.Max(targetWidth, targetHeight),
             2 => Math.Min(targetWidth, targetHeight),

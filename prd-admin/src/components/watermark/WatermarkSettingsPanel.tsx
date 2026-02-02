@@ -13,6 +13,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
+import { Tooltip } from '@/components/ui/Tooltip';
 import {
   deleteWatermarkFont,
   getWatermarks,
@@ -62,6 +63,50 @@ const modeLabelMap: Record<WatermarkConfig['positionMode'], string> = {
   ratio: '比例',
 };
 
+function TitleWithTip(props: { label: string; tip: string }) {
+  const { label, tip } = props;
+  return (
+    <div className="flex items-start gap-1">
+      <span className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>{label}</span>
+      <Tooltip content={tip} side="top" align="center" delayDuration={80} openOnClick>
+        <button
+          type="button"
+          className="mt-1 h-4 w-4 rounded-full inline-flex items-center justify-center text-[10px]"
+          style={{
+            background: 'rgba(255,255,255,0.06)',
+            border: '1px solid rgba(255,255,255,0.18)',
+            color: 'rgba(255,255,255,0.6)',
+          }}
+        >
+          ?
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
+function InlineLabelWithTip(props: { label: string; tip: string }) {
+  const { label, tip } = props;
+  return (
+    <div className="flex items-start gap-1 w-10 shrink-0">
+      <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.7)' }}>{label}</span>
+      <Tooltip content={tip} side="top" align="center" delayDuration={80} openOnClick>
+        <button
+          type="button"
+          className="mt-[2px] h-3.5 w-3.5 rounded-full inline-flex items-center justify-center text-[9px]"
+          style={{
+            background: 'rgba(255,255,255,0.06)',
+            border: '1px solid rgba(255,255,255,0.18)',
+            color: 'rgba(255,255,255,0.6)',
+          }}
+        >
+          ?
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
 const buildDefaultConfig = (fontKey: string): WatermarkConfig => ({
   id: createSpecId(),
   name: '默认水印',
@@ -86,7 +131,7 @@ const buildDefaultConfig = (fontKey: string): WatermarkConfig => ({
   roundedBackgroundEnabled: false,
   cornerRadius: 0,
   baseCanvasWidth: DEFAULT_CANVAS_SIZE,
-  scaleMode: 0,
+  adaptiveScaleMode: 0,
   textColor: '#FFFFFF',
   backgroundColor: '#000000',
   previewBackgroundImageRef: null,
@@ -115,7 +160,7 @@ const normalizeConfig = (config: WatermarkConfig, fallbackName: string): Waterma
     textColor: resolvedTextColor,
     backgroundColor: config.backgroundColor ?? '#000000',
     previewBackgroundImageRef: config.previewBackgroundImageRef ?? null,
-    scaleMode: Number.isFinite(config.scaleMode) ? (config.scaleMode as 0 | 1 | 2 | 3 | 4) : 0,
+    adaptiveScaleMode: Number.isFinite(config.adaptiveScaleMode) ? (config.adaptiveScaleMode as 0 | 1 | 2 | 3 | 4) : 0,
   };
 };
 
@@ -321,7 +366,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             roundedBackgroundEnabled: config.roundedBackgroundEnabled,
             cornerRadius: config.cornerRadius,
             baseCanvasWidth: config.baseCanvasWidth,
-            scaleMode: config.scaleMode ?? 0,
+            adaptiveScaleMode: config.adaptiveScaleMode ?? 0,
             textColor: config.textColor,
             backgroundColor: config.backgroundColor,
             previewBackgroundImageRef: config.previewBackgroundImageRef,
@@ -354,7 +399,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             roundedBackgroundEnabled: config.roundedBackgroundEnabled,
             cornerRadius: config.cornerRadius,
             baseCanvasWidth: config.baseCanvasWidth,
-            scaleMode: config.scaleMode ?? 0,
+            adaptiveScaleMode: config.adaptiveScaleMode ?? 0,
             textColor: config.textColor,
             backgroundColor: config.backgroundColor,
             previewBackgroundImageRef: config.previewBackgroundImageRef,
@@ -956,9 +1001,9 @@ function WatermarkEditor(props: {
   const mainPreviewRef = useRef<HTMLDivElement | null>(null);
   const [mainPreviewSize, setMainPreviewSize] = useState(config.baseCanvasWidth || DEFAULT_CANVAS_SIZE);
   const [fontLoading, setFontLoading] = useState(false);
-  const scaleMode = (Number.isFinite(config.scaleMode) ? config.scaleMode : 0) as 0 | 1 | 2 | 3 | 4;
-  const scaleEnabled = scaleMode !== 0;
-  const scaleModeOptions: Array<{ value: 1 | 2 | 3 | 4; label: string }> = [
+  const adaptiveScaleMode = (Number.isFinite(config.adaptiveScaleMode) ? config.adaptiveScaleMode : 0) as 0 | 1 | 2 | 3 | 4;
+  const adaptiveEnabled = adaptiveScaleMode !== 0;
+  const adaptiveScaleOptions: Array<{ value: 1 | 2 | 3 | 4; label: string }> = [
     { value: 1, label: '长边' },
     { value: 2, label: '短边' },
     { value: 3, label: '宽' },
@@ -1032,7 +1077,7 @@ function WatermarkEditor(props: {
 
   return (
     <div className="flex flex-col h-full overflow-hidden -mt-1">
-      <div className="grid gap-3 flex-1 overflow-hidden items-stretch" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
+      <div className="grid gap-2 flex-1 overflow-hidden items-stretch" style={{ gridTemplateColumns: 'minmax(0, 1fr) 336px' }}>
         {/* 左侧: 主预览画布 */}
         <div
           ref={mainPreviewRef}
@@ -1080,9 +1125,9 @@ function WatermarkEditor(props: {
             boxShadow: 'inset 1px 0 0 var(--border-subtle)',
           }}
         >
-          <div className="flex-1 min-h-0 overflow-y-auto pr-1 pt-2">
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 pt-2">
             <div className="grid gap-2" style={{ gridTemplateColumns: '74px minmax(0, 1fr)' }}>
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>水印文本</div>
+              <TitleWithTip label="文本" tip="显示在图片上的水印文字。" />
               <input
                 value={config.text}
                 onChange={(e) => updateConfig({ text: e.target.value })}
@@ -1090,7 +1135,7 @@ function WatermarkEditor(props: {
                 placeholder="请输入水印文案"
               />
 
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>字体</div>
+              <TitleWithTip label="字体" tip="水印文字使用的字体。" />
               <div className="flex items-center gap-2">
                 <FontSelect
                   value={config.fontKey}
@@ -1121,7 +1166,7 @@ function WatermarkEditor(props: {
                 </Button>
               </div>
 
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>字号</div>
+              <TitleWithTip label="字号" tip="水印文字大小。" />
               <div className="flex items-center gap-2">
                 <input
                   type="range"
@@ -1137,7 +1182,7 @@ function WatermarkEditor(props: {
                 </div>
               </div>
 
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>透明度</div>
+              <TitleWithTip label="透明" tip="水印整体透明度。" />
               <div className="flex items-center gap-2">
                 <input
                   type="range"
@@ -1153,7 +1198,7 @@ function WatermarkEditor(props: {
                 </div>
               </div>
 
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>定位方式</div>
+              <TitleWithTip label="定位" tip="按像素或按比例定位水印。" />
               <div>
                 <PositionModeSwitch
                   value={config.positionMode}
@@ -1176,11 +1221,11 @@ function WatermarkEditor(props: {
                 />
               </div>
 
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>装饰</div>
+              <TitleWithTip label="装饰" tip="图标、填充、边框、文字颜色等装饰项。" />
               <div className="flex flex-col gap-3 pt-2">
                 {/* 图标 */}
                 <div className="flex items-center gap-3">
-                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>图标</span>
+                  <InlineLabelWithTip label="图标" tip="上传/启用水印图标。" />
                   <div className="relative">
                     <label
                       className="h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer overflow-hidden"
@@ -1221,7 +1266,7 @@ function WatermarkEditor(props: {
 
                 {config.iconEnabled ? (
                   <div className="flex items-center gap-3">
-                    <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>位置</span>
+                    <InlineLabelWithTip label="位置" tip="图标相对文字的位置。" />
                     <div className="grid grid-cols-4 gap-2 flex-1">
                       {([
                         { value: 'left', label: '左' },
@@ -1252,7 +1297,7 @@ function WatermarkEditor(props: {
 
                 {config.iconEnabled ? (
                   <div className="flex items-center gap-3">
-                    <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>间距</span>
+                    <InlineLabelWithTip label="间距" tip="图标与文字的距离。" />
                     <div className="flex items-center gap-2 flex-1">
                       <input
                         type="number"
@@ -1262,7 +1307,7 @@ function WatermarkEditor(props: {
                         value={iconGapValue}
                         onChange={(e) => updateConfig({ iconGapPx: Number(e.target.value) })}
                       />
-                      <span className="text-[11px] w-8 shrink-0 text-right" style={{ color: 'rgba(255,255,255,0.7)' }}>缩放</span>
+                      <InlineLabelWithTip label="缩放" tip="图标缩放倍数。" />
                       <input
                         type="number"
                         min={0.2}
@@ -1279,7 +1324,7 @@ function WatermarkEditor(props: {
                 <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                   {/* 填充 + 背景色 */}
                   <div className="flex items-center gap-3">
-                    <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>填充</span>
+                    <InlineLabelWithTip label="填充" tip="文字背景填充开关与颜色。" />
                     <button
                       type="button"
                       className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
@@ -1318,7 +1363,7 @@ function WatermarkEditor(props: {
                 <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                   {/* 边框 + 边框色 */}
                   <div className="flex items-center gap-3">
-                    <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>边框</span>
+                    <InlineLabelWithTip label="边框" tip="文字边框开关与颜色。" />
                     <button
                       type="button"
                       className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
@@ -1356,7 +1401,7 @@ function WatermarkEditor(props: {
                   {/* 边框宽度（启用边框时显示） */}
                   {config.borderEnabled && (
                     <div className="flex items-center gap-3">
-                      <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>粗细</span>
+                      <InlineLabelWithTip label="粗细" tip="边框粗细。" />
                       <input
                         type="range"
                         min="1"
@@ -1378,7 +1423,7 @@ function WatermarkEditor(props: {
                   {/* 圆角 */}
                   {(config.backgroundEnabled || config.borderEnabled) ? (
                     <div className="flex items-center gap-3 min-w-0 overflow-hidden">
-                      <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>圆角</span>
+                    <InlineLabelWithTip label="圆角" tip="背景/边框圆角半径。" />
                       <input
                         type="range"
                         min="0"
@@ -1401,7 +1446,7 @@ function WatermarkEditor(props: {
                 <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                   {/* 文字 + 文字色 */}
                   <div className="flex items-center gap-3">
-                    <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>文字</span>
+                    <InlineLabelWithTip label="文字" tip="文字颜色与样式。" />
                     <div
                       className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
                       style={{
@@ -1435,41 +1480,41 @@ function WatermarkEditor(props: {
                 </div>
               </div>
 
-              <div className="text-xs font-semibold pt-2" style={{ color: 'var(--text-muted)' }}>缩放</div>
+              <TitleWithTip label="适应" tip="开启后按图片尺寸自适应缩放。" />
               <div className="flex flex-col gap-2 pt-1">
                 <div>
                   <ScaleModeSwitch
-                    enabled={scaleEnabled}
+                    enabled={adaptiveEnabled}
                     onToggle={(nextEnabled) => {
-                      updateConfig({ scaleMode: nextEnabled ? (scaleMode === 0 ? 2 : scaleMode) : 0 });
+                      updateConfig({ adaptiveScaleMode: nextEnabled ? (adaptiveScaleMode === 0 ? 2 : adaptiveScaleMode) : 0 });
                     }}
                   />
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>方式</span>
-                  <div className="grid grid-cols-4 gap-2 flex-1">
-                    {scaleModeOptions.map((option) => {
-                      const active = scaleMode === option.value;
-                      return (
-                        <button
-                          key={option.value}
-                          type="button"
-                          disabled={!scaleEnabled}
-                          className="h-7 rounded-[7px] text-[11px] font-semibold transition-all"
-                          style={{
-                            background: active ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.06)',
-                            border: active ? '1px solid rgba(59,130,246,0.5)' : '1px solid rgba(255,255,255,0.12)',
-                            color: active ? 'rgba(59,130,246,0.95)' : 'var(--text-muted)',
-                            opacity: scaleEnabled ? 1 : 0.5,
-                          }}
-                          onClick={() => updateConfig({ scaleMode: option.value })}
-                        >
-                          {option.label}
-                        </button>
-                      );
-                    })}
+                {adaptiveEnabled ? (
+                  <div className="flex items-center gap-2">
+                  <InlineLabelWithTip label="方式" tip="自适应缩放的基准边。" />
+                    <div className="grid grid-cols-4 gap-2 flex-1">
+                      {adaptiveScaleOptions.map((option) => {
+                        const active = adaptiveScaleMode === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className="h-7 rounded-[7px] text-[11px] font-semibold transition-all"
+                            style={{
+                              background: active ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.06)',
+                              border: active ? '1px solid rgba(59,130,246,0.5)' : '1px solid rgba(255,255,255,0.12)',
+                              color: active ? 'rgba(59,130,246,0.95)' : 'var(--text-muted)',
+                            }}
+                            onClick={() => updateConfig({ adaptiveScaleMode: option.value })}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -1792,12 +1837,12 @@ function WatermarkPreview(props: {
   const shortSide = Math.min(width, canvasHeight);
   const longSide = Math.max(width, canvasHeight);
   const previewScale = (() => {
-    if (!spec.scaleMode) return 1;
-    const basis = spec.scaleMode === 1
+    if (!spec.adaptiveScaleMode) return 1;
+    const basis = spec.adaptiveScaleMode === 1
       ? longSide
-      : spec.scaleMode === 2
+      : spec.adaptiveScaleMode === 2
         ? shortSide
-        : spec.scaleMode === 3
+        : spec.adaptiveScaleMode === 3
           ? width
           : canvasHeight;
     return basis / baseSize;
