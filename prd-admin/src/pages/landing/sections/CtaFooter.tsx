@@ -1,5 +1,5 @@
 import { cn } from '@/lib/cn';
-import { GlowOrb } from '../components/GlowOrb';
+import { BlackholeBackground } from '../components/BlackholeBackground';
 
 interface CtaFooterProps {
   className?: string;
@@ -10,25 +10,11 @@ interface CtaFooterProps {
 export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps) {
   return (
     <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
-      {/* Background */}
-      <div className="absolute inset-0 bg-[#050508]" />
+      {/* Blackhole vortex background */}
+      <BlackholeBackground />
 
-      {/* Decorative orbs */}
-      <GlowOrb color="gold" size="xl" className="top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-30" />
-      <GlowOrb color="purple" size="lg" className="top-0 right-0 opacity-20" />
-      <GlowOrb color="blue" size="md" className="bottom-0 left-0 opacity-20" />
-
-      {/* Grid pattern */}
-      <div
-        className="absolute inset-0 opacity-[0.02]"
-        style={{
-          backgroundImage: `
-            linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)
-          `,
-          backgroundSize: '40px 40px',
-        }}
-      />
+      {/* Dark overlay for readability */}
+      <div className="absolute inset-0 bg-black/50" />
 
       {/* Content */}
       <div className="relative z-10 max-w-4xl mx-auto px-6 text-center">

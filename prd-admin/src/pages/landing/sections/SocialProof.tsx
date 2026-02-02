@@ -1,6 +1,5 @@
 import { cn } from '@/lib/cn';
 import { CountUpNumber } from '../components/CountUpNumber';
-import { GlowOrb } from '../components/GlowOrb';
 
 interface Stat {
   value: number;
@@ -71,11 +70,8 @@ interface SocialProofProps {
 export function SocialProof({ className }: SocialProofProps) {
   return (
     <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
-      {/* Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-[#050508] via-[#0a0a0f] to-[#050508]" />
-
-      {/* Decorative */}
-      <GlowOrb color="gold" size="lg" className="top-1/3 left-1/4 opacity-30" />
+      {/* Semi-transparent overlay to let global background show through */}
+      <div className="absolute inset-0 bg-[#050508]/40" />
 
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">

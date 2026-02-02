@@ -1,5 +1,4 @@
 import { cn } from '@/lib/cn';
-import { GlowOrb } from '../components/GlowOrb';
 import { useEffect, useState } from 'react';
 
 // Animated model icons rotating
@@ -286,12 +285,12 @@ interface FeatureBentoProps {
 export function FeatureBento({ className }: FeatureBentoProps) {
   return (
     <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
-      {/* Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-[#050508] via-[#080810] to-[#050508]" />
+      {/* Semi-transparent overlay to let global background show through */}
+      <div className="absolute inset-0 bg-[#050508]/40" />
 
-      {/* Grid pattern */}
+      {/* Subtle grid pattern */}
       <div
-        className="absolute inset-0 opacity-[0.015]"
+        className="absolute inset-0 opacity-[0.02]"
         style={{
           backgroundImage: `
             linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
@@ -300,11 +299,6 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           backgroundSize: '60px 60px',
         }}
       />
-
-      {/* Decorative orbs */}
-      <GlowOrb color="blue" size="lg" className="top-1/4 right-0 translate-x-1/2 opacity-30" />
-      <GlowOrb color="purple" size="md" className="bottom-1/4 left-0 -translate-x-1/2 opacity-30" />
-      <GlowOrb color="gold" size="sm" className="top-1/2 left-1/3 opacity-20" />
 
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">
