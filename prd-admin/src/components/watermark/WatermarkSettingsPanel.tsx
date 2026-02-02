@@ -1872,9 +1872,11 @@ function WatermarkPreview(props: {
   const [measureTick, setMeasureTick] = useState(0);
   const [measuredSignature, setMeasuredSignature] = useState('');
   const [fontReady, setFontReady] = useState(false);
+  // 缓存版本号：修改测量逻辑时需要更新，使旧缓存失效
   const measureSignature = useMemo(
     () =>
       [
+        'v2',  // 版本号：v2 = 直接测量 contentRef 而非手动计算
         spec.text,
         spec.iconEnabled ? '1' : '0',
         spec.iconImageRef ?? '',
@@ -1934,8 +1936,10 @@ function WatermarkPreview(props: {
       ? fontSize + iconSize + gap
       : Math.max(fontSize, iconSize))
     : fontSize;
-  const estimatedWidth = estimatedContentWidth + decorationPadding * 2;
-  const estimatedHeight = estimatedContentHeight + decorationPadding * 2;
+  // 估算尺寸需要包含边框宽度，确保 fallback 值更准确
+  const estimatedBorderExtra = spec.borderEnabled ? borderWidth * 2 : 0;
+  const estimatedWidth = estimatedContentWidth + decorationPadding * 2 + estimatedBorderExtra;
+  const estimatedHeight = estimatedContentHeight + decorationPadding * 2 + estimatedBorderExtra;
   const measuredWidth = watermarkSize.width || cachedSize?.width || estimatedWidth;
   const measuredHeight = watermarkSize.height || cachedSize?.height || estimatedHeight;
   const hasLastMeasured = lastMeasuredSizeRef.current.width > 0 && lastMeasuredSizeRef.current.height > 0;
