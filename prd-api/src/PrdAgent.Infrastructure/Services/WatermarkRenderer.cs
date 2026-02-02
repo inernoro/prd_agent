@@ -200,9 +200,9 @@ public class WatermarkRenderer
                     var targetSize = (int)Math.Round(textHeight * iconScale);
                     if (targetSize > 0)
                     {
-                        var iconScale = targetSize / (double)Math.Max(icon.Width, icon.Height);
-                        var drawW = Math.Max(1, (int)Math.Round(icon.Width * iconScale));
-                        var drawH = Math.Max(1, (int)Math.Round(icon.Height * iconScale));
+                        var iconResizeScale = targetSize / (double)Math.Max(icon.Width, icon.Height);
+                        var drawW = Math.Max(1, (int)Math.Round(icon.Width * iconResizeScale));
+                        var drawH = Math.Max(1, (int)Math.Round(icon.Height * iconResizeScale));
                         var dx = (targetSize - drawW) / 2;
                         var dy = (targetSize - drawH) / 2;
 

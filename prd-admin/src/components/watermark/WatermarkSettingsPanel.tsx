@@ -222,6 +222,8 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
   const [previewErrorById, setPreviewErrorById] = useState<Record<string, boolean>>({});
   const [enlargedPreviewUrl, setEnlargedPreviewUrl] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [titleEditing, setTitleEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
   const testInputRef = useRef<HTMLInputElement | null>(null);
   const testTargetIdRef = useRef<string | null>(null);
 
@@ -277,6 +279,12 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
       activeName: activeConfig?.name,
     });
   }, [onStatusChange, activeConfig]);
+
+  useEffect(() => {
+    if (!draftConfig) return;
+    setTitleDraft(draftConfig.name || '');
+    setTitleEditing(false);
+  }, [draftConfig]);
 
   useEffect(() => {
     if (fonts.length === 0) return;
@@ -826,7 +834,44 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             setEditorOpen(true);
           }
         }}
-        title="水印编辑器"
+        title={draftConfig ? (
+          <div className="flex items-center gap-2">
+            {titleEditing ? (
+              <input
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const nextName = titleDraft.trim();
+                    if (nextName) setDraftConfig((prev) => (prev ? { ...prev, name: nextName } : prev));
+                    setTitleEditing(false);
+                  }
+                }}
+                onBlur={() => {
+                  const nextName = titleDraft.trim();
+                  if (nextName) setDraftConfig((prev) => (prev ? { ...prev, name: nextName } : prev));
+                  setTitleEditing(false);
+                }}
+                className="h-8 w-48 rounded-[8px] px-3 text-sm outline-none prd-field"
+                placeholder="请输入配置名称"
+                autoFocus
+              />
+            ) : (
+              <>
+                <span>{draftConfig?.name?.trim() || '水印配置'}</span>
+                <button
+                  type="button"
+                  className="h-7 w-7 inline-flex items-center justify-center rounded-[8px] hover:bg-white/5"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onClick={() => setTitleEditing(true)}
+                  title="编辑名称"
+                >
+                  <Pencil size={14} />
+                </button>
+              </>
+            )}
+          </div>
+        ) : '水印配置'}
         maxWidth={920}
         contentClassName="overflow-hidden !p-4"
         contentStyle={{ maxHeight: '70vh', height: '70vh' }}
@@ -1037,14 +1082,6 @@ function WatermarkEditor(props: {
         >
           <div className="flex-1 min-h-0 overflow-y-auto pr-1 pt-2">
             <div className="grid gap-2" style={{ gridTemplateColumns: '74px minmax(0, 1fr)' }}>
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>配置名称</div>
-              <input
-                value={config.name}
-                onChange={(e) => updateConfig({ name: e.target.value })}
-                className="w-full h-8 rounded-[8px] px-3 text-sm outline-none prd-field"
-                placeholder="例如：默认水印"
-              />
-
               <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>水印文本</div>
               <input
                 value={config.text}
@@ -1189,8 +1226,8 @@ function WatermarkEditor(props: {
                       {([
                         { value: 'left', label: '左' },
                         { value: 'right', label: '右' },
-                        { value: 'top', label: '中上' },
-                        { value: 'bottom', label: '中下' },
+                        { value: 'top', label: '上' },
+                        { value: 'bottom', label: '下' },
                       ] as const).map((option) => {
                         const active = iconPosition === option.value;
                         return (
@@ -1231,7 +1268,7 @@ function WatermarkEditor(props: {
                         min={0.2}
                         max={3}
                         step={0.1}
-                        className="w-14 h-8 rounded-[8px] px-2 text-sm outline-none prd-field"
+                        className="w-16 h-8 rounded-[8px] px-2 text-sm outline-none prd-field"
                         value={iconScaleValue}
                         onChange={(e) => updateConfig({ iconScale: Number(e.target.value) })}
                       />
@@ -1239,156 +1276,162 @@ function WatermarkEditor(props: {
                   </div>
                 ) : null}
 
-                {/* 填充 + 背景色 */}
-                <div className="flex items-center gap-3">
-                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>填充</span>
-                  <button
-                    type="button"
-                    className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
-                    style={{
-                      background: config.backgroundEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
-                      border: config.backgroundEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
-                      color: config.backgroundEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
-                    }}
-                    title="填充背景"
-                    onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
-                  >
-                    <div className="w-4 h-4 rounded-sm" style={{ background: config.backgroundEnabled ? 'currentColor' : 'transparent', border: '2px solid currentColor' }} />
-                  </button>
-                  {config.backgroundEnabled && (
-                    <label
-                      className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
+                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+                  {/* 填充 + 背景色 */}
+                  <div className="flex items-center gap-3">
+                    <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>填充</span>
+                    <button
+                      type="button"
+                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
                       style={{
-                        background: config.backgroundColor || '#000000',
-                        border: '2px solid rgba(255,255,255,0.3)',
-                        color: 'rgba(255,255,255,0.9)',
+                        background: config.backgroundEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
+                        border: config.backgroundEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
+                        color: config.backgroundEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
                       }}
-                      title="背景颜色"
+                      title="填充背景"
+                      onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
                     >
-                      <Droplet size={12} />
-                      <input
-                        type="color"
-                        value={(config.backgroundColor || '#000000') as string}
-                        className="absolute inset-0 opacity-0 cursor-pointer"
-                        onChange={(e) => updateConfig({ backgroundColor: e.target.value })}
-                      />
-                    </label>
-                  )}
+                      <div className="w-4 h-4 rounded-sm" style={{ background: config.backgroundEnabled ? 'currentColor' : 'transparent', border: '2px solid currentColor' }} />
+                    </button>
+                    {config.backgroundEnabled && (
+                      <label
+                        className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
+                        style={{
+                          background: config.backgroundColor || '#000000',
+                          border: '2px solid rgba(255,255,255,0.3)',
+                          color: 'rgba(255,255,255,0.9)',
+                        }}
+                        title="背景颜色"
+                      >
+                        <Droplet size={12} />
+                        <input
+                          type="color"
+                          value={(config.backgroundColor || '#000000') as string}
+                          className="absolute inset-0 opacity-0 cursor-pointer"
+                          onChange={(e) => updateConfig({ backgroundColor: e.target.value })}
+                        />
+                      </label>
+                    )}
+                  </div>
                 </div>
 
-                {/* 边框 + 边框色 */}
-                <div className="flex items-center gap-3">
-                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>边框</span>
-                  <button
-                    type="button"
-                    className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
-                    style={{
-                      background: config.borderEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
-                      border: config.borderEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
-                      color: config.borderEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
-                    }}
-                    title="显示边框"
-                    onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
-                  >
-                    <Square size={14} />
-                  </button>
+                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+                  {/* 边框 + 边框色 */}
+                  <div className="flex items-center gap-3">
+                    <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>边框</span>
+                    <button
+                      type="button"
+                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
+                      style={{
+                        background: config.borderEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
+                        border: config.borderEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
+                        color: config.borderEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
+                      }}
+                      title="显示边框"
+                      onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
+                    >
+                      <Square size={14} />
+                    </button>
+                    {config.borderEnabled && (
+                      <label
+                        className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
+                        style={{
+                          background: config.borderColor || '#ffffff',
+                          border: '2px solid rgba(255,255,255,0.3)',
+                          color: 'rgba(0,0,0,0.7)',
+                        }}
+                        title="边框颜色"
+                      >
+                        <Droplet size={12} />
+                        <input
+                          type="color"
+                          value={(config.borderColor || '#ffffff') as string}
+                          className="absolute inset-0 opacity-0 cursor-pointer"
+                          onChange={(e) => updateConfig({ borderColor: e.target.value })}
+                        />
+                      </label>
+                    )}
+                  </div>
+
+                  {/* 边框宽度（启用边框时显示） */}
                   {config.borderEnabled && (
+                    <div className="flex items-center gap-3">
+                      <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>粗细</span>
+                      <input
+                        type="range"
+                        min="1"
+                        max="10"
+                        step="1"
+                        value={config.borderWidth ?? 2}
+                        onChange={(e) => updateConfig({ borderWidth: Number(e.target.value) })}
+                        className="flex-1 h-1.5 appearance-none rounded-full cursor-pointer"
+                        style={{
+                          background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) 100%)`,
+                        }}
+                      />
+                      <span className="text-[11px] w-6 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
+                        {config.borderWidth ?? 2}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* 圆角 */}
+                  {(config.backgroundEnabled || config.borderEnabled) ? (
+                    <div className="flex items-center gap-3 min-w-0 overflow-hidden">
+                      <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>圆角</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="50"
+                        step="1"
+                        value={config.cornerRadius ?? 0}
+                        onChange={(e) => updateConfig({ cornerRadius: Number(e.target.value) })}
+                        className="flex-1 min-w-0 h-1.5 appearance-none rounded-full cursor-pointer"
+                        style={{
+                          background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) 100%)`,
+                        }}
+                      />
+                      <span className="text-[11px] w-10 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
+                        {Math.round(((config.cornerRadius ?? 0) / 50) * 100)}%
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+                  {/* 文字 + 文字色 */}
+                  <div className="flex items-center gap-3">
+                    <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>文字</span>
+                    <div
+                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
+                      style={{
+                        background: 'rgba(255,255,255,0.1)',
+                        border: '1.5px solid rgba(255,255,255,0.2)',
+                        color: 'rgba(255,255,255,0.8)',
+                        fontSize: '12px',
+                        fontWeight: 500,
+                      }}
+                    >
+                      字
+                    </div>
                     <label
                       className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
                       style={{
-                        background: config.borderColor || '#ffffff',
+                        background: config.textColor || '#ffffff',
                         border: '2px solid rgba(255,255,255,0.3)',
                         color: 'rgba(0,0,0,0.7)',
                       }}
-                      title="边框颜色"
+                      title="文字颜色"
                     >
                       <Droplet size={12} />
                       <input
                         type="color"
-                        value={(config.borderColor || '#ffffff') as string}
+                        value={(config.textColor || '#ffffff') as string}
                         className="absolute inset-0 opacity-0 cursor-pointer"
-                        onChange={(e) => updateConfig({ borderColor: e.target.value })}
+                        onChange={(e) => updateConfig({ textColor: e.target.value })}
                       />
                     </label>
-                  )}
-                </div>
-
-                {/* 边框宽度（启用边框时显示） */}
-                {config.borderEnabled && (
-                  <div className="flex items-center gap-3">
-                    <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>粗细</span>
-                    <input
-                      type="range"
-                      min="1"
-                      max="10"
-                      step="1"
-                      value={config.borderWidth ?? 2}
-                      onChange={(e) => updateConfig({ borderWidth: Number(e.target.value) })}
-                      className="flex-1 h-1.5 appearance-none rounded-full cursor-pointer"
-                      style={{
-                        background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) 100%)`,
-                      }}
-                    />
-                    <span className="text-[11px] w-6 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                      {config.borderWidth ?? 2}
-                    </span>
                   </div>
-                )}
-
-                {/* 圆角 */}
-                {(config.backgroundEnabled || config.borderEnabled) ? (
-                  <div className="flex items-center gap-3 min-w-0 overflow-hidden">
-                    <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>圆角</span>
-                    <input
-                      type="range"
-                      min="0"
-                      max="50"
-                      step="1"
-                      value={config.cornerRadius ?? 0}
-                      onChange={(e) => updateConfig({ cornerRadius: Number(e.target.value) })}
-                      className="flex-1 min-w-0 h-1.5 appearance-none rounded-full cursor-pointer"
-                      style={{
-                        background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) 100%)`,
-                      }}
-                    />
-                    <span className="text-[11px] w-10 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                      {Math.round(((config.cornerRadius ?? 0) / 50) * 100)}%
-                    </span>
-                  </div>
-                ) : null}
-
-                {/* 文字 + 文字色 */}
-                <div className="flex items-center gap-3">
-                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>文字</span>
-                  <div
-                    className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
-                    style={{
-                      background: 'rgba(255,255,255,0.1)',
-                      border: '1.5px solid rgba(255,255,255,0.2)',
-                      color: 'rgba(255,255,255,0.8)',
-                      fontSize: '12px',
-                      fontWeight: 500,
-                    }}
-                  >
-                    字
-                  </div>
-                  <label
-                    className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
-                    style={{
-                      background: config.textColor || '#ffffff',
-                      border: '2px solid rgba(255,255,255,0.3)',
-                      color: 'rgba(0,0,0,0.7)',
-                    }}
-                    title="文字颜色"
-                  >
-                    <Droplet size={12} />
-                    <input
-                      type="color"
-                      value={(config.textColor || '#ffffff') as string}
-                      className="absolute inset-0 opacity-0 cursor-pointer"
-                      onChange={(e) => updateConfig({ textColor: e.target.value })}
-                    />
-                  </label>
                 </div>
               </div>
 
@@ -1760,7 +1803,8 @@ function WatermarkPreview(props: {
     return basis / baseSize;
   })();
   const fontSize = spec.fontSizePx * previewScale;
-  const iconSize = fontSize;
+  const iconScale = Number.isFinite(spec.iconScale) && (spec.iconScale ?? 0) > 0 ? (spec.iconScale as number) : 1;
+  const iconSize = fontSize * iconScale;
   const baseGap = Number.isFinite(spec.iconGapPx) && (spec.iconGapPx ?? 0) > 0
     ? (spec.iconGapPx as number)
     : (spec.fontSizePx / 4);
@@ -1796,8 +1840,9 @@ function WatermarkPreview(props: {
         fontSize.toFixed(2),
         iconPosition,
         gap.toFixed(2),
+        iconSize.toFixed(2),
       ].join('|'),
-    [spec.text, spec.iconEnabled, spec.iconImageRef, spec.backgroundEnabled, spec.borderEnabled, borderWidth, fontFamily, fontSize, iconPosition, gap]
+    [spec.text, spec.iconEnabled, spec.iconImageRef, spec.backgroundEnabled, spec.borderEnabled, borderWidth, fontFamily, fontSize, iconPosition, gap, iconSize]
   );
   const cachedSize = watermarkSizeCache.get(measureSignature);
 
@@ -1984,6 +2029,7 @@ function WatermarkPreview(props: {
     iconPosition,
     isVerticalIcon,
     gap,
+    iconSize,
     borderWidth,
     decorationPadding,
     width,
