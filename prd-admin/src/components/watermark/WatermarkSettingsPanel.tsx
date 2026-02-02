@@ -1951,7 +1951,9 @@ function WatermarkPreview(props: {
   const pendingMeasure = measuredSignature !== measureSignature;
   const effectiveWidth = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.width : measuredWidth;
   const effectiveHeight = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.height : measuredHeight;
-  const hideUntilMeasured = (!fontReady && !cachedSize) || measuredSignature !== measureSignature;
+  // 必须同时满足：字体加载完成 AND 测量完成，才显示水印
+  // 这样可以避免在尺寸稳定前显示，导致位置跳动
+  const hideUntilMeasured = !fontReady || measuredSignature !== measureSignature;
 
   const offsetX = spec.positionMode === 'ratio' ? spec.offsetX * width : spec.offsetX;
   const offsetY = spec.positionMode === 'ratio' ? spec.offsetY * canvasHeight : spec.offsetY;
