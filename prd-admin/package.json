@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@babel/standalone": "^7.29.0",
     "@lexical/react": "^0.39.0",
     "@lexical/utils": "^0.39.0",
     "@radix-ui/react-dialog": "^1.1.6",
