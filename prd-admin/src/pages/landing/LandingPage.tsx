@@ -6,6 +6,35 @@ import { FeatureBento } from './sections/FeatureBento';
 import { SocialProof } from './sections/SocialProof';
 import { CtaFooter } from './sections/CtaFooter';
 
+// MAP Logo component using official favicon
+function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="goldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style={{ stopColor: '#f4e2b8', stopOpacity: 1 }} />
+          <stop offset="45%" style={{ stopColor: '#d6b26a', stopOpacity: 1 }} />
+          <stop offset="100%" style={{ stopColor: '#f2d59b', stopOpacity: 1 }} />
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="512" height="512" rx="102" ry="102" fill="url(#goldGradient)" />
+      <text
+        x="256"
+        y="268"
+        fontFamily="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif"
+        fontSize="190"
+        fontWeight="900"
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill="#1a1206"
+        letterSpacing="-6"
+      >
+        MAP
+      </text>
+    </svg>
+  );
+}
+
 export default function LandingPage() {
   const navigate = useNavigate();
   const mainRef = useRef<HTMLDivElement>(null);
@@ -44,17 +73,8 @@ export default function LandingPage() {
           <div className="max-w-7xl mx-auto flex items-center justify-between">
             {/* Logo */}
             <div className="flex items-center gap-3">
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center"
-                style={{
-                  background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
-                }}
-              >
-                <svg className="w-5 h-5 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-              </div>
-              <span className="text-lg font-semibold text-white/90">PRD Agent</span>
+              <MapLogo className="w-10 h-10 rounded-xl" />
+              <span className="text-lg font-bold text-white/90">MAP</span>
             </div>
 
             {/* Nav links - desktop */}

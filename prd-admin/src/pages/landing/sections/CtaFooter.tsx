@@ -90,7 +90,7 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
           </div>
 
           <div className="mt-6 text-xs text-white/30">
-            © 2026 PRD Agent. All rights reserved.
+            © 2026 MAP. All rights reserved.
           </div>
         </div>
       </div>
