@@ -30,14 +30,18 @@ import {
   getLiteraryAgentAllModels,
   // 海鲜市场 API
   listLiteraryPromptsMarketplace,
+  publishLiteraryPrompt,
+  unpublishLiteraryPrompt,
   forkLiteraryPrompt,
   listReferenceImageConfigsMarketplace,
+  publishReferenceImageConfig,
+  unpublishReferenceImageConfig,
   forkReferenceImageConfig,
   listWatermarksMarketplace,
   forkWatermark,
 } from '@/services';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse, MarketplaceReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, Hand, TrendingUp, Clock, Search } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, Hand, TrendingUp, Clock, Search, GitFork, Share2, XCircle } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import type { MarketplaceLiteraryPrompt } from '@/services/contracts/literaryPrompts';
 import type { MarketplaceWatermarkConfig } from '@/services/contracts/watermark';
@@ -108,6 +112,14 @@ type PromptTemplate = {
   isSystem?: boolean;
   scenarioType?: string | null;
   order?: number;
+  // 海鲜市场字段
+  isPublic?: boolean;
+  forkCount?: number;
+  forkedFromId?: string | null;
+  forkedFromUserId?: string | null;
+  forkedFromUserName?: string | null;
+  forkedFromUserAvatar?: string | null;
+  isModifiedAfterFork?: boolean;
 };
 
 // 将 PanelCard 移到组件外部定义，避免每次渲染时重新创建组件导致子组件卸载/重新挂载
@@ -173,6 +185,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [configViewMode, setConfigViewMode] = useState<'mine' | 'marketplace'>('mine');
   const [marketplaceSearchKeyword, setMarketplaceSearchKeyword] = useState('');
   const [marketplaceSortBy, setMarketplaceSortBy] = useState<'hot' | 'new'>('hot');
+  const [marketplaceCategoryFilter, setMarketplaceCategoryFilter] = useState<'all' | 'prompt' | 'refImage' | 'watermark'>('all');
   const [marketplacePrompts, setMarketplacePrompts] = useState<MarketplaceLiteraryPrompt[]>([]);
   const [marketplaceRefImages, setMarketplaceRefImages] = useState<MarketplaceReferenceImageConfig[]>([]);
   const [marketplaceWatermarks, setMarketplaceWatermarks] = useState<MarketplaceWatermarkConfig[]>([]);
@@ -1654,6 +1667,94 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   };
 
+  // 发布提示词到海鲜市场
+  const handlePublishPrompt = async (prompt: PromptTemplate) => {
+    try {
+      const res = await publishLiteraryPrompt({ id: prompt.id });
+      if (res.success) {
+        // 更新本地状态
+        setUserPrompts((prev) =>
+          prev.map((p) =>
+            p.id === prompt.id ? { ...p, isPublic: true, forkCount: res.data.prompt.forkCount ?? 0 } : p
+          )
+        );
+        toast.success('发布成功', '配置已发布到海鲜市场');
+      } else {
+        toast.error('发布失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Failed to publish prompt:', error);
+      toast.error('发布失败');
+    }
+  };
+
+  // 取消发布提示词
+  const handleUnpublishPrompt = async (prompt: PromptTemplate) => {
+    const ok = await systemDialog.confirm({
+      title: '确认取消发布',
+      message: `确定要取消发布「${prompt.title}」吗？取消后其他用户将无法看到此配置。`,
+      tone: 'neutral',
+    });
+    if (!ok) return;
+
+    try {
+      const res = await unpublishLiteraryPrompt({ id: prompt.id });
+      if (res.success) {
+        // 更新本地状态
+        setUserPrompts((prev) =>
+          prev.map((p) =>
+            p.id === prompt.id ? { ...p, isPublic: false } : p
+          )
+        );
+        toast.success('已取消发布');
+      } else {
+        toast.error('取消发布失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Failed to unpublish prompt:', error);
+      toast.error('取消发布失败');
+    }
+  };
+
+  // 发布风格图到海鲜市场
+  const handlePublishRefConfig = async (config: ReferenceImageConfig) => {
+    try {
+      const res = await publishReferenceImageConfig({ id: config.id });
+      if (res.success) {
+        await loadReferenceImageConfigs();
+        toast.success('发布成功', '配置已发布到海鲜市场');
+      } else {
+        toast.error('发布失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Failed to publish reference image config:', error);
+      toast.error('发布失败');
+    }
+  };
+
+  // 取消发布风格图
+  const handleUnpublishRefConfig = async (config: ReferenceImageConfig) => {
+    const ok = await systemDialog.confirm({
+      title: '确认取消发布',
+      message: `确定要取消发布「${config.name}」吗？取消后其他用户将无法看到此配置。`,
+      tone: 'neutral',
+    });
+    if (!ok) return;
+
+    try {
+      const res = await unpublishReferenceImageConfig({ id: config.id });
+      if (res.success) {
+        await loadReferenceImageConfigs();
+        toast.success('已取消发布');
+      } else {
+        toast.error('取消发布失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Failed to unpublish reference image config:', error);
+      toast.error('取消发布失败');
+    }
+  };
+
   const buttonConfig = [
     {
       label: '生成配图标记',
@@ -2684,36 +2785,36 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           if (!open) setConfigViewMode('mine'); // 关闭时重置为"我的"视图
         }}
         title="配置管理"
-        description="系统提示词、风格图与水印设置"
+        description={configViewMode === 'mine' ? '系统提示词、风格图与水印设置' : '发现优质配置，一键免费下载'}
         maxWidth={1500}
         contentClassName="overflow-hidden !p-4"
         contentStyle={{ maxHeight: '75vh', height: '75vh' }}
+        titleAction={
+          <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
+            <button
+              type="button"
+              onClick={() => setConfigViewMode('mine')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                configViewMode === 'mine' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
+              }`}
+            >
+              <User size={14} />
+              我的
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfigViewMode('marketplace')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                configViewMode === 'marketplace' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
+              }`}
+            >
+              <Globe size={14} />
+              海鲜市场
+            </button>
+          </div>
+        }
         content={
           <div className="flex flex-col h-full min-h-0">
-            {/* Tab 切换 */}
-            <div className="flex items-center gap-2 mb-4 flex-shrink-0 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>
-              <button
-                type="button"
-                onClick={() => setConfigViewMode('mine')}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                  configViewMode === 'mine' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
-                }`}
-              >
-                <User size={14} />
-                我的
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfigViewMode('marketplace')}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                  configViewMode === 'marketplace' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
-                }`}
-              >
-                <Globe size={14} />
-                海鲜市场
-              </button>
-            </div>
-
             {/* 我的配置视图 */}
             {configViewMode === 'mine' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
@@ -2805,6 +2906,22 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     当前
                                   </span>
                                 )}
+
+                                {/* 已公开徽章 */}
+                                {prompt.isPublic && (
+                                  <span
+                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+                                    style={{
+                                      background: 'rgba(59, 130, 246, 0.12)',
+                                      color: 'rgba(59, 130, 246, 0.95)',
+                                      border: '1px solid rgba(59, 130, 246, 0.28)',
+                                    }}
+                                    title="已发布到海鲜市场"
+                                  >
+                                    <Globe size={8} />
+                                    已公开
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -2845,57 +2962,94 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
 
-                          {/* 下栏：操作按钮区 */}
+                          {/* 下栏：Fork次数 + 操作按钮区 */}
                           <div className="px-2 pb-2 pt-1 flex-shrink-0">
-                            <div className="flex gap-1.5 justify-end">
-                              {selectedPrompt?.id !== prompt.id ? (
+                            {/* Fork次数显示（已发布时显示） */}
+                            {prompt.isPublic && typeof prompt.forkCount === 'number' && (
+                              <div
+                                className="flex items-center gap-1 mb-1.5 text-[10px]"
+                                style={{ color: 'var(--text-muted)' }}
+                              >
+                                <GitFork size={11} />
+                                <span>{prompt.forkCount} 次下载</span>
+                              </div>
+                            )}
+                            <div className="flex gap-1.5 justify-between">
+                              {/* 左侧：发布/取消发布按钮 */}
+                              <div className="flex gap-1.5">
+                                {prompt.isPublic ? (
+                                  <Button
+                                    size="xs"
+                                    variant="secondary"
+                                    onClick={() => void handleUnpublishPrompt(prompt)}
+                                    title="取消发布后其他用户将无法看到此配置"
+                                  >
+                                    <XCircle size={12} />
+                                    取消发布
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="xs"
+                                    variant="secondary"
+                                    onClick={() => void handlePublishPrompt(prompt)}
+                                    title="发布到海鲜市场供其他用户下载"
+                                  >
+                                    <Share2 size={12} />
+                                    发布
+                                  </Button>
+                                )}
+                              </div>
+                              {/* 右侧：选择/编辑/删除按钮 */}
+                              <div className="flex gap-1.5">
+                                {selectedPrompt?.id !== prompt.id ? (
+                                  <Button
+                                    size="xs"
+                                    variant="secondary"
+                                    onClick={() => {
+                                      setSelectedPrompt(prompt);
+                                      // 不关闭配置管理弹窗，选择后仍可继续配置其他项
+                                    }}
+                                  >
+                                    <Check size={12} />
+                                    选择
+                                  </Button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200"
+                                    style={{
+                                      background: 'rgba(34, 197, 94, 0.15)',
+                                      border: '1px solid rgba(34, 197, 94, 0.3)',
+                                      color: 'rgba(34, 197, 94, 0.95)',
+                                    }}
+                                    title="当前选中"
+                                  >
+                                    <CheckCircle2 size={12} />
+                                    已选择
+                                  </button>
+                                )}
                                 <Button
                                   size="xs"
                                   variant="secondary"
                                   onClick={() => {
-                                    setSelectedPrompt(prompt);
-                                    // 不关闭配置管理弹窗，选择后仍可继续配置其他项
+                                    handleEditPrompt(prompt);
+                                    // 不关闭配置管理弹窗，编辑完成后仍可继续配置
                                   }}
                                 >
-                                  <Check size={12} />
-                                  选择
+                                  <Edit2 size={12} />
+                                  编辑
                                 </Button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200"
-                                  style={{
-                                    background: 'rgba(34, 197, 94, 0.15)',
-                                    border: '1px solid rgba(34, 197, 94, 0.3)',
-                                    color: 'rgba(34, 197, 94, 0.95)',
+                                <Button
+                                  size="xs"
+                                  variant="danger"
+                                  onClick={() => {
+                                    void handleDeletePrompt(prompt);
                                   }}
-                                  title="当前选中"
                                 >
-                                  <CheckCircle2 size={12} />
-                                  已选择
-                                </button>
-                              )}
-                              <Button
-                                size="xs"
-                                variant="secondary"
-                                onClick={() => {
-                                  handleEditPrompt(prompt);
-                                  // 不关闭配置管理弹窗，编辑完成后仍可继续配置
-                                }}
-                              >
-                                <Edit2 size={12} />
-                                编辑
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant="danger"
-                                onClick={() => {
-                                  void handleDeletePrompt(prompt);
-                                }}
-                              >
-                                <Trash2 size={12} />
-                                删除
-                              </Button>
+                                  <Trash2 size={12} />
+                                  删除
+                                </Button>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -2977,10 +3131,39 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           {/* 标题栏 */}
                           <div className="p-2 pb-1 flex-shrink-0">
                             <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
+                              <div className="min-w-0 flex-1 flex items-center gap-1.5">
                                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                                   {config.name}
                                 </div>
+                              </div>
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                {/* 已选择徽章 */}
+                                {config.isActive && (
+                                  <span
+                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
+                                    style={{
+                                      background: 'var(--accent-primary)',
+                                      color: 'white',
+                                    }}
+                                  >
+                                    当前
+                                  </span>
+                                )}
+                                {/* 已公开徽章 */}
+                                {config.isPublic && (
+                                  <span
+                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+                                    style={{
+                                      background: 'rgba(59, 130, 246, 0.12)',
+                                      color: 'rgba(59, 130, 246, 0.95)',
+                                      border: '1px solid rgba(59, 130, 246, 0.28)',
+                                    }}
+                                    title="已发布到海鲜市场"
+                                  >
+                                    <Globe size={8} />
+                                    已公开
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -3027,45 +3210,122 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
 
-                          {/* 操作按钮区 */}
+                          {/* Fork次数 + 操作按钮区 */}
                           <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                            <div className="flex flex-wrap gap-1.5 justify-end">
-                              {config.isActive ? (
-                                <button
-                                  type="button"
-                                  className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                                  style={{
-                                    background: 'rgba(34, 197, 94, 0.15)',
-                                    border: '1px solid rgba(34, 197, 94, 0.3)',
-                                    color: 'rgba(34, 197, 94, 0.95)',
-                                  }}
-                                  onClick={async () => {
-                                    setReferenceImageSaving(true);
-                                    try {
-                                      const res = await deactivateReferenceImageConfig({ id: config.id });
-                                      if (res.success) {
-                                        await loadReferenceImageConfigs();
+                            {/* Fork次数显示（已发布时显示） */}
+                            {config.isPublic && typeof config.forkCount === 'number' && (
+                              <div
+                                className="flex items-center gap-1 mb-1.5 text-[10px]"
+                                style={{ color: 'var(--text-muted)' }}
+                              >
+                                <GitFork size={11} />
+                                <span>{config.forkCount} 次下载</span>
+                              </div>
+                            )}
+                            <div className="flex flex-wrap gap-1.5 justify-between">
+                              {/* 左侧：发布/取消发布按钮 */}
+                              <div className="flex gap-1.5">
+                                {config.isPublic ? (
+                                  <Button
+                                    size="xs"
+                                    variant="secondary"
+                                    onClick={() => void handleUnpublishRefConfig(config)}
+                                    title="取消发布后其他用户将无法看到此配置"
+                                  >
+                                    <XCircle size={12} />
+                                    取消发布
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="xs"
+                                    variant="secondary"
+                                    onClick={() => void handlePublishRefConfig(config)}
+                                    title="发布到海鲜市场供其他用户下载"
+                                  >
+                                    <Share2 size={12} />
+                                    发布
+                                  </Button>
+                                )}
+                              </div>
+                              {/* 右侧：选择/编辑/删除按钮 */}
+                              <div className="flex gap-1.5">
+                                {config.isActive ? (
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                                    style={{
+                                      background: 'rgba(34, 197, 94, 0.15)',
+                                      border: '1px solid rgba(34, 197, 94, 0.3)',
+                                      color: 'rgba(34, 197, 94, 0.95)',
+                                    }}
+                                    onClick={async () => {
+                                      setReferenceImageSaving(true);
+                                      try {
+                                        const res = await deactivateReferenceImageConfig({ id: config.id });
+                                        if (res.success) {
+                                          await loadReferenceImageConfigs();
+                                        }
+                                      } finally {
+                                        setReferenceImageSaving(false);
                                       }
-                                    } finally {
-                                      setReferenceImageSaving(false);
-                                    }
-                                  }}
-                                  disabled={referenceImageSaving}
-                                  title="点击取消选择"
-                                >
-                                  <CheckCircle2 size={12} />
-                                  已选择
-                                </button>
-                              ) : (
+                                    }}
+                                    disabled={referenceImageSaving}
+                                    title="点击取消选择"
+                                  >
+                                    <CheckCircle2 size={12} />
+                                    已选择
+                                  </button>
+                                ) : (
+                                  <Button
+                                    size="xs"
+                                    variant="secondary"
+                                    onClick={async () => {
+                                      setReferenceImageSaving(true);
+                                      try {
+                                        const res = await activateReferenceImageConfig({ id: config.id });
+                                        if (res.success) {
+                                          await loadReferenceImageConfigs();
+                                        }
+                                      } finally {
+                                        setReferenceImageSaving(false);
+                                      }
+                                    }}
+                                    disabled={referenceImageSaving}
+                                  >
+                                    <Check size={12} />
+                                    选择
+                                  </Button>
+                                )}
                                 <Button
                                   size="xs"
                                   variant="secondary"
+                                  onClick={() => {
+                                    setEditingRefConfig({ ...config });
+                                    setEditingRefConfigOpen(true);
+                                  }}
+                                >
+                                  <Pencil size={12} />
+                                  编辑
+                                </Button>
+                                <Button
+                                  size="xs"
+                                  variant="danger"
                                   onClick={async () => {
+                                    const confirmed = await systemDialog.confirm({
+                                      title: '删除风格图配置',
+                                      message: `确定要删除「${config.name}」吗？`,
+                                      confirmText: '确定删除',
+                                      tone: 'danger',
+                                    });
+                                    if (!confirmed) return;
                                     setReferenceImageSaving(true);
                                     try {
-                                      const res = await activateReferenceImageConfig({ id: config.id });
+                                      const res = await deleteReferenceImageConfig({ id: config.id });
                                       if (res.success) {
                                         await loadReferenceImageConfigs();
+                                        toast.success('已删除');
+                                      } else {
+                                        toast.error('删除失败', res.error?.message || '未知错误');
                                       }
                                     } finally {
                                       setReferenceImageSaving(false);
@@ -3073,50 +3333,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   }}
                                   disabled={referenceImageSaving}
                                 >
-                                  <Check size={12} />
-                                  选择
+                                  <Trash2 size={12} />
+                                  删除
                                 </Button>
-                              )}
-                              <Button
-                                size="xs"
-                                variant="secondary"
-                                onClick={() => {
-                                  setEditingRefConfig({ ...config });
-                                  setEditingRefConfigOpen(true);
-                                }}
-                              >
-                                <Pencil size={12} />
-                                编辑
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant="danger"
-                                onClick={async () => {
-                                  const confirmed = await systemDialog.confirm({
-                                    title: '删除风格图配置',
-                                    message: `确定要删除「${config.name}」吗？`,
-                                    confirmText: '确定删除',
-                                    tone: 'danger',
-                                  });
-                                  if (!confirmed) return;
-                                  setReferenceImageSaving(true);
-                                  try {
-                                    const res = await deleteReferenceImageConfig({ id: config.id });
-                                    if (res.success) {
-                                      await loadReferenceImageConfigs();
-                                      toast.success('已删除');
-                                    } else {
-                                      toast.error('删除失败', res.error?.message || '未知错误');
-                                    }
-                                  } finally {
-                                    setReferenceImageSaving(false);
-                                  }
-                                }}
-                                disabled={referenceImageSaving}
-                              >
-                                <Trash2 size={12} />
-                                删除
-                              </Button>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -3149,13 +3369,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           </div>
             )}
 
-            {/* 海鲜市场视图 */}
+            {/* 海鲜市场视图 - 混合展示布局 */}
             {configViewMode === 'marketplace' && (
               <div className="flex flex-col h-full min-h-0 flex-1">
-                {/* 搜索和排序栏 */}
-                <div className="flex items-center gap-4 mb-4 flex-shrink-0">
+                {/* 搜索、分类筛选和排序栏 */}
+                <div className="flex items-center gap-3 mb-4 flex-shrink-0 flex-wrap">
                   {/* 搜索框 */}
-                  <div className="relative flex-1 max-w-xs">
+                  <div className="relative flex-1 min-w-[180px] max-w-xs">
                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
                     <input
                       type="text"
@@ -3165,6 +3385,28 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       className="w-full h-8 pl-9 pr-3 rounded-lg text-sm"
                       style={{ background: 'var(--input-bg)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                     />
+                  </div>
+                  {/* 分类筛选 */}
+                  <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
+                    {[
+                      { key: 'all' as const, label: '全部' },
+                      { key: 'prompt' as const, label: '提示词', icon: FileText },
+                      { key: 'refImage' as const, label: '风格图', icon: ImageIcon },
+                      { key: 'watermark' as const, label: '水印', icon: Sparkles },
+                    ].map(({ key, label, icon: Icon }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setMarketplaceCategoryFilter(key)}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
+                          marketplaceCategoryFilter === key ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                        }`}
+                        style={{ color: marketplaceCategoryFilter === key ? undefined : 'var(--text-muted)' }}
+                      >
+                        {Icon && <Icon size={11} />}
+                        {label}
+                      </button>
+                    ))}
                   </div>
                   {/* 排序 */}
                   <div className="flex items-center gap-1">
@@ -3198,232 +3440,142 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0 overflow-auto">
-                    {/* 提示词列 */}
-                    <div className="min-h-0 flex flex-col">
-                      <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                        系统提示词
-                      </div>
-                      {marketplacePrompts.length === 0 ? (
-                        <div className="text-xs py-4 text-center" style={{ color: 'var(--text-muted)' }}>
-                          暂无公开的提示词
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-1 gap-3 overflow-auto">
-                          {marketplacePrompts.map((prompt) => (
-                            <GlassCard key={prompt.id} className="p-0 overflow-hidden">
-                              <div className="flex flex-col">
-                                <div className="p-2 pb-1">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className="min-w-0 flex-1">
-                                      <div className="font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
-                                        {prompt.title}
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                      <span
-                                        className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1"
-                                        style={{ background: 'rgba(59, 130, 246, 0.12)', color: 'rgba(59, 130, 246, 0.95)', border: '1px solid rgba(59, 130, 246, 0.28)' }}
-                                        title="下载次数"
-                                      >
-                                        <Hand size={10} />
-                                        {prompt.forkCount}
-                                      </span>
-                                    </div>
-                                  </div>
-                                  <div className="mt-1 flex items-center gap-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                                    {prompt.ownerUserAvatar ? (
-                                      <img src={prompt.ownerUserAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
-                                    ) : (
-                                      <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
-                                        <User size={10} />
-                                      </div>
-                                    )}
-                                    <span>{prompt.ownerUserName || '未知用户'} 发布</span>
-                                  </div>
-                                </div>
-                                <div className="px-2 pb-1">
-                                  <div
-                                    className="overflow-hidden border rounded-[6px] p-2"
-                                    style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)', maxHeight: '80px' }}
-                                  >
-                                    <div className="text-[11px] line-clamp-3" style={{ color: 'var(--text-muted)' }}>
-                                      {prompt.content || '（内容为空）'}
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="px-2 pb-2 pt-1">
-                                  <div className="flex justify-end">
-                                    <Button
-                                      size="xs"
-                                      variant="secondary"
-                                      onClick={async () => {
-                                        const res = await forkLiteraryPrompt({ id: prompt.id });
-                                        if (res.success) {
-                                          toast.success('下载成功，已添加到「我的」');
-                                          void loadMarketplaceData();
-                                          void loadLiteraryPrompts();
-                                        } else {
-                                          toast.error('下载失败', res.error?.message || '未知错误');
-                                        }
-                                      }}
-                                    >
-                                      <Hand size={12} />
-                                      免费下载
-                                    </Button>
-                                  </div>
-                                </div>
-                              </div>
-                            </GlassCard>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                  <div className="flex-1 min-h-0 overflow-auto">
+                    {/* 混合展示所有类型 */}
+                    {(() => {
+                      // 合并所有数据并添加类型标识
+                      type MixedItem =
+                        | { type: 'prompt'; data: MarketplaceLiteraryPrompt }
+                        | { type: 'refImage'; data: MarketplaceReferenceImageConfig }
+                        | { type: 'watermark'; data: MarketplaceWatermarkConfig };
 
-                    {/* 风格图列 */}
-                    <div className="min-h-0 flex flex-col border-l pl-4" style={{ borderColor: 'var(--border-subtle)' }}>
-                      <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                        风格图设置
-                      </div>
-                      {marketplaceRefImages.length === 0 ? (
-                        <div className="text-xs py-4 text-center" style={{ color: 'var(--text-muted)' }}>
-                          暂无公开的风格图
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-1 gap-3 overflow-auto">
-                          {marketplaceRefImages.map((config) => (
-                            <GlassCard key={config.id} className="p-0 overflow-hidden">
-                              <div className="flex flex-col">
-                                <div className="p-2 pb-1">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className="min-w-0 flex-1">
-                                      <div className="font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
-                                        {config.name}
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                      <span
-                                        className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1"
-                                        style={{ background: 'rgba(59, 130, 246, 0.12)', color: 'rgba(59, 130, 246, 0.95)', border: '1px solid rgba(59, 130, 246, 0.28)' }}
-                                        title="下载次数"
-                                      >
-                                        <Hand size={10} />
-                                        {config.forkCount}
-                                      </span>
-                                    </div>
-                                  </div>
-                                  <div className="mt-1 flex items-center gap-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                                    {config.ownerUserAvatar ? (
-                                      <img src={config.ownerUserAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
-                                    ) : (
-                                      <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
-                                        <User size={10} />
-                                      </div>
-                                    )}
-                                    <span>{config.ownerUserName || '未知用户'} 发布</span>
-                                  </div>
-                                </div>
-                                <div className="px-2 pb-1">
-                                  <div
-                                    className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
-                                    style={{
-                                      background: config.imageUrl
-                                        ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                                        : 'rgba(255,255,255,0.02)',
-                                      height: '80px',
-                                    }}
-                                  >
-                                    {config.imageUrl ? (
-                                      <img src={config.imageUrl} alt={config.name} className="block max-w-full max-h-full object-contain" />
-                                    ) : (
-                                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="px-2 pb-2 pt-1">
-                                  <div className="flex justify-end">
-                                    <Button
-                                      size="xs"
-                                      variant="secondary"
-                                      onClick={async () => {
-                                        const res = await forkReferenceImageConfig({ id: config.id });
-                                        if (res.success) {
-                                          toast.success('下载成功，已添加到「我的」');
-                                          void loadMarketplaceData();
-                                          void loadReferenceImageConfigs();
-                                        } else {
-                                          toast.error('下载失败', res.error?.message || '未知错误');
-                                        }
-                                      }}
-                                    >
-                                      <Hand size={12} />
-                                      免费下载
-                                    </Button>
-                                  </div>
-                                </div>
-                              </div>
-                            </GlassCard>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                      const mixedItems: MixedItem[] = [
+                        ...(marketplaceCategoryFilter === 'all' || marketplaceCategoryFilter === 'prompt'
+                          ? marketplacePrompts.map((p) => ({ type: 'prompt' as const, data: p }))
+                          : []),
+                        ...(marketplaceCategoryFilter === 'all' || marketplaceCategoryFilter === 'refImage'
+                          ? marketplaceRefImages.map((r) => ({ type: 'refImage' as const, data: r }))
+                          : []),
+                        ...(marketplaceCategoryFilter === 'all' || marketplaceCategoryFilter === 'watermark'
+                          ? marketplaceWatermarks.map((w) => ({ type: 'watermark' as const, data: w }))
+                          : []),
+                      ];
 
-                    {/* 水印列 */}
-                    <div className="min-h-0 flex flex-col border-l pl-4" style={{ borderColor: 'var(--border-subtle)' }}>
-                      <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                        水印设置
-                      </div>
-                      {marketplaceWatermarks.length === 0 ? (
-                        <div className="text-xs py-4 text-center" style={{ color: 'var(--text-muted)' }}>
-                          暂无公开的水印
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-1 gap-3 overflow-auto">
-                          {marketplaceWatermarks.map((config) => (
-                            <GlassCard key={config.id} className="p-0 overflow-hidden">
+                      // 按排序方式排序
+                      mixedItems.sort((a, b) => {
+                        if (marketplaceSortBy === 'hot') {
+                          return b.data.forkCount - a.data.forkCount;
+                        } else {
+                          return new Date(b.data.createdAt).getTime() - new Date(a.data.createdAt).getTime();
+                        }
+                      });
+
+                      if (mixedItems.length === 0) {
+                        return (
+                          <div className="text-sm py-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                            暂无公开配置
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {mixedItems.map((item) => (
+                            <GlassCard key={`${item.type}-${item.data.id}`} className="p-0 overflow-hidden">
                               <div className="flex flex-col">
                                 <div className="p-2 pb-1">
                                   <div className="flex items-start justify-between gap-2">
-                                    <div className="min-w-0 flex-1">
-                                      <div className="font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
-                                        {config.name}
+                                    <div className="min-w-0 flex-1 flex items-center gap-1.5">
+                                      {/* 类型标签 */}
+                                      <span
+                                        className="text-[9px] px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5 flex-shrink-0"
+                                        style={{
+                                          background: item.type === 'prompt' ? 'rgba(168, 85, 247, 0.15)' :
+                                                       item.type === 'refImage' ? 'rgba(236, 72, 153, 0.15)' :
+                                                       'rgba(6, 182, 212, 0.15)',
+                                          color: item.type === 'prompt' ? 'rgba(168, 85, 247, 0.95)' :
+                                                 item.type === 'refImage' ? 'rgba(236, 72, 153, 0.95)' :
+                                                 'rgba(6, 182, 212, 0.95)',
+                                          border: item.type === 'prompt' ? '1px solid rgba(168, 85, 247, 0.28)' :
+                                                  item.type === 'refImage' ? '1px solid rgba(236, 72, 153, 0.28)' :
+                                                  '1px solid rgba(6, 182, 212, 0.28)',
+                                        }}
+                                      >
+                                        {item.type === 'prompt' && <><FileText size={9} />提示词</>}
+                                        {item.type === 'refImage' && <><ImageIcon size={9} />风格图</>}
+                                        {item.type === 'watermark' && <><Sparkles size={9} />水印</>}
+                                      </span>
+                                      <div className="font-semibold text-[13px] truncate" style={{ color: 'var(--text-primary)' }}>
+                                        {item.type === 'prompt' ? item.data.title : item.data.name}
                                       </div>
                                     </div>
-                                    <div className="flex items-center gap-1">
+                                    <div className="flex items-center gap-1 flex-shrink-0">
                                       <span
-                                        className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1"
+                                        className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
                                         style={{ background: 'rgba(59, 130, 246, 0.12)', color: 'rgba(59, 130, 246, 0.95)', border: '1px solid rgba(59, 130, 246, 0.28)' }}
                                         title="下载次数"
                                       >
-                                        <Hand size={10} />
-                                        {config.forkCount}
+                                        <GitFork size={9} />
+                                        {item.data.forkCount}
                                       </span>
                                     </div>
                                   </div>
                                   <div className="mt-1 flex items-center gap-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                                    {config.ownerUserAvatar ? (
-                                      <img src={config.ownerUserAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
+                                    {item.data.ownerUserAvatar ? (
+                                      <img src={item.data.ownerUserAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
                                     ) : (
                                       <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
                                         <User size={10} />
                                       </div>
                                     )}
-                                    <span>{config.ownerUserName || '未知用户'} 发布</span>
+                                    <span>{item.data.ownerUserName || '未知用户'}</span>
+                                    <span className="opacity-60">·</span>
+                                    <span>{new Date(item.data.createdAt).toLocaleDateString()}</span>
                                   </div>
                                 </div>
+                                {/* 预览区域 */}
                                 <div className="px-2 pb-1">
-                                  <div
-                                    className="flex items-center justify-center overflow-hidden rounded-[6px] p-2"
-                                    style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)', height: '60px' }}
-                                  >
-                                    {config.previewUrl ? (
-                                      <img src={config.previewUrl} alt={config.name} className="max-h-full object-contain" />
-                                    ) : (
-                                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                        {config.text || '无预览'}
+                                  {item.type === 'prompt' && (
+                                    <div
+                                      className="overflow-hidden border rounded-[6px] p-2"
+                                      style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)', maxHeight: '60px' }}
+                                    >
+                                      <div className="text-[11px] line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+                                        {item.data.content || '（内容为空）'}
                                       </div>
-                                    )}
-                                  </div>
+                                    </div>
+                                  )}
+                                  {item.type === 'refImage' && (
+                                    <div
+                                      className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
+                                      style={{
+                                        background: item.data.imageUrl
+                                          ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
+                                          : 'rgba(255,255,255,0.02)',
+                                        height: '60px',
+                                      }}
+                                    >
+                                      {item.data.imageUrl ? (
+                                        <img src={item.data.imageUrl} alt={item.data.name} className="block max-w-full max-h-full object-contain" />
+                                      ) : (
+                                        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {item.type === 'watermark' && (
+                                    <div
+                                      className="flex items-center justify-center overflow-hidden rounded-[6px] p-2"
+                                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)', height: '50px' }}
+                                    >
+                                      {item.data.previewUrl ? (
+                                        <img src={item.data.previewUrl} alt={item.data.name} className="max-h-full object-contain" />
+                                      ) : (
+                                        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                          {item.data.text || '无预览'}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                                 <div className="px-2 pb-2 pt-1">
                                   <div className="flex justify-end">
@@ -3431,12 +3583,32 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                       size="xs"
                                       variant="secondary"
                                       onClick={async () => {
-                                        const res = await forkWatermark({ id: config.id });
-                                        if (res.success) {
-                                          toast.success('下载成功，已添加到「我的」');
-                                          void loadMarketplaceData();
+                                        if (item.type === 'prompt') {
+                                          const res = await forkLiteraryPrompt({ id: item.data.id });
+                                          if (res.success) {
+                                            toast.success('下载成功，已添加到「我的」');
+                                            void loadMarketplaceData();
+                                            void loadLiteraryPrompts();
+                                          } else {
+                                            toast.error('下载失败', res.error?.message || '未知错误');
+                                          }
+                                        } else if (item.type === 'refImage') {
+                                          const res = await forkReferenceImageConfig({ id: item.data.id });
+                                          if (res.success) {
+                                            toast.success('下载成功，已添加到「我的」');
+                                            void loadMarketplaceData();
+                                            void loadReferenceImageConfigs();
+                                          } else {
+                                            toast.error('下载失败', res.error?.message || '未知错误');
+                                          }
                                         } else {
-                                          toast.error('下载失败', res.error?.message || '未知错误');
+                                          const res = await forkWatermark({ id: item.data.id });
+                                          if (res.success) {
+                                            toast.success('下载成功，已添加到「我的」');
+                                            void loadMarketplaceData();
+                                          } else {
+                                            toast.error('下载失败', res.error?.message || '未知错误');
+                                          }
                                         }
                                       }}
                                     >
@@ -3449,8 +3621,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </GlassCard>
                           ))}
                         </div>
-                      )}
-                    </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>

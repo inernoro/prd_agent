@@ -25,11 +25,13 @@ import {
   uploadWatermarkFont,
   uploadWatermarkIcon,
   testWatermark,
+  publishWatermark,
+  unpublishWatermark,
 } from '@/services';
 import type { WatermarkFontInfo, WatermarkConfig } from '@/services/contracts/watermark';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
-import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical } from 'lucide-react';
+import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical, Globe, Share2, XCircle, GitFork } from 'lucide-react';
 
 const DEFAULT_CANVAS_SIZE = 320;
 const watermarkSizeCache = new Map<string, { width: number; height: number }>();
@@ -564,6 +566,53 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
     [load, saving]
   );
 
+  // 发布水印到海鲜市场
+  const handlePublishWatermark = useCallback(
+    async (target: WatermarkConfig) => {
+      if (saving) return;
+      setSaving(true);
+      try {
+        const res = await publishWatermark({ id: target.id });
+        if (res?.success) {
+          await load();
+          toast.success('发布成功', '配置已发布到海鲜市场');
+        } else {
+          toast.error('发布失败', res?.error?.message || '未知错误');
+        }
+      } finally {
+        setSaving(false);
+      }
+    },
+    [load, saving]
+  );
+
+  // 取消发布水印
+  const handleUnpublishWatermark = useCallback(
+    async (target: WatermarkConfig) => {
+      if (saving) return;
+      const ok = await systemDialog.confirm({
+        title: '确认取消发布',
+        message: `确定要取消发布「${target.name || '水印配置'}」吗？取消后其他用户将无法看到此配置。`,
+        tone: 'neutral',
+      });
+      if (!ok) return;
+
+      setSaving(true);
+      try {
+        const res = await unpublishWatermark({ id: target.id });
+        if (res?.success) {
+          await load();
+          toast.success('已取消发布');
+        } else {
+          toast.error('取消发布失败', res?.error?.message || '未知错误');
+        }
+      } finally {
+        setSaving(false);
+      }
+    },
+    [load, saving]
+  );
+
   useImperativeHandle(ref, () => ({
     addSpec: () => {
       void handleAddConfig();
@@ -627,21 +676,50 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                   <div className="flex flex-col">
                     <div className="p-2 pb-1 flex-shrink-0">
                       <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1 flex items-center gap-1.5">
                           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                             {item.name || `Watermark ${index + 1}`}
                           </div>
                         </div>
-                        <Button
-                          size="xs"
-                          variant="secondary"
-                          onClick={() => handleTestClick(item.id)}
-                          disabled={saving || testingId === item.id}
-                          title="上传图片测试水印效果"
-                        >
-                          <FlaskConical size={12} />
-                          {testingId === item.id ? '测试中...' : '测试'}
-                        </Button>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          {/* 已选择徽章 */}
+                          {isActive && (
+                            <span
+                              className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
+                              style={{
+                                background: 'var(--accent-primary)',
+                                color: 'white',
+                              }}
+                            >
+                              当前
+                            </span>
+                          )}
+                          {/* 已公开徽章 */}
+                          {item.isPublic && (
+                            <span
+                              className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+                              style={{
+                                background: 'rgba(59, 130, 246, 0.12)',
+                                color: 'rgba(59, 130, 246, 0.95)',
+                                border: '1px solid rgba(59, 130, 246, 0.28)',
+                              }}
+                              title="已发布到海鲜市场"
+                            >
+                              <Globe size={8} />
+                              已公开
+                            </span>
+                          )}
+                          <Button
+                            size="xs"
+                            variant="secondary"
+                            onClick={() => handleTestClick(item.id)}
+                            disabled={saving || testingId === item.id}
+                            title="上传图片测试水印效果"
+                          >
+                            <FlaskConical size={12} />
+                            {testingId === item.id ? '测试中...' : '测试'}
+                          </Button>
+                        </div>
                       </div>
                       {/* 授权应用提示 */}
                       {item.appKeys && item.appKeys.length > 0 ? (
@@ -736,53 +814,93 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                       </div>
                     </div>
 
+                    {/* Fork次数 + 操作按钮区 */}
                     <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                      <div className="flex flex-wrap gap-1.5 justify-end">
-                        {isActive ? (
-                          <button
-                            type="button"
-                            className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                            style={{
-                              background: 'rgba(34, 197, 94, 0.15)',
-                              border: '1px solid rgba(34, 197, 94, 0.3)',
-                              color: 'rgba(34, 197, 94, 0.95)',
+                      {/* Fork次数显示（已发布时显示） */}
+                      {item.isPublic && typeof item.forkCount === 'number' && (
+                        <div
+                          className="flex items-center gap-1 mb-1.5 text-[10px]"
+                          style={{ color: 'var(--text-muted)' }}
+                        >
+                          <GitFork size={11} />
+                          <span>{item.forkCount} 次下载</span>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-1.5 justify-between">
+                        {/* 左侧：发布/取消发布按钮 */}
+                        <div className="flex gap-1.5">
+                          {item.isPublic ? (
+                            <Button
+                              size="xs"
+                              variant="secondary"
+                              onClick={() => void handleUnpublishWatermark(item)}
+                              disabled={saving}
+                              title="取消发布后其他用户将无法看到此配置"
+                            >
+                              <XCircle size={12} />
+                              取消发布
+                            </Button>
+                          ) : (
+                            <Button
+                              size="xs"
+                              variant="secondary"
+                              onClick={() => void handlePublishWatermark(item)}
+                              disabled={saving}
+                              title="发布到海鲜市场供其他用户下载"
+                            >
+                              <Share2 size={12} />
+                              发布
+                            </Button>
+                          )}
+                        </div>
+                        {/* 右侧：选择/编辑/删除按钮 */}
+                        <div className="flex gap-1.5">
+                          {isActive ? (
+                            <button
+                              type="button"
+                              className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                              style={{
+                                background: 'rgba(34, 197, 94, 0.15)',
+                                border: '1px solid rgba(34, 197, 94, 0.3)',
+                                color: 'rgba(34, 197, 94, 0.95)',
+                              }}
+                              onClick={() => handleDeactivate(item.id)}
+                              disabled={saving}
+                              title="点击取消选择"
+                            >
+                              <CheckCircle2 size={12} />
+                              已选择
+                            </button>
+                          ) : (
+                            <Button size="xs" variant="secondary" onClick={() => handleActivate(item.id)} disabled={saving}>
+                              <Check size={12} />
+                              选择
+                            </Button>
+                          )}
+                          <Button
+                            size="xs"
+                            variant="secondary"
+                            onClick={() => {
+                              setDraftConfig({ ...item });
+                              setIsNewConfig(false);
+                              setEditorOpen(true);
                             }}
-                            onClick={() => handleDeactivate(item.id)}
-                            disabled={saving}
-                            title="点击取消选择"
                           >
-                            <CheckCircle2 size={12} />
-                            已选择
-                          </button>
-                        ) : (
-                          <Button size="xs" variant="secondary" onClick={() => handleActivate(item.id)} disabled={saving}>
-                            <Check size={12} />
-                            选择
+                            <Pencil size={12} />
+                            编辑
                           </Button>
-                        )}
-                        <Button
-                          size="xs"
-                          variant="secondary"
-                          onClick={() => {
-                            setDraftConfig({ ...item });
-                            setIsNewConfig(false);
-                            setEditorOpen(true);
-                          }}
-                        >
-                          <Pencil size={12} />
-                          编辑
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="danger"
-                          onClick={() => {
-                            void handleDeleteConfig(item);
-                          }}
-                          disabled={saving}
-                        >
-                          <Trash2 size={12} />
-                          删除
-                        </Button>
+                          <Button
+                            size="xs"
+                            variant="danger"
+                            onClick={() => {
+                              void handleDeleteConfig(item);
+                            }}
+                            disabled={saving}
+                          >
+                            <Trash2 size={12} />
+                            删除
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </div>
