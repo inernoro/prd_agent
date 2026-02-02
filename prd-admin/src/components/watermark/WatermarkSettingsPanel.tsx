@@ -2007,32 +2007,23 @@ function WatermarkPreview(props: {
     const target = contentRef.current;
 
     const updateSize = () => {
-      const textRect = textRef.current?.getBoundingClientRect();
-      if (!textRect || !textRect.width || !textRect.height) return;
-      const iconRect = iconRef.current?.getBoundingClientRect();
-      const iconWidth = iconRect?.width ?? 0;
-      const iconHeight = iconRect?.height ?? 0;
-      // 边框宽度会增加元素整体尺寸（CSS border 在 padding 外面）
-      const borderExtra = spec.borderEnabled ? borderWidth * 2 : 0;
-      const hasIcon = iconWidth > 0 && iconHeight > 0;
-      const combinedWidth = hasIcon
-        ? (isVerticalIcon
-          ? Math.max(textRect.width, iconWidth) + decorationPadding * 2 + borderExtra
-          : textRect.width + iconWidth + gap + decorationPadding * 2 + borderExtra)
-        : textRect.width + decorationPadding * 2 + borderExtra;
-      const combinedHeight = hasIcon
-        ? (isVerticalIcon
-          ? textRect.height + iconHeight + gap + decorationPadding * 2 + borderExtra
-          : Math.max(textRect.height, iconHeight) + decorationPadding * 2 + borderExtra)
-        : textRect.height + decorationPadding * 2 + borderExtra;
+      // 直接测量 contentRef 的实际渲染尺寸，避免手动计算带来的 subpixel 误差
+      // 这样可以确保定位计算使用的尺寸与浏览器实际渲染的尺寸完全一致
+      const contentRect = contentRef.current?.getBoundingClientRect();
+      if (!contentRect || !contentRect.width || !contentRect.height) return;
+
+      // 使用 ceil 确保不会因为 subpixel 渲染导致边缘被截断
+      const measuredWidth = Math.ceil(contentRect.width);
+      const measuredHeight = Math.ceil(contentRect.height);
+
       setWatermarkSize((prev) => {
-        if (Math.abs(prev.width - combinedWidth) < 0.5 && Math.abs(prev.height - combinedHeight) < 0.5) {
+        if (Math.abs(prev.width - measuredWidth) < 0.5 && Math.abs(prev.height - measuredHeight) < 0.5) {
           return prev;
         }
-        return { width: combinedWidth, height: combinedHeight };
+        return { width: measuredWidth, height: measuredHeight };
       });
-      watermarkSizeCache.set(measureSignature, { width: combinedWidth, height: combinedHeight });
-      lastMeasuredSizeRef.current = { width: combinedWidth, height: combinedHeight };
+      watermarkSizeCache.set(measureSignature, { width: measuredWidth, height: measuredHeight });
+      lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
       if (fontReady) {
         setMeasuredSignature(measureSignature);
       }
