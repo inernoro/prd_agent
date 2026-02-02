@@ -6,10 +6,8 @@ interface StarfieldBackgroundProps {
 }
 
 /**
- * WebGL Starfield Background - Optimized for performance
- * - 30fps cap (background doesn't need 60fps)
- * - Reduced DPR (1.0 for background)
- * - Simplified shader with fewer layers
+ * WebGL Universe Background - Connected particles with depth layers
+ * Adapted from 背景-粒子-我的宇宙.html, converted to WebGL 1.0
  */
 export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -26,16 +24,14 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
       antialias: false,
       depth: false,
       stencil: false,
-      preserveDrawingBuffer: false,
     });
     if (!gl) {
       console.error('WebGL not supported');
       return;
     }
 
-    // Performance settings
     const isMobile = /Android|webOS|iPhone|iPad|BlackBerry|Windows Phone/i.test(navigator.userAgent);
-    const layers = isMobile ? 2 : 4; // Reduced layers
+    const layerCount = isMobile ? 3 : 4;
     const targetFps = 30;
     const frameInterval = 1000 / targetFps;
 
@@ -46,65 +42,120 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
       }
     `;
 
-    // Optimized fragment shader (WebGL 1.0 compatible)
+    // WebGL 1.0 compatible universe shader
     const fragmentSource = `
       precision mediump float;
 
-      uniform float width;
-      uniform float height;
-      uniform float time;
+      uniform float iTime;
+      uniform vec2 iResolution;
 
-      float random(vec2 p) {
-        return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+      float N21(vec2 p) {
+        p = fract(p * vec2(233.34, 851.73));
+        p += dot(p, p + 23.45);
+        return fract(p.x * p.y);
       }
 
-      vec3 getStarColor(float r) {
-        if (r < 0.33) return vec3(0.96, 0.89, 0.72);  // gold core
-        if (r < 0.66) return vec3(0.84, 0.70, 0.42);  // gold mid
-        return vec3(0.55, 0.23, 0.93);                 // purple accent
+      vec2 N22(vec2 p) {
+        float n = N21(p);
+        return vec2(n, N21(p + n));
+      }
+
+      vec2 getPos(vec2 id, vec2 offset) {
+        vec2 n = N22(id + offset);
+        float x = cos(iTime * n.x);
+        float y = sin(iTime * n.y);
+        return vec2(x, y) * 0.4 + offset;
+      }
+
+      float distanceToLine(vec2 p, vec2 a, vec2 b) {
+        vec2 pa = p - a;
+        vec2 ba = b - a;
+        float t = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+        return length(pa - t * ba);
+      }
+
+      float getLine(vec2 p, vec2 a, vec2 b) {
+        float d = distanceToLine(p, a, b);
+        float dx = 15.0 / iResolution.y;
+        return smoothstep(dx, 0.0, d) * smoothstep(1.2, 0.3, length(a - b));
+      }
+
+      float layer(vec2 st) {
+        float m = 0.0;
+        vec2 gv = fract(st) - 0.5;
+        vec2 id = floor(st);
+        float dx = 15.0 / iResolution.y;
+
+        // Get 9 neighbor positions (WebGL 1.0: manual unroll)
+        vec2 p0 = getPos(id, vec2(-1.0, -1.0));
+        vec2 p1 = getPos(id, vec2(-1.0,  0.0));
+        vec2 p2 = getPos(id, vec2(-1.0,  1.0));
+        vec2 p3 = getPos(id, vec2( 0.0, -1.0));
+        vec2 p4 = getPos(id, vec2( 0.0,  0.0));
+        vec2 p5 = getPos(id, vec2( 0.0,  1.0));
+        vec2 p6 = getPos(id, vec2( 1.0, -1.0));
+        vec2 p7 = getPos(id, vec2( 1.0,  0.0));
+        vec2 p8 = getPos(id, vec2( 1.0,  1.0));
+
+        // Lines from center to all neighbors
+        m += getLine(gv, p4, p0);
+        m += getLine(gv, p4, p1);
+        m += getLine(gv, p4, p2);
+        m += getLine(gv, p4, p3);
+        m += getLine(gv, p4, p5);
+        m += getLine(gv, p4, p6);
+        m += getLine(gv, p4, p7);
+        m += getLine(gv, p4, p8);
+
+        // Cross connections
+        m += getLine(gv, p1, p3);
+        m += getLine(gv, p1, p5);
+        m += getLine(gv, p3, p7);
+        m += getLine(gv, p5, p7);
+
+        // Glowing points
+        vec2 t0 = (gv - p0) * 20.0; m += 1.0 / dot(t0, t0) * (sin(10.0 * iTime + fract(p0.x) * 20.0) * 0.5 + 0.5);
+        vec2 t1 = (gv - p1) * 20.0; m += 1.0 / dot(t1, t1) * (sin(10.0 * iTime + fract(p1.x) * 20.0) * 0.5 + 0.5);
+        vec2 t2 = (gv - p2) * 20.0; m += 1.0 / dot(t2, t2) * (sin(10.0 * iTime + fract(p2.x) * 20.0) * 0.5 + 0.5);
+        vec2 t3 = (gv - p3) * 20.0; m += 1.0 / dot(t3, t3) * (sin(10.0 * iTime + fract(p3.x) * 20.0) * 0.5 + 0.5);
+        vec2 t4 = (gv - p4) * 20.0; m += 1.0 / dot(t4, t4) * (sin(10.0 * iTime + fract(p4.x) * 20.0) * 0.5 + 0.5);
+        vec2 t5 = (gv - p5) * 20.0; m += 1.0 / dot(t5, t5) * (sin(10.0 * iTime + fract(p5.x) * 20.0) * 0.5 + 0.5);
+        vec2 t6 = (gv - p6) * 20.0; m += 1.0 / dot(t6, t6) * (sin(10.0 * iTime + fract(p6.x) * 20.0) * 0.5 + 0.5);
+        vec2 t7 = (gv - p7) * 20.0; m += 1.0 / dot(t7, t7) * (sin(10.0 * iTime + fract(p7.x) * 20.0) * 0.5 + 0.5);
+        vec2 t8 = (gv - p8) * 20.0; m += 1.0 / dot(t8, t8) * (sin(10.0 * iTime + fract(p8.x) * 20.0) * 0.5 + 0.5);
+
+        return m;
       }
 
       void main() {
-        vec2 resolution = vec2(width, height);
-        float t = 1.0 + time * 0.03;
-        float scale = 24.0;
-        float rotAngle = time * -0.05;
+        vec2 uv = (gl_FragCoord.xy - 0.5 * iResolution.xy) / iResolution.y;
 
-        mat2 rot = mat2(cos(rotAngle), -sin(rotAngle), sin(rotAngle), cos(rotAngle));
-        vec2 center = vec2(cos(t), sin(t)) * 0.15 + 0.5;
+        float m = 0.0;
+        float theta = iTime * 0.1;
+        mat2 rot = mat2(cos(theta), -sin(theta), sin(theta), cos(theta));
+        vec2 gradient = uv;
+        uv = rot * uv;
 
-        vec3 col = vec3(0.0);
-
-        // Unrolled loop for WebGL 1.0 compatibility (${layers} layers)
-        for (int i = 0; i < ${layers}; i++) {
-          float layer = float(i) / float(${layers});
-          float depth = fract(layer + t * 0.1);
-          vec2 uv = (center - gl_FragCoord.xy / resolution.x) * rot;
-          uv *= mix(scale, 2.0, depth);
-
-          vec2 gridId = floor(uv);
-          vec2 gridUv = fract(uv) - 0.5;
-
-          vec2 seed = gridId + layer * 100.0;
-          float rand = random(seed);
-          vec2 offset = vec2(random(seed + 1.0), random(seed + 2.0)) - 0.5;
-          offset *= 0.6;
-
-          float dist = length(gridUv - offset);
-          float pulse = 0.5 + 0.5 * sin(rand * 20.0 + time * 2.0);
-
-          // Smooth circular falloff (no more square artifacts)
-          float starSize = 0.08 * depth * (0.5 + 0.5 * pulse);
-          float brightness = smoothstep(starSize, 0.0, dist) * depth;
-
-          col += getStarColor(rand) * brightness * 1.2;
+        // Multiple depth layers (unrolled for WebGL 1.0)
+        for (int i = 0; i < ${layerCount}; i++) {
+          float fi = float(i) * 0.25;
+          float depth = fract(fi + iTime * 0.1);
+          float fade = smoothstep(0.0, 0.2, depth) * smoothstep(1.0, 0.8, depth);
+          m += layer(uv * mix(10.0, 0.5, depth) + fi * 20.0) * fade;
         }
 
-        col = col / (col + 0.5);
+        // Gold color theme instead of rainbow
+        vec3 goldBase = vec3(0.85, 0.65, 0.30);
+        vec3 goldBright = vec3(1.0, 0.90, 0.70);
+        vec3 purple = vec3(0.5, 0.3, 0.7);
 
-        vec2 vUv = gl_FragCoord.xy / resolution - 0.5;
-        float vig = 1.0 - dot(vUv, vUv) * 0.8;
-        col *= vig;
+        float colorMix = sin(iTime * 0.3) * 0.5 + 0.5;
+        vec3 baseColor = mix(goldBase, mix(goldBright, purple, 0.3), colorMix);
+
+        vec3 col = (m - gradient.y * 0.5) * baseColor;
+
+        // Tone mapping
+        col = col / (col + 0.8);
 
         gl_FragColor = vec4(col, 1.0);
       }
@@ -148,26 +199,22 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
     gl.enableVertexAttribArray(positionHandle);
     gl.vertexAttribPointer(positionHandle, 2, gl.FLOAT, false, 0, 0);
 
-    const timeHandle = gl.getUniformLocation(program, 'time');
-    const widthHandle = gl.getUniformLocation(program, 'width');
-    const heightHandle = gl.getUniformLocation(program, 'height');
+    const timeHandle = gl.getUniformLocation(program, 'iTime');
+    const resolutionHandle = gl.getUniformLocation(program, 'iResolution');
 
     const resize = () => {
-      // Use DPR of 1 for background (no need for retina)
-      const dpr = 1;
+      const dpr = 1; // Keep DPR low for performance
       canvas.width = window.innerWidth * dpr;
       canvas.height = window.innerHeight * dpr;
       canvas.style.width = `${window.innerWidth}px`;
       canvas.style.height = `${window.innerHeight}px`;
       gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.uniform1f(widthHandle, canvas.width);
-      gl.uniform1f(heightHandle, canvas.height);
+      gl.uniform2f(resolutionHandle, canvas.width, canvas.height);
     };
 
     resize();
     window.addEventListener('resize', resize);
 
-    // 30fps capped animation loop
     const draw = (timestamp: number) => {
       animationRef.current = requestAnimationFrame(draw);
 
@@ -175,7 +222,7 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
       if (elapsed < frameInterval) return;
 
       lastFrameRef.current = timestamp - (elapsed % frameInterval);
-      timeRef.current += 0.033; // ~30fps time step
+      timeRef.current += 0.033;
 
       gl.uniform1f(timeHandle, timeRef.current);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
