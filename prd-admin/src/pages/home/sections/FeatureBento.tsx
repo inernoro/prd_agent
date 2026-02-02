@@ -1,133 +1,65 @@
 import { cn } from '@/lib/cn';
 import { useEffect, useState } from 'react';
 
-// 3D Model Card Carousel - More impressive visualization
+// Simple model badges grid - clean and no overlap
 function ModelCarousel() {
   const [activeIndex, setActiveIndex] = useState(0);
   const models = [
-    { name: 'GPT-4', color: '#10a37f', icon: '🤖' },
-    { name: 'Claude', color: '#d4a574', icon: '🧠' },
-    { name: 'Gemini', color: '#4285f4', icon: '✨' },
-    { name: 'Llama', color: '#0467df', icon: '🦙' },
-    { name: 'Qwen', color: '#6c5ce7', icon: '🔮' },
-    { name: 'DeepSeek', color: '#00d4aa', icon: '🔍' },
+    { name: 'GPT-4', color: '#10a37f' },
+    { name: 'Claude', color: '#d4a574' },
+    { name: 'Gemini', color: '#4285f4' },
+    { name: 'Llama', color: '#0467df' },
+    { name: 'Qwen', color: '#6c5ce7' },
+    { name: 'DeepSeek', color: '#00d4aa' },
   ];
 
   useEffect(() => {
     const interval = setInterval(() => {
       setActiveIndex((prev) => (prev + 1) % models.length);
-    }, 2500);
+    }, 2000);
     return () => clearInterval(interval);
   }, [models.length]);
 
   return (
-    <div className="relative h-44 mt-4" style={{ perspective: '1000px' }}>
-      {/* Neural network background lines */}
-      <svg className="absolute inset-0 w-full h-full opacity-30">
-        <defs>
-          <linearGradient id="lineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0" />
-            <stop offset="50%" stopColor="#3b82f6" stopOpacity="1" />
-            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        {/* Animated connection lines */}
-        {[...Array(5)].map((_, i) => (
-          <line
-            key={i}
-            x1={`${15 + i * 18}%`}
-            y1="85%"
-            x2="50%"
-            y2="50%"
-            stroke="url(#lineGrad)"
-            strokeWidth="1"
-            className="animate-pulse"
-            style={{ animationDelay: `${i * 0.2}s` }}
-          />
-        ))}
-      </svg>
-
-      {/* 3D Rotating cards container */}
-      <div
-        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full"
-        style={{ transformStyle: 'preserve-3d' }}
-      >
+    <div className="mt-6 space-y-4">
+      {/* Model badges - 2 rows */}
+      <div className="grid grid-cols-3 gap-2">
         {models.map((model, i) => {
-          const offset = (i - activeIndex + models.length) % models.length;
-          const angle = offset * (360 / models.length);
-          const isActive = offset === 0;
-          const isNear = offset === 1 || offset === models.length - 1;
-
+          const isActive = i === activeIndex;
           return (
-            <div
+            <button
               key={model.name}
-              className="absolute left-1/2 top-1/2 transition-all duration-700 ease-out"
+              onClick={() => setActiveIndex(i)}
+              className={cn(
+                'px-3 py-2 rounded-lg border text-center transition-all duration-300',
+                isActive
+                  ? 'border-white/30 bg-white/10'
+                  : 'border-white/10 bg-white/5 hover:bg-white/10'
+              )}
               style={{
-                transform: `
-                  translateX(-50%) translateY(-50%)
-                  rotateY(${angle}deg)
-                  translateZ(${isActive ? 80 : 60}px)
-                  scale(${isActive ? 1.1 : isNear ? 0.85 : 0.7})
-                `,
-                opacity: isActive ? 1 : isNear ? 0.6 : 0.3,
-                zIndex: isActive ? 10 : isNear ? 5 : 1,
+                boxShadow: isActive ? `0 0 15px ${model.color}40` : 'none',
               }}
             >
-              <div
-                className={cn(
-                  'px-4 py-3 rounded-xl backdrop-blur-md border transition-all duration-500',
-                  isActive
-                    ? 'bg-white/10 border-white/30 shadow-lg'
-                    : 'bg-white/5 border-white/10'
-                )}
-                style={{
-                  boxShadow: isActive ? `0 0 30px ${model.color}40, 0 4px 20px rgba(0,0,0,0.3)` : 'none',
-                }}
+              <span
+                className="font-medium text-xs"
+                style={{ color: isActive ? model.color : `${model.color}99` }}
               >
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">{model.icon}</span>
-                  <span
-                    className="font-semibold text-sm whitespace-nowrap"
-                    style={{ color: model.color }}
-                  >
-                    {model.name}
-                  </span>
-                </div>
-                {isActive && (
-                  <div className="mt-1 text-[10px] text-white/50">智能选择中...</div>
-                )}
-              </div>
-            </div>
+                {model.name}
+              </span>
+            </button>
           );
         })}
       </div>
-
-      {/* Bottom indicator dots */}
-      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 flex gap-1.5">
-        {models.map((_, i) => (
-          <button
-            key={i}
-            onClick={() => setActiveIndex(i)}
-            className={cn(
-              'w-1.5 h-1.5 rounded-full transition-all duration-300',
-              i === activeIndex
-                ? 'bg-blue-400 w-4'
-                : 'bg-white/20 hover:bg-white/40'
-            )}
-          />
-        ))}
+      {/* Status indicator */}
+      <div className="flex items-center justify-center gap-2 text-xs text-white/50">
+        <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: models[activeIndex].color }} />
+        <span>智能调度至 <span style={{ color: models[activeIndex].color }}>{models[activeIndex].name}</span></span>
       </div>
-
-      {/* Active model glow */}
-      <div
-        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 rounded-full blur-3xl transition-colors duration-700"
-        style={{ background: `${models[activeIndex].color}20` }}
-      />
     </div>
   );
 }
 
-// Animated speed meter
+// Animated speed meter - simplified layout
 function SpeedMeter() {
   const [value, setValue] = useState(50);
 
@@ -139,42 +71,38 @@ function SpeedMeter() {
   }, []);
 
   return (
-    <div className="relative h-24 mt-4 flex items-center justify-center">
-      <div className="relative">
-        {/* Arc background */}
-        <svg className="w-32 h-16 overflow-visible" viewBox="0 0 100 50">
-          <defs>
-            <linearGradient id="speedGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#22c55e" />
-              <stop offset="50%" stopColor="#eab308" />
-              <stop offset="100%" stopColor="#ef4444" />
-            </linearGradient>
-          </defs>
-          <path
-            d="M 10 50 A 40 40 0 0 1 90 50"
-            fill="none"
-            stroke="rgba(255,255,255,0.1)"
-            strokeWidth="6"
-            strokeLinecap="round"
-          />
-          <path
-            d="M 10 50 A 40 40 0 0 1 90 50"
-            fill="none"
-            stroke="url(#speedGradient)"
-            strokeWidth="6"
-            strokeLinecap="round"
-            strokeDasharray="126"
-            strokeDashoffset={126 - (value / 100) * 126}
-            style={{ transition: 'stroke-dashoffset 1s ease-out' }}
-          />
-        </svg>
-        {/* Value display */}
-        <div className="absolute inset-0 flex items-end justify-center pb-1">
-          <div className="text-center">
-            <span className="text-2xl font-bold text-white">{Math.round(value)}</span>
-            <span className="text-sm text-white/60 ml-1">ms</span>
-          </div>
-        </div>
+    <div className="mt-6 flex flex-col items-center">
+      {/* Arc gauge */}
+      <svg className="w-28 h-14" viewBox="0 0 100 50">
+        <defs>
+          <linearGradient id="speedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#22c55e" />
+            <stop offset="50%" stopColor="#eab308" />
+            <stop offset="100%" stopColor="#ef4444" />
+          </linearGradient>
+        </defs>
+        <path
+          d="M 10 45 A 40 40 0 0 1 90 45"
+          fill="none"
+          stroke="rgba(255,255,255,0.1)"
+          strokeWidth="5"
+          strokeLinecap="round"
+        />
+        <path
+          d="M 10 45 A 40 40 0 0 1 90 45"
+          fill="none"
+          stroke="url(#speedGrad)"
+          strokeWidth="5"
+          strokeLinecap="round"
+          strokeDasharray="126"
+          strokeDashoffset={126 - (value / 100) * 126}
+          style={{ transition: 'stroke-dashoffset 1s ease-out' }}
+        />
+      </svg>
+      {/* Value */}
+      <div className="flex items-baseline gap-1 -mt-2">
+        <span className="text-3xl font-bold text-white">{Math.round(value)}</span>
+        <span className="text-sm text-white/50">ms</span>
       </div>
     </div>
   );
