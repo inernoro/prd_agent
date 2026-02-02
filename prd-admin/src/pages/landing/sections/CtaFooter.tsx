@@ -12,13 +12,62 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
       {/* Semi-transparent overlay to let global background show through */}
       <div className="absolute inset-0 bg-[#050508]/50" />
 
+      {/* Decorative glow orbs */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full opacity-20 blur-[100px]"
+        style={{ background: 'radial-gradient(circle, rgba(214, 178, 106, 0.6) 0%, transparent 70%)' }}
+      />
+      <div className="absolute top-0 right-0 w-80 h-80 rounded-full opacity-10 blur-[80px]"
+        style={{ background: 'radial-gradient(circle, rgba(139, 92, 246, 0.8) 0%, transparent 70%)' }}
+      />
+      <div className="absolute bottom-0 left-0 w-80 h-80 rounded-full opacity-10 blur-[80px]"
+        style={{ background: 'radial-gradient(circle, rgba(59, 130, 246, 0.8) 0%, transparent 70%)' }}
+      />
+
+      {/* Grid pattern */}
+      <div
+        className="absolute inset-0 opacity-[0.02]"
+        style={{
+          backgroundImage: `
+            linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)
+          `,
+          backgroundSize: '40px 40px',
+        }}
+      />
+
+      {/* Floating sparkles */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        {[...Array(12)].map((_, i) => (
+          <div
+            key={i}
+            className="absolute w-1 h-1 bg-amber-400/60 rounded-full animate-pulse"
+            style={{
+              left: `${10 + (i * 7) % 80}%`,
+              top: `${15 + (i * 11) % 70}%`,
+              animationDelay: `${i * 0.3}s`,
+              animationDuration: `${2 + (i % 3)}s`,
+            }}
+          />
+        ))}
+      </div>
+
       {/* Content */}
-      <div className="relative z-10 max-w-4xl mx-auto px-6 text-center">
+      <div className="relative z-10 max-w-5xl mx-auto px-6 text-center">
+        {/* Badge */}
+        <div className="inline-flex items-center gap-2 px-4 py-2 mb-8 rounded-full border border-amber-500/20 bg-amber-500/10 backdrop-blur-sm">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
+          </span>
+          <span className="text-sm text-amber-400/90">限时免费体验中</span>
+        </div>
+
         {/* Headline */}
-        <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold mb-6">
+        <h2 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold mb-6">
           <span className="text-white/90">开启你的</span>
           <br />
           <span
+            className="relative inline-block"
             style={{
               background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
               WebkitBackgroundClip: 'text',
@@ -27,12 +76,42 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
             }}
           >
             Agent 之旅
+            {/* Underline decoration */}
+            <svg className="absolute -bottom-2 left-0 w-full" viewBox="0 0 200 8" fill="none">
+              <path
+                d="M2 6C50 2 150 2 198 6"
+                stroke="url(#goldGradient)"
+                strokeWidth="3"
+                strokeLinecap="round"
+              />
+              <defs>
+                <linearGradient id="goldGradient" x1="0" y1="0" x2="200" y2="0" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stopColor="#f4e2b8" />
+                  <stop offset="50%" stopColor="#d6b26a" />
+                  <stop offset="100%" stopColor="#f2d59b" />
+                </linearGradient>
+              </defs>
+            </svg>
           </span>
         </h2>
 
         <p className="text-lg sm:text-xl text-white/50 max-w-2xl mx-auto mb-10">
           立即注册，免费体验智能 Agent 平台的强大能力
         </p>
+
+        {/* Quick stats */}
+        <div className="flex items-center justify-center gap-8 sm:gap-12 mb-10">
+          {[
+            { value: '10+', label: '智能 Agent' },
+            { value: '99.9%', label: '可用性' },
+            { value: '24/7', label: '技术支持' },
+          ].map((stat, i) => (
+            <div key={i} className="text-center">
+              <div className="text-2xl sm:text-3xl font-bold text-white/80">{stat.value}</div>
+              <div className="text-xs sm:text-sm text-white/40">{stat.label}</div>
+            </div>
+          ))}
+        </div>
 
         {/* CTA buttons */}
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
@@ -59,6 +138,28 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
           >
             联系我们
           </button>
+        </div>
+
+        {/* Trust indicators */}
+        <div className="flex items-center justify-center gap-6 mb-12 text-white/30 text-sm">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+            <span>企业级安全</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+            </svg>
+            <span>免费试用</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <span>即刻上手</span>
+          </div>
         </div>
 
         {/* Footer links */}

@@ -16,7 +16,7 @@ import PromptStagesPage from '@/pages/PromptStagesPage';
 import VisualAgentFullscreenPage from '@/pages/visual-agent/VisualAgentFullscreenPage';
 import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
 import { DefectAgentPage } from '@/pages/defect-agent';
-import { LandingPage } from '@/pages/landing';
+import { LandingPage } from '@/pages/home';
 import AssetsManagePage from '@/pages/AssetsManagePage';
 import OpenPlatformPage from '@/pages/OpenPlatformPage';
 import AuthzPage from '@/pages/AuthzPage';
@@ -27,7 +27,7 @@ import { ToastContainer } from '@/components/ui/Toast';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  if (!isAuthenticated) return <Navigate to="/landing" replace />;
+  if (!isAuthenticated) return <Navigate to="/home" replace />;
   return <>{children}</>;
 }
 
@@ -134,7 +134,7 @@ export default function App() {
       <ToastContainer />
       <Routes>
         {/* Landing page - public */}
-        <Route path="/landing" element={<LandingPage />} />
+        <Route path="/home" element={<LandingPage />} />
 
         <Route path="/login" element={<LoginPage />} />
 
@@ -213,7 +213,7 @@ export default function App() {
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>
 
-        <Route path="*" element={<Navigate to="/landing" replace />} />
+        <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
     </>
   );
