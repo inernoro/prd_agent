@@ -88,13 +88,16 @@ export function StarfieldBackground({ className }: StarfieldBackgroundProps) {
           vec2 seed = gridId + layer * 100.0;
           float rand = random(seed);
           vec2 offset = vec2(random(seed + 1.0), random(seed + 2.0)) - 0.5;
-          offset *= 0.8;
+          offset *= 0.6;
 
           float dist = length(gridUv - offset);
           float pulse = 0.5 + 0.5 * sin(rand * 20.0 + time * 2.0);
-          float brightness = depth * pulse * 0.015 / (dist * dist + 0.001);
 
-          col += getStarColor(rand) * brightness * 0.4;
+          // Smooth circular falloff (no more square artifacts)
+          float starSize = 0.08 * depth * (0.5 + 0.5 * pulse);
+          float brightness = smoothstep(starSize, 0.0, dist) * depth;
+
+          col += getStarColor(rand) * brightness * 1.2;
         }
 
         col = col / (col + 0.5);
