@@ -1,54 +1,128 @@
 import { cn } from '@/lib/cn';
 import { useEffect, useState } from 'react';
 
-// Animated model icons rotating
+// 3D Model Card Carousel - More impressive visualization
 function ModelCarousel() {
+  const [activeIndex, setActiveIndex] = useState(0);
   const models = [
-    { name: 'GPT-4', color: '#10a37f' },
-    { name: 'Claude', color: '#d4a574' },
-    { name: 'Gemini', color: '#4285f4' },
-    { name: 'Llama', color: '#0467df' },
-    { name: 'Qwen', color: '#6c5ce7' },
-    { name: 'DeepSeek', color: '#00d4aa' },
+    { name: 'GPT-4', color: '#10a37f', icon: '🤖' },
+    { name: 'Claude', color: '#d4a574', icon: '🧠' },
+    { name: 'Gemini', color: '#4285f4', icon: '✨' },
+    { name: 'Llama', color: '#0467df', icon: '🦙' },
+    { name: 'Qwen', color: '#6c5ce7', icon: '🔮' },
+    { name: 'DeepSeek', color: '#00d4aa', icon: '🔍' },
   ];
 
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setActiveIndex((prev) => (prev + 1) % models.length);
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [models.length]);
+
   return (
-    <div className="relative h-32 mt-4">
-      {/* Central hub */}
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full bg-gradient-to-br from-white/10 to-white/5 border border-white/20 flex items-center justify-center z-10">
-        <svg className="w-8 h-8 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-        </svg>
-      </div>
-      {/* Orbiting models */}
-      <div className="absolute inset-0 animate-[spin_20s_linear_infinite]">
+    <div className="relative h-44 mt-4" style={{ perspective: '1000px' }}>
+      {/* Neural network background lines */}
+      <svg className="absolute inset-0 w-full h-full opacity-30">
+        <defs>
+          <linearGradient id="lineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0" />
+            <stop offset="50%" stopColor="#3b82f6" stopOpacity="1" />
+            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {/* Animated connection lines */}
+        {[...Array(5)].map((_, i) => (
+          <line
+            key={i}
+            x1={`${15 + i * 18}%`}
+            y1="85%"
+            x2="50%"
+            y2="50%"
+            stroke="url(#lineGrad)"
+            strokeWidth="1"
+            className="animate-pulse"
+            style={{ animationDelay: `${i * 0.2}s` }}
+          />
+        ))}
+      </svg>
+
+      {/* 3D Rotating cards container */}
+      <div
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full"
+        style={{ transformStyle: 'preserve-3d' }}
+      >
         {models.map((model, i) => {
-          const angle = (i * 360) / models.length;
-          const radius = 55;
+          const offset = (i - activeIndex + models.length) % models.length;
+          const angle = offset * (360 / models.length);
+          const isActive = offset === 0;
+          const isNear = offset === 1 || offset === models.length - 1;
+
           return (
             <div
               key={model.name}
-              className="absolute left-1/2 top-1/2 animate-[spin_20s_linear_infinite_reverse]"
+              className="absolute left-1/2 top-1/2 transition-all duration-700 ease-out"
               style={{
-                transform: `rotate(${angle}deg) translateY(-${radius}px) rotate(-${angle}deg)`,
-                marginLeft: '-20px',
-                marginTop: '-12px',
+                transform: `
+                  translateX(-50%) translateY(-50%)
+                  rotateY(${angle}deg)
+                  translateZ(${isActive ? 80 : 60}px)
+                  scale(${isActive ? 1.1 : isNear ? 0.85 : 0.7})
+                `,
+                opacity: isActive ? 1 : isNear ? 0.6 : 0.3,
+                zIndex: isActive ? 10 : isNear ? 5 : 1,
               }}
             >
               <div
-                className="px-3 py-1.5 rounded-full text-xs font-medium bg-black/50 backdrop-blur-sm border border-white/20 whitespace-nowrap"
-                style={{ color: model.color }}
+                className={cn(
+                  'px-4 py-3 rounded-xl backdrop-blur-md border transition-all duration-500',
+                  isActive
+                    ? 'bg-white/10 border-white/30 shadow-lg'
+                    : 'bg-white/5 border-white/10'
+                )}
+                style={{
+                  boxShadow: isActive ? `0 0 30px ${model.color}40, 0 4px 20px rgba(0,0,0,0.3)` : 'none',
+                }}
               >
-                {model.name}
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">{model.icon}</span>
+                  <span
+                    className="font-semibold text-sm whitespace-nowrap"
+                    style={{ color: model.color }}
+                  >
+                    {model.name}
+                  </span>
+                </div>
+                {isActive && (
+                  <div className="mt-1 text-[10px] text-white/50">智能选择中...</div>
+                )}
               </div>
             </div>
           );
         })}
       </div>
-      {/* Connecting lines */}
-      <svg className="absolute inset-0 w-full h-full opacity-20">
-        <circle cx="50%" cy="50%" r="55" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="4 4" className="text-white" />
-      </svg>
+
+      {/* Bottom indicator dots */}
+      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 flex gap-1.5">
+        {models.map((_, i) => (
+          <button
+            key={i}
+            onClick={() => setActiveIndex(i)}
+            className={cn(
+              'w-1.5 h-1.5 rounded-full transition-all duration-300',
+              i === activeIndex
+                ? 'bg-blue-400 w-4'
+                : 'bg-white/20 hover:bg-white/40'
+            )}
+          />
+        ))}
+      </div>
+
+      {/* Active model glow */}
+      <div
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 rounded-full blur-3xl transition-colors duration-700"
+        style={{ background: `${models[activeIndex].color}20` }}
+      />
     </div>
   );
 }
@@ -109,26 +183,25 @@ function SpeedMeter() {
 // Security shield animation
 function SecurityShield() {
   return (
-    <div className="relative h-28 mt-4 flex items-center justify-center">
-      <div className="relative">
+    <div className="mt-4 flex flex-col items-center gap-4">
+      {/* Shield with pulsing rings */}
+      <div className="relative flex items-center justify-center h-20">
         {/* Pulsing rings */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="absolute w-20 h-20 rounded-full border border-emerald-500/30 animate-[ping_2s_ease-in-out_infinite]" />
-          <div className="absolute w-16 h-16 rounded-full border border-emerald-500/40 animate-[ping_2s_ease-in-out_0.5s_infinite]" />
-        </div>
+        <div className="absolute w-16 h-16 rounded-full border border-emerald-500/30 animate-[ping_2s_ease-in-out_infinite]" />
+        <div className="absolute w-12 h-12 rounded-full border border-emerald-500/40 animate-[ping_2s_ease-in-out_0.5s_infinite]" />
         {/* Shield */}
-        <div className="relative w-14 h-16 flex items-center justify-center">
-          <svg className="w-14 h-16 text-emerald-500" viewBox="0 0 24 28" fill="currentColor">
+        <div className="relative w-12 h-14 flex items-center justify-center">
+          <svg className="w-12 h-14 text-emerald-500" viewBox="0 0 24 28" fill="currentColor">
             <path d="M12 0L2 5v7c0 7.5 4.5 14.5 10 17 5.5-2.5 10-9.5 10-17V5L12 0z" fillOpacity="0.2" />
             <path d="M12 0L2 5v7c0 7.5 4.5 14.5 10 17 5.5-2.5 10-9.5 10-17V5L12 0zm0 2.18l8 3.82v5c0 6.5-3.9 12.5-8 14.9-4.1-2.4-8-8.4-8-14.9V6l8-3.82z" fillOpacity="0.5" />
           </svg>
-          <svg className="absolute w-6 h-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="absolute w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
           </svg>
         </div>
       </div>
       {/* Labels */}
-      <div className="absolute bottom-0 left-0 right-0 flex justify-center gap-4 text-xs">
+      <div className="flex justify-center gap-2 text-xs flex-wrap">
         {['加密传输', '权限管控', '审计日志'].map((label) => (
           <span key={label} className="px-2 py-1 rounded bg-emerald-500/10 text-emerald-400/80 border border-emerald-500/20">
             {label}
