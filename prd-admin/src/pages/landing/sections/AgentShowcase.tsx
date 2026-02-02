@@ -382,68 +382,77 @@ function AgentMockup({ type, isActive }: { type: Agent['mockupType']; isActive: 
   }
 
   if (type === 'defect') {
-    // Defect Agent - Card-based kanban view matching the screenshot
+    // Defect Agent - Simplified card-based view
     return (
       <div className={baseClass}>
-        <div className="h-full bg-[#1a1d24] flex">
-          {/* Left sidebar */}
-          <div className="w-40 bg-[#14171c] border-r border-white/10 p-3 space-y-1 text-[10px]">
-            {['仪表盘', '用户管理', '群组管理', '模型管理', '提示词管理', 'PRD Agent', '缺陷管理 Agent', '视觉创作 Agent'].map((item, i) => (
-              <div key={i} className={cn('px-2 py-1.5 rounded flex items-center gap-2', i === 6 ? 'bg-white/10 text-white' : 'text-white/50')}>
-                <div className="w-3 h-3 rounded bg-white/20" />
-                {item}
-              </div>
-            ))}
+        <div className="h-full bg-[#1a1d24] p-4">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex gap-2">
+              <span className="px-3 py-1.5 rounded bg-white/10 text-[11px] text-white/80 border border-white/20">我提交的</span>
+              <span className="px-3 py-1.5 rounded bg-white/5 text-[11px] text-white/50">收到的</span>
+            </div>
+            <span className="px-3 py-1.5 rounded bg-emerald-500/20 text-[11px] text-emerald-400 font-medium">+ 提交缺陷</span>
           </div>
 
-          {/* Main content - Defect cards */}
-          <div className="flex-1 p-4">
-            {/* Header */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex gap-2">
-                <span className="px-2 py-1 rounded bg-white/5 text-[10px] text-white/60">收到</span>
-                <span className="px-2 py-1 rounded bg-white/10 text-[10px] text-white/80 border border-white/20">我提交的</span>
+          {/* Defect cards - 3 columns */}
+          <div className="grid grid-cols-3 gap-3">
+            {/* Card 1 */}
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 hover:border-emerald-500/30 transition-colors">
+              <div className="flex items-center justify-between mb-2">
+                <span className="px-2 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-400">已处理</span>
+                <span className="text-[9px] text-white/30">#0002</span>
               </div>
-              <div className="flex gap-2">
-                <span className="px-2 py-1 rounded bg-white/5 text-[10px] text-white/50">我的模板</span>
-                <span className="px-2 py-1 rounded bg-emerald-500/20 text-[10px] text-emerald-400">+ 提交缺陷</span>
+              <div className="text-[12px] text-white/80 font-medium mb-1">登录页面异常</div>
+              <div className="text-[10px] text-white/40 mb-3">验证码无法刷新</div>
+              <div className="flex items-center justify-between text-[9px]">
+                <span className="px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">轻微</span>
+                <span className="text-white/30">张三</span>
               </div>
             </div>
 
-            {/* Defect cards */}
-            <div className="grid grid-cols-2 gap-3">
-              {/* Card 1 */}
-              <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="px-1.5 py-0.5 rounded text-[8px] bg-emerald-500/20 text-emerald-400">已读</span>
-                  <span className="text-[9px] text-white/40">DEF-2026-0002</span>
-                </div>
-                <div className="text-[11px] text-white/80 mb-2">生图不了？</div>
-                <div className="text-[10px] text-white/50 mb-2">我哪知道</div>
-                <div className="h-8 w-8 rounded bg-white/10 mb-2" />
-                <div className="flex items-center gap-2 text-[9px]">
-                  <span className="px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">轻微</span>
-                  <span className="text-white/40">管理员 → 刘文波</span>
-                </div>
+            {/* Card 2 */}
+            <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="px-2 py-0.5 rounded text-[9px] bg-blue-500/20 text-blue-400">处理中</span>
+                <span className="text-[9px] text-white/30">#0003</span>
               </div>
+              <div className="text-[12px] text-white/80 font-medium mb-1">图片生成失败</div>
+              <div className="text-[10px] text-white/40 mb-3">提示超时错误</div>
+              <div className="flex items-center justify-between text-[9px]">
+                <span className="px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400">中等</span>
+                <span className="text-white/30">李四</span>
+              </div>
+            </div>
 
-              {/* Card 2 */}
-              <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="px-1.5 py-0.5 rounded text-[8px] bg-blue-500/20 text-blue-400">对方已读</span>
-                  <span className="text-[9px] text-white/40">DEF-2026-0001</span>
-                </div>
-                <div className="text-[11px] text-white/80 mb-2">图片老是...</div>
-                <div className="text-[10px] text-white/50 mb-2">修好了通知我</div>
-                <div className="flex gap-1 mb-2">
-                  <div className="h-8 w-8 rounded bg-white/10" />
-                  <div className="h-8 w-8 rounded bg-white/10" />
-                </div>
-                <div className="flex items-center gap-2 text-[9px]">
-                  <span className="px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">轻微</span>
-                  <span className="text-white/40">管理员</span>
-                </div>
+            {/* Card 3 */}
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 hover:border-red-500/30 transition-colors">
+              <div className="flex items-center justify-between mb-2">
+                <span className="px-2 py-0.5 rounded text-[9px] bg-red-500/20 text-red-400">待处理</span>
+                <span className="text-[9px] text-white/30">#0004</span>
               </div>
+              <div className="text-[12px] text-white/80 font-medium mb-1">API 响应慢</div>
+              <div className="text-[10px] text-white/40 mb-3">接口延迟超 5 秒</div>
+              <div className="flex items-center justify-between text-[9px]">
+                <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">严重</span>
+                <span className="text-white/30">王五</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Stats bar */}
+          <div className="mt-4 flex items-center justify-center gap-8 text-[10px]">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-red-500" />
+              <span className="text-white/50">待处理 <span className="text-white/80">3</span></span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-blue-500" />
+              <span className="text-white/50">处理中 <span className="text-white/80">2</span></span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span className="text-white/50">已完成 <span className="text-white/80">15</span></span>
             </div>
           </div>
         </div>
@@ -452,62 +461,62 @@ function AgentMockup({ type, isActive }: { type: Agent['mockupType']; isActive: 
   }
 
   if (type === 'openplatform') {
+    // Open Platform - Simplified API dashboard
     return (
       <div className={baseClass}>
-        <div className="h-full bg-[#1a1d24] flex">
-          {/* Sidebar */}
-          <div className="w-36 bg-[#14171c] border-r border-white/10 p-3 text-[10px]">
-            <div className="text-white/40 mb-2">开放平台</div>
-            {['应用管理', 'API密钥', '调用日志', '计费详情', '开发文档'].map((item, i) => (
-              <div key={i} className={cn('px-2 py-1.5 rounded mb-1', i === 0 ? 'bg-white/10 text-white' : 'text-white/50')}>
-                {item}
-              </div>
-            ))}
+        <div className="h-full bg-[#1a1d24] p-4">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="text-sm text-white/80 font-medium">我的应用</div>
+            <span className="px-3 py-1.5 rounded bg-indigo-500/20 text-[11px] text-indigo-400 font-medium">+ 创建应用</span>
           </div>
 
-          {/* Main content */}
-          <div className="flex-1 p-4">
-            <div className="text-sm text-white/80 mb-4">我的应用</div>
-
-            {/* App cards */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500" />
-                  <div>
-                    <div className="text-[11px] text-white/80">生产环境</div>
-                    <div className="text-[9px] text-white/40">app-prod-xxx</div>
-                  </div>
-                </div>
-                <div className="flex gap-2 text-[9px]">
-                  <span className="px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">运行中</span>
-                  <span className="text-white/40">12,580 次调用</span>
+          {/* App cards - 2 columns */}
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white text-sm font-bold">P</div>
+                <div>
+                  <div className="text-[12px] text-white/80 font-medium">生产环境</div>
+                  <div className="text-[10px] text-white/40">app-prod-xxxxx</div>
                 </div>
               </div>
-
-              <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-orange-500 to-red-500" />
-                  <div>
-                    <div className="text-[11px] text-white/80">测试环境</div>
-                    <div className="text-[9px] text-white/40">app-test-xxx</div>
-                  </div>
-                </div>
-                <div className="flex gap-2 text-[9px]">
-                  <span className="px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-400">调试中</span>
-                  <span className="text-white/40">256 次调用</span>
-                </div>
+              <div className="flex items-center gap-3 text-[10px]">
+                <span className="px-2 py-1 rounded bg-green-500/20 text-green-400">运行中</span>
+                <span className="text-white/50">12,580 次调用</span>
               </div>
             </div>
 
-            {/* API usage chart placeholder */}
-            <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.02] p-3">
-              <div className="text-[10px] text-white/60 mb-2">今日调用趋势</div>
-              <div className="h-16 flex items-end gap-1">
-                {[40, 65, 45, 80, 60, 90, 70, 55, 85, 50].map((h, i) => (
-                  <div key={i} className="flex-1 bg-indigo-500/40 rounded-t" style={{ height: `${h}%` }} />
-                ))}
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center text-white text-sm font-bold">T</div>
+                <div>
+                  <div className="text-[12px] text-white/80 font-medium">测试环境</div>
+                  <div className="text-[10px] text-white/40">app-test-xxxxx</div>
+                </div>
               </div>
+              <div className="flex items-center gap-3 text-[10px]">
+                <span className="px-2 py-1 rounded bg-yellow-500/20 text-yellow-400">调试中</span>
+                <span className="text-white/50">256 次调用</span>
+              </div>
+            </div>
+          </div>
+
+          {/* API usage chart */}
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[11px] text-white/60">今日调用趋势</span>
+              <span className="text-[10px] text-indigo-400">12,836 次</span>
+            </div>
+            <div className="h-20 flex items-end gap-1.5">
+              {[35, 55, 40, 70, 55, 85, 65, 50, 75, 45, 80, 60].map((h, i) => (
+                <div key={i} className="flex-1 bg-gradient-to-t from-indigo-500/60 to-purple-500/40 rounded-t transition-all hover:from-indigo-500/80 hover:to-purple-500/60" style={{ height: `${h}%` }} />
+              ))}
+            </div>
+            <div className="flex justify-between mt-2 text-[9px] text-white/30">
+              <span>00:00</span>
+              <span>12:00</span>
+              <span>24:00</span>
             </div>
           </div>
         </div>
@@ -516,94 +525,95 @@ function AgentMockup({ type, isActive }: { type: Agent['mockupType']; isActive: 
   }
 
   if (type === 'lab') {
-    // Lab - Model experiment interface matching the screenshot
+    // Lab - Simplified model experiment interface
     return (
       <div className={baseClass}>
-        <div className="h-full bg-[#1a1d24] flex">
-          {/* Sidebar */}
-          <div className="w-36 bg-[#14171c] border-r border-white/10 p-3 text-[10px]">
-            {['PRD Agent', '缺陷管理 Agent', '视觉创作 Agent', '文学创作 Agent', '资源管理', '请求日志', '数据管理', '系统设置', '开放平台', '权限管理', '实验室'].map((item, i) => (
-              <div key={i} className={cn('px-2 py-1.5 rounded mb-1', i === 10 ? 'bg-white/10 text-white' : 'text-white/50')}>
-                {item}
-              </div>
-            ))}
+        <div className="h-full bg-[#1a1d24] p-4">
+          {/* Header with tabs */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex gap-3 text-[11px]">
+              <span className="px-3 py-1.5 rounded bg-white/10 text-white border border-white/20">大模型实验</span>
+              <span className="px-3 py-1.5 rounded text-white/50">桌面实验</span>
+            </div>
+            <span className="px-3 py-1.5 rounded bg-rose-500/20 text-[11px] text-rose-400 font-medium">一键开始实验</span>
           </div>
 
-          {/* Main content */}
-          <div className="flex-1 p-4 flex gap-4">
-            {/* Left panel - Config */}
-            <div className="w-44 space-y-3">
-              {/* Tabs */}
-              <div className="flex gap-2 text-[10px]">
-                <span className="text-white/40">试验车间</span>
-                <span className="px-2 py-1 rounded bg-white/10 text-white">大模型实验室</span>
-                <span className="text-white/40">桌面实验室</span>
-              </div>
-
-              {/* Experiment area */}
-              <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] text-white/60">试验区</span>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400">+ 新建</span>
+          <div className="grid grid-cols-2 gap-4">
+            {/* Left - Model selection */}
+            <div className="space-y-3">
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="text-[11px] text-white/60 mb-3">选择模型</div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3 p-2 rounded-lg bg-orange-500/10 border border-orange-500/30">
+                    <div className="w-3 h-3 rounded-full bg-orange-500" />
+                    <span className="text-[11px] text-white/80">GPT-4o</span>
+                    <span className="ml-auto text-[9px] text-white/40">OpenAI</span>
+                  </div>
+                  <div className="flex items-center gap-3 p-2 rounded-lg bg-white/5 border border-white/10">
+                    <div className="w-3 h-3 rounded-full bg-purple-500" />
+                    <span className="text-[11px] text-white/80">Claude 3.5</span>
+                    <span className="ml-auto text-[9px] text-white/40">Anthropic</span>
+                  </div>
+                  <div className="flex items-center gap-3 p-2 rounded-lg bg-white/5 border border-white/10">
+                    <div className="w-3 h-3 rounded-full bg-blue-500" />
+                    <span className="text-[11px] text-white/80">Gemini Pro</span>
+                    <span className="ml-auto text-[9px] text-white/40">Google</span>
+                  </div>
                 </div>
-                <div className="text-[9px] text-white/40 mb-2">保存实验配置与历史 (Mongo)</div>
-                <div className="bg-white/5 rounded p-2 text-[10px] text-white/70">默认实验</div>
               </div>
 
-              {/* Model selection */}
-              <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                <div className="text-[10px] text-white/60 mb-2">大模型实验</div>
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2 text-[9px]">
-                    <div className="w-2 h-2 rounded-full bg-orange-500" />
-                    <span className="text-orange-400">火山引擎</span>
-                    <span className="text-white/40">1个</span>
-                  </div>
-                  <div className="bg-white/5 rounded px-2 py-1 text-[9px] text-white/60">
-                    doubao-seedream-4-5
-                  </div>
-                  <div className="flex items-center gap-2 text-[9px]">
-                    <div className="w-2 h-2 rounded-full bg-green-500" />
-                    <span className="text-green-400">蒙着安</span>
-                    <span className="text-white/40">1个</span>
-                  </div>
+              {/* Prompt input */}
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="text-[11px] text-white/60 mb-2">测试提示词</div>
+                <div className="text-[10px] text-white/50 leading-relaxed">
+                  请用简洁的语言解释什么是 API 网关...
                 </div>
               </div>
             </div>
 
-            {/* Right panel - Results */}
-            <div className="flex-1 space-y-3">
-              {/* Input type tabs */}
-              <div className="flex gap-2 text-[9px]">
-                {['推理', '生图', '意图', 'JSON', 'MCP', 'FunctionCall', '生图意图'].map((tab, i) => (
-                  <span key={i} className={cn('px-2 py-1 rounded', i === 2 ? 'bg-white/10 text-white' : 'bg-white/5 text-white/50')}>
-                    {tab}
-                  </span>
-                ))}
-                <span className="ml-auto px-2 py-1 rounded bg-blue-500/20 text-blue-400">▶ 一键开始实验</span>
-              </div>
-
-              {/* Prompt input */}
-              <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                <div className="text-[9px] text-white/40 mb-1">当前：推理 · 类型：意图</div>
-                <div className="text-[10px] text-white/60">用户输入</div>
-                <div className="mt-2 text-[9px] text-white/50 leading-relaxed">
-                  A premium, technical blueprint-style illustration about the "Open Platform"...
+            {/* Right - Results comparison */}
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] text-white/60">对比结果</span>
+                <div className="flex gap-2 text-[9px]">
+                  <span className="px-2 py-1 rounded bg-rose-500/20 text-rose-400">首字延迟</span>
+                  <span className="text-white/40">总时长</span>
                 </div>
               </div>
 
-              {/* Results area */}
-              <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] text-white/60">实时结果（按首字延迟排序）</span>
-                  <div className="flex gap-2 text-[9px]">
-                    <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400">首字延迟</span>
-                    <span className="text-white/40">总时长</span>
+              {/* Result bars */}
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-orange-400">GPT-4o</span>
+                    <span className="text-white/50">245ms</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                    <div className="h-full w-[65%] bg-gradient-to-r from-orange-500 to-orange-400 rounded-full" />
                   </div>
                 </div>
-                <div className="h-20 flex items-center justify-center text-white/30 text-[10px]">
-                  点击"一键开始实验"查看对比结果
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-purple-400">Claude 3.5</span>
+                    <span className="text-white/50">189ms</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                    <div className="h-full w-[50%] bg-gradient-to-r from-purple-500 to-purple-400 rounded-full" />
+                  </div>
                 </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-blue-400">Gemini Pro</span>
+                    <span className="text-white/50">312ms</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                    <div className="h-full w-[82%] bg-gradient-to-r from-blue-500 to-blue-400 rounded-full" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-white/10 text-center">
+                <span className="text-[10px] text-emerald-400">Claude 3.5 响应最快</span>
               </div>
             </div>
           </div>
