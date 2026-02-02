@@ -1,0 +1,311 @@
+# Remotion 视频实验室
+
+> 用 React 代码创建视频，用自然语言生成动画。
+
+---
+
+## 产品定位
+
+**一句话描述**：在浏览器中实时预览和创作 Remotion 视频动画，支持 AI 生成。
+
+**目标用户**：
+- 开发人员：快速原型设计视频效果
+- 设计师：探索动画创意，无需编写代码
+- 内容创作者：生成短视频素材
+
+**核心价值**：
+1. **即时预览**：参数调整实时反映到视频
+2. **AI 驱动**：用自然语言描述，自动生成动画代码
+3. **学习工具**：通过示例学习 Remotion 框架
+
+---
+
+## 一、功能架构
+
+### 模式划分
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Remotion 视频实验室                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   ┌─────────────────────┐    ┌─────────────────────────────┐   │
+│   │    预设模板模式      │    │       AI 生成模式           │   │
+│   │   (Templates)       │    │      (AI Generator)         │   │
+│   ├─────────────────────┤    ├─────────────────────────────┤   │
+│   │ • 文字揭示          │    │ • 自然语言输入              │   │
+│   │ • Logo 动画         │    │ • LLM 代码生成              │   │
+│   │ • 粒子波浪          │    │ • 浏览器内编译              │   │
+│   │ • 参数化控制        │    │ • 动态组件渲染              │   │
+│   └─────────────────────┘    └─────────────────────────────┘   │
+│                                                                 │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │                  Remotion Player                        │   │
+│   │            (实时预览 + 播放控制)                          │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 技术流程
+
+```
+                    预设模板模式
+                    ────────────
+用户选择模板 → 调节参数 → Remotion Player 渲染
+                 │
+                 ▼
+              实时预览
+
+
+                    AI 生成模式
+                    ────────────
+用户输入描述
+     │
+     ▼
+┌─────────────────┐
+│ LLM Gateway     │  ← System Prompt (Remotion 最佳实践)
+│ runModelLabStream│
+└────────┬────────┘
+         │ SSE 流式响应
+         ▼
+┌─────────────────┐
+│ 代码清理        │  ← 移除 markdown 标记
+│ extractCode()   │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Babel Standalone│  ← 浏览器内编译 JSX/TSX
+│ transform()     │
+└────────┬────────┘
+         │ React 组件
+         ▼
+┌─────────────────┐
+│ 依赖注入        │  ← React, Remotion APIs
+│ new Function()  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Remotion Player │  ← 动态渲染
+└─────────────────┘
+```
+
+---
+
+## 二、预设模板
+
+### 模板列表
+
+| 模板名称 | 效果描述 | 可配置参数 |
+|----------|----------|------------|
+| **文字揭示** | 逐词弹出动画 | 文字内容、颜色、背景色、字号 |
+| **Logo 动画** | 旋转光环 + 文字淡入 | Logo 文字、主色、副色、背景色 |
+| **粒子波浪** | 流动的粒子效果 | 粒子颜色、背景色、粒子数量、波浪速度 |
+
+### 模板规范
+
+每个模板需遵循以下结构：
+
+```typescript
+// 1. 配置导出
+export const templateDefaults = {
+  text: 'Hello World',
+  color: '#ffffff',
+  backgroundColor: '#0f172a',
+};
+
+// 2. Props 类型
+export interface TemplateProps {
+  text?: string;
+  color?: string;
+  backgroundColor?: string;
+}
+
+// 3. 组件导出
+export function Template({
+  text = templateDefaults.text,
+  ...
+}: TemplateProps) {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+
+  // 动画逻辑
+  return (
+    <AbsoluteFill style={{ backgroundColor }}>
+      {/* 内容 */}
+    </AbsoluteFill>
+  );
+}
+```
+
+---
+
+## 三、AI 生成模式
+
+### 设计理念
+
+**"描述效果，生成代码"**
+
+用户无需了解 Remotion API，只需用自然语言描述想要的视觉效果，AI 自动生成可运行的 React 组件代码。
+
+### System Prompt 设计
+
+AI 生成的代码需遵循以下约束：
+
+1. **无外部依赖**：只能使用 React + Remotion 核心 API
+2. **Constants-first**：可配置参数放在文件顶部
+3. **默认导出**：组件必须是 `export default function`
+4. **内联样式**：不使用 CSS 文件
+
+### 支持的 Remotion API
+
+| API | 用途 |
+|-----|------|
+| `useCurrentFrame()` | 获取当前帧号 |
+| `useVideoConfig()` | 获取视频配置 (fps, width, height, durationInFrames) |
+| `interpolate()` | 线性插值动画 |
+| `spring()` | 弹簧物理动画 |
+| `Sequence` | 时序控制 |
+| `AbsoluteFill` | 绝对定位容器 |
+
+### 示例 Prompts
+
+| 示例 | 预期效果 |
+|------|----------|
+| "创建一个 Matrix 风格的绿色代码雨效果" | 字符从上往下飘落 |
+| "创建一个 Glitch 故障风格的文字效果" | 抖动 + 颜色偏移 |
+| "创建一个呼吸灯效果的圆形光环" | 脉冲 + 颜色渐变 |
+| "创建一个文字逐个字母弹跳出现的动画" | 弹簧物理效果 |
+| "创建一个从中心向外爆炸的彩色粒子效果" | 粒子扩散 |
+| "创建一个圆形进度条动画，从 0% 到 100%" | SVG 圆弧 + 数字 |
+
+### 错误处理
+
+| 错误类型 | 处理方式 |
+|----------|----------|
+| Babel 编译失败 | 显示错误信息，提供"重试编译"按钮 |
+| 组件运行时错误 | 显示占位符，不崩溃页面 |
+| LLM 超时 | 显示超时提示，允许重新生成 |
+| 不支持的依赖 | 提示用户修改描述 |
+
+---
+
+## 四、技术实现
+
+### 文件结构
+
+```
+prd-admin/src/pages/lab-remotion/
+├── RemotionLabTab.tsx              # 主页面（模式切换）
+├── components/
+│   └── AiGeneratorPanel.tsx        # AI 生成面板
+├── templates/
+│   ├── index.ts                    # 模板导出
+│   ├── TextReveal.tsx              # 文字揭示
+│   ├── LogoAnimation.tsx           # Logo 动画
+│   └── ParticleWave.tsx            # 粒子波浪
+└── lib/
+    ├── babel-standalone.d.ts       # 类型声明
+    ├── dynamicCompiler.ts          # 动态编译器
+    └── remotionPrompt.ts           # LLM System Prompt
+```
+
+### 依赖项
+
+| 包名 | 版本 | 用途 |
+|------|------|------|
+| `remotion` | ^4.0 | 核心框架 |
+| `@remotion/player` | ^4.0 | 浏览器预览播放器 |
+| `@babel/standalone` | ^7.29 | 浏览器内 JSX 编译 |
+
+### 视频配置
+
+```typescript
+const VIDEO_CONFIG = {
+  fps: 30,              // 帧率
+  durationInFrames: 90, // 总帧数 (3秒)
+  width: 1280,          // 宽度
+  height: 720,          // 高度
+};
+```
+
+---
+
+## 五、访问路径
+
+| 路由 | 页面 | 权限 |
+|------|------|------|
+| `/lab?tab=remotion` | 视频实验室 | `lab.read` |
+
+---
+
+## 六、已知局限
+
+| 局限 | 说明 | 未来可能方案 |
+|------|------|--------------|
+| 无外部依赖 | 不支持 Three.js、Lottie 等 | 预置常用库到作用域 |
+| 仅限预览 | 不支持导出 MP4 | 后端集成 FFmpeg |
+| LLM 质量不稳定 | 有时生成错误代码 | 优化 System Prompt |
+| 无代码编辑器 | 无法手动修改生成代码 | 集成 Monaco Editor |
+
+---
+
+## 七、待办清单
+
+### 已完成 ✅
+
+- [x] 集成 Remotion Player
+- [x] 创建预设模板（文字揭示、Logo 动画、粒子波浪）
+- [x] 实现参数化控制面板
+- [x] 集成 Babel standalone 动态编译
+- [x] 创建 AI 生成面板
+- [x] 实现 Remotion System Prompt
+- [x] 添加示例 Prompts
+- [x] 错误处理和重试机制
+
+### 未来增强 📋
+
+- [ ] **更多预设模板**
+  - [ ] Matrix 代码雨
+  - [ ] Glitch 故障效果
+  - [ ] 数据图表动画
+  - [ ] 打字机效果
+
+- [ ] **AI 增强**
+  - [ ] 优化 System Prompt 提高生成质量
+  - [ ] 添加代码修复能力
+  - [ ] 支持多轮对话调整效果
+
+- [ ] **编辑器增强**
+  - [ ] 集成 Monaco Editor
+  - [ ] 代码高亮显示
+  - [ ] 语法错误提示
+
+- [ ] **导出功能** (需后端支持)
+  - [ ] 导出 MP4 视频
+  - [ ] 导出 GIF 动图
+  - [ ] 导出代码模板
+
+- [ ] **高级特性**
+  - [ ] 时间轴编辑
+  - [ ] 多场景切换
+  - [ ] 音频同步
+
+---
+
+## 八、相关资源
+
+- [Remotion 官方文档](https://www.remotion.dev/docs/)
+- [Remotion Player API](https://www.remotion.dev/docs/player)
+- [Remotion Templates](https://www.remotion.dev/templates/)
+- [Prompt to Motion Graphics](https://github.com/remotion-dev/template-prompt-to-motion-graphics)
+
+---
+
+## 变更记录
+
+| 日期 | 版本 | 变更内容 |
+|------|------|----------|
+| 2026-02-02 | v1.0 | 初始版本：预设模板 + AI 生成模式 |
