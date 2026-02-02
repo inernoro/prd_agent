@@ -1,6 +1,5 @@
 import { cn } from '@/lib/cn';
-import { ParticleField } from '../components/ParticleField';
-import { GlowOrb } from '../components/GlowOrb';
+import { StarfieldBackground } from '../components/StarfieldBackground';
 import { TypewriterText } from '../components/TypewriterText';
 
 interface HeroSectionProps {
@@ -20,33 +19,18 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
   return (
     <section className={cn('relative min-h-screen flex flex-col', className)}>
       {/* Background layers */}
-      <div className="absolute inset-0 bg-[#050508]" />
+      <div className="absolute inset-0 bg-[#030305]" />
 
-      {/* Particle field */}
-      <ParticleField className="opacity-60" />
+      {/* WebGL Starfield */}
+      <StarfieldBackground />
 
-      {/* Glow orbs */}
-      <GlowOrb color="gold" size="xl" className="top-1/4 left-1/4 -translate-x-1/2 -translate-y-1/2" />
-      <GlowOrb color="purple" size="lg" className="bottom-1/3 right-1/4 translate-x-1/2" />
-      <GlowOrb color="blue" size="md" className="top-1/2 right-1/3" />
-
-      {/* Grid pattern overlay */}
-      <div
-        className="absolute inset-0 opacity-[0.02]"
-        style={{
-          backgroundImage: `
-            linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)
-          `,
-          backgroundSize: '80px 80px',
-        }}
-      />
-
-      {/* Radial vignette */}
+      {/* Subtle gradient overlay for text readability */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
-          background: 'radial-gradient(ellipse 70% 50% at 50% 40%, transparent 0%, rgba(5,5,8,0.9) 100%)',
+          background: `
+            radial-gradient(ellipse 80% 60% at 50% 45%, transparent 0%, rgba(3,3,5,0.4) 60%, rgba(3,3,5,0.8) 100%)
+          `,
         }}
       />
 
