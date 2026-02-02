@@ -294,6 +294,11 @@ export const api = {
     prompts: {
       list: () => '/api/literary-agent/prompts',
       byId: (id: string) => `/api/literary-agent/prompts/${id}`,
+      // 海鲜市场
+      marketplace: () => '/api/literary-agent/prompts/marketplace',
+      publish: (id: string) => `/api/literary-agent/prompts/${id}/publish`,
+      unpublish: (id: string) => `/api/literary-agent/prompts/${id}/unpublish`,
+      fork: (id: string) => `/api/literary-agent/prompts/${id}/fork`,
     },
     config: {
       get: () => '/api/literary-agent/config',
@@ -305,6 +310,11 @@ export const api = {
         activate: (id: string) => `/api/literary-agent/config/reference-images/${id}/activate`,
         deactivate: (id: string) => `/api/literary-agent/config/reference-images/${id}/deactivate`,
         active: () => '/api/literary-agent/config/reference-images/active',
+        // 海鲜市场
+        marketplace: () => '/api/literary-agent/config/reference-images/marketplace',
+        publish: (id: string) => `/api/literary-agent/config/reference-images/${id}/publish`,
+        unpublish: (id: string) => `/api/literary-agent/config/reference-images/${id}/unpublish`,
+        fork: (id: string) => `/api/literary-agent/config/reference-images/${id}/fork`,
       },
       /** 获取文生图模型池（无参考图场景） */
       modelsText2Img: () => '/api/literary-agent/config/models/text2img',
@@ -392,6 +402,11 @@ export const api = {
       list: () => '/api/watermark/fonts',
       byKey: (fontKey: string) => `/api/watermark/fonts/${fontKey}`,
     },
+    // 海鲜市场
+    marketplace: () => '/api/watermarks/marketplace',
+    publish: (id: string) => `/api/watermarks/${id}/publish`,
+    unpublish: (id: string) => `/api/watermarks/${id}/unpublish`,
+    fork: (id: string) => `/api/watermarks/${id}/fork`,
   },
 
   // ============ Model Sizes ============

@@ -56,6 +56,18 @@ public class LiteraryAgentConfigController : ControllerBase
            ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
            ?? "unknown";
 
+    /// <summary>
+    /// 获取当前用户信息（用于海鲜市场展示）
+    /// </summary>
+    private async Task<(string userId, string userName, string? avatarUrl)> GetCurrentUserInfoAsync(CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var user = await _db.Users.Find(u => u.UserId == adminId).FirstOrDefaultAsync(ct);
+        var userName = user?.DisplayName ?? user?.Username ?? "未知用户";
+        var avatarUrl = user?.AvatarFileName;
+        return (adminId, userName, avatarUrl);
+    }
+
     #region 模型查询（无参数，内部硬编码 appCallerCode）
 
     /// <summary>
@@ -248,13 +260,15 @@ public class LiteraryAgentConfigController : ControllerBase
     #region 底图配置 CRUD
 
     /// <summary>
-    /// 获取所有底图配置列表
+    /// 获取当前用户的底图配置列表（私有配置）
     /// </summary>
     [HttpGet("reference-images")]
     public async Task<IActionResult> ListReferenceImages(CancellationToken ct)
     {
+        var adminId = GetAdminId();
+
         var configs = await _db.ReferenceImageConfigs
-            .Find(x => x.AppKey == AppKey)
+            .Find(x => x.AppKey == AppKey && x.CreatedByAdminId == adminId)
             .SortByDescending(x => x.IsActive)
             .ThenByDescending(x => x.CreatedAt)
             .ToListAsync(ct);
@@ -361,6 +375,8 @@ public class LiteraryAgentConfigController : ControllerBase
         [FromBody] UpdateReferenceImageRequest request,
         CancellationToken ct)
     {
+        var adminId = GetAdminId();
+
         var config = await _db.ReferenceImageConfigs
             .Find(x => x.Id == id && x.AppKey == AppKey)
             .FirstOrDefaultAsync(ct);
@@ -368,6 +384,12 @@ public class LiteraryAgentConfigController : ControllerBase
         if (config == null)
         {
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在"));
+        }
+
+        // 只有创建者可以编辑
+        if (config.CreatedByAdminId != adminId)
+        {
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限编辑此配置"));
         }
 
         if (!string.IsNullOrWhiteSpace(request.Name))
@@ -378,6 +400,16 @@ public class LiteraryAgentConfigController : ControllerBase
         if (request.Prompt != null) // 允许设置为空字符串
         {
             config.Prompt = request.Prompt.Trim();
+        }
+
+        // 如果是从海鲜市场下载的配置，修改后清除来源标记
+        if (config.ForkedFromId != null)
+        {
+            config.IsModifiedAfterFork = true;
+            config.ForkedFromId = null;
+            config.ForkedFromUserId = null;
+            config.ForkedFromUserName = null;
+            config.ForkedFromUserAvatar = null;
         }
 
         config.UpdatedAt = DateTime.UtcNow;
@@ -746,6 +778,164 @@ public class LiteraryAgentConfigController : ControllerBase
                 updatedAt = DateTime.UtcNow
             }
         }));
+    }
+
+    #endregion
+
+    #region 底图配置海鲜市场 API
+
+    /// <summary>
+    /// 获取海鲜市场公开的底图配置列表
+    /// </summary>
+    [HttpGet("reference-images/marketplace")]
+    public async Task<IActionResult> ListReferenceImagesMarketplace(
+        [FromQuery] string? keyword,
+        [FromQuery] string? sort,
+        CancellationToken ct)
+    {
+        var filterBuilder = Builders<ReferenceImageConfig>.Filter;
+        var filter = filterBuilder.And(
+            filterBuilder.Eq(x => x.AppKey, AppKey),
+            filterBuilder.Eq(x => x.IsPublic, true)
+        );
+
+        // 关键词搜索（按名称）
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            filter = filterBuilder.And(filter, filterBuilder.Regex(x => x.Name, new MongoDB.Bson.BsonRegularExpression(keyword, "i")));
+        }
+
+        var query = _db.ReferenceImageConfigs.Find(filter);
+
+        // 排序
+        query = sort switch
+        {
+            "hot" => query.SortByDescending(x => x.ForkCount).ThenByDescending(x => x.CreatedAt),
+            "new" => query.SortByDescending(x => x.CreatedAt),
+            _ => query.SortByDescending(x => x.ForkCount).ThenByDescending(x => x.CreatedAt) // 默认热门
+        };
+
+        var items = await query.ToListAsync(ct);
+
+        // 获取所有作者信息
+        var ownerIds = items.Where(x => x.CreatedByAdminId != null).Select(x => x.CreatedByAdminId!).Distinct().ToList();
+        var owners = await _db.Users
+            .Find(u => ownerIds.Contains(u.UserId))
+            .ToListAsync(ct);
+        var ownerMap = owners.ToDictionary(u => u.UserId, u => new { name = u.DisplayName ?? u.Username, avatar = u.AvatarFileName });
+
+        var result = items.Select(x => new
+        {
+            x.Id,
+            x.Name,
+            x.Prompt,
+            x.ImageUrl,
+            x.ForkCount,
+            x.CreatedAt,
+            ownerUserId = x.CreatedByAdminId,
+            ownerUserName = x.CreatedByAdminId != null && ownerMap.TryGetValue(x.CreatedByAdminId, out var o) ? o.name : "未知用户",
+            ownerUserAvatar = x.CreatedByAdminId != null && ownerMap.TryGetValue(x.CreatedByAdminId, out var o2) ? o2.avatar : null,
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { items = result }));
+    }
+
+    /// <summary>
+    /// 发布底图配置到海鲜市场
+    /// </summary>
+    [HttpPost("reference-images/{id}/publish")]
+    public async Task<IActionResult> PublishReferenceImage(string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+
+        var config = await _db.ReferenceImageConfigs.Find(x => x.Id == id && x.AppKey == AppKey).FirstOrDefaultAsync(ct);
+        if (config == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在"));
+
+        if (config.CreatedByAdminId != adminId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限发布此配置"));
+
+        config.IsPublic = true;
+        config.UpdatedAt = DateTime.UtcNow;
+
+        await _db.ReferenceImageConfigs.ReplaceOneAsync(x => x.Id == id, config, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { config }));
+    }
+
+    /// <summary>
+    /// 取消发布底图配置（从海鲜市场下架）
+    /// </summary>
+    [HttpPost("reference-images/{id}/unpublish")]
+    public async Task<IActionResult> UnpublishReferenceImage(string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+
+        var config = await _db.ReferenceImageConfigs.Find(x => x.Id == id && x.AppKey == AppKey).FirstOrDefaultAsync(ct);
+        if (config == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在"));
+
+        if (config.CreatedByAdminId != adminId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限操作此配置"));
+
+        config.IsPublic = false;
+        config.UpdatedAt = DateTime.UtcNow;
+
+        await _db.ReferenceImageConfigs.ReplaceOneAsync(x => x.Id == id, config, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { config }));
+    }
+
+    /// <summary>
+    /// 免费下载（Fork）海鲜市场的底图配置
+    /// </summary>
+    [HttpPost("reference-images/{id}/fork")]
+    public async Task<IActionResult> ForkReferenceImage(string id, CancellationToken ct)
+    {
+        var (userId, userName, avatarUrl) = await GetCurrentUserInfoAsync(ct);
+
+        var source = await _db.ReferenceImageConfigs.Find(x => x.Id == id && x.AppKey == AppKey && x.IsPublic).FirstOrDefaultAsync(ct);
+        if (source == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在或未公开"));
+
+        // 获取原作者信息
+        var sourceOwner = source.CreatedByAdminId != null
+            ? await _db.Users.Find(u => u.UserId == source.CreatedByAdminId).FirstOrDefaultAsync(ct)
+            : null;
+        var sourceOwnerName = sourceOwner?.DisplayName ?? sourceOwner?.Username ?? "未知用户";
+        var sourceOwnerAvatar = sourceOwner?.AvatarFileName;
+
+        // 创建副本
+        var forked = new ReferenceImageConfig
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = source.Name,
+            Prompt = source.Prompt,
+            ImageSha256 = source.ImageSha256,
+            ImageUrl = source.ImageUrl,
+            IsActive = false, // 下载的配置默认不激活
+            AppKey = AppKey,
+            CreatedByAdminId = userId,
+            IsPublic = false, // 下载的配置默认不公开
+            ForkCount = 0,
+            ForkedFromId = source.Id,
+            ForkedFromUserId = source.CreatedByAdminId,
+            ForkedFromUserName = sourceOwnerName,
+            ForkedFromUserAvatar = sourceOwnerAvatar,
+            IsModifiedAfterFork = false,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        await _db.ReferenceImageConfigs.InsertOneAsync(forked, cancellationToken: ct);
+
+        // 更新原配置的 ForkCount
+        await _db.ReferenceImageConfigs.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<ReferenceImageConfig>.Update.Inc(x => x.ForkCount, 1),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { config = forked }));
     }
 
     #endregion
