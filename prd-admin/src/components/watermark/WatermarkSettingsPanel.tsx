@@ -1953,6 +1953,7 @@ function WatermarkPreview(props: {
   const maxX = Math.max(width - effectiveWidth, 0);
   const maxY = Math.max(canvasHeight - effectiveHeight, 0);
 
+  // 计算 positionX/Y 仍然用于 watermarkRect、distanceLabels 等
   let positionX = 0;
   let positionY = 0;
   switch (spec.anchor) {
@@ -1977,6 +1978,23 @@ function WatermarkPreview(props: {
 
   positionX = clampPixel(positionX, 0, maxX);
   positionY = clampPixel(positionY, 0, maxY);
+
+  // CSS 原生定位：根据锚点使用 left/right/top/bottom，避免手动计算尺寸带来的误差
+  const cssPosition = (() => {
+    const clampedOffsetX = clampPixel(offsetX, 0, maxX);
+    const clampedOffsetY = clampPixel(offsetY, 0, maxY);
+    switch (spec.anchor) {
+      case 'top-left':
+        return { left: clampedOffsetX, top: clampedOffsetY, right: 'auto' as const, bottom: 'auto' as const };
+      case 'top-right':
+        return { right: clampedOffsetX, top: clampedOffsetY, left: 'auto' as const, bottom: 'auto' as const };
+      case 'bottom-left':
+        return { left: clampedOffsetX, bottom: clampedOffsetY, right: 'auto' as const, top: 'auto' as const };
+      case 'bottom-right':
+      default:
+        return { right: clampedOffsetX, bottom: clampedOffsetY, left: 'auto' as const, top: 'auto' as const };
+    }
+  })();
   const watermarkRect = { x: positionX, y: positionY, width: effectiveWidth, height: effectiveHeight };
   const activeAnchor = getDominantAnchor(watermarkRect, width, canvasHeight, spec.anchor);
   const distanceLabels = {
@@ -2318,9 +2336,11 @@ function WatermarkPreview(props: {
         ref={watermarkRef}
         className="absolute"
         style={{
-          left: positionX,
-          top: positionY,
-          transform: 'translate(0, 0)',
+          // 使用 CSS 原生定位：right/bottom 时浏览器自动处理元素尺寸，无需手动计算
+          left: cssPosition.left,
+          top: cssPosition.top,
+          right: cssPosition.right,
+          bottom: cssPosition.bottom,
           opacity: spec.opacity,
           zIndex: 1,
           visibility: hideUntilMeasured ? 'hidden' : 'visible',
