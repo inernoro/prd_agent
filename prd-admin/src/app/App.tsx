@@ -16,6 +16,7 @@ import PromptStagesPage from '@/pages/PromptStagesPage';
 import VisualAgentFullscreenPage from '@/pages/visual-agent/VisualAgentFullscreenPage';
 import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
 import { DefectAgentPage } from '@/pages/defect-agent';
+import { LandingPage } from '@/pages/landing';
 import AssetsManagePage from '@/pages/AssetsManagePage';
 import OpenPlatformPage from '@/pages/OpenPlatformPage';
 import AuthzPage from '@/pages/AuthzPage';
@@ -132,6 +133,9 @@ export default function App() {
     <>
       <ToastContainer />
       <Routes>
+        {/* Landing page - public */}
+        <Route path="/landing" element={<LandingPage />} />
+
         <Route path="/login" element={<LoginPage />} />
 
         {/* 开发试验场 - 无需权限 */}
