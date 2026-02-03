@@ -53,12 +53,46 @@ const anchorLabelMap: Record<WatermarkAnchor, string> = {
   'bottom-right': '右下',
 };
 
+const modeLabelMap: Record<WatermarkConfig['positionMode'], string> = {
+  pixel: '按像素',
+  ratio: '按比例',
+};
+
 // appKey 到显示名称的映射
 const appKeyLabelMap: Record<string, string> = {
   'literary-agent': '文学创作',
   'visual-agent': '视觉创作',
   'prd-agent': '米多智能体平台',
 };
+
+const LabelTip = ({ tip }: { tip: string }) => (
+  <Tooltip content={tip} side="top" align="center">
+    <span
+      className="inline-flex items-center justify-center h-4 w-4 rounded-full text-[10px] font-semibold"
+      style={{
+        background: 'rgba(255,255,255,0.08)',
+        border: '1px solid rgba(255,255,255,0.12)',
+        color: 'var(--text-muted)',
+      }}
+    >
+      ?
+    </span>
+  </Tooltip>
+);
+
+const TitleWithTip = ({ label, tip }: { label: string; tip: string }) => (
+  <div className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+    <span>{label}</span>
+    <LabelTip tip={tip} />
+  </div>
+);
+
+const InlineLabelWithTip = ({ label, tip }: { label: string; tip: string }) => (
+  <div className="flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+    <span>{label}</span>
+    <LabelTip tip={tip} />
+  </div>
+);
 
 const buildDefaultConfig = (fontKey: string): WatermarkConfig => ({
   id: createSpecId(),
