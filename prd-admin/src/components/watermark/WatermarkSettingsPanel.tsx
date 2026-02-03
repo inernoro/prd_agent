@@ -1925,6 +1925,44 @@ function WatermarkPreview(props: {
     };
   }, [fontFamily, fontSize, measureSignature]);
 
+  // 关键修复：当 fontReady 变为 true 时，延迟两帧再测量
+  // 因为字体加载完成后，浏览器可能还需要一个渲染周期才能应用新字体
+  useEffect(() => {
+    if (!fontReady || !contentRef.current) return;
+
+    let cancelled = false;
+    // 延迟两帧：第一帧让浏览器重新布局，第二帧确保渲染完成
+    const raf1 = requestAnimationFrame(() => {
+      if (cancelled) return;
+      const raf2 = requestAnimationFrame(() => {
+        if (cancelled || !contentRef.current) return;
+
+        const contentRect = contentRef.current.getBoundingClientRect();
+        console.log('[WatermarkMeasure:fontReady]', {
+          contentRect: { width: contentRect.width, height: contentRect.height },
+          measureSignature: measureSignature.slice(0, 30) + '...',
+        });
+
+        if (!contentRect.width || !contentRect.height) return;
+
+        const measuredWidth = Math.ceil(contentRect.width);
+        const measuredHeight = Math.ceil(contentRect.height);
+
+        setWatermarkSize({ width: measuredWidth, height: measuredHeight });
+        watermarkSizeCache.set(measureSignature, { width: measuredWidth, height: measuredHeight });
+        lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
+        setMeasuredSignature(measureSignature);
+      });
+
+      return () => cancelAnimationFrame(raf2);
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf1);
+    };
+  }, [fontReady, measureSignature]);
+
   const estimatedTextWidth = Math.max(spec.text.length, 1) * fontSize * 1.0;
   const hasIcon = Boolean(spec.iconEnabled && spec.iconImageRef);
   const estimatedContentWidth = hasIcon
