@@ -787,3 +787,8 @@ export const getUserRateLimit: GetUserRateLimitContract = withAuth(getUserRateLi
 export const updateUserRateLimit: UpdateUserRateLimitContract = withAuth(updateUserRateLimitReal);
 export const getExemptUsers: GetExemptUsersContract = withAuth(getExemptUsersReal);
 export const getCustomConfigs: GetCustomConfigsContract = withAuth(getCustomConfigsReal);
+
+// Channel Adapter 多通道适配器服务
+import type { IChannelService } from '@/services/contracts/channels';
+import { ChannelService } from '@/services/real/channels';
+export const channelService: IChannelService = new ChannelService();
