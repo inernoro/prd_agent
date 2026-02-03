@@ -12,7 +12,7 @@ import type { ChannelIdentityMapping, CreateIdentityMappingRequest, UpdateIdenti
 import { ChannelTypeDisplayNames } from '@/services/contracts/channels';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
-interface IdentityPanelProps {
+interface BindingPanelProps {
   onActionsReady?: (actions: React.ReactNode) => void;
 }
 
@@ -28,7 +28,7 @@ const channelIcons: Record<string, React.ReactNode> = {
   webhook: <Webhook size={14} />,
 };
 
-export default function IdentityPanel({ onActionsReady }: IdentityPanelProps) {
+export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
   const [mappings, setMappings] = useState<ChannelIdentityMapping[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -80,7 +80,7 @@ export default function IdentityPanel({ onActionsReady }: IdentityPanelProps) {
         <Button variant="secondary" size="sm" onClick={loadMappings}>
           <RefreshCw size={14} />
         </Button>
-        <Button variant="primary" size="sm" onClick={() => setCreateDialogOpen(true)}>
+        <Button variant="primary" size="sm" className="whitespace-nowrap" onClick={() => setCreateDialogOpen(true)}>
           <Plus size={14} /> 新建
         </Button>
       </>
@@ -114,7 +114,7 @@ export default function IdentityPanel({ onActionsReady }: IdentityPanelProps) {
   const handleDelete = async (id: string, identifier: string) => {
     const confirmed = await systemDialog.confirm({
       title: '确认删除',
-      message: `确定要删除身份映射"${identifier}"吗？`,
+      message: `确定要删除邮箱绑定"${identifier}"吗？`,
       tone: 'danger',
     });
     if (!confirmed) return;
@@ -201,7 +201,7 @@ export default function IdentityPanel({ onActionsReady }: IdentityPanelProps) {
 
           {mappings.length === 0 && !loading && (
             <div className="text-center py-12 text-muted-foreground">
-              {search || channelTypeFilter ? '未找到匹配的身份映射' : '暂无身份映射'}
+              {search || channelTypeFilter ? '未找到匹配的邮箱绑定' : '暂无邮箱绑定'}
             </div>
           )}
         </div>
@@ -223,7 +223,7 @@ export default function IdentityPanel({ onActionsReady }: IdentityPanelProps) {
   );
 }
 
-// ============ 身份映射编辑弹窗 ============
+// ============ 邮箱绑定编辑弹窗 ============
 function IdentityMappingDialog({ open, onClose, onSubmit, mode, mapping }: {
   open: boolean;
   onClose: () => void;
@@ -275,7 +275,7 @@ function IdentityMappingDialog({ open, onClose, onSubmit, mode, mapping }: {
   };
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()} title={mode === 'create' ? '新建身份映射' : '编辑身份映射'} maxWidth={500}
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()} title={mode === 'create' ? '新建邮箱绑定' : '编辑邮箱绑定'} maxWidth={500}
       content={
         <div className="space-y-4">
           {mode === 'create' && (

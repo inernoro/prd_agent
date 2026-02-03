@@ -442,6 +442,39 @@ public class ChannelAdminController : ControllerBase
     }
 
     /// <summary>
+    /// 获取任务统计
+    /// </summary>
+    [HttpGet("tasks/stats")]
+    public async Task<IActionResult> GetTaskStats([FromQuery] string? channelType, CancellationToken ct)
+    {
+        var filterBuilder = Builders<ChannelTask>.Filter;
+        var baseFilter = string.IsNullOrWhiteSpace(channelType)
+            ? filterBuilder.Empty
+            : filterBuilder.Eq(x => x.ChannelType, channelType);
+
+        var pendingCount = await _db.ChannelTasks.CountDocumentsAsync(
+            filterBuilder.And(baseFilter, filterBuilder.Eq(x => x.Status, "pending")), cancellationToken: ct);
+        var processingCount = await _db.ChannelTasks.CountDocumentsAsync(
+            filterBuilder.And(baseFilter, filterBuilder.Eq(x => x.Status, "processing")), cancellationToken: ct);
+        var completedCount = await _db.ChannelTasks.CountDocumentsAsync(
+            filterBuilder.And(baseFilter, filterBuilder.Eq(x => x.Status, "completed")), cancellationToken: ct);
+        var failedCount = await _db.ChannelTasks.CountDocumentsAsync(
+            filterBuilder.And(baseFilter, filterBuilder.Eq(x => x.Status, "failed")), cancellationToken: ct);
+        var cancelledCount = await _db.ChannelTasks.CountDocumentsAsync(
+            filterBuilder.And(baseFilter, filterBuilder.Eq(x => x.Status, "cancelled")), cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            Pending = (int)pendingCount,
+            Processing = (int)processingCount,
+            Completed = (int)completedCount,
+            Failed = (int)failedCount,
+            Cancelled = (int)cancelledCount,
+            Total = (int)(pendingCount + processingCount + completedCount + failedCount + cancelledCount)
+        }));
+    }
+
+    /// <summary>
     /// 获取任务详情
     /// </summary>
     [HttpGet("tasks/{id}")]

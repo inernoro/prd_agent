@@ -87,7 +87,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
         <Button variant="secondary" size="sm" onClick={() => { loadWhitelists(); loadStats(); }}>
           <RefreshCw size={14} />
         </Button>
-        <Button variant="primary" size="sm" onClick={() => setCreateDialogOpen(true)}>
+        <Button variant="primary" size="sm" className="whitespace-nowrap" onClick={() => setCreateDialogOpen(true)}>
           <Plus size={14} /> 新建
         </Button>
       </>

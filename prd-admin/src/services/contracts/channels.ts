@@ -234,6 +234,54 @@ export interface IChannelService {
   // 统计
   getStats(): Promise<ChannelStatsResponse>;
   getTaskStats(channelType?: string): Promise<ChannelTaskStats>;
+
+}
+
+// ============ 邮箱配置 ============
+export interface ChannelSettings {
+  id?: string;
+  imapHost?: string;
+  imapPort?: number;
+  imapUsername?: string;
+  imapPassword?: string;
+  imapUseSsl?: boolean;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpUsername?: string;
+  smtpPassword?: string;
+  smtpUseSsl?: boolean;
+  pollIntervalMinutes?: number;
+  isEnabled?: boolean;
+  lastPollAt?: string;
+  lastPollResult?: string;
+}
+
+export interface UpdateSettingsRequest {
+  imapHost?: string;
+  imapPort?: number;
+  imapUsername?: string;
+  imapPassword?: string;
+  imapUseSsl?: boolean;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpUsername?: string;
+  smtpPassword?: string;
+  smtpUseSsl?: boolean;
+  pollIntervalMinutes?: number;
+  isEnabled?: boolean;
+}
+
+export interface TestConnectionRequest {
+  imapHost: string;
+  imapPort: number;
+  imapUsername: string;
+  imapPassword: string;
+  imapUseSsl: boolean;
+}
+
+export interface TestConnectionResult {
+  success: boolean;
+  message: string;
 }
 
 // ============ 常量 ============

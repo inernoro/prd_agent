@@ -99,7 +99,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
             }}
           />
         </div>
-        <Button variant="primary" size="sm" onClick={() => setCreateDialogOpen(true)}>
+        <Button variant="primary" size="sm" className="whitespace-nowrap" onClick={() => setCreateDialogOpen(true)}>
           <Plus size={14} />
           新建应用
         </Button>
