@@ -59,11 +59,6 @@ const appKeyLabelMap: Record<string, string> = {
   'prd-agent': '米多智能体平台',
 };
 
-const modeLabelMap: Record<WatermarkConfig['positionMode'], string> = {
-  pixel: '像素',
-  ratio: '比例',
-};
-
 const buildDefaultConfig = (fontKey: string): WatermarkConfig => ({
   id: createSpecId(),
   name: '默认水印',
@@ -720,23 +715,25 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                               已公开
                             </span>
                           )}
-                          <Button
-                            size="xs"
-                            variant="secondary"
+                          {/* 测试按钮（图标形式） */}
+                          <button
+                            type="button"
+                            className="p-0.5 rounded hover:bg-white/10 transition-colors disabled:opacity-50"
                             onClick={() => handleTestClick(item.id)}
                             disabled={saving || testingId === item.id}
                             title="上传图片测试水印效果"
+                            style={{ color: 'var(--text-muted)' }}
                           >
-                            <FlaskConical size={12} />
-                            {testingId === item.id ? '测试中...' : '测试'}
-                          </Button>
+                            <FlaskConical size={14} />
+                          </button>
                         </div>
                       </div>
                     </div>
 
-                    {/* 配置信息区（统一高度100px） */}
+                    {/* 配置信息区（统一高度100px，左侧两列配置 + 右侧小预览图） */}
                     <div className="px-2 pb-1 flex-shrink-0">
-                      <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 120px', height: '100px' }}>
+                      <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 80px', height: '100px' }}>
+                        {/* 左侧：配置信息（两列布局） */}
                         <div
                           className="overflow-auto border rounded-[6px]"
                           style={{
@@ -744,36 +741,37 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             background: 'rgba(255,255,255,0.02)',
                           }}
                         >
-                          <div className="text-[11px] grid gap-1 grid-cols-1 p-2" style={{ color: 'var(--text-muted)' }}>
-                            <div className="grid items-center gap-2" style={{ gridTemplateColumns: '40px auto' }}>
+                          <div className="text-[11px] grid grid-cols-2 gap-x-3 gap-y-1 p-2" style={{ color: 'var(--text-muted)' }}>
+                            <div className="flex items-center gap-1">
                               <span>字体</span>
                               <span className="truncate" style={{ color: 'var(--text-primary)' }}>{fontLabel}</span>
                             </div>
-                            <div className="grid items-center gap-2" style={{ gridTemplateColumns: '40px auto' }}>
+                            <div className="flex items-center gap-1">
                               <span>大小</span>
                               <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
                             </div>
-                            <div className="grid items-center gap-2" style={{ gridTemplateColumns: '40px auto' }}>
+                            <div className="flex items-center gap-1">
                               <span>位置</span>
                               <span className="truncate" style={{ color: 'var(--text-primary)' }}>
-                                {anchorLabelMap[item.anchor]} · {modeLabelMap[item.positionMode]}
+                                {anchorLabelMap[item.anchor]}
                               </span>
                             </div>
-                            <div className="grid items-center gap-2" style={{ gridTemplateColumns: '40px auto' }}>
+                            <div className="flex items-center gap-1">
                               <span>图标</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{item.iconEnabled ? '已启用' : '禁用'}</span>
+                              <span style={{ color: 'var(--text-primary)' }}>{item.iconEnabled ? '启用' : '禁用'}</span>
                             </div>
-                            <div className="grid items-center gap-2" style={{ gridTemplateColumns: '40px auto' }}>
+                            <div className="flex items-center gap-1 col-span-2">
                               <span>透明度</span>
                               <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
                             </div>
                           </div>
                         </div>
+                        {/* 右侧：预览图（缩小） */}
                         <div
                           className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
                           style={{
                             background: previewUrl && !previewError
-                              ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 16px 16px'
+                              ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
                               : 'rgba(255,255,255,0.02)',
                             border: previewUrl && !previewError ? 'none' : '1px solid rgba(255,255,255,0.08)',
                             cursor: previewUrl && !previewError ? 'zoom-in' : 'default',
@@ -789,7 +787,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             <img
                               src={previewUrl}
                               alt="Preview"
-                              className="block w-full h-auto object-contain"
+                              className="block w-full h-full object-contain"
                               onError={() => setPreviewErrorById((prev) => ({ ...prev, [item.id]: true }))}
                             />
                           ) : (
