@@ -814,21 +814,11 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                       </div>
                     </div>
 
-                    {/* Fork次数 + 操作按钮区 */}
+                    {/* 操作按钮区（单行布局） */}
                     <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                      {/* Fork次数显示（已发布时显示） */}
-                      {item.isPublic && typeof item.forkCount === 'number' && (
-                        <div
-                          className="flex items-center gap-1 mb-1.5 text-[10px]"
-                          style={{ color: 'var(--text-muted)' }}
-                        >
-                          <GitFork size={11} />
-                          <span>{item.forkCount} 次下载</span>
-                        </div>
-                      )}
-                      <div className="flex flex-wrap gap-1.5 justify-between">
-                        {/* 左侧：发布/取消发布按钮 */}
-                        <div className="flex gap-1.5">
+                      <div className="flex items-center gap-1.5 justify-between">
+                        {/* 左侧：发布状态按钮 + 下载次数 */}
+                        <div className="flex items-center gap-2">
                           {item.isPublic ? (
                             <Button
                               size="xs"
@@ -851,6 +841,13 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                               <Share2 size={12} />
                               发布
                             </Button>
+                          )}
+                          {/* 下载次数（已发布时显示） */}
+                          {item.isPublic && typeof item.forkCount === 'number' && (
+                            <span className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                              <GitFork size={10} />
+                              {item.forkCount}
+                            </span>
                           )}
                         </div>
                         {/* 右侧：选择/编辑/删除按钮 */}

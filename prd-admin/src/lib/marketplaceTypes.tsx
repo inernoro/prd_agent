@@ -130,30 +130,32 @@ export interface MarketplaceWatermark extends MarketplaceItemBase {
 // 预览渲染器组件
 // ============================================================================
 
+/** 统一预览区高度 */
+const PREVIEW_HEIGHT = '100px';
+
 /**
  * 提示词预览：Markdown 渲染
  */
 const PromptPreviewRenderer: React.FC<{ item: MarketplacePrompt }> = ({ item }) => (
   <div
-    className="h-full overflow-auto border rounded-[6px]"
+    className="overflow-auto border rounded-[6px]"
     style={{
       borderColor: 'var(--border-subtle)',
       background: 'rgba(255,255,255,0.02)',
-      minHeight: '120px',
-      maxHeight: '160px',
+      height: PREVIEW_HEIGHT,
     }}
   >
     <style>{`
-      .marketplace-prompt-md { font-size: 11px; line-height: 1.5; color: var(--text-secondary); padding: 8px; }
-      .marketplace-prompt-md h1,.marketplace-prompt-md h2,.marketplace-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 8px 0 4px; }
-      .marketplace-prompt-md h1 { font-size: 13px; }
-      .marketplace-prompt-md h2 { font-size: 12px; }
+      .marketplace-prompt-md { font-size: 11px; line-height: 1.4; color: var(--text-secondary); padding: 6px 8px; }
+      .marketplace-prompt-md h1,.marketplace-prompt-md h2,.marketplace-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 4px 0 2px; }
+      .marketplace-prompt-md h1 { font-size: 12px; }
+      .marketplace-prompt-md h2 { font-size: 11px; }
       .marketplace-prompt-md h3 { font-size: 11px; }
-      .marketplace-prompt-md p { margin: 4px 0; }
-      .marketplace-prompt-md ul,.marketplace-prompt-md ol { margin: 4px 0; padding-left: 16px; }
-      .marketplace-prompt-md li { margin: 2px 0; }
-      .marketplace-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-      .marketplace-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; padding: 8px; overflow: auto; margin: 4px 0; }
+      .marketplace-prompt-md p { margin: 2px 0; }
+      .marketplace-prompt-md ul,.marketplace-prompt-md ol { margin: 2px 0; padding-left: 14px; }
+      .marketplace-prompt-md li { margin: 1px 0; }
+      .marketplace-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 3px; border-radius: 3px; }
+      .marketplace-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 4px; padding: 4px 6px; overflow: auto; margin: 2px 0; }
       .marketplace-prompt-md pre code { background: transparent; border: 0; padding: 0; }
     `}</style>
     <div className="marketplace-prompt-md">
@@ -172,15 +174,13 @@ const PromptPreviewRenderer: React.FC<{ item: MarketplacePrompt }> = ({ item }) 
  * 风格图预览：左右布局（文字 + 图片）
  */
 const RefImagePreviewRenderer: React.FC<{ item: MarketplaceRefImage }> = ({ item }) => (
-  <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px' }}>
+  <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: PREVIEW_HEIGHT }}>
     {/* 左侧：提示词预览 */}
     <div
       className="overflow-auto border rounded-[6px] p-2"
       style={{
         borderColor: 'var(--border-subtle)',
         background: 'rgba(255,255,255,0.02)',
-        minHeight: '80px',
-        maxHeight: '100px',
       }}
     >
       <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -195,8 +195,6 @@ const RefImagePreviewRenderer: React.FC<{ item: MarketplaceRefImage }> = ({ item
           ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
           : 'rgba(255,255,255,0.02)',
         border: item.imageUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
-        minHeight: '80px',
-        maxHeight: '100px',
       }}
     >
       {item.imageUrl ? (
@@ -209,25 +207,38 @@ const RefImagePreviewRenderer: React.FC<{ item: MarketplaceRefImage }> = ({ item
 );
 
 /**
- * 水印预览：居中图片
+ * 水印预览：两栏布局（文字信息 + 预览图）
  */
 const WatermarkPreviewRenderer: React.FC<{ item: MarketplaceWatermark }> = ({ item }) => (
-  <div
-    className="flex items-center justify-center overflow-hidden rounded-[6px] p-2"
-    style={{
-      background: 'rgba(255,255,255,0.02)',
-      border: '1px solid var(--border-subtle)',
-      minHeight: '80px',
-      maxHeight: '100px',
-    }}
-  >
-    {item.previewUrl ? (
-      <img src={item.previewUrl} alt={item.name} className="max-h-full object-contain" />
-    ) : (
+  <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: PREVIEW_HEIGHT }}>
+    {/* 左侧：水印文字信息 */}
+    <div
+      className="overflow-auto border rounded-[6px] p-2"
+      style={{
+        borderColor: 'var(--border-subtle)',
+        background: 'rgba(255,255,255,0.02)',
+      }}
+    >
       <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-        {item.text || '无预览'}
+        {item.text || '（无水印文字）'}
       </div>
-    )}
+    </div>
+    {/* 右侧：预览图 */}
+    <div
+      className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
+      style={{
+        background: item.previewUrl
+          ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
+          : 'rgba(255,255,255,0.02)',
+        border: item.previewUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
+      }}
+    >
+      {item.previewUrl ? (
+        <img src={item.previewUrl} alt={item.name} className="block w-full h-full object-contain" />
+      ) : (
+        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无预览</div>
+      )}
+    </div>
   </div>
 );
 

@@ -9,6 +9,7 @@ import React from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { GitFork, User, Hand } from 'lucide-react';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import {
   CONFIG_TYPE_REGISTRY,
   type MixedMarketplaceItem,
@@ -48,41 +49,34 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
       <div className="flex flex-col h-full">
         {/* ========== 标题栏：通用结构 ========== */}
         <div className="p-2 pb-1 flex-shrink-0">
-          <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center justify-between gap-2">
             <div className="min-w-0 flex-1 flex items-center gap-1.5">
               {/* 类型图标 */}
               <TypeIcon
                 size={14}
-                style={{ color: color.iconColor, flexShrink: 0 }}
+                className="flex-shrink-0"
+                style={{ color: color.iconColor }}
               />
               {/* 标题 */}
               <div
-                className="flex-1 font-semibold text-[13px]"
+                className="flex-1 font-semibold text-[13px] truncate"
                 title={displayName}
-                style={{
-                  color: 'var(--text-primary)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  minWidth: 0,
-                }}
+                style={{ color: 'var(--text-primary)' }}
               >
                 {displayName}
               </div>
             </div>
-            <div className="flex items-center gap-1 flex-shrink-0">
-              {/* 类型标签 */}
-              <span
-                className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
-                style={{
-                  background: color.bg,
-                  color: color.text,
-                  border: color.border,
-                }}
-              >
-                {typeDef.label}
-              </span>
-            </div>
+            {/* 类型标签 */}
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0"
+              style={{
+                background: color.bg,
+                color: color.text,
+                border: color.border,
+              }}
+            >
+              {typeDef.label}
+            </span>
           </div>
         </div>
 
@@ -93,40 +87,45 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
 
         {/* ========== 底栏：通用结构 ========== */}
         <div
-          className="px-2 pb-2 pt-1 flex-shrink-0 border-t"
+          className="px-2 pb-2 pt-1.5 flex-shrink-0 border-t"
           style={{ borderColor: 'var(--border-subtle)' }}
         >
-          {/* 元信息：Fork次数 + 作者 + 日期 */}
-          <div
-            className="flex items-center gap-1 mb-1.5 text-[10px]"
-            style={{ color: 'var(--text-muted)' }}
-          >
-            <GitFork size={11} />
-            <span>{item.data.forkCount} 次下载</span>
-            <span className="opacity-60 mx-1">·</span>
-            {item.data.ownerUserAvatar ? (
+          {/* 单行布局：左侧元信息 + 右侧下载按钮 */}
+          <div className="flex items-center justify-between gap-2">
+            {/* 左侧：Fork次数 + 作者 + 日期 */}
+            <div
+              className="flex items-center gap-1 text-[10px] min-w-0"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <GitFork size={11} className="flex-shrink-0" />
+              <span className="flex-shrink-0">{item.data.forkCount} 次下载</span>
+              <span className="opacity-60 flex-shrink-0">·</span>
               <img
-                src={item.data.ownerUserAvatar}
+                src={resolveAvatarUrl({ avatarFileName: item.data.ownerUserAvatar })}
                 alt=""
-                className="w-4 h-4 rounded-full object-cover"
+                className="w-4 h-4 rounded-full object-cover flex-shrink-0"
+                onError={(e) => {
+                  // Fallback to default avatar on error
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = 'none';
+                  target.nextElementSibling?.classList.remove('hidden');
+                }}
               />
-            ) : (
-              <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
+              <div className="w-4 h-4 rounded-full bg-gray-600 items-center justify-center hidden flex-shrink-0">
                 <User size={10} />
               </div>
-            )}
-            <span>{item.data.ownerUserName || '未知用户'}</span>
-            <span className="opacity-60">·</span>
-            <span>{new Date(item.data.createdAt).toLocaleDateString()}</span>
-          </div>
+              <span className="truncate">{item.data.ownerUserName || '未知用户'}</span>
+              <span className="opacity-60 flex-shrink-0">·</span>
+              <span className="flex-shrink-0">{new Date(item.data.createdAt).toLocaleDateString()}</span>
+            </div>
 
-          {/* 下载按钮 */}
-          <div className="flex justify-end">
+            {/* 右侧：下载按钮 */}
             <Button
               size="xs"
               variant="secondary"
               disabled={forking}
               onClick={() => onFork(item.type, item.data.id)}
+              className="flex-shrink-0"
             >
               <Hand size={12} />
               {forking ? '下载中...' : '免费下载'}

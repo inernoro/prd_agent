@@ -3005,21 +3005,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
 
-                          {/* 下栏：Fork次数 + 操作按钮区 */}
+                          {/* 下栏：操作按钮区（单行布局） */}
                           <div className="px-2 pb-2 pt-1 flex-shrink-0">
-                            {/* Fork次数显示（已发布时显示） */}
-                            {prompt.isPublic && typeof prompt.forkCount === 'number' && (
-                              <div
-                                className="flex items-center gap-1 mb-1.5 text-[10px]"
-                                style={{ color: 'var(--text-muted)' }}
-                              >
-                                <GitFork size={11} />
-                                <span>{prompt.forkCount} 次下载</span>
-                              </div>
-                            )}
-                            <div className="flex gap-1.5 justify-between">
-                              {/* 左侧：发布/取消发布按钮 */}
-                              <div className="flex gap-1.5">
+                            <div className="flex items-center gap-1.5 justify-between">
+                              {/* 左侧：发布状态按钮 + 下载次数 */}
+                              <div className="flex items-center gap-2">
                                 {prompt.isPublic ? (
                                   <Button
                                     size="xs"
@@ -3041,6 +3031,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     发布
                                   </Button>
                                 )}
+                                {/* 下载次数（已发布时显示） */}
+                                {prompt.isPublic && typeof prompt.forkCount === 'number' && (
+                                  <span className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                    <GitFork size={10} />
+                                    {prompt.forkCount}
+                                  </span>
+                                )}
                               </div>
                               {/* 右侧：选择/编辑/删除按钮 */}
                               <div className="flex gap-1.5">
@@ -3050,7 +3047,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     variant="secondary"
                                     onClick={() => {
                                       setSelectedPrompt(prompt);
-                                      // 不关闭配置管理弹窗，选择后仍可继续配置其他项
                                     }}
                                   >
                                     <Check size={12} />
@@ -3076,7 +3072,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   variant="secondary"
                                   onClick={() => {
                                     handleEditPrompt(prompt);
-                                    // 不关闭配置管理弹窗，编辑完成后仍可继续配置
                                   }}
                                 >
                                   <Edit2 size={12} />
@@ -3253,21 +3248,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
 
-                          {/* Fork次数 + 操作按钮区 */}
+                          {/* 操作按钮区（单行布局） */}
                           <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                            {/* Fork次数显示（已发布时显示） */}
-                            {config.isPublic && typeof config.forkCount === 'number' && (
-                              <div
-                                className="flex items-center gap-1 mb-1.5 text-[10px]"
-                                style={{ color: 'var(--text-muted)' }}
-                              >
-                                <GitFork size={11} />
-                                <span>{config.forkCount} 次下载</span>
-                              </div>
-                            )}
-                            <div className="flex flex-wrap gap-1.5 justify-between">
-                              {/* 左侧：发布/取消发布按钮 */}
-                              <div className="flex gap-1.5">
+                            <div className="flex items-center gap-1.5 justify-between">
+                              {/* 左侧：发布状态按钮 + 下载次数 */}
+                              <div className="flex items-center gap-2">
                                 {config.isPublic ? (
                                   <Button
                                     size="xs"
@@ -3288,6 +3273,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     <Share2 size={12} />
                                     发布
                                   </Button>
+                                )}
+                                {/* 下载次数（已发布时显示） */}
+                                {config.isPublic && typeof config.forkCount === 'number' && (
+                                  <span className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                    <GitFork size={10} />
+                                    {config.forkCount}
+                                  </span>
                                 )}
                               </div>
                               {/* 右侧：选择/编辑/删除按钮 */}
