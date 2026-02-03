@@ -846,13 +846,16 @@ public class ModelLabController : ControllerBase
         }
 
         // 可选：追加主模型作为标准答案（便于对照）- 必须在 models.Count == 0 检查之前
+        Console.WriteLine($"[ModelLab] IncludeMainModelAsStandard={request.IncludeMainModelAsStandard}, models.Count={models.Count}");
         if (request.IncludeMainModelAsStandard == true)
         {
             var main = await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct);
+            Console.WriteLine($"[ModelLab] Main model found: {main != null}, Id={main?.Id}, PlatformId={main?.PlatformId}, ModelName={main?.ModelName}");
             if (main != null)
             {
                 var mainPid = (main.PlatformId ?? string.Empty).Trim();
                 var mainMid = (main.ModelName ?? string.Empty).Trim();
+                Console.WriteLine($"[ModelLab] mainPid='{mainPid}', mainMid='{mainMid}'");
                 var mainKey = $"{mainPid}:{mainMid}".ToLowerInvariant();
                 var has = models.Any(x =>
                 {
@@ -872,6 +875,11 @@ public class ModelLabController : ControllerBase
                             ModelName = mainMid,
                             Group = main.Group
                         });
+                        Console.WriteLine($"[ModelLab] Added main model to list, models.Count={models.Count}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[ModelLab] Main model skipped: empty platformId or modelName");
                     }
                 }
             }
