@@ -1876,7 +1876,7 @@ function WatermarkPreview(props: {
   const measureSignature = useMemo(
     () =>
       [
-        'v2',  // 版本号：v2 = 直接测量 contentRef 而非手动计算
+        'v3',  // 版本号：v3 = 只有延迟两帧后才写入缓存，避免缓存被错误小尺寸污染
         spec.text,
         spec.iconEnabled ? '1' : '0',
         spec.iconImageRef ?? '',
@@ -2098,7 +2098,8 @@ function WatermarkPreview(props: {
         }
         return { width: measuredWidth, height: measuredHeight };
       });
-      watermarkSizeCache.set(measureSignature, { width: measuredWidth, height: measuredHeight });
+      // 注意：不在这里写入缓存！缓存只在 fontReady effect 延迟两帧后写入
+      // 否则会用 fontReady=true 但字体还没渲染完成时的错误小尺寸污染缓存
       lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
       setMeasuredSignature(measureSignature);
     };
