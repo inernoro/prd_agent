@@ -48,6 +48,7 @@ export function AiGeneratorPanel({ onGenerated, className }: AiGeneratorPanelPro
           suite: 'custom',
           promptText: buildUserPrompt(prompt),
           systemPromptOverride: REMOTION_SYSTEM_PROMPT,
+          includeMainModelAsStandard: true,  // 自动使用系统主模型
           params: {
             temperature: 0.7,
             maxTokens: 4000,
