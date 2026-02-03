@@ -567,8 +567,12 @@ public class ChannelAdminController : ControllerBase
         var channels = new List<ChannelStatusInfo>();
         foreach (var channelType in ChannelTypes.All)
         {
+            var whitelistFilter = Builders<ChannelWhitelist>.Filter.And(
+                Builders<ChannelWhitelist>.Filter.Eq(x => x.ChannelType, channelType),
+                Builders<ChannelWhitelist>.Filter.Eq(x => x.IsActive, true)
+            );
             var whitelistCount = await _db.ChannelWhitelists
-                .CountDocumentsAsync(x => x.ChannelType == channelType && x.IsActive, ct);
+                .CountDocumentsAsync(whitelistFilter, cancellationToken: ct);
 
             var todayTasks = await _db.ChannelTasks
                 .Find(x => x.ChannelType == channelType && x.CreatedAt >= today && x.CreatedAt < tomorrow)
@@ -599,8 +603,8 @@ public class ChannelAdminController : ControllerBase
             : 0;
 
         // 总计数
-        var whitelistCount = await _db.ChannelWhitelists.CountDocumentsAsync(FilterDefinition<ChannelWhitelist>.Empty, ct);
-        var identityMappingCount = await _db.ChannelIdentityMappings.CountDocumentsAsync(FilterDefinition<ChannelIdentityMapping>.Empty, ct);
+        var totalWhitelistCount = await _db.ChannelWhitelists.CountDocumentsAsync(FilterDefinition<ChannelWhitelist>.Empty, cancellationToken: ct);
+        var identityMappingCount = await _db.ChannelIdentityMappings.CountDocumentsAsync(FilterDefinition<ChannelIdentityMapping>.Empty, cancellationToken: ct);
 
         return Ok(ApiResponse<ChannelStatsResponse>.Ok(new ChannelStatsResponse
         {
