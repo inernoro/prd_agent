@@ -625,33 +625,52 @@ function AgentMockup({ type, isActive }: { type: Agent['mockupType']; isActive: 
   return null;
 }
 
-interface AgentShowcaseProps {
-  className?: string;
+// Export agents for external use
+export { agents };
+
+// Parse rgba color string to RGB array
+export function parseGlowColor(glowColor: string): [number, number, number] {
+  const match = glowColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (match) {
+    return [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])];
+  }
+  return [214, 178, 106]; // default gold
 }
 
-export function AgentShowcase({ className }: AgentShowcaseProps) {
-  const [activeIndex, setActiveIndex] = useState(0);
+interface AgentShowcaseProps {
+  className?: string;
+  activeIndex?: number;
+  onIndexChange?: (index: number) => void;
+}
+
+export function AgentShowcase({ className, activeIndex: controlledIndex, onIndexChange }: AgentShowcaseProps) {
+  const [internalIndex, setInternalIndex] = useState(0);
+  const isControlled = controlledIndex !== undefined;
+  const activeIndex = isControlled ? controlledIndex : internalIndex;
+
+  const setActiveIndex = (index: number) => {
+    if (isControlled && onIndexChange) {
+      onIndexChange(index);
+    } else {
+      setInternalIndex(index);
+    }
+  };
 
   // Auto-rotate every 6 seconds
   useEffect(() => {
     const timer = setInterval(() => {
-      setActiveIndex((prev) => (prev + 1) % agents.length);
+      const nextIndex = (activeIndex + 1) % agents.length;
+      setActiveIndex(nextIndex);
     }, 6000);
     return () => clearInterval(timer);
-  }, []);
+  }, [activeIndex, isControlled]);
 
   const activeAgent = agents[activeIndex];
 
   return (
     <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
-      {/* Background */}
-      <div className="absolute inset-0 bg-[#050508]" />
-
-      {/* Dynamic glow based on active agent */}
-      <div
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] rounded-full blur-[150px] transition-all duration-1000"
-        style={{ background: activeAgent.glowColor, opacity: 0.3 }}
-      />
+      {/* Semi-transparent overlay for content readability */}
+      <div className="absolute inset-0 pointer-events-none bg-[#050508]/50" />
 
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">
@@ -687,9 +706,9 @@ export function AgentShowcase({ className }: AgentShowcaseProps) {
         </div>
 
         {/* Main showcase area */}
-        <div className="grid lg:grid-cols-2 gap-8 lg:gap-12 items-center">
+        <div className="grid lg:grid-cols-2 gap-8 lg:gap-16 items-center">
           {/* Left: Info */}
-          <div className="order-2 lg:order-1">
+          <div className="order-2 lg:order-1 lg:pl-4">
             <div
               className={cn(
                 'inline-block px-3 py-1 rounded-full text-xs font-medium mb-4 bg-gradient-to-r',
@@ -738,7 +757,7 @@ export function AgentShowcase({ className }: AgentShowcaseProps) {
           </div>
 
           {/* Right: Mockup */}
-          <div className="order-1 lg:order-2">
+          <div className="order-1 lg:order-2 lg:pr-4">
             <div
               className="relative aspect-[4/3] rounded-2xl overflow-hidden border border-white/10"
               style={{

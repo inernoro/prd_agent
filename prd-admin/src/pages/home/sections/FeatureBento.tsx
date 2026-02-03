@@ -1,9 +1,9 @@
 import { cn } from '@/lib/cn';
-import { GlowOrb } from '../components/GlowOrb';
 import { useEffect, useState } from 'react';
 
-// Animated model icons rotating
+// Simple model badges grid - clean and no overlap
 function ModelCarousel() {
+  const [activeIndex, setActiveIndex] = useState(0);
   const models = [
     { name: 'GPT-4', color: '#10a37f' },
     { name: 'Claude', color: '#d4a574' },
@@ -13,48 +13,53 @@ function ModelCarousel() {
     { name: 'DeepSeek', color: '#00d4aa' },
   ];
 
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setActiveIndex((prev) => (prev + 1) % models.length);
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [models.length]);
+
   return (
-    <div className="relative h-32 mt-4">
-      {/* Central hub */}
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full bg-gradient-to-br from-white/10 to-white/5 border border-white/20 flex items-center justify-center z-10">
-        <svg className="w-8 h-8 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-        </svg>
-      </div>
-      {/* Orbiting models */}
-      <div className="absolute inset-0 animate-[spin_20s_linear_infinite]">
+    <div className="mt-6 space-y-4">
+      {/* Model badges - 2 rows */}
+      <div className="grid grid-cols-3 gap-2">
         {models.map((model, i) => {
-          const angle = (i * 360) / models.length;
-          const radius = 55;
+          const isActive = i === activeIndex;
           return (
-            <div
+            <button
               key={model.name}
-              className="absolute left-1/2 top-1/2 animate-[spin_20s_linear_infinite_reverse]"
+              onClick={() => setActiveIndex(i)}
+              className={cn(
+                'px-3 py-2 rounded-lg border text-center transition-all duration-300',
+                isActive
+                  ? 'border-white/30 bg-white/10'
+                  : 'border-white/10 bg-white/5 hover:bg-white/10'
+              )}
               style={{
-                transform: `rotate(${angle}deg) translateY(-${radius}px) rotate(-${angle}deg)`,
-                marginLeft: '-20px',
-                marginTop: '-12px',
+                boxShadow: isActive ? `0 0 15px ${model.color}40` : 'none',
               }}
             >
-              <div
-                className="px-3 py-1.5 rounded-full text-xs font-medium bg-black/50 backdrop-blur-sm border border-white/20 whitespace-nowrap"
-                style={{ color: model.color }}
+              <span
+                className="font-medium text-xs"
+                style={{ color: isActive ? model.color : `${model.color}99` }}
               >
                 {model.name}
-              </div>
-            </div>
+              </span>
+            </button>
           );
         })}
       </div>
-      {/* Connecting lines */}
-      <svg className="absolute inset-0 w-full h-full opacity-20">
-        <circle cx="50%" cy="50%" r="55" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="4 4" className="text-white" />
-      </svg>
+      {/* Status indicator */}
+      <div className="flex items-center justify-center gap-2 text-xs text-white/50">
+        <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: models[activeIndex].color }} />
+        <span>智能调度至 <span style={{ color: models[activeIndex].color }}>{models[activeIndex].name}</span></span>
+      </div>
     </div>
   );
 }
 
-// Animated speed meter
+// Animated speed meter - simplified layout
 function SpeedMeter() {
   const [value, setValue] = useState(50);
 
@@ -66,42 +71,38 @@ function SpeedMeter() {
   }, []);
 
   return (
-    <div className="relative h-24 mt-4 flex items-center justify-center">
-      <div className="relative">
-        {/* Arc background */}
-        <svg className="w-32 h-16 overflow-visible" viewBox="0 0 100 50">
-          <defs>
-            <linearGradient id="speedGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#22c55e" />
-              <stop offset="50%" stopColor="#eab308" />
-              <stop offset="100%" stopColor="#ef4444" />
-            </linearGradient>
-          </defs>
-          <path
-            d="M 10 50 A 40 40 0 0 1 90 50"
-            fill="none"
-            stroke="rgba(255,255,255,0.1)"
-            strokeWidth="6"
-            strokeLinecap="round"
-          />
-          <path
-            d="M 10 50 A 40 40 0 0 1 90 50"
-            fill="none"
-            stroke="url(#speedGradient)"
-            strokeWidth="6"
-            strokeLinecap="round"
-            strokeDasharray="126"
-            strokeDashoffset={126 - (value / 100) * 126}
-            style={{ transition: 'stroke-dashoffset 1s ease-out' }}
-          />
-        </svg>
-        {/* Value display */}
-        <div className="absolute inset-0 flex items-end justify-center pb-1">
-          <div className="text-center">
-            <span className="text-2xl font-bold text-white">{Math.round(value)}</span>
-            <span className="text-sm text-white/60 ml-1">ms</span>
-          </div>
-        </div>
+    <div className="mt-6 flex flex-col items-center">
+      {/* Arc gauge */}
+      <svg className="w-28 h-14" viewBox="0 0 100 50">
+        <defs>
+          <linearGradient id="speedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#22c55e" />
+            <stop offset="50%" stopColor="#eab308" />
+            <stop offset="100%" stopColor="#ef4444" />
+          </linearGradient>
+        </defs>
+        <path
+          d="M 10 45 A 40 40 0 0 1 90 45"
+          fill="none"
+          stroke="rgba(255,255,255,0.1)"
+          strokeWidth="5"
+          strokeLinecap="round"
+        />
+        <path
+          d="M 10 45 A 40 40 0 0 1 90 45"
+          fill="none"
+          stroke="url(#speedGrad)"
+          strokeWidth="5"
+          strokeLinecap="round"
+          strokeDasharray="126"
+          strokeDashoffset={126 - (value / 100) * 126}
+          style={{ transition: 'stroke-dashoffset 1s ease-out' }}
+        />
+      </svg>
+      {/* Value */}
+      <div className="flex items-baseline gap-1 -mt-2">
+        <span className="text-3xl font-bold text-white">{Math.round(value)}</span>
+        <span className="text-sm text-white/50">ms</span>
       </div>
     </div>
   );
@@ -110,26 +111,25 @@ function SpeedMeter() {
 // Security shield animation
 function SecurityShield() {
   return (
-    <div className="relative h-28 mt-4 flex items-center justify-center">
-      <div className="relative">
+    <div className="mt-4 flex flex-col items-center gap-4">
+      {/* Shield with pulsing rings */}
+      <div className="relative flex items-center justify-center h-20">
         {/* Pulsing rings */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="absolute w-20 h-20 rounded-full border border-emerald-500/30 animate-[ping_2s_ease-in-out_infinite]" />
-          <div className="absolute w-16 h-16 rounded-full border border-emerald-500/40 animate-[ping_2s_ease-in-out_0.5s_infinite]" />
-        </div>
+        <div className="absolute w-16 h-16 rounded-full border border-emerald-500/30 animate-[ping_2s_ease-in-out_infinite]" />
+        <div className="absolute w-12 h-12 rounded-full border border-emerald-500/40 animate-[ping_2s_ease-in-out_0.5s_infinite]" />
         {/* Shield */}
-        <div className="relative w-14 h-16 flex items-center justify-center">
-          <svg className="w-14 h-16 text-emerald-500" viewBox="0 0 24 28" fill="currentColor">
+        <div className="relative w-12 h-14 flex items-center justify-center">
+          <svg className="w-12 h-14 text-emerald-500" viewBox="0 0 24 28" fill="currentColor">
             <path d="M12 0L2 5v7c0 7.5 4.5 14.5 10 17 5.5-2.5 10-9.5 10-17V5L12 0z" fillOpacity="0.2" />
             <path d="M12 0L2 5v7c0 7.5 4.5 14.5 10 17 5.5-2.5 10-9.5 10-17V5L12 0zm0 2.18l8 3.82v5c0 6.5-3.9 12.5-8 14.9-4.1-2.4-8-8.4-8-14.9V6l8-3.82z" fillOpacity="0.5" />
           </svg>
-          <svg className="absolute w-6 h-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="absolute w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
           </svg>
         </div>
       </div>
       {/* Labels */}
-      <div className="absolute bottom-0 left-0 right-0 flex justify-center gap-4 text-xs">
+      <div className="flex justify-center gap-2 text-xs flex-wrap">
         {['加密传输', '权限管控', '审计日志'].map((label) => (
           <span key={label} className="px-2 py-1 rounded bg-emerald-500/10 text-emerald-400/80 border border-emerald-500/20">
             {label}
@@ -286,12 +286,12 @@ interface FeatureBentoProps {
 export function FeatureBento({ className }: FeatureBentoProps) {
   return (
     <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
-      {/* Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-[#050508] via-[#080810] to-[#050508]" />
+      {/* Semi-transparent overlay to let global background show through */}
+      <div className="absolute inset-0 bg-[#050508]/40" />
 
-      {/* Grid pattern */}
+      {/* Subtle grid pattern */}
       <div
-        className="absolute inset-0 opacity-[0.015]"
+        className="absolute inset-0 opacity-[0.02]"
         style={{
           backgroundImage: `
             linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
@@ -300,11 +300,6 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           backgroundSize: '60px 60px',
         }}
       />
-
-      {/* Decorative orbs */}
-      <GlowOrb color="blue" size="lg" className="top-1/4 right-0 translate-x-1/2 opacity-30" />
-      <GlowOrb color="purple" size="md" className="bottom-1/4 left-0 -translate-x-1/2 opacity-30" />
-      <GlowOrb color="gold" size="sm" className="top-1/2 left-1/3 opacity-20" />
 
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">
@@ -337,7 +332,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
         {/* Bento grid - improved layout */}
         <div className="grid grid-cols-1 md:grid-cols-6 gap-4 lg:gap-5">
           {/* Multi-model support - large card spanning 4 columns */}
-          <div className="md:col-span-4 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 lg:p-8 hover:border-blue-500/30 transition-all duration-500">
+          <div className="md:col-span-4 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 lg:p-8 hover:border-blue-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -368,7 +363,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* Speed - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 hover:border-amber-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 hover:border-amber-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -388,7 +383,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* Security - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 hover:border-emerald-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 hover:border-emerald-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -408,7 +403,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* Private deployment - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 hover:border-purple-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 hover:border-purple-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -428,7 +423,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* API Platform - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 hover:border-rose-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 hover:border-rose-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -448,7 +443,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* Workflow - full width */}
-          <div className="md:col-span-6 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 lg:p-8 hover:border-amber-500/30 transition-all duration-500">
+          <div className="md:col-span-6 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 lg:p-8 hover:border-amber-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{

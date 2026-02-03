@@ -1,6 +1,5 @@
 import { cn } from '@/lib/cn';
 import { CountUpNumber } from '../components/CountUpNumber';
-import { GlowOrb } from '../components/GlowOrb';
 
 interface Stat {
   value: number;
@@ -71,11 +70,8 @@ interface SocialProofProps {
 export function SocialProof({ className }: SocialProofProps) {
   return (
     <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
-      {/* Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-[#050508] via-[#0a0a0f] to-[#050508]" />
-
-      {/* Decorative */}
-      <GlowOrb color="gold" size="lg" className="top-1/3 left-1/4 opacity-30" />
+      {/* Semi-transparent overlay to let global background show through */}
+      <div className="absolute inset-0 bg-[#050508]/40" />
 
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">
@@ -97,7 +93,7 @@ export function SocialProof({ className }: SocialProofProps) {
           {stats.map((stat, idx) => (
             <div
               key={idx}
-              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 lg:p-8 text-center hover:border-white/20 transition-all duration-500"
+              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 lg:p-8 text-center hover:border-white/20 transition-all duration-500"
             >
               {/* Glow on hover */}
               <div
@@ -156,7 +152,7 @@ export function SocialProof({ className }: SocialProofProps) {
           {testimonials.map((testimonial, idx) => (
             <div
               key={idx}
-              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 lg:p-8 hover:border-white/20 transition-all duration-500"
+              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 lg:p-8 hover:border-white/20 transition-all duration-500"
             >
               {/* Quote mark */}
               <div className="absolute top-6 right-6 text-6xl font-serif text-white/5 leading-none">
