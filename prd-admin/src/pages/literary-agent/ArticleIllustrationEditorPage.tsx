@@ -1691,6 +1691,18 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     });
     if (!ok) return;
 
+    // 已发布到海鲜市场的配置需要二次确认
+    if (prompt.isPublic) {
+      const doubleConfirmed = await systemDialog.confirm({
+        title: '⚠️ 该配置已发布到海鲜市场',
+        message: '删除后其他用户将无法再下载此配置，确定要删除吗？',
+        tone: 'danger',
+        confirmText: '确认删除',
+        cancelText: '取消',
+      });
+      if (!doubleConfirmed) return;
+    }
+
     try {
       const res = await deleteLiteraryPrompt({ id: prompt.id });
 
@@ -2885,8 +2897,18 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               ) : (
                 <div className="flex-1 min-h-0 overflow-auto pr-1">
                   <div className="grid grid-cols-1 gap-3">
-                    {allPrompts.map((prompt) => (
-                      <GlassCard glow key={prompt.id} className="p-0 overflow-hidden">
+                    {allPrompts.map((prompt) => {
+                      const isPromptSelected = selectedPrompt?.id === prompt.id;
+                      return (
+                      <GlassCard
+                        glow
+                        key={prompt.id}
+                        className="p-0 overflow-hidden"
+                        style={isPromptSelected ? {
+                          border: '1.5px solid rgba(34, 197, 94, 0.5)',
+                          boxShadow: '0 0 12px rgba(34, 197, 94, 0.15)',
+                        } : undefined}
+                      >
                         <div className="group relative flex flex-col h-full">
                           {/* 上栏：标题区 */}
                           <div className="p-2 pb-1 flex-shrink-0">
@@ -2906,64 +2928,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 >
                                   {prompt.title}
                                 </div>
-                              </div>
-
-                              <div className="flex items-center gap-1 flex-shrink-0">
-                                {/* 分类标签 */}
-                                {(!prompt.scenarioType || prompt.scenarioType === 'global') ? (
-                                  <span
-                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                    style={{
-                                      background: 'rgba(168, 85, 247, 0.12)',
-                                      color: 'rgba(168, 85, 247, 0.95)',
-                                      border: '1px solid rgba(168, 85, 247, 0.28)',
-                                    }}
-                                    title="全局共享（所有场景可用）"
-                                  >
-                                    全局
-                                  </span>
-                                ) : prompt.scenarioType === 'article-illustration' ? (
-                                  <span
-                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                    style={{
-                                      background: 'rgba(34, 197, 94, 0.12)',
-                                      color: 'rgba(34, 197, 94, 0.95)',
-                                      border: '1px solid rgba(34, 197, 94, 0.28)',
-                                    }}
-                                    title="文章配图专用"
-                                  >
-                                    文章配图
-                                  </span>
-                                ) : null}
-
-                                {/* 当前选中标签 */}
-                                {selectedPrompt?.id === prompt.id && (
-                                  <span
-                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                    style={{
-                                      background: 'var(--accent-primary)',
-                                      color: 'white',
-                                    }}
-                                  >
-                                    当前
-                                  </span>
-                                )}
-
-                                {/* 已公开徽章 */}
-                                {prompt.isPublic && (
-                                  <span
-                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
-                                    style={{
-                                      background: 'rgba(59, 130, 246, 0.12)',
-                                      color: 'rgba(59, 130, 246, 0.95)',
-                                      border: '1px solid rgba(59, 130, 246, 0.28)',
-                                    }}
-                                    title="已发布到海鲜市场"
-                                  >
-                                    <Globe size={8} />
-                                    已公开
-                                  </span>
-                                )}
                               </div>
                             </div>
                           </div>
@@ -3009,15 +2973,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               {/* 左侧：发布状态按钮 + 下载次数 */}
                               <div className="flex items-center gap-2">
                                 {prompt.isPublic ? (
-                                  <Button
-                                    size="xs"
-                                    variant="secondary"
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                                    style={{
+                                      background: 'rgba(251, 146, 60, 0.15)',
+                                      border: '1px solid rgba(251, 146, 60, 0.35)',
+                                      color: 'rgba(251, 146, 60, 0.95)',
+                                    }}
                                     onClick={() => void handleUnpublishPrompt(prompt)}
                                     title="取消发布后其他用户将无法看到此配置"
                                   >
                                     <XCircle size={12} />
                                     取消发布
-                                  </Button>
+                                  </button>
                                 ) : (
                                   <Button
                                     size="xs"
@@ -3029,8 +2998,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     发布
                                   </Button>
                                 )}
-                                {/* 下载次数（已发布时显示） */}
-                                {prompt.isPublic && typeof prompt.forkCount === 'number' && (
+                                {/* 下载次数 */}
+                                {typeof prompt.forkCount === 'number' && (
                                   <span className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
                                     <GitFork size={10} />
                                     {prompt.forkCount}
@@ -3090,7 +3059,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           </div>
                         </div>
                       </GlassCard>
-                    ))}
+                    );
+                    })}
                   </div>
                 </div>
               )}
@@ -3162,7 +3132,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 ) : (
                   <div className="grid grid-cols-1 gap-3">
                     {referenceImageConfigs.map((config) => (
-                      <GlassCard key={config.id} className="p-0 overflow-hidden">
+                      <GlassCard
+                        key={config.id}
+                        className="p-0 overflow-hidden"
+                        style={config.isActive ? {
+                          border: '1.5px solid rgba(34, 197, 94, 0.5)',
+                          boxShadow: '0 0 12px rgba(34, 197, 94, 0.15)',
+                        } : undefined}
+                      >
                         <div className="flex flex-col">
                           {/* 标题栏 */}
                           <div className="p-2 pb-1 flex-shrink-0">
@@ -3171,23 +3148,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                                   {config.name}
                                 </div>
-                              </div>
-                              <div className="flex items-center gap-1 flex-shrink-0">
-                                {/* 已公开徽章 */}
-                                {config.isPublic && (
-                                  <span
-                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
-                                    style={{
-                                      background: 'rgba(59, 130, 246, 0.12)',
-                                      color: 'rgba(59, 130, 246, 0.95)',
-                                      border: '1px solid rgba(59, 130, 246, 0.28)',
-                                    }}
-                                    title="已发布到海鲜市场"
-                                  >
-                                    <Globe size={8} />
-                                    已公开
-                                  </span>
-                                )}
                               </div>
                             </div>
                           </div>
@@ -3236,15 +3196,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               {/* 左侧：发布状态按钮 + 下载次数 */}
                               <div className="flex items-center gap-2">
                                 {config.isPublic ? (
-                                  <Button
-                                    size="xs"
-                                    variant="secondary"
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                                    style={{
+                                      background: 'rgba(251, 146, 60, 0.15)',
+                                      border: '1px solid rgba(251, 146, 60, 0.35)',
+                                      color: 'rgba(251, 146, 60, 0.95)',
+                                    }}
                                     onClick={() => void handleUnpublishRefConfig(config)}
                                     title="取消发布后其他用户将无法看到此配置"
                                   >
                                     <XCircle size={12} />
                                     取消发布
-                                  </Button>
+                                  </button>
                                 ) : (
                                   <Button
                                     size="xs"
@@ -3256,8 +3221,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     发布
                                   </Button>
                                 )}
-                                {/* 下载次数（已发布时显示） */}
-                                {config.isPublic && typeof config.forkCount === 'number' && (
+                                {/* 下载次数 */}
+                                {typeof config.forkCount === 'number' && (
                                   <span className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
                                     <GitFork size={10} />
                                     {config.forkCount}
@@ -3335,6 +3300,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                       tone: 'danger',
                                     });
                                     if (!confirmed) return;
+                                    // 已发布到海鲜市场的配置需要二次确认
+                                    if (config.isPublic) {
+                                      const doubleConfirmed = await systemDialog.confirm({
+                                        title: '⚠️ 该配置已发布到海鲜市场',
+                                        message: '删除后其他用户将无法再下载此配置，确定要删除吗？',
+                                        tone: 'danger',
+                                        confirmText: '确认删除',
+                                        cancelText: '取消',
+                                      });
+                                      if (!doubleConfirmed) return;
+                                    }
                                     setReferenceImageSaving(true);
                                     try {
                                       const res = await deleteReferenceImageConfig({ id: config.id });

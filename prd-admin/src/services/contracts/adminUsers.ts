@@ -71,6 +71,16 @@ export type UserProfileDefectStats = {
   submittedCount: number;
 };
 
+/** 海鲜市场配置统计项 */
+export type UserProfileMarketplaceItem = {
+  /** 配置类型: watermark, prompt, refImage */
+  configType: 'watermark' | 'prompt' | 'refImage';
+  /** 发布数量 */
+  publishedCount: number;
+  /** 被下载数量 */
+  downloadedCount: number;
+};
+
 export type UserProfileResponse = {
   userId: string;
   username: string;
@@ -93,6 +103,8 @@ export type UserProfileResponse = {
   totalRunCount: number;
   /** 缺陷统计（最近30天） */
   defectStats?: UserProfileDefectStats | null;
+  /** 海鲜市场统计 */
+  marketplaceStats?: UserProfileMarketplaceItem[] | null;
 };
 
 export type GetUserProfileContract = (userId: string) => Promise<ApiResponse<UserProfileResponse>>;

@@ -31,7 +31,7 @@ import {
 import type { WatermarkFontInfo, WatermarkConfig } from '@/services/contracts/watermark';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
-import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical, Globe, Share2, XCircle, GitFork, Eye } from 'lucide-react';
+import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical, Share2, XCircle, GitFork, Eye } from 'lucide-react';
 
 const DEFAULT_CANVAS_SIZE = 320;
 const watermarkSizeCache = new Map<string, { width: number; height: number }>();
@@ -540,6 +540,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
   const handleDeleteConfig = useCallback(
     async (target: WatermarkConfig) => {
       if (saving) return;
+      // 第一次确认
       const confirmed = await systemDialog.confirm({
         title: '确认删除水印配置',
         message: `确定删除「${target.name || '水印配置'}」吗？`,
@@ -548,6 +549,17 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
         cancelText: '取消',
       });
       if (!confirmed) return;
+      // 已发布到海鲜市场的配置需要二次确认
+      if (target.isPublic) {
+        const doubleConfirmed = await systemDialog.confirm({
+          title: '⚠️ 该配置已发布到海鲜市场',
+          message: '删除后其他用户将无法再下载此配置，确定要删除吗？',
+          tone: 'danger',
+          confirmText: '确认删除',
+          cancelText: '取消',
+        });
+        if (!doubleConfirmed) return;
+      }
       setSaving(true);
       try {
         const res = await deleteWatermark({ id: target.id });
@@ -667,7 +679,14 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
               const previewUrl = buildPreviewUrl(item.previewUrl);
               const previewError = Boolean(previewErrorById[item.id]);
               return (
-                <GlassCard key={item.id || `${item.text}-${index}`} className="p-0 overflow-hidden">
+                <GlassCard
+                  key={item.id || `${item.text}-${index}`}
+                  className="p-0 overflow-hidden"
+                  style={isActive ? {
+                    border: '1.5px solid rgba(34, 197, 94, 0.5)',
+                    boxShadow: '0 0 12px rgba(34, 197, 94, 0.15)',
+                  } : undefined}
+                >
                   <div className="flex flex-col">
                     <div className="p-2 pb-1 flex-shrink-0">
                       <div className="flex items-start justify-between gap-2">
@@ -695,21 +714,6 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           </button>
                         </div>
                         <div className="flex items-center gap-1.5 flex-shrink-0">
-                          {/* 已公开徽章 */}
-                          {item.isPublic && (
-                            <span
-                              className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
-                              style={{
-                                background: 'rgba(59, 130, 246, 0.12)',
-                                color: 'rgba(59, 130, 246, 0.95)',
-                                border: '1px solid rgba(59, 130, 246, 0.28)',
-                              }}
-                              title="已发布到海鲜市场"
-                            >
-                              <Globe size={8} />
-                              已公开
-                            </span>
-                          )}
                           {/* 测试按钮（图标形式） */}
                           <button
                             type="button"
@@ -736,7 +740,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             background: 'rgba(255,255,255,0.02)',
                           }}
                         >
-                          <div className="text-[11px] grid grid-cols-2 gap-x-3 gap-y-0.5 p-2" style={{ color: 'var(--text-muted)' }}>
+                          <div className="text-[10px] grid grid-cols-2 gap-x-2 gap-y-0 p-1.5" style={{ color: 'var(--text-muted)' }}>
                             <div className="flex items-center gap-1">
                               <span>文本</span>
                               <span className="truncate" style={{ color: 'var(--text-primary)' }}>{item.text || '无'}</span>
@@ -818,16 +822,21 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                         {/* 左侧：发布状态按钮 + 下载次数 */}
                         <div className="flex items-center gap-2">
                           {item.isPublic ? (
-                            <Button
-                              size="xs"
-                              variant="secondary"
+                            <button
+                              type="button"
+                              className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                              style={{
+                                background: 'rgba(251, 146, 60, 0.15)',
+                                border: '1px solid rgba(251, 146, 60, 0.35)',
+                                color: 'rgba(251, 146, 60, 0.95)',
+                              }}
                               onClick={() => void handleUnpublishWatermark(item)}
                               disabled={saving}
                               title="取消发布后其他用户将无法看到此配置"
                             >
                               <XCircle size={12} />
                               取消发布
-                            </Button>
+                            </button>
                           ) : (
                             <Button
                               size="xs"
@@ -841,7 +850,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             </Button>
                           )}
                           {/* 下载次数（已发布时显示） */}
-                          {item.isPublic && typeof item.forkCount === 'number' && (
+                          {typeof item.forkCount === 'number' && (
                             <span className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
                               <GitFork size={10} />
                               {item.forkCount}
