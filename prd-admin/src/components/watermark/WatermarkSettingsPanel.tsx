@@ -1949,12 +1949,6 @@ function WatermarkPreview(props: {
       const measuredWidth = Math.ceil(contentRect.width);
       const measuredHeight = Math.ceil(contentRect.height);
 
-      console.log('[WatermarkMeasure:fontReady]', {
-        contentRect: { width: contentRect.width, height: contentRect.height },
-        lastSize,
-        measureSignature: measureSignature.slice(0, 30) + '...',
-      });
-
       // 如果尺寸与上次不同，继续等待稳定（不更新状态，避免抖动）
       if (measuredWidth !== lastSize.width || measuredHeight !== lastSize.height) {
         lastSize = { width: measuredWidth, height: measuredHeight };
@@ -1962,7 +1956,6 @@ function WatermarkPreview(props: {
         stabilityTimer = setTimeout(measureAndCheck, 100);
       } else {
         // 尺寸稳定，更新状态并写入缓存
-        console.log('[WatermarkMeasure:stable]', { width: measuredWidth, height: measuredHeight });
         setWatermarkSize({ width: measuredWidth, height: measuredHeight });
         lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
         setMeasuredSignature(measureSignature);
@@ -2026,19 +2019,6 @@ function WatermarkPreview(props: {
   const maxX = Math.max(width - effectiveWidth, 0);
   const maxY = Math.max(canvasHeight - effectiveHeight, 0);
 
-  // 调试日志：追踪定位计算使用的尺寸
-  console.log('[WatermarkPosition]', {
-    effectiveWidth,
-    effectiveHeight,
-    isWatermarkSizeValid,
-    validatedWidth,
-    watermarkSizeState: watermarkSize,
-    estimatedWidth,
-    pendingMeasure,
-    hasLastMeasured,
-    hideUntilMeasured,
-  });
-
   let positionX = 0;
   let positionY = 0;
   switch (spec.anchor) {
@@ -2100,15 +2080,6 @@ function WatermarkPreview(props: {
       // 直接测量 contentRef 的实际渲染尺寸，避免手动计算带来的 subpixel 误差
       // 这样可以确保定位计算使用的尺寸与浏览器实际渲染的尺寸完全一致
       const contentRect = contentRef.current?.getBoundingClientRect();
-
-      // 调试日志：追踪测量时机和结果
-      console.log('[WatermarkMeasure]', {
-        hasContentRef: !!contentRef.current,
-        contentRect: contentRect ? { width: contentRect.width, height: contentRect.height } : null,
-        fontReady,
-        measureSignature: measureSignature.slice(0, 30) + '...',
-      });
-
       if (!contentRect || !contentRect.width || !contentRect.height) return;
 
       // 关键修复：只有当字体加载完成时才更新尺寸状态
