@@ -613,7 +613,7 @@ public class ChannelAdminController : ControllerBase
             ProcessingCount = allTodayTasks.Count(t => t.Status == ChannelTaskStatus.Processing),
             SuccessRate = Math.Round(successRate, 1),
             AvgDurationSeconds = Math.Round(avgDuration, 1),
-            WhitelistCount = (int)whitelistCount,
+            WhitelistCount = (int)totalWhitelistCount,
             IdentityMappingCount = (int)identityMappingCount
         }));
     }
