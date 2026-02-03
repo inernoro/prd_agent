@@ -224,7 +224,7 @@ export default function IdentityMappingsPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <Badge variant={mapping.isVerified ? 'success' : 'warning'} size="sm">
+                    <Badge variant={mapping.isVerified ? 'success' : 'subtle'} size="sm">
                       {mapping.isVerified ? '已验证' : '待验证'}
                     </Badge>
                     {mapping.verifiedAt && (
@@ -326,14 +326,14 @@ export default function IdentityMappingsPage() {
       <IdentityMappingDialog
         open={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
-        onSubmit={handleCreate}
+        onSubmit={(req) => handleCreate(req as CreateIdentityMappingRequest)}
         mode="create"
       />
 
       <IdentityMappingDialog
         open={editDialogOpen}
         onClose={() => { setEditDialogOpen(false); setEditingMapping(null); }}
-        onSubmit={handleUpdate}
+        onSubmit={(req) => handleUpdate(req as UpdateIdentityMappingRequest)}
         mode="edit"
         mapping={editingMapping}
       />

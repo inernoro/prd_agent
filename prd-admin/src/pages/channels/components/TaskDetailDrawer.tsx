@@ -23,10 +23,10 @@ function fmtDate(v?: string | null) {
 }
 
 const statusColors: Record<string, string> = {
-  pending: 'warning',
-  processing: 'info',
+  pending: 'new',
+  processing: 'featured',
   completed: 'success',
-  failed: 'danger',
+  failed: 'discount',
   cancelled: 'subtle',
 };
 
@@ -78,8 +78,8 @@ export function TaskDetailDrawer({
           {/* 状态和操作 */}
           <div className="flex items-center justify-between">
             <Badge
-              variant={statusColors[task.status] as 'success' | 'warning' | 'danger' | 'info' | 'subtle'}
-              size="lg"
+              variant={statusColors[task.status] as 'success' | 'subtle' | 'discount' | 'new' | 'featured'}
+              size="default"
             >
               {TaskStatusDisplayNames[task.status] || task.status}
             </Badge>
@@ -247,7 +247,7 @@ export function TaskDetailDrawer({
                     key={idx}
                     className="flex items-center gap-3 text-sm"
                   >
-                    <Badge variant={statusColors[change.status] as 'success' | 'warning' | 'danger' | 'info' | 'subtle'} size="sm">
+                    <Badge variant={statusColors[change.status] as 'success' | 'subtle' | 'discount' | 'new' | 'featured'} size="sm">
                       {TaskStatusDisplayNames[change.status] || change.status}
                     </Badge>
                     <span className="text-muted-foreground">{fmtDate(change.at)}</span>

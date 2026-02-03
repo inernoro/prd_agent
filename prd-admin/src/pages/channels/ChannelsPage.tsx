@@ -24,22 +24,15 @@ import { toast } from '@/lib/toast';
 import type {
   ChannelWhitelist,
   ChannelStatsResponse,
-  ChannelStatusInfo,
   CreateWhitelistRequest,
   UpdateWhitelistRequest,
 } from '@/services/contracts/channels';
 import {
-  ChannelTypes,
   ChannelTypeDisplayNames,
 } from '@/services/contracts/channels';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { WhitelistEditDialog } from './components/WhitelistEditDialog';
 import { useNavigate } from 'react-router-dom';
-
-function fmtDate(v?: string | null) {
-  if (!v) return '-';
-  return new Date(v).toLocaleString('zh-CN');
-}
 
 const channelIcons: Record<string, React.ReactNode> = {
   email: <Mail size={20} />,
@@ -432,7 +425,7 @@ export default function ChannelsPage() {
       <WhitelistEditDialog
         open={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
-        onSubmit={handleCreate}
+        onSubmit={(req) => handleCreate(req as CreateWhitelistRequest)}
         mode="create"
       />
 
@@ -442,7 +435,7 @@ export default function ChannelsPage() {
           setEditDialogOpen(false);
           setEditingWhitelist(null);
         }}
-        onSubmit={handleUpdate}
+        onSubmit={(req) => handleUpdate(req as UpdateWhitelistRequest)}
         mode="edit"
         whitelist={editingWhitelist}
       />

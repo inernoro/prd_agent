@@ -59,8 +59,9 @@ function ModelCarousel() {
   );
 }
 
-// Animated speed meter - simplified layout
-function SpeedMeter() {
+// Animated speed meter - simplified layout (reserved for future use)
+// @ts-expect-error Reserved for future use
+function _SpeedMeter() {
   const [value, setValue] = useState(50);
 
   useEffect(() => {

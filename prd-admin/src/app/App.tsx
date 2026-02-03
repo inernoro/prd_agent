@@ -16,10 +16,9 @@ import PromptStagesPage from '@/pages/PromptStagesPage';
 import VisualAgentFullscreenPage from '@/pages/visual-agent/VisualAgentFullscreenPage';
 import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
 import { DefectAgentPage } from '@/pages/defect-agent';
-import { ChannelsPage, ChannelTasksPage, IdentityMappingsPage } from '@/pages/channels';
 import { LandingPage } from '@/pages/home';
 import AssetsManagePage from '@/pages/AssetsManagePage';
-import OpenPlatformPage from '@/pages/OpenPlatformPage';
+import OpenPlatformTabsPage from '@/pages/OpenPlatformTabsPage';
 import AuthzPage from '@/pages/AuthzPage';
 import SettingsPage from '@/pages/SettingsPage';
 import RichComposerLab from '@/pages/_dev/RichComposerLab';
@@ -205,10 +204,7 @@ export default function App() {
         <Route path="defect-agent" element={<RequirePermission perm="defect-agent.use"><DefectAgentPage /></RequirePermission>} />
         <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />
         <Route path="data" element={<RequirePermission perm="data.read"><DataManagePage /></RequirePermission>} />
-        <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformPage /></RequirePermission>} />
-        <Route path="open-platform/channels" element={<RequirePermission perm="open-platform.manage"><ChannelsPage /></RequirePermission>} />
-        <Route path="open-platform/channels/tasks" element={<RequirePermission perm="open-platform.manage"><ChannelTasksPage /></RequirePermission>} />
-        <Route path="open-platform/channels/identity-mappings" element={<RequirePermission perm="open-platform.manage"><IdentityMappingsPage /></RequirePermission>} />
+        <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
         <Route path="prompts" element={<RequirePermission perm="prompts.read"><PromptStagesPage /></RequirePermission>} />
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />

@@ -44,10 +44,10 @@ const channelIcons: Record<string, React.ReactNode> = {
 };
 
 const statusColors: Record<string, string> = {
-  pending: 'warning',
-  processing: 'info',
+  pending: 'new',
+  processing: 'featured',
   completed: 'success',
-  failed: 'danger',
+  failed: 'discount',
   cancelled: 'subtle',
 };
 
@@ -290,7 +290,7 @@ export default function ChannelTasksPage() {
                     </Badge>
                   </td>
                   <td className="px-4 py-3">
-                    <Badge variant={statusColors[task.status] as 'success' | 'warning' | 'danger' | 'info' | 'subtle'} size="sm">
+                    <Badge variant={statusColors[task.status] as 'success' | 'subtle' | 'discount' | 'new' | 'featured'} size="sm">
                       {TaskStatusDisplayNames[task.status] || task.status}
                     </Badge>
                   </td>
