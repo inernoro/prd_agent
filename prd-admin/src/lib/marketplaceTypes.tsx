@@ -123,6 +123,8 @@ export interface MarketplaceRefImage extends MarketplaceItemBase {
 export interface MarketplaceWatermark extends MarketplaceItemBase {
   name: string;
   text?: string;
+  fontKey?: string;
+  fontSizePx?: number;
   previewUrl?: string;
 }
 
@@ -207,20 +209,36 @@ const RefImagePreviewRenderer: React.FC<{ item: MarketplaceRefImage }> = ({ item
 );
 
 /**
- * 水印预览：两栏布局（文字信息 + 预览图）
+ * 水印预览：两栏布局（配置信息表 + 预览图）
+ * 与"我的"页面水印卡片保持一致的样式
  */
 const WatermarkPreviewRenderer: React.FC<{ item: MarketplaceWatermark }> = ({ item }) => (
   <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: PREVIEW_HEIGHT }}>
-    {/* 左侧：水印文字信息 */}
+    {/* 左侧：配置信息 */}
     <div
-      className="overflow-auto border rounded-[6px] p-2"
+      className="overflow-auto border rounded-[6px]"
       style={{
         borderColor: 'var(--border-subtle)',
         background: 'rgba(255,255,255,0.02)',
       }}
     >
-      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-        {item.text || '（无水印文字）'}
+      <div className="text-[11px] grid gap-1 grid-cols-1 p-2" style={{ color: 'var(--text-muted)' }}>
+        <div className="grid items-center gap-2" style={{ gridTemplateColumns: '36px auto' }}>
+          <span>文字</span>
+          <span className="truncate" style={{ color: 'var(--text-primary)' }}>{item.text || '（空）'}</span>
+        </div>
+        {item.fontKey && (
+          <div className="grid items-center gap-2" style={{ gridTemplateColumns: '36px auto' }}>
+            <span>字体</span>
+            <span className="truncate" style={{ color: 'var(--text-primary)' }}>{item.fontKey}</span>
+          </div>
+        )}
+        {item.fontSizePx && (
+          <div className="grid items-center gap-2" style={{ gridTemplateColumns: '36px auto' }}>
+            <span>大小</span>
+            <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
+          </div>
+        )}
       </div>
     </div>
     {/* 右侧：预览图 */}

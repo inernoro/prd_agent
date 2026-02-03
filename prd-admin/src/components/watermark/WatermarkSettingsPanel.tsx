@@ -745,52 +745,48 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                       )}
                     </div>
 
+                    {/* 配置信息区（统一高度100px） */}
                     <div className="px-2 pb-1 flex-shrink-0">
-                      <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 140px' }}>
+                      <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 120px', height: '100px' }}>
                         <div
                           className="overflow-auto border rounded-[6px]"
                           style={{
                             borderColor: 'var(--border-subtle)',
                             background: 'rgba(255,255,255,0.02)',
-                            minHeight: '120px',
-                            maxHeight: '160px',
                           }}
                         >
-                          <div className="text-[11px] grid gap-2 grid-cols-1 p-2" style={{ color: 'var(--text-muted)' }}>
-                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                          <div className="text-[11px] grid gap-1 grid-cols-1 p-2" style={{ color: 'var(--text-muted)' }}>
+                            <div className="grid items-center gap-2" style={{ gridTemplateColumns: '40px auto' }}>
                               <span>字体</span>
-                              <span className="truncate" style={{ color: 'var(--text-primary)', maxWidth: 160 }}>{fontLabel}</span>
+                              <span className="truncate" style={{ color: 'var(--text-primary)' }}>{fontLabel}</span>
                             </div>
-                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                            <div className="grid items-center gap-2" style={{ gridTemplateColumns: '40px auto' }}>
                               <span>大小</span>
                               <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
                             </div>
-                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                            <div className="grid items-center gap-2" style={{ gridTemplateColumns: '40px auto' }}>
                               <span>位置</span>
-                              <span className="truncate" style={{ color: 'var(--text-primary)', maxWidth: 200 }}>
+                              <span className="truncate" style={{ color: 'var(--text-primary)' }}>
                                 {anchorLabelMap[item.anchor]} · {modeLabelMap[item.positionMode]}
                               </span>
                             </div>
-                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                            <div className="grid items-center gap-2" style={{ gridTemplateColumns: '40px auto' }}>
                               <span>图标</span>
                               <span style={{ color: 'var(--text-primary)' }}>{item.iconEnabled ? '已启用' : '禁用'}</span>
                             </div>
-                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
+                            <div className="grid items-center gap-2" style={{ gridTemplateColumns: '40px auto' }}>
                               <span>透明度</span>
                               <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
                             </div>
                           </div>
                         </div>
                         <div
-                          className="relative flex items-center justify-center overflow-hidden"
+                          className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
                           style={{
-                            // 使用棋盘格图案表示透明背景
                             background: previewUrl && !previewError
                               ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 16px 16px'
                               : 'rgba(255,255,255,0.02)',
                             border: previewUrl && !previewError ? 'none' : '1px solid rgba(255,255,255,0.08)',
-                            minHeight: '120px',
-                            maxHeight: '160px',
                             cursor: previewUrl && !previewError ? 'zoom-in' : 'default',
                           }}
                           onClick={() => {

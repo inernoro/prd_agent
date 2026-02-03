@@ -2969,28 +2969,27 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
 
-                          {/* 中栏：内容预览区 */}
-                          <div className="px-2 pb-1 flex-1 min-h-0 overflow-hidden">
+                          {/* 中栏：内容预览区（压缩高度以与风格图卡片等高） */}
+                          <div className="px-2 pb-1 flex-shrink-0">
                             <div
-                              className="h-full overflow-auto border rounded-[6px]"
+                              className="overflow-auto border rounded-[6px]"
                               style={{
                                 borderColor: 'var(--border-subtle)',
                                 background: 'rgba(255,255,255,0.02)',
-                                minHeight: '120px',
-                                maxHeight: '160px',
+                                height: '100px',
                               }}
                             >
                               <style>{`
-                                .modal-prompt-md { font-size: 11px; line-height: 1.5; color: var(--text-secondary); padding: 8px; }
-                                .modal-prompt-md h1,.modal-prompt-md h2,.modal-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 8px 0 4px; }
-                                .modal-prompt-md h1 { font-size: 13px; }
-                                .modal-prompt-md h2 { font-size: 12px; }
+                                .modal-prompt-md { font-size: 11px; line-height: 1.4; color: var(--text-secondary); padding: 6px 8px; }
+                                .modal-prompt-md h1,.modal-prompt-md h2,.modal-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 4px 0 2px; }
+                                .modal-prompt-md h1 { font-size: 12px; }
+                                .modal-prompt-md h2 { font-size: 11px; }
                                 .modal-prompt-md h3 { font-size: 11px; }
-                                .modal-prompt-md p { margin: 4px 0; }
-                                .modal-prompt-md ul,.modal-prompt-md ol { margin: 4px 0; padding-left: 16px; }
-                                .modal-prompt-md li { margin: 2px 0; }
-                                .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-                                .modal-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; padding: 8px; overflow: auto; margin: 4px 0; }
+                                .modal-prompt-md p { margin: 2px 0; }
+                                .modal-prompt-md ul,.modal-prompt-md ol { margin: 2px 0; padding-left: 14px; }
+                                .modal-prompt-md li { margin: 1px 0; }
+                                .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 3px; border-radius: 3px; }
+                                .modal-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 4px; padding: 4px 6px; overflow: auto; margin: 2px 0; }
                                 .modal-prompt-md pre code { background: transparent; border: 0; padding: 0; }
                               `}</style>
                               <div className="modal-prompt-md">
@@ -3206,17 +3205,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
 
-                          {/* 内容区：左侧提示词 + 右侧图片预览 */}
+                          {/* 内容区：左侧提示词 + 右侧图片预览（统一高度100px） */}
                           <div className="px-2 pb-1 flex-shrink-0">
-                            <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px' }}>
+                            <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: '100px' }}>
                               {/* 左侧：提示词预览 */}
                               <div
                                 className="overflow-auto border rounded-[6px] p-2"
                                 style={{
                                   borderColor: 'var(--border-subtle)',
                                   background: 'rgba(255,255,255,0.02)',
-                                  minHeight: '80px',
-                                  maxHeight: '100px',
                                 }}
                               >
                                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -3231,8 +3228,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
                                     : 'rgba(255,255,255,0.02)',
                                   border: config.imageUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
-                                  minHeight: '80px',
-                                  maxHeight: '100px',
                                 }}
                               >
                                 {config.imageUrl ? (
