@@ -100,4 +100,6 @@ export type UnpublishLiteraryPromptContract = (input: {
  */
 export type ForkLiteraryPromptContract = (input: {
   id: string;
+  /** 可选的自定义名称，不传则使用原名称 */
+  name?: string;
 }) => Promise<ApiResponse<{ prompt: LiteraryPrompt }>>;

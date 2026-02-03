@@ -777,7 +777,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
       return (
         <div className="flex flex-col h-full min-h-0">
           {/* 搜索和筛选栏 */}
-          <div className="flex items-center gap-4 mb-4 flex-shrink-0">
+          <div className="flex items-center gap-4 mb-4 flex-shrink-0 relative z-10">
             {/* 搜索框 */}
             <div className="relative flex-1 max-w-xs">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
@@ -879,7 +879,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                               <div className="flex justify-end">
                                 <Button size="xs" variant="secondary" onClick={() => handleForkPrompt(prompt)} disabled={saving}>
                                   <Hand size={12} />
-                                  免费下载
+                                  拿来吧
                                 </Button>
                               </div>
                             </div>
@@ -942,7 +942,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                               <div className="flex justify-end">
                                 <Button size="xs" variant="secondary" onClick={() => handleForkRefImage(config)} disabled={saving}>
                                   <Hand size={12} />
-                                  免费下载
+                                  拿来吧
                                 </Button>
                               </div>
                             </div>
@@ -1002,7 +1002,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                               <div className="flex justify-end">
                                 <Button size="xs" variant="secondary" onClick={() => handleForkWatermark(config)} disabled={saving}>
                                   <Hand size={12} />
-                                  免费下载
+                                  拿来吧
                                 </Button>
                               </div>
                             </div>
@@ -1024,8 +1024,13 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
         <Dialog
           open={open}
           onOpenChange={setOpen}
-          title="配置管理"
-          description="系统提示词、风格图与水印设置"
+          title={
+            <div className="flex items-center gap-2">
+              {viewMode === 'mine' ? <User size={18} /> : <Globe size={18} />}
+              <span>{viewMode === 'mine' ? '配置管理' : '海鲜市场'}</span>
+            </div>
+          }
+          description={viewMode === 'mine' ? '系统提示词、风格图与水印设置' : '发现和下载社区分享的配置'}
           maxWidth={1500}
           contentClassName="overflow-hidden !p-4"
           contentStyle={{ maxHeight: '75vh', height: '75vh' }}
@@ -1033,21 +1038,23 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
             <div className="flex flex-col h-full min-h-0">
               {/* Tab 切换 */}
               <div className="flex items-center gap-2 mb-4 flex-shrink-0 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>
-                {VIEW_TABS.map((tab) => (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => setViewMode(tab.key)}
-                    className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                      viewMode === tab.key
-                        ? 'bg-blue-500/20 text-blue-400'
-                        : 'hover:bg-white/5 text-gray-400'
-                    }`}
-                  >
-                    {tab.icon}
-                    {tab.label}
-                  </button>
-                ))}
+                <div className="flex items-center gap-2">
+                  {VIEW_TABS.map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setViewMode(tab.key)}
+                      className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        viewMode === tab.key
+                          ? 'bg-blue-500/20 text-blue-400'
+                          : 'hover:bg-white/5 text-gray-400'
+                      }`}
+                    >
+                      {tab.icon}
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* 内容区 */}

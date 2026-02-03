@@ -92,6 +92,9 @@ public class MongoDbContext
     public IMongoCollection<WatermarkFontAsset> WatermarkFontAssets => _database.GetCollection<WatermarkFontAsset>("watermark_font_assets");
     public IMongoCollection<WatermarkConfig> WatermarkConfigs => _database.GetCollection<WatermarkConfig>("watermark_configs");
 
+    // 海鲜市场 Fork 下载记录
+    public IMongoCollection<MarketplaceForkLog> MarketplaceForkLogs => _database.GetCollection<MarketplaceForkLog>("marketplace_fork_logs");
+
     // Literary Agent 文学创作配置
     public IMongoCollection<LiteraryAgentConfig> LiteraryAgentConfigs => _database.GetCollection<LiteraryAgentConfig>("literary_agent_configs");
     public IMongoCollection<ReferenceImageConfig> ReferenceImageConfigs => _database.GetCollection<ReferenceImageConfig>("reference_image_configs");

@@ -168,7 +168,11 @@ export const unpublishWatermarkReal: UnpublishWatermarkContract = async (input) 
  * 从海鲜市场免费下载（Fork）水印配置
  */
 export const forkWatermarkReal: ForkWatermarkContract = async (input) => {
-  return await apiRequest(api.watermark.fork(encodeURIComponent(input.id)), { method: 'POST' });
+  const body = input.name ? { Name: input.name } : {};
+  return await apiRequest(api.watermark.fork(encodeURIComponent(input.id)), { 
+    method: 'POST',
+    body,
+  });
 };
 
 /**

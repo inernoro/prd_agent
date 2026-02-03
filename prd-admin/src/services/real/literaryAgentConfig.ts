@@ -387,8 +387,12 @@ export const unpublishReferenceImageConfigReal: UnpublishReferenceImageConfigCon
 };
 
 export const forkReferenceImageConfigReal: ForkReferenceImageConfigContract = async (input) => {
+  const body = input.name ? { Name: input.name } : {};
   return await apiRequest<{ config: ReferenceImageConfig }>(
     `${api.literaryAgent.config.referenceImages.byId(encodeURIComponent(input.id))}/fork`,
-    { method: 'POST' }
+    { 
+      method: 'POST',
+      body,
+    }
   );
 };

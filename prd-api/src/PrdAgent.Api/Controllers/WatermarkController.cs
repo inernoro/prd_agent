@@ -1103,11 +1103,22 @@ public class WatermarkController : ControllerBase
     }
 
     /// <summary>
+    /// Fork 请求参数
+    /// </summary>
+    public class ForkRequest
+    {
+        /// <summary>
+        /// 可选的自定义名称，不传则使用原名称
+        /// </summary>
+        public string? Name { get; set; }
+    }
+
+    /// <summary>
     /// 免费下载（Fork）海鲜市场的水印配置
     /// </summary>
     [HttpPost("/api/watermarks/{id}/fork")]
     [HttpPost("/api/v1/watermarks/{id}/fork")]
-    public async Task<IActionResult> Fork(string id, CancellationToken ct)
+    public async Task<IActionResult> Fork(string id, [FromBody] ForkRequest? request, CancellationToken ct)
     {
         var userId = GetUserId(User);
         if (string.IsNullOrWhiteSpace(userId))
@@ -1122,12 +1133,15 @@ public class WatermarkController : ControllerBase
         var sourceOwnerName = sourceOwner?.DisplayName ?? sourceOwner?.Username ?? "未知用户";
         var sourceOwnerAvatar = sourceOwner?.AvatarFileName;
 
+        // 使用自定义名称或原名称
+        var forkedName = !string.IsNullOrWhiteSpace(request?.Name) ? request.Name : source.Name;
+
         // 创建副本
         var forked = new WatermarkConfig
         {
             Id = Guid.NewGuid().ToString("N"),
             UserId = userId,
-            Name = source.Name,
+            Name = forkedName,
             AppKeys = new List<string>(), // 下载的配置默认不绑定任何应用
             Text = source.Text,
             FontKey = source.FontKey,
@@ -1167,6 +1181,25 @@ public class WatermarkController : ControllerBase
             x => x.Id == id,
             Builders<WatermarkConfig>.Update.Inc(x => x.ForkCount, 1),
             cancellationToken: ct);
+
+        // 记录下载日志
+        var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+        var forkLog = new MarketplaceForkLog
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            UserId = userId,
+            UserName = currentUser?.DisplayName ?? currentUser?.Username,
+            UserAvatarFileName = currentUser?.AvatarFileName,
+            ConfigType = "watermark",
+            SourceConfigId = source.Id,
+            SourceConfigName = source.Name,
+            ForkedConfigId = forked.Id,
+            ForkedConfigName = forkedName,
+            SourceOwnerUserId = source.UserId,
+            SourceOwnerName = sourceOwnerName,
+            CreatedAt = DateTime.UtcNow
+        };
+        await _db.MarketplaceForkLogs.InsertOneAsync(forkLog, cancellationToken: ct);
 
         // 生成预览
         try

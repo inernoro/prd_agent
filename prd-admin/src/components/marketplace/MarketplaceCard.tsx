@@ -5,11 +5,12 @@
  * 通用容器结构 + 类型专属预览渲染器。
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { GitFork, User, Hand } from 'lucide-react';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { systemDialog } from '@/lib/systemDialog';
 import {
   CONFIG_TYPE_REGISTRY,
   type MixedMarketplaceItem,
@@ -20,7 +21,7 @@ export interface MarketplaceCardProps {
   /** 混合市场项（包含 type 和 data） */
   item: MixedMarketplaceItem;
   /** Fork 下载回调 */
-  onFork: (typeKey: string, id: string) => Promise<void>;
+  onFork: (typeKey: string, id: string, customName?: string) => Promise<void>;
   /** 是否正在下载 */
   forking?: boolean;
 }
@@ -34,6 +35,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   forking = false,
 }) => {
   const typeDef = CONFIG_TYPE_REGISTRY[item.type] as ConfigTypeDefinition | undefined;
+  const [localForking, setLocalForking] = useState(false);
 
   // 未注册的类型不渲染
   if (!typeDef) {
@@ -43,6 +45,24 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
 
   const { icon: TypeIcon, color, PreviewRenderer } = typeDef;
   const displayName = typeDef.getDisplayName(item.data);
+
+  const handleForkClick = async () => {
+    setLocalForking(true);
+    try {
+      const result = await systemDialog.prompt({
+        title: '拿来吧',
+        message: '请为下载的配置命名',
+        defaultValue: displayName,
+        placeholder: '输入配置名称',
+      });
+
+      if (result !== null) {
+        await onFork(item.type, item.data.id, result || displayName);
+      }
+    } finally {
+      setLocalForking(false);
+    }
+  };
 
   return (
     <GlassCard className="p-0 overflow-hidden">
@@ -123,12 +143,12 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
             <Button
               size="xs"
               variant="secondary"
-              disabled={forking}
-              onClick={() => onFork(item.type, item.data.id)}
+              disabled={forking || localForking}
+              onClick={handleForkClick}
               className="flex-shrink-0"
             >
               <Hand size={12} />
-              {forking ? '下载中...' : '免费下载'}
+              {(forking || localForking) ? '下载中...' : '拿来吧'}
             </Button>
           </div>
         </div>

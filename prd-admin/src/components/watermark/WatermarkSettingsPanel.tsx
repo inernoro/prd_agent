@@ -756,10 +756,6 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                             {item.name || `Watermark ${index + 1}`}
                           </div>
-                          {/* 选中状态标记 - 更大更明显的勾选图标 */}
-                          {isActive && (
-                            <CheckCircle2 size={18} style={{ color: 'rgba(34, 197, 94, 1)', flexShrink: 0 }} />
-                          )}
                           {/* 授权应用查看按钮 */}
                           <button
                             type="button"
@@ -913,14 +909,16 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           {/* 选择按钮 */}
                           <button
                             type="button"
-                            className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
+                            className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
                             style={{
-                              color: isActive ? 'rgba(34, 197, 94, 1)' : 'var(--text-muted)',
-                              background: isActive ? 'rgba(34, 197, 94, 0.15)' : 'transparent',
+                              color: isActive ? 'white' : 'rgba(34, 197, 94, 0.95)',
+                              background: isActive ? 'rgba(34, 197, 94, 0.95)' : 'rgba(34, 197, 94, 0.08)',
+                              border: isActive ? '1px solid rgba(34, 197, 94, 0.95)' : '1px solid rgba(34, 197, 94, 0.45)',
+                              minWidth: 40,
                             }}
                             onClick={() => isActive ? handleDeactivate(item.id) : handleActivate(item.id)}
                             disabled={saving}
-                            title={isActive ? '点击取消选择' : '选择此配置'}
+                            title={isActive ? '取消选择' : '选择'}
                           >
                             {isActive ? <CheckCircle2 size={16} /> : <Check size={16} />}
                           </button>

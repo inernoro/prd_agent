@@ -85,8 +85,12 @@ export const unpublishLiteraryPromptReal: UnpublishLiteraryPromptContract = asyn
 };
 
 export const forkLiteraryPromptReal: ForkLiteraryPromptContract = async (input) => {
+  const body = input.name ? { Name: input.name } : {};
   return await apiRequest<{ prompt: LiteraryPrompt }>(
     `${api.literaryAgent.prompts.byId(encodeURIComponent(input.id))}/fork`,
-    { method: 'POST' }
+    { 
+      method: 'POST',
+      body,
+    }
   );
 };

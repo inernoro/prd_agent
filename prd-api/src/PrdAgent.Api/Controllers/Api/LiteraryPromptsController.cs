@@ -310,10 +310,21 @@ public class LiteraryPromptsController : ControllerBase
     }
 
     /// <summary>
+    /// Fork 请求参数
+    /// </summary>
+    public class ForkRequest
+    {
+        /// <summary>
+        /// 可选的自定义名称，不传则使用原名称
+        /// </summary>
+        public string? Name { get; set; }
+    }
+
+    /// <summary>
     /// 免费下载（Fork）海鲜市场的配置
     /// </summary>
     [HttpPost("{id}/fork")]
-    public async Task<IActionResult> Fork(string id, CancellationToken ct)
+    public async Task<IActionResult> Fork(string id, [FromBody] ForkRequest? request, CancellationToken ct)
     {
         var (userId, userName, avatarUrl) = await GetCurrentUserInfoAsync(ct);
 
@@ -333,12 +344,15 @@ public class LiteraryPromptsController : ControllerBase
             .Project(x => x.Order)
             .FirstOrDefaultAsync(ct);
 
+        // 使用自定义名称或原名称
+        var forkedTitle = !string.IsNullOrWhiteSpace(request?.Name) ? request.Name : source.Title;
+
         // 创建副本
         var forked = new LiteraryPrompt
         {
             Id = Guid.NewGuid().ToString("N"),
             OwnerUserId = userId,
-            Title = source.Title,
+            Title = forkedTitle,
             Content = source.Content,
             ScenarioType = source.ScenarioType,
             Order = maxOrder + 1,
@@ -361,6 +375,25 @@ public class LiteraryPromptsController : ControllerBase
             x => x.Id == id,
             Builders<LiteraryPrompt>.Update.Inc(x => x.ForkCount, 1),
             cancellationToken: ct);
+
+        // 记录下载日志
+        var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+        var forkLog = new MarketplaceForkLog
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            UserId = userId,
+            UserName = currentUser?.DisplayName ?? currentUser?.Username,
+            UserAvatarFileName = currentUser?.AvatarFileName,
+            ConfigType = "prompt",
+            SourceConfigId = source.Id,
+            SourceConfigName = source.Title,
+            ForkedConfigId = forked.Id,
+            ForkedConfigName = forkedTitle,
+            SourceOwnerUserId = source.OwnerUserId,
+            SourceOwnerName = sourceOwnerName,
+            CreatedAt = DateTime.UtcNow
+        };
+        await _db.MarketplaceForkLogs.InsertOneAsync(forkLog, cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { prompt = forked }));
     }

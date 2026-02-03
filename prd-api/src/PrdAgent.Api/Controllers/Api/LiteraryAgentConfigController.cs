@@ -887,10 +887,21 @@ public class LiteraryAgentConfigController : ControllerBase
     }
 
     /// <summary>
+    /// Fork 请求参数
+    /// </summary>
+    public class ForkReferenceImageRequest
+    {
+        /// <summary>
+        /// 可选的自定义名称，不传则使用原名称
+        /// </summary>
+        public string? Name { get; set; }
+    }
+
+    /// <summary>
     /// 免费下载（Fork）海鲜市场的底图配置
     /// </summary>
     [HttpPost("reference-images/{id}/fork")]
-    public async Task<IActionResult> ForkReferenceImage(string id, CancellationToken ct)
+    public async Task<IActionResult> ForkReferenceImage(string id, [FromBody] ForkReferenceImageRequest? request, CancellationToken ct)
     {
         var (userId, userName, avatarUrl) = await GetCurrentUserInfoAsync(ct);
 
@@ -905,11 +916,14 @@ public class LiteraryAgentConfigController : ControllerBase
         var sourceOwnerName = sourceOwner?.DisplayName ?? sourceOwner?.Username ?? "未知用户";
         var sourceOwnerAvatar = sourceOwner?.AvatarFileName;
 
+        // 使用自定义名称或原名称
+        var forkedName = !string.IsNullOrWhiteSpace(request?.Name) ? request.Name : source.Name;
+
         // 创建副本
         var forked = new ReferenceImageConfig
         {
             Id = Guid.NewGuid().ToString("N"),
-            Name = source.Name,
+            Name = forkedName,
             Prompt = source.Prompt,
             ImageSha256 = source.ImageSha256,
             ImageUrl = source.ImageUrl,
@@ -934,6 +948,26 @@ public class LiteraryAgentConfigController : ControllerBase
             x => x.Id == id,
             Builders<ReferenceImageConfig>.Update.Inc(x => x.ForkCount, 1),
             cancellationToken: ct);
+
+        // 记录下载日志
+        var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+        var forkLog = new MarketplaceForkLog
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            UserId = userId,
+            UserName = currentUser?.DisplayName ?? currentUser?.Username,
+            UserAvatarFileName = currentUser?.AvatarFileName,
+            ConfigType = "refImage",
+            SourceConfigId = source.Id,
+            SourceConfigName = source.Name,
+            ForkedConfigId = forked.Id,
+            ForkedConfigName = forkedName,
+            SourceOwnerUserId = source.CreatedByAdminId,
+            SourceOwnerName = sourceOwnerName,
+            AppKey = AppKey,
+            CreatedAt = DateTime.UtcNow
+        };
+        await _db.MarketplaceForkLogs.InsertOneAsync(forkLog, cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { config = forked }));
     }

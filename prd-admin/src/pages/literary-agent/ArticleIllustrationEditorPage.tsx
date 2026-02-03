@@ -391,13 +391,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const loadLiteraryPromptsRef = useRef<() => Promise<void>>();
   const loadReferenceImageConfigsRef = useRef<() => Promise<void>>();
 
-  const handleMarketplaceFork = useCallback(async (typeKey: string, id: string) => {
+  const handleMarketplaceFork = useCallback(async (typeKey: string, id: string, customName?: string) => {
     const typeDef = CONFIG_TYPE_REGISTRY[typeKey];
     if (!typeDef) return;
 
     setForkingId(id);
     try {
-      const res = await typeDef.api.fork({ id });
+      const res = await typeDef.api.fork({ id, name: customName });
       if (res.success) {
         toast.success('下载成功，已添加到「我的」');
         // 刷新市场数据
@@ -2933,10 +2933,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 >
                                   {prompt.title}
                                 </div>
-                                {/* 选中状态标记 - 更大更明显的勾选图标 */}
-                                {isPromptSelected && (
-                                  <CheckCircle2 size={18} style={{ color: 'rgba(34, 197, 94, 1)', flexShrink: 0 }} />
-                                )}
                               </div>
                             </div>
                           </div>
@@ -3006,13 +3002,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 {/* 选择按钮 */}
                                 <button
                                   type="button"
-                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                                  className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
                                   style={{
-                                    color: isPromptSelected ? 'rgba(34, 197, 94, 1)' : 'var(--text-muted)',
-                                    background: isPromptSelected ? 'rgba(34, 197, 94, 0.15)' : 'transparent',
+                                    color: isPromptSelected ? 'white' : 'rgba(34, 197, 94, 0.95)',
+                                    background: isPromptSelected ? 'rgba(34, 197, 94, 0.95)' : 'rgba(34, 197, 94, 0.08)',
+                                    border: isPromptSelected ? '1px solid rgba(34, 197, 94, 0.95)' : '1px solid rgba(34, 197, 94, 0.45)',
+                                    minWidth: 40,
                                   }}
                                   onClick={() => setSelectedPrompt(prompt)}
-                                  title={isPromptSelected ? '当前选中' : '选择此配置'}
+                                  title={isPromptSelected ? '取消选择' : '选择'}
                                 >
                                   {isPromptSelected ? <CheckCircle2 size={16} /> : <Check size={16} />}
                                 </button>
@@ -3132,10 +3130,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                                   {config.name}
                                 </div>
-                                {/* 选中状态标记 - 更大更明显的勾选图标 */}
-                                {config.isActive && (
-                                  <CheckCircle2 size={18} style={{ color: 'rgba(34, 197, 94, 1)', flexShrink: 0 }} />
-                                )}
                               </div>
                             </div>
                           </div>
@@ -3210,10 +3204,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 {/* 选择按钮 */}
                                 <button
                                   type="button"
-                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
+                                  className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
                                   style={{
-                                    color: config.isActive ? 'rgba(34, 197, 94, 1)' : 'var(--text-muted)',
-                                    background: config.isActive ? 'rgba(34, 197, 94, 0.15)' : 'transparent',
+                                    color: config.isActive ? 'white' : 'rgba(34, 197, 94, 0.95)',
+                                    background: config.isActive ? 'rgba(34, 197, 94, 0.95)' : 'rgba(34, 197, 94, 0.08)',
+                                    border: config.isActive ? '1px solid rgba(34, 197, 94, 0.95)' : '1px solid rgba(34, 197, 94, 0.45)',
+                                    minWidth: 40,
                                   }}
                                   onClick={async () => {
                                     setReferenceImageSaving(true);
@@ -3229,7 +3225,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     }
                                   }}
                                   disabled={referenceImageSaving}
-                                  title={config.isActive ? '点击取消选择' : '选择此配置'}
+                                  title={config.isActive ? '取消选择' : '选择'}
                                 >
                                   {config.isActive ? <CheckCircle2 size={16} /> : <Check size={16} />}
                                 </button>

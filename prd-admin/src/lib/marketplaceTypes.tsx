@@ -79,7 +79,7 @@ export interface MarketplaceApiConfig {
   listMarketplace: (params: { keyword?: string; sort?: 'hot' | 'new' }) => Promise<ApiResponse<{ items: any[] }>>;
   publish: (params: { id: string }) => Promise<ApiResponse<any>>;
   unpublish: (params: { id: string }) => Promise<ApiResponse<any>>;
-  fork: (params: { id: string }) => Promise<ApiResponse<any>>;
+  fork: (params: { id: string; name?: string }) => Promise<ApiResponse<any>>;
 }
 
 /**
