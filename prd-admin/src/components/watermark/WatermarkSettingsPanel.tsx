@@ -1868,13 +1868,17 @@ function WatermarkPreview(props: {
   const textRef = useRef<HTMLSpanElement | null>(null);
   const iconRef = useRef<HTMLImageElement | null>(null);
   const lastMeasuredSizeRef = useRef({ width: 0, height: 0 });
+  const sizeStableRef = useRef(false);  // 用于 updateSize 闭包访问
   const [watermarkSize, setWatermarkSize] = useState({ width: 0, height: 0 });
   const [measureTick, setMeasureTick] = useState(0);
   const [measuredSignature, setMeasuredSignature] = useState('');
   const [fontReady, setFontReady] = useState(false);
+  const [sizeStable, setSizeStable] = useState(false);  // 尺寸是否稳定
+  // 缓存版本号：修改测量逻辑时需要更新，使旧缓存失效
   const measureSignature = useMemo(
     () =>
       [
+        'v3',  // 版本号：v3 = 只有延迟两帧后才写入缓存，避免缓存被错误小尺寸污染
         spec.text,
         spec.iconEnabled ? '1' : '0',
         spec.iconImageRef ?? '',
@@ -1895,11 +1899,16 @@ function WatermarkPreview(props: {
     if (cachedSize) {
       setWatermarkSize(cachedSize);
       setMeasuredSignature(measureSignature);
+      setSizeStable(true);  // 有缓存说明尺寸已经稳定过
+      sizeStableRef.current = true;
     } else {
       setWatermarkSize({ width: 0, height: 0 });
       setMeasuredSignature('');
+      setSizeStable(false);  // 需要重新测量并等待稳定
+      sizeStableRef.current = false;
     }
-    setFontReady(false);
+    // 注意：不要在这里 setFontReady(false)，否则会和字体加载 effect 形成循环
+    // 字体状态由专门的 useEffect 管理
   }, [cachedSize, measureSignature]);
 
   useEffect(() => {
@@ -1922,6 +1931,58 @@ function WatermarkPreview(props: {
     };
   }, [fontFamily, fontSize, measureSignature]);
 
+  // 关键修复：当 fontReady 变为 true 时，等待尺寸稳定后再写入缓存
+  // 因为字体加载完成后，浏览器渲染时间不可预测，可能需要多个渲染周期
+  useEffect(() => {
+    if (!fontReady || !contentRef.current) return;
+
+    let cancelled = false;
+    let lastSize = { width: 0, height: 0 };
+    let stabilityTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const measureAndCheck = () => {
+      if (cancelled || !contentRef.current) return;
+
+      const contentRect = contentRef.current.getBoundingClientRect();
+      if (!contentRect.width || !contentRect.height) return;
+
+      const measuredWidth = Math.ceil(contentRect.width);
+      const measuredHeight = Math.ceil(contentRect.height);
+
+      // 如果尺寸与上次不同，继续等待稳定（不更新状态，避免抖动）
+      if (measuredWidth !== lastSize.width || measuredHeight !== lastSize.height) {
+        lastSize = { width: measuredWidth, height: measuredHeight };
+        // 100ms 后再检查
+        stabilityTimer = setTimeout(measureAndCheck, 100);
+      } else {
+        // 尺寸稳定，更新状态并写入缓存
+        setWatermarkSize({ width: measuredWidth, height: measuredHeight });
+        lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
+        setMeasuredSignature(measureSignature);
+        setSizeStable(true);
+        sizeStableRef.current = true;
+        watermarkSizeCache.set(measureSignature, { width: measuredWidth, height: measuredHeight });
+      }
+    };
+
+    // 延迟两帧后开始测量
+    const raf1 = requestAnimationFrame(() => {
+      if (cancelled) return;
+      const raf2 = requestAnimationFrame(() => {
+        if (cancelled) return;
+        measureAndCheck();
+      });
+
+      return () => cancelAnimationFrame(raf2);
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf1);
+      if (stabilityTimer) clearTimeout(stabilityTimer);
+    };
+  }, [fontReady, measureSignature]);
+
   const estimatedTextWidth = Math.max(spec.text.length, 1) * fontSize * 1.0;
   const hasIcon = Boolean(spec.iconEnabled && spec.iconImageRef);
   const estimatedContentWidth = hasIcon
@@ -1934,15 +1995,24 @@ function WatermarkPreview(props: {
       ? fontSize + iconSize + gap
       : Math.max(fontSize, iconSize))
     : fontSize;
-  const estimatedWidth = estimatedContentWidth + decorationPadding * 2;
-  const estimatedHeight = estimatedContentHeight + decorationPadding * 2;
-  const measuredWidth = watermarkSize.width || cachedSize?.width || estimatedWidth;
-  const measuredHeight = watermarkSize.height || cachedSize?.height || estimatedHeight;
+  // 估算尺寸需要包含边框宽度，确保 fallback 值更准确
+  const estimatedBorderExtra = spec.borderEnabled ? borderWidth * 2 : 0;
+  const estimatedWidth = estimatedContentWidth + decorationPadding * 2 + estimatedBorderExtra;
+  const estimatedHeight = estimatedContentHeight + decorationPadding * 2 + estimatedBorderExtra;
+  // 关键修复：只有当 measuredSignature 匹配当前配置时，才使用 watermarkSize
+  // 否则可能是旧配置的尺寸（组件实例复用时 state 被保留）
+  const isWatermarkSizeValid = measuredSignature === measureSignature;
+  const validatedWidth = isWatermarkSizeValid ? watermarkSize.width : 0;
+  const validatedHeight = isWatermarkSizeValid ? watermarkSize.height : 0;
+  const measuredWidth = validatedWidth || cachedSize?.width || estimatedWidth;
+  const measuredHeight = validatedHeight || cachedSize?.height || estimatedHeight;
   const hasLastMeasured = lastMeasuredSizeRef.current.width > 0 && lastMeasuredSizeRef.current.height > 0;
   const pendingMeasure = measuredSignature !== measureSignature;
   const effectiveWidth = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.width : measuredWidth;
   const effectiveHeight = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.height : measuredHeight;
-  const hideUntilMeasured = (!fontReady && !cachedSize) || measuredSignature !== measureSignature;
+  // 必须同时满足：字体加载完成 AND 尺寸稳定，才显示水印
+  // 这样可以避免在尺寸稳定前显示，导致位置抖动
+  const hideUntilMeasured = !fontReady || !sizeStable;
 
   const offsetX = spec.positionMode === 'ratio' ? spec.offsetX * width : spec.offsetX;
   const offsetY = spec.positionMode === 'ratio' ? spec.offsetY * canvasHeight : spec.offsetY;
@@ -2007,35 +2077,33 @@ function WatermarkPreview(props: {
     const target = contentRef.current;
 
     const updateSize = () => {
-      const textRect = textRef.current?.getBoundingClientRect();
-      if (!textRect || !textRect.width || !textRect.height) return;
-      const iconRect = iconRef.current?.getBoundingClientRect();
-      const iconWidth = iconRect?.width ?? 0;
-      const iconHeight = iconRect?.height ?? 0;
-      // 边框宽度会增加元素整体尺寸（CSS border 在 padding 外面）
-      const borderExtra = spec.borderEnabled ? borderWidth * 2 : 0;
-      const hasIcon = iconWidth > 0 && iconHeight > 0;
-      const combinedWidth = hasIcon
-        ? (isVerticalIcon
-          ? Math.max(textRect.width, iconWidth) + decorationPadding * 2 + borderExtra
-          : textRect.width + iconWidth + gap + decorationPadding * 2 + borderExtra)
-        : textRect.width + decorationPadding * 2 + borderExtra;
-      const combinedHeight = hasIcon
-        ? (isVerticalIcon
-          ? textRect.height + iconHeight + gap + decorationPadding * 2 + borderExtra
-          : Math.max(textRect.height, iconHeight) + decorationPadding * 2 + borderExtra)
-        : textRect.height + decorationPadding * 2 + borderExtra;
+      // 直接测量 contentRef 的实际渲染尺寸，避免手动计算带来的 subpixel 误差
+      // 这样可以确保定位计算使用的尺寸与浏览器实际渲染的尺寸完全一致
+      const contentRect = contentRef.current?.getBoundingClientRect();
+      if (!contentRect || !contentRect.width || !contentRect.height) return;
+
+      // 关键修复：只有当字体加载完成时才更新尺寸状态
+      // 否则会用字体未加载时的错误小尺寸覆盖正确尺寸
+      if (!fontReady) return;
+
+      // 关键修复：如果尺寸已经稳定（从缓存加载），不再更新状态
+      // 否则会导致第二次进入编辑时的抖动
+      if (sizeStableRef.current) return;
+
+      // 使用 ceil 确保不会因为 subpixel 渲染导致边缘被截断
+      const measuredWidth = Math.ceil(contentRect.width);
+      const measuredHeight = Math.ceil(contentRect.height);
+
       setWatermarkSize((prev) => {
-        if (Math.abs(prev.width - combinedWidth) < 0.5 && Math.abs(prev.height - combinedHeight) < 0.5) {
+        if (Math.abs(prev.width - measuredWidth) < 0.5 && Math.abs(prev.height - measuredHeight) < 0.5) {
           return prev;
         }
-        return { width: combinedWidth, height: combinedHeight };
+        return { width: measuredWidth, height: measuredHeight };
       });
-      watermarkSizeCache.set(measureSignature, { width: combinedWidth, height: combinedHeight });
-      lastMeasuredSizeRef.current = { width: combinedWidth, height: combinedHeight };
-      if (fontReady) {
-        setMeasuredSignature(measureSignature);
-      }
+      // 注意：不在这里写入缓存！缓存只在 fontReady effect 延迟两帧后写入
+      // 否则会用 fontReady=true 但字体还没渲染完成时的错误小尺寸污染缓存
+      lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
+      setMeasuredSignature(measureSignature);
     };
 
     updateSize();
