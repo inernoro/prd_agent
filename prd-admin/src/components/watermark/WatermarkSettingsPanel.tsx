@@ -1872,6 +1872,7 @@ function WatermarkPreview(props: {
   const [measureTick, setMeasureTick] = useState(0);
   const [measuredSignature, setMeasuredSignature] = useState('');
   const [fontReady, setFontReady] = useState(false);
+  const [sizeStable, setSizeStable] = useState(false);  // 尺寸是否稳定
   // 缓存版本号：修改测量逻辑时需要更新，使旧缓存失效
   const measureSignature = useMemo(
     () =>
@@ -1897,9 +1898,11 @@ function WatermarkPreview(props: {
     if (cachedSize) {
       setWatermarkSize(cachedSize);
       setMeasuredSignature(measureSignature);
+      setSizeStable(true);  // 有缓存说明尺寸已经稳定过
     } else {
       setWatermarkSize({ width: 0, height: 0 });
       setMeasuredSignature('');
+      setSizeStable(false);  // 需要重新测量并等待稳定
     }
     // 注意：不要在这里 setFontReady(false)，否则会和字体加载 effect 形成循环
     // 字体状态由专门的 useEffect 管理
@@ -1949,19 +1952,18 @@ function WatermarkPreview(props: {
         measureSignature: measureSignature.slice(0, 30) + '...',
       });
 
-      // 更新状态（即使尺寸在变化也先更新，保证显示正确）
-      setWatermarkSize({ width: measuredWidth, height: measuredHeight });
-      lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
-      setMeasuredSignature(measureSignature);
-
-      // 如果尺寸与上次不同，继续等待稳定
+      // 如果尺寸与上次不同，继续等待稳定（不更新状态，避免抖动）
       if (measuredWidth !== lastSize.width || measuredHeight !== lastSize.height) {
         lastSize = { width: measuredWidth, height: measuredHeight };
         // 100ms 后再检查
         stabilityTimer = setTimeout(measureAndCheck, 100);
       } else {
-        // 尺寸稳定，写入缓存
+        // 尺寸稳定，更新状态并写入缓存
         console.log('[WatermarkMeasure:stable]', { width: measuredWidth, height: measuredHeight });
+        setWatermarkSize({ width: measuredWidth, height: measuredHeight });
+        lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
+        setMeasuredSignature(measureSignature);
+        setSizeStable(true);
         watermarkSizeCache.set(measureSignature, { width: measuredWidth, height: measuredHeight });
       }
     };
@@ -2011,9 +2013,9 @@ function WatermarkPreview(props: {
   const pendingMeasure = measuredSignature !== measureSignature;
   const effectiveWidth = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.width : measuredWidth;
   const effectiveHeight = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.height : measuredHeight;
-  // 必须同时满足：字体加载完成 AND 测量完成，才显示水印
-  // 这样可以避免在尺寸稳定前显示，导致位置跳动
-  const hideUntilMeasured = !fontReady || measuredSignature !== measureSignature;
+  // 必须同时满足：字体加载完成 AND 尺寸稳定，才显示水印
+  // 这样可以避免在尺寸稳定前显示，导致位置抖动
+  const hideUntilMeasured = !fontReady || !sizeStable;
 
   const offsetX = spec.positionMode === 'ratio' ? spec.offsetX * width : spec.offsetX;
   const offsetY = spec.positionMode === 'ratio' ? spec.offsetY * canvasHeight : spec.offsetY;
