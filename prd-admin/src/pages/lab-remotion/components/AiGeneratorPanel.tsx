@@ -58,28 +58,34 @@ export function AiGeneratorPanel({ onGenerated, className }: AiGeneratorPanelPro
           },
         },
         onEvent: (event) => {
-          if (event.event === 'chunk' && event.data) {
-            try {
-              const parsed = JSON.parse(event.data);
-              if (parsed.text) {
-                fullResponse += parsed.text;
-                setStreamingText(fullResponse);
-              }
-            } catch {
-              // 忽略解析错误
-            }
-          } else if (event.event === 'done') {
-            // 完成，尝试编译
-            const result = compileRemotionCode(fullResponse);
-            setGeneratedCode(result.code || fullResponse);
+          if (!event.data) return;
 
-            if (result.success) {
-              onGenerated(result);
-            } else {
-              setError(result.error || '编译失败');
+          try {
+            const parsed = JSON.parse(event.data);
+
+            // 处理流式内容 - event: model + type: delta
+            if (event.event === 'model' && parsed.type === 'delta' && parsed.content) {
+              fullResponse += parsed.content;
+              setStreamingText(fullResponse);
             }
-          } else if (event.event === 'error') {
-            setError(event.data || '生成失败');
+            // 处理完成 - event: run + type: runDone
+            else if (event.event === 'run' && parsed.type === 'runDone') {
+              // 完成，尝试编译
+              const result = compileRemotionCode(fullResponse);
+              setGeneratedCode(result.code || fullResponse);
+
+              if (result.success) {
+                onGenerated(result);
+              } else {
+                setError(result.error || '编译失败');
+              }
+            }
+            // 处理错误
+            else if (parsed.type === 'error') {
+              setError(parsed.errorMessage || parsed.message || '生成失败');
+            }
+          } catch {
+            // 忽略解析错误
           }
         },
         signal: abortControllerRef.current.signal,
