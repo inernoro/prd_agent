@@ -4,6 +4,15 @@ import { Dialog } from '@/components/ui/Dialog';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
+import { MarketplaceCard } from '@/components/marketplace';
+import {
+  CONFIG_TYPE_REGISTRY,
+  getCategoryFilterOptions,
+  mergeMarketplaceData,
+  sortMarketplaceItems,
+  filterMarketplaceItems,
+  type MarketplaceItemBase,
+} from '@/lib/marketplaceTypes';
 import {
   createLiteraryAgentImageGenRun,
   generateArticleMarkers,
@@ -29,22 +38,14 @@ import {
   deactivateReferenceImageConfig,
   getLiteraryAgentAllModels,
   // 海鲜市场 API
-  listLiteraryPromptsMarketplace,
   publishLiteraryPrompt,
   unpublishLiteraryPrompt,
-  forkLiteraryPrompt,
-  listReferenceImageConfigsMarketplace,
   publishReferenceImageConfig,
   unpublishReferenceImageConfig,
-  forkReferenceImageConfig,
-  listWatermarksMarketplace,
-  forkWatermark,
 } from '@/services';
-import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse, MarketplaceReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, Hand, TrendingUp, Clock, Search, GitFork, Share2, XCircle } from 'lucide-react';
+import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, XCircle } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
-import type { MarketplaceLiteraryPrompt } from '@/services/contracts/literaryPrompts';
-import type { MarketplaceWatermarkConfig } from '@/services/contracts/watermark';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
@@ -181,15 +182,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [editingRefConfig, setEditingRefConfig] = useState<ReferenceImageConfig | null>(null);
   const [editingRefConfigOpen, setEditingRefConfigOpen] = useState(false);
 
-  // 海鲜市场状态
+  // 海鲜市场状态（使用类型注册表）
   const [configViewMode, setConfigViewMode] = useState<'mine' | 'marketplace'>('mine');
   const [marketplaceSearchKeyword, setMarketplaceSearchKeyword] = useState('');
   const [marketplaceSortBy, setMarketplaceSortBy] = useState<'hot' | 'new'>('hot');
-  const [marketplaceCategoryFilter, setMarketplaceCategoryFilter] = useState<'all' | 'prompt' | 'refImage' | 'watermark'>('all');
-  const [marketplacePrompts, setMarketplacePrompts] = useState<MarketplaceLiteraryPrompt[]>([]);
-  const [marketplaceRefImages, setMarketplaceRefImages] = useState<MarketplaceReferenceImageConfig[]>([]);
-  const [marketplaceWatermarks, setMarketplaceWatermarks] = useState<MarketplaceWatermarkConfig[]>([]);
+  const [marketplaceCategoryFilter, setMarketplaceCategoryFilter] = useState<string>('all');
+  const [marketplaceDataByType, setMarketplaceDataByType] = useState<Record<string, MarketplaceItemBase[]>>({});
   const [marketplaceLoading, setMarketplaceLoading] = useState(false);
+  const [forkingId, setForkingId] = useState<string | null>(null);
 
   // 文件上传相关状态
   const [uploadedFileName, setUploadedFileName] = useState('');
@@ -353,28 +353,66 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     void loadReferenceImageConfigs();
   }, [loadReferenceImageConfigs]);
 
-  // 加载海鲜市场数据
+  // 将 loadReferenceImageConfigs 赋值给 ref 以便 handleMarketplaceFork 使用
+  useEffect(() => {
+    loadReferenceImageConfigsRef.current = loadReferenceImageConfigs;
+  }, [loadReferenceImageConfigs]);
+
+  // 加载海鲜市场数据（使用类型注册表）
   const loadMarketplaceData = useCallback(async () => {
     setMarketplaceLoading(true);
     try {
-      const [promptsRes, refImagesRes, watermarksRes] = await Promise.all([
-        listLiteraryPromptsMarketplace({ keyword: marketplaceSearchKeyword || undefined, sort: marketplaceSortBy }),
-        listReferenceImageConfigsMarketplace({ keyword: marketplaceSearchKeyword || undefined, sort: marketplaceSortBy }),
-        listWatermarksMarketplace({ keyword: marketplaceSearchKeyword || undefined, sort: marketplaceSortBy }),
-      ]);
-      if (promptsRes.success && promptsRes.data) {
-        setMarketplacePrompts(promptsRes.data.items);
+      const typeKeys = Object.keys(CONFIG_TYPE_REGISTRY);
+      const results = await Promise.all(
+        typeKeys.map(async (typeKey) => {
+          const typeDef = CONFIG_TYPE_REGISTRY[typeKey];
+          const res = await typeDef.api.listMarketplace({
+            keyword: marketplaceSearchKeyword || undefined,
+            sort: marketplaceSortBy,
+          });
+          return { typeKey, items: res.success && res.data ? res.data.items : [] };
+        })
+      );
+
+      const dataByType: Record<string, MarketplaceItemBase[]> = {};
+      for (const { typeKey, items } of results) {
+        dataByType[typeKey] = items;
       }
-      if (refImagesRes.success && refImagesRes.data) {
-        setMarketplaceRefImages(refImagesRes.data.items);
-      }
-      if (watermarksRes.success && watermarksRes.data) {
-        setMarketplaceWatermarks(watermarksRes.data.items);
-      }
+      setMarketplaceDataByType(dataByType);
     } finally {
       setMarketplaceLoading(false);
     }
   }, [marketplaceSearchKeyword, marketplaceSortBy]);
+
+  // 处理 Fork 下载 - 使用 ref 存储回调以避免声明顺序问题
+  const loadLiteraryPromptsRef = useRef<() => Promise<void>>();
+  const loadReferenceImageConfigsRef = useRef<() => Promise<void>>();
+
+  const handleMarketplaceFork = useCallback(async (typeKey: string, id: string) => {
+    const typeDef = CONFIG_TYPE_REGISTRY[typeKey];
+    if (!typeDef) return;
+
+    setForkingId(id);
+    try {
+      const res = await typeDef.api.fork({ id });
+      if (res.success) {
+        toast.success('下载成功，已添加到「我的」');
+        // 刷新市场数据
+        void loadMarketplaceData();
+        // 刷新对应类型的"我的"数据
+        if (typeKey === 'prompt' && loadLiteraryPromptsRef.current) {
+          void loadLiteraryPromptsRef.current();
+        } else if (typeKey === 'refImage' && loadReferenceImageConfigsRef.current) {
+          void loadReferenceImageConfigsRef.current();
+        }
+        // watermark 由 WatermarkSettingsPanel 自己管理刷新
+      } else {
+        toast.error('下载失败', res.error?.message || '未知错误');
+      }
+    } finally {
+      setForkingId(null);
+    }
+  }, [loadMarketplaceData]);
 
   // 当切换到海鲜市场视图或搜索/排序变化时加载数据
   useEffect(() => {
@@ -547,6 +585,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       console.error('Failed to load literary prompts:', error);
     }
   }, [selectedPrompt]);
+
+  // 将 loadLiteraryPrompts 赋值给 ref 以便 handleMarketplaceFork 使用
+  useEffect(() => {
+    loadLiteraryPromptsRef.current = loadLiteraryPrompts;
+  }, [loadLiteraryPrompts]);
 
   const isBusy = generating || markerStreaming;
 
@@ -3369,7 +3412,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           </div>
             )}
 
-            {/* 海鲜市场视图 - 混合展示布局 */}
+            {/* 海鲜市场视图 - 使用类型注册表实现扩展性 */}
             {configViewMode === 'marketplace' && (
               <div className="flex flex-col h-full min-h-0 flex-1">
                 {/* 搜索、分类筛选和排序栏 */}
@@ -3386,14 +3429,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       style={{ background: 'var(--input-bg)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                     />
                   </div>
-                  {/* 分类筛选 */}
+                  {/* 分类筛选 - 使用类型注册表动态生成 */}
                   <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
-                    {[
-                      { key: 'all' as const, label: '全部' },
-                      { key: 'prompt' as const, label: '提示词', icon: FileText },
-                      { key: 'refImage' as const, label: '风格图', icon: ImageIcon },
-                      { key: 'watermark' as const, label: '水印', icon: Sparkles },
-                    ].map(({ key, label, icon: Icon }) => (
+                    {getCategoryFilterOptions().map(({ key, label, icon: Icon }) => (
                       <button
                         key={key}
                         type="button"
@@ -3441,36 +3479,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   </div>
                 ) : (
                   <div className="flex-1 min-h-0 overflow-auto">
-                    {/* 混合展示所有类型 */}
+                    {/* 使用类型注册表合并、过滤、排序数据 */}
                     {(() => {
-                      // 合并所有数据并添加类型标识
-                      type MixedItem =
-                        | { type: 'prompt'; data: MarketplaceLiteraryPrompt }
-                        | { type: 'refImage'; data: MarketplaceReferenceImageConfig }
-                        | { type: 'watermark'; data: MarketplaceWatermarkConfig };
+                      // 1. 合并数据
+                      const merged = mergeMarketplaceData(marketplaceDataByType, marketplaceCategoryFilter);
+                      // 2. 排序
+                      const sorted = sortMarketplaceItems(merged, marketplaceSortBy);
+                      // 3. 搜索过滤
+                      const filtered = filterMarketplaceItems(sorted, marketplaceSearchKeyword);
 
-                      const mixedItems: MixedItem[] = [
-                        ...(marketplaceCategoryFilter === 'all' || marketplaceCategoryFilter === 'prompt'
-                          ? marketplacePrompts.map((p) => ({ type: 'prompt' as const, data: p }))
-                          : []),
-                        ...(marketplaceCategoryFilter === 'all' || marketplaceCategoryFilter === 'refImage'
-                          ? marketplaceRefImages.map((r) => ({ type: 'refImage' as const, data: r }))
-                          : []),
-                        ...(marketplaceCategoryFilter === 'all' || marketplaceCategoryFilter === 'watermark'
-                          ? marketplaceWatermarks.map((w) => ({ type: 'watermark' as const, data: w }))
-                          : []),
-                      ];
-
-                      // 按排序方式排序
-                      mixedItems.sort((a, b) => {
-                        if (marketplaceSortBy === 'hot') {
-                          return b.data.forkCount - a.data.forkCount;
-                        } else {
-                          return new Date(b.data.createdAt).getTime() - new Date(a.data.createdAt).getTime();
-                        }
-                      });
-
-                      if (mixedItems.length === 0) {
+                      if (filtered.length === 0) {
                         return (
                           <div className="text-sm py-8 text-center" style={{ color: 'var(--text-muted)' }}>
                             暂无公开配置
@@ -3480,185 +3498,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
                       return (
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                          {mixedItems.map((item) => (
-                            <GlassCard key={`${item.type}-${item.data.id}`} className="p-0 overflow-hidden">
-                              <div className="flex flex-col h-full">
-                                {/* 标题栏 */}
-                                <div className="p-2 pb-1 flex-shrink-0">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className="min-w-0 flex-1 flex items-center gap-1.5">
-                                      {/* 类型图标 */}
-                                      {item.type === 'prompt' && <Sparkles size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />}
-                                      {item.type === 'refImage' && <ImageIcon size={14} style={{ color: 'rgba(236, 72, 153, 0.85)', flexShrink: 0 }} />}
-                                      {item.type === 'watermark' && <Sparkles size={14} style={{ color: 'rgba(6, 182, 212, 0.85)', flexShrink: 0 }} />}
-                                      <div
-                                        className="flex-1 font-semibold text-[13px]"
-                                        title={item.type === 'prompt' ? item.data.title : item.data.name}
-                                        style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
-                                      >
-                                        {item.type === 'prompt' ? item.data.title : item.data.name}
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-1 flex-shrink-0">
-                                      {/* 类型标签 */}
-                                      <span
-                                        className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
-                                        style={{
-                                          background: item.type === 'prompt' ? 'rgba(168, 85, 247, 0.12)' :
-                                                       item.type === 'refImage' ? 'rgba(236, 72, 153, 0.12)' :
-                                                       'rgba(6, 182, 212, 0.12)',
-                                          color: item.type === 'prompt' ? 'rgba(168, 85, 247, 0.95)' :
-                                                 item.type === 'refImage' ? 'rgba(236, 72, 153, 0.95)' :
-                                                 'rgba(6, 182, 212, 0.95)',
-                                          border: item.type === 'prompt' ? '1px solid rgba(168, 85, 247, 0.28)' :
-                                                  item.type === 'refImage' ? '1px solid rgba(236, 72, 153, 0.28)' :
-                                                  '1px solid rgba(6, 182, 212, 0.28)',
-                                        }}
-                                      >
-                                        {item.type === 'prompt' && '提示词'}
-                                        {item.type === 'refImage' && '风格图'}
-                                        {item.type === 'watermark' && '水印'}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                {/* 内容预览区 - 与"我的"视图保持一致的高度 */}
-                                <div className="px-2 pb-1 flex-1 min-h-0">
-                                  {item.type === 'prompt' && (
-                                    <div
-                                      className="h-full overflow-auto border rounded-[6px]"
-                                      style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)', minHeight: '120px', maxHeight: '160px' }}
-                                    >
-                                      <style>{`
-                                        .marketplace-prompt-md { font-size: 11px; line-height: 1.5; color: var(--text-secondary); padding: 8px; }
-                                        .marketplace-prompt-md h1,.marketplace-prompt-md h2,.marketplace-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 8px 0 4px; }
-                                        .marketplace-prompt-md h1 { font-size: 13px; }
-                                        .marketplace-prompt-md h2 { font-size: 12px; }
-                                        .marketplace-prompt-md h3 { font-size: 11px; }
-                                        .marketplace-prompt-md p { margin: 4px 0; }
-                                        .marketplace-prompt-md ul,.marketplace-prompt-md ol { margin: 4px 0; padding-left: 16px; }
-                                        .marketplace-prompt-md li { margin: 2px 0; }
-                                        .marketplace-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-                                        .marketplace-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; padding: 8px; overflow: auto; margin: 4px 0; }
-                                        .marketplace-prompt-md pre code { background: transparent; border: 0; padding: 0; }
-                                      `}</style>
-                                      <div className="marketplace-prompt-md">
-                                        {item.data.content ? (
-                                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                            {item.data.content}
-                                          </ReactMarkdown>
-                                        ) : (
-                                          <div style={{ color: 'var(--text-muted)' }}>（内容为空）</div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
-                                  {item.type === 'refImage' && (
-                                    <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px' }}>
-                                      {/* 左侧：提示词预览 */}
-                                      <div
-                                        className="overflow-auto border rounded-[6px] p-2"
-                                        style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)', minHeight: '80px', maxHeight: '100px' }}
-                                      >
-                                        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                          {item.data.prompt || '（无提示词）'}
-                                        </div>
-                                      </div>
-                                      {/* 右侧：图片预览 */}
-                                      <div
-                                        className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
-                                        style={{
-                                          background: item.data.imageUrl
-                                            ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                                            : 'rgba(255,255,255,0.02)',
-                                          border: item.data.imageUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
-                                          minHeight: '80px',
-                                          maxHeight: '100px',
-                                        }}
-                                      >
-                                        {item.data.imageUrl ? (
-                                          <img src={item.data.imageUrl} alt={item.data.name} className="block w-full h-full object-contain" />
-                                        ) : (
-                                          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
-                                  {item.type === 'watermark' && (
-                                    <div
-                                      className="flex items-center justify-center overflow-hidden rounded-[6px] p-2"
-                                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)', minHeight: '80px', maxHeight: '100px' }}
-                                    >
-                                      {item.data.previewUrl ? (
-                                        <img src={item.data.previewUrl} alt={item.data.name} className="max-h-full object-contain" />
-                                      ) : (
-                                        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                          {item.data.text || '无预览'}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* 底栏：Fork次数 + 作者信息 + 下载按钮 */}
-                                <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                                  <div className="flex items-center gap-1 mb-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                                    <GitFork size={11} />
-                                    <span>{item.data.forkCount} 次下载</span>
-                                    <span className="opacity-60 mx-1">·</span>
-                                    {item.data.ownerUserAvatar ? (
-                                      <img src={item.data.ownerUserAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
-                                    ) : (
-                                      <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
-                                        <User size={10} />
-                                      </div>
-                                    )}
-                                    <span>{item.data.ownerUserName || '未知用户'}</span>
-                                    <span className="opacity-60">·</span>
-                                    <span>{new Date(item.data.createdAt).toLocaleDateString()}</span>
-                                  </div>
-                                  <div className="flex justify-end">
-                                    <Button
-                                      size="xs"
-                                      variant="secondary"
-                                      onClick={async () => {
-                                        if (item.type === 'prompt') {
-                                          const res = await forkLiteraryPrompt({ id: item.data.id });
-                                          if (res.success) {
-                                            toast.success('下载成功，已添加到「我的」');
-                                            void loadMarketplaceData();
-                                            void loadLiteraryPrompts();
-                                          } else {
-                                            toast.error('下载失败', res.error?.message || '未知错误');
-                                          }
-                                        } else if (item.type === 'refImage') {
-                                          const res = await forkReferenceImageConfig({ id: item.data.id });
-                                          if (res.success) {
-                                            toast.success('下载成功，已添加到「我的」');
-                                            void loadMarketplaceData();
-                                            void loadReferenceImageConfigs();
-                                          } else {
-                                            toast.error('下载失败', res.error?.message || '未知错误');
-                                          }
-                                        } else {
-                                          const res = await forkWatermark({ id: item.data.id });
-                                          if (res.success) {
-                                            toast.success('下载成功，已添加到「我的」');
-                                            void loadMarketplaceData();
-                                          } else {
-                                            toast.error('下载失败', res.error?.message || '未知错误');
-                                          }
-                                        }
-                                      }}
-                                    >
-                                      <Hand size={12} />
-                                      免费下载
-                                    </Button>
-                                  </div>
-                                </div>
-                              </div>
-                            </GlassCard>
+                          {filtered.map((item) => (
+                            <MarketplaceCard
+                              key={`${item.type}-${item.data.id}`}
+                              item={item}
+                              onFork={handleMarketplaceFork}
+                              forking={forkingId === item.data.id}
+                            />
                           ))}
                         </div>
                       );

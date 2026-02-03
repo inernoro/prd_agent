@@ -1,8 +1,8 @@
 # 海鲜市场（Configuration Marketplace）
 
-> 文档版本：2.0
-> 最后更新：2026-02-02
-> 状态：✅ 已实现
+> 文档版本：3.0
+> 最后更新：2026-02-03
+> 状态：✅ 已实现（支持扩展）
 
 ---
 
@@ -374,22 +374,162 @@ if (config.OwnerUserId != currentUserId)
 
 ---
 
-## 九、相关文件
+## 九、扩展性设计
+
+### 9.1 架构概述
+
+海鲜市场采用**类型注册表模式**，支持在不修改核心代码的情况下新增配置类型。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        前端展示层                                │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  MarketplaceCard (通用容器)                               │   │
+│  │  ├─ header: 标题 + 类型标签 + Fork次数                    │   │
+│  │  ├─ preview: 委托给类型专属渲染器                         │   │
+│  │  └─ footer: 作者信息 + 下载按钮                           │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                             ↓                                    │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  CONFIG_TYPE_REGISTRY (类型注册表)                        │   │
+│  │  ├─ prompt   → PromptPreviewRenderer                     │   │
+│  │  ├─ refImage → RefImagePreviewRenderer                   │   │
+│  │  └─ watermark→ WatermarkPreviewRenderer                  │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        后端数据层                                │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  IForkable 接口 + ForkService                             │   │
+│  │  ├─ GetCopyableFields(): 白名单字段拷贝                   │   │
+│  │  ├─ OnForked(): 类型特定后处理                            │   │
+│  │  └─ ClearForkSource(): 修改后清除来源                     │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 9.2 新增类型步骤
+
+#### 前端（3 步）
+
+```typescript
+// 1. 在 marketplaceTypes.tsx 中定义数据类型
+export interface MarketplaceWorkflow extends MarketplaceItemBase {
+  name: string;
+  nodes: WorkflowNode[];
+  connections: WorkflowConnection[];
+}
+
+// 2. 创建预览渲染器
+const WorkflowPreviewRenderer: React.FC<{ item: MarketplaceWorkflow }> = ({ item }) => (
+  <div className="workflow-preview">
+    <WorkflowMinimap nodes={item.nodes} />
+  </div>
+);
+
+// 3. 在 CONFIG_TYPE_REGISTRY 中注册
+workflow: {
+  key: 'workflow',
+  label: '工作流',
+  icon: GitBranch,
+  color: { bg: '...', text: '...', border: '...', iconColor: '...' },
+  api: {
+    listMarketplace: listWorkflowsMarketplace,
+    publish: publishWorkflow,
+    unpublish: unpublishWorkflow,
+    fork: forkWorkflow,
+  },
+  getDisplayName: (item) => item.name,
+  PreviewRenderer: WorkflowPreviewRenderer,
+}
+```
+
+#### 后端（3 步）
+
+```csharp
+// 1. Model 实现 IForkable 接口
+public class Workflow : IForkable
+{
+    public string Id { get; set; }
+    public string Name { get; set; }
+    public List<WorkflowNode> Nodes { get; set; }
+    // ... 其他字段
+
+    // 实现接口
+    public string GetDisplayName() => Name;
+    public string GetConfigType() => "workflow";
+    public string[] GetCopyableFields() => new[] { nameof(Name), nameof(Nodes), nameof(Connections) };
+    public void OnForked() { /* 特殊处理 */ }
+}
+
+// 2. Controller 中使用 ForkService
+[HttpPost("{id}/fork")]
+public async Task<IActionResult> Fork(string id)
+{
+    var source = await _db.Workflows.Find(...).FirstOrDefaultAsync();
+    var forked = _forkService.Fork(source, currentUserId, ownerName, ownerAvatar);
+    await _db.Workflows.InsertOneAsync(forked);
+    return Ok(forked);
+}
+
+// 3. 添加 Marketplace API 端点
+[HttpGet("marketplace")]
+public async Task<IActionResult> ListMarketplace(...) { ... }
+
+[HttpPost("{id}/publish")]
+public async Task<IActionResult> Publish(...) { ... }
+
+[HttpPost("{id}/unpublish")]
+public async Task<IActionResult> Unpublish(...) { ... }
+```
+
+### 9.3 白名单字段拷贝机制
+
+Fork 时只拷贝 `GetCopyableFields()` 返回的字段，其他字段自动重置：
+
+| 字段类型 | 处理方式 |
+|---------|---------|
+| 业务字段（白名单内） | 拷贝 |
+| Id | 新生成 |
+| OwnerUserId | 设为当前用户 |
+| IsPublic | 重置为 false |
+| ForkCount | 重置为 0 |
+| ForkedFrom* | 设置来源信息 |
+| CreatedAt/UpdatedAt | 重置为当前时间 |
+
+### 9.4 关键文件
+
+| 文件 | 用途 |
+|------|------|
+| `prd-admin/src/lib/marketplaceTypes.tsx` | 前端类型注册表 |
+| `prd-admin/src/components/marketplace/MarketplaceCard.tsx` | 通用卡片组件 |
+| `prd-api/src/PrdAgent.Core/Interfaces/IMarketplaceItem.cs` | 后端接口定义 |
+| `prd-api/src/PrdAgent.Infrastructure/Services/ForkService.cs` | 通用 Fork 服务 |
+
+---
+
+## 十、相关文件
 
 | 文件 | 用途 |
 |------|------|
 | `prd-admin/src/pages/literary-agent/ArticleIllustrationEditorPage.tsx` | 前端主页面 |
 | `prd-admin/src/components/watermark/WatermarkSettingsPanel.tsx` | 水印面板组件 |
+| `prd-admin/src/lib/marketplaceTypes.tsx` | 类型注册表 |
+| `prd-admin/src/components/marketplace/MarketplaceCard.tsx` | 通用卡片组件 |
 | `prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryPromptsController.cs` | 提示词 API |
 | `prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryAgentConfigController.cs` | 风格图 API |
 | `prd-api/src/PrdAgent.Api/Controllers/WatermarkController.cs` | 水印 API |
-| `e2e-tests/marketplace-test.sh` | E2E 测试脚本 |
+| `prd-api/src/PrdAgent.Core/Interfaces/IMarketplaceItem.cs` | 后端接口定义 |
+| `prd-api/src/PrdAgent.Infrastructure/Services/ForkService.cs` | 通用 Fork 服务 |
 
 ---
 
-## 十、变更历史
+## 十一、变更历史
 
 | 日期 | 版本 | 变更内容 | 作者 |
 |------|------|---------|------|
+| 2026-02-03 | 3.0 | 实现类型注册表扩展性设计；新增前端 MarketplaceCard 组件和 marketplaceTypes.tsx；新增后端 IForkable 接口和 ForkService | Claude |
 | 2026-02-02 | 2.0 | 整合用户故事、数据隔离规则、测试清单；更新功能状态为已实现 | Claude |
 | 2026-02-01 | 1.0 | 初始版本 | Claude |
