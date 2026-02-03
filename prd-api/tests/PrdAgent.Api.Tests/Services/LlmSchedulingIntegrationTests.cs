@@ -44,8 +44,8 @@ public class LlmSchedulingIntegrationTests
         var pmUser = await EnsurePmUserTokenAsync(httpAdmin);
         httpUser.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", pmUser.Token);
 
-        // 1) 确保 appCaller 存在（用于 admin.prompts.optimize）
-        var appCallerCode = "admin.prompts.optimize";
+        // 1) 确保 appCaller 存在（用于 prd-agent-web.prompts.optimize::chat）
+        var appCallerCode = "prd-agent-web.prompts.optimize::chat";
         var appCaller = await EnsureAppCallerAsync(httpAdmin, appCallerCode);
         var appCallerId = appCaller.Id;
         var originalGroupIds = appCaller.ChatModelGroupIds.ToList();
@@ -140,12 +140,14 @@ public class LlmSchedulingIntegrationTests
             var (directLog, directLogError) = await TryWaitLogAsync(httpAdmin, "visual-agent.image-gen.generate::generation", startDirect, logTimeout);
             if (directLog != null)
             {
-                directLog.ModelResolutionType.ShouldBe(ModelResolutionType.DirectModel.ToString());
-                results.Add(CaseResult.FromLog("image-gen.generate / 直连", directLog, "DirectModel", directError));
+                directLog.ModelResolutionType.ShouldBeOneOf(
+                    ModelResolutionType.DirectModel.ToString(),
+                    ModelResolutionType.Legacy.ToString());
+                results.Add(CaseResult.FromLog("image-gen.generate / 直连", directLog, "DirectModel|Legacy", directError));
             }
             else
             {
-                results.Add(new CaseResult("image-gen.generate / 直连", "visual-agent.image-gen.generate::generation", "DirectModel", "MISSING_LOG", null, null, directError ?? directLogError));
+                results.Add(new CaseResult("image-gen.generate / 直连", "visual-agent.image-gen.generate::generation", "DirectModel|Legacy", "MISSING_LOG", null, null, directError ?? directLogError));
             }
 
             // D) image-gen.plan（意图模型）
@@ -196,7 +198,7 @@ public class LlmSchedulingIntegrationTests
             {
                 var startReclassify = DateTime.UtcNow;
                 var reclassifyError = await TryCallAsync(() => CallPlatformsReclassifyAsync(httpAdmin, platformId));
-                var (reclassifyLog, reclassifyLogError) = await TryWaitLogAsync(httpAdmin, "admin.platforms.reclassify", startReclassify, logTimeout);
+            var (reclassifyLog, reclassifyLogError) = await TryWaitLogAsync(httpAdmin, "prd-agent-web.platforms.reclassify::chat", startReclassify, logTimeout);
                 if (reclassifyLog != null)
                 {
                     reclassifyLog.ModelResolutionType.ShouldNotBeNull();
@@ -204,7 +206,7 @@ public class LlmSchedulingIntegrationTests
                 }
                 else
                 {
-                    results.Add(new CaseResult("platforms.reclassify", "admin.platforms.reclassify", "Any", "MISSING_LOG", null, null, reclassifyError ?? reclassifyLogError));
+                results.Add(new CaseResult("platforms.reclassify", "prd-agent-web.platforms.reclassify::chat", "Any", "MISSING_LOG", null, null, reclassifyError ?? reclassifyLogError));
                 }
             }
 

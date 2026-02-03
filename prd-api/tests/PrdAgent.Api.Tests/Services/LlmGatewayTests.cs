@@ -25,7 +25,7 @@ public class LlmGatewayTests
         var gateway = CreateTestGateway();
 
         // Act
-        var client = gateway.CreateClient("test-app::chat", "chat");
+        var client = gateway.CreateClient(AppCallerRegistry.Admin.Lab.Chat, "chat");
 
         // Assert
         Assert.NotNull(client);
@@ -40,7 +40,7 @@ public class LlmGatewayTests
 
         // Act
         var client = gateway.CreateClient(
-            "test-app::chat",
+            AppCallerRegistry.Admin.Lab.Chat,
             "chat",
             maxTokens: 8192,
             temperature: 0.7);
@@ -48,7 +48,7 @@ public class LlmGatewayTests
         // Assert
         Assert.NotNull(client);
         var gatewayClient = Assert.IsType<GatewayLLMClient>(client);
-        Assert.Equal("test-app::chat", gatewayClient.AppCallerCode);
+        Assert.Equal(AppCallerRegistry.Admin.Lab.Chat, gatewayClient.AppCallerCode);
         Assert.Equal("chat", gatewayClient.ModelType);
         Assert.Equal(8192, gatewayClient.MaxTokens);
         Assert.Equal(0.7, gatewayClient.Temperature, precision: 2);
@@ -61,7 +61,7 @@ public class LlmGatewayTests
         var gateway = CreateTestGateway();
 
         // Act
-        var client = gateway.CreateClient("test-app::chat", "chat");
+        var client = gateway.CreateClient(AppCallerRegistry.Admin.Lab.Chat, "chat");
 
         // Assert
         var gatewayClient = Assert.IsType<GatewayLLMClient>(client);
@@ -104,9 +104,9 @@ public class LlmGatewayTests
     #region AppCallerCode Format Tests
 
     [Theory]
-    [InlineData("prd-agent.chat::chat", true)]
-    [InlineData("visual-agent.image::generation", true)]
-    [InlineData("admin.prompts.optimize", true)]
+    [InlineData("prd-agent-desktop.chat.sendmessage::chat", true)]
+    [InlineData("visual-agent.image.text2img::generation", true)]
+    [InlineData("prd-agent-web.prompts.optimize::chat", true)]
     [InlineData("open-platform-agent.proxy::chat", true)]
     [InlineData("", false)]
     public void CreateClient_ShouldAcceptVariousAppCallerCodeFormats(string appCallerCode, bool shouldSucceed)
@@ -122,24 +122,22 @@ public class LlmGatewayTests
         }
         else
         {
-            // 空的 appCallerCode 仍然会创建 client，但后续调用会失败
-            var client = gateway.CreateClient(appCallerCode, "chat");
-            Assert.NotNull(client);
+            Assert.Throws<InvalidOperationException>(() => gateway.CreateClient(appCallerCode, "chat"));
         }
     }
 
     [Theory]
-    [InlineData("chat")]
-    [InlineData("vision")]
-    [InlineData("generation")]
-    [InlineData("intent")]
-    public void CreateClient_ShouldAcceptAllModelTypes(string modelType)
+    [InlineData("chat", "prd-agent-web.lab::chat")]
+    [InlineData("vision", "prd-agent-web.lab::vision")]
+    [InlineData("generation", "prd-agent-web.lab::generation")]
+    [InlineData("intent", "visual-agent.image-gen.plan::intent")]
+    public void CreateClient_ShouldAcceptAllModelTypes(string modelType, string appCallerCode)
     {
         // Arrange
         var gateway = CreateTestGateway();
 
         // Act
-        var client = gateway.CreateClient("test-app", modelType);
+        var client = gateway.CreateClient(appCallerCode, modelType);
 
         // Assert
         Assert.NotNull(client);
@@ -156,7 +154,7 @@ public class LlmGatewayTests
     {
         // Arrange
         var gateway = CreateTestGateway();
-        var expectedCode = "prd-agent.chat.sendmessage::chat";
+        var expectedCode = AppCallerRegistry.Desktop.Chat.SendMessageChat;
 
         // Act
         var client = gateway.CreateClient(expectedCode, "chat");
@@ -173,7 +171,7 @@ public class LlmGatewayTests
         var gateway = CreateTestGateway();
 
         // Act
-        var client = gateway.CreateClient("test::vision", "vision");
+        var client = gateway.CreateClient(AppCallerRegistry.VisualAgent.Image.Vision, "vision");
         var gatewayClient = (GatewayLLMClient)client;
 
         // Assert

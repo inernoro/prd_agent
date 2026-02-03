@@ -16,6 +16,9 @@ public class CreateWatermarkRequest
     public double? OffsetY { get; set; }
     public bool? IconEnabled { get; set; }
     public string? IconImageRef { get; set; }
+    public string? IconPosition { get; set; }
+    public double? IconGapPx { get; set; }
+    public double? IconScale { get; set; }
     public bool? BorderEnabled { get; set; }
     public string? BorderColor { get; set; }
     public double? BorderWidth { get; set; }
@@ -23,6 +26,7 @@ public class CreateWatermarkRequest
     public bool? RoundedBackgroundEnabled { get; set; }
     public double? CornerRadius { get; set; }
     public int? BaseCanvasWidth { get; set; }
+    public int? AdaptiveScaleMode { get; set; }
     public string? TextColor { get; set; }
     public string? BackgroundColor { get; set; }
     public string? PreviewBackgroundImageRef { get; set; }
@@ -44,6 +48,9 @@ public class UpdateWatermarkRequest
     public double? OffsetY { get; set; }
     public bool? IconEnabled { get; set; }
     public string? IconImageRef { get; set; }
+    public string? IconPosition { get; set; }
+    public double? IconGapPx { get; set; }
+    public double? IconScale { get; set; }
     public bool? BorderEnabled { get; set; }
     public string? BorderColor { get; set; }
     public double? BorderWidth { get; set; }
@@ -51,6 +58,7 @@ public class UpdateWatermarkRequest
     public bool? RoundedBackgroundEnabled { get; set; }
     public double? CornerRadius { get; set; }
     public int? BaseCanvasWidth { get; set; }
+    public int? AdaptiveScaleMode { get; set; }
     public string? TextColor { get; set; }
     public string? BackgroundColor { get; set; }
     public string? PreviewBackgroundImageRef { get; set; }

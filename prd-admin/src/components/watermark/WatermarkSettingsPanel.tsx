@@ -13,6 +13,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
+import { Tooltip } from '@/components/ui/Tooltip';
 import {
   deleteWatermarkFont,
   getWatermarks,
@@ -73,6 +74,9 @@ const buildDefaultConfig = (fontKey: string): WatermarkConfig => ({
   offsetY: 24,
   iconEnabled: false,
   iconImageRef: null,
+  iconPosition: 'left',
+  iconGapPx: Math.round(28 / 4),
+  iconScale: 1,
   borderEnabled: false,
   borderColor: '#FFFFFF',
   borderWidth: 2,
@@ -80,6 +84,7 @@ const buildDefaultConfig = (fontKey: string): WatermarkConfig => ({
   roundedBackgroundEnabled: false,
   cornerRadius: 0,
   baseCanvasWidth: DEFAULT_CANVAS_SIZE,
+  adaptiveScaleMode: 0,
   textColor: '#FFFFFF',
   backgroundColor: '#000000',
   previewBackgroundImageRef: null,
@@ -99,12 +104,16 @@ const normalizeConfig = (config: WatermarkConfig, fallbackName: string): Waterma
     borderEnabled: Boolean(config.borderEnabled),
     borderColor: config.borderColor ?? '#FFFFFF',
     borderWidth: Number.isFinite(config.borderWidth) ? config.borderWidth : 2,
+    iconPosition: (config.iconPosition ?? 'left') as 'left' | 'right' | 'top' | 'bottom',
+    iconGapPx: Number.isFinite(config.iconGapPx) ? (config.iconGapPx as number) : Math.round((config.fontSizePx ?? 28) / 4),
+    iconScale: Number.isFinite(config.iconScale) ? (config.iconScale as number) : 1,
     backgroundEnabled: Boolean(config.backgroundEnabled),
     roundedBackgroundEnabled: Boolean(config.roundedBackgroundEnabled),
     cornerRadius: Number.isFinite(config.cornerRadius) ? config.cornerRadius : 0,
     textColor: resolvedTextColor,
     backgroundColor: config.backgroundColor ?? '#000000',
     previewBackgroundImageRef: config.previewBackgroundImageRef ?? null,
+    adaptiveScaleMode: Number.isFinite(config.adaptiveScaleMode) ? (config.adaptiveScaleMode as 0 | 1 | 2 | 3 | 4) : 0,
   };
 };
 
@@ -211,6 +220,8 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
   const [previewErrorById, setPreviewErrorById] = useState<Record<string, boolean>>({});
   const [enlargedPreviewUrl, setEnlargedPreviewUrl] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [titleEditing, setTitleEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
   const testInputRef = useRef<HTMLInputElement | null>(null);
   const testTargetIdRef = useRef<string | null>(null);
 
@@ -270,6 +281,12 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
   }, [onStatusChange, activeConfig]);
 
   useEffect(() => {
+    if (!draftConfig) return;
+    setTitleDraft(draftConfig.name || '');
+    setTitleEditing(false);
+  }, [draftConfig]);
+
+  useEffect(() => {
     if (fonts.length === 0) return;
     const fallback = fonts.find((font) => font.fontKey === 'default')?.fontKey || fonts[0].fontKey;
     setConfigs((prev) =>
@@ -294,6 +311,9 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             offsetY: config.offsetY,
             iconEnabled: config.iconEnabled,
             iconImageRef: config.iconImageRef,
+            iconPosition: config.iconPosition ?? 'left',
+            iconGapPx: config.iconGapPx ?? Math.round((config.fontSizePx ?? 28) / 4),
+            iconScale: config.iconScale ?? 1,
             borderEnabled: config.borderEnabled,
             borderColor: config.borderColor,
             borderWidth: config.borderWidth,
@@ -301,6 +321,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             roundedBackgroundEnabled: config.roundedBackgroundEnabled,
             cornerRadius: config.cornerRadius,
             baseCanvasWidth: config.baseCanvasWidth,
+            adaptiveScaleMode: config.adaptiveScaleMode ?? 0,
             textColor: config.textColor,
             backgroundColor: config.backgroundColor,
             previewBackgroundImageRef: config.previewBackgroundImageRef,
@@ -323,6 +344,9 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             offsetY: config.offsetY,
             iconEnabled: config.iconEnabled,
             iconImageRef: config.iconImageRef,
+            iconPosition: config.iconPosition ?? 'left',
+            iconGapPx: config.iconGapPx ?? Math.round((config.fontSizePx ?? 28) / 4),
+            iconScale: config.iconScale ?? 1,
             borderEnabled: config.borderEnabled,
             borderColor: config.borderColor,
             borderWidth: config.borderWidth,
@@ -330,6 +354,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             roundedBackgroundEnabled: config.roundedBackgroundEnabled,
             cornerRadius: config.cornerRadius,
             baseCanvasWidth: config.baseCanvasWidth,
+            adaptiveScaleMode: config.adaptiveScaleMode ?? 0,
             textColor: config.textColor,
             backgroundColor: config.backgroundColor,
             previewBackgroundImageRef: config.previewBackgroundImageRef,
@@ -426,7 +451,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
     }
   };
 
-  const handleAddConfig = () => {
+  const handleAddConfig = useCallback(() => {
     const fallbackFont = fonts[0]?.fontKey || activeConfig?.fontKey || 'default';
     const base = buildDefaultConfig(fallbackFont);
     const newConfig = normalizeConfig(
@@ -440,7 +465,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
     setDraftConfig({ ...newConfig });
     setIsNewConfig(true);
     setEditorOpen(true);
-  };
+  }, [fonts, activeConfig, configs.length]);
 
   const handleEditorCancel = () => {
     setDraftConfig(null);
@@ -658,7 +683,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
         onChange={handleTestFileChange}
       />
       {!hideAddButton ? (
-        <div className="flex items-center justify-end flex-shrink-0">
+        <div className="flex items-center justify-end shrink-0">
           <Button variant="secondary" size="xs" onClick={handleAddConfig} disabled={saving}>
             <Plus size={14} />
             新增配置
@@ -690,7 +715,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                   } : undefined}
                 >
                   <div className="flex flex-col">
-                    <div className="p-2 pb-1 flex-shrink-0">
+                    <div className="p-2 pb-1 shrink-0">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1 flex items-center gap-1.5">
                           <Droplet size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
@@ -919,7 +944,44 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             setEditorOpen(true);
           }
         }}
-        title="水印编辑器"
+        title={draftConfig ? (
+          <div className="flex items-center gap-2">
+            {titleEditing ? (
+              <input
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const nextName = titleDraft.trim();
+                    if (nextName) setDraftConfig((prev) => (prev ? { ...prev, name: nextName } : prev));
+                    setTitleEditing(false);
+                  }
+                }}
+                onBlur={() => {
+                  const nextName = titleDraft.trim();
+                  if (nextName) setDraftConfig((prev) => (prev ? { ...prev, name: nextName } : prev));
+                  setTitleEditing(false);
+                }}
+                className="h-8 w-48 rounded-[8px] px-3 text-sm outline-none prd-field"
+                placeholder="请输入配置名称"
+                autoFocus
+              />
+            ) : (
+              <>
+                <span>{draftConfig?.name?.trim() || '水印配置'}</span>
+                <button
+                  type="button"
+                  className="h-7 w-7 inline-flex items-center justify-center rounded-[8px] hover:bg-white/5"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onClick={() => setTitleEditing(true)}
+                  title="编辑名称"
+                >
+                  <Pencil size={14} />
+                </button>
+              </>
+            )}
+          </div>
+        ) : '水印配置'}
         maxWidth={920}
         contentClassName="overflow-hidden !p-4"
         contentStyle={{ maxHeight: '70vh', height: '70vh' }}
@@ -948,7 +1010,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
       {/* 放大预览模态框 */}
       {enlargedPreviewUrl && (
         <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center"
+          className="fixed inset-0 z-9999 flex items-center justify-center"
           style={{ background: 'rgba(0,0,0,0.85)' }}
           onClick={() => setEnlargedPreviewUrl(null)}
         >
@@ -1004,6 +1066,19 @@ function WatermarkEditor(props: {
   const mainPreviewRef = useRef<HTMLDivElement | null>(null);
   const [mainPreviewSize, setMainPreviewSize] = useState(config.baseCanvasWidth || DEFAULT_CANVAS_SIZE);
   const [fontLoading, setFontLoading] = useState(false);
+  const adaptiveScaleMode = (Number.isFinite(config.adaptiveScaleMode) ? config.adaptiveScaleMode : 0) as 0 | 1 | 2 | 3 | 4;
+  const adaptiveEnabled = adaptiveScaleMode !== 0;
+  const adaptiveScaleOptions: Array<{ value: 1 | 2 | 3 | 4; label: string }> = [
+    { value: 1, label: '长边' },
+    { value: 2, label: '短边' },
+    { value: 3, label: '宽' },
+    { value: 4, label: '高' },
+  ];
+  const iconPosition = config.iconPosition ?? 'left';
+  const iconGapValue = Number.isFinite(config.iconGapPx)
+    ? (config.iconGapPx as number)
+    : Math.round((config.fontSizePx ?? 28) / 4);
+  const iconScaleValue = Number.isFinite(config.iconScale) ? (config.iconScale as number) : 1;
 
   const fontMap = useMemo(() => new Map(fonts.map((f) => [f.fontKey, f])), [fonts]);
   const baseCanvasSize = config.baseCanvasWidth || DEFAULT_CANVAS_SIZE;
@@ -1066,13 +1141,23 @@ function WatermarkEditor(props: {
   }, [currentFont?.fontFamily, config.fontSizePx]);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden -mt-3">
-      <div className="grid gap-3 flex-1 overflow-hidden items-stretch" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
+    <div className="flex flex-col h-full overflow-hidden -mt-1">
+      <div className="grid gap-2 flex-1 overflow-hidden items-stretch" style={{ gridTemplateColumns: 'minmax(0, 1fr) 336px' }}>
         {/* 左侧: 主预览画布 */}
         <div
           ref={mainPreviewRef}
           className="relative flex items-center justify-center overflow-visible self-center"
         >
+          <div
+            className="absolute left-0 -top-7 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]"
+            style={{
+              color: 'var(--text-muted)',
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.12)',
+            }}
+          >
+            {anchorLabelMap[config.anchor]} · {modeLabelMap[config.positionMode]}
+          </div>
           <div
             className="rounded-[8px] flex items-center justify-center overflow-visible p-3 w-fit h-fit"
             style={{
@@ -1089,6 +1174,7 @@ function WatermarkEditor(props: {
               draggable
               showCrosshair
               showDistances
+              showEdgeInputs
               distancePlacement="outside"
               onPositionChange={(next) => updateConfig(next)}
             />
@@ -1097,32 +1183,24 @@ function WatermarkEditor(props: {
 
         {/* 右侧: 配置表单 */}
         <div
-          className="flex flex-col gap-3 overflow-hidden rounded-[10px] p-2 h-full"
+          className="flex flex-col gap-2 overflow-hidden rounded-[10px] p-2 h-full"
           style={{
             background: 'var(--bg-card)',
             border: '1px solid var(--border-subtle)',
             boxShadow: 'inset 1px 0 0 var(--border-subtle)',
           }}
         >
-          <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 pt-2">
             <div className="grid gap-2" style={{ gridTemplateColumns: '74px minmax(0, 1fr)' }}>
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>配置名称</div>
-              <input
-                value={config.name}
-                onChange={(e) => updateConfig({ name: e.target.value })}
-                className="w-full h-9 rounded-[8px] px-3 text-sm outline-none prd-field"
-                placeholder="例如：默认水印"
-              />
-
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>水印文本</div>
+              <TitleWithTip label="文本" tip="显示在图片上的水印文字。" />
               <input
                 value={config.text}
                 onChange={(e) => updateConfig({ text: e.target.value })}
-                className="w-full h-9 rounded-[8px] px-3 text-sm outline-none prd-field"
+                className="w-full h-8 rounded-[8px] px-3 text-sm outline-none prd-field"
                 placeholder="请输入水印文案"
               />
 
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>字体</div>
+              <TitleWithTip label="字体" tip="水印文字使用的字体。" />
               <div className="flex items-center gap-2">
                 <FontSelect
                   value={config.fontKey}
@@ -1145,7 +1223,7 @@ function WatermarkEditor(props: {
                 />
                 <Button
                   size="sm"
-                  className="shrink-0 !h-9 !w-9 !px-0"
+                  className="shrink-0 h-8! w-8! px-0!"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={fontUploading}
                 >
@@ -1153,9 +1231,8 @@ function WatermarkEditor(props: {
                 </Button>
               </div>
 
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>字号</div>
-              <div className="flex flex-col gap-1">
-                <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(config.fontSizePx)}px</div>
+              <TitleWithTip label="字号" tip="水印文字大小。" />
+              <div className="flex items-center gap-2">
                 <input
                   type="range"
                   min={5}
@@ -1163,13 +1240,15 @@ function WatermarkEditor(props: {
                   step={1}
                   value={config.fontSizePx}
                   onChange={(e) => updateConfig({ fontSizePx: Number(e.target.value) })}
-                  className="w-full"
+                  className="flex-1 min-w-0"
                 />
+                <div className="text-[11px] w-10 text-right" style={{ color: 'var(--text-muted)' }}>
+                  {Math.round(config.fontSizePx)}px
+                </div>
               </div>
 
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>透明度</div>
-              <div className="flex flex-col gap-1">
-                <div className="text-[11px] text-right" style={{ color: 'var(--text-muted)' }}>{Math.round(config.opacity * 100)}%</div>
+              <TitleWithTip label="透明" tip="水印整体透明度。" />
+              <div className="flex items-center gap-2">
                 <input
                   type="range"
                   min={0}
@@ -1177,11 +1256,14 @@ function WatermarkEditor(props: {
                   step={0.05}
                   value={config.opacity}
                   onChange={(e) => updateConfig({ opacity: Number(e.target.value) })}
-                  className="w-full"
+                  className="flex-1 min-w-0"
                 />
+                <div className="text-[11px] w-10 text-right" style={{ color: 'var(--text-muted)' }}>
+                  {Math.round(config.opacity * 100)}%
+                </div>
               </div>
 
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>定位方式</div>
+              <TitleWithTip label="定位" tip="按像素或按比例定位水印。" />
               <div>
                 <PositionModeSwitch
                   value={config.positionMode}
@@ -1204,14 +1286,14 @@ function WatermarkEditor(props: {
                 />
               </div>
 
-              <div className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>装饰</div>
+              <TitleWithTip label="装饰" tip="图标、填充、边框、文字颜色等装饰项。" />
               <div className="flex flex-col gap-3 pt-2">
                 {/* 图标 */}
                 <div className="flex items-center gap-3">
-                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>图标</span>
+                  <InlineLabelWithTip label="图标" tip="上传/启用水印图标。" />
                   <div className="relative">
                     <label
-                      className="h-9 w-9 rounded-lg inline-flex items-center justify-center cursor-pointer overflow-hidden"
+                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer overflow-hidden"
                       style={{
                         background: config.iconEnabled && config.iconImageRef ? 'transparent' : 'transparent',
                         border: config.iconEnabled && config.iconImageRef ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
@@ -1224,7 +1306,7 @@ function WatermarkEditor(props: {
                       {config.iconEnabled && config.iconImageRef ? (
                         <img src={config.iconImageRef} alt="水印图标" className="h-full w-full object-cover" />
                       ) : (
-                        <UploadCloud size={16} />
+                        <UploadCloud size={14} />
                       )}
                       <input
                         type="file"
@@ -1247,155 +1329,257 @@ function WatermarkEditor(props: {
                   </div>
                 </div>
 
-                {/* 填充 + 背景色 */}
-                <div className="flex items-center gap-3">
-                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>填充</span>
-                  <button
-                    type="button"
-                    className="h-9 w-9 rounded-lg inline-flex items-center justify-center"
-                    style={{
-                      background: config.backgroundEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
-                      border: config.backgroundEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
-                      color: config.backgroundEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
-                    }}
-                    title="填充背景"
-                    onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
-                  >
-                    <div className="w-4.5 h-4.5 rounded-sm" style={{ background: config.backgroundEnabled ? 'currentColor' : 'transparent', border: '2px solid currentColor' }} />
-                  </button>
-                  {config.backgroundEnabled && (
-                    <label
-                      className="relative h-9 w-9 rounded-lg inline-flex items-center justify-center cursor-pointer"
-                      style={{
-                        background: config.backgroundColor || '#000000',
-                        border: '2px solid rgba(255,255,255,0.3)',
-                        color: 'rgba(255,255,255,0.9)',
-                      }}
-                      title="背景颜色"
-                    >
-                      <Droplet size={14} />
+                {config.iconEnabled ? (
+                  <div className="flex items-center gap-3">
+                    <InlineLabelWithTip label="位置" tip="图标相对文字的位置。" />
+                    <div className="grid grid-cols-4 gap-2 flex-1">
+                      {([
+                        { value: 'left', label: '左' },
+                        { value: 'right', label: '右' },
+                        { value: 'top', label: '上' },
+                        { value: 'bottom', label: '下' },
+                      ] as const).map((option) => {
+                        const active = iconPosition === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className="h-7 rounded-[7px] text-[11px] font-semibold transition-all"
+                            style={{
+                              background: active ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.06)',
+                              border: active ? '1px solid rgba(59,130,246,0.5)' : '1px solid rgba(255,255,255,0.12)',
+                              color: active ? 'rgba(59,130,246,0.95)' : 'var(--text-muted)',
+                            }}
+                            onClick={() => updateConfig({ iconPosition: option.value })}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
+                {config.iconEnabled ? (
+                  <div className="flex items-center gap-3">
+                    <InlineLabelWithTip label="间距" tip="图标与文字的距离。" />
+                    <div className="flex items-center gap-2 flex-1">
                       <input
-                        type="color"
-                        value={(config.backgroundColor || '#000000') as string}
-                        className="absolute inset-0 opacity-0 cursor-pointer"
-                        onChange={(e) => updateConfig({ backgroundColor: e.target.value })}
+                        type="number"
+                        min={0}
+                        step={1}
+                        className="w-12 h-8 rounded-[8px] px-2 text-sm outline-none prd-field"
+                        value={iconGapValue}
+                        onChange={(e) => updateConfig({ iconGapPx: Number(e.target.value) })}
                       />
-                    </label>
-                  )}
+                      <InlineLabelWithTip label="缩放" tip="图标缩放倍数。" />
+                      <input
+                        type="number"
+                        min={0.2}
+                        max={3}
+                        step={0.1}
+                        className="w-16 h-8 rounded-[8px] px-2 text-sm outline-none prd-field"
+                        value={iconScaleValue}
+                        onChange={(e) => updateConfig({ iconScale: Number(e.target.value) })}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+                  {/* 填充 + 背景色 */}
+                  <div className="flex items-center gap-3">
+                    <InlineLabelWithTip label="填充" tip="文字背景填充开关与颜色。" />
+                    <button
+                      type="button"
+                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
+                      style={{
+                        background: config.backgroundEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
+                        border: config.backgroundEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
+                        color: config.backgroundEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
+                      }}
+                      title="填充背景"
+                      onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
+                    >
+                      <div className="w-4 h-4 rounded-sm" style={{ background: config.backgroundEnabled ? 'currentColor' : 'transparent', border: '2px solid currentColor' }} />
+                    </button>
+                    {config.backgroundEnabled && (
+                      <label
+                        className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
+                        style={{
+                          background: config.backgroundColor || '#000000',
+                          border: '2px solid rgba(255,255,255,0.3)',
+                          color: 'rgba(255,255,255,0.9)',
+                        }}
+                        title="背景颜色"
+                      >
+                        <Droplet size={12} />
+                        <input
+                          type="color"
+                          value={(config.backgroundColor || '#000000') as string}
+                          className="absolute inset-0 opacity-0 cursor-pointer"
+                          onChange={(e) => updateConfig({ backgroundColor: e.target.value })}
+                        />
+                      </label>
+                    )}
+                  </div>
                 </div>
 
-                {/* 边框 + 边框色 */}
-                <div className="flex items-center gap-3">
-                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>边框</span>
-                  <button
-                    type="button"
-                    className="h-9 w-9 rounded-lg inline-flex items-center justify-center"
-                    style={{
-                      background: config.borderEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
-                      border: config.borderEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
-                      color: config.borderEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
-                    }}
-                    title="显示边框"
-                    onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
-                  >
-                    <Square size={16} />
-                  </button>
-                  {config.borderEnabled && (
-                    <label
-                      className="relative h-9 w-9 rounded-lg inline-flex items-center justify-center cursor-pointer"
+                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+                  {/* 边框 + 边框色 */}
+                  <div className="flex items-center gap-3">
+                    <InlineLabelWithTip label="边框" tip="文字边框开关与颜色。" />
+                    <button
+                      type="button"
+                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
                       style={{
-                        background: config.borderColor || '#ffffff',
+                        background: config.borderEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
+                        border: config.borderEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
+                        color: config.borderEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
+                      }}
+                      title="显示边框"
+                      onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
+                    >
+                      <Square size={14} />
+                    </button>
+                    {config.borderEnabled && (
+                      <label
+                        className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
+                        style={{
+                          background: config.borderColor || '#ffffff',
+                          border: '2px solid rgba(255,255,255,0.3)',
+                          color: 'rgba(0,0,0,0.7)',
+                        }}
+                        title="边框颜色"
+                      >
+                        <Droplet size={12} />
+                        <input
+                          type="color"
+                          value={(config.borderColor || '#ffffff') as string}
+                          className="absolute inset-0 opacity-0 cursor-pointer"
+                          onChange={(e) => updateConfig({ borderColor: e.target.value })}
+                        />
+                      </label>
+                    )}
+                  </div>
+
+                  {/* 边框宽度（启用边框时显示） */}
+                  {config.borderEnabled && (
+                    <div className="flex items-center gap-3">
+                      <InlineLabelWithTip label="粗细" tip="边框粗细。" />
+                      <input
+                        type="range"
+                        min="1"
+                        max="10"
+                        step="1"
+                        value={config.borderWidth ?? 2}
+                        onChange={(e) => updateConfig({ borderWidth: Number(e.target.value) })}
+                        className="flex-1 h-1.5 appearance-none rounded-full cursor-pointer"
+                        style={{
+                          background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) 100%)`,
+                        }}
+                      />
+                      <span className="text-[11px] w-6 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
+                        {config.borderWidth ?? 2}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* 圆角 */}
+                  {(config.backgroundEnabled || config.borderEnabled) ? (
+                    <div className="flex items-center gap-3 min-w-0 overflow-hidden">
+                    <InlineLabelWithTip label="圆角" tip="背景/边框圆角半径。" />
+                      <input
+                        type="range"
+                        min="0"
+                        max="50"
+                        step="1"
+                        value={config.cornerRadius ?? 0}
+                        onChange={(e) => updateConfig({ cornerRadius: Number(e.target.value) })}
+                        className="flex-1 min-w-0 h-1.5 appearance-none rounded-full cursor-pointer"
+                        style={{
+                          background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) 100%)`,
+                        }}
+                      />
+                      <span className="text-[11px] w-10 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
+                        {Math.round(((config.cornerRadius ?? 0) / 50) * 100)}%
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+                  {/* 文字 + 文字色 */}
+                  <div className="flex items-center gap-3">
+                    <InlineLabelWithTip label="文字" tip="文字颜色与样式。" />
+                    <div
+                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
+                      style={{
+                        background: 'rgba(255,255,255,0.1)',
+                        border: '1.5px solid rgba(255,255,255,0.2)',
+                        color: 'rgba(255,255,255,0.8)',
+                        fontSize: '12px',
+                        fontWeight: 500,
+                      }}
+                    >
+                      字
+                    </div>
+                    <label
+                      className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
+                      style={{
+                        background: config.textColor || '#ffffff',
                         border: '2px solid rgba(255,255,255,0.3)',
                         color: 'rgba(0,0,0,0.7)',
                       }}
-                      title="边框颜色"
+                      title="文字颜色"
                     >
-                      <Droplet size={14} />
+                      <Droplet size={12} />
                       <input
                         type="color"
-                        value={(config.borderColor || '#ffffff') as string}
+                        value={(config.textColor || '#ffffff') as string}
                         className="absolute inset-0 opacity-0 cursor-pointer"
-                        onChange={(e) => updateConfig({ borderColor: e.target.value })}
+                        onChange={(e) => updateConfig({ textColor: e.target.value })}
                       />
                     </label>
-                  )}
-                </div>
-
-                {/* 边框宽度（启用边框时显示） */}
-                {config.borderEnabled && (
-                  <div className="flex items-center gap-3">
-                    <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>粗细</span>
-                    <input
-                      type="range"
-                      min="1"
-                      max="10"
-                      step="1"
-                      value={config.borderWidth ?? 2}
-                      onChange={(e) => updateConfig({ borderWidth: Number(e.target.value) })}
-                      className="flex-1 h-1.5 appearance-none rounded-full cursor-pointer"
-                      style={{
-                        background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) 100%)`,
-                      }}
-                    />
-                    <span className="text-[11px] w-6 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                      {config.borderWidth ?? 2}
-                    </span>
                   </div>
-                )}
+                </div>
+              </div>
 
-                {/* 圆角 */}
-                <div className="flex items-center gap-3">
-                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>圆角</span>
-                  <input
-                    type="range"
-                    min="0"
-                    max="50"
-                    step="1"
-                    value={config.cornerRadius ?? 0}
-                    onChange={(e) => updateConfig({ cornerRadius: Number(e.target.value) })}
-                    className="flex-1 h-1.5 appearance-none rounded-full cursor-pointer"
-                    style={{
-                      background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) 100%)`,
+              <TitleWithTip label="适应" tip="开启后按图片尺寸自适应缩放。" />
+              <div className="flex flex-col gap-2 pt-1">
+                <div>
+                  <ScaleModeSwitch
+                    enabled={adaptiveEnabled}
+                    onToggle={(nextEnabled) => {
+                      updateConfig({ adaptiveScaleMode: nextEnabled ? (adaptiveScaleMode === 0 ? 2 : adaptiveScaleMode) : 0 });
                     }}
                   />
-                  <span className="text-[11px] w-6 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                    {config.cornerRadius ?? 0}
-                  </span>
                 </div>
-
-                {/* 文字 + 文字色 */}
-                <div className="flex items-center gap-3">
-                  <span className="text-[11px] w-8 shrink-0" style={{ color: 'rgba(255,255,255,0.7)' }}>文字</span>
-                  <div
-                    className="h-9 w-9 rounded-lg inline-flex items-center justify-center"
-                    style={{
-                      background: 'rgba(255,255,255,0.1)',
-                      border: '1.5px solid rgba(255,255,255,0.2)',
-                      color: 'rgba(255,255,255,0.8)',
-                      fontSize: '14px',
-                      fontWeight: 500,
-                    }}
-                  >
-                    字
+                {adaptiveEnabled ? (
+                  <div className="flex items-center gap-2">
+                  <InlineLabelWithTip label="方式" tip="自适应缩放的基准边。" />
+                    <div className="grid grid-cols-4 gap-2 flex-1">
+                      {adaptiveScaleOptions.map((option) => {
+                        const active = adaptiveScaleMode === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className="h-7 rounded-[7px] text-[11px] font-semibold transition-all"
+                            style={{
+                              background: active ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.06)',
+                              border: active ? '1px solid rgba(59,130,246,0.5)' : '1px solid rgba(255,255,255,0.12)',
+                              color: active ? 'rgba(59,130,246,0.95)' : 'var(--text-muted)',
+                            }}
+                            onClick={() => updateConfig({ adaptiveScaleMode: option.value })}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <label
-                    className="relative h-9 w-9 rounded-lg inline-flex items-center justify-center cursor-pointer"
-                    style={{
-                      background: config.textColor || '#ffffff',
-                      border: '2px solid rgba(255,255,255,0.3)',
-                      color: 'rgba(0,0,0,0.7)',
-                    }}
-                    title="文字颜色"
-                  >
-                    <Droplet size={14} />
-                    <input
-                      type="color"
-                      value={(config.textColor || '#ffffff') as string}
-                      className="absolute inset-0 opacity-0 cursor-pointer"
-                      onChange={(e) => updateConfig({ textColor: e.target.value })}
-                    />
-                  </label>
-                </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -1414,7 +1598,7 @@ function WatermarkEditor(props: {
                 onChange={(e) => handlePreviewUpload(e.target.files?.[0] ?? null)}
               />
             </label>
-            <Button variant="primary" size="sm" onClick={onSave} className="flex-1 !text-[11px] !h-9 !px-2">
+            <Button variant="primary" size="sm" onClick={onSave} className="flex-1 text-[11px]! h-9! px-2!">
               <Check size={12} />
               保存
             </Button>
@@ -1501,6 +1685,81 @@ function PositionModeSwitch(props: {
   );
 }
 
+function ScaleModeSwitch(props: { enabled: boolean; onToggle: (next: boolean) => void }) {
+  const { enabled, onToggle } = props;
+  const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 });
+  const buttonsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
+
+  useEffect(() => {
+    const activeKey = enabled ? 'on' : 'off';
+    const activeButton = buttonsRef.current.get(activeKey);
+    if (activeButton) {
+      const container = activeButton.parentElement;
+      if (container) {
+        const containerRect = container.getBoundingClientRect();
+        const buttonRect = activeButton.getBoundingClientRect();
+        setIndicatorStyle({
+          left: buttonRect.left - containerRect.left,
+          width: buttonRect.width,
+        });
+      }
+    }
+  }, [enabled]);
+
+  return (
+    <div
+      className="relative inline-flex items-center gap-1 p-1 h-9 rounded-[10px]"
+      style={{
+        background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+      }}
+    >
+      <div
+        className="absolute rounded-[7px] h-7 pointer-events-none"
+        style={{
+          left: indicatorStyle.left,
+          width: indicatorStyle.width,
+          transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+          background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%)',
+          border: '1px solid rgba(255, 255, 255, 0.18)',
+          boxShadow: '0 2px 8px -1px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1) inset',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+        }}
+      />
+      {([
+        { key: 'off', label: '关闭', value: false },
+        { key: 'on', label: '开启', value: true },
+      ] as const).map((item) => {
+        const isActive = enabled === item.value;
+        return (
+          <button
+            key={item.key}
+            ref={(el) => {
+              if (el) {
+                buttonsRef.current.set(item.key, el);
+              } else {
+                buttonsRef.current.delete(item.key);
+              }
+            }}
+            type="button"
+            onClick={() => onToggle(item.value)}
+            className="relative px-4 h-7 text-[12px] font-semibold transition-colors duration-200"
+            style={{
+              color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+              zIndex: 1,
+            }}
+          >
+            {item.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function FontSelect(props: {
   value: string;
   fonts: WatermarkFontInfo[];
@@ -1518,7 +1777,7 @@ function FontSelect(props: {
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
-          className="relative flex-1 h-9 rounded-[12px] px-3 text-sm outline-none prd-field text-left"
+          className="relative flex-1 h-8 rounded-[12px] px-3 text-sm outline-none prd-field text-left"
         >
           <span
             className="block max-w-[9ch] truncate"
@@ -1541,7 +1800,7 @@ function FontSelect(props: {
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          className="z-[120] rounded-[14px] overflow-hidden"
+          className="z-120 rounded-[14px] overflow-hidden"
           style={{
             background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
             border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
@@ -1615,6 +1874,7 @@ function WatermarkPreview(props: {
   showDistances?: boolean;
   distancePlacement?: 'inside' | 'outside';
   showQuadrantLabels?: boolean;
+  showEdgeInputs?: boolean;
   onPositionChange?: (next: Pick<WatermarkConfig, 'anchor' | 'offsetX' | 'offsetY'>) => void;
 }) {
   const {
@@ -1628,6 +1888,7 @@ function WatermarkPreview(props: {
     showDistances,
     distancePlacement = 'outside',
     showQuadrantLabels = true,
+    showEdgeInputs = false,
     onPositionChange,
   } = props;
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -1636,13 +1897,30 @@ function WatermarkPreview(props: {
   const canvasHeight = height ?? size;
 
   const fontFamily = font?.fontFamily || 'sans-serif';
-  // 基于短边计算缩放比例，确保不同宽高比的画布上字体视觉比例一致
+  // 基于缩放模式计算缩放比例，确保预览与后端一致
   const baseSize = spec.baseCanvasWidth || DEFAULT_CANVAS_SIZE;
   const shortSide = Math.min(width, canvasHeight);
-  const previewScale = shortSide / baseSize;
+  const longSide = Math.max(width, canvasHeight);
+  const previewScale = (() => {
+    if (!spec.adaptiveScaleMode) return 1;
+    const basis = spec.adaptiveScaleMode === 1
+      ? longSide
+      : spec.adaptiveScaleMode === 2
+        ? shortSide
+        : spec.adaptiveScaleMode === 3
+          ? width
+          : canvasHeight;
+    return basis / baseSize;
+  })();
   const fontSize = spec.fontSizePx * previewScale;
-  const iconSize = fontSize;
-  const gap = fontSize / 4;
+  const iconScale = Number.isFinite(spec.iconScale) && (spec.iconScale ?? 0) > 0 ? (spec.iconScale as number) : 1;
+  const iconSize = fontSize * iconScale;
+  const baseGap = Number.isFinite(spec.iconGapPx) && (spec.iconGapPx ?? 0) > 0
+    ? (spec.iconGapPx as number)
+    : (spec.fontSizePx / 4);
+  const gap = baseGap * previewScale;
+  const iconPosition = spec.iconPosition ?? 'left';
+  const isVerticalIcon = iconPosition === 'top' || iconPosition === 'bottom';
   const hasDecoration = spec.backgroundEnabled || spec.borderEnabled || (spec.cornerRadius ?? 0) > 0;
   const decorationPadding = hasDecoration ? Math.round(fontSize * 0.3) : 0;
   const textColor = spec.textColor || '#ffffff';
@@ -1655,13 +1933,17 @@ function WatermarkPreview(props: {
   const textRef = useRef<HTMLSpanElement | null>(null);
   const iconRef = useRef<HTMLImageElement | null>(null);
   const lastMeasuredSizeRef = useRef({ width: 0, height: 0 });
+  const sizeStableRef = useRef(false);  // 用于 updateSize 闭包访问
   const [watermarkSize, setWatermarkSize] = useState({ width: 0, height: 0 });
   const [measureTick, setMeasureTick] = useState(0);
   const [measuredSignature, setMeasuredSignature] = useState('');
   const [fontReady, setFontReady] = useState(false);
+  const [sizeStable, setSizeStable] = useState(false);  // 尺寸是否稳定
+  // 缓存版本号：修改测量逻辑时需要更新，使旧缓存失效
   const measureSignature = useMemo(
     () =>
       [
+        'v3',  // 版本号：v3 = 只有延迟两帧后才写入缓存，避免缓存被错误小尺寸污染
         spec.text,
         spec.iconEnabled ? '1' : '0',
         spec.iconImageRef ?? '',
@@ -1670,8 +1952,11 @@ function WatermarkPreview(props: {
         borderWidth.toFixed(2),
         fontFamily,
         fontSize.toFixed(2),
+        iconPosition,
+        gap.toFixed(2),
+        iconSize.toFixed(2),
       ].join('|'),
-    [spec.text, spec.iconEnabled, spec.iconImageRef, spec.backgroundEnabled, spec.borderEnabled, borderWidth, fontFamily, fontSize]
+    [spec.text, spec.iconEnabled, spec.iconImageRef, spec.backgroundEnabled, spec.borderEnabled, borderWidth, fontFamily, fontSize, iconPosition, gap, iconSize]
   );
   const cachedSize = watermarkSizeCache.get(measureSignature);
 
@@ -1679,11 +1964,16 @@ function WatermarkPreview(props: {
     if (cachedSize) {
       setWatermarkSize(cachedSize);
       setMeasuredSignature(measureSignature);
+      setSizeStable(true);  // 有缓存说明尺寸已经稳定过
+      sizeStableRef.current = true;
     } else {
       setWatermarkSize({ width: 0, height: 0 });
       setMeasuredSignature('');
+      setSizeStable(false);  // 需要重新测量并等待稳定
+      sizeStableRef.current = false;
     }
-    setFontReady(false);
+    // 注意：不要在这里 setFontReady(false)，否则会和字体加载 effect 形成循环
+    // 字体状态由专门的 useEffect 管理
   }, [cachedSize, measureSignature]);
 
   useEffect(() => {
@@ -1706,16 +1996,88 @@ function WatermarkPreview(props: {
     };
   }, [fontFamily, fontSize, measureSignature]);
 
+  // 关键修复：当 fontReady 变为 true 时，等待尺寸稳定后再写入缓存
+  // 因为字体加载完成后，浏览器渲染时间不可预测，可能需要多个渲染周期
+  useEffect(() => {
+    if (!fontReady || !contentRef.current) return;
+
+    let cancelled = false;
+    let lastSize = { width: 0, height: 0 };
+    let stabilityTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const measureAndCheck = () => {
+      if (cancelled || !contentRef.current) return;
+
+      const contentRect = contentRef.current.getBoundingClientRect();
+      if (!contentRect.width || !contentRect.height) return;
+
+      const measuredWidth = Math.ceil(contentRect.width);
+      const measuredHeight = Math.ceil(contentRect.height);
+
+      // 如果尺寸与上次不同，继续等待稳定（不更新状态，避免抖动）
+      if (measuredWidth !== lastSize.width || measuredHeight !== lastSize.height) {
+        lastSize = { width: measuredWidth, height: measuredHeight };
+        // 100ms 后再检查
+        stabilityTimer = setTimeout(measureAndCheck, 100);
+      } else {
+        // 尺寸稳定，更新状态并写入缓存
+        setWatermarkSize({ width: measuredWidth, height: measuredHeight });
+        lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
+        setMeasuredSignature(measureSignature);
+        setSizeStable(true);
+        sizeStableRef.current = true;
+        watermarkSizeCache.set(measureSignature, { width: measuredWidth, height: measuredHeight });
+      }
+    };
+
+    // 延迟两帧后开始测量
+    const raf1 = requestAnimationFrame(() => {
+      if (cancelled) return;
+      const raf2 = requestAnimationFrame(() => {
+        if (cancelled) return;
+        measureAndCheck();
+      });
+
+      return () => cancelAnimationFrame(raf2);
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf1);
+      if (stabilityTimer) clearTimeout(stabilityTimer);
+    };
+  }, [fontReady, measureSignature]);
+
   const estimatedTextWidth = Math.max(spec.text.length, 1) * fontSize * 1.0;
-  const estimatedWidth = estimatedTextWidth + (spec.iconEnabled && spec.iconImageRef ? iconSize + gap : 0) + decorationPadding * 2;
-  const estimatedHeight = Math.max(fontSize, iconSize) + decorationPadding * 2;
-  const measuredWidth = watermarkSize.width || cachedSize?.width || estimatedWidth;
-  const measuredHeight = watermarkSize.height || cachedSize?.height || estimatedHeight;
+  const hasIcon = Boolean(spec.iconEnabled && spec.iconImageRef);
+  const estimatedContentWidth = hasIcon
+    ? (isVerticalIcon
+      ? Math.max(estimatedTextWidth, iconSize)
+      : estimatedTextWidth + iconSize + gap)
+    : estimatedTextWidth;
+  const estimatedContentHeight = hasIcon
+    ? (isVerticalIcon
+      ? fontSize + iconSize + gap
+      : Math.max(fontSize, iconSize))
+    : fontSize;
+  // 估算尺寸需要包含边框宽度，确保 fallback 值更准确
+  const estimatedBorderExtra = spec.borderEnabled ? borderWidth * 2 : 0;
+  const estimatedWidth = estimatedContentWidth + decorationPadding * 2 + estimatedBorderExtra;
+  const estimatedHeight = estimatedContentHeight + decorationPadding * 2 + estimatedBorderExtra;
+  // 关键修复：只有当 measuredSignature 匹配当前配置时，才使用 watermarkSize
+  // 否则可能是旧配置的尺寸（组件实例复用时 state 被保留）
+  const isWatermarkSizeValid = measuredSignature === measureSignature;
+  const validatedWidth = isWatermarkSizeValid ? watermarkSize.width : 0;
+  const validatedHeight = isWatermarkSizeValid ? watermarkSize.height : 0;
+  const measuredWidth = validatedWidth || cachedSize?.width || estimatedWidth;
+  const measuredHeight = validatedHeight || cachedSize?.height || estimatedHeight;
   const hasLastMeasured = lastMeasuredSizeRef.current.width > 0 && lastMeasuredSizeRef.current.height > 0;
   const pendingMeasure = measuredSignature !== measureSignature;
   const effectiveWidth = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.width : measuredWidth;
   const effectiveHeight = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.height : measuredHeight;
-  const hideUntilMeasured = (!fontReady && !cachedSize) || measuredSignature !== measureSignature;
+  // 必须同时满足：字体加载完成 AND 尺寸稳定，才显示水印
+  // 这样可以避免在尺寸稳定前显示，导致位置抖动
+  const hideUntilMeasured = !fontReady || !sizeStable;
 
   const offsetX = spec.positionMode === 'ratio' ? spec.offsetX * width : spec.offsetX;
   const offsetY = spec.positionMode === 'ratio' ? spec.offsetY * canvasHeight : spec.offsetY;
@@ -1780,26 +2142,33 @@ function WatermarkPreview(props: {
     const target = contentRef.current;
 
     const updateSize = () => {
-      const textRect = textRef.current?.getBoundingClientRect();
-      if (!textRect || !textRect.width || !textRect.height) return;
-      const iconRect = iconRef.current?.getBoundingClientRect();
-      const iconWidth = iconRect?.width ?? 0;
-      const iconHeight = iconRect?.height ?? 0;
-      // 边框宽度会增加元素整体尺寸（CSS border 在 padding 外面）
-      const borderExtra = spec.borderEnabled ? borderWidth * 2 : 0;
-      const combinedWidth = textRect.width + (iconWidth ? iconWidth + gap : 0) + decorationPadding * 2 + borderExtra;
-      const combinedHeight = Math.max(textRect.height, iconHeight) + decorationPadding * 2 + borderExtra;
+      // 直接测量 contentRef 的实际渲染尺寸，避免手动计算带来的 subpixel 误差
+      // 这样可以确保定位计算使用的尺寸与浏览器实际渲染的尺寸完全一致
+      const contentRect = contentRef.current?.getBoundingClientRect();
+      if (!contentRect || !contentRect.width || !contentRect.height) return;
+
+      // 关键修复：只有当字体加载完成时才更新尺寸状态
+      // 否则会用字体未加载时的错误小尺寸覆盖正确尺寸
+      if (!fontReady) return;
+
+      // 关键修复：如果尺寸已经稳定（从缓存加载），不再更新状态
+      // 否则会导致第二次进入编辑时的抖动
+      if (sizeStableRef.current) return;
+
+      // 使用 ceil 确保不会因为 subpixel 渲染导致边缘被截断
+      const measuredWidth = Math.ceil(contentRect.width);
+      const measuredHeight = Math.ceil(contentRect.height);
+
       setWatermarkSize((prev) => {
-        if (Math.abs(prev.width - combinedWidth) < 0.5 && Math.abs(prev.height - combinedHeight) < 0.5) {
+        if (Math.abs(prev.width - measuredWidth) < 0.5 && Math.abs(prev.height - measuredHeight) < 0.5) {
           return prev;
         }
-        return { width: combinedWidth, height: combinedHeight };
+        return { width: measuredWidth, height: measuredHeight };
       });
-      watermarkSizeCache.set(measureSignature, { width: combinedWidth, height: combinedHeight });
-      lastMeasuredSizeRef.current = { width: combinedWidth, height: combinedHeight };
-      if (fontReady) {
-        setMeasuredSignature(measureSignature);
-      }
+      // 注意：不在这里写入缓存！缓存只在 fontReady effect 延迟两帧后写入
+      // 否则会用 fontReady=true 但字体还没渲染完成时的错误小尺寸污染缓存
+      lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
+      setMeasuredSignature(measureSignature);
     };
 
     updateSize();
@@ -1835,11 +2204,27 @@ function WatermarkPreview(props: {
     spec.borderEnabled,
     fontFamily,
     fontSize,
+    iconPosition,
+    isVerticalIcon,
+    gap,
+    iconSize,
+    borderWidth,
+    decorationPadding,
     width,
     canvasHeight,
     measureTick,
     fontReady,
+    measureSignature,
   ]);
+
+  const commitRect = (nextRect: { x: number; y: number; width: number; height: number }) => {
+    const { width: w, height: h } = sizeRef.current;
+    const nextAnchor = getDominantAnchor(nextRect, w, h, anchorRef.current);
+    const offsets = computeOffsetsFromAnchor(nextAnchor, nextRect, w, h);
+    const storeX = modeRef.current === 'ratio' ? offsets.x / w : offsets.x;
+    const storeY = modeRef.current === 'ratio' ? offsets.y / h : offsets.y;
+    callbackRef.current?.({ anchor: nextAnchor, offsetX: storeX, offsetY: storeY });
+  };
 
   useEffect(() => {
     if (!draggable || !canvasRef.current) return;
@@ -1860,11 +2245,7 @@ function WatermarkPreview(props: {
       const nextX = clampPixel(event.clientX - rect.left - dragOffsetX, 0, maxX);
       const nextY = clampPixel(event.clientY - rect.top - dragOffsetY, 0, maxY);
       const nextRect = { x: nextX, y: nextY, width: wmW, height: wmH };
-      const nextAnchor = getDominantAnchor(nextRect, w, h, anchorRef.current);
-      const offsets = computeOffsetsFromAnchor(nextAnchor, nextRect, w, h);
-      const storeX = modeRef.current === 'ratio' ? offsets.x / w : offsets.x;
-      const storeY = modeRef.current === 'ratio' ? offsets.y / h : offsets.y;
-      callbackRef.current?.({ anchor: nextAnchor, offsetX: storeX, offsetY: storeY });
+      commitRect(nextRect);
     };
 
     const handlePointerUp = (event: PointerEvent) => {
@@ -1909,6 +2290,55 @@ function WatermarkPreview(props: {
     ? 'absolute right-0 top-1/2 -translate-y-1/2 text-[11px] font-semibold'
     : 'absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold';
 
+  const edgeDistances = ({
+    top: Math.round(watermarkRect.y),
+    right: Math.round(Math.max(0, width - (watermarkRect.x + watermarkRect.width))),
+    bottom: Math.round(Math.max(0, canvasHeight - (watermarkRect.y + watermarkRect.height))),
+    left: Math.round(watermarkRect.x),
+  });
+
+  const handleEdgeInputChange = (edge: 'top' | 'right' | 'bottom' | 'left', value: number) => {
+    if (!Number.isFinite(value)) return;
+    const maxX = Math.max(width - effectiveWidth, 0);
+    const maxY = Math.max(canvasHeight - effectiveHeight, 0);
+    let nextX = watermarkRect.x;
+    let nextY = watermarkRect.y;
+
+    switch (edge) {
+      case 'top':
+        nextY = value;
+        break;
+      case 'bottom':
+        nextY = canvasHeight - effectiveHeight - value;
+        break;
+      case 'left':
+        nextX = value;
+        break;
+      case 'right':
+        nextX = width - effectiveWidth - value;
+        break;
+      default:
+        break;
+    }
+
+    nextX = clampPixel(nextX, 0, maxX);
+    nextY = clampPixel(nextY, 0, maxY);
+    commitRect({ x: nextX, y: nextY, width: effectiveWidth, height: effectiveHeight });
+  };
+
+  const edgeInputClassName = 'w-[64px] h-7 px-2 text-[11px] rounded-[7px] text-center outline-none';
+  const edgeInputStyle = {
+    background: 'rgba(255,255,255,0.08)',
+    border: '1px solid rgba(255,255,255,0.16)',
+    color: 'var(--text-muted)',
+    fontWeight: 500,
+  } as const;
+  const getEdgeInputStyle = (active: boolean) => ({
+    ...edgeInputStyle,
+    color: active ? '#FF5C77' : edgeInputStyle.color,
+    fontWeight: active ? 600 : edgeInputStyle.fontWeight,
+  });
+
   return (
     <div
       ref={canvasRef}
@@ -1918,7 +2348,7 @@ function WatermarkPreview(props: {
         height: canvasHeight,
         background: previewImage ? `url(${previewImage}) center/cover no-repeat` : 'rgba(255,255,255,0.04)',
         border: '1px dashed rgba(255,255,255,0.12)',
-        overflow: showDistances && distancePlacement === 'outside' ? 'visible' : 'hidden',
+        overflow: (showDistances || showEdgeInputs) && distancePlacement === 'outside' ? 'visible' : 'hidden',
       }}
     >
       {showCrosshair ? (
@@ -1945,7 +2375,7 @@ function WatermarkPreview(props: {
           </div>
         </div>
       ) : null}
-      {showDistances ? (
+      {showDistances && !showEdgeInputs ? (
         <div className="absolute pointer-events-none" style={{ zIndex: 2, ...distanceWrapperStyle }}>
           <div
             className={topLabelClass}
@@ -1973,6 +2403,54 @@ function WatermarkPreview(props: {
           </div>
         </div>
       ) : null}
+      {showEdgeInputs ? (
+        <>
+          <div className="absolute left-1/2 -translate-x-1/2" style={{ zIndex: 3, top: -44 }}>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className={edgeInputClassName}
+              style={getEdgeInputStyle(activeSides.top)}
+              value={edgeDistances.top}
+              onChange={(e) => handleEdgeInputChange('top', Number(e.target.value))}
+            />
+          </div>
+          <div className="absolute top-1/2 -translate-y-1/2" style={{ zIndex: 3, right: -84 }}>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className={edgeInputClassName}
+              style={getEdgeInputStyle(activeSides.right)}
+              value={edgeDistances.right}
+              onChange={(e) => handleEdgeInputChange('right', Number(e.target.value))}
+            />
+          </div>
+          <div className="absolute left-1/2 -translate-x-1/2" style={{ zIndex: 3, bottom: -44 }}>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className={edgeInputClassName}
+              style={getEdgeInputStyle(activeSides.bottom)}
+              value={edgeDistances.bottom}
+              onChange={(e) => handleEdgeInputChange('bottom', Number(e.target.value))}
+            />
+          </div>
+          <div className="absolute top-1/2 -translate-y-1/2" style={{ zIndex: 3, left: -84 }}>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className={edgeInputClassName}
+              style={getEdgeInputStyle(activeSides.left)}
+              value={edgeDistances.left}
+              onChange={(e) => handleEdgeInputChange('left', Number(e.target.value))}
+            />
+          </div>
+        </>
+      ) : null}
       <div
         data-watermark
         ref={watermarkRef}
@@ -1997,6 +2475,13 @@ function WatermarkPreview(props: {
           ref={contentRef}
           style={{
             display: 'flex',
+            flexDirection: iconPosition === 'right'
+              ? 'row-reverse'
+              : iconPosition === 'top'
+                ? 'column'
+                : iconPosition === 'bottom'
+                  ? 'column-reverse'
+                  : 'row',
             alignItems: 'center',
             gap: gap,
             color: textColor,
@@ -2005,7 +2490,9 @@ function WatermarkPreview(props: {
             padding: decorationPadding,
             background: spec.backgroundEnabled ? backgroundColor : 'transparent',
             border: spec.borderEnabled ? `${borderWidth}px solid ${borderColor}` : '1px solid transparent',
-            borderRadius: (spec.cornerRadius ?? 0) * previewScale,
+            borderRadius: (spec.cornerRadius ?? 0) > 0 && (spec.backgroundEnabled || spec.borderEnabled)
+              ? (spec.cornerRadius ?? 0) * previewScale
+              : 0,
           }}
         >
           {spec.iconEnabled && spec.iconImageRef ? (

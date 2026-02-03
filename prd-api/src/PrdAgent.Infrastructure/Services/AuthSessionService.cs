@@ -12,7 +12,8 @@ namespace PrdAgent.Infrastructure.Services;
 /// </summary>
 public class AuthSessionService : IAuthSessionService
 {
-    private static readonly TimeSpan RefreshSlidingTtl = TimeSpan.FromDays(3);
+    // 统一会话生命周期：Refresh Session 与 Token Version 同为 3 天
+    private static readonly TimeSpan SessionTtl = TimeSpan.FromDays(3);
     private readonly ICacheManager _cache;
     private readonly string _hmacSecret;
 
@@ -58,7 +59,7 @@ public class AuthSessionService : IAuthSessionService
         };
 
         var key = CacheKeys.ForAuthRefresh(uid, ctNorm, sessionKey);
-        await _cache.SetAsync(key, session, RefreshSlidingTtl);
+        await _cache.SetAsync(key, session, SessionTtl);
         return (sessionKey, refreshToken);
     }
 
@@ -85,7 +86,7 @@ public class AuthSessionService : IAuthSessionService
         }
 
         // 验证成功即视为活跃：刷新 TTL
-        await _cache.RefreshExpiryAsync(key, RefreshSlidingTtl);
+        await _cache.RefreshExpiryAsync(key, SessionTtl);
         return true;
     }
 
@@ -98,7 +99,7 @@ public class AuthSessionService : IAuthSessionService
 
         var key = CacheKeys.ForAuthRefresh(uid, ctNorm, sk);
         // 仅刷新 TTL（O(1)），不强制读写 value，降低每次请求开销
-        await _cache.RefreshExpiryAsync(key, RefreshSlidingTtl);
+        await _cache.RefreshExpiryAsync(key, SessionTtl);
     }
 
     public async Task RemoveAllRefreshSessionsAsync(string userId, string clientType, CancellationToken ct = default)
@@ -131,8 +132,8 @@ public class AuthSessionService : IAuthSessionService
         var key = CacheKeys.ForAuthTokenVersion(uid, ctNorm);
         var current = await GetTokenVersionAsync(uid, ctNorm, ct);
         var next = current + 1;
-        // tokenVersion 不需要 3 天 TTL：作为“撤销版本”，可以长期保留
-        await _cache.SetAsync(key, next, expiry: null);
+        // tokenVersion 需要比 Access Token 生命周期更长，否则版本过期后会误判为已撤销
+        await _cache.SetAsync(key, next, expiry: SessionTtl);
         return next;
     }
 }

@@ -73,6 +73,21 @@ public class WatermarkConfig
     public string? IconImageRef { get; set; }
 
     /// <summary>
+    /// 图标位置: left/right/top/bottom
+    /// </summary>
+    public string IconPosition { get; set; } = "left";
+
+    /// <summary>
+    /// 图标与文字间距（像素）
+    /// </summary>
+    public double IconGapPx { get; set; }
+
+    /// <summary>
+    /// 图标缩放比例（1为原始大小）
+    /// </summary>
+    public double IconScale { get; set; } = 1;
+
+    /// <summary>
     /// 是否启用边框
     /// </summary>
     public bool BorderEnabled { get; set; }
@@ -106,6 +121,11 @@ public class WatermarkConfig
     /// 基准画布宽度（用于响应式缩放）
     /// </summary>
     public int BaseCanvasWidth { get; set; }
+
+    /// <summary>
+    /// 自适应缩放模式：0不缩放 1长边 2短边 3宽 4高
+    /// </summary>
+    public int AdaptiveScaleMode { get; set; }
 
     /// <summary>
     /// 文字颜色

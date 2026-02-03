@@ -1,5 +1,6 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 export function Dialog({
   open,
@@ -15,7 +16,7 @@ export function Dialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  title: string;
+  title: ReactNode;
   description?: string;
   content: React.ReactNode;
   /** 默认 520px；可传 900 或 '900px' 等，用于大弹窗 */
@@ -33,13 +34,13 @@ export function Dialog({
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
-          className="fixed inset-0 z-[100] prd-dialog-overlay"
+          className="fixed inset-0 z-100 prd-dialog-overlay"
           style={{ background: 'rgba(0,0,0,0.72)' }}
         />
         <DialogPrimitive.Content
           {...(description ? {} : ({ 'aria-describedby': undefined } as const))}
           className={[
-            'fixed left-1/2 top-1/2 z-[110] w-[92vw] rounded-[22px] p-6 flex flex-col prd-dialog-content',
+            'fixed left-1/2 top-1/2 z-110 w-[92vw] rounded-[22px] p-6 flex flex-col prd-dialog-content',
             contentClassName ?? '',
           ].join(' ')}
           style={{
