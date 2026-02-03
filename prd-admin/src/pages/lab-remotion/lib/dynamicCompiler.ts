@@ -81,11 +81,42 @@ export function compileRemotionCode(sourceCode: string): CompileResult {
       ''
     );
 
-    // 转换 export default 为 module.exports.default
+    // 转换各种 export 语法
+    // 1. export default function XXX / export default class XXX
     executableCode = executableCode.replace(
-      /export\s+default\s+/g,
+      /export\s+default\s+(function|class)\s+(\w+)/g,
+      '$1 $2; module.exports.default = $2'
+    );
+    // 2. export default XXX (变量/表达式)
+    executableCode = executableCode.replace(
+      /export\s+default\s+(?!function|class)/g,
       'module.exports.default = '
     );
+    // 3. export const/let/var XXX = ... (命名导出，取第一个作为默认导出)
+    const namedExportMatch = executableCode.match(/export\s+(const|let|var)\s+(\w+)/);
+    if (namedExportMatch) {
+      const exportedName = namedExportMatch[2];
+      executableCode = executableCode.replace(
+        /export\s+(const|let|var)\s+/g,
+        '$1 '
+      );
+      // 如果没有 default export，使用第一个命名导出作为默认
+      if (!executableCode.includes('module.exports.default')) {
+        executableCode += `\nmodule.exports.default = ${exportedName};`;
+      }
+    }
+    // 4. export function XXX (命名函数导出)
+    const namedFuncMatch = executableCode.match(/export\s+function\s+(\w+)/);
+    if (namedFuncMatch) {
+      const funcName = namedFuncMatch[1];
+      executableCode = executableCode.replace(
+        /export\s+function\s+/g,
+        'function '
+      );
+      if (!executableCode.includes('module.exports.default')) {
+        executableCode += `\nmodule.exports.default = ${funcName};`;
+      }
+    }
 
     // 创建函数执行代码
     const fn = new Function(
