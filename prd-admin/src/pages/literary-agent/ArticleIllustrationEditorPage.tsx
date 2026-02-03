@@ -2828,11 +2828,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           if (!open) setConfigViewMode('mine'); // 关闭时重置为"我的"视图
         }}
         title="配置管理"
-        description={configViewMode === 'mine' ? '系统提示词、风格图与水印设置' : '发现优质配置，一键免费下载'}
         maxWidth={1500}
         contentClassName="overflow-hidden !p-4"
         contentStyle={{ maxHeight: '75vh', height: '75vh' }}
-        titleAction={
+        titleCenter={
           <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
             <button
               type="button"

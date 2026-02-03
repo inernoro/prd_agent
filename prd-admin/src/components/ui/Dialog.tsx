@@ -11,6 +11,7 @@ export function Dialog({
   contentClassName,
   contentStyle,
   titleAction,
+  titleCenter,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -25,6 +26,8 @@ export function Dialog({
   contentStyle?: React.CSSProperties;
   /** 标题栏右侧的操作按钮（在关闭按钮左侧） */
   titleAction?: React.ReactNode;
+  /** 标题栏居中的内容（如标签切换） */
+  titleCenter?: React.ReactNode;
 }) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -49,8 +52,8 @@ export function Dialog({
             ...contentStyle,
           }}
         >
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0 flex-shrink-0">
               <DialogPrimitive.Title className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
                 {title}
               </DialogPrimitive.Title>
@@ -60,7 +63,12 @@ export function Dialog({
                 </DialogPrimitive.Description>
               )}
             </div>
-            <div className="flex items-center gap-2">
+            {titleCenter && (
+              <div className="flex-1 flex justify-center">
+                {titleCenter}
+              </div>
+            )}
+            <div className="flex items-center gap-2 flex-shrink-0">
               {titleAction}
               <DialogPrimitive.Close
                 className="h-9 w-9 inline-flex items-center justify-center rounded-[12px] hover:bg-white/5"
