@@ -18,3 +18,6 @@ export type { TypewriterProps } from './Typewriter';
 
 export { BarChart, barChartDefaults } from './BarChart';
 export type { BarChartProps } from './BarChart';
+
+export { TechIntro, techIntroDefaults } from './TechIntro';
+export type { TechIntroProps } from './TechIntro';

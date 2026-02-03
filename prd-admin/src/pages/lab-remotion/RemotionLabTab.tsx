@@ -17,6 +17,8 @@ import {
   typewriterDefaults,
   BarChart,
   barChartDefaults,
+  TechIntro,
+  techIntroDefaults,
 } from './templates';
 import {
   Play,
@@ -32,6 +34,7 @@ import {
   Zap,
   Terminal,
   BarChart3,
+  Rocket,
 } from 'lucide-react';
 import { AiGeneratorPanel } from './components/AiGeneratorPanel';
 import type { CompileResult } from './lib/dynamicCompiler';
@@ -40,7 +43,7 @@ import type { CompileResult } from './lib/dynamicCompiler';
 type LabMode = 'templates' | 'ai';
 
 // Template types
-type TemplateKey = 'textReveal' | 'logoAnimation' | 'particleWave' | 'matrixRain' | 'glitchText' | 'typewriter' | 'barChart';
+type TemplateKey = 'techIntro' | 'textReveal' | 'logoAnimation' | 'particleWave' | 'matrixRain' | 'glitchText' | 'typewriter' | 'barChart';
 
 interface TemplateConfig {
   key: TemplateKey;
@@ -63,6 +66,20 @@ interface FieldConfig {
 
 // Template configurations
 const templates: TemplateConfig[] = [
+  {
+    key: 'techIntro',
+    name: '科技片头',
+    description: '粒子网格 + 光效扫描 + 标题动画',
+    icon: <Rocket size={18} />,
+    component: TechIntro,
+    defaults: techIntroDefaults,
+    fields: [
+      { key: 'title', label: '主标题', type: 'text' },
+      { key: 'subtitle', label: '副标题', type: 'text' },
+      { key: 'primaryColor', label: '主色', type: 'color' },
+      { key: 'secondaryColor', label: '副色', type: 'color' },
+    ],
+  },
   {
     key: 'textReveal',
     name: '文字揭示',
@@ -199,8 +216,9 @@ export default function RemotionLabTab() {
   const [mode, setMode] = useState<LabMode>('templates');
 
   // Template mode state
-  const [selectedTemplate, setSelectedTemplate] = useState<TemplateKey>('textReveal');
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateKey>('techIntro');
   const [params, setParams] = useState<Record<TemplateKey, Record<string, any>>>({
+    techIntro: { ...techIntroDefaults },
     textReveal: { ...textRevealDefaults },
     logoAnimation: { ...logoAnimationDefaults },
     particleWave: { ...particleWaveDefaults },
@@ -497,22 +515,12 @@ export default function RemotionLabTab() {
             </div>
           </GlassCard>
 
-          {/* Info card */}
-          <GlassCard padding="md" variant="subtle">
-            <div className="text-sm text-[var(--text-secondary)]">
-              {mode === 'templates' ? (
-                <>
-                  <strong className="text-[var(--text-primary)]">Remotion</strong> - 使用 React 创建视频的框架。
-                  每一帧都是 React 组件的渲染结果，通过 <code className="px-1.5 py-0.5 rounded bg-white/10 text-xs">useCurrentFrame()</code> 获取当前帧号来实现动画。
-                </>
-              ) : (
-                <>
-                  <strong className="text-[var(--text-primary)]">AI 生成模式</strong> - 用自然语言描述你想要的动画效果，AI 会生成 Remotion 组件代码并实时预览。
-                  {aiError && <span className="text-red-400 ml-2">· {aiError}</span>}
-                </>
-              )}
+          {/* AI Error display */}
+          {mode === 'ai' && aiError && (
+            <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400">
+              {aiError}
             </div>
-          </GlassCard>
+          )}
         </div>
       </div>
     </div>
