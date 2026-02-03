@@ -58,14 +58,17 @@ export function AiGeneratorPanel({ onGenerated, className }: AiGeneratorPanelPro
           },
         },
         onEvent: (event) => {
+          console.log('[Remotion] onEvent:', event.event, event.data?.substring(0, 100));
           if (!event.data) return;
 
           try {
             const parsed = JSON.parse(event.data);
+            console.log('[Remotion] parsed:', parsed.type, parsed.content?.substring(0, 50));
 
             // 处理流式内容 - event: model + type: delta
             if (event.event === 'model' && parsed.type === 'delta' && parsed.content) {
               fullResponse += parsed.content;
+              console.log('[Remotion] fullResponse length:', fullResponse.length);
               setStreamingText(fullResponse);
             }
             // 处理完成 - event: run + type: runDone
