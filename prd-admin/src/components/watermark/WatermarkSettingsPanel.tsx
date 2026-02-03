@@ -730,9 +730,9 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                       </div>
                     </div>
 
-                    {/* 配置信息区（统一高度100px，左侧两列配置 + 右侧小预览图） */}
+                    {/* 配置信息区（统一高度100px，左侧两列配置 + 右侧预览图，与风格图卡片保持一致） */}
                     <div className="px-2 pb-1 flex-shrink-0">
-                      <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 80px', height: '100px' }}>
+                      <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: '100px' }}>
                         {/* 左侧：配置信息（两列布局） */}
                         <div
                           className="overflow-auto border rounded-[6px]"
