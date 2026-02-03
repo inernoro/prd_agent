@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -7,7 +8,7 @@ import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { Switch } from '@/components/design/Switch';
 import { openPlatformService, getUsers, getAdminGroups } from '@/services';
-import { Plus, Trash2, RefreshCw, Copy, Eye, MoreVertical, ExternalLink, Clock, Filter, Search, X, Pencil, Plug } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Copy, Eye, MoreVertical, ExternalLink, Clock, Filter, Search, X, Pencil, Plug, Mail } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import type { OpenPlatformApp, CreateAppRequest, UpdateAppRequest, OpenPlatformRequestLog } from '@/services/contracts/openPlatform';
@@ -50,6 +51,7 @@ function fmtDate(v?: string | null) {
 }
 
 export default function OpenPlatformPage() {
+  const navigate = useNavigate();
   const [apps, setApps] = useState<OpenPlatformApp[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -244,6 +246,10 @@ export default function OpenPlatformPage() {
         icon={<Plug size={16} />}
         actions={
           <>
+            <Button variant="secondary" size="sm" onClick={() => navigate('/open-platform/channels')}>
+              <Mail size={14} />
+              通道管理
+            </Button>
             <Button variant="secondary" size="sm" onClick={() => handleViewLogs()}>
               查看所有日志
             </Button>

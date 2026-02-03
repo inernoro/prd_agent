@@ -6,7 +6,7 @@ import type {
   ChannelWhitelist,
   ChannelIdentityMapping,
   ChannelTask,
-  ChannelStats,
+  ChannelStatsResponse,
   ChannelTaskStats,
   CreateWhitelistRequest,
   UpdateWhitelistRequest,
@@ -221,8 +221,8 @@ export class ChannelService implements IChannelService {
   }
 
   // ============ 统计 ============
-  async getStats(): Promise<ChannelStats[]> {
-    const response = await apiRequest<ChannelStats[]>(api.channels.stats());
+  async getStats(): Promise<ChannelStatsResponse> {
+    const response = await apiRequest<ChannelStatsResponse>(api.channels.stats());
     if (!response.success) {
       throw new Error(response.error?.message || '获取统计失败');
     }

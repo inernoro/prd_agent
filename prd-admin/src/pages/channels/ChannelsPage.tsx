@@ -23,7 +23,8 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import type {
   ChannelWhitelist,
-  ChannelStats,
+  ChannelStatsResponse,
+  ChannelStatusInfo,
   CreateWhitelistRequest,
   UpdateWhitelistRequest,
 } from '@/services/contracts/channels';
@@ -49,7 +50,7 @@ const channelIcons: Record<string, React.ReactNode> = {
 
 export default function ChannelsPage() {
   const navigate = useNavigate();
-  const [stats, setStats] = useState<ChannelStats[]>([]);
+  const [statsResponse, setStatsResponse] = useState<ChannelStatsResponse | null>(null);
   const [whitelists, setWhitelists] = useState<ChannelWhitelist[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -65,7 +66,7 @@ export default function ChannelsPage() {
   const loadStats = async () => {
     try {
       const data = await channelService.getStats();
-      setStats(data);
+      setStatsResponse(data);
     } catch (err) {
       console.error('Load stats failed:', err);
     }
@@ -183,7 +184,7 @@ export default function ChannelsPage() {
 
       {/* 通道状态卡片 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {stats.map((stat) => (
+        {(statsResponse?.channels || []).map((stat) => (
           <GlassCard key={stat.channelType} className="p-4">
             <div className="flex items-center gap-3">
               <div
@@ -205,16 +206,16 @@ export default function ChannelsPage() {
                   </Badge>
                 </div>
                 <div className="text-sm text-muted-foreground mt-1">
-                  {stat.whitelistCount} 条规则 · 今日 {stat.taskStats.todayTotal} 任务
+                  今日 {stat.todayRequestCount} 请求 · {stat.todaySuccessCount} 成功
                 </div>
               </div>
             </div>
             <div className="mt-3 pt-3 border-t flex justify-between text-xs" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
               <span className="text-muted-foreground">
-                待处理: <span className="text-foreground">{stat.taskStats.pending}</span>
+                成功: <span className="text-green-400">{stat.todaySuccessCount}</span>
               </span>
               <span className="text-muted-foreground">
-                处理中: <span className="text-foreground">{stat.taskStats.processing}</span>
+                失败: <span className="text-red-400">{stat.todayFailCount}</span>
               </span>
               <button
                 className="text-primary hover:underline"

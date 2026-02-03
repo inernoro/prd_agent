@@ -143,12 +143,31 @@ export interface ChannelTaskStats {
   avgDurationMs?: number;
 }
 
+export interface ChannelStatusInfo {
+  channelType: string;
+  displayName: string;
+  isEnabled: boolean;
+  todayRequestCount: number;
+  todaySuccessCount: number;
+  todayFailCount: number;
+}
+
 export interface ChannelStats {
   channelType: string;
   displayName: string;
   isEnabled: boolean;
   whitelistCount: number;
   taskStats: ChannelTaskStats;
+}
+
+export interface ChannelStatsResponse {
+  channels: ChannelStatusInfo[];
+  todayTaskCount: number;
+  processingCount: number;
+  successRate: number;
+  avgDurationSeconds: number;
+  whitelistCount: number;
+  identityMappingCount: number;
 }
 
 // ============ 分页响应 ============
@@ -213,7 +232,7 @@ export interface IChannelService {
   cancelTask(id: string): Promise<ChannelTask>;
 
   // 统计
-  getStats(): Promise<ChannelStats[]>;
+  getStats(): Promise<ChannelStatsResponse>;
   getTaskStats(channelType?: string): Promise<ChannelTaskStats>;
 }
 
