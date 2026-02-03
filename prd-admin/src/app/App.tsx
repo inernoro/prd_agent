@@ -206,9 +206,9 @@ export default function App() {
         <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />
         <Route path="data" element={<RequirePermission perm="data.read"><DataManagePage /></RequirePermission>} />
         <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformPage /></RequirePermission>} />
-        <Route path="channels" element={<RequirePermission perm="channels.manage"><ChannelsPage /></RequirePermission>} />
-        <Route path="channels/tasks" element={<RequirePermission perm="channels.manage"><ChannelTasksPage /></RequirePermission>} />
-        <Route path="channels/identity-mappings" element={<RequirePermission perm="channels.manage"><IdentityMappingsPage /></RequirePermission>} />
+        <Route path="open-platform/channels" element={<RequirePermission perm="open-platform.manage"><ChannelsPage /></RequirePermission>} />
+        <Route path="open-platform/channels/tasks" element={<RequirePermission perm="open-platform.manage"><ChannelTasksPage /></RequirePermission>} />
+        <Route path="open-platform/channels/identity-mappings" element={<RequirePermission perm="open-platform.manage"><IdentityMappingsPage /></RequirePermission>} />
         <Route path="prompts" element={<RequirePermission perm="prompts.read"><PromptStagesPage /></RequirePermission>} />
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />

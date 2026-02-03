@@ -1342,7 +1342,7 @@ db.channel_request_logs.createIndex({ "createdAt": 1 }, { expireAfterSeconds: 25
 
 | # | 页面/组件 | 验收项 | 验收标准 |
 |---|-----------|--------|----------|
-| **F1** | 通道管理页 | 路由配置 | `/channels` 路由可访问 |
+| **F1** | 通道管理页 | 路由配置 | `/open-platform/channels` 路由可访问 |
 | **F2** | 通道管理页 | 通道状态卡片 | 展示各通道状态和今日请求数 |
 | **F3** | 通道管理页 | 白名单列表 | 分页展示白名单，支持筛选 |
 | **F4** | 通道管理页 | 添加白名单 | 点击按钮弹出编辑弹窗 |
@@ -1353,7 +1353,7 @@ db.channel_request_logs.createIndex({ "createdAt": 1 }, { expireAfterSeconds: 25
 | **F9** | 白名单弹窗 | 编辑功能 | 点击行可编辑已有规则 |
 | **F10** | 白名单列表 | 删除确认 | 删除前二次确认 |
 | **F11** | 白名单列表 | 启用/禁用 | 状态切换即时生效 |
-| **F12** | 任务监控页 | 路由配置 | `/channels/tasks` 路由可访问 |
+| **F12** | 任务监控页 | 路由配置 | `/open-platform/channels/tasks` 路由可访问 |
 | **F13** | 任务监控页 | 统计卡片 | 展示今日任务数、处理中、成功率、平均耗时 |
 | **F14** | 任务监控页 | 任务列表 | 分页展示，支持多条件筛选 |
 | **F15** | 任务监控页 | 状态标签 | 不同状态用不同颜色标签 |
@@ -1361,7 +1361,7 @@ db.channel_request_logs.createIndex({ "createdAt": 1 }, { expireAfterSeconds: 25
 | **F17** | 任务详情 | 内容展示 | 展示原始内容、解析参数、执行结果 |
 | **F18** | 任务详情 | 状态历史 | 时间线展示状态变更 |
 | **F19** | 任务详情 | 重试按钮 | 失败任务可点击重试 |
-| **F20** | 身份映射页 | 路由配置 | `/channels/identity-mappings` 路由可访问 |
+| **F20** | 身份映射页 | 路由配置 | `/open-platform/channels/identity-mappings` 路由可访问 |
 | **F21** | 身份映射页 | CRUD 功能 | 支持增删改查身份映射 |
 
 ### 12.3 集成验收清单
@@ -1590,9 +1590,9 @@ cd /path/to/prd_agent
 
 | 页面 | URL | 权限 | 说明 |
 |------|-----|------|------|
-| 通道管理 | `/channels` | `channels.manage` | 通道状态概览 + 白名单管理 |
-| 任务监控 | `/channels/tasks` | `channels.manage` | 任务列表、筛选、统计 |
-| 身份映射 | `/channels/identity-mappings` | `channels.manage` | 外部标识 → 系统用户映射 |
+| 通道管理 | `/open-platform/channels` | `open-platform.manage` | 通道状态概览 + 白名单管理 |
+| 任务监控 | `/open-platform/channels/tasks` | `open-platform.manage` | 任务列表、筛选、统计 |
+| 身份映射 | `/open-platform/channels/identity-mappings` | `open-platform.manage` | 外部标识 → 系统用户映射 |
 
 ### 15.2 后端 API 入口
 
@@ -1638,7 +1638,7 @@ Inbound Parse Webhook URL: https://your-domain.com/api/channels/email/inbound
 
 **步骤 1：添加白名单规则**
 
-1. 登录管理后台，进入 **通道管理** (`/channels`)
+1. 登录管理后台，进入 **开放平台 > 通道管理** (`/open-platform/channels`)
 2. 点击 **+ 新建白名单** 按钮
 3. 填写表单：
    - **通道类型**：选择「邮件」

@@ -156,7 +156,7 @@ export default function ChannelsPage() {
   };
 
   const handleViewTasks = (channelType?: string) => {
-    const path = channelType ? `/channels/tasks?channelType=${channelType}` : '/channels/tasks';
+    const path = channelType ? `/open-platform/channels/tasks?channelType=${channelType}` : '/open-platform/channels/tasks';
     navigate(path);
   };
 
@@ -170,7 +170,7 @@ export default function ChannelsPage() {
             <Button variant="secondary" size="sm" onClick={() => handleViewTasks()}>
               任务监控
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => navigate('/channels/identity-mappings')}>
+            <Button variant="secondary" size="sm" onClick={() => navigate('/open-platform/channels/identity-mappings')}>
               身份映射
             </Button>
             <Button variant="primary" size="sm" onClick={() => setCreateDialogOpen(true)}>

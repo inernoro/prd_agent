@@ -158,7 +158,7 @@ export default function ChannelTasksPage() {
         icon={<Clock size={16} />}
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate('/channels')}>
+            <Button variant="ghost" size="sm" onClick={() => navigate('/open-platform/channels')}>
               <ArrowLeft size={14} />
               返回
             </Button>
