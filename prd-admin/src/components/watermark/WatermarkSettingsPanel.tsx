@@ -1901,7 +1901,8 @@ function WatermarkPreview(props: {
       setWatermarkSize({ width: 0, height: 0 });
       setMeasuredSignature('');
     }
-    setFontReady(false);
+    // 注意：不要在这里 setFontReady(false)，否则会和字体加载 effect 形成循环
+    // 字体状态由专门的 useEffect 管理
   }, [cachedSize, measureSignature]);
 
   useEffect(() => {
