@@ -2046,6 +2046,10 @@ function WatermarkPreview(props: {
 
       if (!contentRect || !contentRect.width || !contentRect.height) return;
 
+      // 关键修复：只有当字体加载完成时才更新尺寸状态
+      // 否则会用字体未加载时的错误小尺寸覆盖正确尺寸
+      if (!fontReady) return;
+
       // 使用 ceil 确保不会因为 subpixel 渲染导致边缘被截断
       const measuredWidth = Math.ceil(contentRect.width);
       const measuredHeight = Math.ceil(contentRect.height);
@@ -2058,9 +2062,7 @@ function WatermarkPreview(props: {
       });
       watermarkSizeCache.set(measureSignature, { width: measuredWidth, height: measuredHeight });
       lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
-      if (fontReady) {
-        setMeasuredSignature(measureSignature);
-      }
+      setMeasuredSignature(measureSignature);
     };
 
     updateSize();
