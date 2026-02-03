@@ -44,7 +44,7 @@ import {
 } from 'lucide-react';
 import { runModelLabStream } from '@/services';
 import { REMOTION_SYSTEM_PROMPT, buildUserPrompt } from './lib/remotionPrompt';
-import { compileRemotionCode, validateRemotionCode, type CompileResult } from './lib/dynamicCompiler';
+import { compileRemotionCode, validateRemotionCode } from './lib/dynamicCompiler';
 import Editor from '@monaco-editor/react';
 
 // Mode types
