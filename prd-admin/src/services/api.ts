@@ -382,6 +382,12 @@ export const api = {
 
   // ============ Channels 多通道适配器 ============
   channels: {
+    settings: {
+      get: () => '/api/admin/channels/settings',
+      update: () => '/api/admin/channels/settings',
+      test: () => '/api/admin/channels/settings/test',
+      poll: () => '/api/admin/channels/settings/poll',
+    },
     whitelists: {
       list: () => '/api/admin/channels/whitelist',
       byId: (id: string) => `/api/admin/channels/whitelist/${id}`,

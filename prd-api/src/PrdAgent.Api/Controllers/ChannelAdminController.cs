@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Models.Requests;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -16,11 +17,13 @@ namespace PrdAgent.Api.Controllers;
 public class ChannelAdminController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly IEmailChannelService _emailService;
     private readonly ILogger<ChannelAdminController> _logger;
 
-    public ChannelAdminController(MongoDbContext db, ILogger<ChannelAdminController> logger)
+    public ChannelAdminController(MongoDbContext db, IEmailChannelService emailService, ILogger<ChannelAdminController> logger)
     {
         _db = db;
+        _emailService = emailService;
         _logger = logger;
     }
 
@@ -649,6 +652,186 @@ public class ChannelAdminController : ControllerBase
             WhitelistCount = (int)totalWhitelistCount,
             IdentityMappingCount = (int)identityMappingCount
         }));
+    }
+
+    #endregion
+
+    #region Settings API
+
+    /// <summary>
+    /// 获取邮箱配置
+    /// </summary>
+    [HttpGet("settings")]
+    public async Task<IActionResult> GetSettings(CancellationToken ct)
+    {
+        var settings = await _db.ChannelSettings
+            .Find(x => x.Id == "default")
+            .FirstOrDefaultAsync(ct);
+
+        if (settings == null)
+        {
+            // 返回默认配置
+            settings = new ChannelSettings { Id = "default" };
+        }
+
+        // 不返回密码
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            settings.Id,
+            settings.ImapHost,
+            settings.ImapPort,
+            settings.ImapUsername,
+            ImapPassword = string.IsNullOrEmpty(settings.ImapPassword) ? null : "********",
+            settings.ImapUseSsl,
+            settings.ImapFolder,
+            settings.SmtpHost,
+            settings.SmtpPort,
+            settings.SmtpUsername,
+            SmtpPassword = string.IsNullOrEmpty(settings.SmtpPassword) ? null : "********",
+            settings.SmtpUseSsl,
+            settings.SmtpFromName,
+            settings.SmtpFromAddress,
+            settings.PollIntervalMinutes,
+            settings.IsEnabled,
+            settings.LastPollAt,
+            settings.LastPollResult,
+            settings.LastPollError,
+            settings.LastPollEmailCount,
+            settings.AcceptedDomains,
+            settings.AutoAcknowledge,
+            settings.MarkAsReadAfterProcess,
+            settings.ProcessedFolder,
+            settings.CreatedAt,
+            settings.UpdatedAt
+        }));
+    }
+
+    /// <summary>
+    /// 更新邮箱配置
+    /// </summary>
+    [HttpPut("settings")]
+    public async Task<IActionResult> UpdateSettings([FromBody] UpdateChannelSettingsRequest request, CancellationToken ct)
+    {
+        var existing = await _db.ChannelSettings
+            .Find(x => x.Id == "default")
+            .FirstOrDefaultAsync(ct);
+
+        if (existing == null)
+        {
+            existing = new ChannelSettings { Id = "default" };
+        }
+
+        // 更新字段（只更新非空值）
+        if (request.ImapHost != null) existing.ImapHost = request.ImapHost;
+        if (request.ImapPort.HasValue) existing.ImapPort = request.ImapPort.Value;
+        if (request.ImapUsername != null) existing.ImapUsername = request.ImapUsername;
+        if (!string.IsNullOrEmpty(request.ImapPassword)) existing.ImapPassword = request.ImapPassword; // TODO: 加密存储
+        if (request.ImapUseSsl.HasValue) existing.ImapUseSsl = request.ImapUseSsl.Value;
+        if (request.ImapFolder != null) existing.ImapFolder = request.ImapFolder;
+
+        if (request.SmtpHost != null) existing.SmtpHost = request.SmtpHost;
+        if (request.SmtpPort.HasValue) existing.SmtpPort = request.SmtpPort.Value;
+        if (request.SmtpUsername != null) existing.SmtpUsername = request.SmtpUsername;
+        if (!string.IsNullOrEmpty(request.SmtpPassword)) existing.SmtpPassword = request.SmtpPassword; // TODO: 加密存储
+        if (request.SmtpUseSsl.HasValue) existing.SmtpUseSsl = request.SmtpUseSsl.Value;
+        if (request.SmtpFromName != null) existing.SmtpFromName = request.SmtpFromName;
+        if (request.SmtpFromAddress != null) existing.SmtpFromAddress = request.SmtpFromAddress;
+
+        if (request.PollIntervalMinutes.HasValue) existing.PollIntervalMinutes = request.PollIntervalMinutes.Value;
+        if (request.IsEnabled.HasValue) existing.IsEnabled = request.IsEnabled.Value;
+
+        if (request.AcceptedDomains != null) existing.AcceptedDomains = request.AcceptedDomains;
+        if (request.AutoAcknowledge.HasValue) existing.AutoAcknowledge = request.AutoAcknowledge.Value;
+        if (request.MarkAsReadAfterProcess.HasValue) existing.MarkAsReadAfterProcess = request.MarkAsReadAfterProcess.Value;
+        if (request.ProcessedFolder != null) existing.ProcessedFolder = request.ProcessedFolder;
+
+        existing.UpdatedAt = DateTime.UtcNow;
+
+        await _db.ChannelSettings.ReplaceOneAsync(
+            x => x.Id == "default",
+            existing,
+            new ReplaceOptions { IsUpsert = true },
+            ct);
+
+        _logger.LogInformation("Channel settings updated by {Admin}", GetAdminId());
+
+        return Ok(ApiResponse<object>.Ok(new { message = "配置已更新" }));
+    }
+
+    /// <summary>
+    /// 测试 IMAP 连接
+    /// </summary>
+    [HttpPost("settings/test")]
+    public async Task<IActionResult> TestConnection([FromBody] TestConnectionRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(request.ImapHost) || string.IsNullOrEmpty(request.ImapUsername))
+        {
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                Success = false,
+                Message = "请填写 IMAP 服务器地址和用户名"
+            }));
+        }
+
+        _logger.LogInformation("Testing IMAP connection to {Host}:{Port}", request.ImapHost, request.ImapPort);
+
+        var (success, message) = await _emailService.TestImapConnectionAsync(
+            request.ImapHost,
+            request.ImapPort,
+            request.ImapUsername,
+            request.ImapPassword,
+            request.ImapUseSsl,
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            Success = success,
+            Message = message
+        }));
+    }
+
+    /// <summary>
+    /// 手动触发邮件拉取
+    /// </summary>
+    [HttpPost("settings/poll")]
+    public async Task<IActionResult> TriggerPoll(CancellationToken ct)
+    {
+        var settings = await _db.ChannelSettings
+            .Find(x => x.Id == "default")
+            .FirstOrDefaultAsync(ct);
+
+        if (settings == null || !settings.IsEnabled)
+        {
+            return BadRequest(ApiResponse<object>.Fail("NOT_ENABLED", "邮件通道未启用"));
+        }
+
+        if (string.IsNullOrEmpty(settings.ImapHost) || string.IsNullOrEmpty(settings.ImapUsername))
+        {
+            return BadRequest(ApiResponse<object>.Fail("NOT_CONFIGURED", "请先配置 IMAP 服务器"));
+        }
+
+        _logger.LogInformation("Manual email poll triggered by {Admin}", GetAdminId());
+
+        try
+        {
+            var emailCount = await _emailService.PollEmailsAsync(ct);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                Success = true,
+                Message = $"邮件轮询完成，处理了 {emailCount} 封邮件",
+                EmailCount = emailCount
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Manual email poll failed");
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                Success = false,
+                Message = $"邮件轮询失败：{ex.Message}",
+                EmailCount = 0
+            }));
+        }
     }
 
     #endregion

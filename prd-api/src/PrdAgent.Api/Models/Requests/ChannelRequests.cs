@@ -155,3 +155,48 @@ public class PagedResponse<T>
     public int PageSize { get; set; }
     public int TotalPages => (int)Math.Ceiling((double)Total / PageSize);
 }
+
+/// <summary>
+/// 更新邮箱配置请求
+/// </summary>
+public class UpdateChannelSettingsRequest
+{
+    // IMAP 收信配置
+    public string? ImapHost { get; set; }
+    public int? ImapPort { get; set; }
+    public string? ImapUsername { get; set; }
+    public string? ImapPassword { get; set; }
+    public bool? ImapUseSsl { get; set; }
+    public string? ImapFolder { get; set; }
+
+    // SMTP 发信配置
+    public string? SmtpHost { get; set; }
+    public int? SmtpPort { get; set; }
+    public string? SmtpUsername { get; set; }
+    public string? SmtpPassword { get; set; }
+    public bool? SmtpUseSsl { get; set; }
+    public string? SmtpFromName { get; set; }
+    public string? SmtpFromAddress { get; set; }
+
+    // 轮询配置
+    public int? PollIntervalMinutes { get; set; }
+    public bool? IsEnabled { get; set; }
+
+    // 高级配置
+    public List<string>? AcceptedDomains { get; set; }
+    public bool? AutoAcknowledge { get; set; }
+    public bool? MarkAsReadAfterProcess { get; set; }
+    public string? ProcessedFolder { get; set; }
+}
+
+/// <summary>
+/// 测试 IMAP 连接请求
+/// </summary>
+public class TestConnectionRequest
+{
+    public string ImapHost { get; set; } = string.Empty;
+    public int ImapPort { get; set; } = 993;
+    public string ImapUsername { get; set; } = string.Empty;
+    public string ImapPassword { get; set; } = string.Empty;
+    public bool ImapUseSsl { get; set; } = true;
+}

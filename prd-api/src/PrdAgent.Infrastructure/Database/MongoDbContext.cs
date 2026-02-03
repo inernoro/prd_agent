@@ -107,6 +107,7 @@ public class MongoDbContext
     public IMongoCollection<ChannelIdentityMapping> ChannelIdentityMappings => _database.GetCollection<ChannelIdentityMapping>("channel_identity_mappings");
     public IMongoCollection<ChannelTask> ChannelTasks => _database.GetCollection<ChannelTask>("channel_tasks");
     public IMongoCollection<ChannelRequestLog> ChannelRequestLogs => _database.GetCollection<ChannelRequestLog>("channel_request_logs");
+    public IMongoCollection<ChannelSettings> ChannelSettings => _database.GetCollection<ChannelSettings>("channel_settings");
 
     private void CreateIndexes()
     {

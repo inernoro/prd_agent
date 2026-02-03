@@ -168,6 +168,10 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
 
+// 邮件通道服务
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailChannelService, PrdAgent.Infrastructure.Services.EmailChannelService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.EmailChannelWorker>();
+
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>
 {

@@ -194,6 +194,12 @@ export interface PagedTaskResponse {
 
 // ============ 服务接口 ============
 export interface IChannelService {
+  // 邮箱配置
+  getSettings(): Promise<ChannelSettings>;
+  updateSettings(request: UpdateSettingsRequest): Promise<ChannelSettings>;
+  testConnection(request: TestConnectionRequest): Promise<TestConnectionResult>;
+  triggerPoll(): Promise<{ success: boolean; message: string; emailCount?: number }>;
+
   // 白名单管理
   getWhitelists(
     page: number,

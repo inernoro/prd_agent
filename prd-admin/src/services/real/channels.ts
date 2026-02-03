@@ -12,11 +12,60 @@ import type {
   UpdateWhitelistRequest,
   CreateIdentityMappingRequest,
   UpdateIdentityMappingRequest,
+  ChannelSettings,
+  UpdateSettingsRequest,
+  TestConnectionRequest,
+  TestConnectionResult,
 } from '../contracts/channels';
 import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
 
 export class ChannelService implements IChannelService {
+  // ============ 邮箱配置 ============
+  async getSettings(): Promise<ChannelSettings> {
+    const response = await apiRequest<ChannelSettings>(api.channels.settings.get());
+    if (!response.success) {
+      throw new Error(response.error?.message || '获取邮箱配置失败');
+    }
+    return response.data!;
+  }
+
+  async updateSettings(request: UpdateSettingsRequest): Promise<ChannelSettings> {
+    const response = await apiRequest<ChannelSettings>(api.channels.settings.update(), {
+      method: 'PUT',
+      body: request,
+    });
+    if (!response.success) {
+      throw new Error(response.error?.message || '更新邮箱配置失败');
+    }
+    return response.data!;
+  }
+
+  async testConnection(request: TestConnectionRequest): Promise<TestConnectionResult> {
+    const response = await apiRequest<TestConnectionResult>(api.channels.settings.test(), {
+      method: 'POST',
+      body: request,
+    });
+    if (!response.success) {
+      throw new Error(response.error?.message || '测试连接失败');
+    }
+    return response.data!;
+  }
+
+  async triggerPoll(): Promise<{ success: boolean; message: string; emailCount?: number }> {
+    const response = await apiRequest<{ success: boolean; message: string; emailCount?: number }>(
+      api.channels.settings.poll(),
+      {
+        method: 'POST',
+        body: {},
+      }
+    );
+    if (!response.success) {
+      throw new Error(response.error?.message || '触发轮询失败');
+    }
+    return response.data!;
+  }
+
   // ============ 白名单管理 ============
   async getWhitelists(
     page: number,
