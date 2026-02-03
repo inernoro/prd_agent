@@ -20,6 +20,7 @@ import {
   TechIntro,
   techIntroDefaults,
 } from './templates';
+import { TemplateWorkflow } from './template-system';
 import {
   Play,
   Pause,
@@ -49,6 +50,7 @@ import {
   ChevronDown,
   ChevronUp,
   GripVertical,
+  Film,
 } from 'lucide-react';
 import { runModelLabStream } from '@/services';
 import { REMOTION_SYSTEM_PROMPT, buildUserPrompt } from './lib/remotionPrompt';
@@ -56,7 +58,7 @@ import { compileRemotionCode, validateRemotionCode } from './lib/dynamicCompiler
 import Editor from '@monaco-editor/react';
 
 // Mode types
-type LabMode = 'templates' | 'ai';
+type LabMode = 'templates' | 'ai-workflow' | 'ai';
 type AiViewTab = 'code' | 'preview';
 
 // Video specification types
@@ -581,6 +583,19 @@ export default function RemotionLabTab() {
           预设模板
         </button>
         <button
+          onClick={() => setMode('ai-workflow')}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2 rounded-lg transition-all',
+            mode === 'ai-workflow'
+              ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+              : 'bg-white/5 text-[var(--text-secondary)] hover:bg-white/10'
+          )}
+        >
+          <Film size={16} />
+          一句话创作
+          <span className="text-xs px-1.5 py-0.5 rounded bg-white/20">New</span>
+        </button>
+        <button
           onClick={() => setMode('ai')}
           className={cn(
             'flex items-center gap-2 px-4 py-2 rounded-lg transition-all',
@@ -590,11 +605,26 @@ export default function RemotionLabTab() {
           )}
         >
           <Wand2 size={16} />
-          AI 生成
-          <span className="text-xs px-1.5 py-0.5 rounded bg-white/20">Beta</span>
+          代码生成
+          <span className="text-xs px-1.5 py-0.5 rounded bg-white/20">Dev</span>
         </button>
       </div>
 
+      {/* AI Workflow Mode - Full Width */}
+      {mode === 'ai-workflow' && (
+        <div className="flex-1 min-h-0 rounded-xl overflow-hidden border border-white/10">
+          <TemplateWorkflow
+            onExport={(data) => {
+              console.log('Export requested:', data);
+              // 未来将调用后端渲染 API
+              alert('导出功能即将推出！当前参数已准备就绪。');
+            }}
+          />
+        </div>
+      )}
+
+      {/* Templates & AI Code Generation Mode */}
+      {mode !== 'ai-workflow' && (
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-4">
         {/* Left Panel */}
         <div className="w-full lg:w-80 flex flex-col gap-4 shrink-0 overflow-auto">
@@ -1153,6 +1183,7 @@ export default function RemotionLabTab() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
