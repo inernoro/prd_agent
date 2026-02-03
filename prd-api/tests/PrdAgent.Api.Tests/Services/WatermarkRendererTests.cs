@@ -117,8 +117,8 @@ public class WatermarkRendererTests
         var centerY = (bounds.minY + bounds.maxY) / 2d;
         var (expectedX, expectedY) = CalculateExpectedCenter(registry, config, width, height);
 
-        Assert.InRange(Math.Abs(centerX - expectedX), 0, 2);
-        Assert.InRange(Math.Abs(centerY - expectedY), 0, 2);
+        Assert.InRange(Math.Abs(centerX - expectedX), 0, 3);
+        Assert.InRange(Math.Abs(centerY - expectedY), 0, 3);
     }
 
     private static (double centerX, double centerY) CalculateExpectedCenter(

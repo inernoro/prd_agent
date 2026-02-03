@@ -59,55 +59,6 @@ function ModelCarousel() {
   );
 }
 
-// Animated speed meter - simplified layout
-function SpeedMeter() {
-  const [value, setValue] = useState(50);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setValue(30 + Math.random() * 40);
-    }, 2000);
-    return () => clearInterval(interval);
-  }, []);
-
-  return (
-    <div className="mt-6 flex flex-col items-center">
-      {/* Arc gauge */}
-      <svg className="w-28 h-14" viewBox="0 0 100 50">
-        <defs>
-          <linearGradient id="speedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#22c55e" />
-            <stop offset="50%" stopColor="#eab308" />
-            <stop offset="100%" stopColor="#ef4444" />
-          </linearGradient>
-        </defs>
-        <path
-          d="M 10 45 A 40 40 0 0 1 90 45"
-          fill="none"
-          stroke="rgba(255,255,255,0.1)"
-          strokeWidth="5"
-          strokeLinecap="round"
-        />
-        <path
-          d="M 10 45 A 40 40 0 0 1 90 45"
-          fill="none"
-          stroke="url(#speedGrad)"
-          strokeWidth="5"
-          strokeLinecap="round"
-          strokeDasharray="126"
-          strokeDashoffset={126 - (value / 100) * 126}
-          style={{ transition: 'stroke-dashoffset 1s ease-out' }}
-        />
-      </svg>
-      {/* Value */}
-      <div className="flex items-baseline gap-1 -mt-2">
-        <span className="text-3xl font-bold text-white">{Math.round(value)}</span>
-        <span className="text-sm text-white/50">ms</span>
-      </div>
-    </div>
-  );
-}
-
 // Security shield animation
 function SecurityShield() {
   return (
