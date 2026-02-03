@@ -31,7 +31,7 @@ import {
 import type { WatermarkFontInfo, WatermarkConfig } from '@/services/contracts/watermark';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
-import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical, Globe, Share2, XCircle, GitFork } from 'lucide-react';
+import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical, Globe, Share2, XCircle, GitFork, Eye } from 'lucide-react';
 
 const DEFAULT_CANVAS_SIZE = 320;
 const watermarkSizeCache = new Map<string, { width: number; height: number }>();
@@ -680,6 +680,17 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                             {item.name || `Watermark ${index + 1}`}
                           </div>
+                          {/* 授权应用查看按钮 */}
+                          <button
+                            type="button"
+                            className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                            title={item.appKeys && item.appKeys.length > 0
+                              ? `已授权: ${item.appKeys.map(k => appKeyLabelMap[k] || k).join('、')}`
+                              : '未授权任何应用'}
+                            style={{ color: item.appKeys && item.appKeys.length > 0 ? 'var(--text-muted)' : 'rgba(239, 68, 68, 0.6)' }}
+                          >
+                            <Eye size={12} />
+                          </button>
                         </div>
                         <div className="flex items-center gap-1.5 flex-shrink-0">
                           {/* 已选择徽章 */}
@@ -721,28 +732,6 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           </Button>
                         </div>
                       </div>
-                      {/* 授权应用提示 */}
-                      {item.appKeys && item.appKeys.length > 0 ? (
-                        <div className="mt-1.5 flex flex-wrap gap-1">
-                          {item.appKeys.map((key) => (
-                            <span
-                              key={key}
-                              className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded"
-                              style={{
-                                background: 'rgba(99, 102, 241, 0.12)',
-                                color: 'rgba(99, 102, 241, 0.9)',
-                                border: '1px solid rgba(99, 102, 241, 0.2)',
-                              }}
-                            >
-                              {appKeyLabelMap[key] || key}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="mt-1.5 text-[10px]" style={{ color: 'rgba(239, 68, 68, 0.7)' }}>
-                          未授权任何应用
-                        </div>
-                      )}
                     </div>
 
                     {/* 配置信息区（统一高度100px） */}
