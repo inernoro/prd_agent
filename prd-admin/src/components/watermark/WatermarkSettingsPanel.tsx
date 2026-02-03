@@ -31,7 +31,7 @@ import {
 import type { WatermarkFontInfo, WatermarkConfig } from '@/services/contracts/watermark';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
-import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical, Share2, XCircle, GitFork, Eye } from 'lucide-react';
+import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical, Share2, GitFork, Eye } from 'lucide-react';
 
 const DEFAULT_CANVAS_SIZE = 320;
 const watermarkSizeCache = new Map<string, { width: number; height: number }>();
@@ -697,6 +697,15 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                             {item.name || `Watermark ${index + 1}`}
                           </div>
+                          {/* 选中状态标记 */}
+                          {isActive && (
+                            <div
+                              className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0"
+                              style={{ background: 'rgba(34, 197, 94, 0.2)' }}
+                            >
+                              <Check size={10} style={{ color: 'rgba(34, 197, 94, 0.95)' }} />
+                            </div>
+                          )}
                           {/* 授权应用查看按钮 */}
                           <button
                             type="button"
@@ -790,7 +799,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                         </div>
                         {/* 右侧：预览图（水印是透明PNG，使用象棋格背景） */}
                         <div
-                          className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
+                          className="flex items-center justify-center overflow-hidden rounded-[6px]"
                           style={{
                             background: previewUrl && !previewError
                               ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
@@ -815,110 +824,74 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           ) : (
                             <div className="text-[11px]" style={{ color: 'rgba(233,209,156,0.7)' }}>无预览</div>
                           )}
-                          {/* 选中状态印章 */}
-                          {isActive && (
-                            <div
-                              className="absolute bottom-1 right-1 w-5 h-5 rounded-full flex items-center justify-center"
-                              style={{
-                                background: 'rgba(34, 197, 94, 0.9)',
-                                boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
-                              }}
-                            >
-                              <Check size={12} style={{ color: '#fff' }} />
-                            </div>
-                          )}
                         </div>
                       </div>
                     </div>
 
-                    {/* 操作按钮区（单行布局） */}
+                    {/* 操作按钮区（图标化布局） */}
                     <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                      <div className="flex items-center gap-1.5 justify-between">
-                        {/* 左侧：发布状态按钮 + 下载次数 */}
-                        <div className="flex items-center gap-2">
-                          {item.isPublic ? (
-                            <button
-                              type="button"
-                              className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                              style={{
-                                background: 'rgba(251, 146, 60, 0.15)',
-                                border: '1px solid rgba(251, 146, 60, 0.35)',
-                                color: 'rgba(251, 146, 60, 0.95)',
-                              }}
-                              onClick={() => void handleUnpublishWatermark(item)}
-                              disabled={saving}
-                              title="取消发布后其他用户将无法看到此配置"
-                            >
-                              <XCircle size={12} />
-                              取消发布
-                            </button>
-                          ) : (
-                            <Button
-                              size="xs"
-                              variant="secondary"
-                              onClick={() => void handlePublishWatermark(item)}
-                              disabled={saving}
-                              title="发布到海鲜市场供其他用户下载"
-                            >
-                              <Share2 size={12} />
-                              发布
-                            </Button>
-                          )}
-                          {/* 下载次数（已发布时显示） */}
+                      <div className="flex items-center gap-1 justify-between">
+                        {/* 左侧：发布图标 + 下载次数 */}
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
+                            style={{
+                              color: item.isPublic ? 'rgba(251, 146, 60, 0.9)' : 'var(--text-muted)',
+                              background: item.isPublic ? 'rgba(251, 146, 60, 0.1)' : 'transparent',
+                            }}
+                            onClick={() => item.isPublic ? void handleUnpublishWatermark(item) : void handlePublishWatermark(item)}
+                            disabled={saving}
+                            title={item.isPublic ? '点击取消发布' : '发布到海鲜市场'}
+                          >
+                            <Share2 size={14} />
+                          </button>
+                          {/* 下载次数 */}
                           {typeof item.forkCount === 'number' && (
-                            <span className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                            <span className="flex items-center gap-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
                               <GitFork size={10} />
                               {item.forkCount}
                             </span>
                           )}
                         </div>
-                        {/* 右侧：选择/编辑/删除按钮 */}
-                        <div className="flex gap-1.5">
-                          {isActive ? (
-                            <button
-                              type="button"
-                              className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                              style={{
-                                background: 'rgba(34, 197, 94, 0.15)',
-                                border: '1px solid rgba(34, 197, 94, 0.3)',
-                                color: 'rgba(34, 197, 94, 0.95)',
-                              }}
-                              onClick={() => handleDeactivate(item.id)}
-                              disabled={saving}
-                              title="点击取消选择"
-                            >
-                              <CheckCircle2 size={12} />
-                              已选择
-                            </button>
-                          ) : (
-                            <Button size="xs" variant="secondary" onClick={() => handleActivate(item.id)} disabled={saving}>
-                              <Check size={12} />
-                              选择
-                            </Button>
-                          )}
-                          <Button
-                            size="xs"
-                            variant="secondary"
+                        {/* 右侧：选择/编辑/删除图标 */}
+                        <div className="flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
+                            style={{
+                              color: isActive ? 'rgba(34, 197, 94, 0.95)' : 'var(--text-muted)',
+                              background: isActive ? 'rgba(34, 197, 94, 0.1)' : 'transparent',
+                            }}
+                            onClick={() => isActive ? handleDeactivate(item.id) : handleActivate(item.id)}
+                            disabled={saving}
+                            title={isActive ? '点击取消选择' : '选择此配置'}
+                          >
+                            {isActive ? <CheckCircle2 size={14} /> : <Check size={14} />}
+                          </button>
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                            style={{ color: 'var(--text-muted)' }}
                             onClick={() => {
                               setDraftConfig({ ...item });
                               setIsNewConfig(false);
                               setEditorOpen(true);
                             }}
+                            title="编辑"
                           >
-                            <Pencil size={12} />
-                            编辑
-                          </Button>
-                          <Button
-                            size="xs"
-                            variant="danger"
-                            onClick={() => {
-                              void handleDeleteConfig(item);
-                            }}
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-md transition-all duration-200 hover:bg-red-500/10 disabled:opacity-50"
+                            style={{ color: 'rgba(239, 68, 68, 0.7)' }}
+                            onClick={() => void handleDeleteConfig(item)}
                             disabled={saving}
+                            title="删除"
                           >
-                            <Trash2 size={12} />
-                            删除
-                          </Button>
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                       </div>
                     </div>

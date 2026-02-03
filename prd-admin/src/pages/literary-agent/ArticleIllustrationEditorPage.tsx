@@ -44,7 +44,7 @@ import {
   unpublishReferenceImageConfig,
 } from '@/services';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, XCircle } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2 } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
@@ -181,6 +181,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const editRefImageInputRef = useRef<HTMLInputElement | null>(null);
   const [editingRefConfig, setEditingRefConfig] = useState<ReferenceImageConfig | null>(null);
   const [editingRefConfigOpen, setEditingRefConfigOpen] = useState(false);
+  const [enlargedRefImageUrl, setEnlargedRefImageUrl] = useState<string | null>(null);
 
   // 海鲜市场状态（使用类型注册表）
   const [configViewMode, setConfigViewMode] = useState<'mine' | 'marketplace'>('mine');
@@ -2932,6 +2933,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 >
                                   {prompt.title}
                                 </div>
+                                {/* 选中状态标记 */}
+                                {isPromptSelected && (
+                                  <div
+                                    className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0"
+                                    style={{ background: 'rgba(34, 197, 94, 0.2)' }}
+                                  >
+                                    <Check size={10} style={{ color: 'rgba(34, 197, 94, 0.95)' }} />
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -2971,93 +2981,63 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
 
-                          {/* 下栏：操作按钮区（单行布局） */}
+                          {/* 下栏：操作按钮区（图标化布局） */}
                           <div className="px-2 pb-2 pt-1 flex-shrink-0">
-                            <div className="flex items-center gap-1.5 justify-between">
-                              {/* 左侧：发布状态按钮 + 下载次数 */}
-                              <div className="flex items-center gap-2">
-                                {prompt.isPublic ? (
-                                  <button
-                                    type="button"
-                                    className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                                    style={{
-                                      background: 'rgba(251, 146, 60, 0.15)',
-                                      border: '1px solid rgba(251, 146, 60, 0.35)',
-                                      color: 'rgba(251, 146, 60, 0.95)',
-                                    }}
-                                    onClick={() => void handleUnpublishPrompt(prompt)}
-                                    title="取消发布后其他用户将无法看到此配置"
-                                  >
-                                    <XCircle size={12} />
-                                    取消发布
-                                  </button>
-                                ) : (
-                                  <Button
-                                    size="xs"
-                                    variant="secondary"
-                                    onClick={() => void handlePublishPrompt(prompt)}
-                                    title="发布到海鲜市场供其他用户下载"
-                                  >
-                                    <Share2 size={12} />
-                                    发布
-                                  </Button>
-                                )}
+                            <div className="flex items-center gap-1 justify-between">
+                              {/* 左侧：发布图标 + 下载次数 */}
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
+                                  style={{
+                                    color: prompt.isPublic ? 'rgba(251, 146, 60, 0.9)' : 'var(--text-muted)',
+                                    background: prompt.isPublic ? 'rgba(251, 146, 60, 0.1)' : 'transparent',
+                                  }}
+                                  onClick={() => prompt.isPublic ? void handleUnpublishPrompt(prompt) : void handlePublishPrompt(prompt)}
+                                  title={prompt.isPublic ? '点击取消发布' : '发布到海鲜市场'}
+                                >
+                                  <Share2 size={14} />
+                                </button>
                                 {/* 下载次数 */}
                                 {typeof prompt.forkCount === 'number' && (
-                                  <span className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                  <span className="flex items-center gap-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
                                     <GitFork size={10} />
                                     {prompt.forkCount}
                                   </span>
                                 )}
                               </div>
-                              {/* 右侧：选择/编辑/删除按钮 */}
-                              <div className="flex gap-1.5">
-                                {selectedPrompt?.id !== prompt.id ? (
-                                  <Button
-                                    size="xs"
-                                    variant="secondary"
-                                    onClick={() => {
-                                      setSelectedPrompt(prompt);
-                                    }}
-                                  >
-                                    <Check size={12} />
-                                    选择
-                                  </Button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200"
-                                    style={{
-                                      background: 'rgba(34, 197, 94, 0.15)',
-                                      border: '1px solid rgba(34, 197, 94, 0.3)',
-                                      color: 'rgba(34, 197, 94, 0.95)',
-                                    }}
-                                    title="当前选中"
-                                  >
-                                    <CheckCircle2 size={12} />
-                                    已选择
-                                  </button>
-                                )}
-                                <Button
-                                  size="xs"
-                                  variant="secondary"
-                                  onClick={() => {
-                                    handleEditPrompt(prompt);
+                              {/* 右侧：选择/编辑/删除图标 */}
+                              <div className="flex items-center gap-0.5">
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                                  style={{
+                                    color: isPromptSelected ? 'rgba(34, 197, 94, 0.95)' : 'var(--text-muted)',
+                                    background: isPromptSelected ? 'rgba(34, 197, 94, 0.1)' : 'transparent',
                                   }}
+                                  onClick={() => setSelectedPrompt(prompt)}
+                                  title={isPromptSelected ? '当前选中' : '选择此配置'}
                                 >
-                                  <Edit2 size={12} />
-                                  编辑
-                                </Button>
-                                <Button
-                                  size="xs"
-                                  variant="danger"
-                                  onClick={() => {
-                                    void handleDeletePrompt(prompt);
-                                  }}
+                                  {isPromptSelected ? <CheckCircle2 size={14} /> : <Check size={14} />}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                                  style={{ color: 'var(--text-muted)' }}
+                                  onClick={() => handleEditPrompt(prompt)}
+                                  title="编辑"
                                 >
-                                  <Trash2 size={12} />
-                                  删除
-                                </Button>
+                                  <Edit2 size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-red-500/10"
+                                  style={{ color: 'rgba(239, 68, 68, 0.7)' }}
+                                  onClick={() => void handleDeletePrompt(prompt)}
+                                  title="删除"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
                               </div>
                             </div>
                           </div>
@@ -3153,6 +3133,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                                   {config.name}
                                 </div>
+                                {/* 选中状态标记 */}
+                                {config.isActive && (
+                                  <div
+                                    className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0"
+                                    style={{ background: 'rgba(34, 197, 94, 0.2)' }}
+                                  >
+                                    <Check size={10} style={{ color: 'rgba(34, 197, 94, 0.95)' }} />
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -3172,13 +3161,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   {config.prompt || '（无提示词）'}
                                 </div>
                               </div>
-                              {/* 右侧：图片预览（风格图使用简单边框，非透明图无需象棋格） */}
+                              {/* 右侧：图片预览（风格图使用简单边框，点击放大） */}
                               <div
-                                className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
+                                className="flex items-center justify-center overflow-hidden rounded-[6px]"
                                 style={{
                                   background: 'rgba(255,255,255,0.02)',
                                   border: '1px solid rgba(255,255,255,0.08)',
+                                  cursor: config.imageUrl ? 'zoom-in' : 'default',
                                 }}
+                                onClick={() => config.imageUrl && setEnlargedRefImageUrl(config.imageUrl)}
+                                title={config.imageUrl ? '点击放大' : undefined}
                               >
                                 {config.imageUrl ? (
                                   <img
@@ -3189,124 +3181,79 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 ) : (
                                   <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
                                 )}
-                                {/* 选中状态印章 */}
-                                {config.isActive && (
-                                  <div
-                                    className="absolute bottom-1 right-1 w-5 h-5 rounded-full flex items-center justify-center"
-                                    style={{
-                                      background: 'rgba(34, 197, 94, 0.9)',
-                                      boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
-                                    }}
-                                  >
-                                    <Check size={12} style={{ color: '#fff' }} />
-                                  </div>
-                                )}
                               </div>
                             </div>
                           </div>
 
-                          {/* 操作按钮区（单行布局） */}
+                          {/* 操作按钮区（图标化布局） */}
                           <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                            <div className="flex items-center gap-1.5 justify-between">
-                              {/* 左侧：发布状态按钮 + 下载次数 */}
-                              <div className="flex items-center gap-2">
-                                {config.isPublic ? (
-                                  <button
-                                    type="button"
-                                    className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                                    style={{
-                                      background: 'rgba(251, 146, 60, 0.15)',
-                                      border: '1px solid rgba(251, 146, 60, 0.35)',
-                                      color: 'rgba(251, 146, 60, 0.95)',
-                                    }}
-                                    onClick={() => void handleUnpublishRefConfig(config)}
-                                    title="取消发布后其他用户将无法看到此配置"
-                                  >
-                                    <XCircle size={12} />
-                                    取消发布
-                                  </button>
-                                ) : (
-                                  <Button
-                                    size="xs"
-                                    variant="secondary"
-                                    onClick={() => void handlePublishRefConfig(config)}
-                                    title="发布到海鲜市场供其他用户下载"
-                                  >
-                                    <Share2 size={12} />
-                                    发布
-                                  </Button>
-                                )}
+                            <div className="flex items-center gap-1 justify-between">
+                              {/* 左侧：发布图标 + 下载次数 */}
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
+                                  style={{
+                                    color: config.isPublic ? 'rgba(251, 146, 60, 0.9)' : 'var(--text-muted)',
+                                    background: config.isPublic ? 'rgba(251, 146, 60, 0.1)' : 'transparent',
+                                  }}
+                                  onClick={() => config.isPublic ? void handleUnpublishRefConfig(config) : void handlePublishRefConfig(config)}
+                                  disabled={referenceImageSaving}
+                                  title={config.isPublic ? '点击取消发布' : '发布到海鲜市场'}
+                                >
+                                  <Share2 size={14} />
+                                </button>
                                 {/* 下载次数 */}
                                 {typeof config.forkCount === 'number' && (
-                                  <span className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                  <span className="flex items-center gap-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
                                     <GitFork size={10} />
                                     {config.forkCount}
                                   </span>
                                 )}
                               </div>
-                              {/* 右侧：选择/编辑/删除按钮 */}
-                              <div className="flex gap-1.5">
-                                {config.isActive ? (
-                                  <button
-                                    type="button"
-                                    className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                                    style={{
-                                      background: 'rgba(34, 197, 94, 0.15)',
-                                      border: '1px solid rgba(34, 197, 94, 0.3)',
-                                      color: 'rgba(34, 197, 94, 0.95)',
-                                    }}
-                                    onClick={async () => {
-                                      setReferenceImageSaving(true);
-                                      try {
-                                        const res = await deactivateReferenceImageConfig({ id: config.id });
-                                        if (res.success) {
-                                          await loadReferenceImageConfigs();
-                                        }
-                                      } finally {
-                                        setReferenceImageSaving(false);
+                              {/* 右侧：选择/编辑/删除图标 */}
+                              <div className="flex items-center gap-0.5">
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
+                                  style={{
+                                    color: config.isActive ? 'rgba(34, 197, 94, 0.95)' : 'var(--text-muted)',
+                                    background: config.isActive ? 'rgba(34, 197, 94, 0.1)' : 'transparent',
+                                  }}
+                                  onClick={async () => {
+                                    setReferenceImageSaving(true);
+                                    try {
+                                      const res = config.isActive
+                                        ? await deactivateReferenceImageConfig({ id: config.id })
+                                        : await activateReferenceImageConfig({ id: config.id });
+                                      if (res.success) {
+                                        await loadReferenceImageConfigs();
                                       }
-                                    }}
-                                    disabled={referenceImageSaving}
-                                    title="点击取消选择"
-                                  >
-                                    <CheckCircle2 size={12} />
-                                    已选择
-                                  </button>
-                                ) : (
-                                  <Button
-                                    size="xs"
-                                    variant="secondary"
-                                    onClick={async () => {
-                                      setReferenceImageSaving(true);
-                                      try {
-                                        const res = await activateReferenceImageConfig({ id: config.id });
-                                        if (res.success) {
-                                          await loadReferenceImageConfigs();
-                                        }
-                                      } finally {
-                                        setReferenceImageSaving(false);
-                                      }
-                                    }}
-                                    disabled={referenceImageSaving}
-                                  >
-                                    <Check size={12} />
-                                    选择
-                                  </Button>
-                                )}
-                                <Button
-                                  size="xs"
-                                  variant="secondary"
+                                    } finally {
+                                      setReferenceImageSaving(false);
+                                    }
+                                  }}
+                                  disabled={referenceImageSaving}
+                                  title={config.isActive ? '点击取消选择' : '选择此配置'}
+                                >
+                                  {config.isActive ? <CheckCircle2 size={14} /> : <Check size={14} />}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                                  style={{ color: 'var(--text-muted)' }}
                                   onClick={() => {
                                     setEditingRefConfig({ ...config });
                                     setEditingRefConfigOpen(true);
                                   }}
+                                  title="编辑"
                                 >
-                                  <Pencil size={12} />
-                                  编辑
-                                </Button>
-                                <Button
-                                  size="xs"
-                                  variant="danger"
+                                  <Pencil size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-red-500/10 disabled:opacity-50"
+                                  style={{ color: 'rgba(239, 68, 68, 0.7)' }}
                                   onClick={async () => {
                                     const confirmed = await systemDialog.confirm({
                                       title: '删除风格图配置',
@@ -3315,7 +3262,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                       tone: 'danger',
                                     });
                                     if (!confirmed) return;
-                                    // 已发布到海鲜市场的配置需要二次确认
                                     if (config.isPublic) {
                                       const doubleConfirmed = await systemDialog.confirm({
                                         title: '⚠️ 该配置已发布到海鲜市场',
@@ -3340,10 +3286,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     }
                                   }}
                                   disabled={referenceImageSaving}
+                                  title="删除"
                                 >
-                                  <Trash2 size={12} />
-                                  删除
-                                </Button>
+                                  <Trash2 size={14} />
+                                </button>
                               </div>
                             </div>
                           </div>
@@ -3493,6 +3439,25 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         initialIndex={imagePreviewIndex}
         open={imagePreviewOpen}
         onClose={() => setImagePreviewOpen(false)}
+      />
+
+      {/* 风格图放大预览对话框 */}
+      <Dialog
+        open={!!enlargedRefImageUrl}
+        onOpenChange={(open) => !open && setEnlargedRefImageUrl(null)}
+        title="图片预览"
+        maxWidth={800}
+        content={
+          enlargedRefImageUrl && (
+            <div className="flex items-center justify-center p-4">
+              <img
+                src={enlargedRefImageUrl}
+                alt="Preview"
+                className="max-w-full max-h-[70vh] object-contain rounded-lg"
+              />
+            </div>
+          )
+        }
       />
 
       {/* 风格图配置编辑对话框 */}

@@ -174,6 +174,7 @@ const PromptPreviewRenderer: React.FC<{ item: MarketplacePrompt }> = ({ item }) 
 
 /**
  * 风格图预览：左右布局（文字 + 图片）
+ * 风格图使用简单边框，非透明PNG无需象棋格背景
  */
 const RefImagePreviewRenderer: React.FC<{ item: MarketplaceRefImage }> = ({ item }) => (
   <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: PREVIEW_HEIGHT }}>
@@ -189,18 +190,16 @@ const RefImagePreviewRenderer: React.FC<{ item: MarketplaceRefImage }> = ({ item
         {item.prompt || '（无提示词）'}
       </div>
     </div>
-    {/* 右侧：图片预览 */}
+    {/* 右侧：图片预览（简单边框，非透明图无需象棋格） */}
     <div
-      className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
+      className="flex items-center justify-center overflow-hidden rounded-[6px]"
       style={{
-        background: item.imageUrl
-          ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-          : 'rgba(255,255,255,0.02)',
-        border: item.imageUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
+        background: 'rgba(255,255,255,0.02)',
+        border: '1px solid rgba(255,255,255,0.08)',
       }}
     >
       {item.imageUrl ? (
-        <img src={item.imageUrl} alt={item.name} className="block w-full h-full object-contain" />
+        <img src={item.imageUrl} alt={item.name} className="block w-full h-full object-cover" />
       ) : (
         <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
       )}
