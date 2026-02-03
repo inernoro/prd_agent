@@ -2,10 +2,22 @@
 
 ## 文档版本
 
-- **版本**：v1.0
+- **版本**：v1.2
 - **创建日期**：2026-02-03
 - **最后更新**：2026-02-03
-- **状态**：规划中
+- **状态**：✅ 开发完成（待集成测试）
+
+---
+
+## 快速导航
+
+| 内容 | 跳转 |
+|------|------|
+| 测试命令 | [14. 测试运行指南](#14-测试运行指南) |
+| 入口地址 | [15. 系统入口](#15-系统入口) |
+| 操作指南 | [16. 操作指南](#16-操作指南) |
+| 用户故事 | [17. 用户故事](#17-用户故事) |
+| TodoList | [18. TodoList 与待办事项](#18-todolist-与待办事项) |
 
 ---
 
@@ -1523,9 +1535,286 @@ public class ChannelAdapterE2ETests
 
 ---
 
+---
+
+## 14. 测试运行指南
+
+### 14.1 单元测试
+
+```bash
+# 运行白名单匹配测试
+cd prd-api
+dotnet test --filter "FullyQualifiedName~WhitelistMatcherTests" --logger "console;verbosity=detailed"
+
+# 运行所有通道适配器相关测试
+dotnet test --filter "FullyQualifiedName~Channel" --logger "console;verbosity=detailed"
+```
+
+### 14.2 集成测试
+
+```bash
+# 运行集成测试（需要数据库连接）
+cd prd-api
+dotnet test --filter "Category=Integration&FullyQualifiedName~Channel" --logger "console;verbosity=detailed"
+```
+
+### 14.3 E2E 测试脚本
+
+```bash
+# 运行全链路 E2E 测试脚本（不参与 CI）
+# 需要先启动后端服务
+
+# 1. 启动后端服务
+cd prd-api/src/PrdAgent.Api
+dotnet run
+
+# 2. 在另一个终端运行 E2E 测试
+cd /path/to/prd_agent
+./scripts/test-channel-adapter-e2e.sh http://localhost:5000 "your-jwt-token"
+```
+
+### 14.4 测试命令速查表
+
+| 测试类型 | 命令 |
+|----------|------|
+| 单元测试 | `dotnet test --filter "FullyQualifiedName~WhitelistMatcherTests"` |
+| 集成测试 | `dotnet test --filter "Category=Integration&FullyQualifiedName~Channel"` |
+| E2E 测试 | `./scripts/test-channel-adapter-e2e.sh [base_url] [token]` |
+| 全部测试 | `dotnet test --filter "FullyQualifiedName~Channel"` |
+
+---
+
+## 15. 系统入口
+
+### 15.1 前端管理页面
+
+| 页面 | URL | 权限 | 说明 |
+|------|-----|------|------|
+| 通道管理 | `/channels` | `channels.manage` | 通道状态概览 + 白名单管理 |
+| 任务监控 | `/channels/tasks` | `channels.manage` | 任务列表、筛选、统计 |
+| 身份映射 | `/channels/identity-mappings` | `channels.manage` | 外部标识 → 系统用户映射 |
+
+### 15.2 后端 API 入口
+
+**管理接口（需要登录 + 权限）**
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/admin/channels/whitelists` | 白名单列表（分页） |
+| POST | `/api/admin/channels/whitelists` | 创建白名单 |
+| PUT | `/api/admin/channels/whitelists/{id}` | 更新白名单 |
+| DELETE | `/api/admin/channels/whitelists/{id}` | 删除白名单 |
+| POST | `/api/admin/channels/whitelists/{id}/toggle` | 启用/禁用 |
+| GET | `/api/admin/channels/identity-mappings` | 身份映射列表 |
+| POST | `/api/admin/channels/identity-mappings` | 创建身份映射 |
+| PUT | `/api/admin/channels/identity-mappings/{id}` | 更新身份映射 |
+| DELETE | `/api/admin/channels/identity-mappings/{id}` | 删除身份映射 |
+| GET | `/api/admin/channels/tasks` | 任务列表（分页） |
+| GET | `/api/admin/channels/tasks/{id}` | 任务详情 |
+| POST | `/api/admin/channels/tasks/{id}/retry` | 重试任务 |
+| POST | `/api/admin/channels/tasks/{id}/cancel` | 取消任务 |
+| GET | `/api/admin/channels/tasks/stats` | 任务统计 |
+| GET | `/api/admin/channels/stats` | 通道统计 |
+
+**Webhook 接口（外部调用）**
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/channels/email/inbound` | SendGrid Inbound Parse Webhook |
+| POST | `/api/channels/email/inbound/test` | 测试入站（仅 Development 环境） |
+
+### 15.3 SendGrid 配置
+
+```
+MX 记录: mx.sendgrid.net
+Inbound Parse Webhook URL: https://your-domain.com/api/channels/email/inbound
+```
+
+---
+
+## 16. 操作指南
+
+### 16.1 配置邮件通道（管理员）
+
+**步骤 1：添加白名单规则**
+
+1. 登录管理后台，进入 **通道管理** (`/channels`)
+2. 点击 **+ 新建白名单** 按钮
+3. 填写表单：
+   - **通道类型**：选择「邮件」
+   - **规则模式**：输入邮箱模式（如 `*@company.com` 或 `user@example.com`）
+   - **绑定用户**（可选）：选择系统用户
+   - **允许的 Agent**：勾选授权的 Agent
+   - **每日配额**：设置每日请求限额
+4. 点击 **创建** 保存
+
+**步骤 2：配置身份映射（可选）**
+
+1. 进入 **身份映射** (`/channels/identity-mappings`)
+2. 点击 **+ 新建映射**
+3. 填写：
+   - **通道类型**：邮件
+   - **通道标识**：用户邮箱地址
+   - **映射用户**：选择系统用户
+4. 点击 **创建**
+
+**步骤 3：验证配置**
+
+1. 发送测试邮件到配置的接收地址
+2. 在 **任务监控** (`/channels/tasks`) 查看任务是否创建成功
+
+### 16.2 通过邮件发送任务（用户）
+
+**方式一：使用前缀标签**
+
+```
+收件人: agent@prdagent.com
+主题: [生图] 一只在夕阳下奔跑的金毛犬
+正文: (可选的详细描述)
+```
+
+**支持的前缀标签**
+
+| 前缀 | Agent | 说明 |
+|------|-------|------|
+| `[生图]` `[画图]` `[图片]` | visual-agent | 图片生成 |
+| `[缺陷]` `[BUG]` `[问题]` | defect-agent | 创建缺陷 |
+| `[PRD]` `[需求]` `[文档]` | prd-agent | PRD 问答 |
+| `[查询]` | - | 查询信息 |
+| `[取消]` | - | 取消任务 |
+| `[帮助]` | - | 获取帮助 |
+
+**方式二：自然语言（无前缀）**
+
+```
+收件人: agent@prdagent.com
+主题: 帮我生成一张图片
+正文: 请帮我生成一只在夕阳下奔跑的金毛犬，风格是写实摄影
+```
+
+### 16.3 查看任务状态（管理员）
+
+1. 进入 **任务监控** (`/channels/tasks`)
+2. 使用筛选器：
+   - **通道**：筛选特定通道（邮件/短信/等）
+   - **状态**：筛选任务状态（待处理/处理中/完成/失败）
+   - **搜索**：按任务 ID 或发送者搜索
+3. 点击任务行查看详情
+4. 对于失败任务，可点击 **重试** 按钮
+
+---
+
+## 17. 用户故事
+
+### 17.1 管理员故事
+
+| 编号 | 用户故事 | 验收标准 |
+|------|----------|----------|
+| **US-A1** | 作为管理员，我希望能配置邮件白名单，以便控制哪些邮箱可以发送任务 | - 支持精确邮箱地址<br>- 支持域名通配符 `*@company.com`<br>- 可启用/禁用规则 |
+| **US-A2** | 作为管理员，我希望能设置每日配额，以防止滥用 | - 可为每条白名单规则设置配额<br>- 超配额请求被拒绝<br>- 配额每日自动重置 |
+| **US-A3** | 作为管理员，我希望能限制白名单可访问的 Agent | - 可多选允许的 Agent<br>- 未授权 Agent 请求被拒绝 |
+| **US-A4** | 作为管理员，我希望能绑定外部邮箱到系统用户 | - 支持创建身份映射<br>- 任务以绑定用户身份执行 |
+| **US-A5** | 作为管理员，我希望能监控所有通道任务 | - 查看任务列表和详情<br>- 支持多条件筛选<br>- 查看任务统计 |
+| **US-A6** | 作为管理员，我希望能重试失败的任务 | - 失败任务可重试<br>- 重试后状态正确更新 |
+
+### 17.2 用户故事
+
+| 编号 | 用户故事 | 验收标准 |
+|------|----------|----------|
+| **US-U1** | 作为用户，我希望通过邮件发送图片生成任务 | - 发送 `[生图] xxx` 邮件<br>- 收到任务确认邮件<br>- 收到生成结果邮件 |
+| **US-U2** | 作为用户，我希望通过邮件创建缺陷 | - 发送 `[缺陷] xxx` 邮件<br>- 缺陷被正确创建<br>- 收到确认邮件 |
+| **US-U3** | 作为用户，我希望通过邮件查询 PRD | - 发送 `[PRD] xxx` 邮件<br>- 收到 PRD 相关回答 |
+| **US-U4** | 作为用户，我希望用自然语言发送任务（无需前缀） | - 系统自动识别意图<br>- 正确路由到对应 Agent |
+| **US-U5** | 作为用户，我希望能取消进行中的任务 | - 发送 `[取消] TASK-xxx`<br>- 任务被正确取消 |
+| **US-U6** | 作为用户，我希望能获取使用帮助 | - 发送 `[帮助]`<br>- 收到使用说明邮件 |
+
+### 17.3 故事地图
+
+```
+                    ┌─────────────────────────────────────────────────────────────────┐
+                    │                        用户故事地图                              │
+                    └─────────────────────────────────────────────────────────────────┘
+
+用户活动:           配置通道              发送任务              监控任务
+                       │                     │                     │
+                       ▼                     ▼                     ▼
+用户任务:     ┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+              │ 添加白名单规则 │    │ 发送邮件任务  │    │ 查看任务列表  │
+              │ 配置身份映射   │    │ 附带参数/附件 │    │ 查看任务详情  │
+              │ 启用/禁用规则  │    │ 取消任务      │    │ 重试失败任务  │
+              └───────────────┘    └───────────────┘    └───────────────┘
+                       │                     │                     │
+                       ▼                     ▼                     ▼
+用户故事:          US-A1~A4              US-U1~U6              US-A5~A6
+
+优先级:         ████████████          ████████████          ████████████
+                   P0                    P0                    P1
+```
+
+---
+
+## 18. TodoList 与待办事项
+
+### 18.1 已完成 ✅
+
+| 任务 | 描述 | 完成日期 |
+|------|------|----------|
+| **数据模型** | ChannelWhitelist, ChannelTask, ChannelIdentityMapping, ChannelRequestLog | 2026-02-03 |
+| **MongoDB 配置** | 集合定义 + 索引创建 | 2026-02-03 |
+| **白名单 API** | GET/POST/PUT/DELETE/Toggle 完整 CRUD | 2026-02-03 |
+| **白名单匹配服务** | 通配符匹配、配额检查、原子更新 | 2026-02-03 |
+| **身份映射 API** | 完整 CRUD | 2026-02-03 |
+| **任务 API** | 列表/详情/重试/取消/统计 | 2026-02-03 |
+| **邮件入站 Webhook** | SendGrid Inbound Parse 格式支持 | 2026-02-03 |
+| **意图识别服务** | 前缀标签解析 + 参数提取 | 2026-02-03 |
+| **前端: 通道管理页** | ChannelsPage.tsx | 2026-02-03 |
+| **前端: 白名单弹窗** | WhitelistEditDialog.tsx | 2026-02-03 |
+| **前端: 任务监控页** | ChannelTasksPage.tsx | 2026-02-03 |
+| **前端: 任务详情** | TaskDetailDrawer.tsx | 2026-02-03 |
+| **前端: 身份映射页** | IdentityMappingsPage.tsx | 2026-02-03 |
+| **前端: 路由配置** | App.tsx 路由 + 权限配置 | 2026-02-03 |
+| **单元测试** | WhitelistMatcherTests.cs | 2026-02-03 |
+| **集成测试** | ChannelApiTests.cs | 2026-02-03 |
+| **E2E 测试脚本** | test-channel-adapter-e2e.sh | 2026-02-03 |
+
+### 18.2 待完成 📋
+
+| 优先级 | 任务 | 描述 | 预计工作量 |
+|--------|------|------|------------|
+| **P0** | 邮件出站适配器 | SendGrid 发送邮件集成 | 1-2 天 |
+| **P0** | 任务执行 Worker | 异步任务队列处理 | 2-3 天 |
+| **P0** | Agent 路由集成 | 调用现有 Agent 执行任务 | 1-2 天 |
+| **P1** | 权限配置 | 添加 `channels.manage` 到权限目录 | 0.5 天 |
+| **P1** | 邮件模板 | 任务确认/完成/失败邮件模板 | 1 天 |
+| **P1** | LLM 意图识别 | 无前缀时调用 LLM 识别意图 | 1 天 |
+| **P2** | 邮件线程追踪 | 支持回复邮件继续对话 | 2 天 |
+| **P2** | 附件处理增强 | 图片/文档解析 | 2-3 天 |
+| **P2** | 统计报表 | 通道使用量图表 | 1-2 天 |
+| **P3** | 短信通道 | Twilio/阿里云短信集成 | 3-5 天 |
+| **P3** | Siri 快捷指令 | iOS Shortcuts 集成 | 3-5 天 |
+
+### 18.3 阻塞项 🚫
+
+| 阻塞项 | 依赖 | 影响范围 | 解决方案 |
+|--------|------|----------|----------|
+| SendGrid API Key | 运维配置 | 邮件发送功能 | 在 appsettings 中配置 |
+| 域名 MX 记录 | DNS 配置 | 邮件接收功能 | 配置 MX 指向 SendGrid |
+
+### 18.4 技术债务 🔧
+
+| 债务项 | 优先级 | 说明 |
+|--------|--------|------|
+| 测试覆盖率 | P2 | 增加更多边界条件测试 |
+| 错误处理 | P2 | 完善错误码和错误消息 |
+| 日志增强 | P2 | 添加结构化日志 |
+| 配置验证 | P3 | 启动时验证 SendGrid 配置 |
+
+---
+
 ## 变更历史
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
 | v1.0 | 2026-02-03 | 初始版本，包含邮件通道详细设计 | - |
 | v1.1 | 2026-02-03 | 添加前端字符画、验收清单、测试清单 | - |
+| v1.2 | 2026-02-03 | 添加测试命令、入口地址、操作指南、用户故事、TodoList | - |
