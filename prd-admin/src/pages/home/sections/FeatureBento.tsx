@@ -331,7 +331,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
 
         {/* Bento grid - improved layout */}
         <div className="grid grid-cols-1 md:grid-cols-6 gap-4 lg:gap-5">
-          {/* Multi-model support - large card spanning 4 columns */}
+          {/* 先进性 - Left large card spanning 4 columns */}
           <div className="md:col-span-4 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 lg:p-8 hover:border-blue-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
@@ -340,45 +340,85 @@ export function FeatureBento({ className }: FeatureBentoProps) {
               }}
             />
             <div className="relative z-10">
-              <div className="flex items-start justify-between gap-4">
+              {/* Header with badge */}
+              <div className="flex items-start justify-between gap-4 mb-6">
                 <div className="flex-1">
-                  <div className="inline-flex p-3 rounded-2xl mb-4 bg-gradient-to-br from-blue-500 to-cyan-500 shadow-lg group-hover:shadow-blue-500/30 group-hover:scale-105 transition-all duration-300">
-                    <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                    </svg>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 mb-4 rounded-full bg-blue-500/10 border border-blue-500/20">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                    <span className="text-xs text-blue-400">实验室孵化</span>
                   </div>
-                  <h3 className="text-xl lg:text-2xl font-bold text-white/90 mb-2">多模型智能调度</h3>
-                  <p className="text-sm lg:text-base text-white/50 leading-relaxed max-w-md">
-                    支持 GPT-4、Claude、Gemini 等主流大模型，智能选择最优模型处理任务
+                  <h3 className="text-xl lg:text-2xl font-bold text-white/90 mb-2">全球最先进模型</h3>
+                  <p className="text-sm lg:text-base text-white/50 leading-relaxed">
+                    昨天发布，今天可用。我们与 OpenAI、Anthropic、Google 等保持同步，新模型第一时间接入
                   </p>
                 </div>
                 <div className="text-right flex-shrink-0 hidden sm:block">
-                  <div className="text-4xl lg:text-5xl font-bold text-white/80">10+</div>
-                  <div className="text-sm text-white/40">支持模型</div>
+                  <div className="text-4xl lg:text-5xl font-bold text-blue-400">24h</div>
+                  <div className="text-sm text-white/40">新模型上线</div>
                 </div>
               </div>
+
+              {/* Feature list */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                {[
+                  { icon: '🚀', title: '持续升级', desc: '永远在技术第一线' },
+                  { icon: '🧪', title: '实验室直通', desc: '前沿模型抢先体验' },
+                  { icon: '🎯', title: '智能调度', desc: '自动选择最优模型' },
+                ].map((item, i) => (
+                  <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5">
+                    <span className="text-lg">{item.icon}</span>
+                    <div>
+                      <div className="text-sm font-medium text-white/80">{item.title}</div>
+                      <div className="text-xs text-white/40">{item.desc}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               <ModelCarousel />
             </div>
             <div className="absolute -bottom-20 -right-20 w-60 h-60 rounded-full opacity-10 blur-3xl bg-gradient-to-br from-blue-500 to-cyan-500 group-hover:opacity-20 transition-opacity duration-500" />
           </div>
 
-          {/* Speed - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 hover:border-amber-500/30 transition-all duration-500">
+          {/* 稳定性 - Right card spanning 2 columns */}
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 hover:border-emerald-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
-                background: 'radial-gradient(circle at 50% 30%, rgba(234, 179, 8, 0.15) 0%, transparent 60%)',
+                background: 'radial-gradient(circle at 50% 30%, rgba(16, 185, 129, 0.15) 0%, transparent 60%)',
               }}
             />
             <div className="relative z-10">
-              <div className="inline-flex p-3 rounded-2xl mb-4 bg-gradient-to-br from-yellow-500 to-orange-500 shadow-lg group-hover:shadow-amber-500/30 group-hover:scale-105 transition-all duration-300">
-                <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
+              <div className="inline-flex items-center gap-2 px-3 py-1 mb-4 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-xs text-emerald-400">永不断线</span>
               </div>
-              <h3 className="text-lg font-bold text-white/90 mb-1">毫秒级响应</h3>
-              <p className="text-sm text-white/50">流式输出，让等待不再漫长</p>
-              <SpeedMeter />
+              <h3 className="text-lg font-bold text-white/90 mb-2">7×24 稳定运行</h3>
+              <p className="text-sm text-white/50 mb-4">Worker 进程池设计，离开屏幕继续运行</p>
+
+              {/* Stability features */}
+              <div className="space-y-2">
+                {[
+                  { icon: '🔄', text: '断网自动重连' },
+                  { icon: '📱', text: '任何设备随时操作' },
+                  { icon: '💤', text: '后台静默运行' },
+                  { icon: '☁️', text: '云端状态同步' },
+                ].map((item, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm">
+                    <span>{item.icon}</span>
+                    <span className="text-white/60">{item.text}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Status indicator */}
+              <div className="mt-4 pt-4 border-t border-white/10 flex items-center justify-between">
+                <span className="text-xs text-white/40">系统状态</span>
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-xs text-emerald-400 font-medium">运行中</span>
+                </div>
+              </div>
             </div>
           </div>
 
