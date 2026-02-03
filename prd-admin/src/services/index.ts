@@ -141,6 +141,10 @@ import type {
   CreateLiteraryPromptContract,
   UpdateLiteraryPromptContract,
   DeleteLiteraryPromptContract,
+  ListLiteraryPromptsMarketplaceContract,
+  PublishLiteraryPromptContract,
+  UnpublishLiteraryPromptContract,
+  ForkLiteraryPromptContract,
 } from '@/services/contracts/literaryPrompts';
 import type {
   GetLiteraryAgentConfigContract,
@@ -160,6 +164,10 @@ import type {
   CreateLiteraryAgentImageGenRunContract,
   CancelLiteraryAgentImageGenRunContract,
   StreamLiteraryAgentImageGenRunWithRetryContract,
+  ListReferenceImageConfigsMarketplaceContract,
+  PublishReferenceImageConfigContract,
+  UnpublishReferenceImageConfigContract,
+  ForkReferenceImageConfigContract,
 } from '@/services/contracts/literaryAgentConfig';
 import type {
   ListDefectTemplatesContract,
@@ -214,6 +222,10 @@ import type {
   UploadWatermarkFontContract,
   DeleteWatermarkFontContract,
   UploadWatermarkIconContract,
+  ListWatermarksMarketplaceContract,
+  PublishWatermarkContract,
+  UnpublishWatermarkContract,
+  ForkWatermarkContract,
 } from '@/services/contracts/watermark';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
@@ -267,6 +279,10 @@ import {
   uploadWatermarkFontReal,
   uploadWatermarkIconReal,
   testWatermarkReal,
+  listWatermarksMarketplaceReal,
+  publishWatermarkReal,
+  unpublishWatermarkReal,
+  forkWatermarkReal,
 } from '@/services/real/watermark';
 import { adminImpersonateReal } from '@/services/real/lab';
 import {
@@ -372,6 +388,10 @@ import {
   createLiteraryPromptReal,
   updateLiteraryPromptReal,
   deleteLiteraryPromptReal,
+  listLiteraryPromptsMarketplaceReal,
+  publishLiteraryPromptReal,
+  unpublishLiteraryPromptReal,
+  forkLiteraryPromptReal,
 } from '@/services/real/literaryPrompts';
 import {
   getLiteraryAgentConfigReal,
@@ -391,6 +411,10 @@ import {
   createLiteraryAgentImageGenRunReal,
   cancelLiteraryAgentImageGenRunReal,
   streamLiteraryAgentImageGenRunWithRetryReal,
+  listReferenceImageConfigsMarketplaceReal,
+  publishReferenceImageConfigReal,
+  unpublishReferenceImageConfigReal,
+  forkReferenceImageConfigReal,
 } from '@/services/real/literaryAgentConfig';
 import {
   listDefectTemplatesReal,
@@ -640,6 +664,11 @@ export const listLiteraryPrompts: ListLiteraryPromptsContract = withAuth(listLit
 export const createLiteraryPrompt: CreateLiteraryPromptContract = withAuth(createLiteraryPromptReal);
 export const updateLiteraryPrompt: UpdateLiteraryPromptContract = withAuth(updateLiteraryPromptReal);
 export const deleteLiteraryPrompt: DeleteLiteraryPromptContract = withAuth(deleteLiteraryPromptReal);
+// Literary Prompts 海鲜市场
+export const listLiteraryPromptsMarketplace: ListLiteraryPromptsMarketplaceContract = withAuth(listLiteraryPromptsMarketplaceReal);
+export const publishLiteraryPrompt: PublishLiteraryPromptContract = withAuth(publishLiteraryPromptReal);
+export const unpublishLiteraryPrompt: UnpublishLiteraryPromptContract = withAuth(unpublishLiteraryPromptReal);
+export const forkLiteraryPrompt: ForkLiteraryPromptContract = withAuth(forkLiteraryPromptReal);
 
 // Literary Agent Config
 export const getLiteraryAgentConfig: GetLiteraryAgentConfigContract = withAuth(getLiteraryAgentConfigReal);
@@ -661,6 +690,11 @@ export const getLiteraryAgentAllModels: GetLiteraryAgentAllModelsContract = with
 export const createLiteraryAgentImageGenRun: CreateLiteraryAgentImageGenRunContract = withAuth(createLiteraryAgentImageGenRunReal);
 export const cancelLiteraryAgentImageGenRun: CancelLiteraryAgentImageGenRunContract = withAuth(cancelLiteraryAgentImageGenRunReal);
 export const streamLiteraryAgentImageGenRunWithRetry: StreamLiteraryAgentImageGenRunWithRetryContract = withAuth(streamLiteraryAgentImageGenRunWithRetryReal);
+// Reference Image Configs 海鲜市场
+export const listReferenceImageConfigsMarketplace: ListReferenceImageConfigsMarketplaceContract = withAuth(listReferenceImageConfigsMarketplaceReal);
+export const publishReferenceImageConfig: PublishReferenceImageConfigContract = withAuth(publishReferenceImageConfigReal);
+export const unpublishReferenceImageConfig: UnpublishReferenceImageConfigContract = withAuth(unpublishReferenceImageConfigReal);
+export const forkReferenceImageConfig: ForkReferenceImageConfigContract = withAuth(forkReferenceImageConfigReal);
 
 // Defect Agent
 export const listDefectTemplates: ListDefectTemplatesContract = withAuth(listDefectTemplatesReal);
@@ -762,6 +796,11 @@ export const uploadWatermarkFont: UploadWatermarkFontContract = withAuth(uploadW
 export const uploadWatermarkIcon: UploadWatermarkIconContract = withAuth(uploadWatermarkIconReal);
 export const deleteWatermarkFont: DeleteWatermarkFontContract = withAuth(deleteWatermarkFontReal);
 export const getModelSizes: GetModelSizesContract = withAuth(getModelSizesReal);
+// Watermark 海鲜市场
+export const listWatermarksMarketplace: ListWatermarksMarketplaceContract = withAuth(listWatermarksMarketplaceReal);
+export const publishWatermark: PublishWatermarkContract = withAuth(publishWatermarkReal);
+export const unpublishWatermark: UnpublishWatermarkContract = withAuth(unpublishWatermarkReal);
+export const forkWatermark: ForkWatermarkContract = withAuth(forkWatermarkReal);
 
 // 限流配置服务
 import type {
