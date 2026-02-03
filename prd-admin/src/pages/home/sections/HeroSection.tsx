@@ -70,7 +70,18 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
 
           {/* Main headline with underline decoration */}
           <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight mb-4">
-            <span className="block text-white/90">智能 Agent</span>
+            <span
+              className="block"
+              style={{
+                background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                backgroundClip: 'text',
+              }}
+            >
+              MAP
+            </span>
+            <span className="block text-white/70 text-3xl sm:text-4xl md:text-5xl lg:text-6xl mt-2">米多Agent平台</span>
             <span className="relative inline-block mt-2">
               <RotatingText />
               {/* Golden underline decoration */}
