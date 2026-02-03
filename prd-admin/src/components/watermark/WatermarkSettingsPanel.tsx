@@ -1868,6 +1868,7 @@ function WatermarkPreview(props: {
   const textRef = useRef<HTMLSpanElement | null>(null);
   const iconRef = useRef<HTMLImageElement | null>(null);
   const lastMeasuredSizeRef = useRef({ width: 0, height: 0 });
+  const sizeStableRef = useRef(false);  // 用于 updateSize 闭包访问
   const [watermarkSize, setWatermarkSize] = useState({ width: 0, height: 0 });
   const [measureTick, setMeasureTick] = useState(0);
   const [measuredSignature, setMeasuredSignature] = useState('');
@@ -1899,10 +1900,12 @@ function WatermarkPreview(props: {
       setWatermarkSize(cachedSize);
       setMeasuredSignature(measureSignature);
       setSizeStable(true);  // 有缓存说明尺寸已经稳定过
+      sizeStableRef.current = true;
     } else {
       setWatermarkSize({ width: 0, height: 0 });
       setMeasuredSignature('');
       setSizeStable(false);  // 需要重新测量并等待稳定
+      sizeStableRef.current = false;
     }
     // 注意：不要在这里 setFontReady(false)，否则会和字体加载 effect 形成循环
     // 字体状态由专门的 useEffect 管理
@@ -1964,6 +1967,7 @@ function WatermarkPreview(props: {
         lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
         setMeasuredSignature(measureSignature);
         setSizeStable(true);
+        sizeStableRef.current = true;
         watermarkSizeCache.set(measureSignature, { width: measuredWidth, height: measuredHeight });
       }
     };
@@ -2110,6 +2114,10 @@ function WatermarkPreview(props: {
       // 关键修复：只有当字体加载完成时才更新尺寸状态
       // 否则会用字体未加载时的错误小尺寸覆盖正确尺寸
       if (!fontReady) return;
+
+      // 关键修复：如果尺寸已经稳定（从缓存加载），不再更新状态
+      // 否则会导致第二次进入编辑时的抖动
+      if (sizeStableRef.current) return;
 
       // 使用 ceil 确保不会因为 subpixel 渲染导致边缘被截断
       const measuredWidth = Math.ceil(contentRect.width);
