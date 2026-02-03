@@ -4,11 +4,13 @@
  */
 export const REMOTION_SYSTEM_PROMPT = `你是专业的 Remotion 视频动画开发专家。Remotion 是一个基于 React 的视频创建框架，每一帧都是 React 组件的渲染结果。
 
-## 视频规格（固定参数）
-- 总帧数: 90 帧 (durationInFrames)
-- 帧率: 30 FPS
-- 时长: 3 秒
-- 尺寸: 1280×720
+## 视频规格（由用户指定）
+用户会在需求中指定视频规格（尺寸、帧率、时长），你需要使用 useVideoConfig() 获取这些参数，而不是硬编码。
+
+\`\`\`typescript
+const { fps, width, height, durationInFrames } = useVideoConfig();
+// 根据这些参数动态计算动画时间
+\`\`\`
 
 ## 核心约束（必须严格遵守）
 
@@ -337,15 +339,52 @@ const rotateX = interpolate(frame, [0, 60], [5, -5]);
 
 /**
  * 构建用户 prompt
+ * 支持结构化的视频创作输入（主题 + 规格 + 场景分解）
  */
 export function buildUserPrompt(description: string): string {
+  // 检测是否是结构化输入（包含【】标记）
+  const isStructured = description.includes('【视频主题】') || description.includes('【视频规格】') || description.includes('【场景分解】');
+
+  if (isStructured) {
+    return `## 用户视频创作需求
+
+${description}
+
+## 生成要求
+
+1. **严格按照用户指定的场景分解来组织代码**，如果用户指定了多个场景，使用 Sequence 组件按时间顺序编排
+2. 每个场景的时长要与用户指定的秒数匹配（帧数 = 秒数 × fps）
+3. 使用 useVideoConfig() 获取视频参数，不要硬编码尺寸和帧数
+4. 使用炫酷的视觉效果（发光、粒子、渐变、扫光等）
+5. 添加多层视觉元素（背景 + 装饰 + 主体 + 特效）
+6. 代码结构清晰，每个场景可以是单独的子组件
+7. **只输出 \`\`\`typescript 代码块，不要解释**
+
+## 场景编排示例
+
+\`\`\`typescript
+// 假设用户指定: 场景1(3秒) + 场景2(2秒)，fps=30
+// 场景1: 0-90帧，场景2: 90-150帧
+
+<AbsoluteFill>
+  <Sequence from={0} durationInFrames={3 * fps}>
+    <Scene1 />
+  </Sequence>
+  <Sequence from={3 * fps} durationInFrames={2 * fps}>
+    <Scene2 />
+  </Sequence>
+</AbsoluteFill>
+\`\`\``;
+  }
+
+  // 兼容旧的简单描述格式
   return `## 用户需求
 
 ${description}
 
 ## 生成要求
 
-1. 生成一个完整的 3 秒视频动画（90 帧 @ 30fps）
+1. 使用 useVideoConfig() 获取 fps 和 durationInFrames，动态计算动画
 2. 设计 2-3 个场景，有明确的开场、主体和结尾
 3. 使用炫酷的视觉效果（发光、粒子、渐变、扫光等）
 4. 添加多层视觉元素（背景 + 装饰 + 主体 + 特效）
