@@ -169,6 +169,9 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
 
 // 邮件通道服务
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailIntentDetector, PrdAgent.Infrastructure.Services.Email.EmailIntentDetector>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailHandler, PrdAgent.Infrastructure.Services.Email.ClassifyEmailHandler>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailHandler, PrdAgent.Infrastructure.Services.Email.TodoEmailHandler>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailChannelService, PrdAgent.Infrastructure.Services.EmailChannelService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.EmailChannelWorker>();
 

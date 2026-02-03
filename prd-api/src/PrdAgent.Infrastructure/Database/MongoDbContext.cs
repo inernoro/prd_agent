@@ -109,6 +109,10 @@ public class MongoDbContext
     public IMongoCollection<ChannelRequestLog> ChannelRequestLogs => _database.GetCollection<ChannelRequestLog>("channel_request_logs");
     public IMongoCollection<ChannelSettings> ChannelSettings => _database.GetCollection<ChannelSettings>("channel_settings");
 
+    // Email Channel 邮件通道
+    public IMongoCollection<TodoItem> TodoItems => _database.GetCollection<TodoItem>("todo_items");
+    public IMongoCollection<EmailClassification> EmailClassifications => _database.GetCollection<EmailClassification>("email_classifications");
+
     private void CreateIndexes()
     {
         static bool IsIndexConflict(MongoCommandException ex)

@@ -5,6 +5,7 @@ using MailKit.Search;
 using MailKit.Security;
 using Microsoft.Extensions.Logging;
 using MimeKit;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -13,16 +14,24 @@ namespace PrdAgent.Infrastructure.Services;
 
 /// <summary>
 /// 邮件通道服务实现
-/// 使用 MailKit 进行 IMAP/SMTP 操作
+/// 使用 MailKit 进行 IMAP/SMTP 操作，支持意图检测和智能处理
 /// </summary>
 public class EmailChannelService : IEmailChannelService
 {
     private readonly MongoDbContext _db;
+    private readonly IEmailIntentDetector _intentDetector;
+    private readonly IEnumerable<IEmailHandler> _handlers;
     private readonly ILogger<EmailChannelService> _logger;
 
-    public EmailChannelService(MongoDbContext db, ILogger<EmailChannelService> logger)
+    public EmailChannelService(
+        MongoDbContext db,
+        IEmailIntentDetector intentDetector,
+        IEnumerable<IEmailHandler> handlers,
+        ILogger<EmailChannelService> logger)
     {
         _db = db;
+        _intentDetector = intentDetector;
+        _handlers = handlers;
         _logger = logger;
     }
 
@@ -205,6 +214,7 @@ public class EmailChannelService : IEmailChannelService
         var fromName = message.From.Mailboxes.FirstOrDefault()?.Name;
         var subject = message.Subject ?? "(无主题)";
         var textBody = message.TextBody ?? message.HtmlBody ?? "";
+        var toAddresses = message.To.Mailboxes.Select(m => m.Address ?? "").ToList();
 
         _logger.LogInformation(
             "Processing email from {From}: {Subject}",
@@ -214,7 +224,6 @@ public class EmailChannelService : IEmailChannelService
         // 检查是否在接受的域名列表中
         if (settings.AcceptedDomains.Count > 0)
         {
-            var toAddresses = message.To.Mailboxes.Select(m => m.Address).ToList();
             var accepted = toAddresses.Any(to =>
                 settings.AcceptedDomains.Any(domain =>
                     to?.EndsWith($"@{domain}", StringComparison.OrdinalIgnoreCase) == true));
@@ -226,44 +235,163 @@ public class EmailChannelService : IEmailChannelService
             }
         }
 
-        // 创建通道任务
+        // 1. 意图检测
+        var intent = await _intentDetector.DetectAsync(toAddresses, subject, textBody, ct);
+        _logger.LogInformation(
+            "Detected intent: {Type} (confidence: {Confidence:P0})",
+            intent.Type,
+            intent.Confidence);
+
+        // 2. 查找发件人的身份映射
+        string? mappedUserId = null;
+        if (!string.IsNullOrEmpty(fromAddress))
+        {
+            var mapping = await _db.ChannelIdentityMappings
+                .Find(m => m.ChannelType == "email" && m.ChannelIdentifier == fromAddress.ToLowerInvariant())
+                .FirstOrDefaultAsync(ct);
+            mappedUserId = mapping?.UserId;
+        }
+
+        // 3. 创建通道任务
         var task = new ChannelTask
         {
             ChannelType = "email",
             ChannelMessageId = message.MessageId,
             SenderIdentifier = fromAddress ?? "unknown",
             SenderDisplayName = fromName,
+            MappedUserId = mappedUserId,
             OriginalSubject = subject,
             OriginalContent = textBody,
-            Status = "pending",
+            Intent = intent.Type.ToString().ToLowerInvariant(),
+            Status = ChannelTaskStatus.Processing,
             StatusHistory = new List<ChannelTaskStatusChange>
             {
                 new()
                 {
-                    Status = "pending",
+                    Status = ChannelTaskStatus.Pending,
                     At = DateTime.UtcNow,
                     Note = "Email received"
+                },
+                new()
+                {
+                    Status = ChannelTaskStatus.Processing,
+                    At = DateTime.UtcNow,
+                    Note = $"Intent: {intent.Type} ({intent.Confidence:P0})"
                 }
             },
             Metadata = new Dictionary<string, object>
             {
                 ["messageId"] = message.MessageId ?? "",
                 ["date"] = message.Date.ToString("O"),
+                ["intentConfidence"] = intent.Confidence,
+                ["intentReason"] = intent.Reason ?? ""
             }
         };
 
         await _db.ChannelTasks.InsertOneAsync(task, cancellationToken: ct);
-
         _logger.LogInformation("Created channel task {TaskId} for email from {From}", task.Id, fromAddress);
 
-        // 发送确认回复（如果启用）
-        if (settings.AutoAcknowledge && !string.IsNullOrEmpty(fromAddress))
+        // 4. 查找并执行对应处理器
+        var handler = _handlers.FirstOrDefault(h => h.IntentType == intent.Type);
+        EmailHandleResult? result = null;
+
+        if (handler != null)
         {
+            try
+            {
+                result = await handler.HandleAsync(
+                    task.Id,
+                    fromAddress ?? "unknown",
+                    fromName,
+                    subject,
+                    textBody,
+                    intent,
+                    mappedUserId,
+                    ct);
+
+                // 更新任务状态
+                var update = Builders<ChannelTask>.Update
+                    .Set(t => t.Status, result.Success ? ChannelTaskStatus.Completed : ChannelTaskStatus.Failed)
+                    .Set(t => t.UpdatedAt, DateTime.UtcNow)
+                    .Set(t => t.CompletedAt, DateTime.UtcNow)
+                    .Push(t => t.StatusHistory, new ChannelTaskStatusChange
+                    {
+                        Status = result.Success ? ChannelTaskStatus.Completed : ChannelTaskStatus.Failed,
+                        At = DateTime.UtcNow,
+                        Note = result.Message
+                    });
+
+                if (result.EntityId != null)
+                {
+                    update = update.Set(t => t.Result, new ChannelTaskResult
+                    {
+                        Type = intent.Type.ToString().ToLowerInvariant(),
+                        TextContent = result.Message,
+                        Data = result.Data
+                    });
+                }
+
+                await _db.ChannelTasks.UpdateOneAsync(t => t.Id == task.Id, update, cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Handler {Handler} failed for task {TaskId}", handler.GetType().Name, task.Id);
+                result = EmailHandleResult.Fail("处理失败", ex.Message);
+
+                await _db.ChannelTasks.UpdateOneAsync(
+                    t => t.Id == task.Id,
+                    Builders<ChannelTask>.Update
+                        .Set(t => t.Status, ChannelTaskStatus.Failed)
+                        .Set(t => t.Error, ex.Message)
+                        .Set(t => t.UpdatedAt, DateTime.UtcNow)
+                        .Push(t => t.StatusHistory, new ChannelTaskStatusChange
+                        {
+                            Status = ChannelTaskStatus.Failed,
+                            At = DateTime.UtcNow,
+                            Note = ex.Message
+                        }),
+                    cancellationToken: ct);
+            }
+        }
+        else
+        {
+            // 无匹配处理器，标记为待人工处理
+            _logger.LogWarning("No handler found for intent {Intent}, task {TaskId} pending manual review", intent.Type, task.Id);
+
+            await _db.ChannelTasks.UpdateOneAsync(
+                t => t.Id == task.Id,
+                Builders<ChannelTask>.Update
+                    .Set(t => t.Status, ChannelTaskStatus.Pending)
+                    .Push(t => t.StatusHistory, new ChannelTaskStatusChange
+                    {
+                        Status = ChannelTaskStatus.Pending,
+                        At = DateTime.UtcNow,
+                        Note = $"No handler for intent: {intent.Type}"
+                    }),
+                cancellationToken: ct);
+
+            result = EmailHandleResult.Ok(
+                "您的邮件已收到，但我暂时无法自动处理此类请求。\n\n" +
+                "支持的操作：\n" +
+                "- 发送到 classify@... 或主题加 [分类] → 邮件分类\n" +
+                "- 发送到 todo@... 或主题加 [待办] → 创建待办事项\n\n" +
+                "您的邮件已记录，稍后会有人工处理。");
+        }
+
+        // 5. 发送回复（如果有处理结果）
+        if (result != null && !string.IsNullOrEmpty(fromAddress))
+        {
+            var replyBody = result.Message;
+            if (!string.IsNullOrEmpty(result.Details))
+            {
+                replyBody += $"\n\n---\n{result.Details}";
+            }
+
             await SendReplyAsync(
                 fromAddress,
                 fromName ?? fromAddress,
                 $"Re: {subject}",
-                "您的请求已收到，正在处理中。我们会尽快回复您。",
+                replyBody,
                 message.MessageId,
                 ct);
         }
@@ -276,7 +404,7 @@ public class EmailChannelService : IEmailChannelService
 
     private async Task UpdatePollStatusAsync(bool success, string? error, int emailCount, CancellationToken ct)
     {
-        var update = MongoDB.Driver.Builders<ChannelSettings>.Update
+        var update = Builders<ChannelSettings>.Update
             .Set(s => s.LastPollAt, DateTime.UtcNow)
             .Set(s => s.LastPollResult, success ? "success" : "failed")
             .Set(s => s.LastPollError, error)
