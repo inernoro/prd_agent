@@ -3479,20 +3479,34 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       }
 
                       return (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                           {mixedItems.map((item) => (
                             <GlassCard key={`${item.type}-${item.data.id}`} className="p-0 overflow-hidden">
-                              <div className="flex flex-col">
-                                <div className="p-2 pb-1">
+                              <div className="flex flex-col h-full">
+                                {/* 标题栏 */}
+                                <div className="p-2 pb-1 flex-shrink-0">
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0 flex-1 flex items-center gap-1.5">
+                                      {/* 类型图标 */}
+                                      {item.type === 'prompt' && <Sparkles size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />}
+                                      {item.type === 'refImage' && <ImageIcon size={14} style={{ color: 'rgba(236, 72, 153, 0.85)', flexShrink: 0 }} />}
+                                      {item.type === 'watermark' && <Sparkles size={14} style={{ color: 'rgba(6, 182, 212, 0.85)', flexShrink: 0 }} />}
+                                      <div
+                                        className="flex-1 font-semibold text-[13px]"
+                                        title={item.type === 'prompt' ? item.data.title : item.data.name}
+                                        style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+                                      >
+                                        {item.type === 'prompt' ? item.data.title : item.data.name}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-1 flex-shrink-0">
                                       {/* 类型标签 */}
                                       <span
-                                        className="text-[9px] px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5 flex-shrink-0"
+                                        className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
                                         style={{
-                                          background: item.type === 'prompt' ? 'rgba(168, 85, 247, 0.15)' :
-                                                       item.type === 'refImage' ? 'rgba(236, 72, 153, 0.15)' :
-                                                       'rgba(6, 182, 212, 0.15)',
+                                          background: item.type === 'prompt' ? 'rgba(168, 85, 247, 0.12)' :
+                                                       item.type === 'refImage' ? 'rgba(236, 72, 153, 0.12)' :
+                                                       'rgba(6, 182, 212, 0.12)',
                                           color: item.type === 'prompt' ? 'rgba(168, 85, 247, 0.95)' :
                                                  item.type === 'refImage' ? 'rgba(236, 72, 153, 0.95)' :
                                                  'rgba(6, 182, 212, 0.95)',
@@ -3501,71 +3515,80 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                                   '1px solid rgba(6, 182, 212, 0.28)',
                                         }}
                                       >
-                                        {item.type === 'prompt' && <><FileText size={9} />提示词</>}
-                                        {item.type === 'refImage' && <><ImageIcon size={9} />风格图</>}
-                                        {item.type === 'watermark' && <><Sparkles size={9} />水印</>}
-                                      </span>
-                                      <div className="font-semibold text-[13px] truncate" style={{ color: 'var(--text-primary)' }}>
-                                        {item.type === 'prompt' ? item.data.title : item.data.name}
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-1 flex-shrink-0">
-                                      <span
-                                        className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
-                                        style={{ background: 'rgba(59, 130, 246, 0.12)', color: 'rgba(59, 130, 246, 0.95)', border: '1px solid rgba(59, 130, 246, 0.28)' }}
-                                        title="下载次数"
-                                      >
-                                        <GitFork size={9} />
-                                        {item.data.forkCount}
+                                        {item.type === 'prompt' && '提示词'}
+                                        {item.type === 'refImage' && '风格图'}
+                                        {item.type === 'watermark' && '水印'}
                                       </span>
                                     </div>
-                                  </div>
-                                  <div className="mt-1 flex items-center gap-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                                    {item.data.ownerUserAvatar ? (
-                                      <img src={item.data.ownerUserAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
-                                    ) : (
-                                      <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
-                                        <User size={10} />
-                                      </div>
-                                    )}
-                                    <span>{item.data.ownerUserName || '未知用户'}</span>
-                                    <span className="opacity-60">·</span>
-                                    <span>{new Date(item.data.createdAt).toLocaleDateString()}</span>
                                   </div>
                                 </div>
-                                {/* 预览区域 */}
-                                <div className="px-2 pb-1">
+
+                                {/* 内容预览区 - 与"我的"视图保持一致的高度 */}
+                                <div className="px-2 pb-1 flex-1 min-h-0">
                                   {item.type === 'prompt' && (
                                     <div
-                                      className="overflow-hidden border rounded-[6px] p-2"
-                                      style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)', maxHeight: '60px' }}
+                                      className="h-full overflow-auto border rounded-[6px]"
+                                      style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)', minHeight: '120px', maxHeight: '160px' }}
                                     >
-                                      <div className="text-[11px] line-clamp-2" style={{ color: 'var(--text-muted)' }}>
-                                        {item.data.content || '（内容为空）'}
+                                      <style>{`
+                                        .marketplace-prompt-md { font-size: 11px; line-height: 1.5; color: var(--text-secondary); padding: 8px; }
+                                        .marketplace-prompt-md h1,.marketplace-prompt-md h2,.marketplace-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 8px 0 4px; }
+                                        .marketplace-prompt-md h1 { font-size: 13px; }
+                                        .marketplace-prompt-md h2 { font-size: 12px; }
+                                        .marketplace-prompt-md h3 { font-size: 11px; }
+                                        .marketplace-prompt-md p { margin: 4px 0; }
+                                        .marketplace-prompt-md ul,.marketplace-prompt-md ol { margin: 4px 0; padding-left: 16px; }
+                                        .marketplace-prompt-md li { margin: 2px 0; }
+                                        .marketplace-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
+                                        .marketplace-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; padding: 8px; overflow: auto; margin: 4px 0; }
+                                        .marketplace-prompt-md pre code { background: transparent; border: 0; padding: 0; }
+                                      `}</style>
+                                      <div className="marketplace-prompt-md">
+                                        {item.data.content ? (
+                                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                            {item.data.content}
+                                          </ReactMarkdown>
+                                        ) : (
+                                          <div style={{ color: 'var(--text-muted)' }}>（内容为空）</div>
+                                        )}
                                       </div>
                                     </div>
                                   )}
                                   {item.type === 'refImage' && (
-                                    <div
-                                      className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
-                                      style={{
-                                        background: item.data.imageUrl
-                                          ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                                          : 'rgba(255,255,255,0.02)',
-                                        height: '60px',
-                                      }}
-                                    >
-                                      {item.data.imageUrl ? (
-                                        <img src={item.data.imageUrl} alt={item.data.name} className="block max-w-full max-h-full object-contain" />
-                                      ) : (
-                                        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
-                                      )}
+                                    <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px' }}>
+                                      {/* 左侧：提示词预览 */}
+                                      <div
+                                        className="overflow-auto border rounded-[6px] p-2"
+                                        style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)', minHeight: '80px', maxHeight: '100px' }}
+                                      >
+                                        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                          {item.data.prompt || '（无提示词）'}
+                                        </div>
+                                      </div>
+                                      {/* 右侧：图片预览 */}
+                                      <div
+                                        className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
+                                        style={{
+                                          background: item.data.imageUrl
+                                            ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
+                                            : 'rgba(255,255,255,0.02)',
+                                          border: item.data.imageUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
+                                          minHeight: '80px',
+                                          maxHeight: '100px',
+                                        }}
+                                      >
+                                        {item.data.imageUrl ? (
+                                          <img src={item.data.imageUrl} alt={item.data.name} className="block w-full h-full object-contain" />
+                                        ) : (
+                                          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
+                                        )}
+                                      </div>
                                     </div>
                                   )}
                                   {item.type === 'watermark' && (
                                     <div
                                       className="flex items-center justify-center overflow-hidden rounded-[6px] p-2"
-                                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)', height: '50px' }}
+                                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)', minHeight: '80px', maxHeight: '100px' }}
                                     >
                                       {item.data.previewUrl ? (
                                         <img src={item.data.previewUrl} alt={item.data.name} className="max-h-full object-contain" />
@@ -3577,7 +3600,24 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     </div>
                                   )}
                                 </div>
-                                <div className="px-2 pb-2 pt-1">
+
+                                {/* 底栏：Fork次数 + 作者信息 + 下载按钮 */}
+                                <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                                  <div className="flex items-center gap-1 mb-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                    <GitFork size={11} />
+                                    <span>{item.data.forkCount} 次下载</span>
+                                    <span className="opacity-60 mx-1">·</span>
+                                    {item.data.ownerUserAvatar ? (
+                                      <img src={item.data.ownerUserAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
+                                    ) : (
+                                      <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
+                                        <User size={10} />
+                                      </div>
+                                    )}
+                                    <span>{item.data.ownerUserName || '未知用户'}</span>
+                                    <span className="opacity-60">·</span>
+                                    <span>{new Date(item.data.createdAt).toLocaleDateString()}</span>
+                                  </div>
                                   <div className="flex justify-end">
                                     <Button
                                       size="xs"
