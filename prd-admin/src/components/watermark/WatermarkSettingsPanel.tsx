@@ -1925,33 +1925,53 @@ function WatermarkPreview(props: {
     };
   }, [fontFamily, fontSize, measureSignature]);
 
-  // 关键修复：当 fontReady 变为 true 时，延迟两帧再测量
-  // 因为字体加载完成后，浏览器可能还需要一个渲染周期才能应用新字体
+  // 关键修复：当 fontReady 变为 true 时，等待尺寸稳定后再写入缓存
+  // 因为字体加载完成后，浏览器渲染时间不可预测，可能需要多个渲染周期
   useEffect(() => {
     if (!fontReady || !contentRef.current) return;
 
     let cancelled = false;
-    // 延迟两帧：第一帧让浏览器重新布局，第二帧确保渲染完成
+    let lastSize = { width: 0, height: 0 };
+    let stabilityTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const measureAndCheck = () => {
+      if (cancelled || !contentRef.current) return;
+
+      const contentRect = contentRef.current.getBoundingClientRect();
+      if (!contentRect.width || !contentRect.height) return;
+
+      const measuredWidth = Math.ceil(contentRect.width);
+      const measuredHeight = Math.ceil(contentRect.height);
+
+      console.log('[WatermarkMeasure:fontReady]', {
+        contentRect: { width: contentRect.width, height: contentRect.height },
+        lastSize,
+        measureSignature: measureSignature.slice(0, 30) + '...',
+      });
+
+      // 更新状态（即使尺寸在变化也先更新，保证显示正确）
+      setWatermarkSize({ width: measuredWidth, height: measuredHeight });
+      lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
+      setMeasuredSignature(measureSignature);
+
+      // 如果尺寸与上次不同，继续等待稳定
+      if (measuredWidth !== lastSize.width || measuredHeight !== lastSize.height) {
+        lastSize = { width: measuredWidth, height: measuredHeight };
+        // 100ms 后再检查
+        stabilityTimer = setTimeout(measureAndCheck, 100);
+      } else {
+        // 尺寸稳定，写入缓存
+        console.log('[WatermarkMeasure:stable]', { width: measuredWidth, height: measuredHeight });
+        watermarkSizeCache.set(measureSignature, { width: measuredWidth, height: measuredHeight });
+      }
+    };
+
+    // 延迟两帧后开始测量
     const raf1 = requestAnimationFrame(() => {
       if (cancelled) return;
       const raf2 = requestAnimationFrame(() => {
-        if (cancelled || !contentRef.current) return;
-
-        const contentRect = contentRef.current.getBoundingClientRect();
-        console.log('[WatermarkMeasure:fontReady]', {
-          contentRect: { width: contentRect.width, height: contentRect.height },
-          measureSignature: measureSignature.slice(0, 30) + '...',
-        });
-
-        if (!contentRect.width || !contentRect.height) return;
-
-        const measuredWidth = Math.ceil(contentRect.width);
-        const measuredHeight = Math.ceil(contentRect.height);
-
-        setWatermarkSize({ width: measuredWidth, height: measuredHeight });
-        watermarkSizeCache.set(measureSignature, { width: measuredWidth, height: measuredHeight });
-        lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
-        setMeasuredSignature(measureSignature);
+        if (cancelled) return;
+        measureAndCheck();
       });
 
       return () => cancelAnimationFrame(raf2);
@@ -1960,6 +1980,7 @@ function WatermarkPreview(props: {
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf1);
+      if (stabilityTimer) clearTimeout(stabilityTimer);
     };
   }, [fontReady, measureSignature]);
 
