@@ -2980,12 +2980,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               }}
                             >
                               <style>{`
-                                .modal-prompt-md { font-size: 11px; line-height: 1.4; color: var(--text-secondary); padding: 6px 8px; }
+                                .modal-prompt-md { font-size: 11px; line-height: 1.4; color: var(--text-secondary); padding: 6px 8px; white-space: pre-wrap; }
                                 .modal-prompt-md h1,.modal-prompt-md h2,.modal-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 4px 0 2px; }
                                 .modal-prompt-md h1 { font-size: 12px; }
                                 .modal-prompt-md h2 { font-size: 11px; }
                                 .modal-prompt-md h3 { font-size: 11px; }
-                                .modal-prompt-md p { margin: 2px 0; }
+                                .modal-prompt-md p { margin: 2px 0; white-space: pre-wrap; }
                                 .modal-prompt-md ul,.modal-prompt-md ol { margin: 2px 0; padding-left: 14px; }
                                 .modal-prompt-md li { margin: 1px 0; }
                                 .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 3px; border-radius: 3px; }
@@ -3174,18 +3174,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 </div>
                               </div>
                               <div className="flex items-center gap-1 flex-shrink-0">
-                                {/* 已选择徽章 */}
-                                {config.isActive && (
-                                  <span
-                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                    style={{
-                                      background: 'var(--accent-primary)',
-                                      color: 'white',
-                                    }}
-                                  >
-                                    当前
-                                  </span>
-                                )}
                                 {/* 已公开徽章 */}
                                 {config.isPublic && (
                                   <span

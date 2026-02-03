@@ -679,27 +679,22 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           <button
                             type="button"
                             className="p-0.5 rounded hover:bg-white/10 transition-colors"
-                            title={item.appKeys && item.appKeys.length > 0
-                              ? `已授权: ${item.appKeys.map(k => appKeyLabelMap[k] || k).join('、')}`
-                              : '未授权任何应用'}
+                            title="点击查看授权应用"
                             style={{ color: item.appKeys && item.appKeys.length > 0 ? 'var(--text-muted)' : 'rgba(239, 68, 68, 0.6)' }}
+                            onClick={() => {
+                              const appNames = item.appKeys && item.appKeys.length > 0
+                                ? item.appKeys.map(k => appKeyLabelMap[k] || k).join('、')
+                                : null;
+                              void systemDialog.alert({
+                                title: '授权应用',
+                                message: appNames ? `已授权给: ${appNames}` : '当前水印未授权给任何应用',
+                              });
+                            }}
                           >
                             <Eye size={12} />
                           </button>
                         </div>
                         <div className="flex items-center gap-1.5 flex-shrink-0">
-                          {/* 已选择徽章 */}
-                          {isActive && (
-                            <span
-                              className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                              style={{
-                                background: 'var(--accent-primary)',
-                                color: 'white',
-                              }}
-                            >
-                              当前
-                            </span>
-                          )}
                           {/* 已公开徽章 */}
                           {item.isPublic && (
                             <span
@@ -741,7 +736,11 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             background: 'rgba(255,255,255,0.02)',
                           }}
                         >
-                          <div className="text-[11px] grid grid-cols-2 gap-x-3 gap-y-1 p-2" style={{ color: 'var(--text-muted)' }}>
+                          <div className="text-[11px] grid grid-cols-2 gap-x-3 gap-y-0.5 p-2" style={{ color: 'var(--text-muted)' }}>
+                            <div className="flex items-center gap-1">
+                              <span>文本</span>
+                              <span className="truncate" style={{ color: 'var(--text-primary)' }}>{item.text || '无'}</span>
+                            </div>
                             <div className="flex items-center gap-1">
                               <span>字体</span>
                               <span className="truncate" style={{ color: 'var(--text-primary)' }}>{fontLabel}</span>
@@ -751,18 +750,34 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                               <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
                             </div>
                             <div className="flex items-center gap-1">
+                              <span>透明度</span>
+                              <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
+                            </div>
+                            <div className="flex items-center gap-1">
                               <span>位置</span>
                               <span className="truncate" style={{ color: 'var(--text-primary)' }}>
                                 {anchorLabelMap[item.anchor]}
                               </span>
                             </div>
                             <div className="flex items-center gap-1">
+                              <span>偏移</span>
+                              <span style={{ color: 'var(--text-primary)' }}>{item.offsetX},{item.offsetY}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
                               <span>图标</span>
                               <span style={{ color: 'var(--text-primary)' }}>{item.iconEnabled ? '启用' : '禁用'}</span>
                             </div>
-                            <div className="flex items-center gap-1 col-span-2">
-                              <span>透明度</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
+                            <div className="flex items-center gap-1">
+                              <span>边框</span>
+                              <span style={{ color: 'var(--text-primary)' }}>{item.borderEnabled ? '启用' : '禁用'}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span>背景</span>
+                              <span style={{ color: 'var(--text-primary)' }}>{item.backgroundEnabled ? '启用' : '禁用'}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span>圆角</span>
+                              <span style={{ color: 'var(--text-primary)' }}>{item.roundedBackgroundEnabled ? '启用' : '禁用'}</span>
                             </div>
                           </div>
                         </div>
