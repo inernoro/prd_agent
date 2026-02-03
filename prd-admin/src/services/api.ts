@@ -383,9 +383,9 @@ export const api = {
   // ============ Channels 多通道适配器 ============
   channels: {
     whitelists: {
-      list: () => '/api/admin/channels/whitelists',
-      byId: (id: string) => `/api/admin/channels/whitelists/${id}`,
-      toggle: (id: string) => `/api/admin/channels/whitelists/${id}/toggle`,
+      list: () => '/api/admin/channels/whitelist',
+      byId: (id: string) => `/api/admin/channels/whitelist/${id}`,
+      toggle: (id: string) => `/api/admin/channels/whitelist/${id}/toggle`,
     },
     identityMappings: {
       list: () => '/api/admin/channels/identity-mappings',
