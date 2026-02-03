@@ -105,7 +105,7 @@ export default function LandingPage() {
             {/* Logo */}
             <div className="flex items-center gap-3">
               <MapLogo className="w-10 h-10 rounded-xl" />
-              <span className="text-lg font-bold text-white/90">MAP</span>
+              <span className="text-lg font-bold text-white/90">米多Agent平台</span>
             </div>
 
             {/* Nav links - desktop */}
