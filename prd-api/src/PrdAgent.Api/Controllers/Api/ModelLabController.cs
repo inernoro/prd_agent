@@ -821,7 +821,7 @@ public class ModelLabController : ControllerBase
         }
 
         var models = new List<ModelLabSelectedModel>();
-        // 规则：若前端显式传 models，则认为是“本次运行的临时模型列表”（例如临时禁用/过滤），优先级最高，不写入实验。
+        // 规则：若前端显式传 models，则认为是"本次运行的临时模型列表"（例如临时禁用/过滤），优先级最高，不写入实验。
         if (request.Models?.Count > 0)
         {
             models = request.Models;
@@ -836,7 +836,7 @@ public class ModelLabController : ControllerBase
             var ms = await _db.LLMModels.Find(m => ids.Contains(m.Id)).ToListAsync(ct);
             models = ms.Select(m => new ModelLabSelectedModel
             {
-                // 兼容：这里 request.ModelIds 仍视为“配置模型内部 id”，但落到运行时统一转换为 platform 语义
+                // 兼容：这里 request.ModelIds 仍视为"配置模型内部 id"，但落到运行时统一转换为 platform 语义
                 ModelId = m.ModelName,
                 PlatformId = m.PlatformId ?? string.Empty,
                 Name = m.ModelName,
@@ -845,12 +845,7 @@ public class ModelLabController : ControllerBase
             }).ToList();
         }
 
-        if (models.Count == 0)
-        {
-            return EffectiveRunRequest.Fail("NO_MODELS", "未选择任何模型");
-        }
-
-        // 可选：追加主模型作为标准答案（便于对照）
+        // 可选：追加主模型作为标准答案（便于对照）- 必须在 models.Count == 0 检查之前
         if (request.IncludeMainModelAsStandard == true)
         {
             var main = await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct);
@@ -867,17 +862,24 @@ public class ModelLabController : ControllerBase
                 });
                 if (!has)
                 {
-                    if (string.IsNullOrWhiteSpace(mainPid) || string.IsNullOrWhiteSpace(mainMid)) { /* ignore */ }
-                    models.Add(new ModelLabSelectedModel
+                    if (!string.IsNullOrWhiteSpace(mainPid) && !string.IsNullOrWhiteSpace(mainMid))
                     {
-                        ModelId = mainMid,
-                        PlatformId = mainPid,
-                        Name = $"标准答案 · {mainMid}".Trim(),
-                        ModelName = mainMid,
-                        Group = main.Group
-                    });
+                        models.Add(new ModelLabSelectedModel
+                        {
+                            ModelId = mainMid,
+                            PlatformId = mainPid,
+                            Name = $"标准答案 · {mainMid}".Trim(),
+                            ModelName = mainMid,
+                            Group = main.Group
+                        });
+                    }
                 }
             }
+        }
+
+        if (models.Count == 0)
+        {
+            return EffectiveRunRequest.Fail("NO_MODELS", "未选择任何模型或模型不可用");
         }
 
         // 统一规范化：确保每个模型都具备 platformId + modelId(=modelName) 的业务语义
