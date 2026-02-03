@@ -336,13 +336,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     };
   }, []);
 
-  // 加载风格图配置列表
+  // 加载风格图配置列表（按 ID 稳定排序，避免操作后重排序导致闪烁）
   const loadReferenceImageConfigs = useCallback(async () => {
     setReferenceImageLoading(true);
     try {
       const res = await listReferenceImageConfigs();
       if (res?.success && res.data?.items) {
-        setReferenceImageConfigs(res.data.items);
+        // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
+        const sorted = [...res.data.items].sort((a, b) => a.id.localeCompare(b.id));
+        setReferenceImageConfigs(sorted);
       }
     } finally {
       setReferenceImageLoading(false);
@@ -562,7 +564,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     });
   }, [markers, markerRunItemsRestored]);
 
-  // 加载文学创作提示词（从后端）
+  // 加载文学创作提示词（从后端，按 ID 稳定排序避免闪烁）
   const loadLiteraryPrompts = useCallback(async () => {
     try {
       const res = await listLiteraryPrompts({ scenarioType: 'article-illustration' });
@@ -575,6 +577,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           scenarioType: p.scenarioType,
           order: p.order,
         }));
+        // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
+        prompts.sort((a, b) => a.id.localeCompare(b.id));
         setUserPrompts(prompts);
         // 如果有提示词但没有选中，自动选中第一个
         if (prompts.length > 0 && !selectedPrompt) {
@@ -3145,6 +3149,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           <div className="p-2 pb-1 flex-shrink-0">
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0 flex-1 flex items-center gap-1.5">
+                                <ImageIcon size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
                                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                                   {config.name}
                                 </div>
@@ -3167,24 +3172,34 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   {config.prompt || '（无提示词）'}
                                 </div>
                               </div>
-                              {/* 右侧：图片预览 */}
+                              {/* 右侧：图片预览（风格图使用简单边框，非透明图无需象棋格） */}
                               <div
                                 className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
                                 style={{
-                                  background: config.imageUrl
-                                    ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                                    : 'rgba(255,255,255,0.02)',
-                                  border: config.imageUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
+                                  background: 'rgba(255,255,255,0.02)',
+                                  border: '1px solid rgba(255,255,255,0.08)',
                                 }}
                               >
                                 {config.imageUrl ? (
                                   <img
                                     src={config.imageUrl}
                                     alt={config.name}
-                                    className="block w-full h-full object-contain"
+                                    className="block w-full h-full object-cover"
                                   />
                                 ) : (
                                   <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
+                                )}
+                                {/* 选中状态印章 */}
+                                {config.isActive && (
+                                  <div
+                                    className="absolute bottom-1 right-1 w-5 h-5 rounded-full flex items-center justify-center"
+                                    style={{
+                                      background: 'rgba(34, 197, 94, 0.9)',
+                                      boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                                    }}
+                                  >
+                                    <Check size={12} style={{ color: '#fff' }} />
+                                  </div>
                                 )}
                               </div>
                             </div>

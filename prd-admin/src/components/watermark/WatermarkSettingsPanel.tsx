@@ -243,6 +243,8 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             item.name || `水印配置 ${index + 1}`,
           )
         );
+        // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
+        normalizedConfigs.sort((a, b) => a.id.localeCompare(b.id));
         setConfigs(normalizedConfigs);
         // 刷新缓存时间戳，确保预览图不被浏览器缓存
         setPreviewEpoch(Date.now());
@@ -691,6 +693,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                     <div className="p-2 pb-1 flex-shrink-0">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1 flex items-center gap-1.5">
+                          <Droplet size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
                           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                             {item.name || `Watermark ${index + 1}`}
                           </div>
@@ -785,7 +788,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             </div>
                           </div>
                         </div>
-                        {/* 右侧：预览图（缩小） */}
+                        {/* 右侧：预览图（水印是透明PNG，使用象棋格背景） */}
                         <div
                           className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
                           style={{
@@ -811,6 +814,18 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             />
                           ) : (
                             <div className="text-[11px]" style={{ color: 'rgba(233,209,156,0.7)' }}>无预览</div>
+                          )}
+                          {/* 选中状态印章 */}
+                          {isActive && (
+                            <div
+                              className="absolute bottom-1 right-1 w-5 h-5 rounded-full flex items-center justify-center"
+                              style={{
+                                background: 'rgba(34, 197, 94, 0.9)',
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                              }}
+                            >
+                              <Check size={12} style={{ color: '#fff' }} />
+                            </div>
                           )}
                         </div>
                       </div>
