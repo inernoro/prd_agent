@@ -2910,8 +2910,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         key={prompt.id}
                         className="p-0 overflow-hidden"
                         style={isPromptSelected ? {
-                          border: '1.5px solid rgba(34, 197, 94, 0.5)',
-                          boxShadow: '0 0 12px rgba(34, 197, 94, 0.15)',
+                          border: '2px solid rgba(34, 197, 94, 0.8)',
+                          boxShadow: '0 0 16px rgba(34, 197, 94, 0.3)',
                         } : undefined}
                       >
                         <div className="group relative flex flex-col h-full">
@@ -2933,14 +2933,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 >
                                   {prompt.title}
                                 </div>
-                                {/* 选中状态标记 */}
+                                {/* 选中状态标记 - 更大更明显的勾选图标 */}
                                 {isPromptSelected && (
-                                  <div
-                                    className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0"
-                                    style={{ background: 'rgba(34, 197, 94, 0.2)' }}
-                                  >
-                                    <Check size={10} style={{ color: 'rgba(34, 197, 94, 0.95)' }} />
-                                  </div>
+                                  <CheckCircle2 size={18} style={{ color: 'rgba(34, 197, 94, 1)', flexShrink: 0 }} />
                                 )}
                               </div>
                             </div>
@@ -3006,20 +3001,24 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   </span>
                                 )}
                               </div>
-                              {/* 右侧：选择/编辑/删除图标 */}
-                              <div className="flex items-center gap-0.5">
+                              {/* 右侧：选择 | 编辑/删除（用分隔线区分功能组） */}
+                              <div className="flex items-center gap-1">
+                                {/* 选择按钮 */}
                                 <button
                                   type="button"
                                   className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
                                   style={{
-                                    color: isPromptSelected ? 'rgba(34, 197, 94, 0.95)' : 'var(--text-muted)',
-                                    background: isPromptSelected ? 'rgba(34, 197, 94, 0.1)' : 'transparent',
+                                    color: isPromptSelected ? 'rgba(34, 197, 94, 1)' : 'var(--text-muted)',
+                                    background: isPromptSelected ? 'rgba(34, 197, 94, 0.15)' : 'transparent',
                                   }}
                                   onClick={() => setSelectedPrompt(prompt)}
                                   title={isPromptSelected ? '当前选中' : '选择此配置'}
                                 >
-                                  {isPromptSelected ? <CheckCircle2 size={14} /> : <Check size={14} />}
+                                  {isPromptSelected ? <CheckCircle2 size={16} /> : <Check size={16} />}
                                 </button>
+                                {/* 分隔线 */}
+                                <div className="h-4 w-px mx-0.5" style={{ background: 'var(--border-subtle)' }} />
+                                {/* 编辑/删除按钮组 */}
                                 <button
                                   type="button"
                                   className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
@@ -3120,8 +3119,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         key={config.id}
                         className="p-0 overflow-hidden"
                         style={config.isActive ? {
-                          border: '1.5px solid rgba(34, 197, 94, 0.5)',
-                          boxShadow: '0 0 12px rgba(34, 197, 94, 0.15)',
+                          border: '2px solid rgba(34, 197, 94, 0.8)',
+                          boxShadow: '0 0 16px rgba(34, 197, 94, 0.3)',
                         } : undefined}
                       >
                         <div className="flex flex-col">
@@ -3133,14 +3132,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                                   {config.name}
                                 </div>
-                                {/* 选中状态标记 */}
+                                {/* 选中状态标记 - 更大更明显的勾选图标 */}
                                 {config.isActive && (
-                                  <div
-                                    className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0"
-                                    style={{ background: 'rgba(34, 197, 94, 0.2)' }}
-                                  >
-                                    <Check size={10} style={{ color: 'rgba(34, 197, 94, 0.95)' }} />
-                                  </div>
+                                  <CheckCircle2 size={18} style={{ color: 'rgba(34, 197, 94, 1)', flexShrink: 0 }} />
                                 )}
                               </div>
                             </div>
@@ -3211,14 +3205,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   </span>
                                 )}
                               </div>
-                              {/* 右侧：选择/编辑/删除图标 */}
-                              <div className="flex items-center gap-0.5">
+                              {/* 右侧：选择 | 编辑/删除（用分隔线区分功能组） */}
+                              <div className="flex items-center gap-1">
+                                {/* 选择按钮 */}
                                 <button
                                   type="button"
                                   className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
                                   style={{
-                                    color: config.isActive ? 'rgba(34, 197, 94, 0.95)' : 'var(--text-muted)',
-                                    background: config.isActive ? 'rgba(34, 197, 94, 0.1)' : 'transparent',
+                                    color: config.isActive ? 'rgba(34, 197, 94, 1)' : 'var(--text-muted)',
+                                    background: config.isActive ? 'rgba(34, 197, 94, 0.15)' : 'transparent',
                                   }}
                                   onClick={async () => {
                                     setReferenceImageSaving(true);
@@ -3236,8 +3231,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   disabled={referenceImageSaving}
                                   title={config.isActive ? '点击取消选择' : '选择此配置'}
                                 >
-                                  {config.isActive ? <CheckCircle2 size={14} /> : <Check size={14} />}
+                                  {config.isActive ? <CheckCircle2 size={16} /> : <Check size={16} />}
                                 </button>
+                                {/* 分隔线 */}
+                                <div className="h-4 w-px mx-0.5" style={{ background: 'var(--border-subtle)' }} />
+                                {/* 编辑/删除按钮组 */}
                                 <button
                                   type="button"
                                   className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"

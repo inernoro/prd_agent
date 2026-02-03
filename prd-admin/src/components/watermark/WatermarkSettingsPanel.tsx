@@ -685,8 +685,8 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                   key={item.id || `${item.text}-${index}`}
                   className="p-0 overflow-hidden"
                   style={isActive ? {
-                    border: '1.5px solid rgba(34, 197, 94, 0.5)',
-                    boxShadow: '0 0 12px rgba(34, 197, 94, 0.15)',
+                    border: '2px solid rgba(34, 197, 94, 0.8)',
+                    boxShadow: '0 0 16px rgba(34, 197, 94, 0.3)',
                   } : undefined}
                 >
                   <div className="flex flex-col">
@@ -697,14 +697,9 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                             {item.name || `Watermark ${index + 1}`}
                           </div>
-                          {/* 选中状态标记 */}
+                          {/* 选中状态标记 - 更大更明显的勾选图标 */}
                           {isActive && (
-                            <div
-                              className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0"
-                              style={{ background: 'rgba(34, 197, 94, 0.2)' }}
-                            >
-                              <Check size={10} style={{ color: 'rgba(34, 197, 94, 0.95)' }} />
-                            </div>
+                            <CheckCircle2 size={18} style={{ color: 'rgba(34, 197, 94, 1)', flexShrink: 0 }} />
                           )}
                           {/* 授权应用查看按钮 */}
                           <button
@@ -854,21 +849,25 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             </span>
                           )}
                         </div>
-                        {/* 右侧：选择/编辑/删除图标 */}
-                        <div className="flex items-center gap-0.5">
+                        {/* 右侧：选择 | 编辑/删除（用分隔线区分功能组） */}
+                        <div className="flex items-center gap-1">
+                          {/* 选择按钮 */}
                           <button
                             type="button"
                             className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
                             style={{
-                              color: isActive ? 'rgba(34, 197, 94, 0.95)' : 'var(--text-muted)',
-                              background: isActive ? 'rgba(34, 197, 94, 0.1)' : 'transparent',
+                              color: isActive ? 'rgba(34, 197, 94, 1)' : 'var(--text-muted)',
+                              background: isActive ? 'rgba(34, 197, 94, 0.15)' : 'transparent',
                             }}
                             onClick={() => isActive ? handleDeactivate(item.id) : handleActivate(item.id)}
                             disabled={saving}
                             title={isActive ? '点击取消选择' : '选择此配置'}
                           >
-                            {isActive ? <CheckCircle2 size={14} /> : <Check size={14} />}
+                            {isActive ? <CheckCircle2 size={16} /> : <Check size={16} />}
                           </button>
+                          {/* 分隔线 */}
+                          <div className="h-4 w-px mx-0.5" style={{ background: 'var(--border-subtle)' }} />
+                          {/* 编辑/删除按钮组 */}
                           <button
                             type="button"
                             className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
