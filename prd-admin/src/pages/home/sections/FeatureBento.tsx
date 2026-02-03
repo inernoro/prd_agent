@@ -201,7 +201,7 @@ function ApiCodeBlock() {
   "messages": [...]
 }
 
-✓ 200 OK (47ms)`;
+> 200 OK (47ms)`;
 
   useEffect(() => {
     let i = 0;
@@ -243,9 +243,9 @@ function WorkflowDiagram() {
     <div className="relative h-28 mt-4 flex items-center justify-center">
       <div className="flex items-center gap-2">
         {[
-          { icon: '📥', label: '输入', color: 'blue' },
-          { icon: '⚙️', label: '处理', color: 'purple' },
-          { icon: '✨', label: '输出', color: 'gold' },
+          { label: '输入', color: 'blue' },
+          { label: '处理', color: 'purple' },
+          { label: '输出', color: 'gold' },
         ].map((step, i) => (
           <div key={step.label} className="flex items-center">
             <div className={cn(
@@ -331,8 +331,8 @@ export function FeatureBento({ className }: FeatureBentoProps) {
 
         {/* Bento grid - improved layout */}
         <div className="grid grid-cols-1 md:grid-cols-6 gap-4 lg:gap-5">
-          {/* Multi-model support - large card spanning 4 columns */}
-          <div className="md:col-span-4 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 lg:p-8 hover:border-blue-500/30 transition-all duration-500">
+          {/* 先进性 - Left large card spanning 4 columns */}
+          <div className="md:col-span-4 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 lg:p-8 hover:border-blue-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -340,50 +340,127 @@ export function FeatureBento({ className }: FeatureBentoProps) {
               }}
             />
             <div className="relative z-10">
-              <div className="flex items-start justify-between gap-4">
+              {/* Header with badge */}
+              <div className="flex items-start justify-between gap-4 mb-6">
                 <div className="flex-1">
-                  <div className="inline-flex p-3 rounded-2xl mb-4 bg-gradient-to-br from-blue-500 to-cyan-500 shadow-lg group-hover:shadow-blue-500/30 group-hover:scale-105 transition-all duration-300">
-                    <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                    </svg>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 mb-4 rounded-full bg-blue-500/10 border border-blue-500/20">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                    <span className="text-xs text-blue-400">实验室孵化</span>
                   </div>
-                  <h3 className="text-xl lg:text-2xl font-bold text-white/90 mb-2">多模型智能调度</h3>
-                  <p className="text-sm lg:text-base text-white/50 leading-relaxed max-w-md">
-                    支持 GPT-4、Claude、Gemini 等主流大模型，智能选择最优模型处理任务
+                  <h3 className="text-xl lg:text-2xl font-bold text-white/90 mb-2">全球最先进模型</h3>
+                  <p className="text-sm lg:text-base text-white/50 leading-relaxed">
+                    昨天发布，今天可用。我们与 OpenAI、Anthropic、Google 等保持同步，新模型第一时间接入
                   </p>
                 </div>
                 <div className="text-right flex-shrink-0 hidden sm:block">
-                  <div className="text-4xl lg:text-5xl font-bold text-white/80">10+</div>
-                  <div className="text-sm text-white/40">支持模型</div>
+                  <div className="text-4xl lg:text-5xl font-bold text-blue-400">24h</div>
+                  <div className="text-sm text-white/40">新模型上线</div>
                 </div>
               </div>
+
+              {/* Feature list */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                {[
+                  { iconType: 'rocket', title: '持续升级', desc: '永远在技术第一线' },
+                  { iconType: 'beaker', title: '实验室直通', desc: '前沿模型抢先体验' },
+                  { iconType: 'target', title: '智能调度', desc: '自动选择最优模型' },
+                ].map((item, i) => (
+                  <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-white/[0.05] border border-white/5">
+                    <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                      {item.iconType === 'rocket' && (
+                        <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                      )}
+                      {item.iconType === 'beaker' && (
+                        <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                        </svg>
+                      )}
+                      {item.iconType === 'target' && (
+                        <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium text-white/80">{item.title}</div>
+                      <div className="text-xs text-white/40">{item.desc}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               <ModelCarousel />
             </div>
             <div className="absolute -bottom-20 -right-20 w-60 h-60 rounded-full opacity-10 blur-3xl bg-gradient-to-br from-blue-500 to-cyan-500 group-hover:opacity-20 transition-opacity duration-500" />
           </div>
 
-          {/* Speed - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 hover:border-amber-500/30 transition-all duration-500">
+          {/* 稳定性 - Right card spanning 2 columns */}
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 hover:border-emerald-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
-                background: 'radial-gradient(circle at 50% 30%, rgba(234, 179, 8, 0.15) 0%, transparent 60%)',
+                background: 'radial-gradient(circle at 50% 30%, rgba(16, 185, 129, 0.15) 0%, transparent 60%)',
               }}
             />
             <div className="relative z-10">
-              <div className="inline-flex p-3 rounded-2xl mb-4 bg-gradient-to-br from-yellow-500 to-orange-500 shadow-lg group-hover:shadow-amber-500/30 group-hover:scale-105 transition-all duration-300">
-                <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
+              <div className="inline-flex items-center gap-2 px-3 py-1 mb-4 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-xs text-emerald-400">永不断线</span>
               </div>
-              <h3 className="text-lg font-bold text-white/90 mb-1">毫秒级响应</h3>
-              <p className="text-sm text-white/50">流式输出，让等待不再漫长</p>
-              <SpeedMeter />
+              <h3 className="text-lg font-bold text-white/90 mb-2">7×24 稳定运行</h3>
+              <p className="text-sm text-white/50 mb-4">Worker 进程池设计，离开屏幕继续运行</p>
+
+              {/* Stability features */}
+              <div className="space-y-2">
+                {[
+                  { iconType: 'refresh', text: '断网自动重连' },
+                  { iconType: 'device', text: '任何设备随时操作' },
+                  { iconType: 'moon', text: '后台静默运行' },
+                  { iconType: 'cloud', text: '云端状态同步' },
+                ].map((item, i) => (
+                  <div key={i} className="flex items-center gap-2.5 text-sm">
+                    <div className="w-6 h-6 rounded-md bg-emerald-500/15 flex items-center justify-center flex-shrink-0">
+                      {item.iconType === 'refresh' && (
+                        <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                      )}
+                      {item.iconType === 'device' && (
+                        <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                        </svg>
+                      )}
+                      {item.iconType === 'moon' && (
+                        <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                        </svg>
+                      )}
+                      {item.iconType === 'cloud' && (
+                        <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+                        </svg>
+                      )}
+                    </div>
+                    <span className="text-white/60">{item.text}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Status indicator */}
+              <div className="mt-4 pt-4 border-t border-white/10 flex items-center justify-between">
+                <span className="text-xs text-white/40">系统状态</span>
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-xs text-emerald-400 font-medium">运行中</span>
+                </div>
+              </div>
             </div>
           </div>
 
           {/* Security - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 hover:border-emerald-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 hover:border-emerald-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -403,7 +480,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* Private deployment - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 hover:border-purple-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 hover:border-purple-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -423,7 +500,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* API Platform - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 hover:border-rose-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 hover:border-rose-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -443,7 +520,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* Workflow - full width */}
-          <div className="md:col-span-6 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 lg:p-8 hover:border-amber-500/30 transition-all duration-500">
+          <div className="md:col-span-6 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 lg:p-8 hover:border-amber-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
