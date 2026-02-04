@@ -128,6 +128,7 @@ public class GroupsController : ControllerBase
             stats.MessageCounts.TryGetValue(g.GroupId, out var messageCount);
             stats.PendingGaps.TryGetValue(g.GroupId, out var pendingGapCount);
             stats.LastMessageAt.TryGetValue(g.GroupId, out var lastMessageAt);
+            stats.TopMembers.TryGetValue(g.GroupId, out var topMembers);
 
             return new AdminGroupListItem
             {
@@ -152,7 +153,8 @@ public class GroupsController : ControllerBase
                 CreatedAt = g.CreatedAt,
                 LastMessageAt = lastMessageAt == default ? null : lastMessageAt,
                 MessageCount = (int)(messageCount == 0 ? 0 : messageCount),
-                PendingGapCount = (int)(pendingGapCount == 0 ? 0 : pendingGapCount)
+                PendingGapCount = (int)(pendingGapCount == 0 ? 0 : pendingGapCount),
+                TopMembers = topMembers
             };
         }).ToList();
 
@@ -184,6 +186,7 @@ public class GroupsController : ControllerBase
         stats.MessageCounts.TryGetValue(groupId, out var messageCount);
         stats.PendingGaps.TryGetValue(groupId, out var pendingGapCount);
         stats.LastMessageAt.TryGetValue(groupId, out var lastMessageAt);
+        stats.TopMembers.TryGetValue(groupId, out var topMembers);
 
         var dto = new AdminGroupListItem
         {
@@ -208,7 +211,8 @@ public class GroupsController : ControllerBase
             CreatedAt = group.CreatedAt,
             LastMessageAt = lastMessageAt == default ? null : lastMessageAt,
             MessageCount = (int)messageCount,
-            PendingGapCount = (int)pendingGapCount
+            PendingGapCount = (int)pendingGapCount,
+            TopMembers = topMembers
         };
 
         return Ok(ApiResponse<AdminGroupListItem>.Ok(dto));
@@ -495,12 +499,47 @@ public class GroupsController : ControllerBase
             .Group(g => g.GroupId, gg => new { GroupId = gg.Key, Count = gg.Count() })
             .ToListAsync();
 
+        // 加载每个群组的前5名成员（按加入时间排序）
+        var allMembers = await _db.GroupMembers
+            .Find(m => groupIds.Contains(m.GroupId))
+            .SortBy(m => m.JoinedAt)
+            .ToListAsync();
+
+        var topMembersByGroup = allMembers
+            .GroupBy(m => m.GroupId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Take(5).Select(m => m.UserId).ToList()
+            );
+
+        // 批量获取用户信息
+        var allUserIds = topMembersByGroup.Values.SelectMany(x => x).Distinct().ToList();
+        var usersForTop = await _db.Users
+            .Find(u => allUserIds.Contains(u.UserId))
+            .Project(u => new { u.UserId, u.DisplayName, u.AvatarFileName })
+            .ToListAsync();
+        var userInfoMap = usersForTop.ToDictionary(u => u.UserId, u => u);
+
+        var topMembers = topMembersByGroup.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value
+                .Where(uid => userInfoMap.ContainsKey(uid))
+                .Select(uid => new AdminGroupTopMember
+                {
+                    UserId = uid,
+                    DisplayName = userInfoMap[uid].DisplayName ?? "",
+                    AvatarFileName = userInfoMap[uid].AvatarFileName
+                })
+                .ToList()
+        );
+
         return new AdminGroupStatsMaps
         {
             MemberCounts = memberCounts.ToDictionary(x => x.GroupId, x => (long)x.Count),
             MessageCounts = messageAgg.ToDictionary(x => x.GroupId, x => (long)x.Count),
             LastMessageAt = messageAgg.ToDictionary(x => x.GroupId, x => x.Last),
-            PendingGaps = pendingGaps.ToDictionary(x => x.GroupId, x => (long)x.Count)
+            PendingGaps = pendingGaps.ToDictionary(x => x.GroupId, x => (long)x.Count),
+            TopMembers = topMembers
         };
     }
 }
@@ -537,6 +576,15 @@ public class AdminGroupListItem
     public DateTime? LastMessageAt { get; set; }
     public int MessageCount { get; set; }
     public int PendingGapCount { get; set; }
+    /// <summary>前几名成员（用于头像堆叠展示）</summary>
+    public List<AdminGroupTopMember>? TopMembers { get; set; }
+}
+
+public class AdminGroupTopMember
+{
+    public string UserId { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public string? AvatarFileName { get; set; }
 }
 
 public class AdminGroupMemberDto
@@ -573,6 +621,7 @@ internal class AdminGroupStatsMaps
     public Dictionary<string, long> MessageCounts { get; set; } = new();
     public Dictionary<string, DateTime> LastMessageAt { get; set; } = new();
     public Dictionary<string, long> PendingGaps { get; set; } = new();
+    public Dictionary<string, List<AdminGroupTopMember>> TopMembers { get; set; } = new();
 }
 
 public class AdminMessageDto

@@ -9,6 +9,12 @@ export type AdminGroupOwner = {
   role: 'PM' | 'DEV' | 'QA' | 'ADMIN';
 };
 
+export type AdminGroupTopMember = {
+  userId: string;
+  displayName: string;
+  avatarFileName?: string | null;
+};
+
 export type AdminGroup = {
   groupId: string;
   groupName: string;
@@ -24,6 +30,7 @@ export type AdminGroup = {
   lastMessageAt?: string | null;
   messageCount: number;
   pendingGapCount: number;
+  topMembers?: AdminGroupTopMember[] | null;
 };
 
 export type PagedResult<T> = {

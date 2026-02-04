@@ -19,7 +19,7 @@ import {
   simulateStreamMessages,
   updateAdminGapStatus,
 } from '@/services';
-import { Trash2, RefreshCw, Copy, Search, Users2, MessageSquareText, AlertTriangle, Send, FolderKanban } from 'lucide-react';
+import { Trash2, RefreshCw, Copy, Search, Users2, MessageSquareText, AlertTriangle, Send, FolderKanban, FileText, Calendar, User } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import ReactMarkdown from 'react-markdown';
@@ -27,10 +27,16 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { LlmRequestDetailDialog } from '@/components/llm/LlmRequestDetailDialog';
 
+type TopMember = {
+  userId: string;
+  displayName: string;
+  avatarFileName?: string | null;
+};
+
 type GroupRow = {
   groupId: string;
   groupName: string;
-  owner?: { userId: string; username: string; displayName: string };
+  owner?: { userId: string; username: string; displayName: string; role?: string };
   memberCount: number;
   prdTitle?: string | null;
   inviteCode: string;
@@ -41,6 +47,7 @@ type GroupRow = {
   lastMessageAt?: string | null;
   messageCount?: number;
   pendingGapCount?: number;
+  topMembers?: TopMember[];
 };
 
 type MemberRow = {
@@ -110,6 +117,79 @@ function MessageMarkdown({ content }: { content: string }) {
   );
 }
 
+/** 头像堆叠组件 */
+function AvatarStack({ members, total, max = 5 }: { members: TopMember[]; total: number; max?: number }) {
+  const displayed = members.slice(0, max);
+  const remaining = total - displayed.length;
+
+  // 根据头像文件名生成URL（如果有配置的base URL）
+  const getAvatarUrl = (fileName?: string | null) => {
+    if (!fileName) return null;
+    // 假设头像存储在 /avatars/ 路径下，实际可配置
+    return `/avatars/${fileName}`;
+  };
+
+  // 生成基于名字的渐变色
+  const getGradient = (name: string) => {
+    const hash = name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const hue = hash % 360;
+    return `linear-gradient(135deg, hsl(${hue}, 60%, 45%), hsl(${(hue + 40) % 360}, 70%, 35%))`;
+  };
+
+  return (
+    <div className="flex items-center">
+      <div className="flex -space-x-2">
+        {displayed.map((member, i) => {
+          const avatarUrl = getAvatarUrl(member.avatarFileName);
+          return (
+            <div
+              key={member.userId}
+              className="w-8 h-8 rounded-full border-2 flex items-center justify-center text-xs font-semibold text-white overflow-hidden"
+              style={{
+                borderColor: 'var(--bg-primary)',
+                background: avatarUrl ? `url(${avatarUrl}) center/cover` : getGradient(member.displayName),
+                zIndex: max - i,
+              }}
+              title={member.displayName}
+            >
+              {!avatarUrl && (member.displayName?.[0] || '?').toUpperCase()}
+            </div>
+          );
+        })}
+        {remaining > 0 && (
+          <div
+            className="w-8 h-8 rounded-full border-2 flex items-center justify-center text-xs font-semibold"
+            style={{
+              borderColor: 'var(--bg-primary)',
+              background: 'rgba(255,255,255,0.1)',
+              color: 'var(--text-secondary)',
+              zIndex: 0,
+            }}
+          >
+            +{remaining}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 邀请状态计算 */
+function getInviteStatus(expireAt?: string | null): { label: string; variant: 'success' | 'discount' | 'subtle' } {
+  if (!expireAt) return { label: '长期有效', variant: 'success' };
+  const exp = new Date(expireAt);
+  const now = new Date();
+  if (exp < now) return { label: '已过期', variant: 'subtle' };
+  return { label: '有效', variant: 'success' };
+}
+
+/** 格式化日期为简短格式 */
+function formatShortDate(dateStr?: string | null): string {
+  if (!dateStr) return '-';
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export default function GroupsPage() {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<GroupRow[]>([]);
@@ -156,7 +236,7 @@ export default function GroupsPage() {
           res.data.items.map((g) => ({
             groupId: g.groupId,
             groupName: g.groupName,
-            owner: g.owner ? { userId: g.owner.userId, username: g.owner.username, displayName: g.owner.displayName } : undefined,
+            owner: g.owner ? { userId: g.owner.userId, username: g.owner.username, displayName: g.owner.displayName, role: g.owner.role } : undefined,
             memberCount: g.memberCount,
             prdTitle: g.prdTitleSnapshot ?? null,
             inviteCode: g.inviteCode,
@@ -167,6 +247,11 @@ export default function GroupsPage() {
             lastMessageAt: g.lastMessageAt ?? null,
             messageCount: g.messageCount,
             pendingGapCount: g.pendingGapCount,
+            topMembers: g.topMembers?.map(m => ({
+              userId: m.userId,
+              displayName: m.displayName,
+              avatarFileName: m.avatarFileName ?? null,
+            })) ?? [],
           }))
         );
       }
@@ -282,81 +367,136 @@ export default function GroupsPage() {
           {null}
         </div>
 
-        <div className="mt-5 flex-1 min-h-0 overflow-auto rounded-[16px]" style={{ border: '1px solid var(--border-subtle)' }}>
-          <table className="w-full text-sm">
-            <thead style={{ background: 'rgba(255,255,255,0.03)' }}>
-              <tr>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>群组</th>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>PRD</th>
-                <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>成员</th>
-                <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>消息</th>
-                <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>待处理缺失</th>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>邀请</th>
-                <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</td>
-                </tr>
-              ) : items.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无数据</td>
-                </tr>
-              ) : (
-                items.map((g) => (
-                  <tr key={g.groupId} className="hover:bg-white/2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                    <td className="px-4 py-3">
-                      <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{g.groupName}</div>
-                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{g.groupId}</div>
-                      {g.owner && (
+        <div className="mt-5 flex-1 min-h-0 overflow-auto">
+          {loading ? (
+            <div className="flex items-center justify-center py-20" style={{ color: 'var(--text-muted)' }}>
+              加载中...
+            </div>
+          ) : items.length === 0 ? (
+            <div className="flex items-center justify-center py-20" style={{ color: 'var(--text-muted)' }}>
+              暂无数据
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {items.map((g) => {
+                const inviteStatus = getInviteStatus(g.inviteExpireAt);
+                return (
+                  <div
+                    key={g.groupId}
+                    className="rounded-[20px] p-5 flex flex-col cursor-pointer transition-all hover:scale-[1.02]"
+                    style={{
+                      background: 'rgba(30, 32, 40, 0.85)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      boxShadow: '0 4px 24px rgba(0,0,0,0.2)',
+                    }}
+                    onClick={() => openDetail(g)}
+                  >
+                    {/* 头部：群组名 + 状态标签 */}
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-xl font-bold truncate" style={{ color: 'var(--text-primary)' }}>
+                          {g.groupName}
+                        </h3>
                         <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                          群主：{g.owner.displayName}（{g.owner.username}）
+                          {g.groupId}
                         </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
+                      </div>
+                      <Badge variant={inviteStatus.variant}>{inviteStatus.label}</Badge>
+                    </div>
+
+                    {/* 群主信息 */}
+                    {g.owner && (
+                      <div className="flex items-center gap-2 mb-4 text-sm" style={{ color: 'var(--text-muted)' }}>
+                        <User size={14} />
+                        <span>群主：{g.owner.role || 'PM'} ({g.owner.displayName})</span>
+                      </div>
+                    )}
+
+                    {/* 标签区域：PRD + 创建时间 */}
+                    <div className="flex flex-wrap gap-2 mb-4">
                       {g.prdTitle ? (
-                        <div className="text-sm font-semibold truncate max-w-[320px]" style={{ color: 'var(--text-primary)' }}>
-                          {g.prdTitle}
+                        <div
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
+                          style={{
+                            background: 'rgba(168, 85, 247, 0.15)',
+                            border: '1px solid rgba(168, 85, 247, 0.35)',
+                            color: 'rgba(216, 180, 254, 0.95)',
+                          }}
+                        >
+                          <FileText size={12} />
+                          <span className="truncate max-w-[140px]">{g.prdTitle}</span>
                         </div>
                       ) : (
-                        <div className="text-sm" style={{ color: 'var(--text-muted)' }}>文档已过期/未快照</div>
+                        <div
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
+                          style={{
+                            background: 'rgba(100, 100, 100, 0.15)',
+                            border: '1px solid rgba(100, 100, 100, 0.35)',
+                            color: 'rgba(180, 180, 180, 0.8)',
+                          }}
+                        >
+                          <FileText size={12} />
+                          无PRD
+                        </div>
                       )}
-                      <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>创建：{fmtDate(g.createdAt)}</div>
-                    </td>
-                    <td className="px-4 py-3 text-right" style={{ color: 'var(--text-secondary)' }}>{g.memberCount}</td>
-                    <td className="px-4 py-3 text-right" style={{ color: 'var(--accent-green)' }}>{g.messageCount ?? 0}</td>
-                    <td
-                      className="px-4 py-3 text-right"
-                      style={{ color: (g.pendingGapCount ?? 0) > 0 ? 'rgba(245,158,11,0.95)' : 'rgba(247,247,251,0.45)' }}
-                    >
-                      {g.pendingGapCount ?? 0}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <code className="text-xs" style={{ color: 'var(--text-secondary)' }}>{g.inviteCode}</code>
-                        {g.inviteExpireAt ? <Badge variant="new">可能已过期</Badge> : <Badge variant="success">长期有效</Badge>}
+                      <div
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
+                        style={{
+                          background: 'rgba(168, 85, 247, 0.15)',
+                          border: '1px solid rgba(168, 85, 247, 0.35)',
+                          color: 'rgba(216, 180, 254, 0.95)',
+                        }}
+                      >
+                        <Calendar size={12} />
+                        {formatShortDate(g.createdAt)}
                       </div>
-                      <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>到期：{fmtDate(g.inviteExpireAt)}</div>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="inline-flex items-center gap-2">
-                        <Button variant="secondary" size="sm" onClick={() => openDetail(g)}>
-                          <Users2 size={16} />
-                          详情
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => onCopy(g.inviteLink)} title="复制邀请链接" aria-label="复制邀请链接">
+                    </div>
+
+                    {/* 分割线 */}
+                    <div className="border-t my-2" style={{ borderColor: 'rgba(255,255,255,0.08)' }} />
+
+                    {/* Footer：头像堆叠 + 统计数字 */}
+                    <div className="flex items-center justify-between mt-2">
+                      <AvatarStack members={g.topMembers || []} total={g.memberCount} max={5} />
+
+                      <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-1.5" title="消息数">
+                          <MessageSquareText size={16} style={{ color: 'var(--text-muted)' }} />
+                          <span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
+                            {g.messageCount ?? 0}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5" title="待处理缺失">
+                          <AlertTriangle
+                            size={16}
+                            style={{ color: (g.pendingGapCount ?? 0) > 0 ? 'rgba(245,158,11,0.95)' : 'var(--text-muted)' }}
+                          />
+                          <span
+                            className="text-sm font-medium"
+                            style={{ color: (g.pendingGapCount ?? 0) > 0 ? 'rgba(245,158,11,0.95)' : 'var(--text-secondary)' }}
+                          >
+                            {g.pendingGapCount ?? 0}
+                          </span>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onCopy(g.inviteLink);
+                          }}
+                          title="复制邀请链接"
+                          aria-label="复制邀请链接"
+                        >
                           <Copy size={16} />
                         </Button>
                       </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="mt-4 flex items-center justify-between">
