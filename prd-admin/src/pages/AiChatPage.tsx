@@ -76,10 +76,14 @@ function StreamingDot() {
  * LLM 经常用 ```markdown / ```md 包裹"本来就想渲染的 Markdown"，
  * 这会导致 ReactMarkdown 将其当作代码块显示（<pre><code>），而非解析内部的 markdown 语法。
  * 这里仅解包 markdown/md 语言标记，其它代码块保持不动。
+ * 同时去除文本开头的空白行（换行符），避免渲染出额外空白。
  */
 function unwrapMarkdownFences(text: string): string {
   if (!text) return text;
-  return text.replace(/```(?:markdown|md)\s*\n([\s\S]*?)\n```/g, '$1');
+  let result = text.replace(/```(?:markdown|md)\s*\n([\s\S]*?)\n```/g, '$1');
+  // 去除开头的空白行（连续的换行符、空格、制表符组成的行）
+  result = result.replace(/^[\s\n\r]+/, '');
+  return result;
 }
 
 const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content: string }) {
