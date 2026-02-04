@@ -1242,27 +1242,25 @@ function WatermarkEditor(props: {
                 </div>
               </div>
 
-              <SectionLabel label="定位" />
-              <div>
-                <PositionModeSwitch
-                  value={config.positionMode}
-                  onChange={(nextMode) => {
-                    if (nextMode === config.positionMode) return;
-                    if (nextMode === 'ratio') {
-                      updateConfig({
-                        positionMode: nextMode,
-                        offsetX: config.offsetX / baseCanvasSize,
-                        offsetY: config.offsetY / baseCanvasSize,
-                      });
-                    } else {
-                      updateConfig({
-                        positionMode: nextMode,
-                        offsetX: config.offsetX * baseCanvasSize,
-                        offsetY: config.offsetY * baseCanvasSize,
-                      });
-                    }
+              <SectionLabel label="文字" />
+              <div className="flex items-center gap-2">
+                <label
+                  className="relative h-8 w-8 rounded-full inline-flex items-center justify-center cursor-pointer"
+                  style={{
+                    background: config.textColor || '#ffffff',
+                    border: '2px solid rgba(255,255,255,0.3)',
+                    color: 'rgba(0,0,0,0.7)',
                   }}
-                />
+                  title="文字颜色"
+                >
+                  <Droplet size={12} />
+                  <input
+                    type="color"
+                    value={(config.textColor || '#ffffff') as string}
+                    className="absolute inset-0 opacity-0 cursor-pointer"
+                    onChange={(e) => updateConfig({ textColor: e.target.value })}
+                  />
+                </label>
               </div>
 
               <SectionLabel label="装饰" />
@@ -1361,30 +1359,6 @@ function WatermarkEditor(props: {
                     />
                   </div>
                 )}
-
-                {/* 文字 + 文字色 - 放在最前面因为最常用 */}
-                <div className="pt-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
-                  <div className="flex items-center gap-3">
-                    <InlineLabel label="文字" />
-                    <label
-                      className="relative h-8 w-8 rounded-full inline-flex items-center justify-center cursor-pointer"
-                      style={{
-                        background: config.textColor || '#ffffff',
-                        border: '2px solid rgba(255,255,255,0.3)',
-                        color: 'rgba(0,0,0,0.7)',
-                      }}
-                      title="文字颜色"
-                    >
-                      <Droplet size={12} />
-                      <input
-                        type="color"
-                        value={(config.textColor || '#ffffff') as string}
-                        className="absolute inset-0 opacity-0 cursor-pointer"
-                        onChange={(e) => updateConfig({ textColor: e.target.value })}
-                      />
-                    </label>
-                  </div>
-                </div>
 
                 <div className="pt-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                   {/* 填充 + 背景色 */}
@@ -1509,6 +1483,29 @@ function WatermarkEditor(props: {
                     </div>
                   </div>
                 )}
+              </div>
+
+              <SectionLabel label="定位" />
+              <div>
+                <PositionModeSwitch
+                  value={config.positionMode}
+                  onChange={(nextMode) => {
+                    if (nextMode === config.positionMode) return;
+                    if (nextMode === 'ratio') {
+                      updateConfig({
+                        positionMode: nextMode,
+                        offsetX: config.offsetX / baseCanvasSize,
+                        offsetY: config.offsetY / baseCanvasSize,
+                      });
+                    } else {
+                      updateConfig({
+                        positionMode: nextMode,
+                        offsetX: config.offsetX * baseCanvasSize,
+                        offsetY: config.offsetY * baseCanvasSize,
+                      });
+                    }
+                  }}
+                />
               </div>
 
               <SectionLabel label="适应" />
