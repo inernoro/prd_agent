@@ -28,6 +28,7 @@ import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { FileText, Image as ImageIcon, Sparkles, type LucideIcon } from 'lucide-react';
+import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
 import {
   listLiteraryPromptsMarketplace,
   publishLiteraryPrompt,
@@ -125,6 +126,14 @@ export interface MarketplaceWatermark extends MarketplaceItemBase {
   text?: string;
   fontKey?: string;
   fontSizePx?: number;
+  anchor?: string;
+  opacity?: number;
+  offsetX?: number;
+  offsetY?: number;
+  iconEnabled?: boolean;
+  borderEnabled?: boolean;
+  backgroundEnabled?: boolean;
+  roundedBackgroundEnabled?: boolean;
   previewUrl?: string;
 }
 
@@ -209,37 +218,26 @@ const RefImagePreviewRenderer: React.FC<{ item: MarketplaceRefImage }> = ({ item
 
 /**
  * 水印预览：两栏布局（配置信息表 + 预览图）
- * 与"我的"页面水印卡片保持一致的样式
+ * 使用共享的 WatermarkDescriptionGrid 组件，与"我的"页面水印卡片保持一致的样式
  */
 const WatermarkPreviewRenderer: React.FC<{ item: MarketplaceWatermark }> = ({ item }) => (
   <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: PREVIEW_HEIGHT }}>
     {/* 左侧：配置信息 */}
-    <div
-      className="overflow-auto border rounded-[6px]"
-      style={{
-        borderColor: 'var(--border-subtle)',
-        background: 'rgba(255,255,255,0.02)',
+    <WatermarkDescriptionGrid
+      data={{
+        text: item.text,
+        fontKey: item.fontKey,
+        fontSizePx: item.fontSizePx,
+        opacity: item.opacity,
+        anchor: item.anchor,
+        offsetX: item.offsetX,
+        offsetY: item.offsetY,
+        iconEnabled: item.iconEnabled,
+        borderEnabled: item.borderEnabled,
+        backgroundEnabled: item.backgroundEnabled,
+        roundedBackgroundEnabled: item.roundedBackgroundEnabled,
       }}
-    >
-      <div className="text-[11px] grid gap-1 grid-cols-1 p-2" style={{ color: 'var(--text-muted)' }}>
-        <div className="grid items-center gap-2" style={{ gridTemplateColumns: '36px auto' }}>
-          <span>文字</span>
-          <span className="truncate" style={{ color: 'var(--text-primary)' }}>{item.text || '（空）'}</span>
-        </div>
-        {item.fontKey && (
-          <div className="grid items-center gap-2" style={{ gridTemplateColumns: '36px auto' }}>
-            <span>字体</span>
-            <span className="truncate" style={{ color: 'var(--text-primary)' }}>{item.fontKey}</span>
-          </div>
-        )}
-        {item.fontSizePx && (
-          <div className="grid items-center gap-2" style={{ gridTemplateColumns: '36px auto' }}>
-            <span>大小</span>
-            <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
-          </div>
-        )}
-      </div>
-    </div>
+    />
     {/* 右侧：预览图 */}
     <div
       className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
