@@ -101,7 +101,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
         return;
       }
 
-      const { runId, intent, plannedAgents, steps } = res.data;
+      const { runId, intent, steps } = res.data;
 
       // Map steps with agent display names
       const stepsWithNames: ToolboxRunStep[] = steps.map((s) => ({
@@ -164,8 +164,8 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       currentRunId: run.id,
       currentRun: run,
       intent: run.intent || null,
-      steps: run.steps,
-      artifacts: run.artifacts,
+      steps: run.steps ?? [],
+      artifacts: run.artifacts ?? [],
       finalResponse: run.finalResponse || null,
       errorMessage: run.errorMessage || null,
       status: run.status === 'Completed' ? 'completed' : run.status === 'Failed' ? 'failed' : 'idle',

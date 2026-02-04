@@ -90,11 +90,11 @@ export function HistoryList() {
                     {config.label}
                   </span>
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    {run.steps.length} 步骤
+                    {run.steps?.length ?? 0} 步骤
                   </span>
-                  {run.artifacts.length > 0 && (
+                  {(run.artifacts?.length ?? 0) > 0 && (
                     <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                      {run.artifacts.length} 成果
+                      {run.artifacts?.length ?? 0} 成果
                     </span>
                   )}
                 </div>

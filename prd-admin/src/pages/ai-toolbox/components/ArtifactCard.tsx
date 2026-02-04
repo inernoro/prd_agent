@@ -1,12 +1,12 @@
 import type { ToolboxArtifact } from '@/services';
-import { FileText, Image, File, Download, Eye } from 'lucide-react';
+import { FileText, Image, File, Download, Eye, type LucideIcon } from 'lucide-react';
 import { useState } from 'react';
 
 interface ArtifactCardProps {
   artifact: ToolboxArtifact;
 }
 
-const TYPE_ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
+const TYPE_ICONS: Record<string, LucideIcon> = {
   Markdown: FileText,
   Image: Image,
   Json: FileText,
