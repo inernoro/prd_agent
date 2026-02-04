@@ -1211,7 +1211,7 @@ function WatermarkEditor(props: {
               </div>
 
               <SectionLabel label="大小" />
-              <div className="flex items-center gap-2" style={{ opacity: config.text ? 1 : 0.4, pointerEvents: config.text ? 'auto' : 'none' }}>
+              <div className="flex items-center gap-2">
                 <input
                   type="range"
                   min={5}
@@ -1220,7 +1220,6 @@ function WatermarkEditor(props: {
                   value={config.fontSizePx}
                   onChange={(e) => updateConfig({ fontSizePx: Number(e.target.value) })}
                   className="flex-1 min-w-0"
-                  disabled={!config.text}
                 />
                 <div className="text-[11px] w-6 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
                   {Math.round(config.fontSizePx)}
