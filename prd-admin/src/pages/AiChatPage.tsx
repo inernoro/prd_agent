@@ -1319,6 +1319,8 @@ export default function AiChatPage() {
                           .prd-md h2 { font-size: 16px; }
                           .prd-md h3 { font-size: 14px; }
                           .prd-md p { margin: 10px 0; }
+                          .prd-md > *:first-child { margin-top: 0; }
+                          .prd-md > *:last-child { margin-bottom: 0; }
                           .prd-md ul, .prd-md ol { margin: 10px 0; padding-left: 20px; }
                           .prd-md li { margin: 5px 0; }
                           .prd-md strong { font-weight: 600; color: var(--text-primary); }
@@ -1340,9 +1342,12 @@ export default function AiChatPage() {
                           @keyframes prd-md-block-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
                         `}</style>
                         {/* 简化渲染：直接渲染 content，借鉴文学创作的流畅体验 */}
-                        <AssistantMarkdown content={unwrapMarkdownFences(m.content || '')} />
+                        {/* 当内容为空时不渲染 markdown，避免显示空气泡 */}
+                        {(m.content || '').trim() ? (
+                          <AssistantMarkdown content={unwrapMarkdownFences(m.content || '')} />
+                        ) : null}
                         {isThisStreaming ? (
-                          <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                          <div className={`text-[12px] ${(m.content || '').trim() ? 'mt-2' : ''}`} style={{ color: 'var(--text-muted)' }}>
                             输出中
                             <StreamingDot />
                           </div>
