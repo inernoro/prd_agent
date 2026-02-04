@@ -32,7 +32,7 @@ import {
 import type { WatermarkFontInfo, WatermarkConfig } from '@/services/contracts/watermark';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
-import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical, Share2, GitFork, Eye } from 'lucide-react';
+import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical, Share2, GitFork, Eye, PaintBucket } from 'lucide-react';
 
 const DEFAULT_CANVAS_SIZE = 320;
 const watermarkSizeCache = new Map<string, { width: number; height: number }>();
@@ -1391,16 +1391,14 @@ function WatermarkEditor(props: {
                     <InlineLabel label="填充" />
                     <button
                       type="button"
-                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
+                      className="inline-flex items-center justify-center"
                       style={{
-                        background: config.backgroundEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
-                        border: config.backgroundEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
                         color: config.backgroundEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
                       }}
                       title="填充背景"
                       onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
                     >
-                      <div className="w-4 h-4 rounded-sm" style={{ background: config.backgroundEnabled ? 'currentColor' : 'transparent', border: '2px solid currentColor' }} />
+                      <PaintBucket size={20} />
                     </button>
                     {config.backgroundEnabled && (
                       <label
@@ -1430,17 +1428,14 @@ function WatermarkEditor(props: {
                     <InlineLabel label="边框" />
                     <button
                       type="button"
-                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
+                      className="h-6 w-8 rounded-[4px] inline-flex items-center justify-center"
                       style={{
-                        background: config.borderEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
-                        border: config.borderEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
-                        color: config.borderEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
+                        background: 'transparent',
+                        border: config.borderEnabled ? '2px solid rgba(255,255,255,0.95)' : '2px solid rgba(255,255,255,0.35)',
                       }}
                       title="显示边框"
                       onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
-                    >
-                      <Square size={14} />
-                    </button>
+                    />
                     {config.borderEnabled && (
                       <label
                         className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
