@@ -14,7 +14,6 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
 import { Dialog } from '@/components/ui/Dialog';
-import { Tooltip } from '@/components/ui/Tooltip';
 import {
   deleteWatermarkFont,
   getWatermarks,
@@ -66,32 +65,15 @@ const appKeyLabelMap: Record<string, string> = {
   'prd-agent': '米多智能体平台',
 };
 
-const LabelTip = ({ tip }: { tip: string }) => (
-  <Tooltip content={tip} side="top" align="center">
-    <span
-      className="inline-flex items-center justify-center h-4 w-4 rounded-full text-[10px] font-semibold"
-      style={{
-        background: 'rgba(255,255,255,0.08)',
-        border: '1px solid rgba(255,255,255,0.12)',
-        color: 'var(--text-muted)',
-      }}
-    >
-      ?
-    </span>
-  </Tooltip>
-);
-
-const TitleWithTip = ({ label, tip }: { label: string; tip: string }) => (
-  <div className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>
-    <span>{label}</span>
-    <LabelTip tip={tip} />
+const SectionLabel = ({ label }: { label: string }) => (
+  <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+    {label}
   </div>
 );
 
-const InlineLabelWithTip = ({ label, tip }: { label: string; tip: string }) => (
-  <div className="flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
-    <span>{label}</span>
-    <LabelTip tip={tip} />
+const InlineLabel = ({ label }: { label: string }) => (
+  <div className="text-[11px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>
+    {label}
   </div>
 );
 
@@ -1188,8 +1170,8 @@ function WatermarkEditor(props: {
           }}
         >
           <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 pt-2">
-            <div className="grid gap-2" style={{ gridTemplateColumns: '74px minmax(0, 1fr)' }}>
-              <TitleWithTip label="文本" tip="显示在图片上的水印文字。" />
+            <div className="grid gap-4" style={{ gridTemplateColumns: '48px minmax(0, 1fr)' }}>
+              <SectionLabel label="文本" />
               <input
                 value={config.text}
                 onChange={(e) => updateConfig({ text: e.target.value })}
@@ -1197,7 +1179,7 @@ function WatermarkEditor(props: {
                 placeholder="请输入水印文案"
               />
 
-              <TitleWithTip label="字体" tip="水印文字使用的字体。" />
+              <SectionLabel label="字体" />
               <div className="flex items-center gap-2">
                 <FontSelect
                   value={config.fontKey}
@@ -1228,7 +1210,7 @@ function WatermarkEditor(props: {
                 </Button>
               </div>
 
-              <TitleWithTip label="字号" tip="水印文字大小。" />
+              <SectionLabel label="字号" />
               <div className="flex items-center gap-2">
                 <input
                   type="range"
@@ -1244,7 +1226,7 @@ function WatermarkEditor(props: {
                 </div>
               </div>
 
-              <TitleWithTip label="透明" tip="水印整体透明度。" />
+              <SectionLabel label="透明" />
               <div className="flex items-center gap-2">
                 <input
                   type="range"
@@ -1260,7 +1242,7 @@ function WatermarkEditor(props: {
                 </div>
               </div>
 
-              <TitleWithTip label="定位" tip="按像素或按比例定位水印。" />
+              <SectionLabel label="定位" />
               <div>
                 <PositionModeSwitch
                   value={config.positionMode}
@@ -1283,11 +1265,11 @@ function WatermarkEditor(props: {
                 />
               </div>
 
-              <TitleWithTip label="装饰" tip="图标、填充、边框、文字颜色等装饰项。" />
-              <div className="flex flex-col gap-3 pt-2">
+              <SectionLabel label="装饰" />
+              <div className="flex flex-col gap-4 pt-2">
                 {/* 图标 */}
                 <div className="flex items-center gap-3">
-                  <InlineLabelWithTip label="图标" tip="上传/启用水印图标。" />
+                  <InlineLabel label="图标" />
                   <div className="relative">
                     <label
                       className="h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer overflow-hidden"
@@ -1328,7 +1310,7 @@ function WatermarkEditor(props: {
 
                 {config.iconEnabled ? (
                   <div className="flex items-center gap-3">
-                    <InlineLabelWithTip label="位置" tip="图标相对文字的位置。" />
+                    <InlineLabel label="位置" />
                     <div className="grid grid-cols-4 gap-2 flex-1">
                       {([
                         { value: 'left', label: '左' },
@@ -1359,7 +1341,7 @@ function WatermarkEditor(props: {
 
                 {config.iconEnabled ? (
                   <div className="flex items-center gap-3">
-                    <InlineLabelWithTip label="间距" tip="图标与文字的距离。" />
+                    <InlineLabel label="间距" />
                     <div className="flex items-center gap-2 flex-1">
                       <input
                         type="number"
@@ -1369,7 +1351,7 @@ function WatermarkEditor(props: {
                         value={iconGapValue}
                         onChange={(e) => updateConfig({ iconGapPx: Number(e.target.value) })}
                       />
-                      <InlineLabelWithTip label="缩放" tip="图标缩放倍数。" />
+                      <InlineLabel label="缩放" />
                       <input
                         type="number"
                         min={0.2}
@@ -1386,7 +1368,7 @@ function WatermarkEditor(props: {
                 <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                   {/* 填充 + 背景色 */}
                   <div className="flex items-center gap-3">
-                    <InlineLabelWithTip label="填充" tip="文字背景填充开关与颜色。" />
+                    <InlineLabel label="填充" />
                     <button
                       type="button"
                       className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
@@ -1425,7 +1407,7 @@ function WatermarkEditor(props: {
                 <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                   {/* 边框 + 边框色 */}
                   <div className="flex items-center gap-3">
-                    <InlineLabelWithTip label="边框" tip="文字边框开关与颜色。" />
+                    <InlineLabel label="边框" />
                     <button
                       type="button"
                       className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
@@ -1463,7 +1445,7 @@ function WatermarkEditor(props: {
                   {/* 边框宽度（启用边框时显示） */}
                   {config.borderEnabled && (
                     <div className="flex items-center gap-3">
-                      <InlineLabelWithTip label="粗细" tip="边框粗细。" />
+                      <InlineLabel label="粗细" />
                       <input
                         type="range"
                         min="1"
@@ -1485,7 +1467,7 @@ function WatermarkEditor(props: {
                   {/* 圆角 */}
                   {(config.backgroundEnabled || config.borderEnabled) ? (
                     <div className="flex items-center gap-3 min-w-0 overflow-hidden">
-                    <InlineLabelWithTip label="圆角" tip="背景/边框圆角半径。" />
+                    <InlineLabel label="圆角" />
                       <input
                         type="range"
                         min="0"
@@ -1508,7 +1490,7 @@ function WatermarkEditor(props: {
                 <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                   {/* 文字 + 文字色 */}
                   <div className="flex items-center gap-3">
-                    <InlineLabelWithTip label="文字" tip="文字颜色与样式。" />
+                    <InlineLabel label="文字" />
                     <div
                       className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
                       style={{
@@ -1542,7 +1524,7 @@ function WatermarkEditor(props: {
                 </div>
               </div>
 
-              <TitleWithTip label="适应" tip="开启后按图片尺寸自适应缩放。" />
+              <SectionLabel label="适应" />
               <div className="flex flex-col gap-2 pt-1">
                 <div>
                   <ScaleModeSwitch
@@ -1554,7 +1536,7 @@ function WatermarkEditor(props: {
                 </div>
                 {adaptiveEnabled ? (
                   <div className="flex items-center gap-2">
-                  <InlineLabelWithTip label="方式" tip="自适应缩放的基准边。" />
+                  <InlineLabel label="方式" />
                     <div className="grid grid-cols-4 gap-2 flex-1">
                       {adaptiveScaleOptions.map((option) => {
                         const active = adaptiveScaleMode === option.value;
