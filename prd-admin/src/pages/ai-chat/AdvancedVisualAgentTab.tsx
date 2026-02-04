@@ -3435,6 +3435,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     initialPromptHandledRef.current = true;
 
     const inline = initialPrompt.inlineImage;
+    const promptText = initialPrompt.text;
 
     // 如果有内联图片，先添加到 canvas
     if (inline?.src) {
@@ -3457,31 +3458,37 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       // 手动同步选中
       setSelectedKeys([inlineKey]);
 
-      // 等待 richComposerRef 准备好后插入 chip
-      const tryInsertChip = (retries = 0) => {
+      // 等待 richComposerRef 准备好后插入 chip 和文字
+      const tryInsertChipAndText = (retries = 0) => {
         if (richComposerRef.current) {
           richComposerRef.current.clearPending();
+          // 插入图片 chip（蓝色就绪状态）
           richComposerRef.current.insertImageChip(
             { key: inlineKey, refId: newRefId, src: inline.src, label: inline.name || `img${newRefId}` },
-            { preserveFocus: false }
+            { ready: true, preserveFocus: false }
           );
+          // 插入提示词文字
+          if (promptText) {
+            richComposerRef.current.insertText(' ' + promptText);
+          }
         } else if (retries < 20) {
           // 每 100ms 重试，最多 2 秒
-          setTimeout(() => tryInsertChip(retries + 1), 100);
+          setTimeout(() => tryInsertChipAndText(retries + 1), 100);
         }
       };
       // 延迟执行，确保 canvas 状态已更新
-      setTimeout(() => tryInsertChip(), 100);
+      setTimeout(() => tryInsertChipAndText(), 100);
+    } else if (promptText) {
+      // 没有图片，只插入文字
+      const tryInsertText = (retries = 0) => {
+        if (richComposerRef.current) {
+          richComposerRef.current.insertText(promptText);
+        } else if (retries < 20) {
+          setTimeout(() => tryInsertText(retries + 1), 100);
+        }
+      };
+      setTimeout(() => tryInsertText(), 100);
     }
-
-    // 延迟发送文本，确保 canvas 和 chip 已准备好
-    const sendTimer = window.setTimeout(() => {
-      void sendText(initialPrompt.text, {
-        inlineImage: inline,
-      });
-    }, 600);
-
-    return () => window.clearTimeout(sendTimer);
   }, [initialPrompt, workspace, modelsLoading]);
 
   const insertAtCursor = (text: string) => {
