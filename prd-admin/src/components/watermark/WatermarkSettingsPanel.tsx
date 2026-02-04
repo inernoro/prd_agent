@@ -13,6 +13,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
+import { ColorPicker } from '@/components/watermark/ColorPicker';
 import { Dialog } from '@/components/ui/Dialog';
 import {
   deleteWatermarkFont,
@@ -75,6 +76,10 @@ const InlineLabel = ({ label }: { label: string }) => (
   <div className="text-[11px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>
     {label}
   </div>
+);
+
+const SectionDivider = () => (
+  <div className="col-span-2 border-t my-1" style={{ borderColor: 'rgba(255,255,255,0.08)' }} />
 );
 
 const buildDefaultConfig = (fontKey: string): WatermarkConfig => ({
@@ -1267,25 +1272,15 @@ function WatermarkEditor(props: {
                   字
                 </button>
                 {config.text && (
-                  <label
-                    className="relative h-8 w-8 rounded-full inline-flex items-center justify-center cursor-pointer"
-                    style={{
-                      background: config.textColor || '#ffffff',
-                      border: '2px solid rgba(255,255,255,0.3)',
-                      color: 'rgba(0,0,0,0.7)',
-                    }}
+                  <ColorPicker
+                    value={config.textColor || '#ffffff'}
+                    onChange={(color) => updateConfig({ textColor: color })}
                     title="文字颜色"
-                  >
-                    <Droplet size={12} />
-                    <input
-                      type="color"
-                      value={(config.textColor || '#ffffff') as string}
-                      className="absolute inset-0 opacity-0 cursor-pointer"
-                      onChange={(e) => updateConfig({ textColor: e.target.value })}
-                    />
-                  </label>
+                  />
                 )}
               </div>
+
+              <SectionDivider />
 
               <SectionLabel label="图标" />
               <div className="flex flex-col gap-3">
@@ -1385,6 +1380,8 @@ function WatermarkEditor(props: {
                 )}
               </div>
 
+              <SectionDivider />
+
               <SectionLabel label="填充" />
               <div className="flex items-center gap-3">
                 <button
@@ -1399,23 +1396,12 @@ function WatermarkEditor(props: {
                   <PaintBucket size={20} />
                 </button>
                 {config.backgroundEnabled && (
-                  <label
-                    className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
-                    style={{
-                      background: config.backgroundColor || '#000000',
-                      border: '2px solid rgba(255,255,255,0.3)',
-                      color: 'rgba(255,255,255,0.9)',
-                    }}
+                  <ColorPicker
+                    value={config.backgroundColor || '#000000'}
+                    onChange={(color) => updateConfig({ backgroundColor: color })}
                     title="背景颜色"
-                  >
-                    <Droplet size={12} />
-                    <input
-                      type="color"
-                      value={(config.backgroundColor || '#000000') as string}
-                      className="absolute inset-0 opacity-0 cursor-pointer"
-                      onChange={(e) => updateConfig({ backgroundColor: e.target.value })}
-                    />
-                  </label>
+                    iconColor="rgba(255,255,255,0.9)"
+                  />
                 )}
               </div>
 
@@ -1433,23 +1419,11 @@ function WatermarkEditor(props: {
                     onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
                   />
                   {config.borderEnabled && (
-                    <label
-                      className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
-                      style={{
-                        background: config.borderColor || '#ffffff',
-                        border: '2px solid rgba(255,255,255,0.3)',
-                        color: 'rgba(0,0,0,0.7)',
-                      }}
+                    <ColorPicker
+                      value={config.borderColor || '#ffffff'}
+                      onChange={(color) => updateConfig({ borderColor: color })}
                       title="边框颜色"
-                    >
-                      <Droplet size={12} />
-                      <input
-                        type="color"
-                        value={(config.borderColor || '#ffffff') as string}
-                        className="absolute inset-0 opacity-0 cursor-pointer"
-                        onChange={(e) => updateConfig({ borderColor: e.target.value })}
-                      />
-                    </label>
+                    />
                   )}
                 </div>
 
@@ -1499,6 +1473,8 @@ function WatermarkEditor(props: {
                   </div>
                 </>
               )}
+
+              <SectionDivider />
 
               <SectionLabel label="定位" />
               <div>
