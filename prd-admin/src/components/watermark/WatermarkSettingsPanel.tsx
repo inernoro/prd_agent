@@ -1170,7 +1170,7 @@ function WatermarkEditor(props: {
           }}
         >
           <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 pt-2">
-            <div className="grid gap-5" style={{ gridTemplateColumns: '48px minmax(0, 1fr)' }}>
+            <div className="grid gap-4" style={{ gridTemplateColumns: '48px minmax(0, 1fr)' }}>
               <SectionLabel label="文本" />
               <input
                 value={config.text}
@@ -1244,6 +1244,21 @@ function WatermarkEditor(props: {
 
               <SectionLabel label="文字" />
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="h-8 w-8 rounded-full inline-flex items-center justify-center"
+                  style={{
+                    background: config.text ? 'rgba(255,255,255,0.1)' : 'transparent',
+                    border: config.text ? '1.5px solid rgba(255,255,255,0.3)' : '1.5px solid rgba(255,255,255,0.1)',
+                    color: config.text ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.35)',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                  }}
+                  title={config.text ? '点击清空文字' : '文字已清空'}
+                  onClick={() => updateConfig({ text: config.text ? '' : '米多AI生成' })}
+                >
+                  字
+                </button>
                 <label
                   className="relative h-8 w-8 rounded-full inline-flex items-center justify-center cursor-pointer"
                   style={{
@@ -1264,7 +1279,7 @@ function WatermarkEditor(props: {
               </div>
 
               <SectionLabel label="装饰" />
-              <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-3">
                 {/* 图标 + 位置按钮 - 一行排列 */}
                 <div className="flex items-center gap-2">
                   {/* 图标上传 */}
@@ -1360,7 +1375,7 @@ function WatermarkEditor(props: {
                   </div>
                 )}
 
-                <div className="pt-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                   {/* 填充 + 背景色 */}
                   <div className="flex items-center gap-3">
                     <InlineLabel label="填充" />
@@ -1399,7 +1414,7 @@ function WatermarkEditor(props: {
                   </div>
                 </div>
 
-                <div className="pt-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                   {/* 边框 + 边框色 */}
                   <div className="flex items-center gap-3">
                     <InlineLabel label="边框" />
@@ -1462,7 +1477,7 @@ function WatermarkEditor(props: {
 
                 {/* 圆角 - 填充和边框共用 */}
                 {(config.backgroundEnabled || config.borderEnabled) && (
-                  <div className="pt-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+                  <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                     <div className="flex items-center gap-3 min-w-0 overflow-hidden">
                       <InlineLabel label="圆角" />
                       <input
