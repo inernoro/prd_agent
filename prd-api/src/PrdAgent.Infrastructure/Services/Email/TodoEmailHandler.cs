@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
@@ -108,7 +107,12 @@ public class TodoEmailHandler : IEmailHandler
         try
         {
             var truncatedBody = body.Length > 1500 ? body[..1500] + "..." : body;
-            var prompt = $$"""
+            var systemPrompt = """
+                你是一个待办事项提取助手。从邮件内容中提取待办信息，用JSON格式返回。
+                只返回JSON，不要其他内容。
+                """;
+
+            var userPrompt = $$"""
                 从以下邮件中提取待办事项信息：
 
                 【主题】{{subject}}
@@ -129,37 +133,37 @@ public class TodoEmailHandler : IEmailHandler
                     "dueDate": "2024-01-15 或 null",
                     "tags": ["标签1", "标签2"]
                 }
-
-                只返回JSON。
                 """;
 
-            var request = new GatewayRequest
+            var client = _llmGateway.CreateClient(
+                "channel-adapter.email::todo-extract",
+                "chat",
+                maxTokens: 1024,
+                temperature: 0.2);
+
+            var messages = new List<LLMMessage>
             {
-                AppCallerCode = "channel-adapter.email::todo-extract",
-                ModelType = "chat",
-                RequestBody = new JsonObject
-                {
-                    ["messages"] = new JsonArray
-                    {
-                        new JsonObject
-                        {
-                            ["role"] = "user",
-                            ["content"] = prompt
-                        }
-                    },
-                    ["temperature"] = 0.2
-                }
+                new() { Role = "user", Content = userPrompt }
             };
 
-            var response = await _llmGateway.SendAsync(request, ct);
+            // 收集流式响应
+            var responseBuilder = new System.Text.StringBuilder();
+            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, ct))
+            {
+                if (chunk.Type == "delta" && chunk.Content != null)
+                {
+                    responseBuilder.Append(chunk.Content);
+                }
+            }
+            var responseContent = responseBuilder.ToString();
 
             // 解析结果
-            var jsonStart = response.Content.IndexOf('{');
-            var jsonEnd = response.Content.LastIndexOf('}');
+            var jsonStart = responseContent.IndexOf('{');
+            var jsonEnd = responseContent.LastIndexOf('}');
 
             if (jsonStart >= 0 && jsonEnd > jsonStart)
             {
-                var json = response.Content[jsonStart..(jsonEnd + 1)];
+                var json = responseContent[jsonStart..(jsonEnd + 1)];
                 var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 

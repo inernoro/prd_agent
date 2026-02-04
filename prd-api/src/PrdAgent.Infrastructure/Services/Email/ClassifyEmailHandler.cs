@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Interfaces.LlmGateway;
@@ -43,31 +42,38 @@ public class ClassifyEmailHandler : IEmailHandler
         {
             // 构建分类 prompt
             var truncatedBody = body.Length > 2000 ? body[..2000] + "..." : body;
-            var prompt = BuildClassifyPrompt(subject, truncatedBody);
+            var userPrompt = BuildClassifyPrompt(subject, truncatedBody);
 
-            // 调用 LLM
-            var request = new GatewayRequest
+            var systemPrompt = """
+                你是一个邮件分类助手。分析邮件内容并返回分类结果。
+                只返回JSON，不要其他内容。
+                """;
+
+            // 创建 LLM 客户端
+            var client = _llmGateway.CreateClient(
+                "channel-adapter.email::classify",
+                "chat",
+                maxTokens: 1024,
+                temperature: 0.3);
+
+            var messages = new List<LLMMessage>
             {
-                AppCallerCode = "channel-adapter.email::classify",
-                ModelType = "chat",
-                RequestBody = new JsonObject
-                {
-                    ["messages"] = new JsonArray
-                    {
-                        new JsonObject
-                        {
-                            ["role"] = "user",
-                            ["content"] = prompt
-                        }
-                    },
-                    ["temperature"] = 0.3 // 分类任务用低温度
-                }
+                new() { Role = "user", Content = userPrompt }
             };
 
-            var response = await _llmGateway.SendAsync(request, ct);
+            // 收集流式响应
+            var responseBuilder = new System.Text.StringBuilder();
+            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, ct))
+            {
+                if (chunk.Type == "delta" && chunk.Content != null)
+                {
+                    responseBuilder.Append(chunk.Content);
+                }
+            }
+            var responseContent = responseBuilder.ToString();
 
             // 解析分类结果
-            var classification = ParseClassificationResult(response.Content, taskId, subject, body);
+            var classification = ParseClassificationResult(responseContent, taskId, subject, body);
 
             // 保存分类结果
             await _db.EmailClassifications.InsertOneAsync(classification, cancellationToken: ct);
