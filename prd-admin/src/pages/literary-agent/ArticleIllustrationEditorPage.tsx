@@ -3004,15 +3004,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   type="button"
                                   className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
                                   style={{
-                                    color: isPromptSelected ? 'white' : 'rgba(34, 197, 94, 0.95)',
-                                    background: isPromptSelected ? 'rgba(34, 197, 94, 0.95)' : 'rgba(34, 197, 94, 0.08)',
-                                    border: isPromptSelected ? '1px solid rgba(34, 197, 94, 0.95)' : '1px solid rgba(34, 197, 94, 0.45)',
+                                    color: isPromptSelected ? 'white' : 'rgba(156, 163, 175, 0.6)',
+                                    background: isPromptSelected ? 'rgba(34, 197, 94, 0.95)' : 'transparent',
+                                    border: isPromptSelected ? '1px solid rgba(34, 197, 94, 0.95)' : 'none',
                                     minWidth: 40,
                                   }}
                                   onClick={() => setSelectedPrompt(prompt)}
                                   title={isPromptSelected ? '取消选择' : '选择'}
                                 >
-                                  {isPromptSelected ? <CheckCircle2 size={16} /> : <Check size={16} />}
+                                  <CheckCircle2 size={16} />
                                 </button>
                                 {/* 分隔线 */}
                                 <div className="h-4 w-px mx-0.5" style={{ background: 'var(--border-subtle)' }} />
@@ -3206,9 +3206,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   type="button"
                                   className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
                                   style={{
-                                    color: config.isActive ? 'white' : 'rgba(34, 197, 94, 0.95)',
-                                    background: config.isActive ? 'rgba(34, 197, 94, 0.95)' : 'rgba(34, 197, 94, 0.08)',
-                                    border: config.isActive ? '1px solid rgba(34, 197, 94, 0.95)' : '1px solid rgba(34, 197, 94, 0.45)',
+                                    color: config.isActive ? 'white' : 'rgba(156, 163, 175, 0.6)',
+                                    background: config.isActive ? 'rgba(34, 197, 94, 0.95)' : 'transparent',
+                                    border: config.isActive ? '1px solid rgba(34, 197, 94, 0.95)' : 'none',
                                     minWidth: 40,
                                   }}
                                   onClick={async () => {
@@ -3227,7 +3227,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   disabled={referenceImageSaving}
                                   title={config.isActive ? '取消选择' : '选择'}
                                 >
-                                  {config.isActive ? <CheckCircle2 size={16} /> : <Check size={16} />}
+                                  <CheckCircle2 size={16} />
                                 </button>
                                 {/* 分隔线 */}
                                 <div className="h-4 w-px mx-0.5" style={{ background: 'var(--border-subtle)' }} />
