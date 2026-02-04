@@ -12,6 +12,7 @@ import {
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
 import { Dialog } from '@/components/ui/Dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import {
@@ -794,59 +795,24 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                     {/* 配置信息区（统一高度100px，左侧两列配置 + 右侧预览图，与风格图卡片保持一致） */}
                     <div className="px-2 pb-1 flex-shrink-0">
                       <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: '100px' }}>
-                        {/* 左侧：配置信息（两列布局） */}
-                        <div
-                          className="overflow-auto border rounded-[6px]"
-                          style={{
-                            borderColor: 'var(--border-subtle)',
-                            background: 'rgba(255,255,255,0.02)',
+                        {/* 左侧：配置信息（使用共享组件，两列布局） */}
+                        <WatermarkDescriptionGrid
+                          data={{
+                            text: item.text,
+                            fontKey: item.fontKey,
+                            fontLabel,
+                            fontSizePx: item.fontSizePx,
+                            opacity: item.opacity,
+                            anchor: item.anchor,
+                            offsetX: item.offsetX,
+                            offsetY: item.offsetY,
+                            iconEnabled: item.iconEnabled,
+                            borderEnabled: item.borderEnabled,
+                            backgroundEnabled: item.backgroundEnabled,
+                            roundedBackgroundEnabled: item.roundedBackgroundEnabled,
                           }}
-                        >
-                          <div className="text-[10px] grid grid-cols-2 gap-x-2 gap-y-0 p-1.5" style={{ color: 'var(--text-muted)' }}>
-                            <div className="flex items-center gap-1">
-                              <span>文本</span>
-                              <span className="truncate" style={{ color: 'var(--text-primary)' }}>{item.text || '无'}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span>字体</span>
-                              <span className="truncate" style={{ color: 'var(--text-primary)' }}>{fontLabel}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span>大小</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span>透明度</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span>位置</span>
-                              <span className="truncate" style={{ color: 'var(--text-primary)' }}>
-                                {anchorLabelMap[item.anchor]}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span>偏移</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{item.offsetX},{item.offsetY}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span>图标</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{item.iconEnabled ? '启用' : '禁用'}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span>边框</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{item.borderEnabled ? '启用' : '禁用'}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span>背景</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{item.backgroundEnabled ? '启用' : '禁用'}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span>圆角</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{item.roundedBackgroundEnabled ? '启用' : '禁用'}</span>
-                            </div>
-                          </div>
-                        </div>
+                          mode="full"
+                        />
                         {/* 右侧：预览图（水印是透明PNG，使用象棋格背景） */}
                         <div
                           className="flex items-center justify-center overflow-hidden rounded-[6px]"
