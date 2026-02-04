@@ -1242,23 +1242,8 @@ function WatermarkEditor(props: {
                 </div>
               </div>
 
-              <SectionLabel label="文字" />
+              <SectionLabel label="颜色" />
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="h-8 w-8 rounded-full inline-flex items-center justify-center"
-                  style={{
-                    background: config.text ? 'rgba(255,255,255,0.1)' : 'transparent',
-                    border: config.text ? '1.5px solid rgba(255,255,255,0.3)' : '1.5px solid rgba(255,255,255,0.1)',
-                    color: config.text ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.35)',
-                    fontSize: '12px',
-                    fontWeight: 500,
-                  }}
-                  title={config.text ? '点击清空文字' : '文字已清空'}
-                  onClick={() => updateConfig({ text: config.text ? '' : '米多AI生成' })}
-                >
-                  字
-                </button>
                 <label
                   className="relative h-8 w-8 rounded-full inline-flex items-center justify-center cursor-pointer"
                   style={{
