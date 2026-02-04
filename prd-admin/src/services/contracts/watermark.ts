@@ -54,6 +54,14 @@ export interface MarketplaceWatermarkConfig {
   text: string;
   fontKey: string;
   fontSizePx: number;
+  anchor?: string;
+  opacity?: number;
+  offsetX?: number;
+  offsetY?: number;
+  iconEnabled?: boolean;
+  borderEnabled?: boolean;
+  backgroundEnabled?: boolean;
+  roundedBackgroundEnabled?: boolean;
   previewUrl?: string | null;
   forkCount: number;
   createdAt: string;
