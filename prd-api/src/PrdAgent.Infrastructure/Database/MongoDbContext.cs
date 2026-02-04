@@ -112,6 +112,7 @@ public class MongoDbContext
     // Email Channel 邮件通道
     public IMongoCollection<TodoItem> TodoItems => _database.GetCollection<TodoItem>("todo_items");
     public IMongoCollection<EmailClassification> EmailClassifications => _database.GetCollection<EmailClassification>("email_classifications");
+    public IMongoCollection<EmailWorkflow> EmailWorkflows => _database.GetCollection<EmailWorkflow>("email_workflows");
 
     private void CreateIndexes()
     {

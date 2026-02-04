@@ -200,3 +200,39 @@ public class TestConnectionRequest
     public string ImapPassword { get; set; } = string.Empty;
     public bool ImapUseSsl { get; set; } = true;
 }
+
+/// <summary>
+/// 创建/更新工作流邮箱请求
+/// </summary>
+public class UpsertEmailWorkflowRequest
+{
+    /// <summary>邮箱前缀（如 todo、classify）</summary>
+    public string? AddressPrefix { get; set; }
+
+    /// <summary>显示名称</summary>
+    public string? DisplayName { get; set; }
+
+    /// <summary>描述说明</summary>
+    public string? Description { get; set; }
+
+    /// <summary>图标（emoji）</summary>
+    public string? Icon { get; set; }
+
+    /// <summary>意图类型（Classify, CreateTodo, Summarize, FollowUp）</summary>
+    public string? IntentType { get; set; }
+
+    /// <summary>目标 Agent</summary>
+    public string? TargetAgent { get; set; }
+
+    /// <summary>自定义处理提示词</summary>
+    public string? CustomPrompt { get; set; }
+
+    /// <summary>自动回复模板</summary>
+    public string? ReplyTemplate { get; set; }
+
+    /// <summary>是否启用</summary>
+    public bool? IsActive { get; set; }
+
+    /// <summary>优先级</summary>
+    public int? Priority { get; set; }
+}

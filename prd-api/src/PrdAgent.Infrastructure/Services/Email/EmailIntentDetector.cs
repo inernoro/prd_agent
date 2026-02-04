@@ -1,46 +1,34 @@
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Infrastructure.Services.Email;
 
 /// <summary>
 /// 邮件意图检测器
-/// 基于规则 + LLM 混合检测
+/// 基于用户配置的工作流 + 规则 + LLM 混合检测
 /// </summary>
 public class EmailIntentDetector : IEmailIntentDetector
 {
+    private readonly MongoDbContext _db;
     private readonly ILlmGateway? _llmGateway;
     private readonly ILogger<EmailIntentDetector> _logger;
 
-    // 意图触发词配置
-    private static readonly Dictionary<EmailIntentType, IntentTrigger> Triggers = new()
+    // 主题关键词触发配置（作为 fallback）
+    private static readonly Dictionary<EmailIntentType, string[]> SubjectTriggers = new()
     {
-        [EmailIntentType.Classify] = new IntentTrigger
-        {
-            AddressPatterns = new[] { "classify@", "分类@", "sort@" },
-            SubjectPatterns = new[] { @"\[分类\]", @"\[归类\]", @"\[classify\]" }
-        },
-        [EmailIntentType.CreateTodo] = new IntentTrigger
-        {
-            AddressPatterns = new[] { "todo@", "待办@", "task@" },
-            SubjectPatterns = new[] { @"\[待办\]", @"\[TODO\]", @"\[任务\]", @"请跟进", @"需要处理" }
-        },
-        [EmailIntentType.Summarize] = new IntentTrigger
-        {
-            AddressPatterns = new[] { "summary@", "摘要@" },
-            SubjectPatterns = new[] { @"\[摘要\]", @"\[summary\]", @"\[总结\]" }
-        },
-        [EmailIntentType.FollowUp] = new IntentTrigger
-        {
-            AddressPatterns = new[] { "followup@", "跟进@" },
-            SubjectPatterns = new[] { @"\[跟进\]", @"\[follow.?up\]", @"请回复", @"等待回复" }
-        }
+        [EmailIntentType.Classify] = new[] { @"\[分类\]", @"\[归类\]", @"\[classify\]" },
+        [EmailIntentType.CreateTodo] = new[] { @"\[待办\]", @"\[TODO\]", @"\[任务\]", @"请跟进", @"需要处理" },
+        [EmailIntentType.Summarize] = new[] { @"\[摘要\]", @"\[summary\]", @"\[总结\]" },
+        [EmailIntentType.FollowUp] = new[] { @"\[跟进\]", @"\[follow.?up\]", @"请回复", @"等待回复" }
     };
 
-    public EmailIntentDetector(ILogger<EmailIntentDetector> logger, ILlmGateway? llmGateway = null)
+    public EmailIntentDetector(MongoDbContext db, ILogger<EmailIntentDetector> logger, ILlmGateway? llmGateway = null)
     {
+        _db = db;
         _logger = logger;
         _llmGateway = llmGateway;
     }
@@ -53,21 +41,39 @@ public class EmailIntentDetector : IEmailIntentDetector
     {
         var addresses = toAddresses.ToList();
 
-        // 1. 先用规则匹配（快速、确定性高）
-        var ruleResult = DetectByRules(addresses, subject);
+        // 1. 从数据库加载工作流配置
+        var workflows = await _db.EmailWorkflows
+            .Find(w => w.IsActive)
+            .SortBy(w => w.Priority)
+            .ToListAsync(ct);
+
+        // 2. 用工作流配置匹配收件地址
+        var workflowResult = DetectByWorkflows(addresses, workflows);
+        if (workflowResult.Confidence > 0.9)
+        {
+            _logger.LogDebug(
+                "Intent detected by workflow: {Type} ({Confidence:P0}) - {Reason}",
+                workflowResult.Type, workflowResult.Confidence, workflowResult.Reason);
+            return workflowResult;
+        }
+
+        // 3. 用规则匹配主题关键词（fallback）
+        var ruleResult = DetectBySubjectRules(subject);
         if (ruleResult.Confidence > 0.8)
         {
-            _logger.LogDebug("Intent detected by rules: {Type} ({Confidence:P0})", ruleResult.Type, ruleResult.Confidence);
+            _logger.LogDebug(
+                "Intent detected by subject rules: {Type} ({Confidence:P0})",
+                ruleResult.Type, ruleResult.Confidence);
             return ruleResult;
         }
 
-        // 2. 如果规则匹配度低且有 LLM，用 LLM 辅助判断
-        if (_llmGateway != null && ruleResult.Confidence < 0.5)
+        // 4. 如果规则匹配度低且有 LLM，用 LLM 辅助判断
+        if (_llmGateway != null && workflowResult.Confidence < 0.5 && ruleResult.Confidence < 0.5)
         {
             try
             {
                 var llmResult = await DetectByLlmAsync(subject, body, ct);
-                if (llmResult.Confidence > ruleResult.Confidence)
+                if (llmResult.Confidence > Math.Max(workflowResult.Confidence, ruleResult.Confidence))
                 {
                     _logger.LogDebug("Intent detected by LLM: {Type} ({Confidence:P0})", llmResult.Type, llmResult.Confidence);
                     return llmResult;
@@ -79,59 +85,75 @@ public class EmailIntentDetector : IEmailIntentDetector
             }
         }
 
-        // 3. 返回规则结果（可能是 Unknown）
-        return ruleResult;
+        // 5. 返回置信度最高的结果
+        var finalResult = workflowResult.Confidence > ruleResult.Confidence ? workflowResult : ruleResult;
+
+        // 6. 提取参数
+        ExtractParameters(subject, finalResult);
+
+        return finalResult;
     }
 
-    private EmailIntent DetectByRules(List<string> toAddresses, string subject)
+    /// <summary>
+    /// 基于用户配置的工作流匹配
+    /// </summary>
+    private EmailIntent DetectByWorkflows(List<string> toAddresses, List<EmailWorkflow> workflows)
     {
-        var result = new EmailIntent { Type = EmailIntentType.Unknown, Confidence = 0 };
-
-        foreach (var (intentType, trigger) in Triggers)
+        foreach (var workflow in workflows)
         {
-            double confidence = 0;
-            string? reason = null;
-
-            // 检查收件地址
-            foreach (var pattern in trigger.AddressPatterns)
+            // 检查收件地址是否匹配工作流前缀
+            foreach (var addr in toAddresses)
             {
-                if (toAddresses.Any(addr => addr.Contains(pattern, StringComparison.OrdinalIgnoreCase)))
-                {
-                    confidence = 0.95; // 地址匹配置信度很高
-                    reason = $"收件地址包含 '{pattern}'";
-                    break;
-                }
-            }
+                if (string.IsNullOrEmpty(addr)) continue;
 
-            // 检查主题（如果地址没匹配到）
-            if (confidence < 0.9)
-            {
-                foreach (var pattern in trigger.SubjectPatterns)
+                // 提取 @ 前的部分
+                var atIndex = addr.IndexOf('@');
+                if (atIndex <= 0) continue;
+
+                var prefix = addr[..atIndex].ToLowerInvariant();
+
+                if (prefix == workflow.AddressPrefix.ToLowerInvariant())
                 {
-                    if (Regex.IsMatch(subject, pattern, RegexOptions.IgnoreCase))
+                    return new EmailIntent
                     {
-                        confidence = Math.Max(confidence, 0.85);
-                        reason = $"主题匹配 '{pattern}'";
-                        break;
-                    }
+                        Type = workflow.IntentType,
+                        Confidence = 0.95, // 精确匹配工作流，高置信度
+                        Reason = $"匹配工作流：{workflow.DisplayName}",
+                        Parameters = new Dictionary<string, string>
+                        {
+                            ["workflowId"] = workflow.Id,
+                            ["workflowName"] = workflow.DisplayName,
+                            ["targetAgent"] = workflow.TargetAgent ?? ""
+                        }
+                    };
                 }
-            }
-
-            if (confidence > result.Confidence)
-            {
-                result = new EmailIntent
-                {
-                    Type = intentType,
-                    Confidence = confidence,
-                    Reason = reason
-                };
             }
         }
 
-        // 如果没有明确匹配，尝试从主题中提取参数
-        if (result.Type != EmailIntentType.Unknown)
+        return new EmailIntent { Type = EmailIntentType.Unknown, Confidence = 0 };
+    }
+
+    /// <summary>
+    /// 基于主题关键词规则匹配
+    /// </summary>
+    private EmailIntent DetectBySubjectRules(string subject)
+    {
+        var result = new EmailIntent { Type = EmailIntentType.Unknown, Confidence = 0 };
+
+        foreach (var (intentType, patterns) in SubjectTriggers)
         {
-            ExtractParameters(subject, result);
+            foreach (var pattern in patterns)
+            {
+                if (Regex.IsMatch(subject, pattern, RegexOptions.IgnoreCase))
+                {
+                    return new EmailIntent
+                    {
+                        Type = intentType,
+                        Confidence = 0.85,
+                        Reason = $"主题匹配关键词：{pattern}"
+                    };
+                }
+            }
         }
 
         return result;
@@ -150,7 +172,7 @@ public class EmailIntentDetector : IEmailIntentDetector
 
             请判断这封邮件属于以下哪种意图：
             1. classify - 需要对邮件内容进行分类归档
-            2. todo - 包含待办事项或任务需要跟进
+            2. createtodo - 包含待办事项或任务需要跟进
             3. summarize - 需要内容摘要
             4. followup - 需要跟进回复
             5. fyi - 仅供参考，无需处理
@@ -160,10 +182,9 @@ public class EmailIntentDetector : IEmailIntentDetector
             只返回JSON，不要其他内容。
             """;
 
-        // 这里应该调用 LLM Gateway，但为了简化先返回默认值
-        // 实际实现时应该：
+        // 这里应该调用 LLM Gateway
+        // 为简化先返回默认值，实际实现时调用:
         // var response = await _llmGateway.SendAsync(new GatewayRequest { ... }, ct);
-        // 解析 response.Content 中的 JSON
 
         await Task.CompletedTask;
 
@@ -205,11 +226,5 @@ public class EmailIntentDetector : IEmailIntentDetector
         {
             intent.Parameters["priority"] = "4";
         }
-    }
-
-    private record IntentTrigger
-    {
-        public string[] AddressPatterns { get; init; } = Array.Empty<string>();
-        public string[] SubjectPatterns { get; init; } = Array.Empty<string>();
     }
 }

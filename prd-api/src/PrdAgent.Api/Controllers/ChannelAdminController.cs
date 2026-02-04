@@ -836,6 +836,265 @@ public class ChannelAdminController : ControllerBase
 
     #endregion
 
+    #region Workflow APIs
+
+    /// <summary>
+    /// 获取工作流邮箱列表
+    /// </summary>
+    [HttpGet("workflows")]
+    public async Task<IActionResult> GetWorkflows(CancellationToken ct)
+    {
+        var workflows = await _db.EmailWorkflows
+            .Find(_ => true)
+            .SortBy(w => w.Priority)
+            .ToListAsync(ct);
+
+        // 获取配置的域名
+        var settings = await _db.ChannelSettings.Find(s => s.Id == "default").FirstOrDefaultAsync(ct);
+        var domain = settings?.AcceptedDomains.FirstOrDefault() ?? "example.com";
+
+        var result = workflows.Select(w => new
+        {
+            w.Id,
+            w.AddressPrefix,
+            FullAddress = $"{w.AddressPrefix}@{domain}",
+            w.DisplayName,
+            w.Description,
+            w.Icon,
+            IntentType = w.IntentType.ToString(),
+            w.TargetAgent,
+            w.CustomPrompt,
+            w.ReplyTemplate,
+            w.IsActive,
+            w.Priority,
+            w.CreatedAt,
+            w.UpdatedAt
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { domain, workflows = result }));
+    }
+
+    /// <summary>
+    /// 获取单个工作流
+    /// </summary>
+    [HttpGet("workflows/{id}")]
+    public async Task<IActionResult> GetWorkflow([FromRoute] string id, CancellationToken ct)
+    {
+        var workflow = await _db.EmailWorkflows.Find(w => w.Id == id).FirstOrDefaultAsync(ct);
+        if (workflow == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "工作流不存在"));
+        }
+
+        return Ok(ApiResponse<EmailWorkflow>.Ok(workflow));
+    }
+
+    /// <summary>
+    /// 创建工作流邮箱
+    /// </summary>
+    [HttpPost("workflows")]
+    public async Task<IActionResult> CreateWorkflow([FromBody] UpsertEmailWorkflowRequest request, CancellationToken ct)
+    {
+        // 验证前缀格式
+        if (string.IsNullOrWhiteSpace(request.AddressPrefix))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "邮箱前缀不能为空"));
+        }
+
+        var prefix = request.AddressPrefix.ToLowerInvariant().Trim();
+        if (!System.Text.RegularExpressions.Regex.IsMatch(prefix, @"^[a-z0-9][a-z0-9._-]*$"))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "邮箱前缀只能包含小写字母、数字、点、下划线和连字符"));
+        }
+
+        // 检查重复
+        var existing = await _db.EmailWorkflows.Find(w => w.AddressPrefix == prefix).FirstOrDefaultAsync(ct);
+        if (existing != null)
+        {
+            return BadRequest(ApiResponse<object>.Fail("DUPLICATE", $"前缀 '{prefix}' 已被使用"));
+        }
+
+        var workflow = new EmailWorkflow
+        {
+            AddressPrefix = prefix,
+            DisplayName = request.DisplayName ?? prefix,
+            Description = request.Description,
+            Icon = request.Icon,
+            IntentType = ParseIntentType(request.IntentType),
+            TargetAgent = request.TargetAgent,
+            CustomPrompt = request.CustomPrompt,
+            ReplyTemplate = request.ReplyTemplate,
+            IsActive = request.IsActive ?? true,
+            Priority = request.Priority ?? 100,
+            CreatedBy = GetAdminId()
+        };
+
+        await _db.EmailWorkflows.InsertOneAsync(workflow, cancellationToken: ct);
+
+        _logger.LogInformation("Email workflow created: {Id} {Prefix} by {Admin}", workflow.Id, prefix, workflow.CreatedBy);
+
+        return CreatedAtAction(nameof(GetWorkflow), new { id = workflow.Id }, ApiResponse<EmailWorkflow>.Ok(workflow));
+    }
+
+    /// <summary>
+    /// 更新工作流邮箱
+    /// </summary>
+    [HttpPut("workflows/{id}")]
+    public async Task<IActionResult> UpdateWorkflow([FromRoute] string id, [FromBody] UpsertEmailWorkflowRequest request, CancellationToken ct)
+    {
+        var workflow = await _db.EmailWorkflows.Find(w => w.Id == id).FirstOrDefaultAsync(ct);
+        if (workflow == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "工作流不存在"));
+        }
+
+        // 如果修改前缀，检查重复
+        if (!string.IsNullOrEmpty(request.AddressPrefix))
+        {
+            var prefix = request.AddressPrefix.ToLowerInvariant().Trim();
+            if (prefix != workflow.AddressPrefix)
+            {
+                var existing = await _db.EmailWorkflows.Find(w => w.AddressPrefix == prefix && w.Id != id).FirstOrDefaultAsync(ct);
+                if (existing != null)
+                {
+                    return BadRequest(ApiResponse<object>.Fail("DUPLICATE", $"前缀 '{prefix}' 已被使用"));
+                }
+            }
+        }
+
+        var update = Builders<EmailWorkflow>.Update
+            .Set(w => w.UpdatedAt, DateTime.UtcNow);
+
+        if (!string.IsNullOrEmpty(request.AddressPrefix))
+            update = update.Set(w => w.AddressPrefix, request.AddressPrefix.ToLowerInvariant().Trim());
+        if (request.DisplayName != null)
+            update = update.Set(w => w.DisplayName, request.DisplayName);
+        if (request.Description != null)
+            update = update.Set(w => w.Description, request.Description);
+        if (request.Icon != null)
+            update = update.Set(w => w.Icon, request.Icon);
+        if (!string.IsNullOrEmpty(request.IntentType))
+            update = update.Set(w => w.IntentType, ParseIntentType(request.IntentType));
+        if (request.TargetAgent != null)
+            update = update.Set(w => w.TargetAgent, request.TargetAgent);
+        if (request.CustomPrompt != null)
+            update = update.Set(w => w.CustomPrompt, request.CustomPrompt);
+        if (request.ReplyTemplate != null)
+            update = update.Set(w => w.ReplyTemplate, request.ReplyTemplate);
+        if (request.IsActive.HasValue)
+            update = update.Set(w => w.IsActive, request.IsActive.Value);
+        if (request.Priority.HasValue)
+            update = update.Set(w => w.Priority, request.Priority.Value);
+
+        await _db.EmailWorkflows.UpdateOneAsync(w => w.Id == id, update, cancellationToken: ct);
+
+        _logger.LogInformation("Email workflow updated: {Id} by {Admin}", id, GetAdminId());
+
+        var updated = await _db.EmailWorkflows.Find(w => w.Id == id).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<EmailWorkflow>.Ok(updated!));
+    }
+
+    /// <summary>
+    /// 删除工作流邮箱
+    /// </summary>
+    [HttpDelete("workflows/{id}")]
+    public async Task<IActionResult> DeleteWorkflow([FromRoute] string id, CancellationToken ct)
+    {
+        var result = await _db.EmailWorkflows.DeleteOneAsync(w => w.Id == id, ct);
+        if (result.DeletedCount == 0)
+        {
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "工作流不存在"));
+        }
+
+        _logger.LogInformation("Email workflow deleted: {Id} by {Admin}", id, GetAdminId());
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// 切换工作流启用状态
+    /// </summary>
+    [HttpPost("workflows/{id}/toggle")]
+    public async Task<IActionResult> ToggleWorkflow([FromRoute] string id, CancellationToken ct)
+    {
+        var workflow = await _db.EmailWorkflows.Find(w => w.Id == id).FirstOrDefaultAsync(ct);
+        if (workflow == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "工作流不存在"));
+        }
+
+        var newStatus = !workflow.IsActive;
+        await _db.EmailWorkflows.UpdateOneAsync(
+            w => w.Id == id,
+            Builders<EmailWorkflow>.Update
+                .Set(w => w.IsActive, newStatus)
+                .Set(w => w.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        _logger.LogInformation("Email workflow toggled: {Id} IsActive={Status} by {Admin}", id, newStatus, GetAdminId());
+
+        return Ok(ApiResponse<object>.Ok(new { id, isActive = newStatus }));
+    }
+
+    /// <summary>
+    /// 初始化默认工作流
+    /// </summary>
+    [HttpPost("workflows/init-defaults")]
+    public async Task<IActionResult> InitDefaultWorkflows(CancellationToken ct)
+    {
+        var existing = await _db.EmailWorkflows.CountDocumentsAsync(_ => true, cancellationToken: ct);
+        if (existing > 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail("ALREADY_EXISTS", "已存在工作流配置，请手动管理"));
+        }
+
+        var defaults = EmailWorkflowTemplates.GetDefaults();
+        foreach (var workflow in defaults)
+        {
+            workflow.CreatedBy = GetAdminId();
+        }
+
+        await _db.EmailWorkflows.InsertManyAsync(defaults, cancellationToken: ct);
+
+        _logger.LogInformation("Default email workflows initialized by {Admin}", GetAdminId());
+
+        return Ok(ApiResponse<object>.Ok(new { message = $"已创建 {defaults.Count} 个默认工作流", count = defaults.Count }));
+    }
+
+    /// <summary>
+    /// 获取可用的意图类型
+    /// </summary>
+    [HttpGet("workflows/intent-types")]
+    public IActionResult GetIntentTypes()
+    {
+        var types = Enum.GetValues<EmailIntentType>()
+            .Where(t => t != EmailIntentType.Unknown && t != EmailIntentType.FYI)
+            .Select(t => new
+            {
+                Value = t.ToString(),
+                DisplayName = GetIntentDisplayName(t)
+            });
+
+        return Ok(ApiResponse<object>.Ok(types));
+    }
+
+    private static EmailIntentType ParseIntentType(string? intentType)
+    {
+        if (string.IsNullOrEmpty(intentType)) return EmailIntentType.Unknown;
+        return Enum.TryParse<EmailIntentType>(intentType, true, out var result) ? result : EmailIntentType.Unknown;
+    }
+
+    private static string GetIntentDisplayName(EmailIntentType type) => type switch
+    {
+        EmailIntentType.Classify => "邮件分类",
+        EmailIntentType.CreateTodo => "创建待办",
+        EmailIntentType.Summarize => "内容摘要",
+        EmailIntentType.FollowUp => "需要跟进",
+        _ => type.ToString()
+    };
+
+    #endregion
+
     #region Helper Methods
 
     private string? GetAdminId()
