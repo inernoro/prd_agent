@@ -1242,25 +1242,42 @@ function WatermarkEditor(props: {
                 </div>
               </div>
 
-              <SectionLabel label="颜色" />
+              <SectionLabel label="文字" />
               <div className="flex items-center gap-2">
-                <label
-                  className="relative h-8 w-8 rounded-full inline-flex items-center justify-center cursor-pointer"
+                <button
+                  type="button"
+                  className="h-8 w-8 rounded-full inline-flex items-center justify-center"
                   style={{
-                    background: config.textColor || '#ffffff',
-                    border: '2px solid rgba(255,255,255,0.3)',
-                    color: 'rgba(0,0,0,0.7)',
+                    background: config.text ? 'rgba(255,255,255,0.1)' : 'transparent',
+                    border: config.text ? '1.5px solid rgba(255,255,255,0.3)' : '1.5px solid rgba(255,255,255,0.1)',
+                    color: config.text ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.35)',
+                    fontSize: '12px',
+                    fontWeight: 500,
                   }}
-                  title="文字颜色"
+                  title={config.text ? '点击关闭文字' : '点击开启文字'}
+                  onClick={() => updateConfig({ text: config.text ? '' : '米多AI生成' })}
                 >
-                  <Droplet size={12} />
-                  <input
-                    type="color"
-                    value={(config.textColor || '#ffffff') as string}
-                    className="absolute inset-0 opacity-0 cursor-pointer"
-                    onChange={(e) => updateConfig({ textColor: e.target.value })}
-                  />
-                </label>
+                  字
+                </button>
+                {config.text && (
+                  <label
+                    className="relative h-8 w-8 rounded-full inline-flex items-center justify-center cursor-pointer"
+                    style={{
+                      background: config.textColor || '#ffffff',
+                      border: '2px solid rgba(255,255,255,0.3)',
+                      color: 'rgba(0,0,0,0.7)',
+                    }}
+                    title="文字颜色"
+                  >
+                    <Droplet size={12} />
+                    <input
+                      type="color"
+                      value={(config.textColor || '#ffffff') as string}
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      onChange={(e) => updateConfig({ textColor: e.target.value })}
+                    />
+                  </label>
+                )}
               </div>
 
               <SectionLabel label="装饰" />
@@ -1305,8 +1322,8 @@ function WatermarkEditor(props: {
                     ) : null}
                   </div>
 
-                  {/* 位置按钮 - 4个圆形按钮 */}
-                  {config.iconEnabled && (
+                  {/* 位置按钮 - 仅在有文字时显示（位置相对于文字） */}
+                  {config.iconEnabled && config.text && (
                     <>
                       {([
                         { value: 'left', label: '左' },
@@ -1335,8 +1352,8 @@ function WatermarkEditor(props: {
                   )}
                 </div>
 
-                {/* 间距和缩放 - 仅在图标启用时显示 */}
-                {config.iconEnabled && (
+                {/* 间距和缩放 - 仅在有文字+图标时显示 */}
+                {config.iconEnabled && config.text && (
                   <div className="flex items-center gap-3">
                     <InlineLabel label="间距" />
                     <input
