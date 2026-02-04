@@ -38,7 +38,7 @@ public class ToolboxRunWorker : BackgroundService
             try
             {
                 // 从队列获取任务
-                var runId = await _runQueue.DequeueAsync(RunKind, stoppingToken);
+                var runId = await _runQueue.DequeueAsync(RunKind, PollInterval, stoppingToken);
 
                 if (string.IsNullOrEmpty(runId))
                 {

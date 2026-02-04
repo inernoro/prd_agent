@@ -171,6 +171,7 @@ public class SimpleOrchestrator : IToolboxOrchestrator
             var stepArtifacts = new List<ToolboxArtifact>();
             var stepSuccess = true;
             string? stepError = null;
+            var pendingEvents = new List<ToolboxRunEvent>();
 
             try
             {
@@ -182,7 +183,7 @@ public class SimpleOrchestrator : IToolboxOrchestrator
                             if (!string.IsNullOrEmpty(chunk.Content))
                             {
                                 stepContent.Append(chunk.Content);
-                                yield return ToolboxRunEvent.StepProgress(step.StepId, chunk.Content, ++seq);
+                                pendingEvents.Add(ToolboxRunEvent.StepProgress(step.StepId, chunk.Content, ++seq));
                             }
                             break;
 
@@ -191,7 +192,7 @@ public class SimpleOrchestrator : IToolboxOrchestrator
                             {
                                 stepArtifacts.Add(chunk.Artifact);
                                 allArtifacts.Add(chunk.Artifact);
-                                yield return ToolboxRunEvent.StepArtifact(step.StepId, chunk.Artifact, ++seq);
+                                pendingEvents.Add(ToolboxRunEvent.StepArtifact(step.StepId, chunk.Artifact, ++seq));
                             }
                             break;
 
@@ -216,6 +217,12 @@ public class SimpleOrchestrator : IToolboxOrchestrator
                 _logger.LogError(ex, "Agent 执行异常: {AgentKey}, Step: {StepId}", step.AgentKey, step.StepId);
                 stepSuccess = false;
                 stepError = ex.Message;
+            }
+
+            // 在 try-catch 外部 yield 事件
+            foreach (var evt in pendingEvents)
+            {
+                yield return evt;
             }
 
             if (stepSuccess)

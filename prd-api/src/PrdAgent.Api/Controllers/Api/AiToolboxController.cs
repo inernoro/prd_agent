@@ -196,7 +196,7 @@ public class AiToolboxController : ControllerBase
 
         if (run.Status != ToolboxRunStatus.Pending)
         {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_STATE, $"当前状态不允许执行: {run.Status}"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"当前状态不允许执行: {run.Status}"));
         }
 
         await _runQueue.EnqueueAsync(ToolboxRunWorker.RunKind, run.Id, ct);
