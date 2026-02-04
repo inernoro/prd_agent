@@ -39,16 +39,21 @@ export function ColorPicker({ value, onChange, title }: ColorPickerProps) {
   }, [inputValue, value]);
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div
+      className="h-8 flex items-center gap-1.5 px-1.5 rounded-lg"
+      style={{
+        background: 'rgba(255,255,255,0.06)',
+        border: '1px solid rgba(255,255,255,0.1)',
+      }}
+    >
       <Popover.Root open={open} onOpenChange={setOpen}>
         <Popover.Trigger asChild>
           <button
             type="button"
-            className="h-6 w-6 rounded-[4px] cursor-pointer transition-transform hover:scale-105 shrink-0"
+            className="h-5 w-5 rounded-[3px] cursor-pointer transition-transform hover:scale-105 shrink-0"
             style={{
               background: value,
-              border: '1px solid rgba(255,255,255,0.25)',
-              boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.1)',
+              border: '1px solid rgba(255,255,255,0.2)',
             }}
             title={title}
           />
@@ -81,11 +86,9 @@ export function ColorPicker({ value, onChange, title }: ColorPickerProps) {
         value={inputValue}
         onChange={handleInputChange}
         onBlur={handleInputBlur}
-        className="w-16 h-6 rounded-[4px] px-1.5 text-[11px] font-mono uppercase outline-none"
+        className="w-14 h-6 bg-transparent text-[11px] font-mono uppercase outline-none"
         style={{
-          background: 'rgba(255,255,255,0.08)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          color: 'rgba(255,255,255,0.9)',
+          color: 'rgba(255,255,255,0.85)',
         }}
         maxLength={6}
         placeholder="FFFFFF"

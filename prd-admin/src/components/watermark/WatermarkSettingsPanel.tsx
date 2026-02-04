@@ -1248,14 +1248,14 @@ function WatermarkEditor(props: {
               </div>
 
               <SectionLabel label="文字" />
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  className="h-8 w-8 rounded-full inline-flex items-center justify-center"
+                  className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
                   style={{
                     background: config.text ? 'rgba(255,255,255,0.1)' : 'transparent',
                     border: config.text ? '1.5px solid rgba(255,255,255,0.3)' : '1.5px solid rgba(255,255,255,0.1)',
-                    color: config.text ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.35)',
+                    color: config.text ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.35)',
                     fontSize: '12px',
                     fontWeight: 500,
                   }}
@@ -1386,14 +1386,16 @@ function WatermarkEditor(props: {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  className="inline-flex items-center justify-center"
+                  className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
                   style={{
+                    background: config.backgroundEnabled ? 'rgba(255,255,255,0.1)' : 'transparent',
+                    border: config.backgroundEnabled ? '1.5px solid rgba(255,255,255,0.3)' : '1.5px solid rgba(255,255,255,0.1)',
                     color: config.backgroundEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
                   }}
                   title="填充背景"
                   onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
                 >
-                  <PaintBucket size={20} />
+                  <PaintBucket size={16} />
                 </button>
                 {config.backgroundEnabled && (
                   <ColorPicker
@@ -1409,14 +1411,21 @@ function WatermarkEditor(props: {
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    className="h-6 w-6 rounded-[4px] inline-flex items-center justify-center"
+                    className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
                     style={{
-                      background: 'transparent',
-                      border: config.borderEnabled ? '2px solid rgba(255,255,255,0.95)' : '2px solid rgba(255,255,255,0.35)',
+                      background: config.borderEnabled ? 'rgba(255,255,255,0.1)' : 'transparent',
+                      border: config.borderEnabled ? '1.5px solid rgba(255,255,255,0.3)' : '1.5px solid rgba(255,255,255,0.1)',
                     }}
                     title="显示边框"
                     onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
-                  />
+                  >
+                    <div
+                      className="h-4 w-5 rounded-[3px]"
+                      style={{
+                        border: config.borderEnabled ? '2px solid rgba(255,255,255,0.95)' : '2px solid rgba(255,255,255,0.35)',
+                      }}
+                    />
+                  </button>
                   {config.borderEnabled && (
                     <ColorPicker
                       value={config.borderColor || '#ffffff'}
