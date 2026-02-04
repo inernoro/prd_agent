@@ -261,7 +261,7 @@ public class AppRegistryService : IAppRegistryService
 
         if (request.TargetAppId != null)
         {
-            var targetApp = await GetAppByIdAsync(request.TargetAppId, ct)
+            _ = await GetAppByIdAsync(request.TargetAppId, ct)
                 ?? throw new InvalidOperationException($"目标应用 {request.TargetAppId} 不存在");
         }
 

@@ -1,6 +1,3 @@
-using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
-
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -8,9 +5,7 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class RegisteredApp
 {
-    [BsonId]
-    [BsonRepresentation(BsonType.ObjectId)]
-    public string Id { get; set; } = null!;
+    public string Id { get; set; } = MongoDB.Bson.ObjectId.GenerateNewId().ToString();
 
     /// <summary>应用唯一标识（由应用方定义）</summary>
     public string AppId { get; set; } = null!;
@@ -438,9 +433,7 @@ public class ResponseError
 /// </summary>
 public class RoutingRule
 {
-    [BsonId]
-    [BsonRepresentation(BsonType.ObjectId)]
-    public string Id { get; set; } = null!;
+    public string Id { get; set; } = MongoDB.Bson.ObjectId.GenerateNewId().ToString();
 
     /// <summary>规则名称</summary>
     public string Name { get; set; } = null!;
