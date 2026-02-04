@@ -58,10 +58,12 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
     setLoading(true);
     try {
       const res = await channelService.getWorkflows(page, pageSize);
-      setWorkflows(res.items);
-      setTotal(res.total);
+      setWorkflows(res?.items || []);
+      setTotal(res?.total || 0);
     } catch (err) {
       toast.error('加载失败', String(err));
+      setWorkflows([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
