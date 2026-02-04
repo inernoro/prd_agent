@@ -175,6 +175,9 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailHandler, PrdAgent.Infr
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailChannelService, PrdAgent.Infrastructure.Services.EmailChannelService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.EmailChannelWorker>();
 
+// 应用注册中心服务
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAppRegistryService, PrdAgent.Infrastructure.Services.AppRegistryService>();
+
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>
 {

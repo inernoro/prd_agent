@@ -114,6 +114,10 @@ public class MongoDbContext
     public IMongoCollection<EmailClassification> EmailClassifications => _database.GetCollection<EmailClassification>("email_classifications");
     public IMongoCollection<EmailWorkflow> EmailWorkflows => _database.GetCollection<EmailWorkflow>("email_workflows");
 
+    // App Registry 应用注册中心
+    public IMongoCollection<RegisteredApp> RegisteredApps => _database.GetCollection<RegisteredApp>("registered_apps");
+    public IMongoCollection<RoutingRule> RoutingRules => _database.GetCollection<RoutingRule>("routing_rules");
+
     private void CreateIndexes()
     {
         static bool IsIndexConflict(MongoCommandException ex)
