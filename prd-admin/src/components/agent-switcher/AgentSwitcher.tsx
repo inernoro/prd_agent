@@ -1,13 +1,15 @@
 /**
- * Agent Switcher 浮层组件
+ * Agent Switcher 浮层组件 v2.0
  *
- * macOS Control Center 风格的 Agent 快捷切换面板
- * - 全局快捷键 Cmd/Ctrl + K 唤起
- * - 支持键盘导航
- * - 显示最近访问记录
+ * 高级视觉效果版本：
+ * - 3D 卡片倾斜效果 (Perspective Tilt)
+ * - 鼠标跟随光效 (Spotlight)
+ * - 脉冲发光动画
+ * - 渐变边框
+ * - 交错入场动画
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import {
@@ -15,19 +17,11 @@ import {
   Image,
   PenLine,
   Bug,
-  Search,
-  Command,
-  ArrowUp,
-  ArrowDown,
-  CornerDownLeft,
   type LucideIcon,
 } from 'lucide-react';
-import { cn } from '@/lib/cn';
 import {
   useAgentSwitcherStore,
   AGENT_DEFINITIONS,
-  getRelativeTime,
-  getAgentByKey,
   type AgentDefinition,
 } from '@/stores/agentSwitcherStore';
 
@@ -39,115 +33,154 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Bug,
 };
 
-/** Agent 快捷项 */
-function AgentQuickItem({
+/** 3D 卡片组件 */
+function Agent3DCard({
   agent,
   index,
   isSelected,
   onClick,
+  onHover,
 }: {
   agent: AgentDefinition;
   index: number;
   isSelected: boolean;
   onClick: () => void;
+  onHover: (index: number | null) => void;
 }) {
+  const cardRef = useRef<HTMLButtonElement>(null);
+  const [transform, setTransform] = useState({ rotateX: 0, rotateY: 0 });
+  const [mousePos, setMousePos] = useState({ x: 50, y: 50 });
   const Icon = ICON_MAP[agent.icon] || MessagesSquare;
 
+  // 3D 倾斜效果
+  const handleMouseMove = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (!cardRef.current) return;
+    const rect = cardRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+
+    const rotateX = ((y - centerY) / centerY) * -12;
+    const rotateY = ((x - centerX) / centerX) * 12;
+
+    setTransform({ rotateX, rotateY });
+    setMousePos({ x: (x / rect.width) * 100, y: (y / rect.height) * 100 });
+  };
+
+  const handleMouseLeave = () => {
+    setTransform({ rotateX: 0, rotateY: 0 });
+    setMousePos({ x: 50, y: 50 });
+    onHover(null);
+  };
+
   return (
     <button
+      ref={cardRef}
       type="button"
       onClick={onClick}
-      className={cn(
-        'group relative flex flex-col items-center gap-2 p-4 rounded-[18px]',
-        'transition-all duration-200 ease-out',
-        'outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-gold)]/50'
-      )}
+      onMouseMove={handleMouseMove}
+      onMouseEnter={() => onHover(index)}
+      onMouseLeave={handleMouseLeave}
+      className="group relative outline-none"
       style={{
-        background: isSelected ? agent.color.bg : 'rgba(255, 255, 255, 0.03)',
-        border: `1px solid ${isSelected ? agent.color.border : 'rgba(255, 255, 255, 0.06)'}`,
-        transform: isSelected ? 'scale(1.02)' : 'scale(1)',
+        perspective: '1000px',
+        animationDelay: `${index * 60}ms`,
       }}
-      data-index={index}
     >
-      {/* 图标容器 */}
+      {/* 外层光晕 - 选中时显示 */}
       <div
-        className="w-12 h-12 rounded-[14px] flex items-center justify-center transition-all duration-200"
+        className="absolute -inset-1 rounded-[28px] opacity-0 transition-opacity duration-500"
         style={{
-          background: agent.color.iconBg,
-          boxShadow: isSelected ? `0 4px 16px ${agent.color.bg}` : 'none',
+          opacity: isSelected ? 1 : 0,
+          background: `radial-gradient(circle at 50% 50%, ${agent.color.text}40 0%, transparent 70%)`,
+          filter: 'blur(12px)',
+          animation: isSelected ? 'pulse-glow 2s ease-in-out infinite' : 'none',
+        }}
+      />
+
+      {/* 主卡片 */}
+      <div
+        className="relative w-[130px] h-[140px] rounded-[24px] flex flex-col items-center justify-center gap-3 transition-all duration-200 ease-out"
+        style={{
+          transform: `rotateX(${transform.rotateX}deg) rotateY(${transform.rotateY}deg) scale(${isSelected ? 1.05 : 1})`,
+          transformStyle: 'preserve-3d',
+          background: isSelected
+            ? `linear-gradient(135deg, ${agent.color.bg} 0%, rgba(20, 20, 24, 0.95) 100%)`
+            : 'linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%)',
+          border: `1px solid ${isSelected ? agent.color.border : 'rgba(255, 255, 255, 0.08)'}`,
+          boxShadow: isSelected
+            ? `0 20px 40px -10px ${agent.color.text}30, 0 0 0 1px ${agent.color.border}, inset 0 1px 0 rgba(255,255,255,0.1)`
+            : '0 4px 24px -4px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.06)',
         }}
       >
-        <Icon size={24} style={{ color: agent.color.text }} />
-      </div>
+        {/* Spotlight 光效 */}
+        <div
+          className="absolute inset-0 rounded-[24px] opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+          style={{
+            background: `radial-gradient(circle at ${mousePos.x}% ${mousePos.y}%, rgba(255,255,255,0.15) 0%, transparent 50%)`,
+          }}
+        />
 
-      {/* 名称 */}
-      <div
-        className="text-[13px] font-medium transition-colors duration-200"
-        style={{ color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)' }}
-      >
-        {agent.name}
-      </div>
+        {/* 渐变边框动画 - 选中时 */}
+        {isSelected && (
+          <div
+            className="absolute -inset-[1px] rounded-[24px] pointer-events-none"
+            style={{
+              background: `linear-gradient(135deg, ${agent.color.text}60, transparent, ${agent.color.text}40)`,
+              backgroundSize: '200% 200%',
+              animation: 'gradient-rotate 3s linear infinite',
+              mask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+              maskComposite: 'exclude',
+              WebkitMaskComposite: 'xor',
+              padding: '1px',
+            }}
+          />
+        )}
 
-      {/* 快捷键提示 */}
-      <div
-        className="absolute top-2 right-2 w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity"
-        style={{ background: 'rgba(255, 255, 255, 0.1)', color: 'var(--text-muted)' }}
-      >
-        {index + 1}
-      </div>
-    </button>
-  );
-}
-
-/** 最近访问项 */
-function RecentVisitItem({
-  agentKey,
-  agentName,
-  title,
-  path: _path,
-  timestamp,
-  onClick,
-}: {
-  agentKey: string;
-  agentName: string;
-  title: string;
-  path: string;
-  timestamp: number;
-  onClick: () => void;
-}) {
-  void _path; // 保留用于未来扩展
-  const agent = getAgentByKey(agentKey);
-  const Icon = agent ? ICON_MAP[agent.icon] || MessagesSquare : MessagesSquare;
-  const color = agent?.color.text || 'var(--text-muted)';
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'w-full flex items-center gap-3 px-3 py-2.5 rounded-[12px]',
-        'transition-all duration-150 ease-out',
-        'hover:bg-white/5 active:bg-white/8',
-        'outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-gold)]/50'
-      )}
-    >
-      <div
-        className="w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0"
-        style={{ background: agent?.color.iconBg || 'rgba(255,255,255,0.05)' }}
-      >
-        <Icon size={16} style={{ color }} />
-      </div>
-
-      <div className="flex-1 min-w-0 text-left">
-        <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-          {agentName}
-          <span className="mx-1.5 opacity-40">/</span>
-          <span style={{ color: 'var(--text-secondary)' }}>{title}</span>
+        {/* 图标容器 */}
+        <div
+          className="relative w-16 h-16 rounded-[20px] flex items-center justify-center transition-all duration-300"
+          style={{
+            background: `linear-gradient(135deg, ${agent.color.iconBg} 0%, ${agent.color.bg} 100%)`,
+            boxShadow: `0 8px 32px -4px ${agent.color.text}50, inset 0 1px 0 rgba(255,255,255,0.2)`,
+            transform: 'translateZ(20px)',
+          }}
+        >
+          <Icon
+            size={32}
+            strokeWidth={1.5}
+            style={{
+              color: agent.color.text,
+              filter: `drop-shadow(0 0 8px ${agent.color.text}80)`,
+            }}
+          />
         </div>
-      </div>
 
-      <div className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
-        {getRelativeTime(timestamp)}
+        {/* 名称 */}
+        <div
+          className="text-[14px] font-semibold transition-colors duration-200"
+          style={{
+            color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+            transform: 'translateZ(10px)',
+            textShadow: isSelected ? `0 0 20px ${agent.color.text}60` : 'none',
+          }}
+        >
+          {agent.name}
+        </div>
+
+        {/* 快捷键角标 */}
+        <div
+          className="absolute top-3 right-3 w-6 h-6 rounded-lg flex items-center justify-center text-[11px] font-bold transition-all duration-200"
+          style={{
+            background: isSelected ? agent.color.iconBg : 'rgba(255, 255, 255, 0.08)',
+            color: isSelected ? agent.color.text : 'var(--text-muted)',
+            boxShadow: isSelected ? `0 0 12px ${agent.color.text}40` : 'none',
+            transform: 'translateZ(15px)',
+          }}
+        >
+          {index + 1}
+        </div>
       </div>
     </button>
   );
@@ -156,30 +189,18 @@ function RecentVisitItem({
 /** 主浮层组件 */
 export function AgentSwitcher() {
   const navigate = useNavigate();
-  const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   const {
     isOpen,
     selectedIndex,
-    searchQuery,
     recentVisits,
     close,
-    setSearchQuery,
+    setSelectedIndex,
     moveSelection,
     addRecentVisit,
   } = useAgentSwitcherStore();
-
-  // 打开时聚焦输入框
-  useEffect(() => {
-    if (isOpen && inputRef.current) {
-      // 延迟聚焦，确保动画开始后再聚焦
-      const timer = setTimeout(() => {
-        inputRef.current?.focus();
-      }, 50);
-      return () => clearTimeout(timer);
-    }
-  }, [isOpen]);
 
   // 导航到 Agent
   const navigateToAgent = useCallback(
@@ -196,13 +217,15 @@ export function AgentSwitcher() {
     [navigate, close, addRecentVisit]
   );
 
-  // 导航到最近访问
-  const navigateToRecent = useCallback(
-    (path: string) => {
-      close();
-      navigate(path);
+  // 鼠标悬浮时更新选中
+  const handleHover = useCallback(
+    (index: number | null) => {
+      setHoveredIndex(index);
+      if (index !== null) {
+        setSelectedIndex(index);
+      }
     },
-    [navigate, close]
+    [setSelectedIndex]
   );
 
   // 键盘事件处理
@@ -210,7 +233,6 @@ export function AgentSwitcher() {
     if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // 阻止默认行为的按键
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape'].includes(e.key)) {
         e.preventDefault();
       }
@@ -219,41 +241,24 @@ export function AgentSwitcher() {
         case 'Escape':
           close();
           break;
-
-        case 'ArrowUp':
-          moveSelection('up');
-          break;
-
-        case 'ArrowDown':
-          moveSelection('down');
-          break;
-
         case 'ArrowLeft':
           moveSelection('left');
           break;
-
         case 'ArrowRight':
           moveSelection('right');
           break;
-
         case 'Enter': {
           const agent = AGENT_DEFINITIONS[selectedIndex];
-          if (agent) {
-            navigateToAgent(agent);
-          }
+          if (agent) navigateToAgent(agent);
           break;
         }
-
-        // 数字键快速跳转
         case '1':
         case '2':
         case '3':
         case '4': {
           const index = parseInt(e.key, 10) - 1;
           const agent = AGENT_DEFINITIONS[index];
-          if (agent) {
-            navigateToAgent(agent);
-          }
+          if (agent) navigateToAgent(agent);
           break;
         }
       }
@@ -266,162 +271,187 @@ export function AgentSwitcher() {
   // 点击遮罩关闭
   const handleBackdropClick = useCallback(
     (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) {
-        close();
-      }
+      if (e.target === e.currentTarget) close();
     },
     [close]
   );
 
-  // 过滤搜索结果
-  const filteredAgents = searchQuery
-    ? AGENT_DEFINITIONS.filter(
-        (a) =>
-          a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          a.key.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : AGENT_DEFINITIONS;
-
   if (!isOpen) return null;
 
-  const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+  // 计算当前选中的 Agent 颜色用于背景
+  const activeAgent = AGENT_DEFINITIONS[hoveredIndex ?? selectedIndex];
+  const activeColor = activeAgent?.color.text || '#60A5FA';
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[200] flex items-start justify-center pt-[12vh]"
+      className="fixed inset-0 z-[200] flex items-center justify-center"
       onClick={handleBackdropClick}
       style={{
-        background: 'rgba(0, 0, 0, 0.5)',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
+        background: 'rgba(0, 0, 0, 0.7)',
+        backdropFilter: 'blur(20px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(180%)',
       }}
     >
+      {/* 动态背景光效 */}
+      <div
+        className="absolute inset-0 pointer-events-none transition-all duration-700"
+        style={{
+          background: `radial-gradient(ellipse 80% 50% at 50% 30%, ${activeColor}15 0%, transparent 60%)`,
+        }}
+      />
+
+      {/* 网格背景 */}
+      <div
+        className="absolute inset-0 pointer-events-none opacity-[0.03]"
+        style={{
+          backgroundImage: `
+            linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)
+          `,
+          backgroundSize: '60px 60px',
+        }}
+      />
+
       {/* 主面板 */}
       <div
         ref={containerRef}
-        className="w-[560px] max-h-[480px] overflow-hidden rounded-[24px] flex flex-col"
-        style={{
-          background:
-            'linear-gradient(180deg, rgba(28, 28, 32, 0.95) 0%, rgba(22, 22, 26, 0.98) 100%)',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
-          boxShadow:
-            '0 24px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05) inset, 0 1px 0 rgba(255, 255, 255, 0.1) inset',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-          animation: 'agentSwitcherIn 200ms ease-out',
-        }}
+        className="relative flex flex-col items-center"
+        style={{ animation: 'switcher-in 300ms cubic-bezier(0.16, 1, 0.3, 1)' }}
         role="dialog"
         aria-modal="true"
         aria-label="Agent 快捷切换"
       >
-        {/* 搜索栏 */}
-        <div className="px-4 pt-4 pb-3">
-          <div
-            className="flex items-center gap-3 px-4 py-3 rounded-[14px]"
+        {/* 标题 */}
+        <div
+          className="mb-8 text-center"
+          style={{ animation: 'fade-in-up 400ms cubic-bezier(0.16, 1, 0.3, 1)' }}
+        >
+          <h2
+            className="text-[24px] font-bold tracking-tight"
             style={{
-              background: 'rgba(255, 255, 255, 0.05)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
+              color: 'var(--text-primary)',
+              textShadow: '0 2px 20px rgba(0,0,0,0.5)',
             }}
           >
-            <Search size={18} style={{ color: 'var(--text-muted)' }} />
-            <input
-              ref={inputRef}
-              type="text"
-              placeholder="搜索 Agent 或快速操作..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="flex-1 bg-transparent text-[14px] outline-none placeholder:text-[var(--text-muted)]"
-              style={{ color: 'var(--text-primary)' }}
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <div
-              className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px]"
-              style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-muted)' }}
-            >
-              {isMac ? <Command size={11} /> : 'Ctrl'}
-              <span>K</span>
-            </div>
-          </div>
+            选择 Agent
+          </h2>
+          <p className="mt-2 text-[13px]" style={{ color: 'var(--text-muted)' }}>
+            按 <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-[11px] font-mono">1-4</kbd> 快速跳转
+            · <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-[11px] font-mono">ESC</kbd> 关闭
+          </p>
         </div>
 
-        {/* Agent 网格 */}
-        <div className="px-4 pb-3">
-          <div className="grid grid-cols-4 gap-2">
-            {filteredAgents.map((agent, index) => (
-              <AgentQuickItem
-                key={agent.key}
+        {/* Agent 卡片网格 */}
+        <div className="flex gap-4">
+          {AGENT_DEFINITIONS.map((agent, index) => (
+            <div
+              key={agent.key}
+              style={{
+                animation: `card-pop-in 400ms cubic-bezier(0.34, 1.56, 0.64, 1) ${100 + index * 80}ms both`,
+              }}
+            >
+              <Agent3DCard
                 agent={agent}
                 index={index}
                 isSelected={selectedIndex === index}
                 onClick={() => navigateToAgent(agent)}
+                onHover={handleHover}
               />
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
 
-        {/* 最近访问 */}
+        {/* 最近访问 - 简化版 */}
         {recentVisits.length > 0 && (
-          <div className="flex-1 min-h-0 px-4 pb-4 overflow-y-auto">
-            <div
-              className="flex items-center gap-2 mb-2 text-[11px] font-medium uppercase tracking-wider"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              <div className="flex-1 h-px" style={{ background: 'rgba(255, 255, 255, 0.08)' }} />
-              <span>最近访问</span>
-              <div className="flex-1 h-px" style={{ background: 'rgba(255, 255, 255, 0.08)' }} />
-            </div>
-
-            <div className="space-y-0.5">
-              {recentVisits.slice(0, 5).map((visit, index) => (
-                <RecentVisitItem
-                  key={`${visit.path}-${index}`}
-                  {...visit}
-                  onClick={() => navigateToRecent(visit.path)}
-                />
-              ))}
-            </div>
+          <div
+            className="mt-8 flex items-center gap-3 px-6 py-3 rounded-full"
+            style={{
+              background: 'rgba(255, 255, 255, 0.04)',
+              border: '1px solid rgba(255, 255, 255, 0.06)',
+              animation: 'fade-in-up 500ms cubic-bezier(0.16, 1, 0.3, 1) 300ms both',
+            }}
+          >
+            <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              最近:
+            </span>
+            {recentVisits.slice(0, 3).map((visit, i) => {
+              const agent = AGENT_DEFINITIONS.find((a) => a.key === visit.agentKey);
+              const Icon = agent ? ICON_MAP[agent.icon] : MessagesSquare;
+              return (
+                <button
+                  key={`${visit.path}-${i}`}
+                  onClick={() => {
+                    close();
+                    navigate(visit.path);
+                  }}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-full transition-all duration-200 hover:bg-white/10"
+                >
+                  <Icon size={14} style={{ color: agent?.color.text || 'var(--text-muted)' }} />
+                  <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                    {visit.agentName}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
-
-        {/* 底部快捷键提示 */}
-        <div
-          className="px-4 py-3 flex items-center justify-center gap-6 text-[11px]"
-          style={{
-            borderTop: '1px solid rgba(255, 255, 255, 0.06)',
-            color: 'var(--text-muted)',
-          }}
-        >
-          <div className="flex items-center gap-1.5">
-            <span className="text-[var(--text-muted)]">ESC</span>
-            <span>关闭</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <ArrowUp size={12} />
-            <ArrowDown size={12} />
-            <span>选择</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <CornerDownLeft size={12} />
-            <span>打开</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="font-mono">1-4</span>
-            <span>快速跳转</span>
-          </div>
-        </div>
       </div>
 
       {/* 动画样式 */}
       <style>{`
-        @keyframes agentSwitcherIn {
+        @keyframes switcher-in {
           from {
             opacity: 0;
-            transform: scale(0.96) translateY(-8px);
+            transform: scale(0.9);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+
+        @keyframes fade-in-up {
+          from {
+            opacity: 0;
+            transform: translateY(10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        @keyframes card-pop-in {
+          from {
+            opacity: 0;
+            transform: scale(0.8) translateY(20px);
           }
           to {
             opacity: 1;
             transform: scale(1) translateY(0);
+          }
+        }
+
+        @keyframes pulse-glow {
+          0%, 100% {
+            opacity: 0.6;
+            transform: scale(1);
+          }
+          50% {
+            opacity: 1;
+            transform: scale(1.05);
+          }
+        }
+
+        @keyframes gradient-rotate {
+          0% {
+            background-position: 0% 50%;
+          }
+          50% {
+            background-position: 100% 50%;
+          }
+          100% {
+            background-position: 0% 50%;
           }
         }
       `}</style>
