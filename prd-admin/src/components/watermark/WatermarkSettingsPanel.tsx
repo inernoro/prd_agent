@@ -1400,7 +1400,6 @@ function WatermarkEditor(props: {
                     value={config.backgroundColor || '#000000'}
                     onChange={(color) => updateConfig({ backgroundColor: color })}
                     title="背景颜色"
-                    iconColor="rgba(255,255,255,0.9)"
                   />
                 )}
               </div>
@@ -1410,7 +1409,7 @@ function WatermarkEditor(props: {
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    className="h-6 w-8 rounded-[4px] inline-flex items-center justify-center"
+                    className="h-6 w-6 rounded-[4px] inline-flex items-center justify-center"
                     style={{
                       background: 'transparent',
                       border: config.borderEnabled ? '2px solid rgba(255,255,255,0.95)' : '2px solid rgba(255,255,255,0.35)',
