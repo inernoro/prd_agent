@@ -159,6 +159,9 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.Services.VisualAgent.IMultiIm
 // 多图领域服务（解析 @imgN 引用 + 意图分析）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IMultiImageDomainService, PrdAgent.Infrastructure.Services.MultiImageDomainService>();
 
+// AI 百宝箱服务（意图识别）
+builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IIntentClassifier, PrdAgent.Api.Services.Toolbox.IntentClassifier>();
+
 // 生图后台任务执行器（可断线继续）
 builder.Services.AddHostedService<ImageGenRunWorker>();
 

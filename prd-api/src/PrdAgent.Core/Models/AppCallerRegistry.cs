@@ -354,6 +354,52 @@ public static class OpenPlatform
 }
 
 /// <summary>
+/// AI Toolbox 百宝箱
+/// </summary>
+public static class AiToolbox
+{
+    public const string AppName = "AI Toolbox";
+
+    public static class Orchestration
+    {
+        [AppCallerMetadata(
+            "意图识别",
+            "识别用户输入的意图，决定调用哪个 Agent",
+            ModelTypes = new[] { ModelTypes.Intent },
+            Category = "Orchestration"
+        )]
+        public const string Intent = "ai-toolbox.orchestration::intent";
+
+        [AppCallerMetadata(
+            "任务规划",
+            "将复杂任务分解为多个子任务",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Orchestration"
+        )]
+        public const string Planning = "ai-toolbox.orchestration.planning::chat";
+
+        [AppCallerMetadata(
+            "对话交互",
+            "百宝箱对话交互",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Orchestration"
+        )]
+        public const string Chat = "ai-toolbox.orchestration::chat";
+    }
+
+    public static class Agent
+    {
+        [AppCallerMetadata(
+            "Agent 执行",
+            "调用具体 Agent 执行任务",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string Execute = "ai-toolbox.agent.execute::chat";
+    }
+}
+
+/// <summary>
 /// Admin 管理后台
 /// </summary>
 public static class Admin

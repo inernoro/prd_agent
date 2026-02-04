@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Models.Toolbox;
 
 namespace PrdAgent.Infrastructure.Database;
 
@@ -104,6 +105,9 @@ public class MongoDbContext
     public IMongoCollection<DefectReport> DefectReports => _database.GetCollection<DefectReport>("defect_reports");
     public IMongoCollection<DefectMessage> DefectMessages => _database.GetCollection<DefectMessage>("defect_messages");
     public IMongoCollection<DefectFolder> DefectFolders => _database.GetCollection<DefectFolder>("defect_folders");
+
+    // AI Toolbox 百宝箱
+    public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
 
     private void CreateIndexes()
     {
@@ -677,5 +681,13 @@ public class MongoDbContext
         DefectMessages.Indexes.CreateOne(new CreateIndexModel<DefectMessage>(
             Builders<DefectMessage>.IndexKeys.Ascending(x => x.DefectId).Ascending(x => x.Seq),
             new CreateIndexOptions { Name = "idx_defect_messages_defect_seq" }));
+
+        // ToolboxRuns：按 userId + createdAt 查询；按 status + createdAt 查询
+        ToolboxRuns.Indexes.CreateOne(new CreateIndexModel<ToolboxRun>(
+            Builders<ToolboxRun>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_toolbox_runs_user_created" }));
+        ToolboxRuns.Indexes.CreateOne(new CreateIndexModel<ToolboxRun>(
+            Builders<ToolboxRun>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_toolbox_runs_status_created" }));
     }
 }
