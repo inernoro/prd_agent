@@ -6,6 +6,9 @@ import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
+import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
+import type { MarketplaceWatermarkConfig } from '@/services/contracts/watermark';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Popover from '@radix-ui/react-popover';
 import {
@@ -18,6 +21,8 @@ import {
   getModels,
   getUserPreferences,
   getWatermarkByApp,
+  listWatermarksMarketplace,
+  forkWatermark,
   modelGroupsService,
   planImageGen,
   refreshVisualAgentWorkspaceCover,
@@ -56,8 +61,8 @@ import {
   ChevronDown,
   Copy,
   Download,
-  Droplet,
   Eye,
+  Globe,
   Grid3X3,
   Hand,
   ImagePlus,
@@ -66,10 +71,15 @@ import {
   MousePointer2,
   Plus,
   Send,
+  Settings,
   Sparkles,
   Square,
+  Store,
+  TrendingUp,
+  Clock,
   Type,
   Trash,
+  User,
   Video,
   ZoomIn,
   ZoomOut,
@@ -862,6 +872,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, []);
   const watermarkPanelRef = useRef<WatermarkSettingsPanelHandle | null>(null);
   const [watermarkSettingsOpen, setWatermarkSettingsOpen] = useState(false);
+  // 设置对话框视图模式：我的 / 海鲜市场
+  const [settingsViewMode, setSettingsViewMode] = useState<'mine' | 'marketplace'>('mine');
+  const [marketplaceLoading, setMarketplaceLoading] = useState(false);
+  const [marketplaceConfigs, setMarketplaceConfigs] = useState<MarketplaceWatermarkConfig[]>([]);
+  const [marketplaceSort, setMarketplaceSort] = useState<'hot' | 'new'>('hot');
+  const [forkingId, setForkingId] = useState<string | null>(null);
   const enabledImageModels = useMemo(() => allImageGenModels.filter((m) => m.enabled), [allImageGenModels]);
   // 提示词模式：按账号持久化（不写 DB）
   // - 关闭：先调用 planImageGen 解析/改写成候选提示词，再生图
@@ -959,6 +975,41 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       cancelled = true;
     };
   }, []);
+
+  // 加载海鲜市场水印数据
+  const loadMarketplace = useCallback(async () => {
+    setMarketplaceLoading(true);
+    try {
+      const res = await listWatermarksMarketplace({ keyword: '', sort: marketplaceSort });
+      if (res.success && res.data?.items) {
+        setMarketplaceConfigs(res.data.items);
+      }
+    } finally {
+      setMarketplaceLoading(false);
+    }
+  }, [marketplaceSort]);
+
+  // Fork 海鲜市场水印
+  const handleForkWatermark = async (config: MarketplaceWatermarkConfig) => {
+    setForkingId(config.id);
+    try {
+      const res = await forkWatermark({ id: config.id });
+      if (res.success) {
+        toast.success('下载成功，已添加到「我的」');
+        // 切换到我的视图，WatermarkSettingsPanel 会自动重新加载数据
+        setSettingsViewMode('mine');
+      }
+    } finally {
+      setForkingId(null);
+    }
+  };
+
+  // 当切换到海鲜市场视图且对话框打开时，加载数据
+  useEffect(() => {
+    if (watermarkSettingsOpen && settingsViewMode === 'marketplace') {
+      void loadMarketplace();
+    }
+  }, [watermarkSettingsOpen, settingsViewMode, loadMarketplace]);
 
   const [messages, setMessages] = useState<UiMsg[]>([
     {
@@ -7300,7 +7351,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
 
-                  {/* 水印设置按钮 */}
+                  {/* 设置按钮 */}
                   <button
                     type="button"
                     className="h-7 w-7 rounded-full inline-flex items-center justify-center"
@@ -7309,11 +7360,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       background: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.12)' : 'rgba(255,255,255,0.04)',
                       color: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.85)' : 'var(--text-secondary)',
                     }}
-                    aria-label="水印设置"
-                    title={watermarkStatus.enabled ? `水印: ${watermarkStatus.name || '已启用'}` : '水印设置'}
+                    aria-label="设置"
+                    title={watermarkStatus.enabled ? `设置 (水印: ${watermarkStatus.name || '已启用'})` : '设置'}
                     onClick={() => setWatermarkSettingsOpen(true)}
                   >
-                    <Droplet size={14} />
+                    <Settings size={14} />
                   </button>
 
                   {(runningCount > 0 || pendingCount > 0) ? (
@@ -7666,29 +7717,197 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       />
       </GlassCard>
 
-      {/* 水印设置对话框 */}
+      {/* 设置对话框 - 包含"我的"和"海鲜市场"标签 */}
       <Dialog
         open={watermarkSettingsOpen}
-        onOpenChange={setWatermarkSettingsOpen}
-        title="水印设置"
-        titleAction={
-          <Button variant="secondary" size="xs" onClick={() => watermarkPanelRef.current?.addSpec()}>
-            <Plus size={14} />
-            新增配置
-          </Button>
+        onOpenChange={(open) => {
+          setWatermarkSettingsOpen(open);
+          if (!open) {
+            // 关闭时重置为"我的"视图
+            setSettingsViewMode('mine');
+          }
+        }}
+        title={
+          <div className="flex items-center gap-2">
+            {settingsViewMode === 'mine' ? <User size={18} /> : <Globe size={18} />}
+            <span>{settingsViewMode === 'mine' ? '水印设置' : '海鲜市场'}</span>
+          </div>
         }
+        description={settingsViewMode === 'mine' ? '配置生成图片时自动叠加的水印' : '发现和下载社区分享的水印配置'}
+        titleAction={
+          settingsViewMode === 'mine' ? (
+            <Button variant="secondary" size="xs" onClick={() => watermarkPanelRef.current?.addSpec()}>
+              <Plus size={14} />
+              新增配置
+            </Button>
+          ) : (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setMarketplaceSort('hot')}
+                className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-all ${
+                  marketplaceSort === 'hot' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                }`}
+                style={{ color: marketplaceSort === 'hot' ? undefined : 'var(--text-muted)' }}
+              >
+                <TrendingUp size={12} />
+                热门
+              </button>
+              <button
+                type="button"
+                onClick={() => setMarketplaceSort('new')}
+                className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-all ${
+                  marketplaceSort === 'new' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                }`}
+                style={{ color: marketplaceSort === 'new' ? undefined : 'var(--text-muted)' }}
+              >
+                <Clock size={12} />
+                最新
+              </button>
+            </div>
+          )
+        }
+        maxWidth={800}
+        contentClassName="overflow-hidden !p-4"
+        contentStyle={{ maxHeight: '70vh', height: '70vh' }}
         content={
           <div className="flex flex-col h-full min-h-0">
-            <div className="text-[12px] mb-3" style={{ color: 'var(--text-muted)' }}>
-              配置生成图片时自动叠加的水印。水印配置与"视觉创作"应用绑定。
+            {/* Tab 切换 */}
+            <div className="flex items-center gap-2 mb-4 flex-shrink-0 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>
+              <button
+                type="button"
+                onClick={() => setSettingsViewMode('mine')}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  settingsViewMode === 'mine'
+                    ? 'bg-blue-500/20 text-blue-400'
+                    : 'hover:bg-white/5 text-gray-400'
+                }`}
+              >
+                <User size={14} />
+                我的
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsViewMode('marketplace')}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  settingsViewMode === 'marketplace'
+                    ? 'bg-blue-500/20 text-blue-400'
+                    : 'hover:bg-white/5 text-gray-400'
+                }`}
+              >
+                <Globe size={14} />
+                海鲜市场
+              </button>
             </div>
+
+            {/* 内容区 */}
             <div className="flex-1 min-h-0 overflow-hidden">
-              <WatermarkSettingsPanel
-                ref={watermarkPanelRef}
-                appKey="visual-agent"
-                onStatusChange={handleWatermarkStatusChange}
-                hideAddButton
-              />
+              {settingsViewMode === 'mine' ? (
+                <WatermarkSettingsPanel
+                  ref={watermarkPanelRef}
+                  appKey="visual-agent"
+                  onStatusChange={handleWatermarkStatusChange}
+                  hideAddButton
+                />
+              ) : (
+                <div className="h-full overflow-auto">
+                  {marketplaceLoading ? (
+                    <div className="flex items-center justify-center py-20">
+                      <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+                    </div>
+                  ) : marketplaceConfigs.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-20 gap-3">
+                      <Store size={48} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
+                      <div className="text-sm" style={{ color: 'var(--text-muted)' }}>暂无公开的水印配置</div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {marketplaceConfigs.map((config) => (
+                        <GlassCard key={config.id} className="p-0 overflow-hidden">
+                          <div className="flex flex-col">
+                            {/* 标题区 */}
+                            <div className="p-3 pb-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                                    {config.name}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <span
+                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1"
+                                    style={{
+                                      background: 'rgba(59, 130, 246, 0.12)',
+                                      color: 'rgba(59, 130, 246, 0.95)',
+                                      border: '1px solid rgba(59, 130, 246, 0.28)',
+                                    }}
+                                    title="下载次数"
+                                  >
+                                    <Hand size={10} />
+                                    {config.forkCount}
+                                  </span>
+                                </div>
+                              </div>
+                              {/* 作者信息 */}
+                              <div className="flex items-center gap-1.5 text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                                {config.ownerUserAvatar ? (
+                                  <img
+                                    src={resolveAvatarUrl({ avatarUrl: config.ownerUserAvatar })}
+                                    alt=""
+                                    className="w-4 h-4 rounded-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
+                                    <User size={10} />
+                                  </div>
+                                )}
+                                <span>{config.ownerUserName || '未知用户'} 发布</span>
+                              </div>
+                            </div>
+                            {/* 配置详情 */}
+                            <div className="px-3 pb-2">
+                              <WatermarkDescriptionGrid
+                                data={{
+                                  text: config.text,
+                                  fontKey: config.fontKey,
+                                  fontSizePx: config.fontSizePx,
+                                  opacity: config.opacity,
+                                  anchor: config.anchor,
+                                  offsetX: config.offsetX,
+                                  offsetY: config.offsetY,
+                                  positionMode: config.positionMode,
+                                  iconEnabled: config.iconEnabled,
+                                  borderEnabled: config.borderEnabled,
+                                  backgroundEnabled: config.backgroundEnabled,
+                                  roundedBackgroundEnabled: config.roundedBackgroundEnabled,
+                                }}
+                              />
+                            </div>
+                            {/* 操作按钮 */}
+                            <div className="px-3 pb-3 pt-1">
+                              <div className="flex justify-end">
+                                <Button
+                                  size="xs"
+                                  variant="secondary"
+                                  onClick={() => void handleForkWatermark(config)}
+                                  disabled={forkingId === config.id}
+                                >
+                                  {forkingId === config.id ? (
+                                    <span className="animate-spin">⏳</span>
+                                  ) : (
+                                    <Hand size={12} />
+                                  )}
+                                  拿来吧
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </GlassCard>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         }

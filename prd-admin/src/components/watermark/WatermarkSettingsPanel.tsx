@@ -29,14 +29,11 @@ import {
   testWatermark,
   publishWatermark,
   unpublishWatermark,
-  listWatermarksMarketplace,
-  forkWatermark,
 } from '@/services';
-import type { WatermarkFontInfo, WatermarkConfig, MarketplaceWatermarkConfig } from '@/services/contracts/watermark';
+import type { WatermarkFontInfo, WatermarkConfig } from '@/services/contracts/watermark';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
-import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical, Share2, GitFork, Eye, PaintBucket, User, Store, TrendingUp, Clock, Search } from 'lucide-react';
-import { resolveAvatarUrl } from '@/lib/avatar';
+import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Droplet, Plus, CheckCircle2, FlaskConical, Share2, GitFork, Eye, PaintBucket } from 'lucide-react';
 
 const DEFAULT_CANVAS_SIZE = 320;
 const watermarkSizeCache = new Map<string, { width: number; height: number }>();
@@ -235,13 +232,6 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
   const [saving, setSaving] = useState(false);
   const [fonts, setFonts] = useState<WatermarkFontInfo[]>([]);
   const [configs, setConfigs] = useState<WatermarkConfig[]>([]);
-  // 视图模式：我的 / 海鲜市场
-  const [viewMode, setViewMode] = useState<'mine' | 'marketplace'>('mine');
-  const [marketplaceLoading, setMarketplaceLoading] = useState(false);
-  const [marketplaceConfigs, setMarketplaceConfigs] = useState<MarketplaceWatermarkConfig[]>([]);
-  const [marketplaceSort, setMarketplaceSort] = useState<'hot' | 'new'>('hot');
-  const [marketplaceKeyword, setMarketplaceKeyword] = useState('');
-  const [forkingId, setForkingId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [draftConfig, setDraftConfig] = useState<WatermarkConfig | null>(null);
   const [isNewConfig, setIsNewConfig] = useState(false);
@@ -679,51 +669,6 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
     [load, saving]
   );
 
-  // 加载海鲜市场数据
-  const loadMarketplace = useCallback(async () => {
-    setMarketplaceLoading(true);
-    try {
-      const res = await listWatermarksMarketplace({ keyword: marketplaceKeyword, sort: marketplaceSort });
-      if (res.success && res.data?.items) {
-        setMarketplaceConfigs(res.data.items);
-      }
-    } finally {
-      setMarketplaceLoading(false);
-    }
-  }, [marketplaceKeyword, marketplaceSort]);
-
-  // 切换到海鲜市场时加载数据
-  useEffect(() => {
-    if (viewMode === 'marketplace') {
-      void loadMarketplace();
-    }
-  }, [viewMode, loadMarketplace]);
-
-  // Fork 水印配置
-  const handleForkWatermark = useCallback(async (item: MarketplaceWatermarkConfig) => {
-    const customName = await systemDialog.prompt({
-      title: '拿来吧',
-      message: '请为下载的配置命名',
-      defaultValue: item.name,
-      placeholder: '输入配置名称',
-    });
-    if (customName === null) return;
-
-    setForkingId(item.id);
-    try {
-      const res = await forkWatermark({ id: item.id, name: customName || item.name });
-      if (res.success) {
-        toast.success('已添加到我的配置');
-        await load(); // 刷新我的配置列表
-        await loadMarketplace(); // 刷新海鲜市场列表（更新 forkCount）
-      } else {
-        toast.error('下载失败', res.error?.message || '未知错误');
-      }
-    } finally {
-      setForkingId(null);
-    }
-  }, [load, loadMarketplace]);
-
   useImperativeHandle(ref, () => ({
     addSpec: () => {
       void handleAddConfig();
@@ -759,74 +704,16 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
         className="hidden"
         onChange={handleTestFileChange}
       />
-
-      {/* 顶部：标签切换 + 操作按钮 */}
-      <div className="flex items-center justify-between shrink-0">
-        {/* 标签切换：我的 / 海鲜市场 */}
-        <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
-          <button
-            type="button"
-            onClick={() => setViewMode('mine')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-              viewMode === 'mine' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
-            }`}
-            style={{ color: viewMode === 'mine' ? undefined : 'var(--text-muted)' }}
-          >
-            <User size={12} />
-            我的
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode('marketplace')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-              viewMode === 'marketplace' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
-            }`}
-            style={{ color: viewMode === 'marketplace' ? undefined : 'var(--text-muted)' }}
-          >
-            <Store size={12} />
-            海鲜市场
-          </button>
-        </div>
-
-        {/* 右侧：新增按钮（仅在"我的"视图显示） */}
-        {viewMode === 'mine' && !hideAddButton && (
+      {!hideAddButton ? (
+        <div className="flex items-center justify-end shrink-0">
           <Button variant="secondary" size="xs" onClick={handleAddConfig} disabled={saving}>
             <Plus size={14} />
             新增配置
           </Button>
-        )}
+        </div>
+      ) : null}
 
-        {/* 右侧：排序按钮（仅在"海鲜市场"视图显示） */}
-        {viewMode === 'marketplace' && (
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setMarketplaceSort('hot')}
-              className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
-                marketplaceSort === 'hot' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
-              }`}
-              style={{ color: marketplaceSort === 'hot' ? undefined : 'var(--text-muted)' }}
-            >
-              <TrendingUp size={12} />
-              热门
-            </button>
-            <button
-              type="button"
-              onClick={() => setMarketplaceSort('new')}
-              className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
-                marketplaceSort === 'new' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
-              }`}
-              style={{ color: marketplaceSort === 'new' ? undefined : 'var(--text-muted)' }}
-            >
-              <Clock size={12} />
-              最新
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* ========== 我的视图 ========== */}
-      {viewMode === 'mine' && configs.length > 0 && (
+      {configs.length > 0 ? (
         <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-hidden">
           <div
             className="grid gap-3 flex-1 min-h-0 overflow-auto overflow-x-hidden pr-1 content-start items-start"
@@ -1023,122 +910,13 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             })}
           </div>
         </div>
-      )}
-
-      {/* 我的视图 - 空状态 */}
-      {viewMode === 'mine' && configs.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-8 gap-3 flex-1">
+      ) : (
+        <div className="flex flex-col items-center justify-center py-8 gap-3">
           <div className="text-sm" style={{ color: 'var(--text-muted)' }}>暂无水印配置</div>
           <Button variant="secondary" size="sm" onClick={handleAddConfig} disabled={saving}>
             <Plus size={14} />
             创建水印
           </Button>
-        </div>
-      )}
-
-      {/* ========== 海鲜市场视图 ========== */}
-      {viewMode === 'marketplace' && (
-        <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-hidden">
-          {marketplaceLoading ? (
-            <div className="flex items-center justify-center py-8 flex-1">
-              <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-            </div>
-          ) : marketplaceConfigs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 gap-3 flex-1">
-              <Store size={32} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
-              <div className="text-sm" style={{ color: 'var(--text-muted)' }}>暂无公开配置</div>
-            </div>
-          ) : (
-            <div
-              className="grid gap-3 flex-1 min-h-0 overflow-auto overflow-x-hidden pr-1 content-start items-start"
-              style={{
-                gridTemplateColumns: columns > 1 ? `repeat(${columns}, minmax(0, 1fr))` : '1fr',
-                gridAutoRows: 'min-content',
-              }}
-            >
-              {marketplaceConfigs.map((item) => (
-                <GlassCard key={item.id} className="p-0 overflow-hidden">
-                  <div className="flex flex-col">
-                    {/* 标题栏 */}
-                    <div className="p-2 pb-1 shrink-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1 flex items-center gap-1.5">
-                          <Droplet size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
-                          <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                            {item.name}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 配置信息区 */}
-                    <div className="px-2 pb-1 flex-shrink-0">
-                      <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: '100px' }}>
-                        <WatermarkDescriptionGrid
-                          data={{
-                            text: item.text,
-                            fontKey: item.fontKey,
-                            fontSizePx: item.fontSizePx,
-                            opacity: item.opacity,
-                            anchor: item.anchor,
-                            offsetX: item.offsetX,
-                            offsetY: item.offsetY,
-                            iconEnabled: item.iconEnabled,
-                            borderEnabled: item.borderEnabled,
-                            backgroundEnabled: item.backgroundEnabled,
-                            roundedBackgroundEnabled: item.roundedBackgroundEnabled,
-                          }}
-                        />
-                        {/* 预览图 */}
-                        <div
-                          className="flex items-center justify-center overflow-hidden rounded-[6px]"
-                          style={{
-                            background: item.previewUrl
-                              ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                              : 'rgba(255,255,255,0.02)',
-                            border: item.previewUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
-                          }}
-                        >
-                          {item.previewUrl ? (
-                            <img src={item.previewUrl} alt="Preview" className="block w-full h-full object-contain" />
-                          ) : (
-                            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无预览</div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 底部：作者信息 + Fork 按钮 */}
-                    <div className="p-2 pt-1.5 border-t flex items-center justify-between" style={{ borderColor: 'var(--border-subtle)' }}>
-                      <div className="flex items-center gap-2 min-w-0">
-                        <img
-                          src={resolveAvatarUrl(item.ownerUserAvatar)}
-                          alt=""
-                          className="w-5 h-5 rounded-full flex-shrink-0"
-                        />
-                        <span className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                          {item.ownerUserName}
-                        </span>
-                        <span className="flex items-center gap-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                          <GitFork size={10} />
-                          {item.forkCount}
-                        </span>
-                      </div>
-                      <Button
-                        size="xs"
-                        variant="secondary"
-                        onClick={() => void handleForkWatermark(item)}
-                        disabled={forkingId === item.id}
-                      >
-                        <GitFork size={12} />
-                        {forkingId === item.id ? '下载中...' : '拿来吧'}
-                      </Button>
-                    </div>
-                  </div>
-                </GlassCard>
-              ))}
-            </div>
-          )}
         </div>
       )}
 

@@ -13,7 +13,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Search, TrendingUp, Clock, ArrowLeft, Store } from 'lucide-react';
-import { GlassCard } from '@/components/design/GlassCard';
 import { MarketplaceCard } from '@/components/marketplace/MarketplaceCard';
 import {
   CONFIG_TYPE_REGISTRY,
@@ -22,7 +21,6 @@ import {
   sortMarketplaceItems,
   filterMarketplaceItems,
   type MarketplaceItemBase,
-  type MixedMarketplaceItem,
 } from '@/lib/marketplaceTypes';
 import { toast } from '@/lib/toast';
 
