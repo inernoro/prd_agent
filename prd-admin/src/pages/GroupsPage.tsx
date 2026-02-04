@@ -117,35 +117,34 @@ function MessageMarkdown({ content }: { content: string }) {
   );
 }
 
-/** 头像堆叠组件 - 紧凑版 */
+/** 头像堆叠组件 - 柔和配色 */
 function AvatarStack({ members, total, max = 4 }: { members: TopMember[]; total: number; max?: number }) {
   const displayed = members.slice(0, max);
-  const remaining = total - displayed.length;
 
   const getAvatarUrl = (fileName?: string | null) => {
     if (!fileName) return null;
     return `/avatars/${fileName}`;
   };
 
-  // 柔和的渐变色
-  const getGradient = (name: string) => {
-    const hash = name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    const hue = hash % 360;
-    return `linear-gradient(135deg, hsl(${hue}, 45%, 55%), hsl(${(hue + 30) % 360}, 50%, 45%))`;
+  // 柔和的灰蓝色调
+  const getGradient = (name: string, index: number) => {
+    const baseHues = [210, 230, 190, 260, 180]; // 蓝、靛、青、紫、青绿
+    const hue = baseHues[index % baseHues.length];
+    return `linear-gradient(135deg, hsl(${hue}, 25%, 45%), hsl(${hue}, 30%, 35%))`;
   };
 
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex -space-x-1.5">
+    <div className="flex items-center gap-1.5">
+      <div className="flex -space-x-1">
         {displayed.map((member, i) => {
           const avatarUrl = getAvatarUrl(member.avatarFileName);
           return (
             <div
               key={member.userId}
-              className="w-6 h-6 rounded-full border flex items-center justify-center text-[10px] font-medium text-white overflow-hidden"
+              className="w-5 h-5 rounded-full border flex items-center justify-center text-[9px] font-medium text-white/90 overflow-hidden"
               style={{
-                borderColor: 'rgba(0,0,0,0.3)',
-                background: avatarUrl ? `url(${avatarUrl}) center/cover` : getGradient(member.displayName),
+                borderColor: 'rgba(255,255,255,0.15)',
+                background: avatarUrl ? `url(${avatarUrl}) center/cover` : getGradient(member.displayName, i),
                 zIndex: max - i,
               }}
               title={member.displayName}
@@ -155,11 +154,28 @@ function AvatarStack({ members, total, max = 4 }: { members: TopMember[]; total:
           );
         })}
       </div>
-      {total > 0 && (
-        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{total}</span>
+      {total > displayed.length && (
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>+{total - displayed.length}</span>
       )}
     </div>
   );
+}
+
+/** 相对时间格式化 */
+function formatRelativeTime(dateStr?: string | null): string {
+  if (!dateStr) return '无活动';
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return '刚刚';
+  if (diffMins < 60) return `${diffMins}分钟前`;
+  if (diffHours < 24) return `${diffHours}小时前`;
+  if (diffDays < 30) return `${diffDays}天前`;
+  return `${Math.floor(diffDays / 30)}月前`;
 }
 
 /** 邀请状态计算 */
@@ -361,64 +377,77 @@ export default function GroupsPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {items.map((g) => {
                 const status = getInviteStatus(g.inviteExpireAt);
+                const hasWarning = (g.pendingGapCount ?? 0) > 0;
                 return (
                   <GlassCard
                     key={g.groupId}
-                    variant="subtle"
+                    variant="default"
                     padding="sm"
                     interactive
+                    glow={hasWarning}
+                    accentHue={hasWarning ? 35 : undefined}
                     onClick={() => openDetail(g)}
                     className="flex flex-col"
                   >
                     {/* 头部：群组名 + 状态 */}
-                    <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
                         <h3 className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                           {g.groupName}
                         </h3>
-                        <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
                           {g.owner ? `${g.owner.role || 'PM'} · ${g.owner.displayName}` : g.groupId}
                         </div>
                       </div>
                       <Badge variant={status.variant}>{status.label}</Badge>
                     </div>
 
-                    {/* PRD 标签 */}
-                    {g.prdTitle && (
-                      <div
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] mb-2 self-start truncate max-w-full"
-                        style={{
-                          background: 'rgba(147, 197, 253, 0.12)',
-                          color: 'rgba(147, 197, 253, 0.9)',
-                        }}
-                      >
-                        <FileText size={10} className="shrink-0" />
-                        <span className="truncate">{g.prdTitle}</span>
+                    {/* 统计数据网格 */}
+                    <div className="grid grid-cols-3 gap-1 my-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                      <div className="text-center">
+                        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g.memberCount}</div>
+                        <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>成员</div>
                       </div>
-                    )}
-
-                    {/* Footer */}
-                    <div className="flex items-center justify-between mt-auto pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                      <AvatarStack members={g.topMembers || []} total={g.memberCount} max={4} />
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-1" title="消息">
-                          <MessageSquareText size={12} style={{ color: 'var(--text-muted)' }} />
-                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{g.messageCount ?? 0}</span>
+                      <div className="text-center" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g.messageCount ?? 0}</div>
+                        <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>消息</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-sm font-semibold" style={{ color: hasWarning ? 'rgba(245,158,11,0.95)' : 'var(--text-primary)' }}>
+                          {g.pendingGapCount ?? 0}
                         </div>
-                        {(g.pendingGapCount ?? 0) > 0 && (
-                          <div className="flex items-center gap-1" title="待处理">
-                            <AlertTriangle size={12} style={{ color: 'rgba(245,158,11,0.9)' }} />
-                            <span className="text-[11px]" style={{ color: 'rgba(245,158,11,0.9)' }}>{g.pendingGapCount}</span>
-                          </div>
-                        )}
-                        <button
-                          className="p-1 rounded hover:bg-white/10 transition-colors"
-                          onClick={(e) => { e.stopPropagation(); onCopy(g.inviteLink); }}
-                          title="复制邀请链接"
-                        >
-                          <Copy size={12} style={{ color: 'var(--text-muted)' }} />
-                        </button>
+                        <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>待处理</div>
                       </div>
+                    </div>
+
+                    {/* PRD 标签 + 活跃时间 */}
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      {g.prdTitle ? (
+                        <div
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] truncate"
+                          style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.85)' }}
+                        >
+                          <FileText size={9} className="shrink-0" />
+                          <span className="truncate max-w-[80px]">{g.prdTitle}</span>
+                        </div>
+                      ) : (
+                        <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>无 PRD</div>
+                      )}
+                      <div className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        {formatRelativeTime(g.lastMessageAt)}
+                      </div>
+                    </div>
+
+                    {/* Footer：头像 + 操作 */}
+                    <div className="flex items-center justify-between pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                      <AvatarStack members={g.topMembers || []} total={g.memberCount} max={4} />
+                      <button
+                        className="p-1 rounded hover:bg-white/10 transition-colors"
+                        onClick={(e) => { e.stopPropagation(); onCopy(g.inviteLink); }}
+                        title="复制邀请链接"
+                      >
+                        <Copy size={12} style={{ color: 'var(--text-muted)' }} />
+                      </button>
                     </div>
                   </GlassCard>
                 );
