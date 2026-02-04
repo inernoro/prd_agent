@@ -66,7 +66,7 @@ const appKeyLabelMap: Record<string, string> = {
 };
 
 const SectionLabel = ({ label }: { label: string }) => (
-  <div className="text-[12px] font-semibold self-center" style={{ color: 'var(--text-muted)' }}>
+  <div className="text-[12px] font-semibold self-center text-center" style={{ color: 'var(--text-muted)' }}>
     {label}
   </div>
 );
@@ -1180,7 +1180,7 @@ function WatermarkEditor(props: {
               />
 
               <SectionLabel label="字体" />
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2" style={{ opacity: config.text ? 1 : 0.4, pointerEvents: config.text ? 'auto' : 'none' }}>
                 <FontSelect
                   value={config.fontKey}
                   fonts={fonts}
@@ -1204,14 +1204,14 @@ function WatermarkEditor(props: {
                   size="sm"
                   className="shrink-0 h-8! w-8! px-0!"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={fontUploading}
+                  disabled={fontUploading || !config.text}
                 >
                   <UploadCloud size={14} />
                 </Button>
               </div>
 
               <SectionLabel label="字号" />
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2" style={{ opacity: config.text ? 1 : 0.4, pointerEvents: config.text ? 'auto' : 'none' }}>
                 <input
                   type="range"
                   min={5}
@@ -1220,6 +1220,7 @@ function WatermarkEditor(props: {
                   value={config.fontSizePx}
                   onChange={(e) => updateConfig({ fontSizePx: Number(e.target.value) })}
                   className="flex-1 min-w-0"
+                  disabled={!config.text}
                 />
                 <div className="text-[11px] w-10 text-right" style={{ color: 'var(--text-muted)' }}>
                   {Math.round(config.fontSizePx)}px
@@ -1255,7 +1256,14 @@ function WatermarkEditor(props: {
                     fontWeight: 500,
                   }}
                   title={config.text ? '点击关闭文字' : '点击开启文字'}
-                  onClick={() => updateConfig({ text: config.text ? '' : '米多AI生成' })}
+                  onClick={() => {
+                    if (config.text) {
+                      // 关闭文字时，图标间距设为0
+                      updateConfig({ text: '', iconGapPx: 0 });
+                    } else {
+                      updateConfig({ text: '米多AI生成' });
+                    }
+                  }}
                 >
                   字
                 </button>
