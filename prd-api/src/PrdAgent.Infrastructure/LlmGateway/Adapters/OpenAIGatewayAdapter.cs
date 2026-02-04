@@ -109,13 +109,24 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
                 finishReason = fr.GetString();
             }
 
-            // 提取 delta 内容（优先使用 delta.content，备选 message.content）
+            // 提取 delta 内容（优先使用 delta.content，备选 reasoning_content、message.content）
             string? content = null;
-            if (choice.TryGetProperty("delta", out var delta) &&
-                delta.TryGetProperty("content", out var contentEl) &&
-                contentEl.ValueKind == JsonValueKind.String)
+            if (choice.TryGetProperty("delta", out var delta))
             {
-                content = contentEl.GetString();
+                // 标准 content 字段
+                if (delta.TryGetProperty("content", out var contentEl) &&
+                    contentEl.ValueKind == JsonValueKind.String)
+                {
+                    content = contentEl.GetString();
+                }
+                // DeepSeek reasoning 模式：reasoning_content 字段（思考过程）
+                // 当 content 为 null 时，可能有 reasoning_content
+                if (string.IsNullOrEmpty(content) &&
+                    delta.TryGetProperty("reasoning_content", out var reasoningEl) &&
+                    reasoningEl.ValueKind == JsonValueKind.String)
+                {
+                    content = reasoningEl.GetString();
+                }
             }
             // 某些 OpenAI 兼容 API 可能使用 message.content 而不是 delta.content
             else if (choice.TryGetProperty("message", out var message) &&
