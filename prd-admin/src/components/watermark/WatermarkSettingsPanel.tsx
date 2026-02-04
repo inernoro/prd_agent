@@ -66,7 +66,7 @@ const appKeyLabelMap: Record<string, string> = {
 };
 
 const SectionLabel = ({ label }: { label: string }) => (
-  <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+  <div className="text-[12px] font-semibold self-center" style={{ color: 'var(--text-muted)' }}>
     {label}
   </div>
 );
@@ -1266,13 +1266,13 @@ function WatermarkEditor(props: {
               </div>
 
               <SectionLabel label="装饰" />
-              <div className="flex flex-col gap-4 pt-2">
-                {/* 图标 */}
-                <div className="flex items-center gap-3">
-                  <InlineLabel label="图标" />
+              <div className="flex flex-col gap-4">
+                {/* 图标 + 位置按钮 - 一行排列 */}
+                <div className="flex items-center gap-2">
+                  {/* 图标上传 */}
                   <div className="relative">
                     <label
-                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer overflow-hidden"
+                      className="h-8 w-8 rounded-full inline-flex items-center justify-center cursor-pointer overflow-hidden"
                       style={{
                         background: config.iconEnabled && config.iconImageRef ? 'transparent' : 'transparent',
                         border: config.iconEnabled && config.iconImageRef ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
@@ -1283,7 +1283,7 @@ function WatermarkEditor(props: {
                       title="上传图标"
                     >
                       {config.iconEnabled && config.iconImageRef ? (
-                        <img src={config.iconImageRef} alt="水印图标" className="h-full w-full object-cover" />
+                        <img src={config.iconImageRef} alt="水印图标" className="h-full w-full object-cover rounded-full" />
                       ) : (
                         <UploadCloud size={14} />
                       )}
@@ -1306,12 +1306,10 @@ function WatermarkEditor(props: {
                       </button>
                     ) : null}
                   </div>
-                </div>
 
-                {config.iconEnabled ? (
-                  <div className="flex items-center gap-3">
-                    <InlineLabel label="位置" />
-                    <div className="grid grid-cols-4 gap-2 flex-1">
+                  {/* 位置按钮 - 4个圆形按钮 */}
+                  {config.iconEnabled && (
+                    <>
                       {([
                         { value: 'left', label: '左' },
                         { value: 'right', label: '右' },
@@ -1323,10 +1321,10 @@ function WatermarkEditor(props: {
                           <button
                             key={option.value}
                             type="button"
-                            className="h-7 rounded-[7px] text-[11px] font-semibold transition-all"
+                            className="h-8 w-8 rounded-full text-[11px] font-semibold transition-all"
                             style={{
                               background: active ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.06)',
-                              border: active ? '1px solid rgba(59,130,246,0.5)' : '1px solid rgba(255,255,255,0.12)',
+                              border: active ? '1.5px solid rgba(59,130,246,0.5)' : '1.5px solid rgba(255,255,255,0.12)',
                               color: active ? 'rgba(59,130,246,0.95)' : 'var(--text-muted)',
                             }}
                             onClick={() => updateConfig({ iconPosition: option.value })}
@@ -1335,35 +1333,34 @@ function WatermarkEditor(props: {
                           </button>
                         );
                       })}
-                    </div>
-                  </div>
-                ) : null}
+                    </>
+                  )}
+                </div>
 
-                {config.iconEnabled ? (
+                {/* 间距和缩放 - 仅在图标启用时显示 */}
+                {config.iconEnabled && (
                   <div className="flex items-center gap-3">
                     <InlineLabel label="间距" />
-                    <div className="flex items-center gap-2 flex-1">
-                      <input
-                        type="number"
-                        min={0}
-                        step={1}
-                        className="w-12 h-8 rounded-[8px] px-2 text-sm outline-none prd-field"
-                        value={iconGapValue}
-                        onChange={(e) => updateConfig({ iconGapPx: Number(e.target.value) })}
-                      />
-                      <InlineLabel label="缩放" />
-                      <input
-                        type="number"
-                        min={0.2}
-                        max={3}
-                        step={0.1}
-                        className="w-16 h-8 rounded-[8px] px-2 text-sm outline-none prd-field"
-                        value={iconScaleValue}
-                        onChange={(e) => updateConfig({ iconScale: Number(e.target.value) })}
-                      />
-                    </div>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      className="w-14 h-8 rounded-[8px] px-2 text-sm outline-none prd-field"
+                      value={iconGapValue}
+                      onChange={(e) => updateConfig({ iconGapPx: Number(e.target.value) })}
+                    />
+                    <InlineLabel label="缩放" />
+                    <input
+                      type="number"
+                      min={0.2}
+                      max={3}
+                      step={0.1}
+                      className="w-14 h-8 rounded-[8px] px-2 text-sm outline-none prd-field"
+                      value={iconScaleValue}
+                      onChange={(e) => updateConfig({ iconScale: Number(e.target.value) })}
+                    />
                   </div>
-                ) : null}
+                )}
 
                 <div className="pt-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                   {/* 填充 + 背景色 */}
