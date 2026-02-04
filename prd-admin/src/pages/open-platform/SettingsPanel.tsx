@@ -396,7 +396,7 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
                   </span>
                   {settings?.lastPollResult && (
                     <Badge
-                      variant={settings.lastPollResult === 'success' ? 'success' : 'danger'}
+                      variant={settings.lastPollResult === 'success' ? 'success' : 'subtle'}
                       className="ml-2"
                     >
                       {settings.lastPollResult === 'success' ? '成功' : '失败'}

@@ -388,6 +388,11 @@ export const api = {
       test: () => '/api/admin/channels/settings/test',
       poll: () => '/api/admin/channels/settings/poll',
     },
+    workflows: {
+      list: () => '/api/admin/channels/workflows',
+      byId: (id: string) => `/api/admin/channels/workflows/${id}`,
+      toggle: (id: string) => `/api/admin/channels/workflows/${id}/toggle`,
+    },
     whitelists: {
       list: () => '/api/admin/channels/whitelist',
       byId: (id: string) => `/api/admin/channels/whitelist/${id}`,

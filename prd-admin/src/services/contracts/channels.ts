@@ -192,6 +192,55 @@ export interface PagedTaskResponse {
   pageSize: number;
 }
 
+// ============ 邮件工作流 ============
+export interface EmailWorkflow {
+  id: string;
+  addressPrefix: string;
+  displayName: string;
+  description?: string;
+  icon?: string;
+  intentType: string;
+  targetAgent?: string;
+  customPrompt?: string;
+  replyTemplate?: string;
+  isActive: boolean;
+  priority: number;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateWorkflowRequest {
+  addressPrefix: string;
+  displayName: string;
+  description?: string;
+  icon?: string;
+  intentType: string;
+  targetAgent?: string;
+  customPrompt?: string;
+  replyTemplate?: string;
+  priority?: number;
+}
+
+export interface UpdateWorkflowRequest {
+  addressPrefix?: string;
+  displayName?: string;
+  description?: string;
+  icon?: string;
+  intentType?: string;
+  targetAgent?: string;
+  customPrompt?: string;
+  replyTemplate?: string;
+  priority?: number;
+}
+
+export interface PagedWorkflowResponse {
+  items: EmailWorkflow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 // ============ 服务接口 ============
 export interface IChannelService {
   // 邮箱配置
@@ -199,6 +248,14 @@ export interface IChannelService {
   updateSettings(request: UpdateSettingsRequest): Promise<ChannelSettings>;
   testConnection(request: TestConnectionRequest): Promise<TestConnectionResult>;
   triggerPoll(): Promise<{ success: boolean; message: string; emailCount?: number }>;
+
+  // 邮件工作流管理
+  getWorkflows(page: number, pageSize: number): Promise<PagedWorkflowResponse>;
+  getWorkflow(id: string): Promise<EmailWorkflow>;
+  createWorkflow(request: CreateWorkflowRequest): Promise<EmailWorkflow>;
+  updateWorkflow(id: string, request: UpdateWorkflowRequest): Promise<EmailWorkflow>;
+  deleteWorkflow(id: string): Promise<void>;
+  toggleWorkflow(id: string): Promise<EmailWorkflow>;
 
   // 白名单管理
   getWhitelists(
@@ -329,4 +386,23 @@ export const TaskIntents: Record<string, string> = {
   'help': '帮助',
   'cancel': '取消',
   'unknown': '未知',
+};
+
+// ============ 邮件意图类型 ============
+export const EmailIntentTypes = {
+  Unknown: 'unknown',
+  Classify: 'classify',
+  CreateTodo: 'createtodo',
+  Summarize: 'summarize',
+  FollowUp: 'followup',
+  FYI: 'fyi',
+} as const;
+
+export const EmailIntentTypeDisplayNames: Record<string, string> = {
+  unknown: '未知',
+  classify: '邮件分类',
+  createtodo: '创建待办',
+  summarize: '内容摘要',
+  followup: '跟进回复',
+  fyi: '仅供参考',
 };

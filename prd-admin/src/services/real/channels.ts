@@ -3,6 +3,7 @@ import type {
   PagedWhitelistResponse,
   PagedIdentityMappingResponse,
   PagedTaskResponse,
+  PagedWorkflowResponse,
   ChannelWhitelist,
   ChannelIdentityMapping,
   ChannelTask,
@@ -12,6 +13,9 @@ import type {
   UpdateWhitelistRequest,
   CreateIdentityMappingRequest,
   UpdateIdentityMappingRequest,
+  CreateWorkflowRequest,
+  UpdateWorkflowRequest,
+  EmailWorkflow,
   ChannelSettings,
   UpdateSettingsRequest,
   TestConnectionRequest,
@@ -62,6 +66,71 @@ export class ChannelService implements IChannelService {
     );
     if (!response.success) {
       throw new Error(response.error?.message || '触发轮询失败');
+    }
+    return response.data!;
+  }
+
+  // ============ 邮件工作流管理 ============
+  async getWorkflows(page: number, pageSize: number): Promise<PagedWorkflowResponse> {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      pageSize: pageSize.toString(),
+    });
+    const response = await apiRequest<PagedWorkflowResponse>(
+      `${api.channels.workflows.list()}?${params.toString()}`
+    );
+    if (!response.success) {
+      throw new Error(response.error?.message || '获取工作流失败');
+    }
+    return response.data!;
+  }
+
+  async getWorkflow(id: string): Promise<EmailWorkflow> {
+    const response = await apiRequest<EmailWorkflow>(api.channels.workflows.byId(id));
+    if (!response.success) {
+      throw new Error(response.error?.message || '获取工作流失败');
+    }
+    return response.data!;
+  }
+
+  async createWorkflow(request: CreateWorkflowRequest): Promise<EmailWorkflow> {
+    const response = await apiRequest<EmailWorkflow>(api.channels.workflows.list(), {
+      method: 'POST',
+      body: request,
+    });
+    if (!response.success) {
+      throw new Error(response.error?.message || '创建工作流失败');
+    }
+    return response.data!;
+  }
+
+  async updateWorkflow(id: string, request: UpdateWorkflowRequest): Promise<EmailWorkflow> {
+    const response = await apiRequest<EmailWorkflow>(api.channels.workflows.byId(id), {
+      method: 'PUT',
+      body: request,
+    });
+    if (!response.success) {
+      throw new Error(response.error?.message || '更新工作流失败');
+    }
+    return response.data!;
+  }
+
+  async deleteWorkflow(id: string): Promise<void> {
+    const response = await apiRequest(api.channels.workflows.byId(id), {
+      method: 'DELETE',
+    });
+    if (!response.success) {
+      throw new Error(response.error?.message || '删除工作流失败');
+    }
+  }
+
+  async toggleWorkflow(id: string): Promise<EmailWorkflow> {
+    const response = await apiRequest<EmailWorkflow>(api.channels.workflows.toggle(id), {
+      method: 'POST',
+      body: {},
+    });
+    if (!response.success) {
+      throw new Error(response.error?.message || '切换工作流状态失败');
     }
     return response.data!;
   }
