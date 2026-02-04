@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
