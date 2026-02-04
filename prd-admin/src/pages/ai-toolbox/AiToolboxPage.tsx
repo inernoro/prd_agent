@@ -1,158 +1,166 @@
-import { useEffect } from 'react';
-import { GlassCard } from '@/components/design/GlassCard';
+import { useEffect, useMemo } from 'react';
 import { TabBar } from '@/components/design/TabBar';
-import { useToolboxStore } from '@/stores/toolboxStore';
-import { Sparkles, History, RotateCcw } from 'lucide-react';
-import { ToolboxInput } from './components/ToolboxInput';
-import { ExecutionPlan } from './components/ExecutionPlan';
-import { ArtifactCard } from './components/ArtifactCard';
-import { IntentDisplay } from './components/IntentDisplay';
-import { HistoryList } from './components/HistoryList';
+import { useToolboxStore, type ToolboxCategory } from '@/stores/toolboxStore';
+import { Package, Search, Plus, Loader2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
+import { ToolCard } from './components/ToolCard';
+import { ToolDetail } from './components/ToolDetail';
+import { ToolEditor } from './components/ToolEditor';
+import { ToolRunner } from './components/ToolRunner';
+
+const CATEGORY_OPTIONS: { key: ToolboxCategory; label: string }[] = [
+  { key: 'all', label: '全部工具' },
+  { key: 'builtin', label: '内置工具' },
+  { key: 'custom', label: '我创建的' },
+];
 
 export default function AiToolboxPage() {
   const {
-    status,
-    intent,
-    steps,
-    artifacts,
-    finalResponse,
-    errorMessage,
-    streamingContent,
-    loadAgents,
-    loadHistory,
-    reset,
+    view,
+    category,
+    searchQuery,
+    items,
+    itemsLoading,
+    selectedItem,
+    setCategory,
+    setSearchQuery,
+    loadItems,
+    startCreate,
   } = useToolboxStore();
 
   useEffect(() => {
-    loadAgents();
-    loadHistory();
-  }, [loadAgents, loadHistory]);
+    loadItems();
+  }, [loadItems]);
 
-  const isActive = status !== 'idle';
-  const isProcessing = status === 'analyzing' || status === 'running';
+  // Filter items based on category and search
+  const filteredItems = useMemo(() => {
+    let result = items;
 
+    // Filter by category
+    if (category === 'builtin') {
+      result = result.filter((item) => item.type === 'builtin');
+    } else if (category === 'custom') {
+      result = result.filter((item) => item.type === 'custom');
+    }
+
+    // Filter by search
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(
+        (item) =>
+          item.name.toLowerCase().includes(query) ||
+          item.description.toLowerCase().includes(query) ||
+          item.tags.some((tag) => tag.toLowerCase().includes(query))
+      );
+    }
+
+    return result;
+  }, [items, category, searchQuery]);
+
+  // Render based on current view
+  if (view === 'detail' && selectedItem) {
+    return <ToolDetail />;
+  }
+
+  if (view === 'create' || view === 'edit') {
+    return <ToolEditor />;
+  }
+
+  if (view === 'running' && selectedItem) {
+    return <ToolRunner />;
+  }
+
+  // Grid view (default)
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       {/* Header */}
       <TabBar
         title="AI 百宝箱"
-        icon={<Sparkles size={16} />}
+        icon={<Package size={16} />}
         items={[]}
         activeKey=""
         onChange={() => {}}
         actions={
-          isActive && (
-            <Button variant="secondary" size="sm" onClick={reset} disabled={isProcessing}>
-              <RotateCcw size={14} />
-              重新开始
-            </Button>
-          )
+          <Button variant="primary" size="sm" onClick={startCreate}>
+            <Plus size={14} />
+            创建智能体
+          </Button>
         }
       />
 
-      {/* Main Content */}
-      <div className="flex-1 min-h-0 flex gap-4">
-        {/* Left: Input & Execution */}
-        <div className="flex-1 min-w-0 flex flex-col gap-4">
-          {/* Input */}
-          <GlassCard className="p-4">
-            <ToolboxInput />
-          </GlassCard>
-
-          {/* Intent Display */}
-          {intent && (
-            <GlassCard className="p-4">
-              <IntentDisplay intent={intent} />
-            </GlassCard>
-          )}
-
-          {/* Execution Plan */}
-          {steps.length > 0 && (
-            <GlassCard className="flex-1 min-h-0 p-4 overflow-auto">
-              <ExecutionPlan steps={steps} streamingContent={streamingContent} />
-            </GlassCard>
-          )}
-
-          {/* Final Response */}
-          {finalResponse && (
-            <GlassCard className="p-4">
-              <h3
-                className="text-sm font-medium mb-2 flex items-center gap-2"
-                style={{ color: 'var(--text-primary)' }}
-              >
-                <Sparkles size={14} style={{ color: 'var(--accent-primary)' }} />
-                执行结果
-              </h3>
-              <div
-                className="prose prose-sm max-w-none"
-                style={{ color: 'var(--text-secondary)' }}
-                dangerouslySetInnerHTML={{ __html: formatMarkdown(finalResponse) }}
-              />
-            </GlassCard>
-          )}
-
-          {/* Error */}
-          {errorMessage && (
-            <GlassCard className="p-4" style={{ borderColor: 'var(--status-error)' }}>
-              <div className="text-sm" style={{ color: 'var(--status-error)' }}>
-                {errorMessage}
-              </div>
-            </GlassCard>
-          )}
-        </div>
-
-        {/* Right: Artifacts & History */}
-        <div className="w-80 flex-shrink-0 flex flex-col gap-4">
-          {/* Artifacts */}
-          {artifacts.length > 0 && (
-            <GlassCard className="p-4">
-              <h3
-                className="text-sm font-medium mb-3 flex items-center gap-2"
-                style={{ color: 'var(--text-primary)' }}
-              >
-                生成成果
-                <span
-                  className="text-xs px-1.5 py-0.5 rounded"
-                  style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}
-                >
-                  {artifacts.length}
-                </span>
-              </h3>
-              <div className="space-y-2">
-                {artifacts.map((artifact) => (
-                  <ArtifactCard key={artifact.id} artifact={artifact} />
-                ))}
-              </div>
-            </GlassCard>
-          )}
-
-          {/* History */}
-          <GlassCard className="flex-1 min-h-0 p-4 overflow-auto">
-            <h3
-              className="text-sm font-medium mb-3 flex items-center gap-2"
-              style={{ color: 'var(--text-primary)' }}
+      {/* Filters */}
+      <div className="flex items-center gap-4">
+        {/* Category tabs */}
+        <div className="flex items-center gap-1 p-1 rounded-lg" style={{ background: 'var(--bg-elevated)' }}>
+          {CATEGORY_OPTIONS.map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => setCategory(opt.key)}
+              className="px-3 py-1.5 rounded-md text-sm transition-all"
+              style={{
+                background: category === opt.key ? 'var(--accent-primary)' : 'transparent',
+                color: category === opt.key ? 'white' : 'var(--text-secondary)',
+              }}
             >
-              <History size={14} />
-              历史记录
-            </h3>
-            <HistoryList />
-          </GlassCard>
+              {opt.label}
+            </button>
+          ))}
         </div>
+
+        {/* Search */}
+        <div className="flex-1 max-w-md relative">
+          <Search
+            size={16}
+            className="absolute left-3 top-1/2 -translate-y-1/2"
+            style={{ color: 'var(--text-muted)' }}
+          />
+          <input
+            type="text"
+            placeholder="搜索工具名称、描述或标签..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 rounded-lg border text-sm outline-none transition-colors"
+            style={{
+              background: 'var(--bg-elevated)',
+              borderColor: 'var(--border-default)',
+              color: 'var(--text-primary)',
+            }}
+          />
+        </div>
+
+        {/* Count */}
+        <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+          {filteredItems.length} 个工具
+        </span>
+      </div>
+
+      {/* Tool Grid */}
+      <div className="flex-1 min-h-0 overflow-auto">
+        {itemsLoading ? (
+          <div className="flex items-center justify-center h-64">
+            <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+          </div>
+        ) : filteredItems.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-64 gap-2">
+            <Package size={48} style={{ color: 'var(--text-muted)' }} />
+            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              {searchQuery ? '没有找到匹配的工具' : '暂无工具'}
+            </div>
+            {category === 'custom' && !searchQuery && (
+              <Button variant="secondary" size="sm" onClick={startCreate}>
+                <Plus size={14} />
+                创建第一个智能体
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 pb-4">
+            {filteredItems.map((item) => (
+              <ToolCard key={item.id} item={item} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
-}
-
-function formatMarkdown(text: string): string {
-  // Simple markdown to HTML conversion for display
-  return text
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" class="max-w-full rounded" />')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/\n/g, '<br />');
 }

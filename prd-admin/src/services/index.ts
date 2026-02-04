@@ -829,21 +829,27 @@ export const getCustomConfigs: GetCustomConfigsContract = withAuth(getCustomConf
 
 // AI Toolbox 百宝箱
 export {
-  sendToolboxMessage,
-  analyzeIntent,
+  // 新版工具集合 API
+  listToolboxItems,
+  getToolboxItem,
+  createToolboxItem,
+  updateToolboxItem,
+  deleteToolboxItem,
+  runToolboxItem,
+  listToolboxAgents,
+  subscribeToolboxRunEvents,
+  // Legacy API
   getToolboxRun,
   listToolboxRuns,
-  listToolboxAgents,
-  executeToolboxRun,
-  subscribeToolboxRunEvents,
 } from '@/services/real/aiToolbox';
 export type {
-  IntentResult,
+  ToolboxItem,
+  ToolboxItemRun,
   AgentInfo,
-  StepInfo,
+  ToolboxRunEvent,
+  // Legacy types
+  IntentResult,
   ToolboxArtifact,
   ToolboxRun,
   ToolboxRunStep,
-  ChatResponse,
-  ToolboxRunEvent,
 } from '@/services/real/aiToolbox';

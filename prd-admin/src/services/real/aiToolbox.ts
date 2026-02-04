@@ -5,13 +5,30 @@ import type { ApiResponse } from '@/types/api';
 
 // ============ Types ============
 
-export interface IntentResult {
-  primaryIntent: string;
-  secondaryIntents: string[];
-  entities: Record<string, unknown>;
-  confidence: number;
-  reasoning?: string;
-  suggestedAgents: string[];
+export interface ToolboxItem {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  category: 'builtin' | 'custom';
+  type: 'builtin' | 'custom';
+  agentKey?: string;
+  prompt?: string;
+  modelId?: string;
+  isPublic?: boolean;
+  createdBy?: string;
+  createdByName?: string;
+  usageCount: number;
+  tags: string[];
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ToolboxItemRun {
+  runId: string;
+  itemId: string;
+  status: string;
+  output?: string;
 }
 
 export interface AgentInfo {
@@ -20,13 +37,24 @@ export interface AgentInfo {
   description: string;
 }
 
-export interface StepInfo {
-  stepId: string;
-  index: number;
-  agentKey: string;
-  agentDisplayName: string;
-  action: string;
-  status: string;
+export interface ToolboxRunEvent {
+  type: string;
+  stepId?: string;
+  content?: string;
+  runStatus?: string;
+  errorMessage?: string;
+  seq: number;
+  timestamp: string;
+}
+
+// Legacy types for backward compatibility
+export interface IntentResult {
+  primaryIntent: string;
+  secondaryIntents: string[];
+  entities: Record<string, unknown>;
+  confidence: number;
+  reasoning?: string;
+  suggestedAgents: string[];
 }
 
 export interface ToolboxArtifact {
@@ -72,65 +100,102 @@ export interface ToolboxRunStep {
   completedAt?: string;
 }
 
-export interface ChatResponse {
-  runId: string;
-  intent: IntentResult;
-  plannedAgents: AgentInfo[];
-  steps: StepInfo[];
-  status: string;
-  sseUrl: string;
-}
-
-export interface ToolboxRunEvent {
-  type: string;
-  stepId?: string;
-  stepIndex?: number;
-  agentKey?: string;
-  content?: string;
-  artifact?: ToolboxArtifact;
-  runStatus?: string;
-  stepStatus?: string;
-  errorMessage?: string;
-  seq: number;
-  timestamp: string;
-}
-
-// ============ API Functions ============
+// ============ Toolbox Items API ============
 
 /**
- * 发送消息到百宝箱（意图识别 + 自动执行）
+ * 获取工具列表
  */
-export async function sendToolboxMessage(
-  message: string,
-  options?: { autoExecute?: boolean; sessionId?: string }
-): Promise<ApiResponse<ChatResponse>> {
-  return await apiRequest<ChatResponse>(
-    api.aiToolbox.chat(),
+export async function listToolboxItems(
+  params?: { category?: string; keyword?: string }
+): Promise<ApiResponse<{ items: ToolboxItem[] }>> {
+  const query = new URLSearchParams();
+  if (params?.category) query.set('category', params.category);
+  if (params?.keyword) query.set('keyword', params.keyword);
+  const queryStr = query.toString();
+  return await apiRequest(
+    `${api.aiToolbox.items()}${queryStr ? `?${queryStr}` : ''}`,
+    { method: 'GET' }
+  );
+}
+
+/**
+ * 获取工具详情
+ */
+export async function getToolboxItem(id: string): Promise<ApiResponse<ToolboxItem>> {
+  return await apiRequest(
+    api.aiToolbox.item(id),
+    { method: 'GET' }
+  );
+}
+
+/**
+ * 创建自定义工具
+ */
+export async function createToolboxItem(
+  item: Partial<ToolboxItem>
+): Promise<ApiResponse<ToolboxItem>> {
+  return await apiRequest(
+    api.aiToolbox.items(),
     {
       method: 'POST',
-      body: {
-        message,
-        sessionId: options?.sessionId,
-        options: {
-          autoExecute: options?.autoExecute ?? true,
-        },
-      },
+      body: item,
     }
   );
 }
 
 /**
- * 仅进行意图识别
+ * 更新工具
  */
-export async function analyzeIntent(message: string): Promise<ApiResponse<IntentResult>> {
-  return await apiRequest<IntentResult>(
-    api.aiToolbox.analyze(),
+export async function updateToolboxItem(
+  id: string,
+  item: Partial<ToolboxItem>
+): Promise<ApiResponse<ToolboxItem>> {
+  return await apiRequest(
+    api.aiToolbox.item(id),
     {
-      method: 'POST',
-      body: { message },
+      method: 'PUT',
+      body: item,
     }
   );
 }
+
+/**
+ * 删除工具
+ */
+export async function deleteToolboxItem(id: string): Promise<ApiResponse<void>> {
+  return await apiRequest(
+    api.aiToolbox.item(id),
+    { method: 'DELETE' }
+  );
+}
+
+/**
+ * 运行工具
+ */
+export async function runToolboxItem(
+  itemId: string,
+  input: string
+): Promise<ApiResponse<ToolboxItemRun>> {
+  return await apiRequest(
+    api.aiToolbox.runItem(itemId),
+    {
+      method: 'POST',
+      body: { input },
+    }
+  );
+}
+
+/**
+ * 获取可用的 Agent 列表
+ */
+export async function listToolboxAgents(): Promise<ApiResponse<{ agents: AgentInfo[] }>> {
+  return await apiRequest(
+    api.aiToolbox.agents(),
+    { method: 'GET' }
+  );
+}
+
+// ============ Legacy API Functions (for backward compatibility) ============
 
 /**
  * 获取运行记录详情
@@ -152,26 +217,6 @@ export async function listToolboxRuns(
   return await apiRequest(
     `${api.aiToolbox.runs()}?page=${page}&pageSize=${pageSize}`,
     { method: 'GET' }
-  );
-}
-
-/**
- * 获取可用的 Agent 列表
- */
-export async function listToolboxAgents(): Promise<ApiResponse<{ agents: AgentInfo[] }>> {
-  return await apiRequest(
-    api.aiToolbox.agents(),
-    { method: 'GET' }
-  );
-}
-
-/**
- * 手动触发执行
- */
-export async function executeToolboxRun(runId: string): Promise<ApiResponse<{ message: string }>> {
-  return await apiRequest(
-    api.aiToolbox.execute(runId),
-    { method: 'POST' }
   );
 }
 

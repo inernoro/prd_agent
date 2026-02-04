@@ -1,273 +1,392 @@
 import { create } from 'zustand';
 import {
-  sendToolboxMessage,
-  listToolboxRuns,
   listToolboxAgents,
+  listToolboxItems,
+  createToolboxItem,
+  updateToolboxItem,
+  deleteToolboxItem,
+  runToolboxItem,
   subscribeToolboxRunEvents,
 } from '@/services';
 import type {
-  ToolboxRun,
-  ToolboxRunStep,
-  ToolboxArtifact,
-  AgentInfo,
-  IntentResult,
+  ToolboxItem,
+  ToolboxItemRun,
   ToolboxRunEvent,
+  AgentInfo,
 } from '@/services';
 
-export type ToolboxStatus = 'idle' | 'analyzing' | 'running' | 'completed' | 'failed';
+export type ToolboxView = 'grid' | 'detail' | 'create' | 'edit' | 'running';
+export type ToolboxCategory = 'all' | 'builtin' | 'custom' | 'favorite';
 
 interface ToolboxState {
-  // Current run state
-  currentRunId: string | null;
-  currentRun: ToolboxRun | null;
-  status: ToolboxStatus;
-  intent: IntentResult | null;
-  steps: ToolboxRunStep[];
-  artifacts: ToolboxArtifact[];
-  finalResponse: string | null;
-  errorMessage: string | null;
-  streamingContent: Record<string, string>; // stepId -> accumulated content
+  // View state
+  view: ToolboxView;
+  category: ToolboxCategory;
+  searchQuery: string;
 
-  // History
-  runHistory: ToolboxRun[];
-  historyLoading: boolean;
+  // Items
+  items: ToolboxItem[];
+  itemsLoading: boolean;
+  selectedItem: ToolboxItem | null;
 
-  // Agent registry
-  agents: AgentInfo[];
-  agentsLoaded: boolean;
+  // Built-in agents
+  builtinAgents: AgentInfo[];
 
-  // SSE subscription
+  // Running state
+  currentRun: ToolboxItemRun | null;
+  runStatus: 'idle' | 'running' | 'completed' | 'failed';
+  runOutput: string;
+  runError: string | null;
   unsubscribe: (() => void) | null;
 
+  // Create/Edit form
+  editingItem: Partial<ToolboxItem> | null;
+
   // Actions
-  sendMessage: (message: string) => Promise<void>;
-  loadHistory: (page?: number, pageSize?: number) => Promise<void>;
-  loadAgents: () => Promise<void>;
-  selectHistoryRun: (run: ToolboxRun) => void;
+  loadItems: () => Promise<void>;
+  loadBuiltinAgents: () => Promise<void>;
+  selectItem: (item: ToolboxItem) => void;
+  setView: (view: ToolboxView) => void;
+  setCategory: (category: ToolboxCategory) => void;
+  setSearchQuery: (query: string) => void;
+  startCreate: () => void;
+  startEdit: (item: ToolboxItem) => void;
+  saveItem: (item: Partial<ToolboxItem>) => Promise<boolean>;
+  deleteItem: (id: string) => Promise<boolean>;
+  runItem: (itemId: string, input: string) => Promise<void>;
+  backToGrid: () => void;
   reset: () => void;
 
-  // Internal actions
-  _handleEvent: (event: ToolboxRunEvent & { eventType: string }) => void;
-  _startSubscription: (runId: string) => void;
+  // Internal
+  _handleRunEvent: (event: ToolboxRunEvent & { eventType: string }) => void;
   _stopSubscription: () => void;
 }
 
+// 内置工具定义
+const BUILTIN_TOOLS: ToolboxItem[] = [
+  {
+    id: 'builtin-prd-agent',
+    name: 'PRD 分析师',
+    description: '智能解读PRD文档，识别需求缺口，回答产品问题',
+    icon: '📋',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'prd-agent',
+    tags: ['PRD', '需求分析', '产品'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'builtin-visual-agent',
+    name: '视觉设计师',
+    description: '高级视觉创作，支持文生图、图生图、多图组合',
+    icon: '🎨',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'visual-agent',
+    tags: ['图片生成', '设计', 'AI绘画'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'builtin-literary-agent',
+    name: '文学创作者',
+    description: '文学创作与配图，支持写作、润色、生成插图',
+    icon: '✍️',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'literary-agent',
+    tags: ['写作', '文案', '创作'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'builtin-defect-agent',
+    name: '缺陷管理员',
+    description: '缺陷提交与跟踪，支持信息提取、分类、生成报告',
+    icon: '🐛',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'defect-agent',
+    tags: ['Bug', '缺陷', '测试'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'builtin-code-reviewer',
+    name: '代码审查员',
+    description: '代码质量审查，发现潜在问题，提供改进建议',
+    icon: '🔍',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'code-reviewer',
+    tags: ['代码', '审查', '质量'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'builtin-translator',
+    name: '多语言翻译',
+    description: '专业级多语言翻译，支持中英日韩等主流语言',
+    icon: '🌐',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'translator',
+    tags: ['翻译', '多语言', '国际化'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'builtin-summarizer',
+    name: '内容摘要师',
+    description: '长文本智能摘要，快速提取关键信息和要点',
+    icon: '📝',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'summarizer',
+    tags: ['摘要', '总结', '阅读'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'builtin-data-analyst',
+    name: '数据分析师',
+    description: '数据分析与可视化建议，帮助理解数据洞察',
+    icon: '📊',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'data-analyst',
+    tags: ['数据', '分析', '图表'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
+];
+
 export const useToolboxStore = create<ToolboxState>((set, get) => ({
   // Initial state
-  currentRunId: null,
+  view: 'grid',
+  category: 'all',
+  searchQuery: '',
+
+  items: [],
+  itemsLoading: false,
+  selectedItem: null,
+
+  builtinAgents: [],
+
   currentRun: null,
-  status: 'idle',
-  intent: null,
-  steps: [],
-  artifacts: [],
-  finalResponse: null,
-  errorMessage: null,
-  streamingContent: {},
-
-  runHistory: [],
-  historyLoading: false,
-
-  agents: [],
-  agentsLoaded: false,
-
+  runStatus: 'idle',
+  runOutput: '',
+  runError: null,
   unsubscribe: null,
 
-  // Send message and start execution
-  sendMessage: async (message: string) => {
-    // Stop any existing subscription
-    get()._stopSubscription();
+  editingItem: null,
 
-    // Reset state
-    set({
-      status: 'analyzing',
-      intent: null,
-      steps: [],
-      artifacts: [],
-      finalResponse: null,
-      errorMessage: null,
-      streamingContent: {},
-      currentRunId: null,
-      currentRun: null,
-    });
-
+  // Load all items (builtin + custom)
+  loadItems: async () => {
+    set({ itemsLoading: true });
     try {
-      const res = await sendToolboxMessage(message, { autoExecute: true });
-
-      if (!res.success || !res.data) {
-        set({
-          status: 'failed',
-          errorMessage: res.error?.message || '发送失败',
-        });
-        return;
-      }
-
-      const { runId, intent, steps } = res.data;
-
-      // Map steps with agent display names
-      const stepsWithNames: ToolboxRunStep[] = steps.map((s) => ({
-        stepId: s.stepId,
-        index: s.index,
-        agentKey: s.agentKey,
-        agentDisplayName: s.agentDisplayName,
-        action: s.action,
-        status: s.status,
-        artifactIds: [],
-      }));
-
-      set({
-        currentRunId: runId,
-        intent,
-        steps: stepsWithNames,
-        status: 'running',
-      });
-
-      // Start SSE subscription
-      get()._startSubscription(runId);
-    } catch (e) {
-      set({
-        status: 'failed',
-        errorMessage: String(e),
-      });
-    }
-  },
-
-  // Load history
-  loadHistory: async (page = 1, pageSize = 20) => {
-    set({ historyLoading: true });
-    try {
-      const res = await listToolboxRuns(page, pageSize);
-      if (res.success && res.data) {
-        set({ runHistory: res.data.items });
-      }
+      const res = await listToolboxItems();
+      const customItems = res.success && res.data ? res.data.items : [];
+      // 合并内置工具和自定义工具
+      set({ items: [...BUILTIN_TOOLS, ...customItems] });
+    } catch {
+      // 即使API失败，也显示内置工具
+      set({ items: BUILTIN_TOOLS });
     } finally {
-      set({ historyLoading: false });
+      set({ itemsLoading: false });
     }
   },
 
-  // Load available agents
-  loadAgents: async () => {
-    if (get().agentsLoaded) return;
+  // Load builtin agents info
+  loadBuiltinAgents: async () => {
     try {
       const res = await listToolboxAgents();
       if (res.success && res.data) {
-        set({ agents: res.data.agents, agentsLoaded: true });
+        set({ builtinAgents: res.data.agents });
       }
     } catch {
       // Silent fail
     }
   },
 
-  // Select a history run to view
-  selectHistoryRun: (run: ToolboxRun) => {
-    get()._stopSubscription();
+  // Select an item to view/use
+  selectItem: (item: ToolboxItem) => {
     set({
-      currentRunId: run.id,
-      currentRun: run,
-      intent: run.intent || null,
-      steps: run.steps ?? [],
-      artifacts: run.artifacts ?? [],
-      finalResponse: run.finalResponse || null,
-      errorMessage: run.errorMessage || null,
-      status: run.status === 'Completed' ? 'completed' : run.status === 'Failed' ? 'failed' : 'idle',
-      streamingContent: {},
+      selectedItem: item,
+      view: 'detail',
+      runStatus: 'idle',
+      runOutput: '',
+      runError: null,
     });
   },
 
-  // Reset to initial state
+  // Set view
+  setView: (view: ToolboxView) => {
+    set({ view });
+  },
+
+  // Set category filter
+  setCategory: (category: ToolboxCategory) => {
+    set({ category });
+  },
+
+  // Set search query
+  setSearchQuery: (query: string) => {
+    set({ searchQuery: query });
+  },
+
+  // Start creating a new item
+  startCreate: () => {
+    set({
+      view: 'create',
+      editingItem: {
+        name: '',
+        description: '',
+        icon: '🤖',
+        type: 'custom',
+        category: 'custom',
+        tags: [],
+        prompt: '',
+      },
+    });
+  },
+
+  // Start editing an item
+  startEdit: (item: ToolboxItem) => {
+    set({
+      view: 'edit',
+      editingItem: { ...item },
+    });
+  },
+
+  // Save item (create or update)
+  saveItem: async (item: Partial<ToolboxItem>) => {
+    try {
+      if (item.id) {
+        const res = await updateToolboxItem(item.id, item);
+        if (!res.success) return false;
+      } else {
+        const res = await createToolboxItem(item);
+        if (!res.success) return false;
+      }
+      await get().loadItems();
+      set({ view: 'grid', editingItem: null });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  // Delete item
+  deleteItem: async (id: string) => {
+    try {
+      const res = await deleteToolboxItem(id);
+      if (!res.success) return false;
+      await get().loadItems();
+      set({ view: 'grid', selectedItem: null });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  // Run an item
+  runItem: async (itemId: string, input: string) => {
+    get()._stopSubscription();
+
+    set({
+      view: 'running',
+      runStatus: 'running',
+      runOutput: '',
+      runError: null,
+    });
+
+    try {
+      const res = await runToolboxItem(itemId, input);
+      if (!res.success || !res.data) {
+        set({
+          runStatus: 'failed',
+          runError: res.error?.message || '执行失败',
+        });
+        return;
+      }
+
+      const { runId } = res.data;
+      set({ currentRun: res.data });
+
+      // Subscribe to events
+      const unsub = subscribeToolboxRunEvents(runId, {
+        onEvent: get()._handleRunEvent,
+        onError: (error) => {
+          set({ runStatus: 'failed', runError: error.message });
+        },
+        onDone: () => {
+          // Normal completion
+        },
+      });
+
+      set({ unsubscribe: unsub });
+    } catch (e) {
+      set({
+        runStatus: 'failed',
+        runError: String(e),
+      });
+    }
+  },
+
+  // Back to grid view
+  backToGrid: () => {
+    get()._stopSubscription();
+    set({
+      view: 'grid',
+      selectedItem: null,
+      editingItem: null,
+      runStatus: 'idle',
+      runOutput: '',
+      runError: null,
+    });
+  },
+
+  // Reset state
   reset: () => {
     get()._stopSubscription();
     set({
-      currentRunId: null,
+      view: 'grid',
+      selectedItem: null,
+      editingItem: null,
       currentRun: null,
-      status: 'idle',
-      intent: null,
-      steps: [],
-      artifacts: [],
-      finalResponse: null,
-      errorMessage: null,
-      streamingContent: {},
+      runStatus: 'idle',
+      runOutput: '',
+      runError: null,
     });
   },
 
-  // Handle SSE event
-  _handleEvent: (event: ToolboxRunEvent & { eventType: string }) => {
+  // Handle run event
+  _handleRunEvent: (event) => {
     const { eventType } = event;
 
     switch (eventType) {
-      case 'run_started':
-        set({ status: 'running' });
-        break;
-
-      case 'step_started':
-        if (event.stepId) {
-          set((state) => ({
-            steps: state.steps.map((s) =>
-              s.stepId === event.stepId ? { ...s, status: 'Running' } : s
-            ),
-          }));
-        }
-        break;
-
       case 'step_progress':
-        if (event.stepId && event.content) {
+        if (event.content) {
           set((state) => ({
-            streamingContent: {
-              ...state.streamingContent,
-              [event.stepId!]: (state.streamingContent[event.stepId!] || '') + event.content,
-            },
-          }));
-        }
-        break;
-
-      case 'step_artifact':
-        if (event.artifact) {
-          set((state) => ({
-            artifacts: [...state.artifacts, event.artifact!],
-            steps: state.steps.map((s) =>
-              s.stepId === event.stepId
-                ? { ...s, artifactIds: [...s.artifactIds, event.artifact!.id] }
-                : s
-            ),
-          }));
-        }
-        break;
-
-      case 'step_completed':
-        if (event.stepId) {
-          set((state) => ({
-            steps: state.steps.map((s) =>
-              s.stepId === event.stepId
-                ? { ...s, status: 'Completed', output: event.content || state.streamingContent[event.stepId!] }
-                : s
-            ),
-          }));
-        }
-        break;
-
-      case 'step_failed':
-        if (event.stepId) {
-          set((state) => ({
-            steps: state.steps.map((s) =>
-              s.stepId === event.stepId
-                ? { ...s, status: 'Failed', errorMessage: event.errorMessage }
-                : s
-            ),
+            runOutput: state.runOutput + event.content,
           }));
         }
         break;
 
       case 'run_completed':
         set({
-          status: 'completed',
-          finalResponse: event.content || null,
+          runStatus: 'completed',
+          runOutput: event.content || get().runOutput,
         });
         get()._stopSubscription();
         break;
 
       case 'run_failed':
         set({
-          status: 'failed',
-          errorMessage: event.errorMessage || '执行失败',
+          runStatus: 'failed',
+          runError: event.errorMessage || '执行失败',
         });
         get()._stopSubscription();
         break;
@@ -278,28 +397,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
     }
   },
 
-  // Start SSE subscription
-  _startSubscription: (runId: string) => {
-    const { _handleEvent } = get();
-
-    const unsubscribe = subscribeToolboxRunEvents(runId, {
-      onEvent: _handleEvent,
-      onError: (error) => {
-        console.error('SSE error:', error);
-        set({
-          status: 'failed',
-          errorMessage: '连接中断',
-        });
-      },
-      onDone: () => {
-        // Connection closed normally
-      },
-    });
-
-    set({ unsubscribe });
-  },
-
-  // Stop SSE subscription
+  // Stop subscription
   _stopSubscription: () => {
     const { unsubscribe } = get();
     if (unsubscribe) {
