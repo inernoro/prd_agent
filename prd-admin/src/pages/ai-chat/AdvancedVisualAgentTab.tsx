@@ -3437,26 +3437,51 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const inline = initialPrompt.inlineImage;
     const promptText = initialPrompt.text;
 
-    // 如果有内联图片，先添加到 canvas
+    // 如果有内联图片，处理 canvas 和 chip
     if (inline?.src) {
-      const inlineKey = `inline_${Date.now()}`;
-      // 为新图片分配 refId
-      const maxExisting = canvasRef.current.reduce((acc, x) => (typeof x.refId === 'number' && x.refId > acc ? x.refId : acc), 0);
-      const newRefId = Math.max(nextRefId, maxExisting + 1);
-      setNextRefId(newRefId + 1);
+      // 检查图片是否已存在于 canvas（通过 src URL 比较）
+      // 这种情况发生在：首页上传图片 → 创建 asset → workspace 加载时 asset 已在 canvas 中
+      const existingItem = canvasRef.current.find((item) => item.src === inline.src);
 
-      const inlineCanvasItem: CanvasImageItem = {
-        key: inlineKey,
-        createdAt: Date.now(),
-        prompt: inline.name || '参考图',
-        src: inline.src,
-        status: 'done',
-        kind: 'image',
-        refId: newRefId,
-      };
-      setCanvas((prev) => [...prev, inlineCanvasItem]);
-      // 手动同步选中
-      setSelectedKeys([inlineKey]);
+      let targetKey: string;
+      let targetRefId: number;
+
+      if (existingItem) {
+        // 图片已存在，使用现有的 key 和 refId
+        targetKey = existingItem.key;
+        targetRefId = existingItem.refId ?? 1;
+        // 确保 refId 存在（老数据迁移场景）
+        if (!existingItem.refId) {
+          const maxExisting = canvasRef.current.reduce((acc, x) => (typeof x.refId === 'number' && x.refId > acc ? x.refId : acc), 0);
+          targetRefId = Math.max(nextRefId, maxExisting + 1);
+          setNextRefId(targetRefId + 1);
+          setCanvas((prev) =>
+            prev.map((item) =>
+              item.key === targetKey ? { ...item, refId: targetRefId } : item
+            )
+          );
+        }
+        // 选中已存在的图片
+        setSelectedKeys([targetKey]);
+      } else {
+        // 图片不存在，创建新的 canvas item
+        targetKey = `inline_${Date.now()}`;
+        const maxExisting = canvasRef.current.reduce((acc, x) => (typeof x.refId === 'number' && x.refId > acc ? x.refId : acc), 0);
+        targetRefId = Math.max(nextRefId, maxExisting + 1);
+        setNextRefId(targetRefId + 1);
+
+        const inlineCanvasItem: CanvasImageItem = {
+          key: targetKey,
+          createdAt: Date.now(),
+          prompt: inline.name || '参考图',
+          src: inline.src,
+          status: 'done',
+          kind: 'image',
+          refId: targetRefId,
+        };
+        setCanvas((prev) => [...prev, inlineCanvasItem]);
+        setSelectedKeys([targetKey]);
+      }
 
       // 等待 richComposerRef 准备好后插入 chip 和文字
       const tryInsertChipAndText = (retries = 0) => {
@@ -3464,7 +3489,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           richComposerRef.current.clearPending();
           // 插入图片 chip（蓝色就绪状态）
           richComposerRef.current.insertImageChip(
-            { key: inlineKey, refId: newRefId, src: inline.src, label: inline.name || `img${newRefId}` },
+            { key: targetKey, refId: targetRefId, src: inline.src, label: inline.name || `img${targetRefId}` },
             { ready: true, preserveFocus: false }
           );
           // 插入提示词文字
