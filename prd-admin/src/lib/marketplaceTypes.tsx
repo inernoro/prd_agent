@@ -237,7 +237,6 @@ const WatermarkPreviewRenderer: React.FC<{ item: MarketplaceWatermark }> = ({ it
         backgroundEnabled: item.backgroundEnabled,
         roundedBackgroundEnabled: item.roundedBackgroundEnabled,
       }}
-      mode="compact"
     />
     {/* 右侧：预览图 */}
     <div

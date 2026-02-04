@@ -811,7 +811,6 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             backgroundEnabled: item.backgroundEnabled,
                             roundedBackgroundEnabled: item.roundedBackgroundEnabled,
                           }}
-                          mode="full"
                         />
                         {/* 右侧：预览图（水印是透明PNG，使用象棋格背景） */}
                         <div
