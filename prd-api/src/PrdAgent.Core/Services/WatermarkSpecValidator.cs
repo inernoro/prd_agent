@@ -41,8 +41,12 @@ public static class WatermarkSpecValidator
     public static (bool ok, string? message) Validate(WatermarkConfig config, IReadOnlyCollection<string> allowedFontKeys)
     {
         if (config == null) return (false, "config 不能为空");
-        if (string.IsNullOrWhiteSpace(config.Text)) return (false, "text 不能为空");
-        if (config.Text.Length > MaxTextChars) return (false, $"text 过长（最多 {MaxTextChars} 字符）");
+
+        // 文字和图标至少要有一个
+        var hasText = !string.IsNullOrWhiteSpace(config.Text);
+        var hasIcon = config.IconEnabled && !string.IsNullOrWhiteSpace(config.IconImageRef);
+        if (!hasText && !hasIcon) return (false, "文字和图标至少要有一个");
+        if (hasText && config.Text.Length > MaxTextChars) return (false, $"text 过长（最多 {MaxTextChars} 字符）");
         if (string.IsNullOrWhiteSpace(config.FontKey)) return (false, "fontKey 不能为空");
         if (allowedFontKeys.Count > 0 && !allowedFontKeys.Contains(config.FontKey)) return (false, "fontKey 非法");
         if (!double.IsFinite(config.FontSizePx) || config.FontSizePx < MinFontSizePx || config.FontSizePx > MaxFontSizePx)
