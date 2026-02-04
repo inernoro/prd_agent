@@ -1,11 +1,10 @@
 /**
- * Agent Switcher 浮层组件 v4.0
+ * Agent Switcher 浮层组件 v5.0
  *
- * Raycast 风格设计：
- * - 深色渐变背景
- * - 毛玻璃面板
- * - 卡片独立渐变
- * - 流畅动效
+ * Apple 极简风格：
+ * - 统一深色卡片，图标为唯一颜色
+ * - 精致微妙的光效
+ * - 克制的设计语言
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -25,14 +24,6 @@ const ICON_URLS: Record<string, string> = {
   'defect-agent': 'https://i.pa.759800.com/icon/backups/agent/defect-agent.png',
 };
 
-/** Agent 卡片渐变配置 */
-const CARD_GRADIENTS: Record<string, { from: string; to: string }> = {
-  'prd-agent': { from: '#1e3a5f', to: '#0a1628' },
-  'visual-agent': { from: '#3d1f5c', to: '#150a24' },
-  'literary-agent': { from: '#1a4a3a', to: '#0a1f18' },
-  'defect-agent': { from: '#5c3d1f', to: '#241508' },
-};
-
 /** Agent 卡片组件 */
 function AgentCard({
   agent,
@@ -50,7 +41,6 @@ function AgentCard({
   delay: number;
 }) {
   const iconUrl = ICON_URLS[agent.key];
-  const gradient = CARD_GRADIENTS[agent.key];
 
   return (
     <button
@@ -59,39 +49,42 @@ function AgentCard({
       onMouseEnter={onMouseEnter}
       className="group relative outline-none focus:outline-none"
       style={{
-        animation: `cardSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) ${delay}ms both`,
+        animation: `cardFloat 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) ${delay}ms both`,
       }}
     >
-      {/* 选中光晕 */}
-      <div
-        className="absolute -inset-[2px] rounded-[20px] transition-opacity duration-300"
-        style={{
-          opacity: isSelected ? 1 : 0,
-          background: `linear-gradient(135deg, ${agent.color.text}80, ${agent.color.text}20)`,
-          filter: 'blur(1px)',
-        }}
-      />
-
       {/* 主卡片 */}
       <div
-        className="relative w-[120px] h-[130px] rounded-[18px] p-4 flex flex-col items-center justify-center gap-3 transition-all duration-200"
+        className="relative w-[140px] h-[160px] rounded-[24px] flex flex-col items-center justify-center gap-4 transition-all duration-300 ease-out"
         style={{
-          background: `linear-gradient(145deg, ${gradient.from} 0%, ${gradient.to} 100%)`,
+          background: isSelected
+            ? 'rgba(255, 255, 255, 0.08)'
+            : 'rgba(255, 255, 255, 0.03)',
           border: isSelected
-            ? `1.5px solid ${agent.color.text}90`
-            : '1.5px solid rgba(255, 255, 255, 0.08)',
+            ? '1px solid rgba(255, 255, 255, 0.15)'
+            : '1px solid rgba(255, 255, 255, 0.06)',
           boxShadow: isSelected
-            ? `0 8px 32px -4px ${agent.color.text}40, inset 0 1px 0 rgba(255,255,255,0.1)`
-            : '0 4px 20px -4px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
-          transform: isSelected ? 'translateY(-2px)' : 'translateY(0)',
+            ? `0 0 0 1px rgba(255,255,255,0.1), 0 20px 40px -10px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1)`
+            : '0 4px 20px -5px rgba(0,0,0,0.3)',
+          transform: isSelected ? 'translateY(-4px) scale(1.02)' : 'translateY(0) scale(1)',
         }}
       >
-        {/* 图标 */}
+        {/* 选中时的顶部光条 */}
+        {isSelected && (
+          <div
+            className="absolute top-0 left-1/2 -translate-x-1/2 w-[60%] h-[2px] rounded-full"
+            style={{
+              background: `linear-gradient(90deg, transparent, ${agent.color.text}, transparent)`,
+              boxShadow: `0 0 20px 2px ${agent.color.text}60`,
+            }}
+          />
+        )}
+
+        {/* 图标容器 */}
         <div
-          className="w-[56px] h-[56px] transition-transform duration-200"
+          className="relative w-[72px] h-[72px] transition-all duration-300 ease-out"
           style={{
-            transform: isSelected ? 'scale(1.05)' : 'scale(1)',
-            filter: isSelected ? `drop-shadow(0 4px 12px ${agent.color.text}60)` : 'none',
+            transform: isSelected ? 'scale(1.1)' : 'scale(1)',
+            filter: isSelected ? `drop-shadow(0 8px 24px ${agent.color.text}50)` : 'none',
           }}
         >
           <img
@@ -104,20 +97,21 @@ function AgentCard({
 
         {/* 名称 */}
         <span
-          className="text-[13px] font-medium transition-colors duration-200"
+          className="text-[14px] font-medium tracking-wide transition-all duration-300"
           style={{
-            color: isSelected ? '#fff' : 'rgba(255,255,255,0.7)',
+            color: isSelected ? '#fff' : 'rgba(255,255,255,0.5)',
           }}
         >
           {agent.name}
         </span>
 
-        {/* 快捷键 */}
+        {/* 快捷键角标 */}
         <div
-          className="absolute top-2 right-2 w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-semibold"
+          className="absolute top-3 right-3 w-6 h-6 rounded-lg flex items-center justify-center text-[11px] font-semibold transition-all duration-300"
           style={{
-            background: 'rgba(255, 255, 255, 0.1)',
-            color: isSelected ? agent.color.text : 'rgba(255,255,255,0.4)',
+            background: isSelected ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)',
+            color: isSelected ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
           }}
         >
           {index + 1}
@@ -221,69 +215,112 @@ export function AgentSwitcher() {
       className="fixed inset-0 z-[200] flex items-center justify-center"
       onClick={handleBackdropClick}
       style={{
-        animation: isClosing ? 'fadeOut 0.2s ease-out both' : 'fadeIn 0.25s ease-out both',
+        animation: isClosing ? 'fadeOut 0.2s ease-out both' : 'fadeIn 0.3s ease-out both',
       }}
     >
-      {/* 深色渐变背景 */}
+      {/* 纯净深色背景 */}
       <div
         className="absolute inset-0"
         style={{
-          background: 'linear-gradient(180deg, rgba(8, 12, 24, 0.95) 0%, rgba(4, 6, 14, 0.98) 100%)',
+          background: 'rgba(0, 0, 0, 0.85)',
+          backdropFilter: 'blur(30px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(30px) saturate(180%)',
         }}
       />
 
-      {/* 微妙的光晕 */}
+      {/* 中央光晕 */}
       <div
-        className="absolute inset-0 pointer-events-none"
+        className="absolute pointer-events-none"
         style={{
-          background: 'radial-gradient(ellipse 50% 30% at 50% 30%, rgba(100, 140, 200, 0.08) 0%, transparent 70%)',
+          width: '800px',
+          height: '400px',
+          background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.03) 0%, transparent 70%)',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
         }}
       />
 
-      {/* 毛玻璃面板 */}
+      {/* 内容区域 - 无面板边框，极简 */}
       <div
-        className="relative rounded-[24px] overflow-hidden"
+        className="relative"
         style={{
-          animation: isClosing ? 'panelOut 0.2s ease-in both' : 'panelIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both',
-          background: 'linear-gradient(180deg, rgba(30, 35, 50, 0.6) 0%, rgba(20, 24, 36, 0.7) 100%)',
-          backdropFilter: 'blur(40px) saturate(150%)',
-          WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          boxShadow: '0 32px 64px -12px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+          animation: isClosing ? 'contentOut 0.2s ease-in both' : 'contentIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both',
         }}
         role="dialog"
         aria-modal="true"
       >
-        <div className="px-8 pt-8 pb-6">
-          {/* 标题 */}
-          <div className="text-center mb-6">
-            <h2
-              className="text-[20px] font-semibold tracking-tight"
-              style={{ color: 'rgba(255, 255, 255, 0.95)' }}
-            >
-              选择 Agent
-            </h2>
-            <p
-              className="mt-2 text-[12px]"
-              style={{ color: 'rgba(255, 255, 255, 0.4)' }}
-            >
-              按 1-4 快速跳转 · ESC 关闭
-            </p>
-          </div>
+        {/* 标题 */}
+        <div className="text-center mb-10">
+          <h2
+            className="text-[28px] font-light tracking-wide"
+            style={{ color: 'rgba(255, 255, 255, 0.9)' }}
+          >
+            选择 Agent
+          </h2>
+          <p
+            className="mt-3 text-[13px] font-light"
+            style={{ color: 'rgba(255, 255, 255, 0.35)' }}
+          >
+            按 1-4 快速切换 · ESC 关闭
+          </p>
+        </div>
 
-          {/* Agent 卡片网格 */}
-          <div className="flex gap-3 justify-center">
-            {AGENT_DEFINITIONS.map((agent, index) => (
-              <AgentCard
-                key={agent.key}
-                agent={agent}
-                index={index}
-                isSelected={selectedIndex === index}
-                onClick={() => navigateToAgent(agent)}
-                onMouseEnter={() => setSelectedIndex(index)}
-                delay={isClosing ? 0 : 80 + index * 50}
-              />
-            ))}
+        {/* Agent 卡片 */}
+        <div className="flex gap-5 justify-center">
+          {AGENT_DEFINITIONS.map((agent, index) => (
+            <AgentCard
+              key={agent.key}
+              agent={agent}
+              index={index}
+              isSelected={selectedIndex === index}
+              onClick={() => navigateToAgent(agent)}
+              onMouseEnter={() => setSelectedIndex(index)}
+              delay={isClosing ? 0 : 100 + index * 60}
+            />
+          ))}
+        </div>
+
+        {/* 底部提示 */}
+        <div className="mt-10 flex justify-center gap-6">
+          <div
+            className="flex items-center gap-2 text-[12px]"
+            style={{ color: 'rgba(255, 255, 255, 0.3)' }}
+          >
+            <span
+              className="px-2 py-1 rounded-md"
+              style={{
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+              }}
+            >
+              ←
+            </span>
+            <span
+              className="px-2 py-1 rounded-md"
+              style={{
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+              }}
+            >
+              →
+            </span>
+            <span className="ml-1">导航</span>
+          </div>
+          <div
+            className="flex items-center gap-2 text-[12px]"
+            style={{ color: 'rgba(255, 255, 255, 0.3)' }}
+          >
+            <span
+              className="px-2 py-1 rounded-md"
+              style={{
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+              }}
+            >
+              ↵
+            </span>
+            <span className="ml-1">确认</span>
           </div>
         </div>
       </div>
@@ -298,30 +335,30 @@ export function AgentSwitcher() {
           from { opacity: 1; }
           to { opacity: 0; }
         }
-        @keyframes panelIn {
+        @keyframes contentIn {
           from {
             opacity: 0;
-            transform: scale(0.95) translateY(10px);
+            transform: scale(0.96);
           }
           to {
             opacity: 1;
-            transform: scale(1) translateY(0);
+            transform: scale(1);
           }
         }
-        @keyframes panelOut {
+        @keyframes contentOut {
           from {
             opacity: 1;
-            transform: scale(1) translateY(0);
+            transform: scale(1);
           }
           to {
             opacity: 0;
-            transform: scale(0.98) translateY(-5px);
+            transform: scale(0.98);
           }
         }
-        @keyframes cardSlideIn {
+        @keyframes cardFloat {
           from {
             opacity: 0;
-            transform: translateY(12px);
+            transform: translateY(20px);
           }
           to {
             opacity: 1;
