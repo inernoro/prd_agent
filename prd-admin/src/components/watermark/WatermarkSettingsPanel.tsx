@@ -1287,7 +1287,7 @@ function WatermarkEditor(props: {
                 )}
               </div>
 
-              <SectionLabel label="装饰" />
+              <SectionLabel label="图标" />
               <div className="flex flex-col gap-3">
                 {/* 图标 + 位置按钮 - 一行排列 */}
                 <div className="flex items-center gap-2">
@@ -1383,126 +1383,122 @@ function WatermarkEditor(props: {
                     />
                   </div>
                 )}
+              </div>
 
-                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
-                  {/* 填充 + 背景色 */}
-                  <div className="flex items-center gap-3">
-                    <InlineLabel label="填充" />
-                    <button
-                      type="button"
-                      className="inline-flex items-center justify-center"
-                      style={{
-                        color: config.backgroundEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
-                      }}
-                      title="填充背景"
-                      onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
-                    >
-                      <PaintBucket size={20} />
-                    </button>
-                    {config.backgroundEnabled && (
-                      <label
-                        className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
-                        style={{
-                          background: config.backgroundColor || '#000000',
-                          border: '2px solid rgba(255,255,255,0.3)',
-                          color: 'rgba(255,255,255,0.9)',
-                        }}
-                        title="背景颜色"
-                      >
-                        <Droplet size={12} />
-                        <input
-                          type="color"
-                          value={(config.backgroundColor || '#000000') as string}
-                          className="absolute inset-0 opacity-0 cursor-pointer"
-                          onChange={(e) => updateConfig({ backgroundColor: e.target.value })}
-                        />
-                      </label>
-                    )}
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
-                  {/* 边框 + 边框色 */}
-                  <div className="flex items-center gap-3">
-                    <InlineLabel label="边框" />
-                    <button
-                      type="button"
-                      className="h-6 w-8 rounded-[4px] inline-flex items-center justify-center"
-                      style={{
-                        background: 'transparent',
-                        border: config.borderEnabled ? '2px solid rgba(255,255,255,0.95)' : '2px solid rgba(255,255,255,0.35)',
-                      }}
-                      title="显示边框"
-                      onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
+              <SectionLabel label="填充" />
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center"
+                  style={{
+                    color: config.backgroundEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
+                  }}
+                  title="填充背景"
+                  onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
+                >
+                  <PaintBucket size={20} />
+                </button>
+                {config.backgroundEnabled && (
+                  <label
+                    className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
+                    style={{
+                      background: config.backgroundColor || '#000000',
+                      border: '2px solid rgba(255,255,255,0.3)',
+                      color: 'rgba(255,255,255,0.9)',
+                    }}
+                    title="背景颜色"
+                  >
+                    <Droplet size={12} />
+                    <input
+                      type="color"
+                      value={(config.backgroundColor || '#000000') as string}
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      onChange={(e) => updateConfig({ backgroundColor: e.target.value })}
                     />
-                    {config.borderEnabled && (
-                      <label
-                        className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
-                        style={{
-                          background: config.borderColor || '#ffffff',
-                          border: '2px solid rgba(255,255,255,0.3)',
-                          color: 'rgba(0,0,0,0.7)',
-                        }}
-                        title="边框颜色"
-                      >
-                        <Droplet size={12} />
-                        <input
-                          type="color"
-                          value={(config.borderColor || '#ffffff') as string}
-                          className="absolute inset-0 opacity-0 cursor-pointer"
-                          onChange={(e) => updateConfig({ borderColor: e.target.value })}
-                        />
-                      </label>
-                    )}
-                  </div>
+                  </label>
+                )}
+              </div>
 
-                  {/* 边框宽度（启用边框时显示） */}
+              <SectionLabel label="边框" />
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    className="h-6 w-8 rounded-[4px] inline-flex items-center justify-center"
+                    style={{
+                      background: 'transparent',
+                      border: config.borderEnabled ? '2px solid rgba(255,255,255,0.95)' : '2px solid rgba(255,255,255,0.35)',
+                    }}
+                    title="显示边框"
+                    onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
+                  />
                   {config.borderEnabled && (
-                    <div className="flex items-center gap-3 mt-3">
-                      <InlineLabel label="粗细" />
+                    <label
+                      className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
+                      style={{
+                        background: config.borderColor || '#ffffff',
+                        border: '2px solid rgba(255,255,255,0.3)',
+                        color: 'rgba(0,0,0,0.7)',
+                      }}
+                      title="边框颜色"
+                    >
+                      <Droplet size={12} />
                       <input
-                        type="range"
-                        min="1"
-                        max="10"
-                        step="1"
-                        value={config.borderWidth ?? 2}
-                        onChange={(e) => updateConfig({ borderWidth: Number(e.target.value) })}
-                        className="flex-1 h-1.5 appearance-none rounded-full cursor-pointer"
-                        style={{
-                          background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) 100%)`,
-                        }}
+                        type="color"
+                        value={(config.borderColor || '#ffffff') as string}
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                        onChange={(e) => updateConfig({ borderColor: e.target.value })}
                       />
-                      <span className="text-[11px] w-6 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                        {config.borderWidth ?? 2}
-                      </span>
-                    </div>
+                    </label>
                   )}
                 </div>
 
-                {/* 圆角 - 填充和边框共用 */}
-                {(config.backgroundEnabled || config.borderEnabled) && (
-                  <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
-                    <div className="flex items-center gap-3 min-w-0 overflow-hidden">
-                      <InlineLabel label="圆角" />
-                      <input
-                        type="range"
-                        min="0"
-                        max="50"
-                        step="1"
-                        value={config.cornerRadius ?? 0}
-                        onChange={(e) => updateConfig({ cornerRadius: Number(e.target.value) })}
-                        className="flex-1 min-w-0 h-1.5 appearance-none rounded-full cursor-pointer"
-                        style={{
-                          background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) 100%)`,
-                        }}
-                      />
-                      <span className="text-[11px] w-10 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                        {Math.round(((config.cornerRadius ?? 0) / 50) * 100)}%
-                      </span>
-                    </div>
+                {/* 边框宽度（启用边框时显示） */}
+                {config.borderEnabled && (
+                  <div className="flex items-center gap-3">
+                    <InlineLabel label="粗细" />
+                    <input
+                      type="range"
+                      min="1"
+                      max="10"
+                      step="1"
+                      value={config.borderWidth ?? 2}
+                      onChange={(e) => updateConfig({ borderWidth: Number(e.target.value) })}
+                      className="flex-1 h-1.5 appearance-none rounded-full cursor-pointer"
+                      style={{
+                        background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) 100%)`,
+                      }}
+                    />
+                    <span className="text-[11px] w-6 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
+                      {config.borderWidth ?? 2}
+                    </span>
                   </div>
                 )}
               </div>
+
+              {/* 圆角 - 填充和边框共用，仅在启用时显示 */}
+              {(config.backgroundEnabled || config.borderEnabled) && (
+                <>
+                  <SectionLabel label="圆角" />
+                  <div className="flex items-center gap-3 min-w-0 overflow-hidden">
+                    <input
+                      type="range"
+                      min="0"
+                      max="50"
+                      step="1"
+                      value={config.cornerRadius ?? 0}
+                      onChange={(e) => updateConfig({ cornerRadius: Number(e.target.value) })}
+                      className="flex-1 min-w-0 h-1.5 appearance-none rounded-full cursor-pointer"
+                      style={{
+                        background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) 100%)`,
+                      }}
+                    />
+                    <span className="text-[11px] w-10 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
+                      {Math.round(((config.cornerRadius ?? 0) / 50) * 100)}%
+                    </span>
+                  </div>
+                </>
+              )}
 
               <SectionLabel label="定位" />
               <div>
