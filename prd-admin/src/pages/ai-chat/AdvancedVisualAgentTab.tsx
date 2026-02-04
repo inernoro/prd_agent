@@ -3386,8 +3386,37 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       // 读取后立即删除，避免重复执行
       sessionStorage.removeItem(sessionKey);
       const messageText = String(data.messageText || '').trim();
+      const assetId = String(data.assetId || '').trim();
+
       if (messageText) {
-        setInitialPrompt(parseInlinePrompt(messageText));
+        const parsed = parseInlinePrompt(messageText);
+
+        // 如果有 assetId 但没有解析出 inlineImage，说明首页已上传图片到后端
+        // 需要从 workspace 资产中获取图片信息
+        if (assetId && !parsed.inlineImage) {
+          // 异步获取资产信息，然后设置 initialPrompt
+          void (async () => {
+            try {
+              const detail = await getVisualAgentWorkspaceDetail({ id: workspaceId, assetLimit: 100 });
+              if (detail.success) {
+                const asset = detail.data.assets?.find((a) => a.id === assetId);
+                if (asset?.url) {
+                  setInitialPrompt({
+                    ...parsed,
+                    inlineImage: { src: asset.url, name: asset.prompt || '参考图' },
+                  });
+                  return;
+                }
+              }
+            } catch {
+              // ignore
+            }
+            // 如果获取失败，仍然使用原始解析结果
+            setInitialPrompt(parsed);
+          })();
+        } else {
+          setInitialPrompt(parsed);
+        }
       }
     } catch {
       // ignore
