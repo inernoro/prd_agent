@@ -826,3 +826,24 @@ export const getUserRateLimit: GetUserRateLimitContract = withAuth(getUserRateLi
 export const updateUserRateLimit: UpdateUserRateLimitContract = withAuth(updateUserRateLimitReal);
 export const getExemptUsers: GetExemptUsersContract = withAuth(getExemptUsersReal);
 export const getCustomConfigs: GetCustomConfigsContract = withAuth(getCustomConfigsReal);
+
+// AI Toolbox 百宝箱
+export {
+  sendToolboxMessage,
+  analyzeIntent,
+  getToolboxRun,
+  listToolboxRuns,
+  listToolboxAgents,
+  executeToolboxRun,
+  subscribeToolboxRunEvents,
+} from '@/services/real/aiToolbox';
+export type {
+  IntentResult,
+  AgentInfo,
+  StepInfo,
+  ToolboxArtifact,
+  ToolboxRun,
+  ToolboxRunStep,
+  ChatResponse,
+  ToolboxRunEvent,
+} from '@/services/real/aiToolbox';
