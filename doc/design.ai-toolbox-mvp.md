@@ -1,10 +1,144 @@
 # AI 百宝箱 MVP 规划
 
 > **目标**: 用最小代价验证核心价值 - "自然语言驱动多 Agent 协同"
+>
+> **最后更新**: 2026-02-04
+> **状态**: Phase 0 ~ 1.5 已完成 ✅
 
 ---
 
-## 1. MVP 核心原则
+## 0. 快速开始
+
+### 入口地址
+
+| 环境 | 地址 |
+|------|------|
+| 本地开发 | `http://localhost:5173/ai-toolbox` |
+| 后端 API | `http://localhost:5000/api/ai-toolbox/*` |
+
+### 测试命令
+
+```bash
+# 后端单元测试
+cd prd-api
+dotnet test --filter "FullyQualifiedName~Toolbox"
+
+# 后端集成测试
+dotnet test --filter "Category=Integration&FullyQualifiedName~AiToolbox"
+
+# 前端启动
+cd prd-admin
+pnpm dev
+
+# 前端类型检查
+pnpm tsc --noEmit
+```
+
+### 操作方式
+
+1. **登录后台** → 侧边栏点击 **"AI 百宝箱"**
+2. **输入自然语言请求** → 如 "帮我写一篇关于 AI 的文章并配图"
+3. **观察执行过程**:
+   - 意图识别结果（主意图、置信度、调度的专家）
+   - 执行计划（多步骤可视化进度条）
+   - 实时流式输出
+4. **查看成果物** → 右侧成果区支持预览和下载
+5. **历史记录** → 右下角可查看之前的执行记录
+
+---
+
+## 1. 用户故事
+
+### 用户故事 1: 单 Agent - PRD 分析
+
+```
+作为产品经理
+我想要快速分析一份 PRD 文档的完整性
+以便发现潜在的遗漏和问题
+
+验收标准:
+- 输入: "帮我分析这个 PRD 有什么问题"
+- 系统识别意图为 prd_analysis
+- 调用 PRD Agent 进行分析
+- 返回结构化的分析报告
+```
+
+### 用户故事 2: 单 Agent - 图片生成
+
+```
+作为设计师
+我想要用自然语言描述生成配图
+以便快速获得视觉素材
+
+验收标准:
+- 输入: "生成一张科技感的产品封面图，蓝色主题"
+- 系统识别意图为 image_generation
+- 调用 Visual Agent 生成图片
+- 返回生成的图片，支持预览和下载
+```
+
+### 用户故事 3: 单 Agent - 内容创作
+
+```
+作为内容运营
+我想要快速生成一篇文章
+以便发布到公众号
+
+验收标准:
+- 输入: "帮我写一篇关于人工智能在医疗领域应用的文章"
+- 系统识别意图为 content_creation
+- 调用 Literary Agent 生成文章
+- 返回 Markdown 格式的文章，支持复制
+```
+
+### 用户故事 4: 单 Agent - 缺陷管理
+
+```
+作为测试工程师
+我想要从描述中提取结构化的缺陷信息
+以便快速提交 Bug 报告
+
+验收标准:
+- 输入: "登录页面点击提交后没有反应，控制台报 500 错误"
+- 系统识别意图为 defect_management
+- 调用 Defect Agent 提取缺陷信息
+- 返回结构化的缺陷报告（标题、描述、复现步骤、严重程度等）
+```
+
+### 用户故事 5: 双 Agent 协同 - 写作 + 配图
+
+```
+作为自媒体创作者
+我想要一次性获得文章和配图
+以便提高内容生产效率
+
+验收标准:
+- 输入: "帮我写一段关于春天的散文，并配一张插图"
+- 系统识别为复合意图 [content_creation, image_generation]
+- Step 1: Literary Agent 生成文字
+- Step 2: Visual Agent 根据文字生成配图
+- 返回文字 + 图片的组合成果
+- 用户能看到分步执行进度
+```
+
+### 用户故事 6: 双 Agent 协同 - PRD 分析 + 报告生成
+
+```
+作为产品总监
+我想要分析 PRD 并生成可分享的报告
+以便在评审会上使用
+
+验收标准:
+- 输入: "分析这份 PRD 的问题，并生成一份汇报用的缺陷清单"
+- 系统识别为复合意图 [prd_analysis, defect_management]
+- Step 1: PRD Agent 分析文档
+- Step 2: Defect Agent 整理成缺陷报告格式
+- 返回可下载的报告文档
+```
+
+---
+
+## 2. MVP 核心原则
 
 ```
 砍功能，不砍体验
@@ -14,21 +148,21 @@
 
 ---
 
-## 2. MVP 范围定义
+## 3. MVP 范围定义
 
-### 2.1 包含 (In Scope)
+### 3.1 包含 (In Scope) ✅ 已完成
 
-| 功能 | 说明 | 复用现有 |
-|------|------|----------|
-| 统一对话入口 | 一个输入框，接收自然语言 | 复用 AiChatPage 样式 |
-| 意图识别 | 识别用户想用哪个 Agent | LLM Gateway |
-| Agent 路由 | 根据意图调度对应 Agent | 新建路由逻辑 |
-| 单 Agent 执行 | 调用现有 Agent 能力 | 现有 4 个 Agent |
-| 双 Agent 串行 | A 的输出作为 B 的输入 | 新建编排逻辑 |
-| 执行状态展示 | 显示当前执行到哪一步 | Run/Worker + SSE |
-| Markdown 成果 | 输出 Markdown 格式结果 | 现有消息渲染 |
+| 功能 | 说明 | 复用现有 | 状态 |
+|------|------|----------|------|
+| 统一对话入口 | 一个输入框，接收自然语言 | 复用 AiChatPage 样式 | ✅ |
+| 意图识别 | 识别用户想用哪个 Agent | LLM Gateway | ✅ |
+| Agent 路由 | 根据意图调度对应 Agent | 新建路由逻辑 | ✅ |
+| 单 Agent 执行 | 调用现有 Agent 能力 | 现有 4 个 Agent | ✅ |
+| 双 Agent 串行 | A 的输出作为 B 的输入 | 新建编排逻辑 | ✅ |
+| 执行状态展示 | 显示当前执行到哪一步 | Run/Worker + SSE | ✅ |
+| Markdown 成果 | 输出 Markdown 格式结果 | 现有消息渲染 | ✅ |
 
-### 2.2 不包含 (Out of Scope for MVP)
+### 3.2 不包含 (Out of Scope for MVP)
 
 | 功能 | 原因 | 后续 Phase |
 |------|------|------------|
@@ -41,7 +175,7 @@
 
 ---
 
-## 3. MVP 架构（极简版）
+## 4. MVP 架构（极简版）
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -49,7 +183,7 @@
 ├─────────────────────────────────────────────────┤
 │                                                 │
 │  ┌───────────────────────────────────────────┐  │
-│  │        前端: ToolboxChatPage              │  │
+│  │        前端: AiToolboxPage                │  │
 │  │  [输入框] → [执行状态] → [结果展示]         │  │
 │  └───────────────────────────────────────────┘  │
 │                      │                          │
@@ -57,11 +191,12 @@
 │  ┌───────────────────────────────────────────┐  │
 │  │        AiToolboxController                │  │
 │  │  POST /api/ai-toolbox/chat                │  │
+│  │  GET  /api/ai-toolbox/runs/{id}/stream    │  │
 │  └───────────────────────────────────────────┘  │
 │                      │                          │
 │                      ▼                          │
 │  ┌───────────────────────────────────────────┐  │
-│  │        ToolboxService                     │  │
+│  │        ToolboxRunWorker                   │  │
 │  │  1. 意图识别 (IntentClassifier)           │  │
 │  │  2. 路由分发 (AgentRouter)                │  │
 │  │  3. 执行编排 (SimpleOrchestrator)         │  │
@@ -71,7 +206,7 @@
 │         ▼           ▼           ▼              │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐       │
 │  │PRD Agent │ │Visual    │ │Literary  │ ...   │
-│  │(现有)    │ │Agent     │ │Agent     │       │
+│  │Adapter   │ │Agent     │ │Agent     │       │
 │  └──────────┘ └──────────┘ └──────────┘       │
 │                                                 │
 └─────────────────────────────────────────────────┘
@@ -79,391 +214,208 @@
 
 ---
 
-## 4. 分阶段实施计划
+## 5. 已完成的实现 ✅
 
-### Phase 0: 统一入口 + 意图路由（3-4 天）
+### Phase 0: 统一入口 + 意图路由 ✅
 
-**目标**: 用户输入自然语言，系统识别意图并路由到对应 Agent
+**完成日期**: 2026-02-04
 
-#### 后端任务
+#### 后端实现
 
-```
-□ 创建 AiToolboxController
-  - AppKey: "ai-toolbox"
-  - Route: /api/ai-toolbox
+- [x] `AiToolboxController.cs` - 主控制器
+- [x] `IIntentClassifier.cs` + `IntentClassifier.cs` - 意图识别
+- [x] `ToolboxModels.cs` - 数据模型
+- [x] `AppCallerRegistry.cs` - 注册 AppCallerCode
+- [x] `AdminPermissionCatalog.cs` - 添加权限
 
-□ 实现 IntentClassifier
-  - 输入: 用户消息
-  - 输出: { intent: "prd_analysis" | "image_gen" | "writing" | "defect", confidence }
-  - 实现: 调用 LLM Gateway 做分类
-
-□ 实现 AgentRouter
-  - 根据 intent 返回应该调用哪个 Agent 的信息
-
-□ 注册 AppCallerCode
-  - ai-toolbox.intent::intent
-  - ai-toolbox.chat::chat
-```
-
-#### 前端任务
-
-```
-□ 创建 ToolboxChatPage
-  - 路由: /ai-toolbox
-  - 复用 AiChatPage 的输入框和消息列表样式
-
-□ 显示意图识别结果
-  - "我理解您想要: [PRD分析] → 正在调用 PRD Agent..."
-```
-
-#### 验收标准
+#### 验收
 
 ```
 输入: "帮我分析这个PRD有什么问题"
-输出: 识别为 prd_analysis，显示将调用 PRD Agent
+输出: 识别为 prd_analysis，confidence: 0.95
 ```
 
 ---
 
-### Phase 0.5: 单 Agent 执行验证（2-3 天）
+### Phase 0.5: 单 Agent 执行 ✅
 
-**目标**: 意图识别后，真正调用对应 Agent 并返回结果
+**完成日期**: 2026-02-04
 
-#### 后端任务
+#### 后端实现
 
-```
-□ 创建 IAgentAdapter 接口
-  public interface IAgentAdapter
-  {
-      string AgentKey { get; }
-      Task<AgentResponse> ExecuteAsync(string userMessage, Dictionary<string, object> context, CancellationToken ct);
-  }
+- [x] `IAgentAdapter.cs` - Agent 适配器接口
+- [x] `PrdAgentAdapter.cs` - PRD Agent 适配器
+- [x] `VisualAgentAdapter.cs` - Visual Agent 适配器
+- [x] `LiteraryAgentAdapter.cs` - Literary Agent 适配器
+- [x] `DefectAgentAdapter.cs` - Defect Agent 适配器
+- [x] `ToolboxRunWorker.cs` - 后台执行 Worker
+- [x] `RedisToolboxEventStore.cs` - 事件存储
 
-□ 实现 4 个适配器（封装现有 Agent 调用）
-  - PrdAgentAdapter → 调用现有 PRD 相关 Service
-  - VisualAgentAdapter → 调用 ImageGenService
-  - LiteraryAgentAdapter → 调用 LiteraryAgent 相关 Service
-  - DefectAgentAdapter → 调用 DefectAgent Service
-
-□ 创建 ToolboxRunWorker
-  - 复用 Run/Worker 模式
-  - 执行 Agent 调用，流式返回结果
-```
-
-#### 前端任务
-
-```
-□ 对接 SSE 流式展示
-  - 显示 Agent 执行中的流式输出
-  - 显示最终结果
-```
-
-#### 验收标准
+#### 验收
 
 ```
 输入: "帮我生成一张夕阳下的猫咪图片"
 输出:
-  1. 识别意图: image_gen
+  1. 识别意图: image_generation
   2. 调用 Visual Agent
   3. 返回生成的图片
 ```
 
 ---
 
-### Phase 1: 双 Agent 串行协同（3-4 天）
+### Phase 1: 双 Agent 串行协同 ✅
 
-**目标**: 支持 A Agent 输出作为 B Agent 输入的串行执行
+**完成日期**: 2026-02-04
 
-#### 后端任务
+#### 后端实现
 
-```
-□ 实现 SimpleOrchestrator
-  - 分析用户请求是否需要多 Agent
-  - 生成简单的执行计划 [Agent1 → Agent2]
-  - 串行执行，传递中间结果
+- [x] `IToolboxOrchestrator.cs` + `SimpleOrchestrator.cs` - 编排器
+- [x] 复合意图识别支持
+- [x] 步骤间输出传递
 
-□ 扩展意图识别
-  - 识别复合意图: "写文章+配图" → [literary, visual]
-  - 返回 Agent 序列而非单个 Agent
-```
-
-#### 前端任务
-
-```
-□ 显示执行计划
-  - "执行计划: 1. Literary Agent 写文章 → 2. Visual Agent 生成配图"
-
-□ 显示分步进度
-  - ✅ Step 1: 文章已生成
-  - ⏳ Step 2: 正在生成配图...
-```
-
-#### 验收标准
+#### 验收
 
 ```
 输入: "帮我写一段关于春天的文字，并配一张插图"
 输出:
-  1. 识别为复合意图 [writing, image_gen]
-  2. Step 1: Literary Agent 生成文字
-  3. Step 2: Visual Agent 基于文字生成配图
+  1. 识别为复合意图 [content_creation, image_generation]
+  2. Step 1: Literary Agent 生成文字 ✅
+  3. Step 2: Visual Agent 基于文字生成配图 ✅
   4. 返回文字 + 图片
 ```
 
 ---
 
-### Phase 1.5: 基础成果展示（2 天）
+### Phase 1.5: 前端实现 + 成果展示 ✅
 
-**目标**: 美化成果展示，支持下载
+**完成日期**: 2026-02-04
 
-#### 后端任务
+#### 前端实现
 
-```
-□ 统一成果格式
-  public class ToolboxArtifact
-  {
-      public string Type { get; set; }  // "markdown", "image", "code"
-      public string Content { get; set; }
-      public string Url { get; set; }
-      public string FileName { get; set; }
-  }
-```
-
-#### 前端任务
-
-```
-□ 成果卡片组件
-  - Markdown 渲染
-  - 图片预览
-  - 下载按钮
-
-□ 复制/分享功能
-```
-
----
-
-## 5. 技术实现细节
-
-### 5.1 意图识别 Prompt
-
-```
-你是一个意图分类器。根据用户输入，判断用户想要执行的任务类型。
-
-可选类型：
-- prd_analysis: PRD分析、需求解读、缺口检测
-- image_gen: 图片生成、视觉创作、配图
-- writing: 写作、文章、文案、文学创作
-- defect: 缺陷提交、Bug报告、问题追踪
-- composite: 需要多个能力组合（如"写文章+配图"）
-
-用户输入: {user_message}
-
-输出 JSON:
-{
-  "primary_intent": "类型",
-  "secondary_intents": ["如果是composite，列出需要的能力"],
-  "confidence": 0.0-1.0,
-  "reasoning": "简短解释"
-}
-```
-
-### 5.2 Controller 代码框架
-
-```csharp
-[ApiController]
-[Route("api/ai-toolbox")]
-[Authorize]
-[AdminController("ai-toolbox", AdminPermissionCatalog.ToolboxUse)]
-public class AiToolboxController : ControllerBase
-{
-    private const string AppKey = "ai-toolbox";
-
-    private readonly IIntentClassifier _intentClassifier;
-    private readonly IAgentRouter _agentRouter;
-    private readonly IToolboxOrchestrator _orchestrator;
-
-    [HttpPost("chat")]
-    public async Task<IActionResult> Chat([FromBody] ToolboxChatRequest request, CancellationToken ct)
-    {
-        // 1. 意图识别
-        var intent = await _intentClassifier.ClassifyAsync(request.Message, ct);
-
-        // 2. 路由决策
-        var agents = _agentRouter.Route(intent);
-
-        // 3. 创建执行 Run
-        var runId = await _orchestrator.CreateRunAsync(request.Message, agents, ct);
-
-        return Ok(new { runId, intent, agents });
-    }
-
-    [HttpGet("runs/{runId}/events")]
-    public async Task StreamEvents(string runId, [FromQuery] int afterSeq = 0, CancellationToken ct)
-    {
-        // SSE 流式返回执行事件
-        Response.ContentType = "text/event-stream";
-        // ...
-    }
-}
-```
-
-### 5.3 数据库集合（MVP）
-
-```
-toolbox_runs
-├── _id: string
-├── userId: string
-├── userMessage: string
-├── intent: { primary, secondary[], confidence }
-├── agents: string[]  // ["literary-agent", "visual-agent"]
-├── status: "pending" | "running" | "completed" | "failed"
-├── steps: [
-│   { agentKey, status, startedAt, completedAt, output }
-│ ]
-├── artifacts: [
-│   { type, content, url, fileName }
-│ ]
-├── createdAt: datetime
-└── completedAt: datetime
-```
+- [x] `aiToolbox.ts` - API 服务层 + SSE 订阅
+- [x] `toolboxStore.ts` - Zustand 状态管理
+- [x] `AiToolboxPage.tsx` - 主页面
+- [x] `ToolboxInput.tsx` - 输入组件 + 示例提示词
+- [x] `ExecutionPlan.tsx` - 执行计划可视化
+- [x] `IntentDisplay.tsx` - 意图识别展示
+- [x] `ArtifactCard.tsx` - 成果物卡片
+- [x] `HistoryList.tsx` - 历史记录
+- [x] `dateUtils.ts` - 日期工具
+- [x] `App.tsx` - 路由注册
+- [x] `AdminMenuCatalog.cs` - 侧边栏菜单
 
 ---
 
 ## 6. 文件清单
 
-### 后端新增文件
+### 后端文件
 
 ```
 prd-api/src/PrdAgent.Api/
 ├── Controllers/Api/
-│   └── AiToolboxController.cs          # 主 Controller
-└── Services/
-    └── Toolbox/
-        ├── IIntentClassifier.cs        # 意图识别接口
-        ├── IntentClassifier.cs         # 意图识别实现
-        ├── IAgentRouter.cs             # 路由接口
-        ├── AgentRouter.cs              # 路由实现
-        ├── IToolboxOrchestrator.cs     # 编排接口
-        ├── SimpleOrchestrator.cs       # 简单编排实现
-        ├── ToolboxRunWorker.cs         # 后台 Worker
-        └── Adapters/
-            ├── IAgentAdapter.cs        # Agent 适配器接口
-            ├── PrdAgentAdapter.cs
-            ├── VisualAgentAdapter.cs
-            ├── LiteraryAgentAdapter.cs
-            └── DefectAgentAdapter.cs
+│   └── AiToolboxController.cs          # 主 Controller (548行)
+└── Services/Toolbox/
+    ├── IIntentClassifier.cs            # 意图识别接口
+    ├── IntentClassifier.cs             # 意图识别实现 (规则 + LLM)
+    ├── IAgentAdapter.cs                # Agent 适配器接口 (194行)
+    ├── ToolboxOrchestrator.cs          # 编排器 (303行)
+    ├── ToolboxRunWorker.cs             # 后台 Worker (257行)
+    └── Adapters/
+        ├── PrdAgentAdapter.cs          # PRD Agent 适配器
+        ├── VisualAgentAdapter.cs       # Visual Agent 适配器
+        ├── LiteraryAgentAdapter.cs     # Literary Agent 适配器
+        └── DefectAgentAdapter.cs       # Defect Agent 适配器
 
 prd-api/src/PrdAgent.Core/
-├── Models/
-│   └── Toolbox/
-│       ├── ToolboxRun.cs               # Run 模型
-│       ├── IntentResult.cs             # 意图结果
-│       └── ToolboxArtifact.cs          # 成果物
-└── AppCallerRegistry.cs                # 添加 ToolboxAgent 节
+├── Models/Toolbox/
+│   └── ToolboxModels.cs                # 数据模型
+├── Security/
+│   ├── AdminPermissionCatalog.cs       # 权限定义
+│   └── AdminMenuCatalog.cs             # 菜单定义
+└── Models/AppCallerRegistry.cs         # AppCallerCode 注册
 ```
 
-### 前端新增文件
+### 前端文件
 
 ```
 prd-admin/src/
-├── pages/
-│   └── ai-toolbox/
-│       ├── ToolboxChatPage.tsx         # 主页面
-│       └── components/
-│           ├── ToolboxInput.tsx        # 输入框
-│           ├── IntentBadge.tsx         # 意图标签
-│           ├── ExecutionPlan.tsx       # 执行计划展示
-│           ├── StepProgress.tsx        # 步骤进度
-│           └── ArtifactCard.tsx        # 成果卡片
+├── pages/ai-toolbox/
+│   ├── index.ts                        # 导出
+│   ├── AiToolboxPage.tsx               # 主页面
+│   └── components/
+│       ├── ToolboxInput.tsx            # 输入框 + 示例
+│       ├── IntentDisplay.tsx           # 意图展示
+│       ├── ExecutionPlan.tsx           # 执行计划
+│       ├── ArtifactCard.tsx            # 成果卡片
+│       └── HistoryList.tsx             # 历史记录
 ├── services/
-│   └── toolboxService.ts               # API 调用
-└── stores/
-    └── toolboxStore.ts                 # 状态管理
+│   ├── api.ts                          # API 路径
+│   ├── index.ts                        # 服务导出
+│   └── real/aiToolbox.ts               # API 实现
+├── stores/
+│   └── toolboxStore.ts                 # 状态管理
+├── lib/
+│   └── dateUtils.ts                    # 日期工具
+└── app/App.tsx                         # 路由注册
 ```
 
 ---
 
-## 7. 预估工时
+## 7. API 接口
 
-| 阶段 | 后端 | 前端 | 总计 |
-|------|------|------|------|
-| Phase 0: 意图路由 | 2d | 1.5d | 3.5d |
-| Phase 0.5: 单 Agent | 2d | 1d | 3d |
-| Phase 1: 双 Agent | 2.5d | 1.5d | 4d |
-| Phase 1.5: 成果展示 | 0.5d | 1.5d | 2d |
-| **总计** | **7d** | **5.5d** | **12.5d** |
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/ai-toolbox/chat` | 发送消息（意图识别 + 自动执行） |
+| POST | `/api/ai-toolbox/analyze` | 仅意图识别 |
+| GET | `/api/ai-toolbox/runs` | 获取历史列表 |
+| GET | `/api/ai-toolbox/runs/{id}` | 获取单个 Run 详情 |
+| POST | `/api/ai-toolbox/runs/{id}/execute` | 手动触发执行 |
+| GET | `/api/ai-toolbox/runs/{id}/stream` | SSE 事件流 |
+| GET | `/api/ai-toolbox/agents` | 获取可用 Agent 列表 |
 
 ---
 
-## 8. 我的建议
+## 8. 待办事项 (TODO)
 
-### 8.1 第一步先做什么？
+### Phase 2: 并行 Agent 执行
 
-**建议从 Phase 0 的后端开始**：
+- [ ] 支持 Agent 并行执行
+- [ ] 结果合并策略
 
-1. **先建 Controller 骨架** - 确定 API 契约
-2. **再做意图识别** - 这是整个系统的"大脑"
-3. **最后做前端** - 有了后端 API 才能联调
+### Phase 3: 高级成果物
 
-### 8.2 快速验证的捷径
+- [ ] PPT 生成
+- [ ] PDF 导出
+- [ ] 图表生成
 
-如果想更快看到效果，可以：
+### Phase 4: 可视化工作流
 
-```
-跳过方案: 先不做 ToolboxRunWorker
-替代方案: 直接在 Controller 里同步执行
-         等 MVP 验证后再改为 Run/Worker 异步模式
+- [ ] 拖拽式工作流编辑器
+- [ ] 工作流模板保存/分享
 
-优点: 减少 2 天工作量
-缺点: 长任务会阻塞，后续需要重构
-```
+### Phase 5: 插件生态
 
-### 8.3 风险提示
+- [ ] 自定义 Agent 创建
+- [ ] Agent 市场
+- [ ] 插件系统
+
+---
+
+## 9. 风险与应对
 
 | 风险 | 概率 | 应对 |
 |------|------|------|
-| 意图识别不准 | 中 | 先用规则兜底，LLM 识别失败时让用户手选 |
+| 意图识别不准 | 中 | 规则优先 + LLM 兜底，识别失败时让用户手选 |
 | Agent 适配复杂 | 低 | 现有 Agent 已有清晰接口，适配工作量可控 |
 | 串行编排状态管理 | 中 | 用简单的状态机，不要过度设计 |
 
-### 8.4 MVP 成功标准
+---
+
+## 10. MVP 成功标准 ✅
 
 ```
 ✅ 能通过自然语言触发现有 4 个 Agent 中的任意一个
 ✅ 能执行 "写文章 + 配图" 这样的双 Agent 串行任务
 ✅ 用户能看到执行进度
 ✅ 用户能看到最终成果并下载
-```
-
----
-
-## 9. 下一步行动
-
-如果现在开始实施，建议按此顺序：
-
-```
-Day 1-2:
-  □ 创建 AiToolboxController 骨架
-  □ 实现 IntentClassifier（含 Prompt 调试）
-  □ 注册 AppCallerCode
-  □ 写单元测试验证意图识别
-
-Day 3-4:
-  □ 实现 4 个 AgentAdapter
-  □ 实现 AgentRouter
-  □ 端到端测试单 Agent 调用
-
-Day 5-6:
-  □ 创建前端 ToolboxChatPage
-  □ 对接后端 API
-  □ 实现意图展示和结果渲染
-
-Day 7-8:
-  □ 实现 SimpleOrchestrator
-  □ 支持双 Agent 串行
-  □ 前端执行计划和进度展示
-
-Day 9-10:
-  □ 成果展示美化
-  □ 端到端测试
-  □ Bug 修复和优化
 ```
