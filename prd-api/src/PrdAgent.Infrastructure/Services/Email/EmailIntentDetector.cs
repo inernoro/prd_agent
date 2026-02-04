@@ -164,11 +164,11 @@ public class EmailIntentDetector : IEmailIntentDetector
         // 截取正文前500字符避免 token 过多
         var truncatedBody = body.Length > 500 ? body[..500] + "..." : body;
 
-        var prompt = $"""
+        var prompt = $$"""
             分析以下邮件，判断发件人的意图：
 
-            主题：{subject}
-            正文：{truncatedBody}
+            主题：{{subject}}
+            正文：{{truncatedBody}}
 
             请判断这封邮件属于以下哪种意图：
             1. classify - 需要对邮件内容进行分类归档
@@ -178,7 +178,7 @@ public class EmailIntentDetector : IEmailIntentDetector
             5. fyi - 仅供参考，无需处理
             6. unknown - 无法判断
 
-            请用JSON格式回复：{{"intent": "xxx", "confidence": 0.8, "reason": "判断依据"}}
+            请用JSON格式回复：{"intent": "xxx", "confidence": 0.8, "reason": "判断依据"}
             只返回JSON，不要其他内容。
             """;
 

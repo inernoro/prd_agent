@@ -83,16 +83,15 @@ public class TodoEmailHandler : IEmailHandler
             // 构建回复消息
             var replyMessage = BuildReplyMessage(todo);
 
-            return EmailHandleResult.Ok(replyMessage)
+            var result = EmailHandleResult.Ok(replyMessage);
+            result.EntityId = todo.Id;
+            result.Data = new Dictionary<string, object>
             {
-                EntityId = todo.Id,
-                Data = new Dictionary<string, object>
-                {
-                    ["title"] = todo.Title,
-                    ["priority"] = todo.Priority,
-                    ["dueDate"] = todo.DueDate?.ToString("yyyy-MM-dd") ?? ""
-                }
+                ["title"] = todo.Title,
+                ["priority"] = todo.Priority,
+                ["dueDate"] = todo.DueDate?.ToString("yyyy-MM-dd") ?? ""
             };
+            return result;
         }
         catch (Exception ex)
         {
@@ -108,11 +107,11 @@ public class TodoEmailHandler : IEmailHandler
         try
         {
             var truncatedBody = body.Length > 1500 ? body[..1500] + "..." : body;
-            var prompt = $"""
+            var prompt = $$"""
                 从以下邮件中提取待办事项信息：
 
-                【主题】{subject}
-                【正文】{truncatedBody}
+                【主题】{{subject}}
+                【正文】{{truncatedBody}}
 
                 请提取：
                 1. 待办标题（简洁明了，20字以内）
@@ -122,13 +121,13 @@ public class TodoEmailHandler : IEmailHandler
                 5. 相关标签
 
                 用JSON格式返回：
-                {{
+                {
                     "title": "待办标题",
                     "description": "关键内容描述",
                     "priority": 3,
                     "dueDate": "2024-01-15 或 null",
                     "tags": ["标签1", "标签2"]
-                }}
+                }
 
                 只返回JSON。
                 """;

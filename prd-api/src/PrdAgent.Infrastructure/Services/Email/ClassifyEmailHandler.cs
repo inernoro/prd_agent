@@ -80,17 +80,16 @@ public class ClassifyEmailHandler : IEmailHandler
             // 构建回复消息
             var replyMessage = BuildReplyMessage(classification);
 
-            return EmailHandleResult.Ok(replyMessage, classification.Summary)
+            var result = EmailHandleResult.Ok(replyMessage, classification.Summary);
+            result.EntityId = classification.Id;
+            result.Data = new Dictionary<string, object>
             {
-                EntityId = classification.Id,
-                Data = new Dictionary<string, object>
-                {
-                    ["category"] = classification.Category,
-                    ["subCategory"] = classification.SubCategory ?? "",
-                    ["urgency"] = classification.Urgency,
-                    ["keywords"] = classification.Keywords
-                }
+                ["category"] = classification.Category,
+                ["subCategory"] = classification.SubCategory ?? "",
+                ["urgency"] = classification.Urgency,
+                ["keywords"] = classification.Keywords
             };
+            return result;
         }
         catch (Exception ex)
         {
@@ -101,17 +100,17 @@ public class ClassifyEmailHandler : IEmailHandler
 
     private string BuildClassifyPrompt(string subject, string body)
     {
-        return $"""
+        return $$"""
             请分析以下邮件内容，进行分类和摘要。
 
             【邮件主题】
-            {subject}
+            {{subject}}
 
             【邮件正文】
-            {body}
+            {{body}}
 
             请用JSON格式返回分类结果：
-            {{
+            {
                 "category": "主分类（如：工作、财务、人事、技术、营销、客户、个人等）",
                 "subCategory": "子分类（可选）",
                 "urgency": "紧急程度（low/medium/high/urgent）",
@@ -119,7 +118,7 @@ public class ClassifyEmailHandler : IEmailHandler
                 "suggestedAction": "建议的处理方式",
                 "keywords": ["关键词1", "关键词2"],
                 "summary": "50字以内的内容摘要"
-            }}
+            }
 
             只返回JSON，不要其他内容。
             """;
