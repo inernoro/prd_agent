@@ -1497,10 +1497,11 @@ function WatermarkEditor(props: {
                         offsetY: config.offsetY / baseCanvasSize,
                       });
                     } else {
+                      // 从 ratio 切换到 pixel 时取整
                       updateConfig({
                         positionMode: nextMode,
-                        offsetX: config.offsetX * baseCanvasSize,
-                        offsetY: config.offsetY * baseCanvasSize,
+                        offsetX: Math.round(config.offsetX * baseCanvasSize),
+                        offsetY: Math.round(config.offsetY * baseCanvasSize),
                       });
                     }
                   }}
@@ -2183,8 +2184,9 @@ function WatermarkPreview(props: {
     const { width: w, height: h } = sizeRef.current;
     const nextAnchor = getDominantAnchor(nextRect, w, h, anchorRef.current);
     const offsets = computeOffsetsFromAnchor(nextAnchor, nextRect, w, h);
-    const storeX = modeRef.current === 'ratio' ? offsets.x / w : offsets.x;
-    const storeY = modeRef.current === 'ratio' ? offsets.y / h : offsets.y;
+    // pixel 模式下取整，ratio 模式保留小数
+    const storeX = modeRef.current === 'ratio' ? offsets.x / w : Math.round(offsets.x);
+    const storeY = modeRef.current === 'ratio' ? offsets.y / h : Math.round(offsets.y);
     callbackRef.current?.({ anchor: nextAnchor, offsetX: storeX, offsetY: storeY });
   };
 

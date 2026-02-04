@@ -1,7 +1,14 @@
 /**
  * 海鲜市场类型注册表
  *
- * 用于支持多种配置类型的扩展，新增类型只需在 CONFIG_TYPE_REGISTRY 中添加配置即可。
+ * 架构设计：
+ * - CONFIG_TYPE_REGISTRY: 配置类型注册表，定义每种类型的元数据和渲染器
+ * - APP_MARKETPLACE_CONFIG: 应用市场配置，定义每个应用需要哪些类型
+ *
+ * 扩展方式：
+ * 1. 新增配置类型 → 在 CONFIG_TYPE_REGISTRY 中添加
+ * 2. 新增应用 → 在 APP_MARKETPLACE_CONFIG 中添加
+ * 3. 已有应用添加类型 → 修改 APP_MARKETPLACE_CONFIG 中的 configTypes 数组
  *
  * @example 新增类型
  * ```typescript
@@ -20,6 +27,12 @@
  *   api: { listMarketplace: ..., fork: ... },
  *   getDisplayName: (item) => item.name,
  *   PreviewRenderer: WorkflowPreview,
+ * }
+ *
+ * // 3. 在 APP_MARKETPLACE_CONFIG 中为需要的应用添加
+ * 'visual-agent': {
+ *   label: '视觉创作',
+ *   configTypes: ['watermark', 'workflow'],  // 添加 'workflow'
  * }
  * ```
  */
@@ -332,6 +345,43 @@ export const CONFIG_TYPE_REGISTRY: Record<string, ConfigTypeDefinition<any>> = {
 };
 
 // ============================================================================
+// 应用市场配置注册表
+// ============================================================================
+
+/**
+ * 应用市场配置
+ *
+ * 定义每个应用需要哪些配置类型，海鲜市场根据此配置展示对应类型。
+ * 新增应用只需添加一条配置即可。
+ */
+export interface AppMarketplaceConfig {
+  /** 应用显示名称 */
+  label: string;
+  /** 该应用需要的配置类型（按展示顺序） */
+  configTypes: string[];
+  /** 默认视图模式 */
+  defaultView?: 'mine' | 'marketplace';
+}
+
+export const APP_MARKETPLACE_CONFIG: Record<string, AppMarketplaceConfig> = {
+  'literary-agent': {
+    label: '文学创作',
+    configTypes: ['prompt', 'refImage', 'watermark'],
+    defaultView: 'mine',
+  },
+  'visual-agent': {
+    label: '视觉创作',
+    configTypes: ['watermark'],  // 可按需扩展：'canvasTemplate', 'genPreset' 等
+    defaultView: 'mine',
+  },
+  // 未来新增应用示例：
+  // 'design-agent': {
+  //   label: '设计助手',
+  //   configTypes: ['canvasTemplate', 'colorPalette', 'watermark'],
+  // },
+};
+
+// ============================================================================
 // 工具函数
 // ============================================================================
 
@@ -361,6 +411,72 @@ export function getCategoryFilterOptions(): Array<{ key: string; label: string; 
       icon: typeDef.icon,
     })),
   ];
+}
+
+// ============================================================================
+// 应用相关工具函数
+// ============================================================================
+
+/**
+ * 获取应用的市场配置
+ */
+export function getAppMarketplaceConfig(appKey: string): AppMarketplaceConfig | undefined {
+  return APP_MARKETPLACE_CONFIG[appKey];
+}
+
+/**
+ * 获取应用需要的配置类型定义列表
+ */
+export function getConfigTypesForApp(appKey: string): ConfigTypeDefinition[] {
+  const appConfig = APP_MARKETPLACE_CONFIG[appKey];
+  if (!appConfig) return [];
+
+  return appConfig.configTypes
+    .map((key) => CONFIG_TYPE_REGISTRY[key])
+    .filter((def): def is ConfigTypeDefinition => def !== undefined);
+}
+
+/**
+ * 获取应用需要的类型键列表
+ */
+export function getConfigTypeKeysForApp(appKey: string): string[] {
+  const appConfig = APP_MARKETPLACE_CONFIG[appKey];
+  return appConfig?.configTypes ?? [];
+}
+
+/**
+ * 获取应用的类型筛选选项
+ */
+export function getCategoryFilterOptionsForApp(
+  appKey: string
+): Array<{ key: string; label: string; icon?: LucideIcon }> {
+  const types = getConfigTypesForApp(appKey);
+
+  // 如果只有一种类型，不需要"全部"选项
+  if (types.length <= 1) {
+    return types.map((typeDef) => ({
+      key: typeDef.key,
+      label: typeDef.label,
+      icon: typeDef.icon,
+    }));
+  }
+
+  return [
+    { key: 'all', label: '全部' },
+    ...types.map((typeDef) => ({
+      key: typeDef.key,
+      label: typeDef.label,
+      icon: typeDef.icon,
+    })),
+  ];
+}
+
+/**
+ * 检查类型是否适用于指定应用
+ */
+export function isTypeApplicableToApp(typeKey: string, appKey: string): boolean {
+  const appConfig = APP_MARKETPLACE_CONFIG[appKey];
+  return appConfig?.configTypes.includes(typeKey) ?? false;
 }
 
 /**
