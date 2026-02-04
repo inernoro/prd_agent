@@ -4,7 +4,7 @@ import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import {
   Mail, Server, AlertTriangle, CheckCircle, Loader2, RefreshCw, Eye, EyeOff,
-  ArrowRight, Zap, Shield, MessageSquare, Play, ExternalLink, Copy
+  ArrowRight, Zap, Shield, MessageSquare, Play, ExternalLink
 } from 'lucide-react';
 import { channelService } from '@/services';
 import { toast } from '@/lib/toast';
