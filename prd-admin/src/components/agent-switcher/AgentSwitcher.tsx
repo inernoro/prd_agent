@@ -1,10 +1,10 @@
 /**
- * Agent Switcher 浮层组件 v5.0
+ * Agent Switcher 浮层组件 v6.0
  *
- * Apple 极简风格：
- * - 统一深色卡片，图标为唯一颜色
- * - 精致微妙的光效
- * - 克制的设计语言
+ * 精美背景 + 强化发光效果：
+ * - 渐变背景 + 多层光球
+ * - 选中卡片多层发光
+ * - 图标呼吸光效
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -24,6 +24,14 @@ const ICON_URLS: Record<string, string> = {
   'defect-agent': 'https://i.pa.759800.com/icon/backups/agent/defect-agent.png',
 };
 
+/** Agent 主题色 */
+const AGENT_GLOW_COLORS: Record<string, string> = {
+  'prd-agent': '#3b82f6',      // 蓝色
+  'visual-agent': '#a855f7',   // 紫色
+  'literary-agent': '#22c55e', // 绿色
+  'defect-agent': '#f97316',   // 橙色
+};
+
 /** Agent 卡片组件 */
 function AgentCard({
   agent,
@@ -41,6 +49,7 @@ function AgentCard({
   delay: number;
 }) {
   const iconUrl = ICON_URLS[agent.key];
+  const glowColor = AGENT_GLOW_COLORS[agent.key];
 
   return (
     <button
@@ -49,32 +58,64 @@ function AgentCard({
       onMouseEnter={onMouseEnter}
       className="group relative outline-none focus:outline-none"
       style={{
-        animation: `cardFloat 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) ${delay}ms both`,
+        animation: `cardFloat 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) ${delay}ms both`,
       }}
     >
+      {/* 选中时的外层大光晕 */}
+      {isSelected && (
+        <div
+          className="absolute -inset-4 rounded-[32px] pointer-events-none"
+          style={{
+            background: `radial-gradient(ellipse at center, ${glowColor}30 0%, transparent 70%)`,
+            animation: 'glowPulse 2s ease-in-out infinite',
+          }}
+        />
+      )}
+
+      {/* 选中时的中层光晕 */}
+      {isSelected && (
+        <div
+          className="absolute -inset-1 rounded-[28px] pointer-events-none"
+          style={{
+            background: `linear-gradient(135deg, ${glowColor}40, transparent 50%, ${glowColor}20)`,
+            filter: 'blur(2px)',
+          }}
+        />
+      )}
+
       {/* 主卡片 */}
       <div
-        className="relative w-[140px] h-[160px] rounded-[24px] flex flex-col items-center justify-center gap-4 transition-all duration-300 ease-out"
+        className="relative w-[140px] h-[160px] rounded-[24px] flex flex-col items-center justify-center gap-4 transition-all duration-300 ease-out overflow-hidden"
         style={{
           background: isSelected
-            ? 'rgba(255, 255, 255, 0.08)'
-            : 'rgba(255, 255, 255, 0.03)',
+            ? `linear-gradient(145deg, rgba(30, 35, 55, 0.9) 0%, rgba(20, 24, 40, 0.95) 100%)`
+            : 'rgba(20, 24, 36, 0.6)',
           border: isSelected
-            ? '1px solid rgba(255, 255, 255, 0.15)'
-            : '1px solid rgba(255, 255, 255, 0.06)',
+            ? `1px solid ${glowColor}60`
+            : '1px solid rgba(255, 255, 255, 0.08)',
           boxShadow: isSelected
-            ? `0 0 0 1px rgba(255,255,255,0.1), 0 20px 40px -10px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1)`
-            : '0 4px 20px -5px rgba(0,0,0,0.3)',
-          transform: isSelected ? 'translateY(-4px) scale(1.02)' : 'translateY(0) scale(1)',
+            ? `0 0 20px ${glowColor}40, 0 0 40px ${glowColor}20, 0 20px 40px -10px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1)`
+            : '0 4px 24px -4px rgba(0,0,0,0.4)',
+          transform: isSelected ? 'translateY(-6px) scale(1.03)' : 'translateY(0) scale(1)',
         }}
       >
-        {/* 选中时的顶部光条 */}
+        {/* 卡片内部顶部光线 */}
+        <div
+          className="absolute top-0 left-0 right-0 h-[1px] transition-opacity duration-300"
+          style={{
+            background: isSelected
+              ? `linear-gradient(90deg, transparent, ${glowColor}80, transparent)`
+              : 'linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent)',
+            opacity: isSelected ? 1 : 0.5,
+          }}
+        />
+
+        {/* 选中时的内部光斑 */}
         {isSelected && (
           <div
-            className="absolute top-0 left-1/2 -translate-x-1/2 w-[60%] h-[2px] rounded-full"
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[100px] h-[100px] rounded-full pointer-events-none"
             style={{
-              background: `linear-gradient(90deg, transparent, ${agent.color.text}, transparent)`,
-              boxShadow: `0 0 20px 2px ${agent.color.text}60`,
+              background: `radial-gradient(circle, ${glowColor}15 0%, transparent 70%)`,
             }}
           />
         )}
@@ -83,8 +124,10 @@ function AgentCard({
         <div
           className="relative w-[72px] h-[72px] transition-all duration-300 ease-out"
           style={{
-            transform: isSelected ? 'scale(1.1)' : 'scale(1)',
-            filter: isSelected ? `drop-shadow(0 8px 24px ${agent.color.text}50)` : 'none',
+            transform: isSelected ? 'scale(1.12)' : 'scale(1)',
+            filter: isSelected
+              ? `drop-shadow(0 0 20px ${glowColor}70) drop-shadow(0 4px 12px ${glowColor}50)`
+              : 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
           }}
         >
           <img
@@ -92,6 +135,9 @@ function AgentCard({
             alt={agent.name}
             className="w-full h-full object-contain"
             draggable={false}
+            style={{
+              animation: isSelected ? 'iconGlow 2s ease-in-out infinite' : 'none',
+            }}
           />
         </div>
 
@@ -100,6 +146,7 @@ function AgentCard({
           className="text-[14px] font-medium tracking-wide transition-all duration-300"
           style={{
             color: isSelected ? '#fff' : 'rgba(255,255,255,0.5)',
+            textShadow: isSelected ? `0 0 20px ${glowColor}80` : 'none',
           }}
         >
           {agent.name}
@@ -107,11 +154,12 @@ function AgentCard({
 
         {/* 快捷键角标 */}
         <div
-          className="absolute top-3 right-3 w-6 h-6 rounded-lg flex items-center justify-center text-[11px] font-semibold transition-all duration-300"
+          className="absolute top-3 right-3 w-6 h-6 rounded-lg flex items-center justify-center text-[11px] font-bold transition-all duration-300"
           style={{
-            background: isSelected ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)',
-            color: isSelected ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
+            background: isSelected ? `${glowColor}30` : 'rgba(255, 255, 255, 0.06)',
+            color: isSelected ? '#fff' : 'rgba(255,255,255,0.35)',
+            border: isSelected ? `1px solid ${glowColor}50` : '1px solid rgba(255, 255, 255, 0.08)',
+            boxShadow: isSelected ? `0 0 10px ${glowColor}40` : 'none',
           }}
         >
           {index + 1}
@@ -218,30 +266,71 @@ export function AgentSwitcher() {
         animation: isClosing ? 'fadeOut 0.2s ease-out both' : 'fadeIn 0.3s ease-out both',
       }}
     >
-      {/* 纯净深色背景 */}
+      {/* 多层渐变背景 */}
       <div
         className="absolute inset-0"
         style={{
-          background: 'rgba(0, 0, 0, 0.85)',
-          backdropFilter: 'blur(30px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+          background: `
+            radial-gradient(ellipse 80% 50% at 50% 0%, rgba(59, 130, 246, 0.15) 0%, transparent 50%),
+            radial-gradient(ellipse 60% 40% at 70% 100%, rgba(168, 85, 247, 0.12) 0%, transparent 50%),
+            radial-gradient(ellipse 50% 30% at 20% 80%, rgba(34, 197, 94, 0.08) 0%, transparent 50%),
+            linear-gradient(180deg, #0a0e1a 0%, #060810 50%, #030408 100%)
+          `,
         }}
       />
 
-      {/* 中央光晕 */}
+      {/* 浮动光球 1 - 顶部蓝色 */}
       <div
         className="absolute pointer-events-none"
         style={{
-          width: '800px',
+          width: '400px',
           height: '400px',
-          background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.03) 0%, transparent 70%)',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
+          top: '-100px',
+          left: '30%',
+          background: 'radial-gradient(circle, rgba(59, 130, 246, 0.2) 0%, transparent 60%)',
+          filter: 'blur(60px)',
+          animation: 'floatOrb 8s ease-in-out infinite',
         }}
       />
 
-      {/* 内容区域 - 无面板边框，极简 */}
+      {/* 浮动光球 2 - 右下紫色 */}
+      <div
+        className="absolute pointer-events-none"
+        style={{
+          width: '300px',
+          height: '300px',
+          bottom: '10%',
+          right: '15%',
+          background: 'radial-gradient(circle, rgba(168, 85, 247, 0.15) 0%, transparent 60%)',
+          filter: 'blur(50px)',
+          animation: 'floatOrb 10s ease-in-out infinite reverse',
+        }}
+      />
+
+      {/* 浮动光球 3 - 左下绿色 */}
+      <div
+        className="absolute pointer-events-none"
+        style={{
+          width: '250px',
+          height: '250px',
+          bottom: '20%',
+          left: '10%',
+          background: 'radial-gradient(circle, rgba(34, 197, 94, 0.1) 0%, transparent 60%)',
+          filter: 'blur(40px)',
+          animation: 'floatOrb 12s ease-in-out infinite 2s',
+        }}
+      />
+
+      {/* 毛玻璃遮罩层 */}
+      <div
+        className="absolute inset-0"
+        style={{
+          backdropFilter: 'blur(20px) saturate(150%)',
+          WebkitBackdropFilter: 'blur(20px) saturate(150%)',
+        }}
+      />
+
+      {/* 内容区域 */}
       <div
         className="relative"
         style={{
@@ -253,14 +342,17 @@ export function AgentSwitcher() {
         {/* 标题 */}
         <div className="text-center mb-10">
           <h2
-            className="text-[28px] font-light tracking-wide"
-            style={{ color: 'rgba(255, 255, 255, 0.9)' }}
+            className="text-[28px] font-semibold tracking-wide"
+            style={{
+              color: 'rgba(255, 255, 255, 0.95)',
+              textShadow: '0 0 40px rgba(255, 255, 255, 0.2)',
+            }}
           >
             选择 Agent
           </h2>
           <p
             className="mt-3 text-[13px] font-light"
-            style={{ color: 'rgba(255, 255, 255, 0.35)' }}
+            style={{ color: 'rgba(255, 255, 255, 0.4)' }}
           >
             按 1-4 快速切换 · ESC 关闭
           </p>
@@ -276,7 +368,7 @@ export function AgentSwitcher() {
               isSelected={selectedIndex === index}
               onClick={() => navigateToAgent(agent)}
               onMouseEnter={() => setSelectedIndex(index)}
-              delay={isClosing ? 0 : 100 + index * 60}
+              delay={isClosing ? 0 : 100 + index * 70}
             />
           ))}
         </div>
@@ -285,13 +377,13 @@ export function AgentSwitcher() {
         <div className="mt-10 flex justify-center gap-6">
           <div
             className="flex items-center gap-2 text-[12px]"
-            style={{ color: 'rgba(255, 255, 255, 0.3)' }}
+            style={{ color: 'rgba(255, 255, 255, 0.35)' }}
           >
             <span
               className="px-2 py-1 rounded-md"
               style={{
-                background: 'rgba(255, 255, 255, 0.06)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
               }}
             >
               ←
@@ -299,8 +391,8 @@ export function AgentSwitcher() {
             <span
               className="px-2 py-1 rounded-md"
               style={{
-                background: 'rgba(255, 255, 255, 0.06)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
               }}
             >
               →
@@ -309,13 +401,13 @@ export function AgentSwitcher() {
           </div>
           <div
             className="flex items-center gap-2 text-[12px]"
-            style={{ color: 'rgba(255, 255, 255, 0.3)' }}
+            style={{ color: 'rgba(255, 255, 255, 0.35)' }}
           >
             <span
               className="px-2 py-1 rounded-md"
               style={{
-                background: 'rgba(255, 255, 255, 0.06)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
               }}
             >
               ↵
@@ -338,31 +430,63 @@ export function AgentSwitcher() {
         @keyframes contentIn {
           from {
             opacity: 0;
-            transform: scale(0.96);
+            transform: scale(0.95) translateY(10px);
           }
           to {
             opacity: 1;
-            transform: scale(1);
+            transform: scale(1) translateY(0);
           }
         }
         @keyframes contentOut {
           from {
             opacity: 1;
-            transform: scale(1);
+            transform: scale(1) translateY(0);
           }
           to {
             opacity: 0;
-            transform: scale(0.98);
+            transform: scale(0.98) translateY(-5px);
           }
         }
         @keyframes cardFloat {
           from {
             opacity: 0;
-            transform: translateY(20px);
+            transform: translateY(24px) scale(0.95);
           }
           to {
             opacity: 1;
-            transform: translateY(0);
+            transform: translateY(0) scale(1);
+          }
+        }
+        @keyframes glowPulse {
+          0%, 100% {
+            opacity: 0.6;
+            transform: scale(1);
+          }
+          50% {
+            opacity: 1;
+            transform: scale(1.05);
+          }
+        }
+        @keyframes iconGlow {
+          0%, 100% {
+            filter: brightness(1);
+          }
+          50% {
+            filter: brightness(1.15);
+          }
+        }
+        @keyframes floatOrb {
+          0%, 100% {
+            transform: translate(0, 0);
+          }
+          25% {
+            transform: translate(20px, -15px);
+          }
+          50% {
+            transform: translate(-10px, 10px);
+          }
+          75% {
+            transform: translate(15px, 5px);
           }
         }
       `}</style>
