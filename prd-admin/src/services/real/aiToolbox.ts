@@ -1,5 +1,6 @@
-import { apiRequest, apiRequestSse } from '@/services/real/apiClient';
+import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
+import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 
 // ============ Types ============
@@ -175,7 +176,7 @@ export async function executeToolboxRun(runId: string): Promise<ApiResponse<{ me
 }
 
 /**
- * 订阅运行事件流（SSE）
+ * 订阅运行事件流（SSE）- 使用 fetch 支持 JWT 认证
  */
 export function subscribeToolboxRunEvents(
   runId: string,
@@ -186,49 +187,81 @@ export function subscribeToolboxRunEvents(
     onDone?: () => void;
   }
 ): () => void {
+  const token = useAuthStore.getState().token;
   const url = `${api.aiToolbox.stream(runId)}${options.afterSeq ? `?afterSeq=${options.afterSeq}` : ''}`;
+  const abortController = new AbortController();
 
-  const eventSource = new EventSource(url, { withCredentials: true });
-
-  // 处理各种事件类型
-  const eventTypes = [
-    'run_started',
-    'step_started',
-    'step_progress',
-    'step_artifact',
-    'step_completed',
-    'step_failed',
-    'run_completed',
-    'run_failed',
-    'ping',
-    'done',
-    'error',
-  ];
-
-  eventTypes.forEach((type) => {
-    eventSource.addEventListener(type, (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(event.data);
-        options.onEvent({ ...data, eventType: type });
-
-        if (type === 'done' || type === 'run_completed' || type === 'run_failed') {
-          eventSource.close();
-          options.onDone?.();
-        }
-      } catch (e) {
-        console.error('解析事件失败:', e);
+  (async () => {
+    try {
+      const headers: Record<string, string> = {
+        Accept: 'text/event-stream',
+      };
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
       }
-    });
-  });
 
-  eventSource.onerror = (e) => {
-    console.error('SSE 连接错误:', e);
-    options.onError?.(new Error('SSE 连接错误'));
-    eventSource.close();
-  };
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+        signal: abortController.signal,
+      });
 
-  // 返回取消订阅函数
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        let currentEvent = '';
+        let currentData = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            currentEvent = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            currentData = line.slice(5).trim();
+          } else if (line === '' && currentEvent && currentData) {
+            try {
+              const data = JSON.parse(currentData);
+              options.onEvent({ ...data, eventType: currentEvent });
+
+              if (currentEvent === 'done' || currentEvent === 'run_completed' || currentEvent === 'run_failed') {
+                options.onDone?.();
+                return;
+              }
+            } catch (e) {
+              console.error('解析事件失败:', e);
+            }
+            currentEvent = '';
+            currentData = '';
+          }
+        }
+      }
+
+      options.onDone?.();
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') {
+        console.error('SSE 连接错误:', e);
+        options.onError?.(e as Error);
+      }
+    }
+  })();
+
   return () => {
-    eventSource.close();
+    abortController.abort();
   };
 }
