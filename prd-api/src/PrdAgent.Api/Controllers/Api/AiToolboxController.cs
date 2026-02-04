@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Services.Toolbox;
 using PrdAgent.Core.Interfaces;
@@ -87,6 +88,7 @@ public class AiToolboxController : ControllerBase
         // Step 2: 创建运行记录
         var run = new ToolboxRun
         {
+            Id = ObjectId.GenerateNewId().ToString(),
             UserId = userId,
             SessionId = request.SessionId,
             UserMessage = message,

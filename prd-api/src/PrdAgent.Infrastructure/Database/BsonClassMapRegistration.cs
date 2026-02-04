@@ -2,6 +2,7 @@ using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Conventions;
 using MongoDB.Bson.Serialization.Serializers;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Models.Toolbox;
 
 namespace PrdAgent.Infrastructure.Database;
 
@@ -68,6 +69,7 @@ public static class BsonClassMapRegistration
             RegisterUserPreferences();
             RegisterWatermarkFontAsset();
             RegisterWatermarkConfig();
+            RegisterToolboxRun();
 
             _registered = true;
         }
@@ -843,5 +845,45 @@ public static class BsonClassMapRegistration
                 .SetSerializer(new StringOrObjectIdSerializer());
             cm.SetIgnoreExtraElements(true);
         });
+    }
+
+    private static void RegisterToolboxRun()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(ToolboxRun))) return;
+        BsonClassMap.RegisterClassMap<ToolboxRun>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(ToolboxRunStep)))
+        {
+            BsonClassMap.RegisterClassMap<ToolboxRunStep>(cm =>
+            {
+                cm.AutoMap();
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(ToolboxArtifact)))
+        {
+            BsonClassMap.RegisterClassMap<ToolboxArtifact>(cm =>
+            {
+                cm.AutoMap();
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(IntentResult)))
+        {
+            BsonClassMap.RegisterClassMap<IntentResult>(cm =>
+            {
+                cm.AutoMap();
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
     }
 }

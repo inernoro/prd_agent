@@ -1,6 +1,3 @@
-using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
-
 namespace PrdAgent.Core.Models.Toolbox;
 
 /// <summary>
@@ -165,9 +162,10 @@ public static class AgentRegistry
 /// </summary>
 public class ToolboxRun
 {
-    [BsonId]
-    [BsonRepresentation(BsonType.ObjectId)]
-    public string Id { get; set; } = ObjectId.GenerateNewId().ToString();
+    /// <summary>
+    /// 运行 ID（MongoDB ObjectId 格式，由 Infrastructure 层生成）
+    /// </summary>
+    public string Id { get; set; } = string.Empty;
 
     /// <summary>
     /// 所属用户 ID
