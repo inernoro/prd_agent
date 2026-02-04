@@ -3434,44 +3434,54 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 标记已处理，避免重复执行
     initialPromptHandledRef.current = true;
 
-    // 延迟执行，确保 UI 已渲染完成
-    const timer = window.setTimeout(() => {
-      const inline = initialPrompt.inlineImage;
+    const inline = initialPrompt.inlineImage;
 
-      // 如果有内联图片，先添加到 canvas
-      if (inline?.src) {
-        const inlineKey = `inline_${Date.now()}`;
-        // 为新图片分配 refId
-        const maxExisting = canvasRef.current.reduce((acc, x) => (typeof x.refId === 'number' && x.refId > acc ? x.refId : acc), 0);
-        const newRefId = Math.max(nextRefId, maxExisting + 1);
-        setNextRefId(newRefId + 1);
-        
-        const inlineCanvasItem: CanvasImageItem = {
-          key: inlineKey,
-          createdAt: Date.now(),
-          prompt: inline.name || '参考图',
-          src: inline.src,
-          status: 'done',
-          kind: 'image',
-          refId: newRefId,
-        };
-        setCanvas((prev) => [...prev, inlineCanvasItem]);
-        // 手动同步选中和 chip（因为 setCanvas 是异步的）
-        setSelectedKeys([inlineKey]);
-        richComposerRef.current?.clearPending();
-        richComposerRef.current?.insertImageChip(
-          { key: inlineKey, refId: newRefId, src: inline.src, label: inline.name || `img${newRefId}` },
-          { preserveFocus: true }
-        );
-      }
+    // 如果有内联图片，先添加到 canvas
+    if (inline?.src) {
+      const inlineKey = `inline_${Date.now()}`;
+      // 为新图片分配 refId
+      const maxExisting = canvasRef.current.reduce((acc, x) => (typeof x.refId === 'number' && x.refId > acc ? x.refId : acc), 0);
+      const newRefId = Math.max(nextRefId, maxExisting + 1);
+      setNextRefId(newRefId + 1);
 
-      // 通过统一守门员发送（inlineImage 现在已在 canvas 中，会被 selectedKeys 引用）
+      const inlineCanvasItem: CanvasImageItem = {
+        key: inlineKey,
+        createdAt: Date.now(),
+        prompt: inline.name || '参考图',
+        src: inline.src,
+        status: 'done',
+        kind: 'image',
+        refId: newRefId,
+      };
+      setCanvas((prev) => [...prev, inlineCanvasItem]);
+      // 手动同步选中
+      setSelectedKeys([inlineKey]);
+
+      // 等待 richComposerRef 准备好后插入 chip
+      const tryInsertChip = (retries = 0) => {
+        if (richComposerRef.current) {
+          richComposerRef.current.clearPending();
+          richComposerRef.current.insertImageChip(
+            { key: inlineKey, refId: newRefId, src: inline.src, label: inline.name || `img${newRefId}` },
+            { preserveFocus: false }
+          );
+        } else if (retries < 20) {
+          // 每 100ms 重试，最多 2 秒
+          setTimeout(() => tryInsertChip(retries + 1), 100);
+        }
+      };
+      // 延迟执行，确保 canvas 状态已更新
+      setTimeout(() => tryInsertChip(), 100);
+    }
+
+    // 延迟发送文本，确保 canvas 和 chip 已准备好
+    const sendTimer = window.setTimeout(() => {
       void sendText(initialPrompt.text, {
         inlineImage: inline,
       });
-    }, 500);
+    }, 600);
 
-    return () => window.clearTimeout(timer);
+    return () => window.clearTimeout(sendTimer);
   }, [initialPrompt, workspace, modelsLoading]);
 
   const insertAtCursor = (text: string) => {
