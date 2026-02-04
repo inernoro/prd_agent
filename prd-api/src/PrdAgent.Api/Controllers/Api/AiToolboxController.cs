@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Services.Toolbox;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.Toolbox;
 using PrdAgent.Core.Security;
@@ -23,6 +24,9 @@ public class AiToolboxController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly IIntentClassifier _intentClassifier;
+    private readonly IToolboxOrchestrator _orchestrator;
+    private readonly IToolboxEventStore _eventStore;
+    private readonly IRunQueue _runQueue;
     private readonly ILogger<AiToolboxController> _logger;
 
     private const string AppKey = "ai-toolbox";
@@ -31,10 +35,16 @@ public class AiToolboxController : ControllerBase
     public AiToolboxController(
         MongoDbContext db,
         IIntentClassifier intentClassifier,
+        IToolboxOrchestrator orchestrator,
+        IToolboxEventStore eventStore,
+        IRunQueue runQueue,
         ILogger<AiToolboxController> logger)
     {
         _db = db;
         _intentClassifier = intentClassifier;
+        _orchestrator = orchestrator;
+        _eventStore = eventStore;
+        _runQueue = runQueue;
         _logger = logger;
     }
 
@@ -96,7 +106,7 @@ public class AiToolboxController : ControllerBase
                 Index = i,
                 AgentKey = agentKey,
                 AgentDisplayName = agentDef?.DisplayName ?? agentKey,
-                Action = GetDefaultActionForAgent(agentKey, intent),
+                Action = GetDefaultActionForAgent(agentKey, intent, i, intent.SuggestedAgents.Count),
                 Input = new Dictionary<string, object>
                 {
                     ["userMessage"] = message,
@@ -109,6 +119,15 @@ public class AiToolboxController : ControllerBase
         await _db.ToolboxRuns.InsertOneAsync(run, cancellationToken: ct);
 
         _logger.LogInformation("百宝箱 Run 已创建: RunId={RunId}, Steps={StepCount}", run.Id, run.Steps.Count);
+
+        // Step 3: 根据选项决定是否自动执行
+        var autoExecute = request.Options?.AutoExecute ?? true;
+        if (autoExecute && run.Steps.Count > 0)
+        {
+            // 入队等待后台执行
+            await _runQueue.EnqueueAsync(ToolboxRunWorker.RunKind, run.Id, ct);
+            _logger.LogInformation("Run 已入队: {RunId}", run.Id);
+        }
 
         // 返回响应
         var response = new ToolboxChatResponse
@@ -134,7 +153,7 @@ public class AiToolboxController : ControllerBase
                 Action = s.Action,
                 Status = s.Status.ToString().ToLowerInvariant()
             }).ToList(),
-            Status = run.Status.ToString().ToLowerInvariant(),
+            Status = autoExecute ? "queued" : "pending",
             SseUrl = $"/api/ai-toolbox/runs/{run.Id}/stream"
         };
 
@@ -156,6 +175,30 @@ public class AiToolboxController : ControllerBase
 
         var intent = await _intentClassifier.ClassifyAsync(message, ct);
         return Ok(ApiResponse<IntentResult>.Ok(intent));
+    }
+
+    /// <summary>
+    /// 手动触发执行
+    /// </summary>
+    [HttpPost("runs/{runId}/execute")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ExecuteRun(string runId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var run = await _db.ToolboxRuns.Find(x => x.Id == runId && x.UserId == userId).FirstOrDefaultAsync(ct);
+
+        if (run == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "运行记录不存在"));
+        }
+
+        if (run.Status != ToolboxRunStatus.Pending)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_STATE, $"当前状态不允许执行: {run.Status}"));
+        }
+
+        await _runQueue.EnqueueAsync(ToolboxRunWorker.RunKind, run.Id, ct);
+        return Ok(ApiResponse<object>.Ok(new { message = "已加入执行队列" }));
     }
 
     /// <summary>
@@ -214,7 +257,7 @@ public class AiToolboxController : ControllerBase
                 r.Id,
                 r.UserMessage,
                 intent = r.Intent?.PrimaryIntent,
-                r.Status,
+                status = r.Status.ToString().ToLowerInvariant(),
                 agentCount = r.PlannedAgents.Count,
                 r.CreatedAt,
                 r.CompletedAt
@@ -245,11 +288,11 @@ public class AiToolboxController : ControllerBase
     }
 
     /// <summary>
-    /// SSE 流式获取运行事件（Phase 0.5 实现）
+    /// SSE 流式获取运行事件
     /// </summary>
     [HttpGet("runs/{runId}/stream")]
     [Produces("text/event-stream")]
-    public async Task StreamRun(string runId, [FromQuery] int? afterSeq, CancellationToken ct)
+    public async Task StreamRun(string runId, [FromQuery] long? afterSeq, CancellationToken ct)
     {
         Response.ContentType = "text/event-stream";
         Response.Headers.CacheControl = "no-cache";
@@ -265,47 +308,122 @@ public class AiToolboxController : ControllerBase
             return;
         }
 
-        // Phase 0: 简单返回当前状态
-        // Phase 0.5 将实现真正的流式执行
-        await WriteEventAsync("status", new
-        {
-            runId = run.Id,
-            status = run.Status.ToString().ToLowerInvariant(),
-            message = "MVP Phase 0: 意图识别已完成，Agent 执行将在 Phase 0.5 实现"
-        }, ct);
+        var lastSeq = afterSeq ?? 0;
 
-        await WriteEventAsync("intent", run.Intent, ct);
-
-        await WriteEventAsync("plan", new
+        // 首先发送历史事件（断线重连场景）
+        await foreach (var evt in _eventStore.GetEventsAsync(runId, lastSeq, ct))
         {
-            agents = run.PlannedAgents,
-            steps = run.Steps.Select(s => new
+            await WriteEventAsync(GetEventName(evt.Type), evt, ct);
+            lastSeq = evt.Seq;
+        }
+
+        // 如果 Run 已完成，直接返回
+        if (run.Status is ToolboxRunStatus.Completed or ToolboxRunStatus.Failed or ToolboxRunStatus.Cancelled)
+        {
+            await WriteEventAsync("done", new
             {
-                s.StepId,
-                s.Index,
-                s.AgentKey,
-                s.AgentDisplayName,
-                s.Action,
-                status = s.Status.ToString().ToLowerInvariant()
-            })
-        }, ct);
+                runId = run.Id,
+                status = run.Status.ToString().ToLowerInvariant(),
+                finalResponse = run.FinalResponse,
+                artifacts = run.Artifacts
+            }, ct);
+            return;
+        }
 
-        await WriteEventAsync("done", new { runId = run.Id }, ct);
+        // 轮询等待新事件
+        var pollInterval = TimeSpan.FromMilliseconds(500);
+        var timeout = TimeSpan.FromMinutes(10);
+        var startTime = DateTime.UtcNow;
+
+        while (!ct.IsCancellationRequested && DateTime.UtcNow - startTime < timeout)
+        {
+            // 获取新事件
+            var hasNewEvents = false;
+            await foreach (var evt in _eventStore.GetEventsAsync(runId, lastSeq, ct))
+            {
+                await WriteEventAsync(GetEventName(evt.Type), evt, ct);
+                lastSeq = evt.Seq;
+                hasNewEvents = true;
+
+                // 如果是完成或失败事件，结束流
+                if (evt.Type is ToolboxRunEventType.RunCompleted or ToolboxRunEventType.RunFailed)
+                {
+                    return;
+                }
+            }
+
+            if (!hasNewEvents)
+            {
+                // 发送心跳
+                await WriteEventAsync("ping", new { timestamp = DateTime.UtcNow }, ct);
+                await Task.Delay(pollInterval, ct);
+            }
+
+            // 重新检查 Run 状态
+            run = await _db.ToolboxRuns.Find(x => x.Id == runId).FirstOrDefaultAsync(ct);
+            if (run?.Status is ToolboxRunStatus.Completed or ToolboxRunStatus.Failed or ToolboxRunStatus.Cancelled)
+            {
+                await WriteEventAsync("done", new
+                {
+                    runId = run.Id,
+                    status = run.Status.ToString().ToLowerInvariant(),
+                    finalResponse = run.FinalResponse,
+                    artifacts = run.Artifacts
+                }, ct);
+                return;
+            }
+        }
     }
 
     private async Task WriteEventAsync(string eventName, object data, CancellationToken ct)
     {
-        var json = JsonSerializer.Serialize(data, JsonOptions);
-        await Response.WriteAsync($"event: {eventName}\n", ct);
-        await Response.WriteAsync($"data: {json}\n\n", ct);
-        await Response.Body.FlushAsync(ct);
+        try
+        {
+            var json = JsonSerializer.Serialize(data, JsonOptions);
+            await Response.WriteAsync($"event: {eventName}\n", ct);
+            await Response.WriteAsync($"data: {json}\n\n", ct);
+            await Response.Body.FlushAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            // 客户端断开连接
+        }
+        catch (ObjectDisposedException)
+        {
+            // 连接已关闭
+        }
     }
+
+    private static string GetEventName(ToolboxRunEventType type) => type switch
+    {
+        ToolboxRunEventType.RunStarted => "run_started",
+        ToolboxRunEventType.StepStarted => "step_started",
+        ToolboxRunEventType.StepProgress => "step_progress",
+        ToolboxRunEventType.StepArtifact => "step_artifact",
+        ToolboxRunEventType.StepCompleted => "step_completed",
+        ToolboxRunEventType.StepFailed => "step_failed",
+        ToolboxRunEventType.RunCompleted => "run_completed",
+        ToolboxRunEventType.RunFailed => "run_failed",
+        _ => "unknown"
+    };
 
     /// <summary>
     /// 根据 Agent 和意图确定默认动作
     /// </summary>
-    private static string GetDefaultActionForAgent(string agentKey, IntentResult intent)
+    private static string GetDefaultActionForAgent(string agentKey, IntentResult intent, int stepIndex, int totalSteps)
     {
+        // 多步骤串行场景：如果是 visual-agent 且不是第一步，说明需要基于前序内容生成图
+        if (agentKey == "visual-agent" && stepIndex > 0)
+        {
+            return "text2img"; // 基于前序内容生成图
+        }
+
+        // 如果是 literary-agent 且后面还有 visual-agent，说明是"写文章+配图"场景
+        if (agentKey == "literary-agent" && intent.PrimaryIntent == IntentTypes.Composite)
+        {
+            return "write_content";
+        }
+
         return agentKey switch
         {
             "prd-agent" => "analyze_prd",

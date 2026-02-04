@@ -397,6 +397,60 @@ public static class AiToolbox
         )]
         public const string Execute = "ai-toolbox.agent.execute::chat";
     }
+
+    /// <summary>
+    /// 各 Agent 的 AppCallerCode
+    /// </summary>
+    public static class Agents
+    {
+        [AppCallerMetadata(
+            "PRD Agent 对话",
+            "PRD 分析、缺口检测、问题解答",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string PrdChat = "ai-toolbox.agent.prd::chat";
+
+        [AppCallerMetadata(
+            "Visual Agent 对话",
+            "视觉创作对话交互",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string VisualChat = "ai-toolbox.agent.visual::chat";
+
+        [AppCallerMetadata(
+            "Visual Agent 视觉理解",
+            "图片描述、视觉理解",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Agent"
+        )]
+        public const string VisualVision = "ai-toolbox.agent.visual::vision";
+
+        [AppCallerMetadata(
+            "Visual Agent 图片生成",
+            "文生图、图生图",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Agent"
+        )]
+        public const string VisualGeneration = "ai-toolbox.agent.visual::generation";
+
+        [AppCallerMetadata(
+            "Literary Agent 对话",
+            "文学创作、写作、润色",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string LiteraryChat = "ai-toolbox.agent.literary::chat";
+
+        [AppCallerMetadata(
+            "Defect Agent 对话",
+            "缺陷提取、分类、报告",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string DefectChat = "ai-toolbox.agent.defect::chat";
+    }
 }
 
 /// <summary>
