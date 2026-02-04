@@ -1170,7 +1170,7 @@ function WatermarkEditor(props: {
           }}
         >
           <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 pt-2">
-            <div className="grid gap-4" style={{ gridTemplateColumns: '48px minmax(0, 1fr)' }}>
+            <div className="grid gap-5" style={{ gridTemplateColumns: '48px minmax(0, 1fr)' }}>
               <SectionLabel label="文本" />
               <input
                 value={config.text}
@@ -1365,7 +1365,7 @@ function WatermarkEditor(props: {
                   </div>
                 ) : null}
 
-                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+                <div className="pt-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                   {/* 填充 + 背景色 */}
                   <div className="flex items-center gap-3">
                     <InlineLabel label="填充" />
@@ -1404,7 +1404,7 @@ function WatermarkEditor(props: {
                   </div>
                 </div>
 
-                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+                <div className="pt-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                   {/* 边框 + 边框色 */}
                   <div className="flex items-center gap-3">
                     <InlineLabel label="边框" />
@@ -1444,7 +1444,7 @@ function WatermarkEditor(props: {
 
                   {/* 边框宽度（启用边框时显示） */}
                   {config.borderEnabled && (
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 mt-3">
                       <InlineLabel label="粗细" />
                       <input
                         type="range"
@@ -1463,11 +1463,13 @@ function WatermarkEditor(props: {
                       </span>
                     </div>
                   )}
+                </div>
 
-                  {/* 圆角 */}
-                  {(config.backgroundEnabled || config.borderEnabled) ? (
+                {/* 圆角 - 填充和边框共用 */}
+                {(config.backgroundEnabled || config.borderEnabled) && (
+                  <div className="pt-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                     <div className="flex items-center gap-3 min-w-0 overflow-hidden">
-                    <InlineLabel label="圆角" />
+                      <InlineLabel label="圆角" />
                       <input
                         type="range"
                         min="0"
@@ -1484,10 +1486,10 @@ function WatermarkEditor(props: {
                         {Math.round(((config.cornerRadius ?? 0) / 50) * 100)}%
                       </span>
                     </div>
-                  ) : null}
-                </div>
+                  </div>
+                )}
 
-                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+                <div className="pt-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
                   {/* 文字 + 文字色 */}
                   <div className="flex items-center gap-3">
                     <InlineLabel label="文字" />
