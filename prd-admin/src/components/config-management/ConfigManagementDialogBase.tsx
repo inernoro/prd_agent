@@ -421,29 +421,27 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
         maxWidth={maxWidth}
         contentClassName="overflow-hidden !p-4"
         contentStyle={{ maxHeight: '75vh', height: '75vh' }}
+        titleCenter={
+          showMarketplaceTab ? (
+            <div className="flex items-center gap-2">
+              {VIEW_TABS.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setViewMode(tab.key)}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    viewMode === tab.key ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
+                  }`}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          ) : undefined
+        }
         content={
           <div className="flex flex-col h-full min-h-0">
-            {/* Tab 切换 */}
-            {showMarketplaceTab && (
-              <div className="flex items-center justify-center gap-2 mb-4 flex-shrink-0 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>
-                <div className="flex items-center gap-2">
-                  {VIEW_TABS.map((tab) => (
-                    <button
-                      key={tab.key}
-                      type="button"
-                      onClick={() => setViewMode(tab.key)}
-                      className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                        viewMode === tab.key ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
-                      }`}
-                    >
-                      {tab.icon}
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* 内容区 */}
             <div className="flex-1 min-h-0">{viewMode === 'mine' ? renderMineView() : renderMarketplaceView()}</div>
           </div>
