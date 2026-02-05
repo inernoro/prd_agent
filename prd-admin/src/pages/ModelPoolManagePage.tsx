@@ -22,7 +22,7 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 // Note: systemDialog 仅用于 confirm 确认框，toast 用于轻量级提示
@@ -227,6 +227,15 @@ export function ModelPoolManagePage() {
     }
   };
 
+  // 平台名称查找表
+  const platformNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    (platforms ?? []).forEach((p) => {
+      if (p?.id) map.set(p.id, p.name || p.id);
+    });
+    return map;
+  }, [platforms]);
+
   const filteredPools = searchTerm
     ? pools.filter(
         (p) =>
@@ -358,9 +367,14 @@ export function ModelPoolManagePage() {
                                   <span className="text-[10px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>
                                     #{idx + 1}
                                   </span>
-                                  <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
-                                    {model.modelId}
-                                  </span>
+                                  <div className="min-w-0 flex-1">
+                                    <span className="text-[12px] truncate block" style={{ color: 'var(--text-primary)' }}>
+                                      {model.modelId}
+                                    </span>
+                                    <span className="text-[10px] truncate block" style={{ color: 'var(--text-muted)' }}>
+                                      {platformNameById.get(model.platformId) ?? model.platformId}
+                                    </span>
+                                  </div>
                                 </div>
                                 <span
                                   className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
@@ -544,7 +558,7 @@ export function ModelPoolManagePage() {
                                 {m.modelId}
                               </div>
                               <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                                {m.platformId}
+                                {platformNameById.get(m.platformId) ?? m.platformId}
                               </div>
                             </div>
                           </div>
