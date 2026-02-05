@@ -218,19 +218,38 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
 
     // 渲染"我的"视图
     const renderMineView = () => {
-      // 使用固定栏宽，卡片撑满栏宽
+      // 有分隔线时：固定栏宽，栏内垂直堆叠
+      // 无分隔线时：内容区撑满，由 renderMineContent 控制卡片布局（如 flex-wrap）
+      if (showColumnDividers) {
+        return (
+          <div className="flex flex-wrap gap-4 h-full min-h-0 overflow-auto content-start">
+            {columns.map((col, idx) => (
+              <div
+                key={col.key}
+                className={`min-h-0 flex flex-col ${idx > 0 ? 'border-l pl-4' : ''}`}
+                style={{
+                  width: COLUMN_WIDTH,
+                  flexShrink: 0,
+                  ...(idx > 0 ? { borderColor: 'var(--border-subtle)' } : {})
+                }}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    {col.title}
+                  </div>
+                  {col.titleAction}
+                </div>
+                <div className="flex-1 min-h-0 overflow-auto">{col.renderMineContent(mineContext)}</div>
+              </div>
+            ))}
+          </div>
+        );
+      }
+      // 无分隔线：单栏撑满，卡片由内部组件控制（flex-wrap）
       return (
-        <div className="flex flex-wrap gap-4 h-full min-h-0 overflow-auto content-start">
-          {columns.map((col, idx) => (
-            <div
-              key={col.key}
-              className={`min-h-0 flex flex-col ${showColumnDividers && idx > 0 ? 'border-l pl-4' : ''}`}
-              style={{
-                width: COLUMN_WIDTH,
-                flexShrink: 0,
-                ...(showColumnDividers && idx > 0 ? { borderColor: 'var(--border-subtle)' } : {})
-              }}
-            >
+        <div className="flex flex-col gap-4 h-full min-h-0 overflow-auto">
+          {columns.map((col) => (
+            <div key={col.key} className="min-h-0 flex flex-col flex-1">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                   {col.title}
@@ -311,7 +330,8 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
             <div className="flex-1 flex items-center justify-center">
               <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
             </div>
-          ) : (
+          ) : showColumnDividers ? (
+            // 有分隔线：固定栏宽，卡片撑满栏宽，垂直堆叠
             <div className="flex flex-wrap gap-4 flex-1 min-h-0 overflow-auto content-start">
               {visibleColumns.map((col, idx) => {
                 const items = (marketplaceData[col.key] || []) as unknown[];
@@ -338,6 +358,36 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
                     ) : (
                       <div className="flex flex-col gap-3 overflow-auto">
                         {items.map((item: any) => col.renderMarketplaceCard?.(item, marketplaceCardContext))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            // 无分隔线：整个空间，卡片固定宽度，flex-wrap横向优先
+            <div className="flex flex-col gap-4 flex-1 min-h-0 overflow-auto">
+              {visibleColumns.map((col) => {
+                const items = (marketplaceData[col.key] || []) as unknown[];
+                return (
+                  <div key={col.key} className="min-h-0 flex flex-col">
+                    <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                      {col.title}
+                    </div>
+                    {items.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-12 gap-3">
+                        <Store size={32} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
+                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          暂无公开的{col.filterLabel}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-3 overflow-auto content-start">
+                        {items.map((item: any) => (
+                          <div key={item.id} style={{ width: COLUMN_WIDTH, flexShrink: 0 }}>
+                            {col.renderMarketplaceCard?.(item, marketplaceCardContext)}
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
