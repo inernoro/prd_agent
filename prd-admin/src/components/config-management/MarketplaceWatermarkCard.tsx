@@ -6,7 +6,7 @@
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
-import { Hand, User, Sparkles } from 'lucide-react';
+import { Hand, User, Droplet } from 'lucide-react';
 import type { MarketplaceWatermarkConfig } from '@/services/contracts/watermark';
 import type { MarketplaceCardContext } from './ConfigManagementDialogBase';
 
@@ -31,7 +31,7 @@ export function MarketplaceWatermarkCard({ config, ctx, onFork }: MarketplaceWat
         <div className="p-2 pb-1">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1 flex items-center gap-1.5">
-              <Sparkles size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
+              <Droplet size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
               <div
                 className="flex-1 font-semibold text-[13px]"
                 style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
@@ -53,9 +53,9 @@ export function MarketplaceWatermarkCard({ config, ctx, onFork }: MarketplaceWat
           </div>
         </div>
 
-        {/* 配置详情 + 预览图 */}
+        {/* 配置详情 + 预览图（与 WatermarkSettingsPanel 保持一致：100px 高度） */}
         <div className="px-2 pb-1">
-          <div className="grid gap-2" style={{ gridTemplateColumns: config.previewUrl ? 'minmax(0, 1fr) 80px' : '1fr' }}>
+          <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: '100px' }}>
             <WatermarkDescriptionGrid
               data={{
                 text: config.text,
@@ -72,22 +72,25 @@ export function MarketplaceWatermarkCard({ config, ctx, onFork }: MarketplaceWat
                 roundedBackgroundEnabled: config.roundedBackgroundEnabled,
               }}
             />
-            {config.previewUrl && (
-              <div
-                className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
-                style={{
-                  background: 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px',
-                  minHeight: '60px',
-                  maxHeight: '80px',
-                }}
-              >
+            <div
+              className="flex items-center justify-center overflow-hidden rounded-[6px]"
+              style={{
+                background: config.previewUrl
+                  ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
+                  : 'rgba(255,255,255,0.02)',
+                border: config.previewUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
+              }}
+            >
+              {config.previewUrl ? (
                 <img
                   src={config.previewUrl}
                   alt={config.name}
                   className="block w-full h-full object-contain"
                 />
-              </div>
-            )}
+              ) : (
+                <div className="text-[11px]" style={{ color: 'rgba(233,209,156,0.7)' }}>无预览</div>
+              )}
+            </div>
           </div>
         </div>
 
