@@ -126,8 +126,8 @@ function MessageMarkdown({ content }: { content: string }) {
   );
 }
 
-/** 头像堆叠组件 - 柔和配色 */
-function AvatarStack({ members, total, max = 4 }: { members: TopMember[]; total: number; max?: number }) {
+/** 头像堆叠组件 - 柔和配色 (保留供后续使用) */
+export function AvatarStack({ members, total, max = 4 }: { members: TopMember[]; total: number; max?: number }) {
   const displayed = members.slice(0, max);
 
   const getAvatarUrl = (fileName?: string | null) => {
@@ -135,8 +135,8 @@ function AvatarStack({ members, total, max = 4 }: { members: TopMember[]; total:
     return `/avatars/${fileName}`;
   };
 
-  // 柔和的灰蓝色调
-  const getGradient = (name: string, index: number) => {
+  // 柔和的灰蓝色调 (name 参数保留供后续扩展)
+  const getGradient = (_name: string, index: number) => {
     const baseHues = [210, 230, 190, 260, 180]; // 蓝、靛、青、紫、青绿
     const hue = baseHues[index % baseHues.length];
     return `linear-gradient(135deg, hsl(${hue}, 25%, 45%), hsl(${hue}, 30%, 35%))`;
@@ -231,7 +231,7 @@ function RoleBar({ distribution }: { distribution?: RoleDistribution | null }) {
   return (
     <div className="flex items-center gap-1">
       <div className="flex h-1.5 flex-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.1)' }}>
-        {segments.map((seg, i) => (
+        {segments.map((seg) => (
           <div
             key={seg.label}
             style={{ width: `${(seg.count / total) * 100}%`, background: seg.color }}

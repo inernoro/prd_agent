@@ -1,5 +1,3 @@
-import React from 'react';
-
 /**
  * 轨道加载器 - 基于 thirdparty/ref/加载进度.html
  * SVG 路径动画，偏离轨道效果

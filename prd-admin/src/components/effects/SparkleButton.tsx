@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 
 /**
  * 闪烁生成按钮 - 基于 thirdparty/ref/生成按钮.html
@@ -13,7 +13,6 @@ interface SparkleButtonProps {
 
 export function SparkleButton({ text = 'Generate', onClick, className }: SparkleButtonProps) {
   const particlesRef = useRef<HTMLSpanElement>(null);
-  const [isHovered, setIsHovered] = useState(false);
 
   useEffect(() => {
     if (!particlesRef.current) return;
@@ -174,8 +173,6 @@ export function SparkleButton({ text = 'Generate', onClick, className }: Sparkle
       `}</style>
       <div
         className={`sparkle-btn-wrapper ${className || ''}`}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
       >
         <button className="sparkle-btn" onClick={onClick}>
           <span className="spark"></span>
