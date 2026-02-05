@@ -1,13 +1,18 @@
 import { useEffect, useMemo } from 'react';
-import { TabBar } from '@/components/design/TabBar';
 import { GlassCard } from '@/components/design/GlassCard';
-import { useToolboxStore, type ToolboxCategory } from '@/stores/toolboxStore';
-import { Package, Search, Plus, Loader2, Sparkles, Boxes, User } from 'lucide-react';
+import { useToolboxStore, type ToolboxCategory, type ToolboxPageTab } from '@/stores/toolboxStore';
+import { Package, Search, Plus, Loader2, Sparkles, Boxes, User, Wrench } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { ToolCard } from './components/ToolCard';
 import { ToolDetail } from './components/ToolDetail';
 import { ToolEditor } from './components/ToolEditor';
 import { ToolRunner } from './components/ToolRunner';
+import { BasicCapabilities } from './components/BasicCapabilities';
+
+const PAGE_TABS: { key: ToolboxPageTab; label: string; icon: React.ReactNode }[] = [
+  { key: 'toolbox', label: 'AI 百宝箱', icon: <Package size={14} /> },
+  { key: 'capabilities', label: '基础能力', icon: <Wrench size={14} /> },
+];
 
 const CATEGORY_OPTIONS: { key: ToolboxCategory; label: string; icon: React.ReactNode }[] = [
   { key: 'all', label: '全部', icon: <Boxes size={12} /> },
@@ -25,11 +30,13 @@ const pageContainerStyle: React.CSSProperties = {
 export default function AiToolboxPage() {
   const {
     view,
+    pageTab,
     category,
     searchQuery,
     items,
     itemsLoading,
     selectedItem,
+    setPageTab,
     setCategory,
     setSearchQuery,
     loadItems,
@@ -78,24 +85,52 @@ export default function AiToolboxPage() {
     return <ToolRunner />;
   }
 
+  // Render based on page tab
+  if (pageTab === 'capabilities') {
+    return <BasicCapabilities />;
+  }
+
   // Grid view (default)
   return (
     <div className="h-full min-h-0 flex flex-col gap-3" style={pageContainerStyle}>
       {/* Header */}
       <div className="px-4 pt-3">
-        <TabBar
-          title="AI 百宝箱"
-          icon={<Package size={15} />}
-          items={[]}
-          activeKey=""
-          onChange={() => {}}
-          actions={
-            <Button variant="primary" size="sm" onClick={startCreate}>
-              <Plus size={13} />
-              创建智能体
-            </Button>
-          }
-        />
+        <div className="flex items-center justify-between">
+          {/* Page Tab Switcher */}
+          <div
+            className="flex items-center gap-0.5 p-0.5 rounded-xl"
+            style={{
+              background: 'rgba(255, 255, 255, 0.03)',
+              border: '1px solid rgba(255, 255, 255, 0.06)',
+            }}
+          >
+            {PAGE_TABS.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setPageTab(tab.key)}
+                className="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-2"
+                style={{
+                  background: pageTab === tab.key
+                    ? 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
+                    : 'transparent',
+                  color: pageTab === tab.key ? 'white' : 'rgba(255, 255, 255, 0.6)',
+                  boxShadow: pageTab === tab.key
+                    ? '0 2px 10px -2px rgba(var(--accent-primary-rgb, 99, 102, 241), 0.4)'
+                    : 'none',
+                }}
+              >
+                {tab.icon}
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Actions */}
+          <Button variant="primary" size="sm" onClick={startCreate}>
+            <Plus size={13} />
+            创建智能体
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}

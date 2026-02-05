@@ -111,7 +111,6 @@ interface FormState {
   conversationStarters: string[];
   enabledTools: string[];
   knowledgeBase: string[];
-  model: string;
   temperature: number;
   enableMemory: boolean;
 }
@@ -129,7 +128,6 @@ export function ToolEditor() {
     conversationStarters: ['帮我写一段文案', '分析一下这个数据'],
     enabledTools: [],
     knowledgeBase: [],
-    model: 'gpt-4o',
     temperature: 0.7,
     enableMemory: false,
   });
@@ -402,26 +400,23 @@ export function ToolEditor() {
   // 渲染高级设置
   const renderAdvancedSettings = () => (
     <div className="space-y-3 pt-2">
-      {/* 模型选择 */}
-      <div>
-        <label className="block text-[11px] font-medium mb-1.5" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
-          模型
-        </label>
-        <select
-          value={form.model}
-          onChange={(e) => setForm({ ...form, model: e.target.value })}
-          className="w-full px-2.5 py-1.5 rounded-lg border text-[12px] outline-none"
-          style={{
-            background: 'rgba(255, 255, 255, 0.03)',
-            borderColor: 'rgba(255, 255, 255, 0.08)',
-            color: 'rgba(255, 255, 255, 0.9)',
-          }}
+      {/* 模型池说明 */}
+      <div
+        className="p-2.5 rounded-lg"
+        style={{
+          background: 'rgba(99, 102, 241, 0.08)',
+          border: '1px solid rgba(99, 102, 241, 0.15)',
+        }}
+      >
+        <div
+          className="text-[11px] font-medium mb-1"
+          style={{ color: 'rgba(129, 140, 248, 0.95)' }}
         >
-          <option value="gpt-4o">GPT-4o</option>
-          <option value="gpt-4o-mini">GPT-4o Mini</option>
-          <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
-          <option value="deepseek-chat">DeepSeek Chat</option>
-        </select>
+          模型调度
+        </div>
+        <div className="text-[10px]" style={{ color: 'rgba(255, 255, 255, 0.55)' }}>
+          智能体使用 <code className="px-1 py-0.5 rounded" style={{ background: 'rgba(255, 255, 255, 0.08)' }}>ai-toolbox</code> 应用标识绑定的模型池，由后端自动调度最优模型。
+        </div>
       </div>
 
       {/* 温度 */}

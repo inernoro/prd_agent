@@ -17,10 +17,12 @@ import type {
 
 export type ToolboxView = 'grid' | 'detail' | 'create' | 'edit' | 'running';
 export type ToolboxCategory = 'all' | 'builtin' | 'custom' | 'favorite';
+export type ToolboxPageTab = 'toolbox' | 'capabilities';
 
 interface ToolboxState {
   // View state
   view: ToolboxView;
+  pageTab: ToolboxPageTab;
   category: ToolboxCategory;
   searchQuery: string;
 
@@ -47,6 +49,7 @@ interface ToolboxState {
   loadBuiltinAgents: () => Promise<void>;
   selectItem: (item: ToolboxItem) => void;
   setView: (view: ToolboxView) => void;
+  setPageTab: (tab: ToolboxPageTab) => void;
   setCategory: (category: ToolboxCategory) => void;
   setSearchQuery: (query: string) => void;
   startCreate: () => void;
@@ -165,6 +168,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
 export const useToolboxStore = create<ToolboxState>((set, get) => ({
   // Initial state
   view: 'grid',
+  pageTab: 'toolbox',
   category: 'all',
   searchQuery: '',
 
@@ -224,6 +228,11 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
   // Set view
   setView: (view: ToolboxView) => {
     set({ view });
+  },
+
+  // Set page tab
+  setPageTab: (pageTab: ToolboxPageTab) => {
+    set({ pageTab });
   },
 
   // Set category filter
