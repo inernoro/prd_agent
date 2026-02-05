@@ -450,14 +450,30 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0, 0, 0, 0.85)' }}
+      style={{
+        background: 'rgba(0, 0, 0, 0.6)',
+        backdropFilter: 'blur(12px) saturate(150%)',
+        WebkitBackdropFilter: 'blur(12px) saturate(150%)',
+      }}
       onClick={onClose}
     >
-      <div className="relative flex flex-col max-w-[95vw] max-h-[95vh]" onClick={(e) => e.stopPropagation()}>
-        {/* 头部工具栏 */}
+      <div
+        className="relative flex flex-col max-w-[95vw] max-h-[95vh] rounded-xl"
+        style={{
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* 头部工具栏 - 液态玻璃效果 */}
         <div
           className="flex items-center justify-between px-4 py-3 rounded-t-xl"
-          style={{ background: 'rgba(30, 30, 40, 0.95)', borderBottom: '1px solid rgba(255,255,255,0.1)' }}
+          style={{
+            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.1)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.05)) 100%)',
+            backdropFilter: 'blur(40px) saturate(180%)',
+            WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+            borderBottom: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
+            boxShadow: '0 1px 0 0 rgba(255, 255, 255, 0.1) inset',
+          }}
         >
           <div className="flex items-center gap-3">
             <div>
@@ -526,15 +542,18 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
 
         {/* 主体内容 */}
         <div className="flex flex-1 min-h-0">
-          {/* 预览区域 - 固定尺寸，内容自适应 */}
+          {/* 预览区域 - 固定尺寸，内容自适应，液态玻璃效果 */}
           <div
             className="relative flex items-center justify-center overflow-hidden rounded-bl-xl"
             style={{
-              background: 'rgba(10, 10, 15, 0.98)',
+              background: 'linear-gradient(180deg, rgba(15, 15, 20, 0.85) 0%, rgba(10, 10, 15, 0.9) 100%)',
+              backdropFilter: 'blur(40px) saturate(150%)',
+              WebkitBackdropFilter: 'blur(40px) saturate(150%)',
               width: '70vw',
               height: '70vh',
               minWidth: 600,
               minHeight: 400,
+              boxShadow: '0 0 0 1px rgba(255, 255, 255, 0.06) inset',
             }}
           >
             <div
@@ -560,9 +579,18 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
             )}
           </div>
 
-          {/* 参数面板 */}
+          {/* 参数面板 - 液态玻璃效果 */}
           {showParams && (
-            <div className="w-80 overflow-y-auto rounded-br-xl" style={{ background: 'rgba(25, 25, 35, 0.98)', borderLeft: '1px solid rgba(255,255,255,0.1)' }}>
+            <div
+              className="w-80 overflow-y-auto rounded-br-xl"
+              style={{
+                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
+                backdropFilter: 'blur(40px) saturate(180%)',
+                WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+                borderLeft: '1px solid var(--glass-border, rgba(255, 255, 255, 0.1))',
+                boxShadow: '-1px 0 0 0 rgba(255, 255, 255, 0.05) inset',
+              }}
+            >
               <div className="p-4 space-y-4">
                 {/* 性能信息 */}
                 {config.performance && (
