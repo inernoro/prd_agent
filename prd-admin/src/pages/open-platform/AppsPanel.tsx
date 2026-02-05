@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -20,6 +20,11 @@ import {
   AlertTriangle,
   Check,
   HelpCircle,
+  CheckSquare,
+  Square,
+  Layers,
+  Activity,
+  Zap,
 } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -71,6 +76,9 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
 
+  // 批量选择
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingApp, setEditingApp] = useState<OpenPlatformApp | null>(null);
@@ -79,12 +87,20 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
   const [curlDialogOpen, setCurlDialogOpen] = useState(false);
   const [currentCurlCommand, setCurrentCurlCommand] = useState('');
 
+  // 统计数据
+  const stats = useMemo(() => {
+    const activeCount = apps.filter(a => a.isActive).length;
+    const totalRequests = apps.reduce((sum, a) => sum + (a.totalRequests || 0), 0);
+    return { total, activeCount, totalRequests };
+  }, [apps, total]);
+
   const loadApps = async () => {
     setLoading(true);
     try {
       const res = await openPlatformService.getApps(page, pageSize, search || undefined);
       setApps(res.items);
       setTotal(res.total);
+      setSelectedIds(new Set()); // 加载后清空选择
     } catch (err) {
       toast.error('加载失败', String(err));
     } finally {
@@ -101,6 +117,24 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
       </Button>
     );
   }, [onActionsReady]);
+
+  // ============ 选择操作 ============
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === apps.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(apps.map(a => a.id)));
+    }
+  };
 
   const handleCreate = async (request: CreateAppRequest) => {
     try {
@@ -145,6 +179,27 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
       loadApps();
     } catch (err) {
       toast.error('删除失败', String(err));
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    const confirmed = await systemDialog.confirm({
+      title: '批量删除',
+      message: `确定要删除选中的 ${selectedIds.size} 个应用吗？此操作不可恢复。`,
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+    try {
+      // 逐个删除
+      for (const id of selectedIds) {
+        await openPlatformService.deleteApp(id);
+      }
+      toast.success(`已删除 ${selectedIds.size} 个应用`);
+      loadApps();
+    } catch (err) {
+      toast.error('删除失败', String(err));
+      loadApps();
     }
   };
 
@@ -199,10 +254,10 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
   };
 
   return (
-    <div className="h-full overflow-auto p-1">
-      <GlassCard glow className="min-h-full">
+    <div className="h-full overflow-hidden p-1">
+      <GlassCard glow className="h-full flex flex-col">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <div className="p-4 border-b border-white/10 flex-shrink-0" style={{ background: 'rgba(255,255,255,0.02)' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Key size={18} className="text-muted-foreground" />
@@ -214,11 +269,28 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
           </div>
         </div>
 
-        <div className="p-5 space-y-5">
-          {/* 应用列表标题 */}
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium">应用列表</h3>
+        <div className="flex-1 min-h-0 grid grid-cols-12">
+          {/* ============ 左栏：应用列表 ============ */}
+          <div className="col-span-8 border-r border-white/10 flex flex-col">
+            {/* 列表标题栏 */}
+            <div className="flex items-center justify-between p-4 border-b border-white/10 flex-shrink-0">
+              <div className="flex items-center gap-3">
+                {apps.length > 0 && (
+                  <button
+                    onClick={toggleSelectAll}
+                    className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground"
+                  >
+                    {selectedIds.size === apps.length ? <CheckSquare size={16} /> : <Square size={16} />}
+                  </button>
+                )}
+                <h3 className="text-sm font-medium">应用列表</h3>
+                {selectedIds.size > 0 && (
+                  <Button variant="danger" size="sm" onClick={handleBatchDelete}>
+                    <Trash2 size={12} />
+                    删除 {selectedIds.size} 项
+                  </Button>
+                )}
+              </div>
               <div className="flex items-center gap-2">
                 <div className="relative">
                   <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -228,125 +300,216 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     className="h-8 pl-8 pr-3 text-sm rounded-lg outline-none"
-                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '180px' }}
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '160px' }}
                   />
                 </div>
-                <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)}>
+                <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)} className="whitespace-nowrap">
                   <Plus size={14} />
                   新建应用
                 </Button>
               </div>
             </div>
 
-            {/* 应用卡片列表 */}
-            <div className="space-y-2">
-              {apps.length === 0 && !loading ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  {search ? '未找到匹配的应用' : '暂无应用，点击上方按钮创建'}
-                </div>
-              ) : (
-                apps.map((app) => (
-                  <div
-                    key={app.id}
-                    className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/[0.03]"
-                    style={{ border: '1px solid rgba(255,255,255,0.06)' }}
-                  >
-                    <div className="flex items-center gap-4 flex-1 min-w-0">
+            {/* 应用列表（可滚动） */}
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="space-y-2">
+                {apps.length === 0 && !loading ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    {search ? '未找到匹配的应用' : '暂无应用，点击上方按钮创建'}
+                  </div>
+                ) : (
+                  apps.map((app) => (
+                    <div
+                      key={app.id}
+                      className={`flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-white/[0.03] ${selectedIds.has(app.id) ? 'bg-blue-500/10 border-blue-500/30' : ''}`}
+                      style={{ border: selectedIds.has(app.id) ? '1px solid rgba(59,130,246,0.3)' : '1px solid rgba(255,255,255,0.06)' }}
+                    >
+                      {/* 选择框 */}
+                      <button
+                        onClick={() => toggleSelect(app.id)}
+                        className="p-0.5 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground flex-shrink-0"
+                      >
+                        {selectedIds.has(app.id) ? <CheckSquare size={16} className="text-blue-400" /> : <Square size={16} />}
+                      </button>
+
+                      {/* 应用图标 */}
                       <div
-                        className="w-10 h-10 rounded-lg flex items-center justify-center text-lg font-bold flex-shrink-0"
+                        className="w-9 h-9 rounded-lg flex items-center justify-center text-base font-bold flex-shrink-0"
                         style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}
                       >
                         {app.appName.charAt(0).toUpperCase()}
                       </div>
+
+                      {/* 应用信息 */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="font-medium">{app.appName}</span>
+                          <span className="font-medium text-sm">{app.appName}</span>
                           {!app.isActive && <Badge variant="subtle" size="sm">已禁用</Badge>}
                         </div>
-                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
                           <span>用户: {app.boundUserName}</span>
                           {app.boundGroupName && <span>群组: {app.boundGroupName}</span>}
                           <span>请求: <span className="text-blue-400">{app.totalRequests}</span></span>
                         </div>
                       </div>
+
+                      {/* 密钥信息 */}
                       <div className="flex-shrink-0 text-right">
-                        <code className="text-xs px-2 py-1 rounded-lg" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                        <code className="text-xs px-2 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.05)' }}>
                           {app.apiKeyMasked}
                         </code>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          最后使用: {fmtDate(app.lastUsedAt)}
+                        <div className="text-[10px] text-muted-foreground mt-0.5">
+                          {fmtDate(app.lastUsedAt)}
                         </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center gap-3 ml-4">
-                      <Switch
-                        checked={app.isActive}
-                        onCheckedChange={() => handleToggleStatus(app.id)}
-                        ariaLabel={app.isActive ? '禁用应用' : '启用应用'}
-                      />
-                      <DropdownMenu.Root>
-                        <DropdownMenu.Trigger asChild>
-                          <button className="p-1.5 rounded hover:bg-white/10 transition-colors text-muted-foreground hover:text-foreground">
-                            <MoreVertical size={16} />
-                          </button>
-                        </DropdownMenu.Trigger>
-                        <DropdownMenu.Portal>
-                          <DropdownMenu.Content
-                            align="end"
-                            sideOffset={8}
-                            className="z-50 rounded-xl p-2 min-w-[160px]"
-                            style={{
-                              background: 'linear-gradient(180deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
-                              border: '1px solid rgba(255,255,255,0.15)',
-                              boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
-                              backdropFilter: 'blur(40px)',
-                            }}
-                          >
-                            <DropdownMenu.Item
-                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10"
-                              onSelect={() => handleEdit(app)}
+                      {/* 操作 */}
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <Switch
+                          checked={app.isActive}
+                          onCheckedChange={() => handleToggleStatus(app.id)}
+                          ariaLabel={app.isActive ? '禁用应用' : '启用应用'}
+                        />
+                        <DropdownMenu.Root>
+                          <DropdownMenu.Trigger asChild>
+                            <button className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground">
+                              <MoreVertical size={14} />
+                            </button>
+                          </DropdownMenu.Trigger>
+                          <DropdownMenu.Portal>
+                            <DropdownMenu.Content
+                              align="end"
+                              sideOffset={4}
+                              className="z-50 rounded-lg p-1 min-w-[140px]"
+                              style={{
+                                background: 'rgba(30,30,35,0.95)',
+                                border: '1px solid rgba(255,255,255,0.1)',
+                                backdropFilter: 'blur(20px)',
+                              }}
                             >
-                              <Pencil size={14} /> 编辑
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Item
-                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10"
-                              onSelect={showCurlCommand}
-                            >
-                              <Code size={14} /> curl 命令
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Item
-                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10"
-                              onSelect={() => handleRegenerateKey(app.id, app.appName)}
-                            >
-                              <RefreshCw size={14} /> 重新生成密钥
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Separator className="my-1 h-px bg-white/10" />
-                            <DropdownMenu.Item
-                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10 text-red-400"
-                              onSelect={() => handleDelete(app.id, app.appName)}
-                            >
-                              <Trash2 size={14} /> 删除
-                            </DropdownMenu.Item>
-                          </DropdownMenu.Content>
-                        </DropdownMenu.Portal>
-                      </DropdownMenu.Root>
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10"
+                                onSelect={() => handleEdit(app)}
+                              >
+                                <Pencil size={12} /> 编辑
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10"
+                                onSelect={showCurlCommand}
+                              >
+                                <Code size={12} /> curl 命令
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10"
+                                onSelect={() => handleRegenerateKey(app.id, app.appName)}
+                              >
+                                <RefreshCw size={12} /> 重新生成密钥
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Separator className="my-1 h-px bg-white/10" />
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10 text-red-400"
+                                onSelect={() => handleDelete(app.id, app.appName)}
+                              >
+                                <Trash2 size={12} /> 删除
+                              </DropdownMenu.Item>
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Portal>
+                        </DropdownMenu.Root>
+                      </div>
                     </div>
+                  ))
+                )}
+              </div>
+
+              {total > pageSize && (
+                <div className="flex justify-between items-center pt-4 mt-4 border-t border-white/10">
+                  <div className="text-sm text-muted-foreground">共 {total} 条</div>
+                  <div className="flex gap-2">
+                    <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>上一页</Button>
+                    <Button variant="secondary" size="sm" disabled={page >= Math.ceil(total / pageSize)} onClick={() => setPage(page + 1)}>下一页</Button>
                   </div>
-                ))
+                </div>
               )}
             </div>
+          </div>
 
-            {total > pageSize && (
-              <div className="flex justify-between items-center pt-4 mt-4 border-t border-white/10">
-                <div className="text-sm text-muted-foreground">共 {total} 条</div>
-                <div className="flex gap-2">
-                  <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>上一页</Button>
-                  <Button variant="secondary" size="sm" disabled={page >= Math.ceil(total / pageSize)} onClick={() => setPage(page + 1)}>下一页</Button>
+          {/* ============ 右栏：统计信息 ============ */}
+          <div className="col-span-4 p-5 overflow-y-auto">
+            {/* 统计卡片 */}
+            <section className="space-y-4">
+              <h4 className="text-xs text-muted-foreground uppercase tracking-wider">统计概览</h4>
+
+              <div className="grid grid-cols-1 gap-3">
+                <div className="p-4 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.1)' }}>
+                      <Layers size={18} className="text-blue-400" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-semibold">{stats.total}</div>
+                      <div className="text-xs text-muted-foreground">应用总数</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'rgba(34,197,94,0.1)' }}>
+                      <Activity size={18} className="text-green-400" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-semibold text-green-400">{stats.activeCount}</div>
+                      <div className="text-xs text-muted-foreground">活跃应用</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'rgba(251,191,36,0.1)' }}>
+                      <Zap size={18} className="text-amber-400" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-semibold">{stats.totalRequests.toLocaleString()}</div>
+                      <div className="text-xs text-muted-foreground">总请求数</div>
+                    </div>
+                  </div>
                 </div>
               </div>
-            )}
-          </section>
+            </section>
+
+            {/* 快速操作 */}
+            <section className="mt-6 space-y-3">
+              <h4 className="text-xs text-muted-foreground uppercase tracking-wider">快速操作</h4>
+              <button
+                onClick={showCurlCommand}
+                className="w-full p-3 rounded-lg text-left text-sm hover:bg-white/5 transition-colors flex items-center gap-3"
+                style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+              >
+                <Code size={16} className="text-muted-foreground" />
+                <span>查看 curl 调用示例</span>
+              </button>
+              <a
+                href="#"
+                className="w-full p-3 rounded-lg text-left text-sm hover:bg-white/5 transition-colors flex items-center gap-3 block"
+                style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+              >
+                <ExternalLink size={16} className="text-muted-foreground" />
+                <span>查看 API 文档</span>
+              </a>
+            </section>
+
+            {/* 说明 */}
+            <section className="mt-6 p-4 rounded-lg" style={{ background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.1)' }}>
+              <h4 className="text-xs font-medium text-blue-400 mb-2">使用说明</h4>
+              <ul className="text-xs text-muted-foreground space-y-1">
+                <li>• API 兼容 OpenAI Chat Completions 格式</li>
+                <li>• 每个应用有独立的 API Key</li>
+                <li>• 请求会关联到绑定的用户和群组</li>
+                <li>• 可设置系统提示词自定义行为</li>
+              </ul>
+            </section>
+          </div>
         </div>
       </GlassCard>
 
