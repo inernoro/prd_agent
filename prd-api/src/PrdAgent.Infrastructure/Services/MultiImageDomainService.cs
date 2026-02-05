@@ -144,26 +144,15 @@ public class MultiImageDomainService : IMultiImageDomainService
             };
         }
 
-        // 多图场景：构建图片对照表，让 nanobanana 理解每张图片
-        // 不做复杂的意图推断，保留用户原始描述
-        var sb = new StringBuilder();
-        sb.AppendLine(prompt);
-        sb.AppendLine();
-        sb.AppendLine("【图片对照表】");
-
-        foreach (var r in refs.OrderBy(x => x.OccurrenceOrder))
-        {
-            var label = string.IsNullOrWhiteSpace(r.Label) ? $"图片{r.RefId}" : r.Label;
-            sb.AppendLine($"- @img{r.RefId} 对应 {label}");
-        }
-
+        // 多图场景：直接返回原始 prompt，不需要对照表
+        // 图片已按顺序传给多模态模型，模型可以直接"看到"图片内容
         return new ImageIntentResult
         {
             Success = true,
-            EnhancedPrompt = sb.ToString().TrimEnd(),
+            EnhancedPrompt = prompt,
             OriginalPrompt = prompt,
             ImageRefCount = refs.Count,
-            Confidence = 0.8
+            Confidence = 1.0
         };
     }
 
