@@ -152,8 +152,8 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
   };
 
   return (
-    <div className="h-full overflow-auto">
-      <GlassCard glow className="m-1">
+    <div className="h-full overflow-auto p-1">
+      <GlassCard glow className="min-h-full">
         {/* 顶部提示栏 */}
         <div className="p-4 border-b border-white/10" style={{ background: 'rgba(255,255,255,0.02)' }}>
           <div className="flex items-center justify-between">

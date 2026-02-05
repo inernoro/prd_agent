@@ -126,8 +126,8 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
   const inputCls = "w-full px-2.5 py-1.5 rounded bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-sm";
 
   return (
-    <div className="h-full overflow-auto">
-      <GlassCard glow className="m-1">
+    <div className="h-full overflow-auto p-1">
+      <GlassCard glow className="min-h-full">
         <div className="grid grid-cols-12 divide-x divide-white/10">
           {/* 左栏：配置 */}
           <div className="col-span-7 p-5 space-y-5">
