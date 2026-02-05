@@ -29,6 +29,7 @@ import ConvergingBeamsBackdrop from '@/components/login/ConvergingBeamsBackdrop'
 // BlackHoleScene 已删除，使用新的 BlackHoleVortex 组件
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { RippleImageTransition } from '@/components/effects/RippleImageTransition';
+import { SliceFlipTransition } from '@/components/effects/SliceFlipTransition';
 import { SparkleButton } from '@/components/effects/SparkleButton';
 import { GlowingCard } from '@/components/effects/GlowingCard';
 import { NeonButtonGroup } from '@/components/effects/NeonButton';
@@ -316,6 +317,34 @@ const EFFECT_CONFIGS: EffectConfig[] = [
           height={size ? Math.min(size.height - 32, 225) : 190}
           autoPlay
           interval={4000}
+        />
+      </div>
+    ),
+  },
+  {
+    id: 'slice-flip',
+    label: '切片翻转过渡',
+    functionName: 'SliceFlipTransition',
+    category: 'other',
+    status: 'ready',
+    params: [
+      { name: 'imageA', type: 'string', description: '图片A的URL' },
+      { name: 'imageB', type: 'string', description: '图片B的URL' },
+      { name: 'sliceCount', type: 'number', default: '8', description: '切片数量' },
+      { name: 'labelA', type: 'string', default: "'方案 A'", description: '按钮A文字' },
+      { name: 'labelB', type: 'string', default: "'方案 B'", description: '按钮B文字' },
+    ],
+    performance: { animationDuration: '0.6s + 80ms × 切片数', renderer: 'CSS' },
+    render: (size) => (
+      <div className="flex items-center justify-center h-full p-4" style={{ background: '#0a0a12' }}>
+        <SliceFlipTransition
+          imageA={DEMO_IMAGES[0]}
+          imageB={DEMO_IMAGES[1]}
+          width={size ? Math.min(size.width - 32, 400) : 340}
+          height={size ? Math.min(size.height - 32, 280) : 240}
+          sliceCount={8}
+          labelA="Before"
+          labelB="After"
         />
       </div>
     ),
