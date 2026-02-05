@@ -8,13 +8,12 @@ import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } 
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import {
   ConfigManagementDialogBase,
+  MarketplaceWatermarkCard,
   type ConfigManagementDialogHandle as ConfigDialogHandle,
   type ConfigColumn,
   type MarketplaceCardContext,
 } from '@/components/config-management';
-import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
 import type { MarketplaceWatermarkConfig } from '@/services/contracts/watermark';
-import { resolveAvatarUrl } from '@/lib/avatar';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Popover from '@radix-ui/react-popover';
 import {
@@ -81,7 +80,6 @@ import {
   Square,
   Type,
   Trash,
-  User,
   Video,
   ZoomIn,
   ZoomOut,
@@ -7710,93 +7708,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               return res.success && res.data?.items ? res.data.items : [];
             },
             renderMarketplaceCard: (config: MarketplaceWatermarkConfig, ctx: MarketplaceCardContext) => (
-              <GlassCard key={config.id} className="p-0 overflow-hidden">
-                <div className="flex flex-col">
-                  {/* 标题区 */}
-                  <div className="p-3 pb-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
-                          {config.name}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <span
-                          className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1"
-                          style={{
-                            background: 'rgba(59, 130, 246, 0.12)',
-                            color: 'rgba(59, 130, 246, 0.95)',
-                            border: '1px solid rgba(59, 130, 246, 0.28)',
-                          }}
-                          title="下载次数"
-                        >
-                          <Hand size={10} />
-                          {config.forkCount}
-                        </span>
-                      </div>
-                    </div>
-                    {/* 作者信息 */}
-                    <div className="flex items-center gap-1.5 text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                      {config.ownerUserAvatar ? (
-                        <img
-                          src={resolveAvatarUrl({ avatarUrl: config.ownerUserAvatar })}
-                          alt=""
-                          className="w-4 h-4 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
-                          <User size={10} />
-                        </div>
-                      )}
-                      <span>{config.ownerUserName || '未知用户'} 发布</span>
-                    </div>
-                  </div>
-                  {/* 配置详情 */}
-                  <div className="px-3 pb-2">
-                    <WatermarkDescriptionGrid
-                      data={{
-                        text: config.text,
-                        fontKey: config.fontKey,
-                        fontSizePx: config.fontSizePx,
-                        opacity: config.opacity,
-                        anchor: config.anchor,
-                        offsetX: config.offsetX,
-                        offsetY: config.offsetY,
-                        positionMode: config.positionMode,
-                        iconEnabled: config.iconEnabled,
-                        borderEnabled: config.borderEnabled,
-                        backgroundEnabled: config.backgroundEnabled,
-                        roundedBackgroundEnabled: config.roundedBackgroundEnabled,
-                      }}
-                    />
-                  </div>
-                  {/* 操作按钮 */}
-                  <div className="px-3 pb-3 pt-1">
-                    <div className="flex justify-end">
-                      <Button
-                        size="xs"
-                        variant="secondary"
-                        onClick={() => void ctx.onFork(config.id, async () => {
-                          const res = await forkWatermark({ id: config.id });
-                          if (res.success) {
-                            toast.success('下载成功，已添加到「我的」');
-                            return true;
-                          }
-                          return false;
-                        })}
-                        disabled={ctx.forkingId === config.id}
-                      >
-                        {ctx.forkingId === config.id ? (
-                          <span className="animate-spin">⏳</span>
-                        ) : (
-                          <Hand size={12} />
-                        )}
-                        拿来吧
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </GlassCard>
+              <MarketplaceWatermarkCard
+                key={config.id}
+                config={config}
+                ctx={ctx}
+                onFork={async () => {
+                  const res = await forkWatermark({ id: config.id });
+                  if (res.success) {
+                    toast.success('下载成功，已添加到「我的」');
+                    return true;
+                  }
+                  return false;
+                }}
+              />
             ),
           } as ConfigColumn<MarketplaceWatermarkConfig>,
         ]}

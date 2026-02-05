@@ -7,6 +7,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import {
   ConfigManagementDialogBase,
+  MarketplaceWatermarkCard,
   type ConfigManagementDialogHandle as BaseDialogHandle,
   type ConfigColumn,
   type MarketplaceCardContext,
@@ -778,52 +779,12 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
           return res.success && res.data ? res.data.items : [];
         },
         renderMarketplaceCard: (config: MarketplaceWatermarkConfig, ctx: MarketplaceCardContext) => (
-          <GlassCard key={config.id} className="p-0 overflow-hidden">
-            <div className="flex flex-col">
-              <div className="p-2 pb-1">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
-                      {config.name}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {renderForkCountBadge(config.forkCount)}
-                  </div>
-                </div>
-                <div className="mt-1">
-                  {renderAuthorInfo(config.ownerUserAvatar, config.ownerUserName)}
-                </div>
-              </div>
-              <div className="px-2 pb-1">
-                <div
-                  className="flex items-center justify-center overflow-hidden rounded-[6px] p-2"
-                  style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)', height: '60px' }}
-                >
-                  {config.previewUrl ? (
-                    <img src={config.previewUrl} alt={config.name} className="max-h-full object-contain" />
-                  ) : (
-                    <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      {config.text || '无预览'}
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="px-2 pb-2 pt-1">
-                <div className="flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="secondary"
-                    onClick={() => ctx.onFork(config.id, () => handleForkWatermark(config))}
-                    disabled={ctx.saving || ctx.forkingId === config.id}
-                  >
-                    <Hand size={12} />
-                    {ctx.forkingId === config.id ? '下载中...' : '拿来吧'}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </GlassCard>
+          <MarketplaceWatermarkCard
+            key={config.id}
+            config={config}
+            ctx={ctx}
+            onFork={() => handleForkWatermark(config)}
+          />
         ),
       },
     ];

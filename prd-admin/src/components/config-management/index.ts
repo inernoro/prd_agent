@@ -8,3 +8,5 @@ export {
   type ViewMode,
   type SortOption,
 } from './ConfigManagementDialogBase';
+
+export { MarketplaceWatermarkCard } from './MarketplaceWatermarkCard';
