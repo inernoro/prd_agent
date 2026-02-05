@@ -42,6 +42,7 @@ import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
 import { ModelKpiRail } from '@/components/model/ModelKpiRail';
 import { ModelTokensDisplay } from '@/components/model/ModelTokensDisplay';
 import { PlatformAvailableModelsDialog, type AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
+import { ModelListItem } from '@/components/model/ModelListItem';
 import { formatDuration } from '@/lib/formatStats';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -2436,15 +2437,16 @@ export default function ModelManagePage() {
                 <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
                   将添加的模型
                 </div>
-                <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                  <span className="text-[10px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>#1</span>
-                  <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                    {addToPoolModel.modelName}
-                  </span>
-                  <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                    ({platforms.find(p => p.id === addToPoolModel.platformId)?.name || addToPoolModel.platformId})
-                  </span>
-                </div>
+                <ModelListItem
+                  model={{
+                    platformId: addToPoolModel.platformId,
+                    platformName: platforms.find(p => p.id === addToPoolModel.platformId)?.name,
+                    modelId: addToPoolModel.modelName,
+                  }}
+                  index={1}
+                  total={1}
+                  size="sm"
+                />
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
