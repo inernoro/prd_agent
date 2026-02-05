@@ -18,11 +18,14 @@
   stroke: #fff;
   fill: none;
   stroke-width: 0;
-  transition: stroke-width 0.2s linear;
+  /* 默认无过渡，这样回到 0 时瞬间消失 */
+  transition: none;
 }
 
 .ripple-switch-circle.animate {
   stroke-width: 82px;
+  /* 只在扩散时有过渡动画 */
+  transition: stroke-width 0.2s linear;
 }
 
 /* 图片幻灯片 */
