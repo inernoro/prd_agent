@@ -3153,7 +3153,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     });
 
     try {
-      const refForInit = (primaryRef ?? selected) as CanvasImageItem | null;
+      // Bug fix: 只有用户显式引用图片（@imgN）才使用 initImage，选中但未引用的图片不应触发 img2img
+      const refForInit = primaryRef as CanvasImageItem | null;
       const initSrc = (refForInit?.src ?? '').trim();
       const initSha = (refForInit?.sha256 ?? '').trim();
       let initImageBase64: string | undefined;
@@ -6592,7 +6593,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 color: 'rgba(255,255,255,0.7)',
                               }}
                               title="重试生成"
-                              onClick={() => { if (genError.prompt) void sendText(genError.prompt); }}
+                              onClick={() => {
+                                if (!genError.prompt) return;
+                                // 检查是否有 @imgN 引用
+                                const hasImgRef = /@img\d+/i.test(genError.prompt);
+                                if (!hasImgRef && genError.refSrc) {
+                                  // img2img 场景：将 refSrc 作为内联图片传入
+                                  void sendText(genError.prompt, { inlineImage: { src: genError.refSrc } });
+                                } else {
+                                  // text2img 或 multi-img：直接发送 prompt
+                                  void sendText(genError.prompt);
+                                }
+                              }}
                             >
                               重试
                             </button>
@@ -6657,7 +6669,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 color: 'rgba(255,255,255,0.7)',
                               }}
                               title="使用相同提示词重新生成"
-                              onClick={() => { if (genDone.prompt) void sendText(genDone.prompt); }}
+                              onClick={() => {
+                                if (!genDone.prompt) return;
+                                // 检查是否有 @imgN 引用
+                                const hasImgRef = /@img\d+/i.test(genDone.prompt);
+                                if (!hasImgRef && genDone.refSrc) {
+                                  // img2img 场景：将 refSrc 作为内联图片传入
+                                  void sendText(genDone.prompt, { inlineImage: { src: genDone.refSrc } });
+                                } else {
+                                  // text2img 或 multi-img：直接发送 prompt
+                                  void sendText(genDone.prompt);
+                                }
+                              }}
                             >
                               重试
                             </button>

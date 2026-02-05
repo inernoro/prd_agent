@@ -1293,15 +1293,15 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                         <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                           {it.requestPurposeDisplayName || it.requestPurpose || '未知'}
                         </div>
-                        {/* appCallerCode */}
+                        {/* appCallerCode - 缩写为 acc，悬浮显示全文 */}
                         {it.requestPurpose && (
                           <span
-                            className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0"
+                            className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0 cursor-help"
                             style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
-                            title={`appCallerCode: ${it.requestPurpose}`}
+                            title={it.requestPurpose}
                           >
                             <AppCallerKeyIcon size={10} className="opacity-60" />
-                            {it.requestPurpose}
+                            acc
                           </span>
                         )}
                       </div>
@@ -1631,7 +1631,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                     { k: 'status', v: detail.status || '—' },
                     { k: 'requestId', v: detail.requestId || '—' },
                     { k: 'requestType', v: detail.requestType || '—' },
-                    { k: 'appCallerCode', v: detail.requestPurpose || '—' },
+                    { k: 'acc', v: detail.requestPurpose || '—' },
                     { k: 'groupId', v: detail.groupId || '—' },
                     { k: 'sessionId', v: detail.sessionId || '—' },
                     { k: 'startedAt', v: formatLocalTime(detail.startedAt) },
