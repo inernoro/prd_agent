@@ -6,8 +6,8 @@ import * as THREE from 'three';
  * WebGL Shader 实现的 Droste 效果递归缩放漩涡
  */
 
-// 原始噪声纹理 URL（与 HTML 版本完全相同）
-const NOISE_TEXTURE_URL = 'https://s3-us-west-2.amazonaws.com/s.cdpn.io/982762/noise.png';
+// 本地噪声纹理（从 CDN 下载到 public/textures/ 目录）
+const NOISE_TEXTURE_URL = '/textures/noise.png';
 
 const vertexShader = `
 void main() {
@@ -157,9 +157,8 @@ export function BlackHoleVortex({ className }: BlackHoleVortexProps) {
     const container = containerRef.current;
     let isDisposed = false;
 
-    // 加载原始噪声纹理（与 HTML 版本相同）
+    // 加载本地噪声纹理
     const loader = new THREE.TextureLoader();
-    loader.setCrossOrigin('anonymous');
 
     loader.load(NOISE_TEXTURE_URL, (texture) => {
       if (isDisposed) {
