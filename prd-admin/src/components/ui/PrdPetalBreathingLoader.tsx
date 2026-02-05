@@ -70,7 +70,7 @@ export function PrdPetalBreathingLoader({
   style,
 }: {
   size?: number;
-  /** 为 true 时，组件铺满父容器，并按容器最短边自适应缩放 */
+  /** 为 true 时，铺满父容器（cover 效果：按较大边拉伸，裁剪溢出） */
   fill?: boolean;
   /** 主题色 */
   variant?: keyof typeof petalPalettes;
@@ -143,9 +143,9 @@ export function PrdPetalBreathingLoader({
         // - 不依赖具体色值：直接跳过最后 3 层（最深色）
         if (fill && idx >= 17) return null;
 
-        // fill 模式：使用容器查询单位 min(cqw, cqh) 取较小值，保持正圆不变形
+        // fill 模式：使用 max(cqw, cqh) 按较大边拉伸，溢出部分被父容器裁剪（cover 效果）
         // 非 fill 模式：使用固定 px 单位
-        const petalSizeFill = `min(${i * 5}cqw, ${i * 5}cqh)`;
+        const petalSizeFill = `max(${i * 5}cqw, ${i * 5}cqh)`;
         const petalSizeFixed = `calc(${i} * 4 * var(--prdPetalUnitPx))`;
 
         return (
@@ -154,11 +154,11 @@ export function PrdPetalBreathingLoader({
             className={`prd-petal-breath__petal${paused ? ' prd-petal-breath__petal--paused' : ''}`}
             style={
               {
-                // fill 模式：等比缩放，始终保持正圆（取宽高较小值）
+                // fill 模式：按较大边拉伸，居中后裁剪溢出
                 width: fill ? petalSizeFill : petalSizeFixed,
                 height: fill ? petalSizeFill : petalSizeFixed,
-                // fill 模式用百分比近似圆角（box-shadow 用 px，避免 % 不支持）
-                borderRadius: fill ? `${Math.min(50, Math.round(8 + i * 0.9))}%` : `calc(${1 + 0.2 * i} * var(--prdPetalUnitPx))`,
+                // 尖锐花瓣：圆角要小（2-4%），不要太圆（原来8-26%太胖）
+                borderRadius: fill ? `${2 + i * 0.1}%` : `calc(${1 + 0.2 * i} * var(--prdPetalUnitPx))`,
                 boxShadow: fill
                   ? `0 0 ${Math.max(1, Math.round(i * 0.9))}px rgba(0,0,0,0.10)`
                   : `0 0 calc(${0.5 * i} * var(--prdPetalUnitPx)) rgba(0,0,0,0.1)`,
