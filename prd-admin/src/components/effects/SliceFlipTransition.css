@@ -39,20 +39,11 @@
   background-size: cover;
   z-index: 10;
   opacity: 0;
-  transition: opacity 0.2s ease, transform 0.8s ease;
 }
 
 .ripple-switch-slide.active {
   opacity: 1;
   z-index: 20;
-}
-
-.ripple-switch-slide.animating {
-  transform: scale(1.15);
-}
-
-.ripple-switch-slide.active.animating {
-  transform: scale(1);
 }
 
 /* 顶部按钮组 */
