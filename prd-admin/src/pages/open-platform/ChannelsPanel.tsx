@@ -2,27 +2,18 @@ import { useEffect, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
-import { Select } from '@/components/design/Select';
 import { Switch } from '@/components/design/Switch';
 import { channelService } from '@/services';
-import { Plus, Trash2, RefreshCw, MoreVertical, Mail, MessageSquare, Mic, Webhook, Pencil, Search, Shield, ExternalLink } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, MoreVertical, Webhook, Pencil, Search, ExternalLink } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import type { ChannelWhitelist, ChannelStatsResponse, CreateWhitelistRequest, UpdateWhitelistRequest } from '@/services/contracts/channels';
-import { ChannelTypeDisplayNames } from '@/services/contracts/channels';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { WhitelistEditDialog } from '../channels/components/WhitelistEditDialog';
 
 interface ChannelsPanelProps {
   onActionsReady?: (actions: React.ReactNode) => void;
 }
-
-const channelIcons: Record<string, React.ReactNode> = {
-  email: <Mail size={18} />,
-  sms: <MessageSquare size={18} />,
-  siri: <Mic size={18} />,
-  webhook: <Webhook size={18} />,
-};
 
 export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
   const [statsResponse, setStatsResponse] = useState<ChannelStatsResponse | null>(null);
@@ -32,7 +23,6 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
   const [pageSize] = useState(20);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
-  const [channelTypeFilter, setChannelTypeFilter] = useState<string>('');
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -50,7 +40,8 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
   const loadWhitelists = async () => {
     setLoading(true);
     try {
-      const res = await channelService.getWhitelists(page, pageSize, channelTypeFilter || undefined, search || undefined);
+      // 只加载 webhook 类型的白名单
+      const res = await channelService.getWhitelists(page, pageSize, 'webhook', search || undefined);
       setWhitelists(res.items);
       setTotal(res.total);
     } catch (err) {
@@ -61,7 +52,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
   };
 
   useEffect(() => { loadStats(); }, []);
-  useEffect(() => { loadWhitelists(); }, [page, search, channelTypeFilter]);
+  useEffect(() => { loadWhitelists(); }, [page, search]);
 
   useEffect(() => {
     onActionsReady?.(
@@ -73,7 +64,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
 
   const handleCreate = async (request: CreateWhitelistRequest) => {
     try {
-      await channelService.createWhitelist(request);
+      await channelService.createWhitelist({ ...request, channelType: 'webhook' });
       toast.success('创建成功');
       setCreateDialogOpen(false);
       loadWhitelists();
@@ -123,6 +114,9 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
     }
   };
 
+  // 获取 webhook 通道统计
+  const webhookStats = statsResponse?.channels?.find(c => c.channelType === 'webhook');
+
   return (
     <div className="h-full overflow-auto p-1">
       <GlassCard glow className="min-h-full">
@@ -130,8 +124,8 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
         <div className="p-4 border-b border-white/10" style={{ background: 'rgba(255,255,255,0.02)' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <Shield size={18} className="text-muted-foreground" />
-              <span>配置通道白名单，只有白名单内的标识才能访问系统</span>
+              <Webhook size={18} className="text-muted-foreground" />
+              <span>配置 Webhook 端点，允许外部系统通过 HTTP 请求触发任务</span>
             </div>
             <a href="#" className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1">
               了解更多 <ExternalLink size={12} />
@@ -140,46 +134,42 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
         </div>
 
         <div className="p-5 space-y-5">
-          {/* 通道状态卡片 */}
-          {statsResponse?.channels && statsResponse.channels.length > 0 && (
+          {/* Webhook 状态卡片 */}
+          {webhookStats && (
             <section>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium">通道状态</h3>
-              </div>
-              <div className="grid grid-cols-4 gap-3">
-                {statsResponse.channels.map((stat) => (
-                  <div
-                    key={stat.channelType}
-                    className="p-3 rounded-lg transition-colors"
-                    style={{
-                      background: stat.isEnabled ? 'rgba(34,197,94,0.06)' : 'rgba(255,255,255,0.02)',
-                      border: stat.isEnabled ? '1px solid rgba(34,197,94,0.2)' : '1px solid rgba(255,255,255,0.06)',
-                    }}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="w-9 h-9 rounded-lg flex items-center justify-center"
-                        style={{
-                          background: stat.isEnabled ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.05)',
-                          color: stat.isEnabled ? 'rgb(34,197,94)' : 'var(--text-muted)',
-                        }}
-                      >
-                        {channelIcons[stat.channelType] || <Webhook size={18} />}
+              <div
+                className="p-4 rounded-lg"
+                style={{
+                  background: webhookStats.isEnabled ? 'rgba(34,197,94,0.06)' : 'rgba(255,255,255,0.02)',
+                  border: webhookStats.isEnabled ? '1px solid rgba(34,197,94,0.2)' : '1px solid rgba(255,255,255,0.06)',
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div
+                      className="w-12 h-12 rounded-lg flex items-center justify-center"
+                      style={{
+                        background: webhookStats.isEnabled ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.05)',
+                        color: webhookStats.isEnabled ? 'rgb(34,197,94)' : 'var(--text-muted)',
+                      }}
+                    >
+                      <Webhook size={24} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">Webhook 通道</span>
+                        {webhookStats.isEnabled && <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-sm">{stat.displayName}</span>
-                          {stat.isEnabled && (
-                            <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-                          )}
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-0.5">
-                          今日 <span className={stat.todayRequestCount > 0 ? 'text-blue-400' : ''}>{stat.todayRequestCount}</span> 请求 · <span className={stat.todaySuccessCount > 0 ? 'text-green-400' : ''}>{stat.todaySuccessCount}</span> 成功
-                        </div>
+                      <div className="text-sm text-muted-foreground mt-0.5">
+                        今日 <span className={webhookStats.todayRequestCount > 0 ? 'text-blue-400' : ''}>{webhookStats.todayRequestCount}</span> 请求
+                        · <span className={webhookStats.todaySuccessCount > 0 ? 'text-green-400' : ''}>{webhookStats.todaySuccessCount}</span> 成功
                       </div>
                     </div>
                   </div>
-                ))}
+                  <Badge variant={webhookStats.isEnabled ? 'success' : 'subtle'} size="default">
+                    {webhookStats.isEnabled ? '已启用' : '未启用'}
+                  </Badge>
+                </div>
               </div>
             </section>
           )}
@@ -202,12 +192,6 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
                     style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '160px' }}
                   />
                 </div>
-                <Select value={channelTypeFilter} onChange={(e) => setChannelTypeFilter(e.target.value)} uiSize="sm">
-                  <option value="">全部通道</option>
-                  {Object.entries(ChannelTypeDisplayNames).map(([key, name]) => (
-                    <option key={key} value={key}>{name}</option>
-                  ))}
-                </Select>
                 <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)} className="whitespace-nowrap flex-shrink-0">
                   <Plus size={14} />
                   添加规则
@@ -219,7 +203,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
             <div className="space-y-2">
               {whitelists.length === 0 && !loading ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  {search || channelTypeFilter ? '未找到匹配的规则' : '暂无白名单规则，点击上方按钮添加'}
+                  {search ? '未找到匹配的规则' : '暂无白名单规则，点击上方按钮添加'}
                 </div>
               ) : (
                 whitelists.map((wl) => (
@@ -233,7 +217,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
                         className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
                         style={{ background: 'rgba(255,255,255,0.05)' }}
                       >
-                        {channelIcons[wl.channelType] || <Webhook size={16} />}
+                        <Webhook size={16} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
@@ -243,7 +227,6 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
                           )}
                         </div>
                         <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                          <span>{ChannelTypeDisplayNames[wl.channelType]}</span>
                           {wl.boundUserName && (
                             <span>→ {wl.boundUserName}</span>
                           )}
@@ -328,6 +311,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
         onClose={() => setCreateDialogOpen(false)}
         onSubmit={(req) => handleCreate(req as CreateWhitelistRequest)}
         mode="create"
+        fixedChannelType="webhook"
       />
       <WhitelistEditDialog
         open={editDialogOpen}
@@ -335,6 +319,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
         onSubmit={(req) => handleUpdate(req as UpdateWhitelistRequest)}
         mode="edit"
         whitelist={editingWhitelist}
+        fixedChannelType="webhook"
       />
     </div>
   );

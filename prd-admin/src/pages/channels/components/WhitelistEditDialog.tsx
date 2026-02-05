@@ -19,6 +19,8 @@ interface WhitelistEditDialogProps {
   onSubmit: (request: CreateWhitelistRequest | UpdateWhitelistRequest) => void;
   mode: 'create' | 'edit';
   whitelist?: ChannelWhitelist | null;
+  /** 固定通道类型，设置后隐藏类型选择器 */
+  fixedChannelType?: string;
 }
 
 const AVAILABLE_AGENTS = [
@@ -41,8 +43,9 @@ export function WhitelistEditDialog({
   onSubmit,
   mode,
   whitelist,
+  fixedChannelType,
 }: WhitelistEditDialogProps) {
-  const [channelType, setChannelType] = useState<string>(ChannelTypes.Email);
+  const [channelType, setChannelType] = useState<string>(fixedChannelType || ChannelTypes.Email);
   const [identifierPattern, setIdentifierPattern] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [description, setDescription] = useState('');
@@ -58,7 +61,7 @@ export function WhitelistEditDialog({
     if (open) {
       loadUsers();
       if (mode === 'edit' && whitelist) {
-        setChannelType(whitelist.channelType);
+        setChannelType(fixedChannelType || whitelist.channelType);
         setIdentifierPattern(whitelist.identifierPattern);
         setDisplayName(whitelist.displayName || '');
         setDescription(whitelist.description || '');
@@ -67,7 +70,7 @@ export function WhitelistEditDialog({
         setDailyQuota(whitelist.dailyQuota);
         setPriority(whitelist.priority);
       } else {
-        setChannelType(ChannelTypes.Email);
+        setChannelType(fixedChannelType || ChannelTypes.Email);
         setIdentifierPattern('');
         setDisplayName('');
         setDescription('');
@@ -77,7 +80,7 @@ export function WhitelistEditDialog({
         setPriority(0);
       }
     }
-  }, [open, mode, whitelist]);
+  }, [open, mode, whitelist, fixedChannelType]);
 
   const loadUsers = async () => {
     setLoadingUsers(true);
@@ -157,8 +160,8 @@ export function WhitelistEditDialog({
             </div>
           </div>
 
-          {/* 通道类型选择 */}
-          {mode === 'create' && (
+          {/* 通道类型选择 - 仅在创建模式且未固定类型时显示 */}
+          {mode === 'create' && !fixedChannelType && (
             <div>
               <label className="block text-xs text-muted-foreground mb-1">选择通道 *</label>
               <div className="flex gap-2">
