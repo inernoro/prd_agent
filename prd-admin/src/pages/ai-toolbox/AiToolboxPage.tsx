@@ -1,17 +1,18 @@
 import { useEffect, useMemo } from 'react';
 import { TabBar } from '@/components/design/TabBar';
+import { GlassCard } from '@/components/design/GlassCard';
 import { useToolboxStore, type ToolboxCategory } from '@/stores/toolboxStore';
-import { Package, Search, Plus, Loader2 } from 'lucide-react';
+import { Package, Search, Plus, Loader2, Sparkles, Boxes, User } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { ToolCard } from './components/ToolCard';
 import { ToolDetail } from './components/ToolDetail';
 import { ToolEditor } from './components/ToolEditor';
 import { ToolRunner } from './components/ToolRunner';
 
-const CATEGORY_OPTIONS: { key: ToolboxCategory; label: string }[] = [
-  { key: 'all', label: '全部工具' },
-  { key: 'builtin', label: '内置工具' },
-  { key: 'custom', label: '我创建的' },
+const CATEGORY_OPTIONS: { key: ToolboxCategory; label: string; icon: React.ReactNode }[] = [
+  { key: 'all', label: '全部', icon: <Boxes size={14} /> },
+  { key: 'builtin', label: '内置工具', icon: <Sparkles size={14} /> },
+  { key: 'custom', label: '我创建的', icon: <User size={14} /> },
 ];
 
 export default function AiToolboxPage() {
@@ -88,20 +89,32 @@ export default function AiToolboxPage() {
         }
       />
 
-      {/* Filters */}
-      <div className="flex items-center gap-4">
+      {/* Filters - Glass style */}
+      <GlassCard variant="subtle" padding="sm" className="flex items-center gap-4">
         {/* Category tabs */}
-        <div className="flex items-center gap-1 p-1 rounded-lg" style={{ background: 'var(--bg-elevated)' }}>
+        <div
+          className="flex items-center gap-1 p-1 rounded-xl"
+          style={{
+            background: 'rgba(255, 255, 255, 0.03)',
+            border: '1px solid rgba(255, 255, 255, 0.06)',
+          }}
+        >
           {CATEGORY_OPTIONS.map((opt) => (
             <button
               key={opt.key}
               onClick={() => setCategory(opt.key)}
-              className="px-3 py-1.5 rounded-md text-sm transition-all"
+              className="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-2"
               style={{
-                background: category === opt.key ? 'var(--accent-primary)' : 'transparent',
-                color: category === opt.key ? 'white' : 'var(--text-secondary)',
+                background: category === opt.key
+                  ? 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
+                  : 'transparent',
+                color: category === opt.key ? 'white' : 'var(--text-muted)',
+                boxShadow: category === opt.key
+                  ? '0 4px 12px -2px rgba(var(--accent-primary-rgb, 99, 102, 241), 0.4)'
+                  : 'none',
               }}
             >
+              {opt.icon}
               {opt.label}
             </button>
           ))}
@@ -111,7 +124,7 @@ export default function AiToolboxPage() {
         <div className="flex-1 max-w-md relative">
           <Search
             size={16}
-            className="absolute left-3 top-1/2 -translate-y-1/2"
+            className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
             style={{ color: 'var(--text-muted)' }}
           />
           <input
@@ -119,40 +132,69 @@ export default function AiToolboxPage() {
             placeholder="搜索工具名称、描述或标签..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 rounded-lg border text-sm outline-none transition-colors"
+            className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm outline-none transition-all duration-200 focus:ring-2 focus:ring-[var(--accent-primary)]/30"
             style={{
-              background: 'var(--bg-elevated)',
-              borderColor: 'var(--border-default)',
+              background: 'rgba(255, 255, 255, 0.03)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
               color: 'var(--text-primary)',
             }}
           />
         </div>
 
-        {/* Count */}
-        <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+        {/* Count badge */}
+        <div
+          className="px-3 py-1.5 rounded-full text-xs font-medium"
+          style={{
+            background: 'rgba(255, 255, 255, 0.05)',
+            color: 'var(--text-muted)',
+            border: '1px solid rgba(255, 255, 255, 0.06)',
+          }}
+        >
           {filteredItems.length} 个工具
-        </span>
-      </div>
+        </div>
+      </GlassCard>
 
       {/* Tool Grid */}
       <div className="flex-1 min-h-0 overflow-auto">
         {itemsLoading ? (
           <div className="flex items-center justify-center h-64">
-            <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+            <div className="text-center">
+              <Loader2
+                size={32}
+                className="animate-spin mx-auto mb-3"
+                style={{ color: 'var(--accent-primary)' }}
+              />
+              <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                加载中...
+              </div>
+            </div>
           </div>
         ) : filteredItems.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-64 gap-2">
-            <Package size={48} style={{ color: 'var(--text-muted)' }} />
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              {searchQuery ? '没有找到匹配的工具' : '暂无工具'}
+          <GlassCard variant="subtle" className="flex flex-col items-center justify-center h-64 gap-4">
+            <div
+              className="w-20 h-20 rounded-2xl flex items-center justify-center"
+              style={{
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid rgba(255, 255, 255, 0.06)',
+              }}
+            >
+              <Package size={40} style={{ color: 'var(--text-muted)' }} />
+            </div>
+            <div className="text-center">
+              <div className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                {searchQuery ? '没有找到匹配的工具' : '暂无工具'}
+              </div>
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                {searchQuery ? '尝试其他关键词' : '点击右上角创建你的第一个智能体'}
+              </div>
             </div>
             {category === 'custom' && !searchQuery && (
-              <Button variant="secondary" size="sm" onClick={startCreate}>
+              <Button variant="primary" size="sm" onClick={startCreate}>
                 <Plus size={14} />
-                创建第一个智能体
+                创建智能体
               </Button>
             )}
-          </div>
+          </GlassCard>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 pb-4">
             {filteredItems.map((item) => (
