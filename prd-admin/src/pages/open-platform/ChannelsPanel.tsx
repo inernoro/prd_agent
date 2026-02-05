@@ -5,7 +5,7 @@ import { Badge } from '@/components/design/Badge';
 import { Select } from '@/components/design/Select';
 import { Switch } from '@/components/design/Switch';
 import { channelService } from '@/services';
-import { Plus, Trash2, RefreshCw, MoreVertical, Mail, MessageSquare, Mic, Webhook, Pencil, Search } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, MoreVertical, Mail, MessageSquare, Mic, Webhook, Pencil, Search, Shield, ExternalLink } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import type { ChannelWhitelist, ChannelStatsResponse, CreateWhitelistRequest, UpdateWhitelistRequest } from '@/services/contracts/channels';
@@ -63,36 +63,13 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
   useEffect(() => { loadStats(); }, []);
   useEffect(() => { loadWhitelists(); }, [page, search, channelTypeFilter]);
 
-  // 传递 actions 给父容器
   useEffect(() => {
     onActionsReady?.(
-      <>
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="搜索白名单..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-8 pl-9 pr-3 text-sm rounded-lg outline-none"
-            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '180px' }}
-          />
-        </div>
-        <Select value={channelTypeFilter} onChange={(e) => setChannelTypeFilter(e.target.value)} uiSize="sm">
-          <option value="">全部通道</option>
-          {Object.entries(ChannelTypeDisplayNames).map(([key, name]) => (
-            <option key={key} value={key}>{name}</option>
-          ))}
-        </Select>
-        <Button variant="secondary" size="sm" onClick={() => { loadWhitelists(); loadStats(); }}>
-          <RefreshCw size={14} />
-        </Button>
-        <Button variant="primary" size="sm" className="whitespace-nowrap" onClick={() => setCreateDialogOpen(true)}>
-          <Plus size={14} /> 新建
-        </Button>
-      </>
+      <Button variant="secondary" size="sm" onClick={() => { loadWhitelists(); loadStats(); }}>
+        <RefreshCw size={14} />
+      </Button>
     );
-  }, [search, channelTypeFilter, onActionsReady]);
+  }, [onActionsReady]);
 
   const handleCreate = async (request: CreateWhitelistRequest) => {
     try {
@@ -147,138 +124,218 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
   };
 
   return (
-    <div className="h-full flex flex-col gap-4">
-      {/* 通道状态卡片 */}
-      <div className="grid grid-cols-4 gap-3">
-        {(statsResponse?.channels || []).map((stat) => (
-          <GlassCard key={stat.channelType} className="p-3">
+    <div className="h-full overflow-auto p-1">
+      <GlassCard glow className="min-h-full">
+        {/* 顶部提示栏 */}
+        <div className="p-4 border-b border-white/10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{
-                background: stat.isEnabled ? 'linear-gradient(135deg, rgba(34,197,94,0.2), rgba(34,197,94,0.1))' : 'rgba(255,255,255,0.05)',
-                color: stat.isEnabled ? 'rgb(34,197,94)' : 'var(--text-muted)',
-              }}>
-                {channelIcons[stat.channelType] || <Webhook size={18} />}
+              <Shield size={18} className="text-muted-foreground" />
+              <span>配置通道白名单，只有白名单内的标识才能访问系统</span>
+            </div>
+            <a href="#" className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1">
+              了解更多 <ExternalLink size={12} />
+            </a>
+          </div>
+        </div>
+
+        <div className="p-5 space-y-5">
+          {/* 通道状态卡片 */}
+          {statsResponse?.channels && statsResponse.channels.length > 0 && (
+            <section>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium">通道状态</h3>
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-sm">{stat.displayName}</span>
-                  <Badge variant={stat.isEnabled ? 'success' : 'subtle'} size="sm">
-                    {stat.isEnabled ? '启用' : '未配置'}
-                  </Badge>
+              <div className="grid grid-cols-4 gap-3">
+                {statsResponse.channels.map((stat) => (
+                  <div
+                    key={stat.channelType}
+                    className="p-3 rounded-lg transition-colors"
+                    style={{
+                      background: stat.isEnabled ? 'rgba(34,197,94,0.06)' : 'rgba(255,255,255,0.02)',
+                      border: stat.isEnabled ? '1px solid rgba(34,197,94,0.2)' : '1px solid rgba(255,255,255,0.06)',
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-9 h-9 rounded-lg flex items-center justify-center"
+                        style={{
+                          background: stat.isEnabled ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.05)',
+                          color: stat.isEnabled ? 'rgb(34,197,94)' : 'var(--text-muted)',
+                        }}
+                      >
+                        {channelIcons[stat.channelType] || <Webhook size={18} />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">{stat.displayName}</span>
+                          {stat.isEnabled && (
+                            <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          今日 <span className={stat.todayRequestCount > 0 ? 'text-blue-400' : ''}>{stat.todayRequestCount}</span> 请求 · <span className={stat.todaySuccessCount > 0 ? 'text-green-400' : ''}>{stat.todaySuccessCount}</span> 成功
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <div className="border-t border-white/10" />
+
+          {/* 白名单规则 */}
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium">白名单规则</h3>
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="text"
+                    placeholder="搜索规则..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="h-8 pl-8 pr-3 text-sm rounded-lg outline-none"
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '160px' }}
+                  />
                 </div>
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  今日 {stat.todayRequestCount} 请求 · {stat.todaySuccessCount} 成功
-                </div>
+                <Select value={channelTypeFilter} onChange={(e) => setChannelTypeFilter(e.target.value)} uiSize="sm">
+                  <option value="">全部通道</option>
+                  {Object.entries(ChannelTypeDisplayNames).map(([key, name]) => (
+                    <option key={key} value={key}>{name}</option>
+                  ))}
+                </Select>
+                <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)}>
+                  <Plus size={14} />
+                  添加规则
+                </Button>
               </div>
             </div>
-          </GlassCard>
-        ))}
-      </div>
 
-      {/* 白名单列表 */}
-      <GlassCard glow className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-auto">
-          <table className="w-full">
-            <thead className="sticky top-0" style={{ background: 'rgba(0,0,0,0.4)' }}>
-              <tr>
-                <th className="px-4 py-3 text-left text-sm font-medium">规则模式</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">通道</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">绑定用户</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">允许的 Agent</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">配额</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">状态</th>
-                <th className="px-4 py-3 text-right text-sm font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {whitelists.map((wl) => (
-                <tr key={wl.id} className="transition-colors hover:bg-white/[0.02]" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
-                  <td className="px-4 py-3">
-                    <div className="font-mono text-sm">{wl.identifierPattern}</div>
-                    {wl.displayName && <div className="text-xs text-muted-foreground mt-0.5">{wl.displayName}</div>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      {channelIcons[wl.channelType]}
-                      <span className="text-sm">{ChannelTypeDisplayNames[wl.channelType] || wl.channelType}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    {wl.boundUserName ? (
-                      <div className="flex items-center gap-2">
-                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-semibold" style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}>
-                          {wl.boundUserName.charAt(0).toUpperCase()}
-                        </div>
-                        <span className="text-sm">{wl.boundUserName}</span>
+            {/* 规则列表 */}
+            <div className="space-y-2">
+              {whitelists.length === 0 && !loading ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  {search || channelTypeFilter ? '未找到匹配的规则' : '暂无白名单规则，点击上方按钮添加'}
+                </div>
+              ) : (
+                whitelists.map((wl) => (
+                  <div
+                    key={wl.id}
+                    className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/[0.03]"
+                    style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+                  >
+                    <div className="flex items-center gap-4 flex-1 min-w-0">
+                      <div
+                        className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                        style={{ background: 'rgba(255,255,255,0.05)' }}
+                      >
+                        {channelIcons[wl.channelType] || <Webhook size={16} />}
                       </div>
-                    ) : <span className="text-muted-foreground text-sm">未绑定</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {wl.allowedAgents.length > 0 ? (
-                        wl.allowedAgents.map((agent) => <Badge key={agent} variant="subtle" size="sm">{agent}</Badge>)
-                      ) : <span className="text-muted-foreground text-sm">全部</span>}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <code className="font-mono text-sm">{wl.identifierPattern}</code>
+                          {wl.displayName && (
+                            <span className="text-xs text-muted-foreground">({wl.displayName})</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                          <span>{ChannelTypeDisplayNames[wl.channelType]}</span>
+                          {wl.boundUserName && (
+                            <span>→ {wl.boundUserName}</span>
+                          )}
+                          <span>
+                            配额: <span className={wl.todayUsedCount >= wl.dailyQuota ? 'text-red-400' : 'text-blue-400'}>{wl.todayUsedCount}</span>/{wl.dailyQuota}
+                          </span>
+                        </div>
+                      </div>
+                      {wl.allowedAgents.length > 0 && (
+                        <div className="flex flex-wrap gap-1 flex-shrink-0">
+                          {wl.allowedAgents.slice(0, 2).map((agent) => (
+                            <Badge key={agent} variant="subtle" size="sm">{agent}</Badge>
+                          ))}
+                          {wl.allowedAgents.length > 2 && (
+                            <Badge variant="subtle" size="sm">+{wl.allowedAgents.length - 2}</Badge>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="text-sm">
-                      <span className={wl.todayUsedCount >= wl.dailyQuota ? 'text-red-400' : ''}>{wl.todayUsedCount}</span>
-                      <span className="text-muted-foreground"> / {wl.dailyQuota}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Switch checked={wl.isActive} onCheckedChange={() => handleToggleStatus(wl.id)} ariaLabel={wl.isActive ? '禁用' : '启用'} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end">
+
+                    <div className="flex items-center gap-3 ml-4">
+                      <Switch
+                        checked={wl.isActive}
+                        onCheckedChange={() => handleToggleStatus(wl.id)}
+                        ariaLabel={wl.isActive ? '禁用' : '启用'}
+                      />
                       <DropdownMenu.Root>
                         <DropdownMenu.Trigger asChild>
-                          <Button variant="ghost" size="sm"><MoreVertical size={14} /></Button>
+                          <button className="p-1.5 rounded hover:bg-white/10 transition-colors text-muted-foreground hover:text-foreground">
+                            <MoreVertical size={16} />
+                          </button>
                         </DropdownMenu.Trigger>
                         <DropdownMenu.Portal>
-                          <DropdownMenu.Content align="end" sideOffset={8} className="z-50 rounded-xl p-2 min-w-[140px]" style={{
-                            background: 'linear-gradient(180deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
-                            border: '1px solid rgba(255,255,255,0.15)',
-                            boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
-                            backdropFilter: 'blur(40px)',
-                          }}>
-                            <DropdownMenu.Item className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10" onSelect={() => { setEditingWhitelist(wl); setEditDialogOpen(true); }}>
+                          <DropdownMenu.Content
+                            align="end"
+                            sideOffset={8}
+                            className="z-50 rounded-xl p-2 min-w-[140px]"
+                            style={{
+                              background: 'linear-gradient(180deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
+                              border: '1px solid rgba(255,255,255,0.15)',
+                              boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
+                              backdropFilter: 'blur(40px)',
+                            }}
+                          >
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10"
+                              onSelect={() => { setEditingWhitelist(wl); setEditDialogOpen(true); }}
+                            >
                               <Pencil size={14} /> 编辑
                             </DropdownMenu.Item>
                             <DropdownMenu.Separator className="my-1 h-px bg-white/10" />
-                            <DropdownMenu.Item className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10 text-red-400" onSelect={() => handleDelete(wl.id, wl.identifierPattern)}>
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10 text-red-400"
+                              onSelect={() => handleDelete(wl.id, wl.identifierPattern)}
+                            >
                               <Trash2 size={14} /> 删除
                             </DropdownMenu.Item>
                           </DropdownMenu.Content>
                         </DropdownMenu.Portal>
                       </DropdownMenu.Root>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {whitelists.length === 0 && !loading && (
-            <div className="text-center py-12 text-muted-foreground">
-              {search || channelTypeFilter ? '未找到匹配的白名单规则' : '暂无白名单规则'}
+                  </div>
+                ))
+              )}
             </div>
-          )}
+
+            {total > pageSize && (
+              <div className="flex justify-between items-center pt-4 mt-4 border-t border-white/10">
+                <div className="text-sm text-muted-foreground">共 {total} 条</div>
+                <div className="flex gap-2">
+                  <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>上一页</Button>
+                  <Button variant="secondary" size="sm" disabled={page >= Math.ceil(total / pageSize)} onClick={() => setPage(page + 1)}>下一页</Button>
+                </div>
+              </div>
+            )}
+          </section>
         </div>
-
-        {total > pageSize && (
-          <div className="p-4 border-t flex justify-between items-center" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-            <div className="text-sm text-muted-foreground">共 {total} 条</div>
-            <div className="flex gap-2">
-              <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>上一页</Button>
-              <Button variant="secondary" size="sm" disabled={page >= Math.ceil(total / pageSize)} onClick={() => setPage(page + 1)}>下一页</Button>
-            </div>
-          </div>
-        )}
       </GlassCard>
 
-      <WhitelistEditDialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} onSubmit={(req) => handleCreate(req as CreateWhitelistRequest)} mode="create" />
-      <WhitelistEditDialog open={editDialogOpen} onClose={() => { setEditDialogOpen(false); setEditingWhitelist(null); }} onSubmit={(req) => handleUpdate(req as UpdateWhitelistRequest)} mode="edit" whitelist={editingWhitelist} />
+      <WhitelistEditDialog
+        open={createDialogOpen}
+        onClose={() => setCreateDialogOpen(false)}
+        onSubmit={(req) => handleCreate(req as CreateWhitelistRequest)}
+        mode="create"
+      />
+      <WhitelistEditDialog
+        open={editDialogOpen}
+        onClose={() => { setEditDialogOpen(false); setEditingWhitelist(null); }}
+        onSubmit={(req) => handleUpdate(req as UpdateWhitelistRequest)}
+        mode="edit"
+        whitelist={editingWhitelist}
+      />
     </div>
   );
 }
