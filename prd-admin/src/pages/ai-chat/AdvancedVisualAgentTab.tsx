@@ -6594,13 +6594,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               title="重试生成"
                               onClick={() => {
                                 if (!genError.prompt) return;
-                                // 检查是否有 @imgN 引用
-                                const hasImgRef = /@img\d+/i.test(genError.prompt);
-                                if (!hasImgRef && genError.refSrc) {
-                                  // img2img 场景：将 refSrc 作为内联图片传入
+                                // 只要有参考图就传入，不管 prompt 里有没有 @imgN
+                                // 因为重试时原始的 @imgN 引用可能已经失效
+                                if (genError.refSrc) {
                                   void sendText(genError.prompt, { inlineImage: { src: genError.refSrc } });
                                 } else {
-                                  // text2img 或 multi-img：直接发送 prompt
                                   void sendText(genError.prompt);
                                 }
                               }}
@@ -6670,13 +6668,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               title="使用相同提示词重新生成"
                               onClick={() => {
                                 if (!genDone.prompt) return;
-                                // 检查是否有 @imgN 引用
-                                const hasImgRef = /@img\d+/i.test(genDone.prompt);
-                                if (!hasImgRef && genDone.refSrc) {
-                                  // img2img 场景：将 refSrc 作为内联图片传入
+                                // 只要有参考图就传入，不管 prompt 里有没有 @imgN
+                                // 因为重试时原始的 @imgN 引用可能已经失效
+                                if (genDone.refSrc) {
                                   void sendText(genDone.prompt, { inlineImage: { src: genDone.refSrc } });
                                 } else {
-                                  // text2img 或 multi-img：直接发送 prompt
                                   void sendText(genDone.prompt);
                                 }
                               }}
