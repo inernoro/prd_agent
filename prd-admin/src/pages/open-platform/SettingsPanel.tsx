@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
-import { Mail, Server, AlertTriangle, CheckCircle, Loader2, RefreshCw, Eye, EyeOff, ArrowRight, Zap, Shield, Play } from 'lucide-react';
+import { Mail, Server, AlertTriangle, CheckCircle, Loader2, RefreshCw, Eye, EyeOff, Zap, Shield, Play } from 'lucide-react';
 import { channelService } from '@/services';
 import { toast } from '@/lib/toast';
 import type { ChannelStatsResponse, ChannelSettings, UpdateSettingsRequest } from '@/services/contracts/channels';
@@ -84,8 +84,11 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
     setTesting(true); setTestResult(null);
     try {
       const result = await channelService.testConnection({
-        imapHost: form.imapHost, imapPort: form.imapPort, imapUsername: form.imapUsername,
-        imapPassword: form.imapPassword || settings?.imapPassword || '', imapUseSsl: form.imapUseSsl,
+        imapHost: form.imapHost || '',
+        imapPort: form.imapPort || 993,
+        imapUsername: form.imapUsername || '',
+        imapPassword: form.imapPassword || settings?.imapPassword || '',
+        imapUseSsl: form.imapUseSsl ?? true,
       });
       setTestResult(result);
     } catch (err) { setTestResult({ success: false, message: err instanceof Error ? err.message : '测试失败' }); }

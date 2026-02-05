@@ -5,48 +5,52 @@ import { Badge } from '@/components/design/Badge';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { channelService, getUsers } from '@/services';
-import { Plus, Trash2, RefreshCw, MoreVertical, Pencil, Search, Mail, MessageSquare, Mic, Webhook, UserCheck } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  RefreshCw,
+  MoreVertical,
+  Pencil,
+  Mail,
+  Copy,
+  Check,
+  HelpCircle,
+  ExternalLink,
+  FileText,
+  UserCheck,
+} from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
-import type { ChannelIdentityMapping, CreateIdentityMappingRequest, UpdateIdentityMappingRequest } from '@/services/contracts/channels';
-import { ChannelTypeDisplayNames } from '@/services/contracts/channels';
+import type {
+  ChannelIdentityMapping,
+  CreateIdentityMappingRequest,
+  UpdateIdentityMappingRequest,
+  ChannelSettings,
+} from '@/services/contracts/channels';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import * as Tooltip from '@radix-ui/react-tooltip';
 
 interface BindingPanelProps {
   onActionsReady?: (actions: React.ReactNode) => void;
 }
 
-function fmtDate(v?: string | null) {
-  if (!v) return '-';
-  return new Date(v).toLocaleString('zh-CN');
-}
-
-const channelIcons: Record<string, React.ReactNode> = {
-  email: <Mail size={14} />,
-  sms: <MessageSquare size={14} />,
-  siri: <Mic size={14} />,
-  webhook: <Webhook size={14} />,
-};
-
 export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
   const [mappings, setMappings] = useState<ChannelIdentityMapping[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
   const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState('');
-  const [channelTypeFilter, setChannelTypeFilter] = useState('');
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingMapping, setEditingMapping] = useState<ChannelIdentityMapping | null>(null);
 
+  // 系统邮箱配置
+  const [settings, setSettings] = useState<ChannelSettings | null>(null);
+  const [copied, setCopied] = useState(false);
+
   const loadMappings = async () => {
     setLoading(true);
     try {
-      const res = await channelService.getIdentityMappings(page, pageSize, channelTypeFilter || undefined, search || undefined);
-      setMappings(res.items);
-      setTotal(res.total);
+      const res = await channelService.getIdentityMappings(1, 100, 'email');
+      setMappings(res.items || []);
     } catch (err) {
       toast.error('加载失败', String(err));
     } finally {
@@ -54,47 +58,52 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
     }
   };
 
-  useEffect(() => { loadMappings(); }, [page, search, channelTypeFilter]);
+  const loadSettings = async () => {
+    try {
+      const data = await channelService.getSettings();
+      setSettings(data);
+    } catch (err) {
+      console.warn('Failed to load settings:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadMappings();
+    loadSettings();
+  }, []);
 
   // 传递 actions 给父容器
   useEffect(() => {
     onActionsReady?.(
-      <>
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="搜索身份..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-8 pl-9 pr-3 text-sm rounded-lg outline-none"
-            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '160px' }}
-          />
-        </div>
-        <Select value={channelTypeFilter} onChange={(e) => setChannelTypeFilter(e.target.value)} uiSize="sm">
-          <option value="">全部通道</option>
-          {Object.entries(ChannelTypeDisplayNames).map(([key, name]) => (
-            <option key={key} value={key}>{name}</option>
-          ))}
-        </Select>
-        <Button variant="secondary" size="sm" onClick={loadMappings}>
-          <RefreshCw size={14} />
-        </Button>
-        <Button variant="primary" size="sm" className="whitespace-nowrap" onClick={() => setCreateDialogOpen(true)}>
-          <Plus size={14} /> 新建
-        </Button>
-      </>
+      <Button variant="secondary" size="sm" onClick={() => { loadMappings(); loadSettings(); }}>
+        <RefreshCw size={14} />
+      </Button>
     );
-  }, [search, channelTypeFilter, onActionsReady]);
+  }, [onActionsReady]);
+
+  // 系统接收邮箱地址
+  const systemEmailAddress = settings?.imapUsername || null;
+
+  const handleCopyEmail = async () => {
+    if (!systemEmailAddress) return;
+    try {
+      await navigator.clipboard.writeText(systemEmailAddress);
+      setCopied(true);
+      toast.success('已复制到剪贴板');
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error('复制失败');
+    }
+  };
 
   const handleCreate = async (request: CreateIdentityMappingRequest) => {
     try {
       await channelService.createIdentityMapping(request);
-      toast.success('创建成功');
+      toast.success('添加成功');
       setCreateDialogOpen(false);
       loadMappings();
     } catch (err) {
-      toast.error('创建失败', String(err));
+      toast.error('添加失败', String(err));
     }
   };
 
@@ -114,7 +123,7 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
   const handleDelete = async (id: string, identifier: string) => {
     const confirmed = await systemDialog.confirm({
       title: '确认删除',
-      message: `确定要删除邮箱绑定"${identifier}"吗？`,
+      message: `确定要移除授权发件人"${identifier}"吗？`,
       tone: 'danger',
     });
     if (!confirmed) return;
@@ -128,110 +137,222 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
   };
 
   return (
-    <div className="h-full flex flex-col gap-4">
-      <GlassCard glow className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-auto">
-          <table className="w-full">
-            <thead className="sticky top-0" style={{ background: 'rgba(0,0,0,0.4)' }}>
-              <tr>
-                <th className="px-4 py-3 text-left text-sm font-medium">通道标识</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">通道类型</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">映射用户</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">验证状态</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">创建时间</th>
-                <th className="px-4 py-3 text-right text-sm font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mappings.map((mapping) => (
-                <tr key={mapping.id} className="transition-colors hover:bg-white/[0.02]" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
-                  <td className="px-4 py-3">
-                    <div className="font-mono text-sm">{mapping.channelIdentifier}</div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      {channelIcons[mapping.channelType]}
-                      <span className="text-sm">{ChannelTypeDisplayNames[mapping.channelType] || mapping.channelType}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold" style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}>
-                        {(mapping.userName || '?').charAt(0).toUpperCase()}
+    <div className="h-full overflow-auto">
+      <GlassCard glow className="m-1">
+        {/* 顶部提示栏 */}
+        <div className="p-4 border-b border-white/10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <FileText size={18} className="text-muted-foreground" />
+              <span>通过邮件创建任务，转发邮件自动处理</span>
+            </div>
+            <a href="#" className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1">
+              了解更多 <ExternalLink size={12} />
+            </a>
+          </div>
+        </div>
+
+        <div className="p-5 space-y-6">
+          {/* 系统邮箱 */}
+          <section>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-medium">系统邮箱</h3>
+                <p className="text-sm text-muted-foreground mt-0.5">发送邮件到此地址创建任务</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {systemEmailAddress ? (
+                  <>
+                    <code className="text-base font-mono">{systemEmailAddress}</code>
+                    <button
+                      onClick={handleCopyEmail}
+                      className="p-1.5 rounded hover:bg-white/10 transition-colors"
+                      title="复制邮箱地址"
+                    >
+                      {copied ? <Check size={16} className="text-green-400" /> : <Copy size={16} className="text-muted-foreground" />}
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground text-sm">
+                    未配置 - 请先在「邮箱配置」中设置
+                  </span>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <div className="border-t border-white/10" />
+
+          {/* 工作流邮箱提示 */}
+          <section>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h3 className="font-medium">工作流邮箱</h3>
+                <Tooltip.Provider>
+                  <Tooltip.Root>
+                    <Tooltip.Trigger asChild>
+                      <button className="text-muted-foreground hover:text-foreground">
+                        <HelpCircle size={14} />
+                      </button>
+                    </Tooltip.Trigger>
+                    <Tooltip.Portal>
+                      <Tooltip.Content
+                        className="px-3 py-2 text-sm rounded-lg max-w-xs"
+                        style={{
+                          background: 'rgba(0,0,0,0.9)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                        }}
+                        sideOffset={5}
+                      >
+                        自定义邮箱地址和说明来处理不同的任务
+                        <Tooltip.Arrow style={{ fill: 'rgba(0,0,0,0.9)' }} />
+                      </Tooltip.Content>
+                    </Tooltip.Portal>
+                  </Tooltip.Root>
+                </Tooltip.Provider>
+              </div>
+              <a
+                href="#"
+                onClick={(e) => { e.preventDefault(); /* 跳转到工作流页面 */ }}
+                className="text-sm text-blue-400 hover:text-blue-300"
+              >
+                在「邮件工作流」中配置
+              </a>
+            </div>
+            <p className="text-sm text-muted-foreground mt-1">
+              自定义邮箱地址和说明来处理不同的任务。
+            </p>
+          </section>
+
+          <div className="border-t border-white/10" />
+
+          {/* 授权发件人 */}
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-medium">授权发件人</h3>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  仅这些地址发送的邮件可创建任务
+                </p>
+              </div>
+              <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)}>
+                <Plus size={14} />
+                添加授权发件人
+              </Button>
+            </div>
+
+            {/* 发件人列表 */}
+            <div className="space-y-2">
+              {mappings.length === 0 && !loading ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  暂无授权发件人，点击上方按钮添加
+                </div>
+              ) : (
+                mappings.map((mapping) => (
+                  <div
+                    key={mapping.id}
+                    className="flex items-center justify-between p-3 rounded-lg transition-colors hover:bg-white/[0.03]"
+                    style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Mail size={16} className="text-muted-foreground" />
+                      <div>
+                        <div className="font-mono text-sm">{mapping.channelIdentifier}</div>
+                        {mapping.userName && (
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            映射用户: {mapping.userName}
+                          </div>
+                        )}
                       </div>
-                      <span className="text-sm">{mapping.userName || mapping.userId}</span>
+                      {mapping.isVerified && (
+                        <Badge variant="success" size="sm">
+                          <UserCheck size={10} className="mr-1" />
+                          已验证
+                        </Badge>
+                      )}
                     </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge variant={mapping.isVerified ? 'success' : 'subtle'} size="sm">
-                      <UserCheck size={12} className="mr-1" />
-                      {mapping.isVerified ? '已验证' : '未验证'}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-muted-foreground">{fmtDate(mapping.createdAt)}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end">
-                      <DropdownMenu.Root>
-                        <DropdownMenu.Trigger asChild>
-                          <Button variant="ghost" size="sm"><MoreVertical size={14} /></Button>
-                        </DropdownMenu.Trigger>
-                        <DropdownMenu.Portal>
-                          <DropdownMenu.Content align="end" sideOffset={8} className="z-50 rounded-xl p-2 min-w-[140px]" style={{
+                    <DropdownMenu.Root>
+                      <DropdownMenu.Trigger asChild>
+                        <button className="p-1.5 rounded hover:bg-white/10 transition-colors text-muted-foreground hover:text-foreground">
+                          <MoreVertical size={16} />
+                        </button>
+                      </DropdownMenu.Trigger>
+                      <DropdownMenu.Portal>
+                        <DropdownMenu.Content
+                          align="end"
+                          sideOffset={8}
+                          className="z-50 rounded-xl p-2 min-w-[140px]"
+                          style={{
                             background: 'linear-gradient(180deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
                             border: '1px solid rgba(255,255,255,0.15)',
                             boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
                             backdropFilter: 'blur(40px)',
-                          }}>
-                            <DropdownMenu.Item className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10" onSelect={() => { setEditingMapping(mapping); setEditDialogOpen(true); }}>
-                              <Pencil size={14} /> 编辑
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Separator className="my-1 h-px bg-white/10" />
-                            <DropdownMenu.Item className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10 text-red-400" onSelect={() => handleDelete(mapping.id, mapping.channelIdentifier)}>
-                              <Trash2 size={14} /> 删除
-                            </DropdownMenu.Item>
-                          </DropdownMenu.Content>
-                        </DropdownMenu.Portal>
-                      </DropdownMenu.Root>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {mappings.length === 0 && !loading && (
-            <div className="text-center py-12 text-muted-foreground">
-              {search || channelTypeFilter ? '未找到匹配的邮箱绑定' : '暂无邮箱绑定'}
+                          }}
+                        >
+                          <DropdownMenu.Item
+                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10"
+                            onSelect={() => {
+                              setEditingMapping(mapping);
+                              setEditDialogOpen(true);
+                            }}
+                          >
+                            <Pencil size={14} /> 编辑
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Separator className="my-1 h-px bg-white/10" />
+                          <DropdownMenu.Item
+                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10 text-red-400"
+                            onSelect={() => handleDelete(mapping.id, mapping.channelIdentifier)}
+                          >
+                            <Trash2 size={14} /> 删除
+                          </DropdownMenu.Item>
+                        </DropdownMenu.Content>
+                      </DropdownMenu.Portal>
+                    </DropdownMenu.Root>
+                  </div>
+                ))
+              )}
             </div>
-          )}
+          </section>
         </div>
-
-        {total > pageSize && (
-          <div className="p-4 border-t flex justify-between items-center" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-            <div className="text-sm text-muted-foreground">共 {total} 条</div>
-            <div className="flex gap-2">
-              <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>上一页</Button>
-              <Button variant="secondary" size="sm" disabled={page >= Math.ceil(total / pageSize)} onClick={() => setPage(page + 1)}>下一页</Button>
-            </div>
-          </div>
-        )}
       </GlassCard>
 
-      <IdentityMappingDialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} onSubmit={(req) => handleCreate(req as CreateIdentityMappingRequest)} mode="create" />
-      <IdentityMappingDialog open={editDialogOpen} onClose={() => { setEditDialogOpen(false); setEditingMapping(null); }} onSubmit={(req) => handleUpdate(req as UpdateIdentityMappingRequest)} mode="edit" mapping={editingMapping} />
+      {/* 创建对话框 */}
+      <IdentityMappingDialog
+        open={createDialogOpen}
+        onClose={() => setCreateDialogOpen(false)}
+        onSubmit={(req) => handleCreate(req as CreateIdentityMappingRequest)}
+        mode="create"
+      />
+
+      {/* 编辑对话框 */}
+      <IdentityMappingDialog
+        open={editDialogOpen}
+        onClose={() => {
+          setEditDialogOpen(false);
+          setEditingMapping(null);
+        }}
+        onSubmit={(req) => handleUpdate(req as UpdateIdentityMappingRequest)}
+        mode="edit"
+        mapping={editingMapping}
+      />
     </div>
   );
 }
 
-// ============ 邮箱绑定编辑弹窗 ============
-function IdentityMappingDialog({ open, onClose, onSubmit, mode, mapping }: {
+// ============ 授权发件人编辑弹窗 ============
+function IdentityMappingDialog({
+  open,
+  onClose,
+  onSubmit,
+  mode,
+  mapping,
+}: {
   open: boolean;
   onClose: () => void;
   onSubmit: (req: CreateIdentityMappingRequest | UpdateIdentityMappingRequest) => void;
   mode: 'create' | 'edit';
   mapping?: ChannelIdentityMapping | null;
 }) {
-  const [channelType, setChannelType] = useState('email');
   const [channelIdentifier, setChannelIdentifier] = useState('');
   const [userId, setUserId] = useState('');
   const [isVerified, setIsVerified] = useState(false);
@@ -242,15 +363,13 @@ function IdentityMappingDialog({ open, onClose, onSubmit, mode, mapping }: {
     if (open) {
       loadUsers();
       if (mode === 'edit' && mapping) {
-        setChannelType(mapping.channelType);
         setChannelIdentifier(mapping.channelIdentifier);
         setUserId(mapping.userId);
         setIsVerified(mapping.isVerified);
       } else {
-        setChannelType('email');
         setChannelIdentifier('');
         setUserId('');
-        setIsVerified(false);
+        setIsVerified(true); // 默认已验证
       }
     }
   }, [open, mode, mapping]);
@@ -260,56 +379,101 @@ function IdentityMappingDialog({ open, onClose, onSubmit, mode, mapping }: {
     try {
       const res = await getUsers({ page: 1, pageSize: 100 });
       setUsers(res.success ? res.data?.items || [] : []);
-    } catch { setUsers([]); }
-    finally { setLoadingUsers(false); }
+    } catch {
+      setUsers([]);
+    } finally {
+      setLoadingUsers(false);
+    }
   };
 
   const handleSubmit = () => {
     if (mode === 'create') {
-      if (!channelIdentifier.trim()) { toast.warning('验证失败', '通道标识不能为空'); return; }
-      if (!userId) { toast.warning('验证失败', '必须选择用户'); return; }
-      onSubmit({ channelType, channelIdentifier: channelIdentifier.trim(), userId, isVerified });
+      if (!channelIdentifier.trim()) {
+        toast.warning('验证失败', '邮箱地址不能为空');
+        return;
+      }
+      if (!channelIdentifier.includes('@')) {
+        toast.warning('验证失败', '请输入有效的邮箱地址');
+        return;
+      }
+      if (!userId) {
+        toast.warning('验证失败', '必须选择映射用户');
+        return;
+      }
+      onSubmit({
+        channelType: 'email',
+        channelIdentifier: channelIdentifier.trim().toLowerCase(),
+        userId,
+        isVerified,
+      });
     } else {
       onSubmit({ userId, isVerified });
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()} title={mode === 'create' ? '新建邮箱绑定' : '编辑邮箱绑定'} maxWidth={500}
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => !isOpen && onClose()}
+      title={mode === 'create' ? '添加授权发件人' : '编辑授权发件人'}
+      maxWidth={450}
       content={
         <div className="space-y-4">
           {mode === 'create' && (
-            <>
-              <div>
-                <label className="block text-sm font-medium mb-1">通道类型 *</label>
-                <Select value={channelType} onChange={(e) => setChannelType(e.target.value)} uiSize="md">
-                  {Object.entries(ChannelTypeDisplayNames).map(([key, name]) => (
-                    <option key={key} value={key}>{name}</option>
-                  ))}
-                </Select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">通道标识 *</label>
-                <input type="text" value={channelIdentifier} onChange={(e) => setChannelIdentifier(e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded-md" placeholder="如：user@example.com" />
-              </div>
-            </>
+            <div>
+              <label className="block text-sm font-medium mb-1.5">邮箱地址 *</label>
+              <input
+                type="email"
+                value={channelIdentifier}
+                onChange={(e) => setChannelIdentifier(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none"
+                placeholder="user@example.com"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                此邮箱发送的邮件将被系统处理
+              </p>
+            </div>
           )}
+
           <div>
-            <label className="block text-sm font-medium mb-1">映射用户 *</label>
-            <Select value={userId} onChange={(e) => setUserId(e.target.value)} disabled={loadingUsers} uiSize="md">
+            <label className="block text-sm font-medium mb-1.5">映射用户 *</label>
+            <Select
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              disabled={loadingUsers}
+              uiSize="md"
+            >
               <option value="">{loadingUsers ? '加载中...' : '请选择用户'}</option>
-              {users.map((u) => <option key={u.userId} value={u.userId}>{u.displayName} (@{u.username})</option>)}
+              {users.map((u) => (
+                <option key={u.userId} value={u.userId}>
+                  {u.displayName} (@{u.username})
+                </option>
+              ))}
             </Select>
+            <p className="text-xs text-muted-foreground mt-1">
+              该邮箱的操作将关联到此系统用户
+            </p>
           </div>
+
           <div>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={isVerified} onChange={(e) => setIsVerified(e.target.checked)} />
-              已验证身份
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isVerified}
+                onChange={(e) => setIsVerified(e.target.checked)}
+                className="rounded"
+              />
+              标记为已验证
             </label>
           </div>
-          <div className="flex justify-end gap-2 pt-4 border-t border-border">
-            <Button variant="secondary" onClick={onClose}>取消</Button>
-            <Button onClick={handleSubmit}>{mode === 'create' ? '创建' : '保存'}</Button>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-white/10">
+            <Button variant="secondary" onClick={onClose}>
+              取消
+            </Button>
+            <Button onClick={handleSubmit}>
+              {mode === 'create' ? '添加' : '保存'}
+            </Button>
           </div>
         </div>
       }

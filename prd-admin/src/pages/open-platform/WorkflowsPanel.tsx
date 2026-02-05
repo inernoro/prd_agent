@@ -5,19 +5,18 @@ import { Badge } from '@/components/design/Badge';
 import { Select } from '@/components/design/Select';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
-import { channelService } from '@/services';
+import { channelService, appCallersService } from '@/services';
 import {
   Plus,
   Trash2,
   RefreshCw,
   MoreVertical,
-  Mail,
   Pencil,
   FileText,
-  CheckSquare,
-  MessageCircle,
   HelpCircle,
-  Info,
+  Wrench,
+  Sparkles,
+  ExternalLink,
 } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -25,19 +24,11 @@ import type {
   EmailWorkflow,
   CreateWorkflowRequest,
   UpdateWorkflowRequest,
+  ChannelSettings,
 } from '@/services/contracts/channels';
-import { EmailIntentTypeDisplayNames } from '@/services/contracts/channels';
+import type { LLMAppCaller } from '@/types/appCaller';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-
-// Intent type icons
-const intentIcons: Record<string, React.ReactNode> = {
-  classify: <FileText size={16} />,
-  createtodo: <CheckSquare size={16} />,
-  summarize: <MessageCircle size={16} />,
-  followup: <Mail size={16} />,
-  fyi: <HelpCircle size={16} />,
-  unknown: <HelpCircle size={16} />,
-};
+import * as Tooltip from '@radix-ui/react-tooltip';
 
 interface WorkflowsPanelProps {
   onActionsReady?: (actions: React.ReactNode) => void;
@@ -45,51 +36,65 @@ interface WorkflowsPanelProps {
 
 export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) {
   const [workflows, setWorkflows] = useState<EmailWorkflow[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
   const [loading, setLoading] = useState(false);
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingWorkflow, setEditingWorkflow] = useState<EmailWorkflow | null>(null);
 
+  // 邮箱配置（用于获取域名）
+  const [settings, setSettings] = useState<ChannelSettings | null>(null);
+  // 已注册应用列表
+  const [appCallers, setAppCallers] = useState<LLMAppCaller[]>([]);
+
   const loadWorkflows = async () => {
     setLoading(true);
     try {
-      const res = await channelService.getWorkflows(page, pageSize);
+      const res = await channelService.getWorkflows(1, 100);
       setWorkflows(res?.items || []);
-      setTotal(res?.total || 0);
     } catch (err) {
       toast.error('加载失败', String(err));
       setWorkflows([]);
-      setTotal(0);
     } finally {
       setLoading(false);
     }
   };
 
+  const loadSettings = async () => {
+    try {
+      const data = await channelService.getSettings();
+      setSettings(data);
+    } catch (err) {
+      console.warn('Failed to load settings:', err);
+    }
+  };
+
+  const loadAppCallers = async () => {
+    try {
+      const res = await appCallersService.getAppCallers(1, 100);
+      setAppCallers(res?.data?.items || []);
+    } catch (err) {
+      console.warn('Failed to load app callers:', err);
+    }
+  };
+
   useEffect(() => {
     loadWorkflows();
-  }, [page]);
+    loadSettings();
+    loadAppCallers();
+  }, []);
 
   // Setup action buttons for TabBar
   useEffect(() => {
-    if (onActionsReady) {
-      onActionsReady(
-        <>
-          <Button variant="secondary" size="sm" onClick={loadWorkflows}>
-            <RefreshCw size={14} />
-            刷新
-          </Button>
-          <Button variant="primary" size="sm" onClick={() => setCreateDialogOpen(true)}>
-            <Plus size={14} />
-            新建工作流
-          </Button>
-        </>
-      );
-    }
+    onActionsReady?.(
+      <Button variant="secondary" size="sm" onClick={() => { loadWorkflows(); loadSettings(); }}>
+        <RefreshCw size={14} />
+      </Button>
+    );
   }, [onActionsReady]);
+
+  // 从 IMAP 用户名提取域名
+  const emailDomain = settings?.imapUsername?.split('@')[1] || null;
 
   const handleCreate = async (request: CreateWorkflowRequest) => {
     try {
@@ -123,11 +128,10 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
   const handleDelete = async (id: string, displayName: string) => {
     const confirmed = await systemDialog.confirm({
       title: '确认删除',
-      message: `确定要删除工作流"${displayName}"吗？此操作不可恢复。`,
+      message: `确定要删除工作流邮箱"${displayName}"吗？`,
       tone: 'danger',
     });
     if (!confirmed) return;
-
     try {
       await channelService.deleteWorkflow(id);
       toast.success('删除成功');
@@ -148,181 +152,161 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4">
-      {/* 使用指南 */}
-      <GlassCard className="p-4">
-        <div className="flex items-start gap-3">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-blue-500/20 text-blue-400">
-            <Info size={16} />
-          </div>
-          <div className="flex-1">
-            <h3 className="font-medium mb-1">工作流配置说明</h3>
-            <div className="space-y-2 text-sm text-muted-foreground">
-              <p><strong>企业邮箱模式</strong>：配置自定义邮箱前缀（如 todo@company.com），发送到该地址的邮件会自动触发对应的处理流程。</p>
-              <p><strong>普通邮箱模式</strong>（Gmail/163等）：在邮件主题中添加关键词触发，如 [待办]、[分类]、[摘要]。</p>
-              <div className="mt-2 p-2 rounded bg-amber-500/10 border border-amber-500/20">
-                <span className="text-amber-400">提示：</span> 两种模式可以同时生效，系统会优先匹配邮箱前缀，其次匹配主题关键词。
-              </div>
+    <div className="h-full overflow-auto">
+      <GlassCard glow className="m-1">
+        {/* 顶部提示栏 */}
+        <div className="p-4 border-b border-white/10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <FileText size={18} className="text-muted-foreground" />
+              <span>自定义邮箱地址和说明来处理不同的任务</span>
             </div>
+            <a href="#" className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1">
+              了解更多 <ExternalLink size={12} />
+            </a>
           </div>
         </div>
-      </GlassCard>
 
-      {/* 工作流列表 */}
-      <GlassCard glow className="flex-1 flex flex-col min-h-0">
-        <div className="flex-1 overflow-auto">
-          <table className="w-full">
-            <thead style={{ background: 'rgba(255,255,255,0.02)' }}>
-              <tr>
-                <th className="px-4 py-3 text-left text-sm font-medium">工作流</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">邮箱前缀</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">处理类型</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">目标 Agent</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">优先级</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">状态</th>
-                <th className="px-4 py-3 text-right text-sm font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {workflows.map((wf) => (
-                <tr
-                  key={wf.id}
-                  className="transition-colors"
-                  style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl">{wf.icon || '📧'}</span>
-                      <div>
-                        <div className="font-medium">{wf.displayName}</div>
-                        {wf.description && (
-                          <div className="text-xs text-muted-foreground mt-0.5">{wf.description}</div>
-                        )}
+        <div className="p-5 space-y-6">
+          {/* 手动配置提示 */}
+          <div className="flex items-start gap-3 p-3 rounded-lg" style={{ background: 'rgba(251, 191, 36, 0.08)', border: '1px solid rgba(251, 191, 36, 0.2)' }}>
+            <Wrench size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
+            <div className="text-sm">
+              <span className="text-amber-400 font-medium">当前为手动配置模式</span>
+              <span className="text-muted-foreground ml-2">
+                未来版本将支持自动识别邮件意图，无需预先配置工作流
+              </span>
+              <Sparkles size={12} className="inline-block ml-1 text-amber-400/60" />
+            </div>
+          </div>
+
+          {/* 工作流邮箱标题 */}
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <h3 className="font-medium">工作流邮箱</h3>
+                <Tooltip.Provider>
+                  <Tooltip.Root>
+                    <Tooltip.Trigger asChild>
+                      <button className="text-muted-foreground hover:text-foreground">
+                        <HelpCircle size={14} />
+                      </button>
+                    </Tooltip.Trigger>
+                    <Tooltip.Portal>
+                      <Tooltip.Content
+                        className="px-3 py-2 text-sm rounded-lg max-w-xs"
+                        style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid rgba(255,255,255,0.1)' }}
+                        sideOffset={5}
+                      >
+                        配置不同的邮箱前缀，发送到对应地址的邮件会触发相应的处理流程
+                        <Tooltip.Arrow style={{ fill: 'rgba(0,0,0,0.9)' }} />
+                      </Tooltip.Content>
+                    </Tooltip.Portal>
+                  </Tooltip.Root>
+                </Tooltip.Provider>
+              </div>
+              <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)}>
+                <Plus size={14} />
+                添加工作流邮箱
+              </Button>
+            </div>
+
+            {/* 工作流列表 */}
+            <div className="space-y-2">
+              {workflows.length === 0 && !loading ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  暂无工作流邮箱，点击上方按钮添加
+                </div>
+              ) : (
+                workflows.map((wf) => (
+                  <div
+                    key={wf.id}
+                    className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/[0.03]"
+                    style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+                  >
+                    <div className="flex items-center gap-4 flex-1 min-w-0">
+                      <span className="text-2xl flex-shrink-0">{wf.icon || '📧'}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{wf.displayName}</span>
+                          {!wf.isActive && (
+                            <Badge variant="subtle" size="sm">已禁用</Badge>
+                          )}
+                        </div>
+                        <div className="text-sm text-muted-foreground mt-0.5 truncate">
+                          {wf.description || '发送邮件到此地址触发处理'}
+                        </div>
+                      </div>
+                      <div className="flex-shrink-0">
+                        <code
+                          className="px-2.5 py-1 rounded text-sm font-mono"
+                          style={{ background: 'rgba(59,130,246,0.1)', color: 'rgba(96,165,250,0.95)' }}
+                        >
+                          {wf.addressPrefix}@{emailDomain || 'your-domain.com'}
+                        </code>
                       </div>
                     </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <code className="px-2 py-1 rounded text-sm" style={{ background: 'rgba(59,130,246,0.1)', color: 'rgba(96,165,250,0.95)' }}>
-                      {wf.addressPrefix}@...
-                    </code>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      {intentIcons[wf.intentType] || <HelpCircle size={16} />}
-                      <span>{EmailIntentTypeDisplayNames[wf.intentType] || wf.intentType}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    {wf.targetAgent ? (
-                      <Badge variant="subtle" size="sm">{wf.targetAgent}</Badge>
-                    ) : (
-                      <span className="text-muted-foreground text-sm">默认</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-sm">{wf.priority}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Switch
-                      checked={wf.isActive}
-                      onCheckedChange={() => handleToggleStatus(wf.id)}
-                      ariaLabel={wf.isActive ? '禁用工作流' : '启用工作流'}
-                    />
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end items-center gap-2">
+
+                    <div className="flex items-center gap-3 ml-4">
+                      <Switch
+                        checked={wf.isActive}
+                        onCheckedChange={() => handleToggleStatus(wf.id)}
+                        ariaLabel={wf.isActive ? '禁用工作流' : '启用工作流'}
+                      />
                       <DropdownMenu.Root>
                         <DropdownMenu.Trigger asChild>
-                          <Button variant="ghost" size="sm" title="更多操作">
-                            <MoreVertical size={14} />
-                          </Button>
+                          <button className="p-1.5 rounded hover:bg-white/10 transition-colors text-muted-foreground hover:text-foreground">
+                            <MoreVertical size={16} />
+                          </button>
                         </DropdownMenu.Trigger>
                         <DropdownMenu.Portal>
                           <DropdownMenu.Content
                             align="end"
                             sideOffset={8}
-                            className="z-50 rounded-[14px] p-2 min-w-[160px]"
+                            className="z-50 rounded-xl p-2 min-w-[140px]"
                             style={{
-                              background:
-                                'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                              boxShadow:
-                                '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                              backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                              WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                              background: 'linear-gradient(180deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
+                              border: '1px solid rgba(255,255,255,0.15)',
+                              boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
+                              backdropFilter: 'blur(40px)',
                             }}
                           >
                             <DropdownMenu.Item
-                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-[10px] cursor-pointer outline-none transition-colors"
-                              style={{ color: 'var(--text-primary)' }}
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10"
                               onSelect={() => handleEdit(wf)}
                             >
-                              <Pencil size={14} />
-                              <span>编辑工作流</span>
+                              <Pencil size={14} /> 编辑
                             </DropdownMenu.Item>
-                            <DropdownMenu.Separator
-                              className="my-1 h-px"
-                              style={{ background: 'rgba(255,255,255,0.10)' }}
-                            />
+                            <DropdownMenu.Separator className="my-1 h-px bg-white/10" />
                             <DropdownMenu.Item
-                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-[10px] cursor-pointer outline-none transition-colors"
-                              style={{ color: 'rgba(239,68,68,0.95)' }}
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10 text-red-400"
                               onSelect={() => handleDelete(wf.id, wf.displayName)}
                             >
-                              <Trash2 size={14} />
-                              <span>删除工作流</span>
+                              <Trash2 size={14} /> 删除
                             </DropdownMenu.Item>
                           </DropdownMenu.Content>
                         </DropdownMenu.Portal>
                       </DropdownMenu.Root>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {workflows.length === 0 && !loading && (
-            <div className="text-center py-12 text-muted-foreground">
-              暂无工作流，点击右上角"新建工作流"开始配置
+                  </div>
+                ))
+              )}
             </div>
-          )}
+          </section>
         </div>
-
-        {total > pageSize && (
-          <div
-            className="p-4 border-t flex justify-between items-center"
-            style={{ borderColor: 'rgba(255,255,255,0.06)' }}
-          >
-            <div className="text-sm text-muted-foreground">
-              共 {total} 条，第 {page} / {Math.ceil(total / pageSize)} 页
-            </div>
-            <div className="flex gap-2">
-              <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>
-                上一页
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={page >= Math.ceil(total / pageSize)}
-                onClick={() => setPage(page + 1)}
-              >
-                下一页
-              </Button>
-            </div>
-          </div>
-        )}
       </GlassCard>
 
+      {/* 创建对话框 */}
       <WorkflowEditDialog
         open={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
         onSubmit={(req) => handleCreate(req as CreateWorkflowRequest)}
         mode="create"
+        emailDomain={emailDomain}
+        appCallers={appCallers}
       />
 
+      {/* 编辑对话框 */}
       <WorkflowEditDialog
         open={editDialogOpen}
         onClose={() => {
@@ -332,6 +316,8 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
         onSubmit={(req) => handleUpdate(req as UpdateWorkflowRequest)}
         mode="edit"
         workflow={editingWorkflow}
+        emailDomain={emailDomain}
+        appCallers={appCallers}
       />
     </div>
   );
@@ -344,22 +330,24 @@ function WorkflowEditDialog({
   onSubmit,
   mode,
   workflow,
+  emailDomain,
+  appCallers,
 }: {
   open: boolean;
   onClose: () => void;
   onSubmit: (request: CreateWorkflowRequest | UpdateWorkflowRequest) => void;
   mode: 'create' | 'edit';
   workflow?: EmailWorkflow | null;
+  emailDomain: string | null;
+  appCallers: LLMAppCaller[];
 }) {
   const [addressPrefix, setAddressPrefix] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [description, setDescription] = useState('');
   const [icon, setIcon] = useState('');
-  const [intentType, setIntentType] = useState('classify');
-  const [targetAgent, setTargetAgent] = useState('');
+  const [targetApp, setTargetApp] = useState('');
   const [customPrompt, setCustomPrompt] = useState('');
   const [replyTemplate, setReplyTemplate] = useState('');
-  const [priority, setPriority] = useState(100);
 
   useEffect(() => {
     if (mode === 'edit' && workflow) {
@@ -367,21 +355,17 @@ function WorkflowEditDialog({
       setDisplayName(workflow.displayName);
       setDescription(workflow.description || '');
       setIcon(workflow.icon || '');
-      setIntentType(workflow.intentType);
-      setTargetAgent(workflow.targetAgent || '');
+      setTargetApp(workflow.targetAgent || '');
       setCustomPrompt(workflow.customPrompt || '');
       setReplyTemplate(workflow.replyTemplate || '');
-      setPriority(workflow.priority);
     } else {
       setAddressPrefix('');
       setDisplayName('');
       setDescription('');
       setIcon('');
-      setIntentType('classify');
-      setTargetAgent('');
+      setTargetApp('');
       setCustomPrompt('');
       setReplyTemplate('');
-      setPriority(100);
     }
   }, [open, mode, workflow]);
 
@@ -391,7 +375,7 @@ function WorkflowEditDialog({
       return;
     }
     if (!displayName.trim()) {
-      toast.warning('验证失败', '显示名称不能为空');
+      toast.warning('验证失败', '工作流名称不能为空');
       return;
     }
 
@@ -400,75 +384,91 @@ function WorkflowEditDialog({
       displayName: displayName.trim(),
       description: description.trim() || undefined,
       icon: icon.trim() || undefined,
-      intentType,
-      targetAgent: targetAgent.trim() || undefined,
+      intentType: 'classify', // 默认使用分类
+      targetAgent: targetApp || undefined,
       customPrompt: customPrompt.trim() || undefined,
       replyTemplate: replyTemplate.trim() || undefined,
-      priority,
+      priority: 100,
     });
   };
 
-  const intentOptions = [
-    { value: 'classify', label: '邮件分类', icon: '📁' },
-    { value: 'createtodo', label: '创建待办', icon: '📋' },
-    { value: 'summarize', label: '内容摘要', icon: '📝' },
-    { value: 'followup', label: '跟进回复', icon: '📨' },
-    { value: 'fyi', label: '仅供参考', icon: '📄' },
-  ];
+  const domainDisplay = emailDomain || 'your-domain.com';
 
   return (
     <Dialog
       open={open}
       onOpenChange={(isOpen) => !isOpen && onClose()}
-      title={mode === 'create' ? '新建工作流' : '编辑工作流'}
-      maxWidth={600}
+      title={mode === 'create' ? '添加工作流邮箱' : '编辑工作流邮箱'}
+      maxWidth={500}
       contentClassName="max-h-[85vh] overflow-y-auto"
       content={
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1.5">邮箱前缀 *</label>
-              <div className="flex items-center gap-1">
-                <input
-                  type="text"
-                  value={addressPrefix}
-                  onChange={(e) => setAddressPrefix(e.target.value)}
-                  className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none"
-                  placeholder="todo"
-                />
-                <span className="text-muted-foreground">@domain</span>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">发送到此前缀的邮件将触发工作流</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">显示名称 *</label>
-              <input
-                type="text"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none"
-                placeholder="待办事项"
-              />
-            </div>
+        <div className="space-y-5">
+          {/* 邮箱地址预览 */}
+          <div className="p-3 rounded-lg" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)' }}>
+            <div className="text-xs text-muted-foreground mb-1">邮件发送地址</div>
+            <code className="text-blue-400 font-mono">
+              {addressPrefix || 'prefix'}@{domainDisplay}
+            </code>
           </div>
 
+          {/* 邮箱前缀 */}
+          <div>
+            <label className="block text-sm font-medium mb-1.5">邮箱前缀 *</label>
+            <div className="flex items-center">
+              <input
+                type="text"
+                value={addressPrefix}
+                onChange={(e) => setAddressPrefix(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                className="flex-1 px-3 py-2 rounded-l-lg bg-white/5 border border-white/10 border-r-0 focus:border-blue-500/50 focus:outline-none"
+                placeholder="todo"
+              />
+              <span className="px-3 py-2 rounded-r-lg bg-white/[0.03] border border-white/10 text-muted-foreground text-sm">
+                @{domainDisplay}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              只能包含小写字母、数字和短横线
+            </p>
+          </div>
+
+          {/* 工作流名称 */}
+          <div>
+            <label className="block text-sm font-medium mb-1.5">工作流名称 *</label>
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none"
+              placeholder="待办事项"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              在列表中显示的名称，方便识别
+            </p>
+          </div>
+
+          {/* 图标和目标应用 */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1.5">处理类型 *</label>
-              <Select
-                value={intentType}
-                onChange={(e) => setIntentType(e.target.value)}
-                uiSize="md"
-              >
-                {intentOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.icon} {opt.label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">图标</label>
+              <label className="block text-sm font-medium mb-1.5">
+                图标
+                <Tooltip.Provider>
+                  <Tooltip.Root>
+                    <Tooltip.Trigger asChild>
+                      <HelpCircle size={12} className="inline-block ml-1 text-muted-foreground" />
+                    </Tooltip.Trigger>
+                    <Tooltip.Portal>
+                      <Tooltip.Content
+                        className="px-3 py-2 text-xs rounded-lg max-w-xs"
+                        style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid rgba(255,255,255,0.1)' }}
+                        sideOffset={5}
+                      >
+                        显示在工作流列表中的图标，帮助快速识别
+                        <Tooltip.Arrow style={{ fill: 'rgba(0,0,0,0.9)' }} />
+                      </Tooltip.Content>
+                    </Tooltip.Portal>
+                  </Tooltip.Root>
+                </Tooltip.Provider>
+              </label>
               <input
                 type="text"
                 value={icon}
@@ -476,10 +476,25 @@ function WorkflowEditDialog({
                 className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none"
                 placeholder="📋"
               />
-              <p className="text-xs text-muted-foreground mt-1">支持 emoji 或图标名</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1.5">绑定应用</label>
+              <Select
+                value={targetApp}
+                onChange={(e) => setTargetApp(e.target.value)}
+                uiSize="md"
+              >
+                <option value="">自动处理</option>
+                {appCallers.map((app) => (
+                  <option key={app.id} value={app.appCode}>
+                    {app.displayName || app.appCode}
+                  </option>
+                ))}
+              </Select>
             </div>
           </div>
 
+          {/* 描述 */}
           <div>
             <label className="block text-sm font-medium mb-1.5">描述</label>
             <textarea
@@ -491,60 +506,46 @@ function WorkflowEditDialog({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1.5">目标 Agent</label>
-              <input
-                type="text"
-                value={targetAgent}
-                onChange={(e) => setTargetAgent(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none"
-                placeholder="defect-agent"
-              />
-              <p className="text-xs text-muted-foreground mt-1">留空则使用默认处理器</p>
+          {/* 高级设置折叠 */}
+          <details className="group">
+            <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
+              <span className="group-open:rotate-90 transition-transform">▶</span>
+              高级设置
+            </summary>
+            <div className="mt-3 space-y-4 pl-4 border-l border-white/10">
+              {/* 追加提示词 */}
+              <div>
+                <label className="block text-sm font-medium mb-1.5">追加提示词</label>
+                <textarea
+                  value={customPrompt}
+                  onChange={(e) => setCustomPrompt(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-xs font-mono"
+                  placeholder="可选，AI 处理邮件时的额外指令..."
+                  rows={3}
+                />
+              </div>
+
+              {/* 自动回复模板 */}
+              <div>
+                <label className="block text-sm font-medium mb-1.5">自动回复模板</label>
+                <textarea
+                  value={replyTemplate}
+                  onChange={(e) => setReplyTemplate(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-xs font-mono"
+                  placeholder="支持变量：{senderName}, {subject}, {result}"
+                  rows={3}
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">优先级</label>
-              <input
-                type="number"
-                value={priority}
-                onChange={(e) => setPriority(parseInt(e.target.value) || 100)}
-                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none"
-                min={1}
-                max={999}
-              />
-              <p className="text-xs text-muted-foreground mt-1">数字越小优先级越高</p>
-            </div>
-          </div>
+          </details>
 
-          <div>
-            <label className="block text-sm font-medium mb-1.5">自定义处理提示词</label>
-            <textarea
-              value={customPrompt}
-              onChange={(e) => setCustomPrompt(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-xs font-mono"
-              placeholder="可选，用于 LLM 处理时的自定义提示词..."
-              rows={3}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1.5">自动回复模板</label>
-            <textarea
-              value={replyTemplate}
-              onChange={(e) => setReplyTemplate(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-xs font-mono"
-              placeholder="支持变量：{senderName}, {subject}, {result}"
-              rows={3}
-            />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+          {/* 操作按钮 */}
+          <div className="flex justify-end gap-2 pt-4 border-t border-white/10">
             <Button variant="secondary" onClick={onClose}>
               取消
             </Button>
             <Button onClick={handleSubmit}>
-              {mode === 'create' ? '创建' : '保存'}
+              {mode === 'create' ? '添加' : '保存'}
             </Button>
           </div>
         </div>
