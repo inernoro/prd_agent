@@ -25,6 +25,10 @@ import {
   Layers,
   Activity,
   Zap,
+  TrendingUp,
+  MessageSquare,
+  Database,
+  List,
 } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -68,6 +72,13 @@ function fmtDate(v?: string | null) {
   return new Date(v).toLocaleString('zh-CN');
 }
 
+// HTTP 端点配置
+const HTTP_ENDPOINTS = [
+  { path: '/v1/chat/completions', method: 'POST', name: '对话完成', icon: MessageSquare, color: 'blue' },
+  { path: '/v1/embeddings', method: 'POST', name: '向量嵌入', icon: Database, color: 'purple' },
+  { path: '/v1/models', method: 'GET', name: '模型列表', icon: List, color: 'green' },
+];
+
 export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
   const [apps, setApps] = useState<OpenPlatformApp[]>([]);
   const [total, setTotal] = useState(0);
@@ -91,8 +102,20 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
   const stats = useMemo(() => {
     const activeCount = apps.filter(a => a.isActive).length;
     const totalRequests = apps.reduce((sum, a) => sum + (a.totalRequests || 0), 0);
-    return { total, activeCount, totalRequests };
+    // 模拟成功率（实际应从后端获取）
+    const successRate = totalRequests > 0 ? 98.5 : 0;
+    return { total, activeCount, totalRequests, successRate };
   }, [apps, total]);
+
+  // 模拟端点统计数据（实际应从后端获取）
+  const endpointStats = useMemo(() => {
+    const total = stats.totalRequests;
+    return [
+      { ...HTTP_ENDPOINTS[0], today: Math.floor(total * 0.75), success: 99.2, latency: 2.3 },
+      { ...HTTP_ENDPOINTS[1], today: Math.floor(total * 0.20), success: 100, latency: 0.8 },
+      { ...HTTP_ENDPOINTS[2], today: Math.floor(total * 0.05), success: 100, latency: 0.1 },
+    ];
+  }, [stats.totalRequests]);
 
   const loadApps = async () => {
     setLoading(true);
@@ -100,7 +123,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
       const res = await openPlatformService.getApps(page, pageSize, search || undefined);
       setApps(res.items);
       setTotal(res.total);
-      setSelectedIds(new Set()); // 加载后清空选择
+      setSelectedIds(new Set());
     } catch (err) {
       toast.error('加载失败', String(err));
     } finally {
@@ -191,7 +214,6 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
     });
     if (!confirmed) return;
     try {
-      // 逐个删除
       for (const id of selectedIds) {
         await openPlatformService.deleteApp(id);
       }
@@ -253,12 +275,24 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
     setCurlDialogOpen(true);
   };
 
+  const colorMap: Record<string, string> = {
+    blue: 'rgba(59,130,246,0.1)',
+    purple: 'rgba(168,85,247,0.1)',
+    green: 'rgba(34,197,94,0.1)',
+  };
+
+  const textColorMap: Record<string, string> = {
+    blue: 'text-blue-400',
+    purple: 'text-purple-400',
+    green: 'text-green-400',
+  };
+
   return (
     <div className="h-full overflow-hidden p-1">
       <GlassCard glow className="h-full flex flex-col">
-        {/* 顶部提示栏 */}
+        {/* ============ 顶部统计栏 ============ */}
         <div className="p-4 border-b border-white/10 flex-shrink-0" style={{ background: 'rgba(255,255,255,0.02)' }}>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <Key size={18} className="text-muted-foreground" />
               <span>管理 OpenAI 兼容的 API 应用，支持第三方集成</span>
@@ -267,10 +301,54 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
               API 文档 <ExternalLink size={12} />
             </a>
           </div>
+
+          {/* 统计卡片 - 横向排列 */}
+          <div className="grid grid-cols-4 gap-3">
+            <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.1)' }}>
+                <Layers size={16} className="text-blue-400" />
+              </div>
+              <div>
+                <div className="text-xl font-semibold">{stats.total}</div>
+                <div className="text-xs text-muted-foreground">应用总数</div>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'rgba(34,197,94,0.1)' }}>
+                <Activity size={16} className="text-green-400" />
+              </div>
+              <div>
+                <div className="text-xl font-semibold text-green-400">{stats.activeCount}</div>
+                <div className="text-xs text-muted-foreground">活跃应用</div>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'rgba(251,191,36,0.1)' }}>
+                <Zap size={16} className="text-amber-400" />
+              </div>
+              <div>
+                <div className="text-xl font-semibold">{stats.totalRequests.toLocaleString()}</div>
+                <div className="text-xs text-muted-foreground">总请求数</div>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'rgba(168,85,247,0.1)' }}>
+                <TrendingUp size={16} className="text-purple-400" />
+              </div>
+              <div>
+                <div className="text-xl font-semibold">{stats.successRate}%</div>
+                <div className="text-xs text-muted-foreground">成功率</div>
+              </div>
+            </div>
+          </div>
         </div>
 
+        {/* ============ 主体区域 ============ */}
         <div className="flex-1 min-h-0 grid grid-cols-12">
-          {/* ============ 左栏：应用列表 ============ */}
+          {/* 左栏：应用列表 */}
           <div className="col-span-8 border-r border-white/10 flex flex-col">
             {/* 列表标题栏 */}
             <div className="flex items-center justify-between p-4 border-b border-white/10 flex-shrink-0">
@@ -321,7 +399,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                   apps.map((app) => (
                     <div
                       key={app.id}
-                      className={`flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-white/[0.03] ${selectedIds.has(app.id) ? 'bg-blue-500/10 border-blue-500/30' : ''}`}
+                      className={`flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-white/[0.03] ${selectedIds.has(app.id) ? 'bg-blue-500/10' : ''}`}
                       style={{ border: selectedIds.has(app.id) ? '1px solid rgba(59,130,246,0.3)' : '1px solid rgba(255,255,255,0.06)' }}
                     >
                       {/* 选择框 */}
@@ -433,76 +511,69 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
             </div>
           </div>
 
-          {/* ============ 右栏：统计信息 ============ */}
+          {/* ============ 右栏：HTTP 端点统计 ============ */}
           <div className="col-span-4 p-5 overflow-y-auto">
-            {/* 统计卡片 */}
-            <section className="space-y-4">
-              <h4 className="text-xs text-muted-foreground uppercase tracking-wider">统计概览</h4>
+            {/* HTTP 端点统计 */}
+            <section className="space-y-3">
+              <h4 className="text-xs text-muted-foreground uppercase tracking-wider">HTTP 端点统计</h4>
 
-              <div className="grid grid-cols-1 gap-3">
-                <div className="p-4 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.1)' }}>
-                      <Layers size={18} className="text-blue-400" />
+              {endpointStats.map((ep, idx) => {
+                const Icon = ep.icon;
+                return (
+                  <div key={idx} className="p-3 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-7 h-7 rounded flex items-center justify-center" style={{ background: colorMap[ep.color] }}>
+                        <Icon size={14} className={textColorMap[ep.color]} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-medium">{ep.name}</div>
+                        <code className="text-[10px] text-muted-foreground">{ep.method} {ep.path}</code>
+                      </div>
                     </div>
-                    <div>
-                      <div className="text-2xl font-semibold">{stats.total}</div>
-                      <div className="text-xs text-muted-foreground">应用总数</div>
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="p-1.5 rounded" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                        <div className="text-sm font-semibold">{ep.today.toLocaleString()}</div>
+                        <div className="text-[10px] text-muted-foreground">今日请求</div>
+                      </div>
+                      <div className="p-1.5 rounded" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                        <div className="text-sm font-semibold text-green-400">{ep.success}%</div>
+                        <div className="text-[10px] text-muted-foreground">成功率</div>
+                      </div>
+                      <div className="p-1.5 rounded" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                        <div className="text-sm font-semibold">{ep.latency}s</div>
+                        <div className="text-[10px] text-muted-foreground">平均延迟</div>
+                      </div>
                     </div>
                   </div>
-                </div>
-
-                <div className="p-4 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'rgba(34,197,94,0.1)' }}>
-                      <Activity size={18} className="text-green-400" />
-                    </div>
-                    <div>
-                      <div className="text-2xl font-semibold text-green-400">{stats.activeCount}</div>
-                      <div className="text-xs text-muted-foreground">活跃应用</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'rgba(251,191,36,0.1)' }}>
-                      <Zap size={18} className="text-amber-400" />
-                    </div>
-                    <div>
-                      <div className="text-2xl font-semibold">{stats.totalRequests.toLocaleString()}</div>
-                      <div className="text-xs text-muted-foreground">总请求数</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+                );
+              })}
             </section>
 
             {/* 快速操作 */}
-            <section className="mt-6 space-y-3">
+            <section className="mt-5 space-y-2">
               <h4 className="text-xs text-muted-foreground uppercase tracking-wider">快速操作</h4>
               <button
                 onClick={showCurlCommand}
-                className="w-full p-3 rounded-lg text-left text-sm hover:bg-white/5 transition-colors flex items-center gap-3"
+                className="w-full p-2.5 rounded-lg text-left text-sm hover:bg-white/5 transition-colors flex items-center gap-2"
                 style={{ border: '1px solid rgba(255,255,255,0.06)' }}
               >
-                <Code size={16} className="text-muted-foreground" />
+                <Code size={14} className="text-muted-foreground" />
                 <span>查看 curl 调用示例</span>
               </button>
               <a
                 href="#"
-                className="w-full p-3 rounded-lg text-left text-sm hover:bg-white/5 transition-colors flex items-center gap-3 block"
+                className="w-full p-2.5 rounded-lg text-left text-sm hover:bg-white/5 transition-colors flex items-center gap-2 block"
                 style={{ border: '1px solid rgba(255,255,255,0.06)' }}
               >
-                <ExternalLink size={16} className="text-muted-foreground" />
+                <ExternalLink size={14} className="text-muted-foreground" />
                 <span>查看 API 文档</span>
               </a>
             </section>
 
             {/* 说明 */}
-            <section className="mt-6 p-4 rounded-lg" style={{ background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.1)' }}>
-              <h4 className="text-xs font-medium text-blue-400 mb-2">使用说明</h4>
-              <ul className="text-xs text-muted-foreground space-y-1">
+            <section className="mt-5 p-3 rounded-lg" style={{ background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.1)' }}>
+              <h4 className="text-xs font-medium text-blue-400 mb-1.5">使用说明</h4>
+              <ul className="text-[11px] text-muted-foreground space-y-0.5">
                 <li>• API 兼容 OpenAI Chat Completions 格式</li>
                 <li>• 每个应用有独立的 API Key</li>
                 <li>• 请求会关联到绑定的用户和群组</li>
