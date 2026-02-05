@@ -144,17 +144,9 @@ public class MultiImageDomainService : IMultiImageDomainService
             };
         }
 
-        // 多图场景：将 @imgN 替换为顺序号（图1、图2...）
-        // 图片已按出现顺序传给模型，用顺序号让模型理解指代关系
+        // 多图场景：使用 Transformer 将 @imgN 替换为顺序号
         var refIdToOrder = refs.ToDictionary(r => r.RefId, r => r.OccurrenceOrder + 1);
-        var cleanPrompt = ImageRefPattern.Replace(prompt, match =>
-        {
-            if (int.TryParse(match.Groups[1].Value, out var refId) && refIdToOrder.TryGetValue(refId, out var order))
-            {
-                return $"图{order}";
-            }
-            return match.Value; // 未找到的引用保持原样
-        });
+        var cleanPrompt = MultiImagePromptTransformer.Transform(prompt, refIdToOrder);
 
         return new ImageIntentResult
         {
