@@ -69,16 +69,16 @@ export function GlassCard({
       subtle: 0.7,
     };
 
-    // 计算光晕颜色 - 更柔和的光晕效果，避免光污染
-    let glowColor = 'rgba(255, 255, 255, 0.03)';
+    // 计算光晕颜色 - 增强可见度的光晕效果
+    let glowColor = 'rgba(255, 255, 255, 0.05)';
     if (glow) {
       if (variant === 'gold') {
-        glowColor = 'rgba(214, 178, 106, 0.12)'; // 金色光晕，降低强度
+        glowColor = 'rgba(214, 178, 106, 0.25)'; // 金色光晕，更明显
       } else if (accentHue !== undefined) {
-        // 使用自定义色相，降低透明度避免光污染
-        glowColor = `hsla(${accentHue}, 60%, 60%, 0.1)`;
+        // 使用自定义色相，透明度提高到 0.2
+        glowColor = `hsla(${accentHue}, 70%, 65%, 0.2)`;
       } else {
-        glowColor = 'rgba(255, 255, 255, 0.08)'; // 白色光晕
+        glowColor = 'rgba(255, 255, 255, 0.15)'; // 白色光晕
       }
     }
 
@@ -118,11 +118,10 @@ export function GlassCard({
       backdropFilter: blur,
       WebkitBackdropFilter: blur,
       boxShadow: shadowLayers.join(', '),
-      // GPU 合成层优化
-      transform: 'translate3d(0, 0, 0)',
-      backfaceVisibility: 'hidden' as const,
-      WebkitBackfaceVisibility: 'hidden' as const,
-      // 创建独立的堆叠上下文
+      // 强制创建持久的 GPU 合成层，避免状态变化时频繁创建/销毁合成层导致闪烁
+      transform: 'translateZ(0)',
+      willChange: 'transform',
+      // 创建独立的堆叠上下文，防止与背景动画停止时的合成层重建产生光晕渲染异常
       isolation: 'isolate',
       ...style,
     };

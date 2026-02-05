@@ -78,7 +78,7 @@ export function ToolCard({ item }: ToolCardProps) {
     <GlassCard
       variant="subtle"
       accentHue={accentHue}
-      glow={false}
+      glow
       padding="none"
       interactive
       onClick={() => selectItem(item)}
@@ -90,9 +90,9 @@ export function ToolCard({ item }: ToolCardProps) {
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 group-hover:scale-110"
             style={{
-              background: `linear-gradient(135deg, hsla(${accentHue}, 70%, 60%, 0.15) 0%, hsla(${accentHue}, 70%, 40%, 0.08) 100%)`,
-              boxShadow: `0 2px 8px -2px hsla(${accentHue}, 70%, 50%, 0.25), inset 0 1px 0 0 rgba(255,255,255,0.1)`,
-              border: `1px solid hsla(${accentHue}, 60%, 60%, 0.2)`,
+              background: `linear-gradient(135deg, hsla(${accentHue}, 70%, 60%, 0.18) 0%, hsla(${accentHue}, 70%, 40%, 0.1) 100%)`,
+              boxShadow: `0 3px 12px -3px hsla(${accentHue}, 70%, 50%, 0.35), inset 0 1px 0 0 rgba(255,255,255,0.12)`,
+              border: `1px solid hsla(${accentHue}, 60%, 60%, 0.25)`,
             }}
           >
             <IconComponent
@@ -100,6 +100,13 @@ export function ToolCard({ item }: ToolCardProps) {
               style={{ color: `hsla(${accentHue}, 70%, 70%, 1)` }}
             />
           </div>
+          {/* Subtle glow behind icon */}
+          <div
+            className="absolute inset-0 -z-10 blur-lg opacity-40 group-hover:opacity-60 transition-opacity"
+            style={{
+              background: `radial-gradient(circle, hsla(${accentHue}, 70%, 50%, 0.5) 0%, transparent 70%)`,
+            }}
+          />
         </div>
 
         {/* Name */}
