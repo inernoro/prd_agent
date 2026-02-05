@@ -332,10 +332,10 @@ export default function GroupsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query.page, query.search, query.inviteStatus]);
 
-  const openDetail = async (g: GroupRow) => {
+  const openDetail = async (g: GroupRow, initialTab: 'members' | 'gaps' | 'messages' = 'members') => {
     setSelected(g);
     setOpen(true);
-    setTab('members');
+    setTab(initialTab);
     // members
     const mRes = await getAdminGroupMembers(g.groupId);
     if (mRes.success) {
@@ -440,7 +440,7 @@ export default function GroupsPage() {
               暂无数据
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2.5">
               {items.map((g) => {
                 const status = getInviteStatus(g.inviteExpireAt);
                 const hasWarning = (g.pendingGapCount ?? 0) > 0;
@@ -515,9 +515,34 @@ export default function GroupsPage() {
                       </div>
                     </div>
 
-                    {/* Footer：头像 + 操作 */}
+                    {/* Footer：快捷操作 + 复制 */}
                     <div className="flex items-center justify-between pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                      <AvatarStack members={g.topMembers || []} total={g.memberCount} max={4} />
+                      <div className="flex items-center gap-1">
+                        <button
+                          className="px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors hover:brightness-110"
+                          style={{ background: 'rgba(59, 130, 246, 0.15)', color: 'rgba(96, 165, 250, 0.95)' }}
+                          onClick={(e) => { e.stopPropagation(); openDetail(g, 'members'); }}
+                          title="查看成员"
+                        >
+                          成员
+                        </button>
+                        <button
+                          className="px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors hover:brightness-110"
+                          style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'rgba(251, 191, 36, 0.95)' }}
+                          onClick={(e) => { e.stopPropagation(); openDetail(g, 'gaps'); }}
+                          title="查看缺失"
+                        >
+                          缺失
+                        </button>
+                        <button
+                          className="px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors hover:brightness-110"
+                          style={{ background: 'rgba(34, 197, 94, 0.15)', color: 'rgba(74, 222, 128, 0.95)' }}
+                          onClick={(e) => { e.stopPropagation(); openDetail(g, 'messages'); }}
+                          title="查看消息"
+                        >
+                          消息
+                        </button>
+                      </div>
                       <button
                         className="p-1 rounded hover:bg-white/10 transition-colors"
                         onClick={(e) => { e.stopPropagation(); onCopy(g.inviteLink); }}
