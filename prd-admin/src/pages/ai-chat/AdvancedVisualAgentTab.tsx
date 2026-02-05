@@ -3237,13 +3237,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }
 
       // 构建多图引用数组（新架构）
+      // label 使用顺序号（第1张图、第2张图），避免 VLM 描述与用户称呼不一致导致语义混乱
       const imageRefsForBackend = imageRefs
         .filter((img) => img.sha256 || img.originalSha256) // 只传有 sha256 的图片
         .map((img, idx) => ({
           refId: img.refId ?? (idx + 1),
           assetSha256: img.originalSha256 || img.sha256 || '',
           url: img.originalSrc || img.src || '',
-          label: img.prompt || `图片${idx + 1}`,
+          label: `第${idx + 1}张图`,
         }));
 
       const runRes = await createWorkspaceImageGenRun({
