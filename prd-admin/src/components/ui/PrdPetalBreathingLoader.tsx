@@ -109,12 +109,23 @@ export function PrdPetalBreathingLoader({
       role="status"
     >
       <style>{`
+/* 非 fill 模式：使用 grid 布局居中 */
 .prd-petal-breath__petal {
   grid-row: 1 / -1;
   grid-column: 1 / -1;
   box-sizing: border-box;
   animation: prd-petal-breath 2s ease alternate infinite;
   transform: rotate(var(--prdPetalRot)) scale(1);
+}
+
+/* fill 模式：使用绝对定位 + translate 居中，溢出裁剪时保持中心对齐 */
+.prd-petal-breath__petal--fill {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  box-sizing: border-box;
+  animation: prd-petal-breath-fill 2s ease alternate infinite;
+  transform: translate(-50%, -50%) rotate(var(--prdPetalRot)) scale(1);
 }
 
 .prd-petal-breath__petal--paused {
@@ -127,8 +138,15 @@ export function PrdPetalBreathingLoader({
   }
 }
 
+@keyframes prd-petal-breath-fill {
+  to {
+    transform: translate(-50%, -50%) rotate(var(--prdPetalRot)) scale(0.6);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .prd-petal-breath__petal {
+  .prd-petal-breath__petal,
+  .prd-petal-breath__petal--fill {
     animation: none !important;
   }
 }
@@ -148,10 +166,13 @@ export function PrdPetalBreathingLoader({
         const petalSizeFill = `max(${i * 5}cqw, ${i * 5}cqh)`;
         const petalSizeFixed = `calc(${i} * 4 * var(--prdPetalUnitPx))`;
 
+        // fill 模式用 --fill 类（绝对定位居中），非 fill 用普通类（grid 布局）
+        const petalClass = fill ? 'prd-petal-breath__petal--fill' : 'prd-petal-breath__petal';
+
         return (
           <div
             key={c}
-            className={`prd-petal-breath__petal${paused ? ' prd-petal-breath__petal--paused' : ''}`}
+            className={`${petalClass}${paused ? ' prd-petal-breath__petal--paused' : ''}`}
             style={
               {
                 // fill 模式：按较大边拉伸，居中后裁剪溢出
