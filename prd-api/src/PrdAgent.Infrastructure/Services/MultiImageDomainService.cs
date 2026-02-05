@@ -144,12 +144,16 @@ public class MultiImageDomainService : IMultiImageDomainService
             };
         }
 
-        // 多图场景：直接返回原始 prompt，不需要对照表
-        // 图片已按顺序传给多模态模型，模型可以直接"看到"图片内容
+        // 多图场景：清理 @imgN 标记，图片已按顺序传给模型
+        // 模型可以直接"看到"图片，不需要文本标记
+        var cleanPrompt = ImageRefPattern.Replace(prompt, "").Trim();
+        // 清理可能产生的多余空格
+        cleanPrompt = System.Text.RegularExpressions.Regex.Replace(cleanPrompt, @"\s{2,}", " ");
+
         return new ImageIntentResult
         {
             Success = true,
-            EnhancedPrompt = prompt,
+            EnhancedPrompt = cleanPrompt,
             OriginalPrompt = prompt,
             ImageRefCount = refs.Count,
             Confidence = 1.0
