@@ -331,21 +331,19 @@ export default function GroupsPage() {
       />
 
       <GlassCard glow className="flex-1 min-h-0 flex flex-col">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex-1 min-w-[240px]">
-            <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-              <input
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setPage(1);
-                }}
-                className="h-10 w-full rounded-[14px] pl-9 pr-4 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                placeholder="搜索群组名/群组ID/群主"
-              />
-            </div>
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <input
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              className="h-8 w-full rounded-lg pl-8 pr-3 text-xs outline-none"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)' }}
+              placeholder="搜索群组名/群组ID/群主"
+            />
           </div>
 
           <Select
@@ -354,17 +352,15 @@ export default function GroupsPage() {
               setInviteStatus(e.target.value as 'all' | 'valid' | 'expired');
               setPage(1);
             }}
-            uiSize="md"
+            uiSize="sm"
           >
-            <option value="all">邀请状态</option>
+            <option value="all">全部状态</option>
             <option value="valid">有效</option>
             <option value="expired">已过期</option>
           </Select>
-
-          {null}
         </div>
 
-        <div className="mt-4 flex-1 min-h-0 overflow-auto">
+        <div className="mt-3 flex-1 min-h-0 overflow-auto">
           {loading ? (
             <div className="flex items-center justify-center py-16" style={{ color: 'var(--text-muted)' }}>
               加载中...
