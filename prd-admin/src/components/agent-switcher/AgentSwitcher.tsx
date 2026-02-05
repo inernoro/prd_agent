@@ -1,10 +1,10 @@
 /**
- * Agent Switcher 浮层组件 v8.0
+ * Agent Switcher 浮层组件 v9.0
  *
- * 电影胶片滚动背景：
- * - 多层滚动光条
- * - 胶片齿孔动画
- * - 选中卡片发光效果
+ * Linear 风格设计：
+ * - 大卡片，图片为背景
+ * - 功能描述
+ * - 四向飞入动画
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -24,149 +24,21 @@ const ICON_URLS: Record<string, string> = {
   'defect-agent': 'https://i.pa.759800.com/icon/backups/agent/defect-agent.png',
 };
 
-/** Agent 主题色 */
-const AGENT_GLOW_COLORS: Record<string, string> = {
-  'prd-agent': '#3b82f6',
-  'visual-agent': '#a855f7',
-  'literary-agent': '#22c55e',
-  'defect-agent': '#f97316',
+/** Agent 功能描述 */
+const AGENT_DESCRIPTIONS: Record<string, string> = {
+  'prd-agent': '智能解读PRD文档，快速提取需求要点',
+  'visual-agent': 'AI驱动的视觉创作，一键生成精美图像',
+  'literary-agent': '文学创作助手，为文章配图赋予灵魂',
+  'defect-agent': '缺陷管理专家，高效追踪问题闭环',
 };
 
-/** 电影胶片滚动背景 */
-function FilmStripBackground() {
-  return (
-    <div className="absolute inset-0 overflow-hidden">
-      {/* 基础深色渐变 */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background: 'linear-gradient(135deg, #0a0a12 0%, #12121f 50%, #0a0a15 100%)',
-        }}
-      />
-
-      {/* 胶片齿孔 - 左侧 */}
-      <div
-        className="absolute left-4 top-0 w-3 h-full"
-        style={{
-          background: `repeating-linear-gradient(
-            to bottom,
-            transparent 0px,
-            transparent 20px,
-            rgba(255,255,255,0.03) 20px,
-            rgba(255,255,255,0.03) 30px,
-            transparent 30px,
-            transparent 50px
-          )`,
-          animation: 'filmScroll 2s linear infinite',
-        }}
-      />
-
-      {/* 胶片齿孔 - 右侧 */}
-      <div
-        className="absolute right-4 top-0 w-3 h-full"
-        style={{
-          background: `repeating-linear-gradient(
-            to bottom,
-            transparent 0px,
-            transparent 20px,
-            rgba(255,255,255,0.03) 20px,
-            rgba(255,255,255,0.03) 30px,
-            transparent 30px,
-            transparent 50px
-          )`,
-          animation: 'filmScroll 2s linear infinite',
-        }}
-      />
-
-      {/* 滚动光条层 1 - 慢速 */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background: `repeating-linear-gradient(
-            180deg,
-            transparent 0%,
-            transparent 48%,
-            rgba(59, 130, 246, 0.03) 49%,
-            rgba(59, 130, 246, 0.05) 50%,
-            rgba(59, 130, 246, 0.03) 51%,
-            transparent 52%,
-            transparent 100%
-          )`,
-          backgroundSize: '100% 200px',
-          animation: 'scrollDown 8s linear infinite',
-        }}
-      />
-
-      {/* 滚动光条层 2 - 中速 */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background: `repeating-linear-gradient(
-            180deg,
-            transparent 0%,
-            transparent 45%,
-            rgba(168, 85, 247, 0.02) 48%,
-            rgba(168, 85, 247, 0.04) 50%,
-            rgba(168, 85, 247, 0.02) 52%,
-            transparent 55%,
-            transparent 100%
-          )`,
-          backgroundSize: '100% 300px',
-          animation: 'scrollDown 12s linear infinite',
-        }}
-      />
-
-      {/* 滚动光条层 3 - 快速斜向 */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background: `repeating-linear-gradient(
-            165deg,
-            transparent 0%,
-            transparent 49%,
-            rgba(255, 255, 255, 0.015) 49.5%,
-            rgba(255, 255, 255, 0.02) 50%,
-            rgba(255, 255, 255, 0.015) 50.5%,
-            transparent 51%,
-            transparent 100%
-          )`,
-          backgroundSize: '100px 100px',
-          animation: 'scrollDiagonal 4s linear infinite',
-        }}
-      />
-
-      {/* 水平扫描线效果 */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background: `repeating-linear-gradient(
-            to bottom,
-            transparent 0px,
-            transparent 2px,
-            rgba(0, 0, 0, 0.1) 2px,
-            rgba(0, 0, 0, 0.1) 4px
-          )`,
-        }}
-      />
-
-      {/* 中央聚光效果 */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background: 'radial-gradient(ellipse 60% 50% at 50% 50%, rgba(59, 130, 246, 0.08) 0%, transparent 60%)',
-        }}
-      />
-
-      {/* 暗角效果 */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background: 'radial-gradient(ellipse 80% 80% at 50% 50%, transparent 30%, rgba(0, 0, 0, 0.4) 100%)',
-        }}
-      />
-    </div>
-  );
-}
+/** 入场方向配置 */
+const ENTRY_DIRECTIONS = [
+  { x: -120, y: -80, rotate: -8 },   // 左上
+  { x: 120, y: -80, rotate: 8 },     // 右上
+  { x: -120, y: 80, rotate: 8 },     // 左下
+  { x: 120, y: 80, rotate: -8 },     // 右下
+];
 
 /** Agent 卡片组件 */
 function AgentCard({
@@ -175,17 +47,18 @@ function AgentCard({
   isSelected,
   onClick,
   onMouseEnter,
-  delay,
+  isClosing,
 }: {
   agent: AgentDefinition;
   index: number;
   isSelected: boolean;
   onClick: () => void;
   onMouseEnter: () => void;
-  delay: number;
+  isClosing: boolean;
 }) {
   const iconUrl = ICON_URLS[agent.key];
-  const glowColor = AGENT_GLOW_COLORS[agent.key];
+  const description = AGENT_DESCRIPTIONS[agent.key];
+  const direction = ENTRY_DIRECTIONS[index];
 
   return (
     <button
@@ -194,86 +67,96 @@ function AgentCard({
       onMouseEnter={onMouseEnter}
       className="group relative outline-none focus:outline-none"
       style={{
-        animation: `cardFloat 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) ${delay}ms both`,
+        animation: isClosing
+          ? `cardExit 0.3s cubic-bezier(0.4, 0, 1, 1) ${index * 50}ms both`
+          : `cardEnter 0.6s cubic-bezier(0.16, 1, 0.3, 1) ${150 + index * 100}ms both`,
+        ['--entry-x' as string]: `${direction.x}px`,
+        ['--entry-y' as string]: `${direction.y}px`,
+        ['--entry-rotate' as string]: `${direction.rotate}deg`,
       }}
     >
-      {/* 选中时的外层大光晕 */}
-      {isSelected && (
-        <div
-          className="absolute -inset-4 rounded-[32px] pointer-events-none"
-          style={{
-            background: `radial-gradient(ellipse at center, ${glowColor}40 0%, transparent 70%)`,
-            animation: 'glowPulse 2s ease-in-out infinite',
-          }}
-        />
-      )}
-
-      {/* 主卡片 */}
+      {/* 主卡片 - 无边框，图片为主体 */}
       <div
-        className="relative w-[140px] h-[160px] rounded-[24px] flex flex-col items-center justify-center gap-4 transition-all duration-300 ease-out overflow-hidden"
+        className="relative w-[200px] h-[260px] rounded-[28px] overflow-hidden transition-all duration-500 ease-out cursor-pointer"
         style={{
-          background: isSelected
-            ? 'rgba(20, 24, 40, 0.9)'
-            : 'rgba(15, 18, 30, 0.75)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          border: isSelected
-            ? `1.5px solid ${glowColor}70`
-            : '1px solid rgba(255, 255, 255, 0.1)',
+          background: 'linear-gradient(145deg, rgba(25, 28, 40, 0.95) 0%, rgba(15, 17, 25, 0.98) 100%)',
           boxShadow: isSelected
-            ? `0 0 30px ${glowColor}50, 0 0 60px ${glowColor}25, 0 20px 40px -10px rgba(0,0,0,0.5)`
-            : '0 4px 24px -4px rgba(0,0,0,0.4)',
-          transform: isSelected ? 'translateY(-8px) scale(1.05)' : 'translateY(0) scale(1)',
+            ? `0 0 0 2px ${agent.color.text}, 0 25px 50px -12px rgba(0, 0, 0, 0.6), 0 0 80px -20px ${agent.color.text}50`
+            : '0 20px 40px -12px rgba(0, 0, 0, 0.5)',
+          transform: isSelected
+            ? 'translateY(-12px) scale(1.02)'
+            : 'translateY(0) scale(1)',
         }}
       >
-        {/* 顶部光线 */}
+        {/* 顶部渐变光效 */}
         <div
-          className="absolute top-0 left-0 right-0 h-[2px]"
+          className="absolute top-0 left-0 right-0 h-32 pointer-events-none transition-opacity duration-500"
           style={{
             background: isSelected
-              ? `linear-gradient(90deg, transparent, ${glowColor}, transparent)`
-              : 'linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent)',
-            boxShadow: isSelected ? `0 0 20px ${glowColor}` : 'none',
+              ? `linear-gradient(180deg, ${agent.color.text}25 0%, transparent 100%)`
+              : 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%)',
           }}
         />
 
-        {/* 图标 */}
-        <div
-          className="relative w-[72px] h-[72px] transition-all duration-300 ease-out"
-          style={{
-            transform: isSelected ? 'scale(1.15)' : 'scale(1)',
-            filter: isSelected
-              ? `drop-shadow(0 0 25px ${glowColor}80) drop-shadow(0 0 50px ${glowColor}40)`
-              : 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
-          }}
-        >
-          <img
-            src={iconUrl}
-            alt={agent.name}
-            className="w-full h-full object-contain"
-            draggable={false}
-          />
+        {/* 图标区域 */}
+        <div className="relative pt-8 pb-4 flex justify-center">
+          <div
+            className="relative w-[100px] h-[100px] transition-all duration-500 ease-out"
+            style={{
+              transform: isSelected ? 'scale(1.1) translateY(-4px)' : 'scale(1)',
+              filter: isSelected
+                ? `drop-shadow(0 0 30px ${agent.color.text}80)`
+                : 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))',
+            }}
+          >
+            <img
+              src={iconUrl}
+              alt={agent.name}
+              className="w-full h-full object-contain"
+              draggable={false}
+            />
+          </div>
         </div>
 
-        {/* 名称 */}
-        <span
-          className="text-[14px] font-medium tracking-wide transition-all duration-300"
-          style={{
-            color: isSelected ? '#fff' : 'rgba(255,255,255,0.6)',
-            textShadow: isSelected ? `0 0 20px ${glowColor}` : 'none',
-          }}
-        >
-          {agent.name}
-        </span>
+        {/* 文字区域 */}
+        <div className="px-5 pb-6">
+          {/* 名称 */}
+          <h3
+            className="text-[18px] font-semibold text-center mb-2 transition-all duration-300"
+            style={{
+              color: isSelected ? '#fff' : 'rgba(255,255,255,0.85)',
+            }}
+          >
+            {agent.name}
+          </h3>
 
-        {/* 快捷键角标 */}
+          {/* 描述 */}
+          <p
+            className="text-[13px] text-center leading-relaxed transition-all duration-300"
+            style={{
+              color: isSelected ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.45)',
+            }}
+          >
+            {description}
+          </p>
+        </div>
+
+        {/* 底部渐变 */}
         <div
-          className="absolute top-3 right-3 w-6 h-6 rounded-lg flex items-center justify-center text-[11px] font-bold transition-all duration-300"
+          className="absolute bottom-0 left-0 right-0 h-20 pointer-events-none transition-opacity duration-500"
           style={{
-            background: isSelected ? `${glowColor}40` : 'rgba(255, 255, 255, 0.08)',
-            color: isSelected ? '#fff' : 'rgba(255,255,255,0.4)',
-            border: isSelected ? `1px solid ${glowColor}60` : '1px solid rgba(255, 255, 255, 0.1)',
-            boxShadow: isSelected ? `0 0 15px ${glowColor}50` : 'none',
+            background: isSelected
+              ? `linear-gradient(0deg, ${agent.color.text}15 0%, transparent 100%)`
+              : 'transparent',
+          }}
+        />
+
+        {/* 快捷键 */}
+        <div
+          className="absolute top-4 right-4 w-8 h-8 rounded-xl flex items-center justify-center text-[13px] font-bold transition-all duration-300"
+          style={{
+            background: isSelected ? `${agent.color.text}40` : 'rgba(255, 255, 255, 0.08)',
+            color: isSelected ? '#fff' : 'rgba(255,255,255,0.5)',
           }}
         >
           {index + 1}
@@ -310,7 +193,7 @@ export function AgentSwitcher() {
         close();
         setIsClosing(false);
         navigate(agent.route);
-      }, 200);
+      }, 350);
     },
     [navigate, close, addRecentVisit]
   );
@@ -320,7 +203,7 @@ export function AgentSwitcher() {
     setTimeout(() => {
       close();
       setIsClosing(false);
-    }, 200);
+    }, 350);
   }, [close]);
 
   useEffect(() => {
@@ -376,42 +259,79 @@ export function AgentSwitcher() {
       className="fixed inset-0 z-[200] flex items-center justify-center"
       onClick={handleBackdropClick}
       style={{
-        animation: isClosing ? 'fadeOut 0.2s ease-out both' : 'fadeIn 0.3s ease-out both',
+        animation: isClosing ? 'bgFadeOut 0.35s ease-out both' : 'bgFadeIn 0.4s ease-out both',
       }}
     >
-      {/* 电影胶片滚动背景 */}
-      <FilmStripBackground />
+      {/* Linear 风格深黑背景 */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background: 'linear-gradient(180deg, #0a0a0f 0%, #0f0f18 50%, #0a0a12 100%)',
+        }}
+      />
+
+      {/* 微妙的网格背景 */}
+      <div
+        className="absolute inset-0 opacity-[0.02]"
+        style={{
+          backgroundImage: `
+            linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)
+          `,
+          backgroundSize: '60px 60px',
+        }}
+      />
+
+      {/* 中央光晕 */}
+      <div
+        className="absolute pointer-events-none"
+        style={{
+          width: '800px',
+          height: '600px',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          background: 'radial-gradient(ellipse at center, rgba(100, 120, 255, 0.06) 0%, transparent 60%)',
+        }}
+      />
 
       {/* 内容区域 */}
       <div
         className="relative"
         style={{
-          animation: isClosing ? 'contentOut 0.2s ease-in both' : 'contentIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both',
+          animation: isClosing ? 'contentFadeOut 0.25s ease-in both' : 'contentFadeIn 0.5s ease-out both',
         }}
         role="dialog"
         aria-modal="true"
       >
         {/* 标题 */}
-        <div className="text-center mb-10">
+        <div
+          className="text-center mb-12"
+          style={{
+            animation: isClosing ? 'none' : 'titleSlideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both',
+          }}
+        >
           <h2
-            className="text-[28px] font-semibold tracking-wide"
+            className="text-[36px] font-bold tracking-tight"
             style={{
-              color: 'rgba(255, 255, 255, 0.95)',
-              textShadow: '0 0 40px rgba(100, 150, 255, 0.4)',
+              color: '#fff',
+              background: 'linear-gradient(180deg, #fff 0%, rgba(255,255,255,0.7) 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
             }}
           >
-            选择 Agent
+            选择你的 Agent
           </h2>
           <p
-            className="mt-3 text-[13px] font-light"
-            style={{ color: 'rgba(255, 255, 255, 0.45)' }}
+            className="mt-4 text-[15px]"
+            style={{ color: 'rgba(255, 255, 255, 0.4)' }}
           >
-            按 1-4 快速切换 · ESC 关闭
+            每个 Agent 都是为特定场景打造的智能助手
           </p>
         </div>
 
-        {/* Agent 卡片 */}
-        <div className="flex gap-5 justify-center">
+        {/* Agent 卡片网格 */}
+        <div className="flex gap-6 justify-center">
           {AGENT_DEFINITIONS.map((agent, index) => (
             <AgentCard
               key={agent.key}
@@ -420,127 +340,127 @@ export function AgentSwitcher() {
               isSelected={selectedIndex === index}
               onClick={() => navigateToAgent(agent)}
               onMouseEnter={() => setSelectedIndex(index)}
-              delay={isClosing ? 0 : 100 + index * 70}
+              isClosing={isClosing}
             />
           ))}
         </div>
 
         {/* 底部提示 */}
-        <div className="mt-10 flex justify-center gap-6">
+        <div
+          className="mt-12 flex justify-center gap-8"
+          style={{
+            animation: isClosing ? 'none' : 'hintFadeIn 0.6s ease-out 0.5s both',
+          }}
+        >
           <div
-            className="flex items-center gap-2 text-[12px]"
-            style={{ color: 'rgba(255, 255, 255, 0.4)' }}
+            className="flex items-center gap-3 text-[13px]"
+            style={{ color: 'rgba(255, 255, 255, 0.35)' }}
           >
-            <span
-              className="px-2 py-1 rounded-md"
-              style={{
-                background: 'rgba(255, 255, 255, 0.1)',
-                border: '1px solid rgba(255, 255, 255, 0.15)',
-              }}
-            >
-              ←
-            </span>
-            <span
-              className="px-2 py-1 rounded-md"
-              style={{
-                background: 'rgba(255, 255, 255, 0.1)',
-                border: '1px solid rgba(255, 255, 255, 0.15)',
-              }}
-            >
-              →
-            </span>
-            <span className="ml-1">导航</span>
+            <div className="flex gap-1">
+              <span
+                className="px-2 py-1 rounded-lg"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                }}
+              >
+                ←
+              </span>
+              <span
+                className="px-2 py-1 rounded-lg"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                }}
+              >
+                →
+              </span>
+            </div>
+            <span>切换选择</span>
           </div>
           <div
-            className="flex items-center gap-2 text-[12px]"
-            style={{ color: 'rgba(255, 255, 255, 0.4)' }}
+            className="flex items-center gap-3 text-[13px]"
+            style={{ color: 'rgba(255, 255, 255, 0.35)' }}
           >
             <span
-              className="px-2 py-1 rounded-md"
+              className="px-3 py-1 rounded-lg"
               style={{
-                background: 'rgba(255, 255, 255, 0.1)',
-                border: '1px solid rgba(255, 255, 255, 0.15)',
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
               }}
             >
-              ↵
+              Enter
             </span>
-            <span className="ml-1">确认</span>
+            <span>确认进入</span>
+          </div>
+          <div
+            className="flex items-center gap-3 text-[13px]"
+            style={{ color: 'rgba(255, 255, 255, 0.35)' }}
+          >
+            <span
+              className="px-3 py-1 rounded-lg"
+              style={{
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+              }}
+            >
+              Esc
+            </span>
+            <span>关闭</span>
           </div>
         </div>
       </div>
 
       {/* 动画样式 */}
       <style>{`
-        @keyframes fadeIn {
+        @keyframes bgFadeIn {
           from { opacity: 0; }
           to { opacity: 1; }
         }
-        @keyframes fadeOut {
+        @keyframes bgFadeOut {
           from { opacity: 1; }
           to { opacity: 0; }
         }
-        @keyframes contentIn {
+        @keyframes contentFadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes contentFadeOut {
+          from { opacity: 1; }
+          to { opacity: 0; }
+        }
+        @keyframes titleSlideIn {
           from {
             opacity: 0;
-            transform: scale(0.95) translateY(10px);
+            transform: translateY(-20px);
           }
           to {
             opacity: 1;
-            transform: scale(1) translateY(0);
-          }
-        }
-        @keyframes contentOut {
-          from {
-            opacity: 1;
-            transform: scale(1) translateY(0);
-          }
-          to {
-            opacity: 0;
-            transform: scale(0.98) translateY(-5px);
-          }
-        }
-        @keyframes cardFloat {
-          from {
-            opacity: 0;
-            transform: translateY(24px) scale(0.95);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-          }
-        }
-        @keyframes glowPulse {
-          0%, 100% {
-            opacity: 0.6;
-            transform: scale(1);
-          }
-          50% {
-            opacity: 1;
-            transform: scale(1.08);
-          }
-        }
-        @keyframes filmScroll {
-          0% {
             transform: translateY(0);
           }
-          100% {
-            transform: translateY(50px);
+        }
+        @keyframes hintFadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes cardEnter {
+          from {
+            opacity: 0;
+            transform: translate(var(--entry-x), var(--entry-y)) rotate(var(--entry-rotate)) scale(0.8);
+          }
+          to {
+            opacity: 1;
+            transform: translate(0, 0) rotate(0deg) scale(1);
           }
         }
-        @keyframes scrollDown {
-          0% {
-            background-position: 0 0;
+        @keyframes cardExit {
+          from {
+            opacity: 1;
+            transform: translate(0, 0) rotate(0deg) scale(1);
           }
-          100% {
-            background-position: 0 200px;
-          }
-        }
-        @keyframes scrollDiagonal {
-          0% {
-            background-position: 0 0;
-          }
-          100% {
-            background-position: 100px 100px;
+          to {
+            opacity: 0;
+            transform: translate(var(--entry-x), var(--entry-y)) rotate(var(--entry-rotate)) scale(0.8);
           }
         }
       `}</style>
