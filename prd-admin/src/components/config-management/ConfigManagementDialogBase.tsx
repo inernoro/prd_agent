@@ -215,8 +215,10 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
 
     // 渲染"我的"视图
     const renderMineView = () => {
+      // 根据栏数动态计算网格列数
+      const gridColsClass = columns.length === 1 ? 'lg:grid-cols-1' : columns.length === 2 ? 'lg:grid-cols-2' : 'lg:grid-cols-3';
       return (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full min-h-0">
+        <div className={`grid grid-cols-1 ${gridColsClass} gap-4 h-full min-h-0`}>
           {columns.map((col, idx) => (
             <div
               key={col.key}
@@ -304,7 +306,7 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
               <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0 overflow-auto">
+            <div className={`grid grid-cols-1 ${visibleColumns.length === 1 ? 'lg:grid-cols-1' : visibleColumns.length === 2 ? 'lg:grid-cols-2' : 'lg:grid-cols-3'} gap-4 flex-1 min-h-0 overflow-auto`}>
               {visibleColumns.map((col, idx) => {
                 const items = (marketplaceData[col.key] || []) as unknown[];
                 return (
@@ -363,7 +365,7 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
           <div className="flex flex-col h-full min-h-0">
             {/* Tab 切换 */}
             {showMarketplaceTab && (
-              <div className="flex items-center gap-2 mb-4 flex-shrink-0 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>
+              <div className="flex items-center justify-center gap-2 mb-4 flex-shrink-0 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>
                 <div className="flex items-center gap-2">
                   {VIEW_TABS.map((tab) => (
                     <button
