@@ -365,34 +365,34 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
               })}
             </div>
           ) : (
-            // 无分隔线：整个空间，卡片固定宽度，flex-wrap横向优先
-            <div className="flex flex-col gap-4 flex-1 min-h-0 overflow-auto">
-              {visibleColumns.map((col) => {
-                const items = (marketplaceData[col.key] || []) as unknown[];
-                return (
-                  <div key={col.key} className="min-h-0 flex flex-col">
-                    <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                      {col.title}
+            // 无分隔线：整个空间，卡片固定宽度，flex-wrap横向优先，不显示栏标题（卡片已有类型标签）
+            <div className="flex-1 min-h-0 overflow-auto">
+              {(() => {
+                // 合并所有栏的数据
+                const allItems = visibleColumns.flatMap((col) => {
+                  const items = (marketplaceData[col.key] || []) as unknown[];
+                  return items.map((item: any) => ({ item, col }));
+                });
+                if (allItems.length === 0) {
+                  return (
+                    <div className="flex flex-col items-center justify-center py-12 gap-3">
+                      <Store size={32} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
+                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        暂无公开的配置
+                      </div>
                     </div>
-                    {items.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-12 gap-3">
-                        <Store size={32} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
-                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                          暂无公开的{col.filterLabel}
-                        </div>
+                  );
+                }
+                return (
+                  <div className="flex flex-wrap gap-3 content-start">
+                    {allItems.map(({ item, col }) => (
+                      <div key={item.id} style={{ width: COLUMN_WIDTH, flexShrink: 0 }}>
+                        {col.renderMarketplaceCard?.(item, marketplaceCardContext)}
                       </div>
-                    ) : (
-                      <div className="flex flex-wrap gap-3 overflow-auto content-start">
-                        {items.map((item: any) => (
-                          <div key={item.id} style={{ width: COLUMN_WIDTH, flexShrink: 0 }}>
-                            {col.renderMarketplaceCard?.(item, marketplaceCardContext)}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    ))}
                   </div>
                 );
-              })}
+              })()}
             </div>
           )}
         </div>
