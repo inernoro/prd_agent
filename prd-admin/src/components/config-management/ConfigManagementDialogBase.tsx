@@ -327,7 +327,7 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
                     ) : (
                       <div className="flex flex-wrap gap-3 overflow-auto content-start" style={{ minWidth: 0 }}>
                         {items.map((item: any) => (
-                          <div key={item.id} style={{ width: 280, flexShrink: 0 }}>
+                          <div key={item.id} style={{ width: 360, flexShrink: 0 }}>
                             {col.renderMarketplaceCard?.(item, marketplaceCardContext)}
                           </div>
                         ))}
