@@ -21,7 +21,7 @@ import { PrdLoader } from '@/components/ui/PrdLoader';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { RainBackground } from '@/components/effects/RainBackground';
 import { CssRainBackground } from '@/components/effects/CssRainBackground';
-import { RibbonIcon } from '@/components/effects/BlackHoleIcon';
+// RibbonIcon 已删除：丝带动画组件有问题
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
 import ConvergingBeamsBackdrop from '@/components/login/ConvergingBeamsBackdrop';
 // XAiBackdrop 已移除：设计为超低对比度衬底，不适合单独展示
@@ -164,21 +164,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
       </div>
     ),
   },
-  {
-    id: 'ribbon-loader',
-    label: '丝带动画',
-    functionName: 'RibbonIcon',
-    category: 'loading',
-    status: 'ready',
-    sourceRef: '加载-丝带动画.html',
-    params: [{ name: 'size', type: 'number', default: '48', description: '尺寸 (px)' }],
-    performance: { frameRate: '60fps (RAF)', delay: '3ms/帧', renderer: 'Canvas' },
-    render: () => (
-      <div className="flex items-center justify-center h-full">
-        <RibbonIcon size={120} />
-      </div>
-    ),
-  },
+  // 丝带动画已删除：组件有问题
 
   // ============ 背景效果 ============
   {
@@ -539,15 +525,15 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
 
         {/* 主体内容 */}
         <div className="flex flex-1 min-h-0">
-          {/* 预览区域 */}
+          {/* 预览区域 - 固定尺寸，内容自适应 */}
           <div
             className="relative flex items-center justify-center overflow-hidden rounded-bl-xl"
             style={{
               background: 'rgba(10, 10, 15, 0.98)',
-              width: currentSize ? currentSize.width + 32 : '70vw',
-              height: currentSize ? currentSize.height + 32 : '70vh',
-              minWidth: 400,
-              minHeight: 300,
+              width: '70vw',
+              height: '70vh',
+              minWidth: 600,
+              minHeight: 400,
             }}
           >
             <div
@@ -556,7 +542,9 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
               style={{
                 width: currentSize ? currentSize.width : '100%',
                 height: currentSize ? currentSize.height : '100%',
-                border: currentSize ? '1px solid rgba(255,255,255,0.1)' : 'none',
+                maxWidth: '100%',
+                maxHeight: '100%',
+                border: '1px solid rgba(255,255,255,0.1)',
               }}
             >
               <Suspense fallback={<div className="flex items-center justify-center h-full"><PrdLoader size={32} /></div>}>
