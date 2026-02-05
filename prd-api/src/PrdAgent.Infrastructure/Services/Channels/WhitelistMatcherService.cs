@@ -138,17 +138,18 @@ public class WhitelistMatcherService
     /// <returns>是否匹配</returns>
     public static bool MatchPattern(string pattern, string identifier)
     {
-        if (string.IsNullOrWhiteSpace(pattern))
+        if (string.IsNullOrWhiteSpace(pattern) || string.IsNullOrWhiteSpace(identifier))
         {
             return false;
         }
 
-        var normalizedPattern = pattern.ToLowerInvariant();
+        var normalizedPattern = pattern.Trim().ToLowerInvariant();
+        var normalizedIdentifier = identifier.Trim().ToLowerInvariant();
 
         // 精确匹配
         if (!normalizedPattern.Contains('*'))
         {
-            return normalizedPattern == identifier;
+            return normalizedPattern == normalizedIdentifier;
         }
 
         // 全局通配
@@ -164,7 +165,7 @@ public class WhitelistMatcherService
 
         try
         {
-            return Regex.IsMatch(identifier, regexPattern, RegexOptions.IgnoreCase);
+            return Regex.IsMatch(normalizedIdentifier, regexPattern);
         }
         catch (RegexParseException)
         {
