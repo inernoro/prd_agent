@@ -33,12 +33,20 @@ type TopMember = {
   avatarFileName?: string | null;
 };
 
+type RoleDistribution = {
+  pm: number;
+  dev: number;
+  qa: number;
+  admin: number;
+};
+
 type GroupRow = {
   groupId: string;
   groupName: string;
   owner?: { userId: string; username: string; displayName: string; role?: string };
   memberCount: number;
   prdTitle?: string | null;
+  prdTokenEstimate?: number | null;
   inviteCode: string;
   inviteLink: string;
   inviteExpireAt?: string | null;
@@ -48,6 +56,7 @@ type GroupRow = {
   messageCount?: number;
   pendingGapCount?: number;
   topMembers?: TopMember[];
+  roleDistribution?: RoleDistribution | null;
 };
 
 type MemberRow = {
@@ -187,6 +196,65 @@ function getInviteStatus(expireAt?: string | null): { label: string; variant: 's
   return { label: '有效', variant: 'success' };
 }
 
+/** 热度计算 - 基于消息量和最近活跃时间 */
+function getHeatLevel(messageCount: number, lastMessageAt?: string | null): { icon: string; label: string; color: string } {
+  const now = new Date();
+  const last = lastMessageAt ? new Date(lastMessageAt) : null;
+  const daysSinceActive = last ? Math.floor((now.getTime() - last.getTime()) / 86400000) : 999;
+
+  if (messageCount >= 50 && daysSinceActive <= 3) {
+    return { icon: '🔥', label: '热门', color: 'rgba(239, 68, 68, 0.9)' };
+  }
+  if (messageCount >= 10 && daysSinceActive <= 7) {
+    return { icon: '⚡', label: '活跃', color: 'rgba(245, 158, 11, 0.9)' };
+  }
+  if (daysSinceActive > 30 || messageCount === 0) {
+    return { icon: '💤', label: '静默', color: 'rgba(156, 163, 175, 0.7)' };
+  }
+  return { icon: '✨', label: '正常', color: 'rgba(147, 197, 253, 0.9)' };
+}
+
+/** 角色分布条组件 */
+function RoleBar({ distribution }: { distribution?: RoleDistribution | null }) {
+  if (!distribution) return null;
+  const { pm, dev, qa, admin } = distribution;
+  const total = pm + dev + qa + admin;
+  if (total === 0) return null;
+
+  const segments = [
+    { count: pm, label: 'PM', color: 'rgba(168, 85, 247, 0.8)' },
+    { count: dev, label: 'DEV', color: 'rgba(59, 130, 246, 0.8)' },
+    { count: qa, label: 'QA', color: 'rgba(34, 197, 94, 0.8)' },
+    { count: admin, label: 'ADMIN', color: 'rgba(245, 158, 11, 0.8)' },
+  ].filter(s => s.count > 0);
+
+  return (
+    <div className="flex items-center gap-1">
+      <div className="flex h-1.5 flex-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.1)' }}>
+        {segments.map((seg, i) => (
+          <div
+            key={seg.label}
+            style={{ width: `${(seg.count / total) * 100}%`, background: seg.color }}
+            title={`${seg.label}: ${seg.count}`}
+          />
+        ))}
+      </div>
+      <div className="flex items-center gap-1 text-[9px]" style={{ color: 'var(--text-muted)' }}>
+        {segments.slice(0, 2).map(seg => (
+          <span key={seg.label} style={{ color: seg.color }}>{seg.label}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 格式化 Token 数量 */
+function formatTokens(n?: number | null): string {
+  if (!n) return '-';
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+
 export default function GroupsPage() {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<GroupRow[]>([]);
@@ -236,6 +304,7 @@ export default function GroupsPage() {
             owner: g.owner ? { userId: g.owner.userId, username: g.owner.username, displayName: g.owner.displayName, role: g.owner.role } : undefined,
             memberCount: g.memberCount,
             prdTitle: g.prdTitleSnapshot ?? null,
+            prdTokenEstimate: g.prdTokenEstimateSnapshot ?? null,
             inviteCode: g.inviteCode,
             inviteLink: `prdagent://join/${g.inviteCode}`,
             inviteExpireAt: g.inviteExpireAt ?? null,
@@ -249,6 +318,7 @@ export default function GroupsPage() {
               displayName: m.displayName,
               avatarFileName: m.avatarFileName ?? null,
             })) ?? [],
+            roleDistribution: g.roleDistribution ?? null,
           }))
         );
       }
@@ -374,6 +444,7 @@ export default function GroupsPage() {
               {items.map((g) => {
                 const status = getInviteStatus(g.inviteExpireAt);
                 const hasWarning = (g.pendingGapCount ?? 0) > 0;
+                const heat = getHeatLevel(g.messageCount ?? 0, g.lastMessageAt);
                 return (
                   <GlassCard
                     key={g.groupId}
@@ -385,39 +456,49 @@ export default function GroupsPage() {
                     onClick={() => openDetail(g)}
                     className="flex flex-col"
                   >
-                    {/* 头部：群组名 + 状态 */}
+                    {/* 头部：热度图标 + 群组名 + 状态 */}
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        <h3 className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {g.groupName}
-                        </h3>
-                        <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+                        <div className="flex items-center gap-1.5">
+                          <span title={heat.label} style={{ fontSize: 12 }}>{heat.icon}</span>
+                          <h3 className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            {g.groupName}
+                          </h3>
+                        </div>
+                        <div className="text-[10px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
                           {g.owner ? `${g.owner.role || 'PM'} · ${g.owner.displayName}` : g.groupId}
                         </div>
                       </div>
                       <Badge variant={status.variant}>{status.label}</Badge>
                     </div>
 
-                    {/* 统计数据网格 */}
-                    <div className="grid grid-cols-3 gap-1 my-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                    {/* 统计数据网格 - 4列 */}
+                    <div className="grid grid-cols-4 gap-1 my-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
                       <div className="text-center">
                         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g.memberCount}</div>
                         <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>成员</div>
                       </div>
-                      <div className="text-center" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div className="text-center" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
                         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g.messageCount ?? 0}</div>
                         <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>消息</div>
                       </div>
-                      <div className="text-center">
+                      <div className="text-center" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
                         <div className="text-sm font-semibold" style={{ color: hasWarning ? 'rgba(245,158,11,0.95)' : 'var(--text-primary)' }}>
                           {g.pendingGapCount ?? 0}
                         </div>
                         <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>缺失</div>
                       </div>
+                      <div className="text-center" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{formatTokens(g.prdTokenEstimate)}</div>
+                        <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>Tokens</div>
+                      </div>
                     </div>
 
+                    {/* 角色分布条 */}
+                    <RoleBar distribution={g.roleDistribution} />
+
                     {/* PRD 标签 + 活跃时间 */}
-                    <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center justify-between gap-2 mt-2 mb-2">
                       {g.prdTitle ? (
                         <div
                           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] truncate"
