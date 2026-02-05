@@ -185,6 +185,16 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
 
+// 邮件通道服务
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailIntentDetector, PrdAgent.Infrastructure.Services.Email.EmailIntentDetector>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailHandler, PrdAgent.Infrastructure.Services.Email.ClassifyEmailHandler>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailHandler, PrdAgent.Infrastructure.Services.Email.TodoEmailHandler>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailChannelService, PrdAgent.Infrastructure.Services.EmailChannelService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.EmailChannelWorker>();
+
+// 应用注册中心服务
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAppRegistryService, PrdAgent.Infrastructure.Services.AppRegistryService>();
+
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>
 {
@@ -936,3 +946,6 @@ static IResult HealthCheck()
     };
     return Results.Ok(response);
 }
+
+// 使 Program 类可被测试项目访问（用于 WebApplicationFactory<Program>）
+public partial class Program { }

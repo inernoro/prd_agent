@@ -827,6 +827,10 @@ export const updateUserRateLimit: UpdateUserRateLimitContract = withAuth(updateU
 export const getExemptUsers: GetExemptUsersContract = withAuth(getExemptUsersReal);
 export const getCustomConfigs: GetCustomConfigsContract = withAuth(getCustomConfigsReal);
 
+// Channel Adapter 多通道适配器服务
+import type { IChannelService } from '@/services/contracts/channels';
+import { ChannelService } from '@/services/real/channels';
+export const channelService: IChannelService = new ChannelService();
 // AI Toolbox 百宝箱
 export {
   // 新版工具集合 API

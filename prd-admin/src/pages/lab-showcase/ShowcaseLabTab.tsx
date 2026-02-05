@@ -255,7 +255,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     status: 'ready',
     sourceRef: '背景-黑洞漩涡.html',
     params: [{ name: 'className', type: 'string', description: '自定义类名' }],
-    performance: { frameRate: '60fps', renderer: 'WebGL (Shader)' },
+    performance: { frameRate: '60fps', renderer: 'WebGL' },
     render: () => (
       <div className="relative w-full h-full">
         <BlackHoleVortex />

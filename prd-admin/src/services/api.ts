@@ -390,6 +390,38 @@ export const api = {
     },
   },
 
+  // ============ Channels 多通道适配器 ============
+  channels: {
+    settings: {
+      get: () => '/api/admin/channels/settings',
+      update: () => '/api/admin/channels/settings',
+      test: () => '/api/admin/channels/settings/test',
+      poll: () => '/api/admin/channels/settings/poll',
+    },
+    workflows: {
+      list: () => '/api/admin/channels/workflows',
+      byId: (id: string) => `/api/admin/channels/workflows/${id}`,
+      toggle: (id: string) => `/api/admin/channels/workflows/${id}/toggle`,
+    },
+    whitelists: {
+      list: () => '/api/admin/channels/whitelist',
+      byId: (id: string) => `/api/admin/channels/whitelist/${id}`,
+      toggle: (id: string) => `/api/admin/channels/whitelist/${id}/toggle`,
+    },
+    identityMappings: {
+      list: () => '/api/admin/channels/identity-mappings',
+      byId: (id: string) => `/api/admin/channels/identity-mappings/${id}`,
+    },
+    tasks: {
+      list: () => '/api/admin/channels/tasks',
+      byId: (id: string) => `/api/admin/channels/tasks/${id}`,
+      retry: (id: string) => `/api/admin/channels/tasks/${id}/retry`,
+      cancel: (id: string) => `/api/admin/channels/tasks/${id}/cancel`,
+      stats: () => '/api/admin/channels/tasks/stats',
+    },
+    stats: () => '/api/admin/channels/stats',
+  },
+
   // ============ Watermark 水印 ============
   watermark: {
     list: () => '/api/watermarks',

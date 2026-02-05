@@ -1,5 +1,3 @@
-import React from 'react';
-
 /**
  * 霓虹灯按钮 - 基于 thirdparty/ref/下一步.html
  * 玻璃态按钮，悬停时有霓虹光晕效果
