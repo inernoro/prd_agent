@@ -143,35 +143,38 @@ export function ToolCard({ item }: ToolCardProps) {
 
         {/* Footer */}
         <div className="flex items-center justify-between">
-          {/* Type badges */}
-          <div className="flex items-center gap-1">
-            {/* 定制版/内置/自定义 标签 */}
+          {/* Type badges - 定制版显示两个标签 */}
+          <div className="flex flex-col gap-1">
+            {/* 定制版标签 */}
+            {isCustomized && (
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5 w-fit"
+                style={{
+                  background: 'rgba(168, 85, 247, 0.15)',
+                  color: 'rgb(192, 132, 252)',
+                  border: '1px solid rgba(168, 85, 247, 0.25)',
+                }}
+              >
+                <ExternalLink size={8} />
+                定制版
+              </span>
+            )}
+            {/* 内置/自定义 标签 */}
             <span
-              className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+              className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5 w-fit"
               style={{
-                background: isCustomized
-                  ? 'rgba(168, 85, 247, 0.15)'
-                  : item.type === 'builtin'
-                    ? `hsla(${accentHue}, 60%, 50%, 0.15)`
-                    : 'rgba(34, 197, 94, 0.15)',
-                color: isCustomized
-                  ? 'rgb(192, 132, 252)'
-                  : item.type === 'builtin'
-                    ? `hsla(${accentHue}, 70%, 70%, 1)`
-                    : 'rgb(74, 222, 128)',
-                border: isCustomized
-                  ? '1px solid rgba(168, 85, 247, 0.25)'
-                  : item.type === 'builtin'
-                    ? `1px solid hsla(${accentHue}, 60%, 50%, 0.25)`
-                    : '1px solid rgba(34, 197, 94, 0.25)',
+                background: item.type === 'builtin'
+                  ? `hsla(${accentHue}, 60%, 50%, 0.15)`
+                  : 'rgba(34, 197, 94, 0.15)',
+                color: item.type === 'builtin'
+                  ? `hsla(${accentHue}, 70%, 70%, 1)`
+                  : 'rgb(74, 222, 128)',
+                border: item.type === 'builtin'
+                  ? `1px solid hsla(${accentHue}, 60%, 50%, 0.25)`
+                  : '1px solid rgba(34, 197, 94, 0.25)',
               }}
             >
-              {isCustomized ? (
-                <>
-                  <ExternalLink size={8} />
-                  定制版
-                </>
-              ) : item.type === 'builtin' ? (
+              {item.type === 'builtin' ? (
                 <>
                   <Sparkles size={8} />
                   内置
