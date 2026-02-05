@@ -946,3 +946,6 @@ static IResult HealthCheck()
     };
     return Results.Ok(response);
 }
+
+// 使 Program 类可被测试项目访问（用于 WebApplicationFactory<Program>）
+public partial class Program { }
