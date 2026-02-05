@@ -5,6 +5,7 @@ import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
+import { ModelListItem } from '@/components/model/ModelListItem';
 import {
   getModelGroups,
   getPlatforms,
@@ -358,31 +359,25 @@ export function ModelPoolManagePage() {
                           {pool.models.map((model, idx) => {
                             const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
                             return (
-                              <div
+                              <ModelListItem
                                 key={keyOfModel(model)}
-                                className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg"
-                                style={{ background: 'rgba(255,255,255,0.03)' }}
-                              >
-                                <div className="flex items-center gap-2 min-w-0 flex-1">
-                                  <span className="text-[10px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                    #{idx + 1}
+                                model={{
+                                  platformId: model.platformId,
+                                  platformName: platformNameById.get(model.platformId),
+                                  modelId: model.modelId,
+                                }}
+                                index={idx + 1}
+                                total={pool.models.length}
+                                size="sm"
+                                suffix={
+                                  <span
+                                    className="text-[10px] px-1.5 py-0.5 rounded"
+                                    style={{ background: status.bg, color: status.color }}
+                                  >
+                                    {status.label}
                                   </span>
-                                  <div className="min-w-0 flex-1">
-                                    <span className="text-[12px] truncate block" style={{ color: 'var(--text-primary)' }}>
-                                      {model.modelId}
-                                    </span>
-                                    <span className="text-[10px] truncate block" style={{ color: 'var(--text-muted)' }}>
-                                      {platformNameById.get(model.platformId) ?? model.platformId}
-                                    </span>
-                                  </div>
-                                </div>
-                                <span
-                                  className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
-                                  style={{ background: status.bg, color: status.color }}
-                                >
-                                  {status.label}
-                                </span>
-                              </div>
+                                }
+                              />
                             );
                           })}
                         </div>
@@ -544,50 +539,44 @@ export function ModelPoolManagePage() {
                   ) : (
                     <div className="space-y-2">
                       {poolForm.models.map((m, idx) => (
-                        <div
+                        <ModelListItem
                           key={keyOfModel(m)}
-                          className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg"
-                          style={{ background: 'rgba(255,255,255,0.04)' }}
-                        >
-                          <div className="flex items-center gap-2 min-w-0 flex-1">
-                            <span className="text-[11px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>
-                              #{idx + 1}
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                                {m.modelId}
-                              </div>
-                              <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                                {platformNameById.get(m.platformId) ?? m.platformId}
-                              </div>
+                          model={{
+                            platformId: m.platformId,
+                            platformName: platformNameById.get(m.platformId),
+                            modelId: m.modelId,
+                          }}
+                          index={idx + 1}
+                          total={poolForm.models.length}
+                          size="md"
+                          suffix={
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                value={Number(m.priority ?? 0)}
+                                onChange={(e) => {
+                                  const v = parseInt(e.target.value) || 0;
+                                  setPoolForm((prev) => ({
+                                    ...prev,
+                                    models: prev.models.map((x) =>
+                                      keyOfModel(x) === keyOfModel(m) ? { ...x, priority: v } : x
+                                    ),
+                                  }));
+                                }}
+                                className="h-8 w-16 px-2 rounded-lg outline-none text-[12px] text-center"
+                                style={{
+                                  background: 'var(--bg-input)',
+                                  border: '1px solid rgba(255,255,255,0.12)',
+                                  color: 'var(--text-primary)',
+                                }}
+                                title="优先级"
+                              />
+                              <Button variant="ghost" size="sm" onClick={() => toggleModel(m.platformId, m.modelId)} title="移除">
+                                <Trash2 size={14} />
+                              </Button>
                             </div>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <input
-                              type="number"
-                              value={Number(m.priority ?? 0)}
-                              onChange={(e) => {
-                                const v = parseInt(e.target.value) || 0;
-                                setPoolForm((prev) => ({
-                                  ...prev,
-                                  models: prev.models.map((x) =>
-                                    keyOfModel(x) === keyOfModel(m) ? { ...x, priority: v } : x
-                                  ),
-                                }));
-                              }}
-                              className="h-8 w-16 px-2 rounded-lg outline-none text-[12px] text-center"
-                              style={{
-                                background: 'var(--bg-input)',
-                                border: '1px solid rgba(255,255,255,0.12)',
-                                color: 'var(--text-primary)',
-                              }}
-                              title="优先级"
-                            />
-                            <Button variant="ghost" size="sm" onClick={() => toggleModel(m.platformId, m.modelId)} title="移除">
-                              <Trash2 size={14} />
-                            </Button>
-                          </div>
-                        </div>
+                          }
+                        />
                       ))}
                     </div>
                   )}

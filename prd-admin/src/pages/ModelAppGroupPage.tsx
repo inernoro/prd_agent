@@ -5,6 +5,7 @@ import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { PlatformAvailableModelsDialog } from '@/components/model/PlatformAvailableModelsDialog';
 import type { AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
+import { ModelListItem } from '@/components/model/ModelListItem';
 import {
   getAppCallers,
   updateAppCaller,
@@ -1462,98 +1463,81 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                             const poolStatsKey = `${selectedApp?.appCode || ''}:${model.platformId}:${model.modelId}`.toLowerCase();
                                             const stats = poolModelStats[poolStatsKey] || null;
                                             return (
-                                              <div
+                                              <ModelListItem
                                                 key={`${poolGroup.id}-${model.platformId}-${model.modelId}`}
-                                                className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors"
-                                                style={{
-                                                  background: 'rgba(255, 255, 255, 0.02)',
+                                                model={{
+                                                  platformId: model.platformId,
+                                                  platformName,
+                                                  modelId: model.modelId,
                                                 }}
-                                                onMouseEnter={(e) => {
-                                                  e.currentTarget.style.background = 'rgba(251, 191, 36, 0.08)';
-                                                }}
-                                                onMouseLeave={(e) => {
-                                                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)';
-                                                }}
-                                              >
-                                                {/* 序号 */}
-                                                <span className="text-[10px] font-medium w-5 text-center shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                                  {modelIdx + 1}
-                                                </span>
-                                                {/* 平台 */}
-                                                <span
-                                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] shrink-0"
-                                                  style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}
-                                                >
-                                                  <Server size={10} />
-                                                  {platformName}
-                                                </span>
-                                                {/* 模型名 */}
-                                                <div className="flex items-center gap-1 min-w-0 flex-1">
-                                                  <Box size={12} style={{ color: 'var(--text-muted)' }} className="shrink-0" />
-                                                  <span className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                                                    {model.modelId}
-                                                  </span>
-                                                </div>
-                                                {/* 调用统计 */}
-                                                {stats ? (
-                                                  <div className="flex items-center gap-2 text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                                    <span title="近7天请求次数">
-                                                      {stats.requestCount.toLocaleString()}次
+                                                index={modelIdx + 1}
+                                                total={poolModels.length}
+                                                size="sm"
+                                                hoverable
+                                                suffix={
+                                                  <>
+                                                    {/* 调用统计 */}
+                                                    {stats ? (
+                                                      <div className="flex items-center gap-2 text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                        <span title="近7天请求次数">
+                                                          {stats.requestCount.toLocaleString()}次
+                                                        </span>
+                                                        {stats.avgDurationMs != null && (
+                                                          <span title="平均耗时">
+                                                            {stats.avgDurationMs}ms
+                                                          </span>
+                                                        )}
+                                                        {stats.avgTtfbMs != null && (
+                                                          <span title="首字延迟(TTFB)">
+                                                            TTFB:{stats.avgTtfbMs}ms
+                                                          </span>
+                                                        )}
+                                                        {(stats.totalInputTokens != null || stats.totalOutputTokens != null) && (
+                                                          <span title="输入/输出Token">
+                                                            {((stats.totalInputTokens || 0) / 1000).toFixed(1)}k/{((stats.totalOutputTokens || 0) / 1000).toFixed(1)}k
+                                                          </span>
+                                                        )}
+                                                      </div>
+                                                    ) : (
+                                                      <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                        暂无统计
+                                                      </span>
+                                                    )}
+                                                    {/* 状态 */}
+                                                    <span
+                                                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
+                                                      style={{ background: status.bg, color: status.color }}
+                                                    >
+                                                      {status.label}
                                                     </span>
-                                                    {stats.avgDurationMs != null && (
-                                                      <span title="平均耗时">
-                                                        {stats.avgDurationMs}ms
-                                                      </span>
-                                                    )}
-                                                    {stats.avgTtfbMs != null && (
-                                                      <span title="首字延迟(TTFB)">
-                                                        TTFB:{stats.avgTtfbMs}ms
-                                                      </span>
-                                                    )}
-                                                    {(stats.totalInputTokens != null || stats.totalOutputTokens != null) && (
-                                                      <span title="输入/输出Token">
-                                                        {((stats.totalInputTokens || 0) / 1000).toFixed(1)}k/{((stats.totalOutputTokens || 0) / 1000).toFixed(1)}k
-                                                      </span>
-                                                    )}
-                                                  </div>
-                                                ) : (
-                                                  <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                                    暂无统计
-                                                  </span>
-                                                )}
-                                                {/* 状态 */}
-                                                <span
-                                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
-                                                  style={{ background: status.bg, color: status.color }}
-                                                >
-                                                  {status.label}
-                                                </span>
-                                                {/* 操作按钮 - hover 显示 */}
-                                                <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                  {/* 查看日志 */}
-                                                  <button
-                                                    className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-blue-500/20"
-                                                    onClick={() => {
-                                                      // 跳转到日志页，带上筛选参数
-                                                      const params = new URLSearchParams();
-                                                      params.set('tab', 'llm');
-                                                      if (model.platformId) params.set('provider', platformName);
-                                                      if (model.modelId) params.set('model', model.modelId);
-                                                      navigate(`/logs?${params.toString()}`);
-                                                    }}
-                                                    title="查看该模型的调用日志"
-                                                  >
-                                                    <Eye size={11} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
-                                                  </button>
-                                                  <button
-                                                    className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-red-500/20"
-                                                    onClick={() => handleRemoveModelFromPool(poolGroup, model.platformId, model.modelId)}
-                                                    title="从模型池中移除"
-                                                  >
-                                                    <Trash2 size={11} style={{ color: 'rgba(239, 68, 68, 0.8)' }} />
-                                                  </button>
-                                                </div>
-                                              </div>
+                                                    {/* 操作按钮 - hover 显示 */}
+                                                    <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                      {/* 查看日志 */}
+                                                      <button
+                                                        className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-blue-500/20"
+                                                        onClick={() => {
+                                                          // 跳转到日志页，带上筛选参数
+                                                          const params = new URLSearchParams();
+                                                          params.set('tab', 'llm');
+                                                          if (model.platformId) params.set('provider', platformName);
+                                                          if (model.modelId) params.set('model', model.modelId);
+                                                          navigate(`/logs?${params.toString()}`);
+                                                        }}
+                                                        title="查看该模型的调用日志"
+                                                      >
+                                                        <Eye size={11} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
+                                                      </button>
+                                                      <button
+                                                        className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-red-500/20"
+                                                        onClick={() => handleRemoveModelFromPool(poolGroup, model.platformId, model.modelId)}
+                                                        title="从模型池中移除"
+                                                      >
+                                                        <Trash2 size={11} style={{ color: 'rgba(239, 68, 68, 0.8)' }} />
+                                                      </button>
+                                                    </div>
+                                                  </>
+                                                }
+                                              />
                                             );
                                           })
                                         ) : (
@@ -1626,48 +1610,47 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
               <div className="space-y-2">
                 {groupModelsDraft.length === 0 ? (
                   <div className="text-center py-6 text-sm" style={{ color: 'var(--text-muted)' }}>
-                    暂无模型，请点击“从平台选择”添加
+                    暂无模型，请点击"从平台选择"添加
                   </div>
                 ) : (
                   [...groupModelsDraft]
                     .sort((a, b) => Number(a.priority ?? 0) - Number(b.priority ?? 0))
-                    .map((m) => (
-                      <div
+                    .map((m, idx, arr) => (
+                      <ModelListItem
                         key={keyOfGroupModel(m)}
-                        className="flex items-center justify-between gap-3 rounded-[12px] px-3 py-2"
-                        style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.03)' }}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                            {m.modelId}
+                        model={{
+                          platformId: m.platformId,
+                          platformName: platforms.find(p => p.id === m.platformId)?.name,
+                          modelId: m.modelId,
+                        }}
+                        index={idx + 1}
+                        total={arr.length}
+                        size="md"
+                        suffix={
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              value={Number(m.priority ?? 0)}
+                              onChange={(e) => {
+                                const v = parseInt(e.target.value) || 0;
+                                setGroupModelsDraft((prev) =>
+                                  prev.map((x) => (keyOfGroupModel(x) === keyOfGroupModel(m) ? { ...x, priority: v } : x))
+                                );
+                              }}
+                              className="h-9 w-24 px-2 rounded-[10px] outline-none text-[12px]"
+                              style={{
+                                background: 'var(--bg-input)',
+                                border: '1px solid rgba(255,255,255,0.12)',
+                                color: 'var(--text-primary)',
+                              }}
+                              title="优先级（越小越靠前）"
+                            />
+                            <Button variant="ghost" size="sm" onClick={() => toggleDraftModel(m.platformId, m.modelId)} title="移除">
+                              <Trash2 size={14} />
+                            </Button>
                           </div>
-                          <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                            platformId: {m.platformId}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            value={Number(m.priority ?? 0)}
-                            onChange={(e) => {
-                              const v = parseInt(e.target.value) || 0;
-                              setGroupModelsDraft((prev) =>
-                                prev.map((x) => (keyOfGroupModel(x) === keyOfGroupModel(m) ? { ...x, priority: v } : x))
-                              );
-                            }}
-                            className="h-9 w-24 px-2 rounded-[10px] outline-none text-[12px]"
-                            style={{
-                              background: 'var(--bg-input)',
-                              border: '1px solid rgba(255,255,255,0.12)',
-                              color: 'var(--text-primary)',
-                            }}
-                            title="优先级（越小越靠前）"
-                          />
-                          <Button variant="ghost" size="sm" onClick={() => toggleDraftModel(m.platformId, m.modelId)} title="移除">
-                            <Trash2 size={14} />
-                          </Button>
-                        </div>
-                      </div>
+                        }
+                      />
                     ))
                 )}
               </div>
