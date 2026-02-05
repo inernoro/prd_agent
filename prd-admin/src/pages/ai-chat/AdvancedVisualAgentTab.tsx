@@ -468,8 +468,26 @@ type UiMsg = {
 // 图片生成结果/错误的富消息编码 —— 持久化在 content 字符串中
 const GEN_ERROR_PREFIX = '[GEN_ERROR]';
 const GEN_DONE_PREFIX = '[GEN_DONE]';
-type GenErrorMeta = { msg: string; refSrc?: string; prompt?: string; runId?: string; modelPool?: string };
-type GenDoneMeta = { src: string; refSrc?: string; prompt?: string; runId?: string; modelPool?: string };
+// genType: 生成类型 - text2img(纯文生图) | img2img(单图参考) | vision(多图)
+// imageRefShas: 所有参考图的 sha256 数组（用于重试时恢复图片引用）
+type GenErrorMeta = {
+  msg: string;
+  refSrc?: string;
+  prompt?: string;
+  runId?: string;
+  modelPool?: string;
+  genType?: 'text2img' | 'img2img' | 'vision';
+  imageRefShas?: string[];
+};
+type GenDoneMeta = {
+  src: string;
+  refSrc?: string;
+  prompt?: string;
+  runId?: string;
+  modelPool?: string;
+  genType?: 'text2img' | 'img2img' | 'vision';
+  imageRefShas?: string[];
+};
 function buildGenErrorContent(meta: GenErrorMeta): string {
   return `${GEN_ERROR_PREFIX}${JSON.stringify(meta)}`;
 }
@@ -3004,13 +3022,28 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const uiModelToken = modelPoolName ? `(@model:${modelPoolName}) ` : '';
     pushMsg('User', `${uiSizeToken}${uiModelToken}${display || reqText}`);
 
+    // 计算生成类型和参考图 sha256 数组（用于重试时恢复）
+    const imageRefShas = imageRefs
+      .map((img) => img.originalSha256 || img.sha256 || '')
+      .filter((sha) => sha.length === 64);
+    const genType: 'text2img' | 'img2img' | 'vision' =
+      imageRefs.length > 1 ? 'vision' :
+      imageRefs.length === 1 ? 'img2img' :
+      (selectedAtSend && (selectedAtSend.sha256 || selectedAtSend.originalSha256)) ? 'img2img' :
+      'text2img';
+    // 如果是通过选中图片触发的 img2img，也要记录 sha
+    if (genType === 'img2img' && imageRefShas.length === 0 && selectedAtSend) {
+      const selSha = selectedAtSend.originalSha256 || selectedAtSend.sha256 || '';
+      if (selSha.length === 64) imageRefShas.push(selSha);
+    }
+
     let items: Array<{ prompt: string }> = [];
     let firstPrompt = '';
     if (directPrompt) {
       firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
       if (!firstPrompt) {
         const msg = '内容为空';
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined, genType, imageRefShas }));
         return;
       }
     } else {
@@ -3019,13 +3052,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         const pres = await planImageGen({ text: reqText, maxItems: 8 });
         if (!pres.success) {
           const msg = pres.error?.message || '解析失败';
-          pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined }));
+          pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined, genType, imageRefShas }));
           return;
         }
         plan = pres.data ?? null;
       } catch (e) {
         const msg = e instanceof Error ? e.message : '网络错误';
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined, genType, imageRefShas }));
         return;
       }
 
@@ -3323,7 +3356,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (!runRes.success) {
         const msg = runRes.error?.message || '生成失败';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, genType, imageRefShas }));
         triggerDefectFlash();
         return;
       }
@@ -3332,7 +3365,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (!runId) {
         const msg = '未返回 runId';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, genType, imageRefShas }));
         triggerDefectFlash();
         return;
       }
@@ -3391,12 +3424,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               )
             );
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName }));
+            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, genType, imageRefShas }));
           } else if (t === 'imageError' || t === 'error') {
             const msg = String(o.errorMessage ?? '生成失败');
             setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName }));
+            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, genType, imageRefShas }));
             triggerDefectFlash();
           }
         },
@@ -3414,7 +3447,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     } catch (e) {
       const msg = e instanceof Error ? e.message : '生成失败';
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-      pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
+      pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, genType, imageRefShas }));
       triggerDefectFlash();
     }
   };
@@ -6594,12 +6627,49 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               title="重试生成"
                               onClick={() => {
                                 if (!genError.prompt) return;
-                                // 只要有参考图就传入，不管 prompt 里有没有 @imgN
-                                // 因为重试时原始的 @imgN 引用可能已经失效
-                                if (genError.refSrc) {
-                                  void sendText(genError.prompt, { inlineImage: { src: genError.refSrc } });
-                                } else {
-                                  void sendText(genError.prompt);
+                                // 清理失效的 @imgN 标记，使用干净的 prompt
+                                const cleanPrompt = genError.prompt.replace(/@img\d+\s*/gi, '').trim();
+                                if (!cleanPrompt) return;
+
+                                // 根据 genType 决定重试方式
+                                const gt = genError.genType || (genError.refSrc ? 'img2img' : 'text2img');
+                                const shas = genError.imageRefShas || [];
+
+                                if (gt === 'text2img') {
+                                  // 纯文生图：直接发送 prompt
+                                  void sendText(cleanPrompt);
+                                } else if (gt === 'img2img') {
+                                  // 单图参考：使用 refSrc 或从 sha256 构建 URL
+                                  const imgUrl = genError.refSrc || (shas[0] ? `/api/visual-agent/image-master/assets/file/${shas[0]}.png` : '');
+                                  if (imgUrl) {
+                                    void sendText(cleanPrompt, { inlineImage: { src: imgUrl } });
+                                  } else {
+                                    void sendText(cleanPrompt);
+                                  }
+                                } else if (gt === 'vision') {
+                                  // 多图场景：尝试通过 sha256 在 canvas 中找到图片并重建引用
+                                  const foundItems = shas
+                                    .map((sha) => canvas.find((c) => c.sha256 === sha || c.originalSha256 === sha))
+                                    .filter((c): c is CanvasImageItem => !!c && !!c.src);
+                                  if (foundItems.length >= 2) {
+                                    // 找到了多张图，构建 chipRefs
+                                    const chipRefs = foundItems.map((c, idx) => ({
+                                      refId: c.refId ?? (idx + 1),
+                                      canvasKey: c.key,
+                                    }));
+                                    void sendText(cleanPrompt, { chipRefs });
+                                  } else if (foundItems.length === 1 || genError.refSrc) {
+                                    // 只找到一张或有 refSrc，降级为 img2img
+                                    const imgUrl = foundItems[0]?.src || genError.refSrc || '';
+                                    if (imgUrl) {
+                                      void sendText(cleanPrompt, { inlineImage: { src: imgUrl } });
+                                    } else {
+                                      void sendText(cleanPrompt);
+                                    }
+                                  } else {
+                                    // 找不到图片，降级为 text2img
+                                    void sendText(cleanPrompt);
+                                  }
                                 }
                               }}
                             >
@@ -6668,12 +6738,49 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               title="使用相同提示词重新生成"
                               onClick={() => {
                                 if (!genDone.prompt) return;
-                                // 只要有参考图就传入，不管 prompt 里有没有 @imgN
-                                // 因为重试时原始的 @imgN 引用可能已经失效
-                                if (genDone.refSrc) {
-                                  void sendText(genDone.prompt, { inlineImage: { src: genDone.refSrc } });
-                                } else {
-                                  void sendText(genDone.prompt);
+                                // 清理失效的 @imgN 标记，使用干净的 prompt
+                                const cleanPrompt = genDone.prompt.replace(/@img\d+\s*/gi, '').trim();
+                                if (!cleanPrompt) return;
+
+                                // 根据 genType 决定重试方式
+                                const gt = genDone.genType || (genDone.refSrc ? 'img2img' : 'text2img');
+                                const shas = genDone.imageRefShas || [];
+
+                                if (gt === 'text2img') {
+                                  // 纯文生图：直接发送 prompt
+                                  void sendText(cleanPrompt);
+                                } else if (gt === 'img2img') {
+                                  // 单图参考：使用 refSrc 或从 sha256 构建 URL
+                                  const imgUrl = genDone.refSrc || (shas[0] ? `/api/visual-agent/image-master/assets/file/${shas[0]}.png` : '');
+                                  if (imgUrl) {
+                                    void sendText(cleanPrompt, { inlineImage: { src: imgUrl } });
+                                  } else {
+                                    void sendText(cleanPrompt);
+                                  }
+                                } else if (gt === 'vision') {
+                                  // 多图场景：尝试通过 sha256 在 canvas 中找到图片并重建引用
+                                  const foundItems = shas
+                                    .map((sha) => canvas.find((c) => c.sha256 === sha || c.originalSha256 === sha))
+                                    .filter((c): c is CanvasImageItem => !!c && !!c.src);
+                                  if (foundItems.length >= 2) {
+                                    // 找到了多张图，构建 chipRefs
+                                    const chipRefs = foundItems.map((c, idx) => ({
+                                      refId: c.refId ?? (idx + 1),
+                                      canvasKey: c.key,
+                                    }));
+                                    void sendText(cleanPrompt, { chipRefs });
+                                  } else if (foundItems.length === 1 || genDone.refSrc) {
+                                    // 只找到一张或有 refSrc，降级为 img2img
+                                    const imgUrl = foundItems[0]?.src || genDone.refSrc || '';
+                                    if (imgUrl) {
+                                      void sendText(cleanPrompt, { inlineImage: { src: imgUrl } });
+                                    } else {
+                                      void sendText(cleanPrompt);
+                                    }
+                                  } else {
+                                    // 找不到图片，降级为 text2img
+                                    void sendText(cleanPrompt);
+                                  }
                                 }
                               }}
                             >
