@@ -468,11 +468,14 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
         <div
           className="flex items-center justify-between px-4 py-3 rounded-t-xl"
           style={{
-            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.1)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.05)) 100%)',
-            backdropFilter: 'blur(40px) saturate(180%)',
-            WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-            borderBottom: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
-            boxShadow: '0 1px 0 0 rgba(255, 255, 255, 0.1) inset',
+            background: `
+              radial-gradient(ellipse 80% 50% at 50% 0%, rgba(255, 255, 255, 0.15) 0%, transparent 50%),
+              linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%)
+            `,
+            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.15)',
+            boxShadow: '0 1px 0 0 rgba(255, 255, 255, 0.1) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.1) inset',
           }}
         >
           <div className="flex items-center gap-3">
@@ -546,14 +549,14 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
           <div
             className="relative flex items-center justify-center overflow-hidden rounded-bl-xl"
             style={{
-              background: 'linear-gradient(180deg, rgba(15, 15, 20, 0.85) 0%, rgba(10, 10, 15, 0.9) 100%)',
-              backdropFilter: 'blur(40px) saturate(150%)',
-              WebkitBackdropFilter: 'blur(40px) saturate(150%)',
+              background: 'linear-gradient(180deg, rgba(30, 30, 40, 0.5) 0%, rgba(20, 20, 30, 0.6) 100%)',
+              backdropFilter: 'blur(40px) saturate(150%) brightness(0.95)',
+              WebkitBackdropFilter: 'blur(40px) saturate(150%) brightness(0.95)',
               width: '70vw',
               height: '70vh',
               minWidth: 600,
               minHeight: 400,
-              boxShadow: '0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+              boxShadow: '0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 1px 0 0 rgba(255, 255, 255, 0.05) inset',
             }}
           >
             <div
@@ -584,11 +587,14 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
             <div
               className="w-80 overflow-y-auto rounded-br-xl"
               style={{
-                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                backdropFilter: 'blur(40px) saturate(180%)',
-                WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-                borderLeft: '1px solid var(--glass-border, rgba(255, 255, 255, 0.1))',
-                boxShadow: '-1px 0 0 0 rgba(255, 255, 255, 0.05) inset',
+                background: `
+                  radial-gradient(ellipse 100% 30% at 0% 0%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
+                  linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.03) 100%)
+                `,
+                backdropFilter: 'blur(40px) saturate(180%) brightness(1.05)',
+                WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.05)',
+                borderLeft: '1px solid rgba(255, 255, 255, 0.12)',
+                boxShadow: '1px 0 0 0 rgba(255, 255, 255, 0.05) inset',
               }}
             >
               <div className="p-4 space-y-4">
