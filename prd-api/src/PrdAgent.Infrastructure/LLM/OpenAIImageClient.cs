@@ -921,13 +921,27 @@ public class OpenAIImageClient
             }
             else if (TryExtractMarkdownImageUrl(responseContent, out var mdUrl))
             {
-                // Markdown 图片格式: ![alt](url)
-                _logger.LogInformation("[Vision API] 解析到 Markdown 图片格式，提取 URL: {Url}", mdUrl);
-                images.Add(new ImageGenImage
+                // Markdown 图片格式: ![alt](url) 或 ![alt](data:image/...;base64,...)
+                _logger.LogInformation("[Vision API] 解析到 Markdown 图片格式，提取内容: {Url}",
+                    mdUrl.Length > 100 ? mdUrl[..100] + "..." : mdUrl);
+
+                // 检查是否为 data URL (base64)
+                if (mdUrl.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
                 {
-                    Index = 0,
-                    Url = mdUrl
-                });
+                    images.Add(new ImageGenImage
+                    {
+                        Index = 0,
+                        Base64 = mdUrl
+                    });
+                }
+                else
+                {
+                    images.Add(new ImageGenImage
+                    {
+                        Index = 0,
+                        Url = mdUrl
+                    });
+                }
             }
             else
             {
@@ -1097,16 +1111,17 @@ public class OpenAIImageClient
     }
 
     /// <summary>
-    /// 尝试从 Markdown 图片格式中提取 URL
-    /// 支持格式: ![alt](url) 或 ![](url)
+    /// 尝试从 Markdown 图片格式中提取 URL 或 Data URL
+    /// 支持格式: ![alt](url) 或 ![](url) 或 ![alt](data:image/...;base64,...)
     /// </summary>
     private static bool TryExtractMarkdownImageUrl(string content, out string url)
     {
         url = string.Empty;
         if (string.IsNullOrWhiteSpace(content)) return false;
 
-        // 匹配 Markdown 图片格式: ![任意文本](URL)
-        var match = Regex.Match(content, @"!\[.*?\]\((https?://[^\s\)]+)\)");
+        // 匹配 Markdown 图片格式: ![任意文本](URL 或 DataURL)
+        // 支持 http/https URL 和 data:image/... base64 格式
+        var match = Regex.Match(content, @"!\[.*?\]\(((?:https?://[^\s\)]+)|(?:data:image/[^\s\)]+))\)");
         if (match.Success && match.Groups.Count > 1)
         {
             url = match.Groups[1].Value.Trim();
