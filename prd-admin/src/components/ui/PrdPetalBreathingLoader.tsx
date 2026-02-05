@@ -157,9 +157,7 @@ export function PrdPetalBreathingLoader({
         const rot = i * 36;
         const delayMs = i * 80;
         const zIndex = 100 - i;
-        // fill 模式下：跳过最外层深色底板（会形成一个近黑的圆角矩形背景）
-        // - 不依赖具体色值：直接跳过最后 3 层（最深色）
-        if (fill && idx >= 17) return null;
+        // 保留所有 20 层花瓣，不跳过任何层
 
         // fill 模式：使用 max(cqw, cqh) 按较大边拉伸，溢出部分被父容器裁剪（cover 效果）
         // 非 fill 模式：使用固定 px 单位

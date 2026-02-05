@@ -28,6 +28,10 @@ import ConvergingBeamsBackdrop from '@/components/login/ConvergingBeamsBackdrop'
 // import XAiBackdrop from '@/components/login/XAiBackdrop';
 import BlackHoleScene from '@/components/three/BlackHoleScene';
 import { RippleImageTransition } from '@/components/effects/RippleImageTransition';
+import { SparkleButton } from '@/components/effects/SparkleButton';
+import { GlowingCard } from '@/components/effects/GlowingCard';
+import { NeonButtonGroup } from '@/components/effects/NeonButton';
+import { OrbitLoader } from '@/components/effects/OrbitLoader';
 
 // 预设尺寸
 const PRESET_SIZES = [
@@ -326,6 +330,83 @@ const EFFECT_CONFIGS: EffectConfig[] = [
           autoPlay
           interval={4000}
         />
+      </div>
+    ),
+  },
+
+  // ============ 新增按钮特效 ============
+  {
+    id: 'sparkle-button',
+    label: '闪烁生成按钮',
+    functionName: 'SparkleButton',
+    category: 'button',
+    status: 'ready',
+    sourceRef: '生成按钮.html',
+    params: [
+      { name: 'text', type: 'string', default: "'Generate'", description: '按钮文字' },
+      { name: 'onClick', type: '() => void', description: '点击回调' },
+    ],
+    performance: { animationDuration: '1.8s 闪烁', frameRate: '60fps', renderer: 'CSS' },
+    render: () => (
+      <div className="flex items-center justify-center h-full" style={{ background: 'hsl(260 97% 6%)' }}>
+        <SparkleButton text="Generate Site" />
+      </div>
+    ),
+  },
+  {
+    id: 'neon-buttons',
+    label: '霓虹灯按钮',
+    functionName: 'NeonButton',
+    category: 'button',
+    status: 'ready',
+    sourceRef: '下一步.html',
+    params: [
+      { name: 'text', type: 'string', default: "'Next Step'", description: '按钮文字' },
+      { name: 'color', type: "'pink' | 'blue' | 'green'", default: "'pink'", description: '霓虹颜色' },
+    ],
+    performance: { animationDuration: '0.5s 悬停', renderer: 'CSS' },
+    render: () => (
+      <div className="flex items-center justify-center h-full p-4" style={{ background: 'linear-gradient(to bottom, #5d326c, #350048)' }}>
+        <NeonButtonGroup />
+      </div>
+    ),
+  },
+
+  // ============ 新增卡片特效 ============
+  {
+    id: 'glowing-card',
+    label: '发光边框卡片',
+    functionName: 'GlowingCard',
+    category: 'card',
+    status: 'ready',
+    sourceRef: '特效卡片.html',
+    params: [
+      { name: 'title', type: 'string', default: "'Glowing shadows'", description: '卡片标题' },
+      { name: 'label', type: 'string', default: "'cool'", description: '标签文字' },
+    ],
+    performance: { animationDuration: '4s 色相循环', renderer: 'CSS' },
+    render: () => (
+      <div className="flex items-center justify-center h-full" style={{ background: 'hsl(260 100% 3%)' }}>
+        <GlowingCard title="Glowing shadows" label="cool" />
+      </div>
+    ),
+  },
+
+  // ============ 新增加载动画 ============
+  {
+    id: 'orbit-loader',
+    label: '轨道加载器',
+    functionName: 'OrbitLoader',
+    category: 'loading',
+    status: 'ready',
+    sourceRef: '加载进度.html',
+    params: [
+      { name: 'size', type: 'number', default: '128', description: '尺寸 (px)' },
+    ],
+    performance: { animationDuration: '3s', renderer: 'CSS' },
+    render: () => (
+      <div className="flex items-center justify-center h-full" style={{ background: 'hsl(223 10% 10%)' }}>
+        <OrbitLoader size={100} />
       </div>
     ),
   },
