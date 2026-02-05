@@ -144,11 +144,17 @@ public class MultiImageDomainService : IMultiImageDomainService
             };
         }
 
-        // 多图场景：清理 @imgN 标记，图片已按顺序传给模型
-        // 模型可以直接"看到"图片，不需要文本标记
-        var cleanPrompt = ImageRefPattern.Replace(prompt, "").Trim();
-        // 清理可能产生的多余空格
-        cleanPrompt = System.Text.RegularExpressions.Regex.Replace(cleanPrompt, @"\s{2,}", " ");
+        // 多图场景：将 @imgN 替换为顺序号（图1、图2...）
+        // 图片已按出现顺序传给模型，用顺序号让模型理解指代关系
+        var refIdToOrder = refs.ToDictionary(r => r.RefId, r => r.OccurrenceOrder + 1);
+        var cleanPrompt = ImageRefPattern.Replace(prompt, match =>
+        {
+            if (int.TryParse(match.Groups[1].Value, out var refId) && refIdToOrder.TryGetValue(refId, out var order))
+            {
+                return $"图{order}";
+            }
+            return match.Value; // 未找到的引用保持原样
+        });
 
         return new ImageIntentResult
         {
