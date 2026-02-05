@@ -62,13 +62,13 @@ interface ToolboxState {
   _stopSubscription: () => void;
 }
 
-// 内置工具定义
+// 内置工具定义 - icon 使用 Lucide 图标名称
 const BUILTIN_TOOLS: ToolboxItem[] = [
   {
     id: 'builtin-prd-agent',
     name: 'PRD 分析师',
     description: '智能解读PRD文档，识别需求缺口，回答产品问题',
-    icon: '📋',
+    icon: 'FileText',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'prd-agent',
@@ -80,7 +80,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     id: 'builtin-visual-agent',
     name: '视觉设计师',
     description: '高级视觉创作，支持文生图、图生图、多图组合',
-    icon: '🎨',
+    icon: 'Palette',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'visual-agent',
@@ -92,7 +92,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     id: 'builtin-literary-agent',
     name: '文学创作者',
     description: '文学创作与配图，支持写作、润色、生成插图',
-    icon: '✍️',
+    icon: 'PenTool',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'literary-agent',
@@ -104,7 +104,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     id: 'builtin-defect-agent',
     name: '缺陷管理员',
     description: '缺陷提交与跟踪，支持信息提取、分类、生成报告',
-    icon: '🐛',
+    icon: 'Bug',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'defect-agent',
@@ -116,7 +116,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     id: 'builtin-code-reviewer',
     name: '代码审查员',
     description: '代码质量审查，发现潜在问题，提供改进建议',
-    icon: '🔍',
+    icon: 'Code2',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'code-reviewer',
@@ -128,7 +128,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     id: 'builtin-translator',
     name: '多语言翻译',
     description: '专业级多语言翻译，支持中英日韩等主流语言',
-    icon: '🌐',
+    icon: 'Languages',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'translator',
@@ -140,7 +140,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     id: 'builtin-summarizer',
     name: '内容摘要师',
     description: '长文本智能摘要，快速提取关键信息和要点',
-    icon: '📝',
+    icon: 'FileSearch',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'summarizer',
@@ -152,7 +152,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     id: 'builtin-data-analyst',
     name: '数据分析师',
     description: '数据分析与可视化建议，帮助理解数据洞察',
-    icon: '📊',
+    icon: 'BarChart3',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'data-analyst',
@@ -243,7 +243,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       editingItem: {
         name: '',
         description: '',
-        icon: '🤖',
+        icon: 'Bot',
         type: 'custom',
         category: 'custom',
         tags: [],

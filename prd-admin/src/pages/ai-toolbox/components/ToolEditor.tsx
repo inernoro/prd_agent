@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useToolboxStore } from '@/stores/toolboxStore';
+import type { LucideIcon } from 'lucide-react';
 import {
   ArrowLeft,
   Save,
@@ -18,20 +19,72 @@ import {
   Zap,
   Settings,
   Send,
+  FileText,
+  Palette,
+  PenTool,
+  Bug,
+  Code2,
+  Languages,
+  FileSearch,
+  BarChart3,
+  Bot,
+  Lightbulb,
+  Target,
+  Rocket,
+  Brain,
+  Cpu,
+  Database,
+  Globe,
+  Image,
+  Music,
+  Video,
+  GraduationCap,
+  Briefcase,
+  Heart,
+  Star,
+  Shield,
+  Lock,
+  Search,
+  Layers,
 } from 'lucide-react';
 
-const EMOJI_OPTIONS = [
-  '🤖', '💡', '🎯', '📊', '🔧', '🎨', '✨', '🚀',
-  '📝', '💬', '🔍', '⚡', '🌟', '🎪', '🎭', '🎮',
-  '📋', '🐛', '🌐', '✍️', '🎵', '🎬', '📚', '🧠',
-];
+// 图标组件映射
+const ICON_MAP: Record<string, LucideIcon> = {
+  FileText, Palette, PenTool, Bug, Code2, Languages, FileSearch, BarChart3,
+  Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare, Zap,
+  Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
+  GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
+};
+
+// 可选的图标列表
+const ICON_OPTIONS = Object.keys(ICON_MAP);
+
+// 图标名称到色相的映射
+const ICON_HUE_MAP: Record<string, number> = {
+  FileText: 210, Palette: 330, PenTool: 45, Bug: 0, Code2: 180, Languages: 200,
+  FileSearch: 50, BarChart3: 270, Bot: 210, Lightbulb: 45, Target: 0, Wrench: 30,
+  Sparkles: 280, Rocket: 210, MessageSquare: 180, Zap: 45, Brain: 270, Cpu: 200,
+  Database: 220, Globe: 180, Image: 330, Music: 300, Video: 0, BookOpen: 140,
+  GraduationCap: 220, Briefcase: 30, Heart: 350, Star: 45, Shield: 210, Lock: 200,
+  Search: 180, Layers: 240,
+};
+
+// 获取图标组件
+function getIconComponent(iconName: string): LucideIcon {
+  return ICON_MAP[iconName] || Bot;
+}
+
+// 获取强调色色相
+function getAccentHue(iconName: string): number {
+  return ICON_HUE_MAP[iconName] ?? 210;
+}
 
 // 预设的能力工具
 const CAPABILITY_TOOLS = [
-  { key: 'webSearch', label: '联网搜索', icon: '🌐', description: '搜索互联网获取最新信息' },
-  { key: 'imageGen', label: '图片生成', icon: '🎨', description: '使用 AI 生成图片' },
-  { key: 'codeInterpreter', label: '代码解释器', icon: '💻', description: '执行代码并返回结果' },
-  { key: 'fileReader', label: '文件解析', icon: '📄', description: '读取和分析文件' },
+  { key: 'webSearch', label: '联网搜索', icon: 'Globe', description: '搜索互联网获取最新信息' },
+  { key: 'imageGen', label: '图片生成', icon: 'Image', description: '使用 AI 生成图片' },
+  { key: 'codeInterpreter', label: '代码解释器', icon: 'Code2', description: '执行代码并返回结果' },
+  { key: 'fileReader', label: '文件解析', icon: 'FileText', description: '读取和分析文件' },
 ];
 
 // Tab 配置
@@ -69,7 +122,7 @@ export function ToolEditor() {
   const [form, setForm] = useState<FormState>({
     name: editingItem?.name || '',
     description: editingItem?.description || '',
-    icon: editingItem?.icon || '🤖',
+    icon: editingItem?.icon || 'Bot',
     prompt: editingItem?.prompt || '',
     tags: editingItem?.tags?.join(', ') || '',
     welcomeMessage: '你好！我是你的 AI 助手，有什么可以帮你的吗？',
@@ -82,7 +135,7 @@ export function ToolEditor() {
   });
 
   const [saving, setSaving] = useState(false);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showIconPicker, setShowIconPicker] = useState(false);
   const [activeTab, setActiveTab] = useState('persona');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [previewInput, setPreviewInput] = useState('');
@@ -100,6 +153,10 @@ export function ToolEditor() {
       .map((t) => t.trim())
       .filter(Boolean);
   }, [form.tags]);
+
+  // 当前图标组件
+  const CurrentIconComponent = getIconComponent(form.icon);
+  const currentIconHue = getAccentHue(form.icon);
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.prompt.trim()) return;
@@ -204,38 +261,48 @@ export function ToolEditor() {
           能力工具
         </label>
         <div className="grid grid-cols-2 gap-1.5">
-          {CAPABILITY_TOOLS.map((tool) => (
-            <button
-              key={tool.key}
-              onClick={() => toggleTool(tool.key)}
-              className="p-2 rounded-lg text-left transition-all"
-              style={{
-                background: form.enabledTools.includes(tool.key)
-                  ? 'rgba(99, 102, 241, 0.15)'
-                  : 'rgba(255, 255, 255, 0.03)',
-                border: form.enabledTools.includes(tool.key)
-                  ? '1px solid rgba(99, 102, 241, 0.3)'
-                  : '1px solid rgba(255, 255, 255, 0.06)',
-              }}
-            >
-              <div className="flex items-center gap-1.5 mb-0.5">
-                <span className="text-sm">{tool.icon}</span>
-                <span
-                  className="text-[11px] font-medium"
-                  style={{
-                    color: form.enabledTools.includes(tool.key)
-                      ? 'rgb(129, 140, 248)'
-                      : 'rgba(255, 255, 255, 0.85)',
-                  }}
-                >
-                  {tool.label}
-                </span>
-              </div>
-              <div className="text-[10px]" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
-                {tool.description}
-              </div>
-            </button>
-          ))}
+          {CAPABILITY_TOOLS.map((tool) => {
+            const ToolIcon = getIconComponent(tool.icon);
+            return (
+              <button
+                key={tool.key}
+                onClick={() => toggleTool(tool.key)}
+                className="p-2 rounded-lg text-left transition-all"
+                style={{
+                  background: form.enabledTools.includes(tool.key)
+                    ? 'rgba(99, 102, 241, 0.15)'
+                    : 'rgba(255, 255, 255, 0.03)',
+                  border: form.enabledTools.includes(tool.key)
+                    ? '1px solid rgba(99, 102, 241, 0.3)'
+                    : '1px solid rgba(255, 255, 255, 0.06)',
+                }}
+              >
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <ToolIcon
+                    size={14}
+                    style={{
+                      color: form.enabledTools.includes(tool.key)
+                        ? 'rgb(129, 140, 248)'
+                        : 'rgba(255, 255, 255, 0.6)',
+                    }}
+                  />
+                  <span
+                    className="text-[11px] font-medium"
+                    style={{
+                      color: form.enabledTools.includes(tool.key)
+                        ? 'rgb(129, 140, 248)'
+                        : 'rgba(255, 255, 255, 0.85)',
+                    }}
+                  >
+                    {tool.label}
+                  </span>
+                </div>
+                <div className="text-[10px]" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+                  {tool.description}
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -418,7 +485,7 @@ export function ToolEditor() {
       <div className="px-4 pt-3">
         <TabBar
           title={title}
-          icon={<span className="text-base">{form.icon}</span>}
+          icon={<CurrentIconComponent size={15} style={{ color: `hsla(${currentIconHue}, 70%, 70%, 1)` }} />}
           items={[]}
           activeKey=""
           onChange={() => {}}
@@ -460,38 +527,53 @@ export function ToolEditor() {
               </div>
 
               <div className="flex gap-3">
-                {/* 图标 */}
+                {/* 图标选择器 */}
                 <div className="relative flex-shrink-0">
                   <button
-                    onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                    className="w-14 h-14 rounded-xl flex items-center justify-center text-2xl border transition-all hover:border-[var(--accent-primary)] hover:scale-105"
+                    onClick={() => setShowIconPicker(!showIconPicker)}
+                    className="w-14 h-14 rounded-xl flex items-center justify-center border transition-all hover:border-[var(--accent-primary)] hover:scale-105"
                     style={{
-                      background: 'rgba(255, 255, 255, 0.03)',
-                      borderColor: 'rgba(255, 255, 255, 0.1)',
+                      background: `linear-gradient(135deg, hsla(${currentIconHue}, 70%, 60%, 0.15) 0%, hsla(${currentIconHue}, 70%, 40%, 0.08) 100%)`,
+                      borderColor: `hsla(${currentIconHue}, 60%, 60%, 0.25)`,
                     }}
                   >
-                    {form.icon}
+                    <CurrentIconComponent
+                      size={24}
+                      style={{ color: `hsla(${currentIconHue}, 70%, 70%, 1)` }}
+                    />
                   </button>
-                  {showEmojiPicker && (
+                  {showIconPicker && (
                     <div
-                      className="absolute top-full left-0 mt-2 p-2 rounded-lg border shadow-lg z-10 grid grid-cols-6 gap-1"
+                      className="absolute top-full left-0 mt-2 p-2 rounded-lg border shadow-lg z-10 grid grid-cols-8 gap-1 w-[280px]"
                       style={{
                         background: 'var(--bg-elevated, #1a1f2e)',
                         borderColor: 'rgba(255, 255, 255, 0.1)',
                       }}
                     >
-                      {EMOJI_OPTIONS.map((emoji) => (
-                        <button
-                          key={emoji}
-                          onClick={() => {
-                            setForm({ ...form, icon: emoji });
-                            setShowEmojiPicker(false);
-                          }}
-                          className="w-7 h-7 rounded flex items-center justify-center text-base hover:bg-white/10 transition-colors"
-                        >
-                          {emoji}
-                        </button>
-                      ))}
+                      {ICON_OPTIONS.map((iconName) => {
+                        const Icon = getIconComponent(iconName);
+                        const hue = getAccentHue(iconName);
+                        return (
+                          <button
+                            key={iconName}
+                            onClick={() => {
+                              setForm({ ...form, icon: iconName });
+                              setShowIconPicker(false);
+                            }}
+                            className="w-8 h-8 rounded flex items-center justify-center hover:bg-white/10 transition-colors"
+                            style={{
+                              background: form.icon === iconName
+                                ? `hsla(${hue}, 60%, 50%, 0.2)`
+                                : 'transparent',
+                            }}
+                          >
+                            <Icon
+                              size={16}
+                              style={{ color: `hsla(${hue}, 70%, 70%, 1)` }}
+                            />
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -678,13 +760,16 @@ export function ToolEditor() {
               {/* Agent 信息卡片 */}
               <div className="text-center mb-4">
                 <div
-                  className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl mx-auto mb-2"
+                  className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-2"
                   style={{
-                    background: 'rgba(99, 102, 241, 0.15)',
-                    border: '1px solid rgba(99, 102, 241, 0.25)',
+                    background: `linear-gradient(135deg, hsla(${currentIconHue}, 70%, 60%, 0.15) 0%, hsla(${currentIconHue}, 70%, 40%, 0.08) 100%)`,
+                    border: `1px solid hsla(${currentIconHue}, 60%, 60%, 0.25)`,
                   }}
                 >
-                  {form.icon}
+                  <CurrentIconComponent
+                    size={20}
+                    style={{ color: `hsla(${currentIconHue}, 70%, 70%, 1)` }}
+                  />
                 </div>
                 <div
                   className="font-medium text-[12px]"
