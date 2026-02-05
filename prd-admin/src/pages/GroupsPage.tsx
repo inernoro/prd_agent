@@ -416,7 +416,7 @@ export default function GroupsPage() {
                         <div className="text-sm font-semibold" style={{ color: hasWarning ? 'rgba(245,158,11,0.95)' : 'var(--text-primary)' }}>
                           {g.pendingGapCount ?? 0}
                         </div>
-                        <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>待处理</div>
+                        <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>缺失</div>
                       </div>
                     </div>
 
