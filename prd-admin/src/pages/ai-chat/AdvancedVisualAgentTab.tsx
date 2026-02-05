@@ -7679,8 +7679,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       {/* 设置对话框 - 使用通用 ConfigManagementDialogBase */}
       <ConfigManagementDialogBase
         ref={configDialogRef}
-        mineTitle="水印设置"
-        mineDescription="配置生成图片时自动叠加的水印"
+        mineTitle="配置管理"
+        mineDescription="水印设置"
         marketplaceDescription="发现和下载社区分享的水印配置"
         maxWidth={1500}
         showColumnDividers={false}

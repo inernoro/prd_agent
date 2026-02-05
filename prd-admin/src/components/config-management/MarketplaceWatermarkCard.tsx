@@ -5,6 +5,7 @@
 
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
 import { Hand, User } from 'lucide-react';
 import type { MarketplaceWatermarkConfig } from '@/services/contracts/watermark';
 import type { MarketplaceCardContext } from './ConfigManagementDialogBase';
@@ -16,6 +17,13 @@ interface MarketplaceWatermarkCardProps {
 }
 
 export function MarketplaceWatermarkCard({ config, ctx, onFork }: MarketplaceWatermarkCardProps) {
+  // 格式化日期
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+  };
+
   return (
     <GlassCard className="p-0 overflow-hidden">
       <div className="flex flex-col">
@@ -39,33 +47,26 @@ export function MarketplaceWatermarkCard({ config, ctx, onFork }: MarketplaceWat
               水印
             </span>
           </div>
-          {/* 作者信息 */}
-          <div className="flex items-center gap-1.5 text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
-            {config.ownerUserAvatar ? (
-              <img src={config.ownerUserAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
-            ) : (
-              <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
-                <User size={10} />
-              </div>
-            )}
-            <span>{config.ownerUserName || '未知用户'} 发布</span>
-          </div>
         </div>
 
-        {/* 预览区 */}
+        {/* 配置详情 */}
         <div className="px-2 pb-1">
-          <div
-            className="flex items-center justify-center overflow-hidden rounded-[6px] p-2"
-            style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)', height: '60px' }}
-          >
-            {config.previewUrl ? (
-              <img src={config.previewUrl} alt={config.name} className="max-h-full object-contain" />
-            ) : (
-              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                {config.text || '无预览'}
-              </div>
-            )}
-          </div>
+          <WatermarkDescriptionGrid
+            data={{
+              text: config.text,
+              fontKey: config.fontKey,
+              fontSizePx: config.fontSizePx,
+              opacity: config.opacity,
+              anchor: config.anchor,
+              offsetX: config.offsetX,
+              offsetY: config.offsetY,
+              positionMode: config.positionMode,
+              iconEnabled: config.iconEnabled,
+              borderEnabled: config.borderEnabled,
+              backgroundEnabled: config.backgroundEnabled,
+              roundedBackgroundEnabled: config.roundedBackgroundEnabled,
+            }}
+          />
         </div>
 
         {/* 底部操作区 */}
@@ -84,6 +85,19 @@ export function MarketplaceWatermarkCard({ config, ctx, onFork }: MarketplaceWat
                 <Hand size={10} />
                 {config.forkCount} 次下载
               </span>
+              {/* 作者信息 */}
+              {config.ownerUserAvatar ? (
+                <img src={config.ownerUserAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
+              ) : (
+                <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
+                  <User size={10} />
+                </div>
+              )}
+              <span>{config.ownerUserName || '未知用户'}</span>
+              {/* 日期 */}
+              {config.createdAt && (
+                <span>{formatDate(config.createdAt)}</span>
+              )}
             </div>
             {/* 拿来吧按钮 */}
             <Button
