@@ -425,6 +425,22 @@ export const api = {
     },
   },
 
+  // ============ AI Toolbox 百宝箱 ============
+  aiToolbox: {
+    // 工具管理
+    items: () => '/api/ai-toolbox/items',
+    item: (id: string) => `/api/ai-toolbox/items/${id}`,
+    runItem: (itemId: string) => `/api/ai-toolbox/items/${itemId}/run`,
+    agents: () => '/api/ai-toolbox/agents',
+    // Legacy - 运行记录
+    chat: () => '/api/ai-toolbox/chat',
+    analyze: () => '/api/ai-toolbox/analyze',
+    runs: () => '/api/ai-toolbox/runs',
+    run: (runId: string) => `/api/ai-toolbox/runs/${runId}`,
+    execute: (runId: string) => `/api/ai-toolbox/runs/${runId}/execute`,
+    stream: (runId: string) => `/api/ai-toolbox/runs/${runId}/stream`,
+  },
+
   // ============ V1 API (用户端) ============
   v1: {
     documents: {
