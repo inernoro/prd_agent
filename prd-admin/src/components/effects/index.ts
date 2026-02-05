@@ -8,3 +8,4 @@ export { SparkleButton } from './SparkleButton';
 export { GlowingCard } from './GlowingCard';
 export { NeonButton, NeonButtonGroup } from './NeonButton';
 export { OrbitLoader } from './OrbitLoader';
+export { BlackHoleVortex } from './BlackHoleVortex';

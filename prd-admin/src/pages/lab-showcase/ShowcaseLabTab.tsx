@@ -26,7 +26,8 @@ import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop
 import ConvergingBeamsBackdrop from '@/components/login/ConvergingBeamsBackdrop';
 // XAiBackdrop 已移除：设计为超低对比度衬底，不适合单独展示
 // import XAiBackdrop from '@/components/login/XAiBackdrop';
-import BlackHoleScene from '@/components/three/BlackHoleScene';
+// BlackHoleScene 已删除，使用新的 BlackHoleVortex 组件
+import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { RippleImageTransition } from '@/components/effects/RippleImageTransition';
 import { SparkleButton } from '@/components/effects/SparkleButton';
 import { GlowingCard } from '@/components/effects/GlowingCard';
@@ -246,17 +247,17 @@ const EFFECT_CONFIGS: EffectConfig[] = [
   },
   // XAiBackdrop 已移除：设计为超低对比度衬底（透明度仅 1.6%-4.5%），不适合单独展示
   {
-    id: 'blackhole-scene',
-    label: '黑洞场景',
-    functionName: 'BlackHoleScene',
+    id: 'blackhole-vortex',
+    label: '黑洞漩涡',
+    functionName: 'BlackHoleVortex',
     category: 'background',
     status: 'ready',
     sourceRef: '背景-黑洞漩涡.html',
     params: [{ name: 'className', type: 'string', description: '自定义类名' }],
-    performance: { frameRate: '60fps', delay: '4.2s 淡入', renderer: 'WebGL' },
+    performance: { frameRate: '60fps', renderer: 'WebGL (Shader)' },
     render: () => (
-      <div className="relative w-full h-full" style={{ background: '#050507' }}>
-        <BlackHoleScene />
+      <div className="relative w-full h-full">
+        <BlackHoleVortex />
       </div>
     ),
   },
