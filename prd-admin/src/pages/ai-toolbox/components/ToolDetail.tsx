@@ -3,8 +3,43 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useToolboxStore } from '@/stores/toolboxStore';
-import { ArrowLeft, Play, Edit, Trash2, Zap, Tag, Calendar, User } from 'lucide-react';
 import { formatDistanceToNow } from '@/lib/dateUtils';
+import {
+  ArrowLeft, Play, Edit, Trash2, Zap, Tag, Calendar, User,
+  FileText, Palette, PenTool, Bug, Code2, Languages, FileSearch, BarChart3,
+  Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare,
+  Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
+  GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+
+// 图标组件映射
+const ICON_MAP: Record<string, LucideIcon> = {
+  FileText, Palette, PenTool, Bug, Code2, Languages, FileSearch, BarChart3,
+  Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare, Zap,
+  Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
+  GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
+};
+
+// 图标名称到色相的映射
+const ICON_HUE_MAP: Record<string, number> = {
+  FileText: 210, Palette: 330, PenTool: 45, Bug: 0, Code2: 180, Languages: 200,
+  FileSearch: 50, BarChart3: 270, Bot: 210, Lightbulb: 45, Target: 0, Wrench: 30,
+  Sparkles: 280, Rocket: 210, MessageSquare: 180, Zap: 45, Brain: 270, Cpu: 200,
+  Database: 220, Globe: 180, Image: 330, Music: 300, Video: 0, BookOpen: 140,
+  GraduationCap: 220, Briefcase: 30, Heart: 350, Star: 45, Shield: 210, Lock: 200,
+  Search: 180, Layers: 240,
+};
+
+// 获取图标组件
+function getIconComponent(iconName: string): LucideIcon {
+  return ICON_MAP[iconName] || Bot;
+}
+
+// 获取强调色色相
+function getAccentHue(iconName: string): number {
+  return ICON_HUE_MAP[iconName] ?? 210;
+}
 
 export function ToolDetail() {
   const { selectedItem, backToGrid, startEdit, deleteItem, runItem } = useToolboxStore();
@@ -12,6 +47,9 @@ export function ToolDetail() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   if (!selectedItem) return null;
+
+  const IconComponent = getIconComponent(selectedItem.icon);
+  const accentHue = getAccentHue(selectedItem.icon);
 
   const handleRun = () => {
     if (!input.trim()) return;
@@ -32,7 +70,7 @@ export function ToolDetail() {
       {/* Header */}
       <TabBar
         title={selectedItem.name}
-        icon={<span className="text-lg">{selectedItem.icon}</span>}
+        icon={<IconComponent size={18} style={{ color: `hsla(${accentHue}, 70%, 70%, 1)` }} />}
         items={[]}
         activeKey=""
         onChange={() => {}}
@@ -71,10 +109,14 @@ export function ToolDetail() {
             {/* Icon & Name */}
             <div className="flex items-center gap-3 mb-4">
               <div
-                className="w-16 h-16 rounded-xl flex items-center justify-center text-3xl"
-                style={{ background: 'var(--bg-base)' }}
+                className="w-16 h-16 rounded-xl flex items-center justify-center"
+                style={{
+                  background: `linear-gradient(135deg, hsla(${accentHue}, 70%, 60%, 0.18) 0%, hsla(${accentHue}, 70%, 40%, 0.1) 100%)`,
+                  boxShadow: `0 4px 16px -4px hsla(${accentHue}, 70%, 50%, 0.35), inset 0 1px 0 0 rgba(255,255,255,0.12)`,
+                  border: `1px solid hsla(${accentHue}, 60%, 60%, 0.25)`,
+                }}
               >
-                {selectedItem.icon}
+                <IconComponent size={32} style={{ color: `hsla(${accentHue}, 70%, 70%, 1)` }} />
               </div>
               <div>
                 <div className="font-medium" style={{ color: 'var(--text-primary)' }}>
