@@ -208,7 +208,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
                     <option key={key} value={key}>{name}</option>
                   ))}
                 </Select>
-                <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)}>
+                <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)} className="whitespace-nowrap flex-shrink-0">
                   <Plus size={14} />
                   添加规则
                 </Button>

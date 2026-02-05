@@ -127,10 +127,10 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
 
   return (
     <div className="h-full overflow-auto p-1">
-      <GlassCard glow className="min-h-full">
-        <div className="grid grid-cols-12 divide-x divide-white/10">
+      <GlassCard glow className="min-h-full flex flex-col">
+        <div className="flex-1 grid grid-cols-12">
           {/* 左栏：配置 */}
-          <div className="col-span-7 p-5 space-y-5">
+          <div className="col-span-7 p-5 space-y-5 border-r border-white/10">
             {/* IMAP */}
             <section>
               <div className="flex items-center gap-2 mb-3">
@@ -211,15 +211,15 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
 
             <div className="border-t border-white/10" />
 
-            {/* 启用 */}
+            {/* 轮询设置 */}
             <section>
               <div className="flex items-center gap-2 mb-3">
                 <Play size={14} className="text-green-400" />
-                <span className="text-sm font-medium">启用通道</span>
+                <span className="text-sm font-medium">邮件轮询</span>
               </div>
               <div className="flex items-center gap-6">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">轮询间隔</span>
+                  <span className="text-xs text-muted-foreground">检查间隔</span>
                   <input type="number" value={form.pollIntervalMinutes} onChange={e => set('pollIntervalMinutes', +e.target.value || 5)}
                     min={1} max={60} className="w-14 px-2 py-1 rounded bg-white/5 border border-white/10 text-sm text-center" />
                   <span className="text-xs text-muted-foreground">分钟</span>
@@ -234,7 +234,7 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
               </div>
               {form.isEnabled && (
                 <div className="mt-2 text-xs text-green-400 flex items-center gap-1">
-                  <CheckCircle size={10} />每 {form.pollIntervalMinutes} 分钟检查新邮件
+                  <CheckCircle size={10} />系统每 {form.pollIntervalMinutes} 分钟检查一次新邮件
                 </div>
               )}
             </section>

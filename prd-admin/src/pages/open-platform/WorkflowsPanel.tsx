@@ -13,10 +13,10 @@ import {
   MoreVertical,
   Pencil,
   FileText,
-  HelpCircle,
   Wrench,
   Sparkles,
   ExternalLink,
+  HelpCircle,
 } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -225,7 +225,6 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
                     style={{ border: '1px solid rgba(255,255,255,0.06)' }}
                   >
                     <div className="flex items-center gap-4 flex-1 min-w-0">
-                      <span className="text-2xl flex-shrink-0">{wf.icon || '📧'}</span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="font-medium">{wf.displayName}</span>
@@ -238,12 +237,16 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
                         </div>
                       </div>
                       <div className="flex-shrink-0">
-                        <code
-                          className="px-2.5 py-1 rounded text-sm font-mono"
-                          style={{ background: 'rgba(59,130,246,0.1)', color: 'rgba(96,165,250,0.95)' }}
-                        >
-                          {wf.addressPrefix}@{emailDomain || 'your-domain.com'}
-                        </code>
+                        {emailDomain ? (
+                          <code
+                            className="px-2.5 py-1 rounded text-sm font-mono"
+                            style={{ background: 'rgba(59,130,246,0.1)', color: 'rgba(96,165,250,0.95)' }}
+                          >
+                            {wf.addressPrefix}@{emailDomain}
+                          </code>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">请先配置系统邮箱</span>
+                        )}
                       </div>
                     </div>
 
@@ -344,7 +347,6 @@ function WorkflowEditDialog({
   const [addressPrefix, setAddressPrefix] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [description, setDescription] = useState('');
-  const [icon, setIcon] = useState('');
   const [targetApp, setTargetApp] = useState('');
   const [customPrompt, setCustomPrompt] = useState('');
   const [replyTemplate, setReplyTemplate] = useState('');
@@ -354,7 +356,6 @@ function WorkflowEditDialog({
       setAddressPrefix(workflow.addressPrefix);
       setDisplayName(workflow.displayName);
       setDescription(workflow.description || '');
-      setIcon(workflow.icon || '');
       setTargetApp(workflow.targetAgent || '');
       setCustomPrompt(workflow.customPrompt || '');
       setReplyTemplate(workflow.replyTemplate || '');
@@ -362,7 +363,6 @@ function WorkflowEditDialog({
       setAddressPrefix('');
       setDisplayName('');
       setDescription('');
-      setIcon('');
       setTargetApp('');
       setCustomPrompt('');
       setReplyTemplate('');
@@ -383,16 +383,13 @@ function WorkflowEditDialog({
       addressPrefix: addressPrefix.trim().toLowerCase(),
       displayName: displayName.trim(),
       description: description.trim() || undefined,
-      icon: icon.trim() || undefined,
-      intentType: 'classify', // 默认使用分类
+      intentType: 'classify',
       targetAgent: targetApp || undefined,
       customPrompt: customPrompt.trim() || undefined,
       replyTemplate: replyTemplate.trim() || undefined,
       priority: 100,
     });
   };
-
-  const domainDisplay = emailDomain || 'your-domain.com';
 
   return (
     <Dialog
@@ -404,12 +401,18 @@ function WorkflowEditDialog({
       content={
         <div className="space-y-5">
           {/* 邮箱地址预览 */}
-          <div className="p-3 rounded-lg" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)' }}>
-            <div className="text-xs text-muted-foreground mb-1">邮件发送地址</div>
-            <code className="text-blue-400 font-mono">
-              {addressPrefix || 'prefix'}@{domainDisplay}
-            </code>
-          </div>
+          {emailDomain ? (
+            <div className="p-3 rounded-lg" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)' }}>
+              <div className="text-xs text-muted-foreground mb-1">邮件发送地址</div>
+              <code className="text-blue-400 font-mono">
+                {addressPrefix || 'prefix'}@{emailDomain}
+              </code>
+            </div>
+          ) : (
+            <div className="p-3 rounded-lg" style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)' }}>
+              <div className="text-xs text-amber-400">请先在「邮箱配置」中配置系统邮箱</div>
+            </div>
+          )}
 
           {/* 邮箱前缀 */}
           <div>
@@ -421,9 +424,10 @@ function WorkflowEditDialog({
                 onChange={(e) => setAddressPrefix(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
                 className="flex-1 px-3 py-2 rounded-l-lg bg-white/5 border border-white/10 border-r-0 focus:border-blue-500/50 focus:outline-none"
                 placeholder="todo"
+                disabled={!emailDomain}
               />
               <span className="px-3 py-2 rounded-r-lg bg-white/[0.03] border border-white/10 text-muted-foreground text-sm">
-                @{domainDisplay}
+                @{emailDomain || '未配置'}
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
@@ -446,52 +450,21 @@ function WorkflowEditDialog({
             </p>
           </div>
 
-          {/* 图标和目标应用 */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1.5">
-                图标
-                <Tooltip.Provider>
-                  <Tooltip.Root>
-                    <Tooltip.Trigger asChild>
-                      <HelpCircle size={12} className="inline-block ml-1 text-muted-foreground" />
-                    </Tooltip.Trigger>
-                    <Tooltip.Portal>
-                      <Tooltip.Content
-                        className="px-3 py-2 text-xs rounded-lg max-w-xs"
-                        style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid rgba(255,255,255,0.1)' }}
-                        sideOffset={5}
-                      >
-                        显示在工作流列表中的图标，帮助快速识别
-                        <Tooltip.Arrow style={{ fill: 'rgba(0,0,0,0.9)' }} />
-                      </Tooltip.Content>
-                    </Tooltip.Portal>
-                  </Tooltip.Root>
-                </Tooltip.Provider>
-              </label>
-              <input
-                type="text"
-                value={icon}
-                onChange={(e) => setIcon(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none"
-                placeholder="📋"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">绑定应用</label>
-              <Select
-                value={targetApp}
-                onChange={(e) => setTargetApp(e.target.value)}
-                uiSize="md"
-              >
-                <option value="">自动处理</option>
-                {appCallers.map((app) => (
-                  <option key={app.id} value={app.appCode}>
-                    {app.displayName || app.appCode}
-                  </option>
-                ))}
-              </Select>
-            </div>
+          {/* 绑定应用 */}
+          <div>
+            <label className="block text-sm font-medium mb-1.5">绑定应用</label>
+            <Select
+              value={targetApp}
+              onChange={(e) => setTargetApp(e.target.value)}
+              uiSize="md"
+            >
+              <option value="">自动处理</option>
+              {appCallers.map((app) => (
+                <option key={app.id} value={app.appCode}>
+                  {app.displayName || app.appCode}
+                </option>
+              ))}
+            </Select>
           </div>
 
           {/* 描述 */}

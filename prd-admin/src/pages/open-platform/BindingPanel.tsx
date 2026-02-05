@@ -12,12 +12,9 @@ import {
   MoreVertical,
   Pencil,
   Mail,
-  Copy,
-  Check,
-  HelpCircle,
   ExternalLink,
-  FileText,
   UserCheck,
+  Users,
 } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -25,10 +22,8 @@ import type {
   ChannelIdentityMapping,
   CreateIdentityMappingRequest,
   UpdateIdentityMappingRequest,
-  ChannelSettings,
 } from '@/services/contracts/channels';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import * as Tooltip from '@radix-ui/react-tooltip';
 
 interface BindingPanelProps {
   onActionsReady?: (actions: React.ReactNode) => void;
@@ -42,10 +37,6 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingMapping, setEditingMapping] = useState<ChannelIdentityMapping | null>(null);
 
-  // 系统邮箱配置
-  const [settings, setSettings] = useState<ChannelSettings | null>(null);
-  const [copied, setCopied] = useState(false);
-
   const loadMappings = async () => {
     setLoading(true);
     try {
@@ -58,43 +49,17 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
     }
   };
 
-  const loadSettings = async () => {
-    try {
-      const data = await channelService.getSettings();
-      setSettings(data);
-    } catch (err) {
-      console.warn('Failed to load settings:', err);
-    }
-  };
-
   useEffect(() => {
     loadMappings();
-    loadSettings();
   }, []);
 
-  // 传递 actions 给父容器
   useEffect(() => {
     onActionsReady?.(
-      <Button variant="secondary" size="sm" onClick={() => { loadMappings(); loadSettings(); }}>
+      <Button variant="secondary" size="sm" onClick={loadMappings}>
         <RefreshCw size={14} />
       </Button>
     );
   }, [onActionsReady]);
-
-  // 系统接收邮箱地址
-  const systemEmailAddress = settings?.imapUsername || null;
-
-  const handleCopyEmail = async () => {
-    if (!systemEmailAddress) return;
-    try {
-      await navigator.clipboard.writeText(systemEmailAddress);
-      setCopied(true);
-      toast.success('已复制到剪贴板');
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      toast.error('复制失败');
-    }
-  };
 
   const handleCreate = async (request: CreateIdentityMappingRequest) => {
     try {
@@ -143,8 +108,8 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
         <div className="p-4 border-b border-white/10" style={{ background: 'rgba(255,255,255,0.02)' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <FileText size={18} className="text-muted-foreground" />
-              <span>通过邮件创建任务，转发邮件自动处理</span>
+              <Users size={18} className="text-muted-foreground" />
+              <span>管理可以向系统发送邮件的外部邮箱地址</span>
             </div>
             <a href="#" className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1">
               了解更多 <ExternalLink size={12} />
@@ -152,124 +117,60 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
           </div>
         </div>
 
-        <div className="p-5 space-y-6">
-          {/* 系统邮箱 */}
-          <section>
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-medium">系统邮箱</h3>
-                <p className="text-sm text-muted-foreground mt-0.5">发送邮件到此地址创建任务</p>
-              </div>
-              <div className="flex items-center gap-2">
-                {systemEmailAddress ? (
-                  <>
-                    <code className="text-base font-mono">{systemEmailAddress}</code>
-                    <button
-                      onClick={handleCopyEmail}
-                      className="p-1.5 rounded hover:bg-white/10 transition-colors"
-                      title="复制邮箱地址"
-                    >
-                      {copied ? <Check size={16} className="text-green-400" /> : <Copy size={16} className="text-muted-foreground" />}
-                    </button>
-                  </>
-                ) : (
-                  <span className="text-muted-foreground text-sm">
-                    未配置 - 请先在「邮箱配置」中设置
-                  </span>
-                )}
-              </div>
-            </div>
-          </section>
-
-          <div className="border-t border-white/10" />
-
-          {/* 工作流邮箱提示 */}
-          <section>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <h3 className="font-medium">工作流邮箱</h3>
-                <Tooltip.Provider>
-                  <Tooltip.Root>
-                    <Tooltip.Trigger asChild>
-                      <button className="text-muted-foreground hover:text-foreground">
-                        <HelpCircle size={14} />
-                      </button>
-                    </Tooltip.Trigger>
-                    <Tooltip.Portal>
-                      <Tooltip.Content
-                        className="px-3 py-2 text-sm rounded-lg max-w-xs"
-                        style={{
-                          background: 'rgba(0,0,0,0.9)',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                        }}
-                        sideOffset={5}
-                      >
-                        自定义邮箱地址和说明来处理不同的任务
-                        <Tooltip.Arrow style={{ fill: 'rgba(0,0,0,0.9)' }} />
-                      </Tooltip.Content>
-                    </Tooltip.Portal>
-                  </Tooltip.Root>
-                </Tooltip.Provider>
-              </div>
-              <a
-                href="#"
-                onClick={(e) => { e.preventDefault(); /* 跳转到工作流页面 */ }}
-                className="text-sm text-blue-400 hover:text-blue-300"
-              >
-                在「邮件工作流」中配置
-              </a>
-            </div>
-            <p className="text-sm text-muted-foreground mt-1">
-              自定义邮箱地址和说明来处理不同的任务。
-            </p>
-          </section>
-
-          <div className="border-t border-white/10" />
-
+        <div className="p-5">
           {/* 授权发件人 */}
           <section>
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="font-medium">授权发件人</h3>
                 <p className="text-sm text-muted-foreground mt-0.5">
-                  仅这些地址发送的邮件可创建任务
+                  只有这些邮箱地址发送的邮件才会被系统处理
                 </p>
               </div>
-              <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)}>
+              <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)} className="whitespace-nowrap">
                 <Plus size={14} />
-                添加授权发件人
+                添加
               </Button>
             </div>
 
             {/* 发件人列表 */}
             <div className="space-y-2">
               {mappings.length === 0 && !loading ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  暂无授权发件人，点击上方按钮添加
+                <div className="text-center py-12 text-muted-foreground">
+                  <Mail size={32} className="mx-auto mb-3 opacity-50" />
+                  <p>暂无授权发件人</p>
+                  <p className="text-xs mt-1">添加后，这些邮箱发送的邮件将被系统处理</p>
                 </div>
               ) : (
                 mappings.map((mapping) => (
                   <div
                     key={mapping.id}
-                    className="flex items-center justify-between p-3 rounded-lg transition-colors hover:bg-white/[0.03]"
+                    className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/[0.03]"
                     style={{ border: '1px solid rgba(255,255,255,0.06)' }}
                   >
-                    <div className="flex items-center gap-3">
-                      <Mail size={16} className="text-muted-foreground" />
+                    <div className="flex items-center gap-4">
+                      <div
+                        className="w-9 h-9 rounded-lg flex items-center justify-center"
+                        style={{ background: 'rgba(59,130,246,0.1)' }}
+                      >
+                        <Mail size={16} className="text-blue-400" />
+                      </div>
                       <div>
-                        <div className="font-mono text-sm">{mapping.channelIdentifier}</div>
+                        <div className="flex items-center gap-2">
+                          <code className="font-mono text-sm">{mapping.channelIdentifier}</code>
+                          {mapping.isVerified && (
+                            <Badge variant="success" size="sm">
+                              <UserCheck size={10} className="mr-1" />
+                              已验证
+                            </Badge>
+                          )}
+                        </div>
                         {mapping.userName && (
                           <div className="text-xs text-muted-foreground mt-0.5">
-                            映射用户: {mapping.userName}
+                            → 映射到用户: {mapping.userName}
                           </div>
                         )}
                       </div>
-                      {mapping.isVerified && (
-                        <Badge variant="success" size="sm">
-                          <UserCheck size={10} className="mr-1" />
-                          已验证
-                        </Badge>
-                      )}
                     </div>
                     <DropdownMenu.Root>
                       <DropdownMenu.Trigger asChild>
@@ -369,7 +270,7 @@ function IdentityMappingDialog({
       } else {
         setChannelIdentifier('');
         setUserId('');
-        setIsVerified(true); // 默认已验证
+        setIsVerified(true);
       }
     }
   }, [open, mode, mapping]);
