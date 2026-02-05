@@ -7701,7 +7701,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 appKey="visual-agent"
                 onStatusChange={handleWatermarkStatusChange}
                 hideAddButton
-                cardWidth={360}
               />
             ),
             loadMarketplace: async ({ keyword, sort }) => {

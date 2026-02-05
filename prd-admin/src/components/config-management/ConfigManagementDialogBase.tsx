@@ -213,16 +213,23 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
       ...columns.filter((col) => col.loadMarketplace).map((col) => ({ key: col.key, label: col.filterLabel })),
     ];
 
+    // 固定栏宽：对话框1500px，内容区约1468px，3栏+2gap(32px)，每栏约478px
+    const COLUMN_WIDTH = 460;
+
     // 渲染"我的"视图
     const renderMineView = () => {
-      // 使用 flex 均分栏宽，栏内卡片自适应
+      // 使用固定栏宽，卡片撑满栏宽
       return (
-        <div className="flex gap-4 h-full min-h-0">
+        <div className="flex flex-wrap gap-4 h-full min-h-0 overflow-auto content-start">
           {columns.map((col, idx) => (
             <div
               key={col.key}
-              className={`flex-1 min-w-0 min-h-0 flex flex-col h-full ${showColumnDividers && idx > 0 ? 'border-l pl-4' : ''}`}
-              style={showColumnDividers && idx > 0 ? { borderColor: 'var(--border-subtle)' } : undefined}
+              className={`min-h-0 flex flex-col ${showColumnDividers && idx > 0 ? 'border-l pl-4' : ''}`}
+              style={{
+                width: COLUMN_WIDTH,
+                flexShrink: 0,
+                ...(showColumnDividers && idx > 0 ? { borderColor: 'var(--border-subtle)' } : {})
+              }}
             >
               <div className="flex items-center justify-between mb-2">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -305,14 +312,18 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
               <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
             </div>
           ) : (
-            <div className="flex gap-4 flex-1 min-h-0 overflow-auto">
+            <div className="flex flex-wrap gap-4 flex-1 min-h-0 overflow-auto content-start">
               {visibleColumns.map((col, idx) => {
                 const items = (marketplaceData[col.key] || []) as unknown[];
                 return (
                   <div
                     key={col.key}
-                    className={`flex-1 min-w-0 min-h-0 flex flex-col ${idx > 0 ? 'border-l pl-4' : ''}`}
-                    style={idx > 0 ? { borderColor: 'var(--border-subtle)' } : undefined}
+                    className={`min-h-0 flex flex-col ${idx > 0 ? 'border-l pl-4' : ''}`}
+                    style={{
+                      width: COLUMN_WIDTH,
+                      flexShrink: 0,
+                      ...(idx > 0 ? { borderColor: 'var(--border-subtle)' } : {})
+                    }}
                   >
                     <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
                       {col.title}
@@ -325,12 +336,8 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
                         </div>
                       </div>
                     ) : (
-                      <div className="flex flex-wrap gap-3 overflow-auto content-start" style={{ minWidth: 0 }}>
-                        {items.map((item: any) => (
-                          <div key={item.id} style={{ width: 360, flexShrink: 0 }}>
-                            {col.renderMarketplaceCard?.(item, marketplaceCardContext)}
-                          </div>
-                        ))}
+                      <div className="flex flex-col gap-3 overflow-auto">
+                        {items.map((item: any) => col.renderMarketplaceCard?.(item, marketplaceCardContext))}
                       </div>
                     )}
                   </div>
