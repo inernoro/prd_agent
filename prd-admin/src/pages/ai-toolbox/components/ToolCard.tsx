@@ -44,88 +44,88 @@ export function ToolCard({ item }: ToolCardProps) {
       onClick={() => selectItem(item)}
       className="group"
     >
-      <div className="p-4">
-        {/* Icon with glow effect */}
-        <div className="relative mb-4">
+      <div className="p-3">
+        {/* Icon with glow effect - 更小更精致 */}
+        <div className="relative mb-3">
           <div
-            className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl transition-all duration-300 group-hover:scale-110"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-xl transition-all duration-300 group-hover:scale-110"
             style={{
-              background: `linear-gradient(135deg, hsla(${accentHue}, 70%, 60%, 0.15) 0%, hsla(${accentHue}, 70%, 40%, 0.08) 100%)`,
-              boxShadow: `0 4px 20px -4px hsla(${accentHue}, 70%, 50%, 0.3), inset 0 1px 0 0 rgba(255,255,255,0.1)`,
-              border: `1px solid hsla(${accentHue}, 60%, 60%, 0.2)`,
+              background: `linear-gradient(135deg, hsla(${accentHue}, 70%, 60%, 0.18) 0%, hsla(${accentHue}, 70%, 40%, 0.1) 100%)`,
+              boxShadow: `0 3px 12px -3px hsla(${accentHue}, 70%, 50%, 0.35), inset 0 1px 0 0 rgba(255,255,255,0.12)`,
+              border: `1px solid hsla(${accentHue}, 60%, 60%, 0.25)`,
             }}
           >
             {item.icon}
           </div>
           {/* Subtle glow behind icon */}
           <div
-            className="absolute inset-0 -z-10 blur-xl opacity-50 group-hover:opacity-70 transition-opacity"
+            className="absolute inset-0 -z-10 blur-lg opacity-40 group-hover:opacity-60 transition-opacity"
             style={{
-              background: `radial-gradient(circle, hsla(${accentHue}, 70%, 50%, 0.4) 0%, transparent 70%)`,
+              background: `radial-gradient(circle, hsla(${accentHue}, 70%, 50%, 0.5) 0%, transparent 70%)`,
             }}
           />
         </div>
 
-        {/* Name */}
+        {/* Name - 更亮的字体 */}
         <div
-          className="font-semibold text-sm mb-1.5 truncate"
-          style={{ color: 'var(--text-primary)' }}
+          className="font-semibold text-[13px] mb-1 truncate"
+          style={{ color: 'rgba(255, 255, 255, 0.95)' }}
         >
           {item.name}
         </div>
 
-        {/* Description */}
+        {/* Description - 稍微亮一点 */}
         <div
-          className="text-xs line-clamp-2 mb-3 leading-relaxed"
-          style={{ color: 'var(--text-muted)', minHeight: '2.5em' }}
+          className="text-[11px] line-clamp-2 mb-2.5 leading-relaxed"
+          style={{ color: 'rgba(255, 255, 255, 0.55)', minHeight: '2.2em' }}
         >
           {item.description}
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-between">
-          {/* Type badge */}
+          {/* Type badge - 更小 */}
           <span
-            className="text-xs px-2 py-1 rounded-full font-medium flex items-center gap-1"
+            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
             style={{
               background: item.type === 'builtin'
-                ? `hsla(${accentHue}, 60%, 50%, 0.12)`
-                : 'rgba(34, 197, 94, 0.12)',
+                ? `hsla(${accentHue}, 60%, 50%, 0.15)`
+                : 'rgba(34, 197, 94, 0.15)',
               color: item.type === 'builtin'
-                ? `hsla(${accentHue}, 70%, 65%, 1)`
-                : 'rgb(34, 197, 94)',
+                ? `hsla(${accentHue}, 70%, 70%, 1)`
+                : 'rgb(74, 222, 128)',
               border: item.type === 'builtin'
-                ? `1px solid hsla(${accentHue}, 60%, 50%, 0.2)`
-                : '1px solid rgba(34, 197, 94, 0.2)',
+                ? `1px solid hsla(${accentHue}, 60%, 50%, 0.25)`
+                : '1px solid rgba(34, 197, 94, 0.25)',
             }}
           >
-            {item.type === 'builtin' && <Sparkles size={10} />}
+            {item.type === 'builtin' && <Sparkles size={8} />}
             {item.type === 'builtin' ? '内置' : '自定义'}
           </span>
 
           {/* Usage count */}
           {item.usageCount > 0 && (
             <span
-              className="flex items-center gap-1 text-xs"
-              style={{ color: 'var(--text-muted)' }}
+              className="flex items-center gap-0.5 text-[10px]"
+              style={{ color: 'rgba(255, 255, 255, 0.5)' }}
             >
-              <Zap size={10} style={{ color: `hsla(${accentHue}, 70%, 60%, 0.8)` }} />
+              <Zap size={9} style={{ color: `hsla(${accentHue}, 70%, 65%, 0.9)` }} />
               {item.usageCount}
             </span>
           )}
         </div>
 
-        {/* Tags */}
+        {/* Tags - 更紧凑 */}
         {item.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t" style={{ borderColor: 'var(--glass-border, rgba(255,255,255,0.08))' }}>
+          <div className="flex flex-wrap gap-1 mt-2.5 pt-2.5 border-t" style={{ borderColor: 'rgba(255, 255, 255, 0.06)' }}>
             {item.tags.slice(0, 3).map((tag) => (
               <span
                 key={tag}
-                className="text-xs px-2 py-0.5 rounded-md"
+                className="text-[10px] px-1.5 py-0.5 rounded"
                 style={{
                   background: 'rgba(255, 255, 255, 0.05)',
-                  color: 'var(--text-muted)',
-                  border: '1px solid rgba(255, 255, 255, 0.05)',
+                  color: 'rgba(255, 255, 255, 0.55)',
+                  border: '1px solid rgba(255, 255, 255, 0.04)',
                 }}
               >
                 {tag}
@@ -133,8 +133,8 @@ export function ToolCard({ item }: ToolCardProps) {
             ))}
             {item.tags.length > 3 && (
               <span
-                className="text-xs px-2 py-0.5 rounded-md"
-                style={{ color: 'var(--text-muted)' }}
+                className="text-[10px] px-1.5 py-0.5"
+                style={{ color: 'rgba(255, 255, 255, 0.4)' }}
               >
                 +{item.tags.length - 3}
               </span>
