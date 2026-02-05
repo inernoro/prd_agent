@@ -18,7 +18,7 @@
   stroke: #fff;
   fill: none;
   stroke-width: 0;
-  transition: stroke-width 0.3s linear;
+  transition: stroke-width 0.2s linear;
 }
 
 .ripple-switch-circle.animate {
@@ -39,7 +39,7 @@
   background-size: cover;
   z-index: 10;
   opacity: 0;
-  transition: opacity 0.3s ease, transform 1.4s ease;
+  transition: opacity 0.2s ease, transform 0.8s ease;
 }
 
 .ripple-switch-slide.active {
@@ -48,7 +48,7 @@
 }
 
 .ripple-switch-slide.animating {
-  transform: scale(1.3);
+  transform: scale(1.15);
 }
 
 .ripple-switch-slide.active.animating {

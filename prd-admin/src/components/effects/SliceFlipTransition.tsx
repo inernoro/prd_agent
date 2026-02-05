@@ -21,7 +21,7 @@ export interface SliceFlipTransitionProps {
 /**
  * 水波纹切换过渡效果组件
  *
- * 点击按钮触发图片切换，通过水波纹从中心扩散实现过渡动画
+ * 点击按钮触发图片切换，通过水波纹从按钮位置扩散实现过渡动画
  * 借鉴 RippleImageTransition 的水波纹效果
  */
 export function SliceFlipTransition({
@@ -35,8 +35,9 @@ export function SliceFlipTransition({
 }: SliceFlipTransitionProps) {
   const [activeImage, setActiveImage] = useState<'A' | 'B'>('A');
   const [isAnimating, setIsAnimating] = useState(false);
+  const [rippleDirection, setRippleDirection] = useState<'left' | 'right'>('right');
 
-  // 水波纹圆环配置 - 9个圆环，从中心扩散
+  // 水波纹圆环配置 - 9个圆环，从按钮位置扩散
   const circleCount = 9;
   const circles = Array.from({ length: circleCount }, (_, i) => ({
     index: i + 1,
@@ -48,27 +49,47 @@ export function SliceFlipTransition({
     (target: 'A' | 'B') => {
       if (isAnimating || activeImage === target) return;
       setIsAnimating(true);
+      // 切换到 B 从右边扩散，切换到 A 从左边扩散
+      setRippleDirection(target === 'B' ? 'right' : 'left');
       setActiveImage(target);
-      // 动画完成后解锁
-      setTimeout(() => setIsAnimating(false), 1400);
+      // 动画完成后解锁（缩短时间）
+      setTimeout(() => setIsAnimating(false), 1000);
     },
     [isAnimating, activeImage]
   );
 
-  // 水波纹中心点（右侧按钮位置）
-  const rippleCenterX = width - 60;
-  const rippleCenterY = height / 2;
-
   return (
     <div className={`ripple-switch-container ${className}`} style={{ width, height }}>
-      {/* 水波纹 SVG - 从按钮位置扩散 */}
-      <svg className="ripple-switch-svg" width={width} height={height}>
+      {/* 左侧水波纹 SVG */}
+      <svg
+        className={`ripple-switch-svg ripple-switch-svg-left ${rippleDirection === 'left' && isAnimating ? 'active' : ''}`}
+        width={width}
+        height={height}
+      >
         {circles.map((c) => (
           <circle
-            key={c.index}
-            className={`ripple-switch-circle ${isAnimating ? 'animate' : ''}`}
-            cx={rippleCenterX}
-            cy={rippleCenterY}
+            key={`left-${c.index}`}
+            className={`ripple-switch-circle ${isAnimating && rippleDirection === 'left' ? 'animate' : ''}`}
+            cx={34}
+            cy="49%"
+            r={c.radius}
+            style={{ transitionDelay: `${c.delay}s` }}
+          />
+        ))}
+      </svg>
+
+      {/* 右侧水波纹 SVG */}
+      <svg
+        className={`ripple-switch-svg ripple-switch-svg-right ${rippleDirection === 'right' && isAnimating ? 'active' : ''}`}
+        width={width}
+        height={height}
+      >
+        {circles.map((c) => (
+          <circle
+            key={`right-${c.index}`}
+            className={`ripple-switch-circle ${isAnimating && rippleDirection === 'right' ? 'animate' : ''}`}
+            cx={width - 33}
+            cy="49%"
             r={c.radius}
             style={{ transitionDelay: `${c.delay}s` }}
           />
