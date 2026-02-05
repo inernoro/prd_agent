@@ -15,6 +15,7 @@ import {
   generateVisualAgentWorkspaceTitle,
   getVisualAgentWorkspaceDetail,
   getAdapterInfoByModelName,
+  getImageGenRun,
   getModels,
   getUserPreferences,
   getWatermarkByApp,
@@ -89,6 +90,8 @@ type CanvasImageItem = {
   src: string;
   status: 'done' | 'error' | 'running';
   kind?: 'image' | 'generator' | 'shape' | 'text';
+  /** 关联的生图任务 ID，用于刷新页面后同步状态 */
+  runId?: string;
   /** 用户手动调整过尺寸（避免 onLoad 用 natural 覆盖 w/h） */
   userResized?: boolean;
   errorMessage?: string | null;
@@ -2130,6 +2133,55 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           // 为没有 refId 的图片分配新的 refId（老数据迁移）
           const refIdChanged = assignMissingRefIds(restored.canvas);
           applyCanvasFocus(restored.canvas);
+
+          // 同步 running 状态的元素：查询后端实际状态
+          const runningElements = restored.canvas.filter((el) => el.status === 'running' && el.runId);
+          if (runningElements.length > 0) {
+            void (async () => {
+              for (const el of runningElements) {
+                try {
+                  const res = await getImageGenRun({ runId: el.runId!, includeItems: true });
+                  if (!res.success || !res.data?.run) continue;
+                  const run = res.data.run;
+                  if (run.status === 'Failed' || run.status === 'Cancelled') {
+                    // 后端已失败，更新前端状态
+                    setCanvas((prev) =>
+                      prev.map((x) =>
+                        x.key === el.key
+                          ? { ...x, status: 'error', errorMessage: run.status === 'Failed' ? '生成失败（后端）' : '已取消' }
+                          : x
+                      )
+                    );
+                  } else if (run.status === 'Completed') {
+                    // 后端已完成，尝试获取图片 URL
+                    const item = res.data.items?.find((it) => it.url);
+                    if (item?.url) {
+                      setCanvas((prev) =>
+                        prev.map((x) =>
+                          x.key === el.key
+                            ? { ...x, status: 'done', src: item.url!, kind: 'image' }
+                            : x
+                        )
+                      );
+                    } else {
+                      // 完成但没有 URL，标记为错误
+                      setCanvas((prev) =>
+                        prev.map((x) =>
+                          x.key === el.key
+                            ? { ...x, status: 'error', errorMessage: '生成完成但无图片 URL' }
+                            : x
+                        )
+                      );
+                    }
+                  }
+                  // 如果是 Queued/Running，保持 running 状态，用户可以等待或重试
+                } catch {
+                  // 查询失败，保持原状态
+                }
+              }
+            })();
+          }
+
           if (restored.missingAssets > 0 || restored.localOnlyImages > 0) {
             pushMsg(
               'Assistant',
@@ -3284,6 +3336,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         triggerDefectFlash();
         return;
       }
+
+      // 保存 runId 到画布元素，用于刷新页面后同步状态
+      setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, runId } : x)));
 
       // 可选：订阅进度并实时替换（关闭页面也没关系，服务端会最终回填）
       const ac = new AbortController();

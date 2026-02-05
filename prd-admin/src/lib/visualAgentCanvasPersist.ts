@@ -33,6 +33,8 @@ export type PersistedCanvasElementV1 =
       status?: 'running' | 'error';
       /** 图片引用 ID，用于消息中的 @imgN 引用，持久化保存 */
       refId?: number;
+      /** 关联的生图任务 ID，用于刷新页面后同步状态 */
+      runId?: string;
       ext?: Record<string, unknown>;
     }
   | {
@@ -111,6 +113,8 @@ export interface CanvasImageItem {
   naturalH?: number;
   userResized?: boolean;
   refId?: number;
+  /** 关联的生图任务 ID，用于刷新页面后同步状态 */
+  runId?: string;
   // generator 专用
   requestedSize?: string | null;
   effectiveSize?: string | null;
@@ -210,6 +214,8 @@ export function canvasToPersistedV1(items: CanvasImageItem[]): {
         status: isPlaceholder ? (it.status as 'running' | 'error') : undefined,
         // 持久化 refId，用于消息中的 @imgN 引用
         refId: typeof it.refId === 'number' && it.refId > 0 ? it.refId : undefined,
+        // 持久化 runId，用于刷新页面后同步状态
+        runId: isPlaceholder && it.runId ? String(it.runId).trim() : undefined,
         ext: {},
       });
     } else if (kind === 'generator') {
@@ -310,6 +316,8 @@ export function persistedV1ToCanvas(
         naturalH: typeof el.naturalH === 'number' && el.naturalH > 0 ? el.naturalH : a?.height || undefined,
         // 恢复持久化的 refId
         refId: typeof el.refId === 'number' && el.refId > 0 ? el.refId : undefined,
+        // 恢复持久化的 runId，用于刷新页面后同步状态
+        runId: isPlaceholder && el.runId ? String(el.runId).trim() : undefined,
       });
     } else if (el.kind === 'generator') {
       out.push({
