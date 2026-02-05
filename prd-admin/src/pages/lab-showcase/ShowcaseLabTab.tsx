@@ -323,18 +323,17 @@ const EFFECT_CONFIGS: EffectConfig[] = [
   },
   {
     id: 'slice-flip',
-    label: '切片翻转过渡',
+    label: '水波纹切换',
     functionName: 'SliceFlipTransition',
     category: 'other',
     status: 'ready',
     params: [
       { name: 'imageA', type: 'string', description: '图片A的URL' },
       { name: 'imageB', type: 'string', description: '图片B的URL' },
-      { name: 'sliceCount', type: 'number', default: '8', description: '切片数量' },
       { name: 'labelA', type: 'string', default: "'方案 A'", description: '按钮A文字' },
       { name: 'labelB', type: 'string', default: "'方案 B'", description: '按钮B文字' },
     ],
-    performance: { animationDuration: '0.6s + 80ms × 切片数', renderer: 'CSS' },
+    performance: { animationDuration: '1.4s', delay: '50ms × 圆环', renderer: 'CSS' },
     render: (size) => (
       <div className="flex items-center justify-center h-full p-4" style={{ background: '#0a0a12' }}>
         <SliceFlipTransition
@@ -342,7 +341,6 @@ const EFFECT_CONFIGS: EffectConfig[] = [
           imageB={DEMO_IMAGES[1]}
           width={size ? Math.min(size.width - 32, 400) : 340}
           height={size ? Math.min(size.height - 32, 280) : 240}
-          sliceCount={8}
           labelA="Before"
           labelB="After"
         />

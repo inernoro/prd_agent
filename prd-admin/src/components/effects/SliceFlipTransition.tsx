@@ -10,8 +10,6 @@ export interface SliceFlipTransitionProps {
   width?: number;
   /** 高度 */
   height?: number;
-  /** 切片数量 */
-  sliceCount?: number;
   /** 按钮A文字 */
   labelA?: string;
   /** 按钮B文字 */
@@ -21,16 +19,16 @@ export interface SliceFlipTransitionProps {
 }
 
 /**
- * 切片翻转过渡效果组件
+ * 水波纹切换过渡效果组件
  *
- * 点击按钮触发图片切换，通过水平切片翻转实现炫酷过渡动画
+ * 点击按钮触发图片切换，通过水波纹从中心扩散实现过渡动画
+ * 借鉴 RippleImageTransition 的水波纹效果
  */
 export function SliceFlipTransition({
   imageA,
   imageB,
   width = 400,
   height = 300,
-  sliceCount = 8,
   labelA = '方案 A',
   labelB = '方案 B',
   className = '',
@@ -38,7 +36,13 @@ export function SliceFlipTransition({
   const [activeImage, setActiveImage] = useState<'A' | 'B'>('A');
   const [isAnimating, setIsAnimating] = useState(false);
 
-  const sliceHeight = height / sliceCount;
+  // 水波纹圆环配置 - 9个圆环，从中心扩散
+  const circleCount = 9;
+  const circles = Array.from({ length: circleCount }, (_, i) => ({
+    index: i + 1,
+    radius: 20 + i * 80,
+    delay: (i + 1) * 0.05,
+  }));
 
   const handleSwitch = useCallback(
     (target: 'A' | 'B') => {
@@ -46,84 +50,75 @@ export function SliceFlipTransition({
       setIsAnimating(true);
       setActiveImage(target);
       // 动画完成后解锁
-      setTimeout(() => setIsAnimating(false), sliceCount * 80 + 600);
+      setTimeout(() => setIsAnimating(false), 1400);
     },
-    [isAnimating, activeImage, sliceCount]
+    [isAnimating, activeImage]
   );
 
-  // 生成切片
-  const slices = Array.from({ length: sliceCount }, (_, i) => ({
-    index: i,
-    top: i * sliceHeight,
-    delay: i * 0.08,
-  }));
+  // 水波纹中心点（右侧按钮位置）
+  const rippleCenterX = width - 60;
+  const rippleCenterY = height / 2;
 
   return (
-    <div className={`slice-flip-container ${className}`} style={{ width, height }}>
-      {/* 切片层 */}
-      <div className="slice-flip-slices">
-        {slices.map((slice) => (
-          <div
-            key={slice.index}
-            className={`slice-flip-slice ${activeImage === 'B' ? 'flipped' : ''}`}
-            style={{
-              height: sliceHeight,
-              top: slice.top,
-              transitionDelay: `${slice.delay}s`,
-            }}
-          >
-            {/* 正面 - 图片A */}
-            <div
-              className="slice-flip-face slice-flip-front"
-              style={{
-                backgroundImage: `url(${imageA})`,
-                backgroundPosition: `center ${-slice.top}px`,
-                backgroundSize: `${width}px ${height}px`,
-              }}
-            />
-            {/* 背面 - 图片B */}
-            <div
-              className="slice-flip-face slice-flip-back"
-              style={{
-                backgroundImage: `url(${imageB})`,
-                backgroundPosition: `center ${-slice.top}px`,
-                backgroundSize: `${width}px ${height}px`,
-              }}
-            />
-          </div>
+    <div className={`ripple-switch-container ${className}`} style={{ width, height }}>
+      {/* 水波纹 SVG - 从按钮位置扩散 */}
+      <svg className="ripple-switch-svg" width={width} height={height}>
+        {circles.map((c) => (
+          <circle
+            key={c.index}
+            className={`ripple-switch-circle ${isAnimating ? 'animate' : ''}`}
+            cx={rippleCenterX}
+            cy={rippleCenterY}
+            r={c.radius}
+            style={{ transitionDelay: `${c.delay}s` }}
+          />
         ))}
+      </svg>
+
+      {/* 图片层 */}
+      <div className="ripple-switch-slides">
+        <div
+          className={`ripple-switch-slide ${activeImage === 'A' ? 'active' : ''} ${isAnimating ? 'animating' : ''}`}
+          style={{ backgroundImage: `url(${imageA})` }}
+        />
+        <div
+          className={`ripple-switch-slide ${activeImage === 'B' ? 'active' : ''} ${isAnimating ? 'animating' : ''}`}
+          style={{ backgroundImage: `url(${imageB})` }}
+        />
       </div>
 
-      {/* 光晕效果层 */}
-      <div className={`slice-flip-glow ${isAnimating ? 'active' : ''}`} />
-
       {/* 按钮组 */}
-      <div className="slice-flip-buttons">
+      <div className="ripple-switch-buttons">
         <button
-          className={`slice-flip-btn ${activeImage === 'A' ? 'active' : ''}`}
+          className={`ripple-switch-btn ${activeImage === 'A' ? 'active' : ''}`}
           onClick={() => handleSwitch('A')}
           disabled={isAnimating}
         >
-          <span className="slice-flip-btn-dot" />
+          <span className="ripple-switch-btn-dot" />
           {labelA}
         </button>
         <button
-          className={`slice-flip-btn ${activeImage === 'B' ? 'active' : ''}`}
+          className={`ripple-switch-btn ${activeImage === 'B' ? 'active' : ''}`}
           onClick={() => handleSwitch('B')}
           disabled={isAnimating}
         >
-          <span className="slice-flip-btn-dot" />
+          <span className="ripple-switch-btn-dot" />
           {labelB}
         </button>
       </div>
 
-      {/* 状态指示 */}
-      <div className="slice-flip-status">
-        <span className={`slice-flip-status-label ${activeImage === 'A' ? 'active' : ''}`}>A</span>
-        <div className="slice-flip-status-track">
-          <div className={`slice-flip-status-thumb ${activeImage === 'B' ? 'right' : ''}`} />
-        </div>
-        <span className={`slice-flip-status-label ${activeImage === 'B' ? 'active' : ''}`}>B</span>
+      {/* 底部指示器 */}
+      <div className="ripple-switch-indicators">
+        <button
+          className={`ripple-switch-indicator ${activeImage === 'A' ? 'active' : ''}`}
+          onClick={() => handleSwitch('A')}
+          disabled={isAnimating}
+        />
+        <button
+          className={`ripple-switch-indicator ${activeImage === 'B' ? 'active' : ''}`}
+          onClick={() => handleSwitch('B')}
+          disabled={isAnimating}
+        />
       </div>
     </div>
   );

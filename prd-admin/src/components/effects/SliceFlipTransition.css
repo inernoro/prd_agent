@@ -1,95 +1,69 @@
 /* 容器 */
-.slice-flip-container {
+.ripple-switch-container {
   position: relative;
   overflow: hidden;
   border-radius: 16px;
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.1),
-    0 25px 50px -12px rgba(0, 0, 0, 0.5);
-  background: #0a0a0f;
+  box-shadow: 0 0 88px 5px rgba(0, 0, 0, 0.75);
+  background: #000;
 }
 
-/* 切片容器 */
-.slice-flip-slices {
+/* 水波纹 SVG */
+.ripple-switch-svg {
+  position: absolute;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.ripple-switch-circle {
+  stroke: #fff;
+  fill: none;
+  stroke-width: 0;
+  transition: stroke-width 0.3s linear;
+}
+
+.ripple-switch-circle.animate {
+  stroke-width: 82px;
+}
+
+/* 图片幻灯片 */
+.ripple-switch-slides {
   position: relative;
   width: 100%;
   height: 100%;
-  perspective: 1000px;
 }
 
-/* 单个切片 */
-.slice-flip-slice {
-  position: absolute;
-  left: 0;
-  width: 100%;
-  transform-style: preserve-3d;
-  transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.slice-flip-slice.flipped {
-  transform: rotateX(-180deg);
-}
-
-/* 切片的正反面 */
-.slice-flip-face {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  backface-visibility: hidden;
-  background-repeat: no-repeat;
-}
-
-.slice-flip-front {
-  z-index: 2;
-}
-
-.slice-flip-back {
-  transform: rotateX(180deg);
-}
-
-/* 光晕效果 */
-.slice-flip-glow {
+.ripple-switch-slide {
   position: absolute;
   inset: 0;
+  background-position: center;
+  background-size: cover;
   z-index: 10;
-  pointer-events: none;
   opacity: 0;
-  background: radial-gradient(
-    ellipse 80% 60% at 50% 50%,
-    rgba(255, 255, 255, 0.15) 0%,
-    transparent 60%
-  );
-  transition: opacity 0.3s ease;
+  transition: opacity 0.3s ease, transform 1.4s ease;
 }
 
-.slice-flip-glow.active {
+.ripple-switch-slide.active {
   opacity: 1;
-  animation: slice-flip-glow-pulse 0.8s ease-out;
+  z-index: 20;
 }
 
-@keyframes slice-flip-glow-pulse {
-  0% {
-    opacity: 0;
-    transform: scale(0.8);
-  }
-  50% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.2);
-  }
+.ripple-switch-slide.animating {
+  transform: scale(1.3);
 }
 
-/* 按钮组 */
-.slice-flip-buttons {
+.ripple-switch-slide.active.animating {
+  transform: scale(1);
+}
+
+/* 顶部按钮组 */
+.ripple-switch-buttons {
   position: absolute;
   top: 16px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 20;
+  z-index: 50;
   display: flex;
-  gap: 8px;
+  gap: 4px;
   padding: 4px;
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.5);
@@ -97,7 +71,7 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.slice-flip-btn {
+.ripple-switch-btn {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -112,21 +86,25 @@
   transition: all 0.25s ease;
 }
 
-.slice-flip-btn:hover:not(:disabled) {
+.ripple-switch-btn:hover:not(:disabled) {
   color: rgba(255, 255, 255, 0.9);
   background: rgba(255, 255, 255, 0.05);
 }
 
-.slice-flip-btn.active {
+.ripple-switch-btn.active {
   background: rgba(255, 255, 255, 0.15);
   color: #fff;
 }
 
-.slice-flip-btn:disabled {
+.ripple-switch-btn:disabled {
   cursor: not-allowed;
 }
 
-.slice-flip-btn-dot {
+.ripple-switch-btn:focus {
+  outline: none;
+}
+
+.ripple-switch-btn-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -135,59 +113,46 @@
   transition: all 0.25s ease;
 }
 
-.slice-flip-btn.active .slice-flip-btn-dot {
+.ripple-switch-btn.active .ripple-switch-btn-dot {
   opacity: 1;
   box-shadow: 0 0 8px currentColor;
 }
 
-/* 状态指示器 */
-.slice-flip-status {
+/* 底部指示器 */
+.ripple-switch-indicators {
   position: absolute;
   bottom: 16px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 20;
+  z-index: 50;
   display: flex;
-  align-items: center;
   gap: 8px;
-  padding: 6px 12px;
-  border-radius: 20px;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.slice-flip-status-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.4);
-  transition: color 0.3s ease;
-}
-
-.slice-flip-status-label.active {
-  color: #fff;
-}
-
-.slice-flip-status-track {
-  width: 32px;
-  height: 4px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.15);
-  position: relative;
-}
-
-.slice-flip-status-thumb {
-  position: absolute;
-  top: -2px;
-  left: 0;
-  width: 8px;
-  height: 8px;
+.ripple-switch-indicator {
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #a78bfa 0%, #818cf8 100%);
-  box-shadow: 0 0 8px rgba(167, 139, 250, 0.6);
-  transition: left 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  padding: 0;
 }
 
-.slice-flip-status-thumb.right {
-  left: calc(100% - 8px);
+.ripple-switch-indicator:hover {
+  border-color: rgba(255, 255, 255, 0.8);
+}
+
+.ripple-switch-indicator:focus {
+  outline: none;
+}
+
+.ripple-switch-indicator.active {
+  background: #fff;
+  border-color: #fff;
+}
+
+.ripple-switch-indicator:disabled {
+  cursor: not-allowed;
 }
