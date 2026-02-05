@@ -13,7 +13,7 @@ public class WatermarkSpecValidatorTests
         var config = new WatermarkConfig
         {
             Text = "test",
-            FontKey = "dejavu-sans",
+            FontKey = "default",
             FontSizePx = 24,
             Opacity = 0.5,
             PositionMode = "ratio",
@@ -41,7 +41,7 @@ public class WatermarkSpecValidatorTests
         var config = new WatermarkConfig
         {
             Text = "test",
-            FontKey = "dejavu-sans",
+            FontKey = "default",
             FontSizePx = 24,
             Opacity = 1.5,
             PositionMode = "ratio",
@@ -50,7 +50,7 @@ public class WatermarkSpecValidatorTests
             BaseCanvasWidth = 320
         };
 
-        var (ok, _) = WatermarkSpecValidator.Validate(config, new[] { "dejavu-sans" });
+        var (ok, _) = WatermarkSpecValidator.Validate(config, new[] { "default" });
         Assert.False(ok);
     }
 
@@ -69,7 +69,7 @@ public class WatermarkSpecValidatorTests
             BaseCanvasWidth = 320
         };
 
-        var (ok, _) = WatermarkSpecValidator.Validate(config, new[] { "dejavu-sans" });
+        var (ok, _) = WatermarkSpecValidator.Validate(config, new[] { "default" });
         Assert.False(ok);
     }
 }
