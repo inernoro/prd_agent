@@ -24,7 +24,8 @@ import { CssRainBackground } from '@/components/effects/CssRainBackground';
 import { RibbonIcon } from '@/components/effects/BlackHoleIcon';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
 import ConvergingBeamsBackdrop from '@/components/login/ConvergingBeamsBackdrop';
-import XAiBackdrop from '@/components/login/XAiBackdrop';
+// XAiBackdrop 已移除：设计为超低对比度衬底，不适合单独展示
+// import XAiBackdrop from '@/components/login/XAiBackdrop';
 import BlackHoleScene from '@/components/three/BlackHoleScene';
 import { RippleImageTransition } from '@/components/effects/RippleImageTransition';
 
@@ -253,20 +254,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
       </div>
     ),
   },
-  {
-    id: 'xai-backdrop',
-    label: 'X 风格背景',
-    functionName: 'XAiBackdrop',
-    category: 'background',
-    status: 'ready',
-    params: [{ name: 'className', type: 'string', description: '自定义类名' }],
-    performance: { renderer: 'CSS' },
-    render: () => (
-      <div className="relative w-full h-full" style={{ background: '#050507' }}>
-        <XAiBackdrop />
-      </div>
-    ),
-  },
+  // XAiBackdrop 已移除：设计为超低对比度衬底（透明度仅 1.6%-4.5%），不适合单独展示
   {
     id: 'blackhole-scene',
     label: '黑洞场景',
