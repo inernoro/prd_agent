@@ -13,6 +13,8 @@ export interface ToolboxItem {
   category: 'builtin' | 'custom';
   type: 'builtin' | 'custom';
   agentKey?: string;
+  /** 定制版 Agent 的跳转路由，有此字段则为定制版 */
+  routePath?: string;
   prompt?: string;
   modelId?: string;
   isPublic?: boolean;

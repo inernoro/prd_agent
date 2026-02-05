@@ -66,7 +66,9 @@ interface ToolboxState {
 }
 
 // 内置工具定义 - icon 使用 Lucide 图标名称
+// routePath 存在则为"定制版"（跳转专门页面），否则为"普通版"（走统一对话）
 const BUILTIN_TOOLS: ToolboxItem[] = [
+  // ========== 定制版 Agent（有专门页面）==========
   {
     id: 'builtin-prd-agent',
     name: 'PRD 分析师',
@@ -75,7 +77,8 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     category: 'builtin',
     type: 'builtin',
     agentKey: 'prd-agent',
-    tags: ['PRD', '需求分析', '产品'],
+    routePath: '/prd-agent',
+    tags: ['PRD', '需求分析', '定制版'],
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
@@ -87,7 +90,8 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     category: 'builtin',
     type: 'builtin',
     agentKey: 'visual-agent',
-    tags: ['图片生成', '设计', 'AI绘画'],
+    routePath: '/visual-agent',
+    tags: ['图片生成', '设计', '定制版'],
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
@@ -99,7 +103,8 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     category: 'builtin',
     type: 'builtin',
     agentKey: 'literary-agent',
-    tags: ['写作', '文案', '创作'],
+    routePath: '/literary-agent',
+    tags: ['写作', '文案', '定制版'],
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
@@ -111,10 +116,12 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     category: 'builtin',
     type: 'builtin',
     agentKey: 'defect-agent',
-    tags: ['Bug', '缺陷', '测试'],
+    routePath: '/defect-agent',
+    tags: ['Bug', '缺陷', '定制版'],
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  // ========== 普通版 Agent（统一对话界面）==========
   {
     id: 'builtin-code-reviewer',
     name: '代码审查员',

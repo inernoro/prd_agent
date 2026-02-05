@@ -1,9 +1,11 @@
 import type { ToolboxItem } from '@/services';
 import { useToolboxStore } from '@/stores/toolboxStore';
+import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import {
   Zap,
   Sparkles,
+  ExternalLink,
   FileText,
   Palette,
   PenTool,
@@ -71,8 +73,22 @@ function getAccentHue(iconName: string): number {
 
 export function ToolCard({ item }: ToolCardProps) {
   const { selectItem } = useToolboxStore();
+  const navigate = useNavigate();
   const accentHue = getAccentHue(item.icon);
   const IconComponent = getIconComponent(item.icon);
+
+  // 判断是否为定制版（有专门路由页面）
+  const isCustomized = !!item.routePath;
+
+  const handleClick = () => {
+    if (isCustomized && item.routePath) {
+      // 定制版：跳转到专门页面
+      navigate(item.routePath);
+    } else {
+      // 普通版：显示对话界面
+      selectItem(item);
+    }
+  };
 
   return (
     <GlassCard
@@ -81,7 +97,7 @@ export function ToolCard({ item }: ToolCardProps) {
       glow
       padding="none"
       interactive
-      onClick={() => selectItem(item)}
+      onClick={handleClick}
       className="group"
     >
       <div className="p-3">
@@ -127,24 +143,44 @@ export function ToolCard({ item }: ToolCardProps) {
 
         {/* Footer */}
         <div className="flex items-center justify-between">
-          {/* Type badge */}
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
-            style={{
-              background: item.type === 'builtin'
-                ? `hsla(${accentHue}, 60%, 50%, 0.15)`
-                : 'rgba(34, 197, 94, 0.15)',
-              color: item.type === 'builtin'
-                ? `hsla(${accentHue}, 70%, 70%, 1)`
-                : 'rgb(74, 222, 128)',
-              border: item.type === 'builtin'
-                ? `1px solid hsla(${accentHue}, 60%, 50%, 0.25)`
-                : '1px solid rgba(34, 197, 94, 0.25)',
-            }}
-          >
-            {item.type === 'builtin' && <Sparkles size={8} />}
-            {item.type === 'builtin' ? '内置' : '自定义'}
-          </span>
+          {/* Type badges */}
+          <div className="flex items-center gap-1">
+            {/* 定制版/内置/自定义 标签 */}
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+              style={{
+                background: isCustomized
+                  ? 'rgba(168, 85, 247, 0.15)'
+                  : item.type === 'builtin'
+                    ? `hsla(${accentHue}, 60%, 50%, 0.15)`
+                    : 'rgba(34, 197, 94, 0.15)',
+                color: isCustomized
+                  ? 'rgb(192, 132, 252)'
+                  : item.type === 'builtin'
+                    ? `hsla(${accentHue}, 70%, 70%, 1)`
+                    : 'rgb(74, 222, 128)',
+                border: isCustomized
+                  ? '1px solid rgba(168, 85, 247, 0.25)'
+                  : item.type === 'builtin'
+                    ? `1px solid hsla(${accentHue}, 60%, 50%, 0.25)`
+                    : '1px solid rgba(34, 197, 94, 0.25)',
+              }}
+            >
+              {isCustomized ? (
+                <>
+                  <ExternalLink size={8} />
+                  定制版
+                </>
+              ) : item.type === 'builtin' ? (
+                <>
+                  <Sparkles size={8} />
+                  内置
+                </>
+              ) : (
+                '自定义'
+              )}
+            </span>
+          </div>
 
           {/* Usage count */}
           {item.usageCount > 0 && (
