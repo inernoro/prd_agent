@@ -3153,8 +3153,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     });
 
     try {
-      // Bug fix: 只有用户显式引用图片（@imgN）才使用 initImage，选中但未引用的图片不应触发 img2img
-      const refForInit = primaryRef as CanvasImageItem | null;
+      const refForInit = (primaryRef ?? selected) as CanvasImageItem | null;
       const initSrc = (refForInit?.src ?? '').trim();
       const initSha = (refForInit?.sha256 ?? '').trim();
       let initImageBase64: string | undefined;
