@@ -1,15 +1,31 @@
 import { useEffect, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { Badge } from '@/components/design/Badge';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { Switch } from '@/components/design/Switch';
 import { openPlatformService, getUsers, getAdminGroups } from '@/services';
-import { Plus, Trash2, RefreshCw, Copy, MoreVertical, Pencil, Search } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  RefreshCw,
+  Copy,
+  MoreVertical,
+  Pencil,
+  Search,
+  Key,
+  Code,
+  ExternalLink,
+  AlertTriangle,
+  Check,
+  HelpCircle,
+} from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import type { OpenPlatformApp, CreateAppRequest, UpdateAppRequest } from '@/services/contracts/openPlatform';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import * as Tooltip from '@radix-ui/react-tooltip';
 
 interface AppsPanelProps {
   onActionsReady?: (actions: React.ReactNode) => void;
@@ -76,36 +92,15 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
     }
   };
 
-  useEffect(() => {
-    loadApps();
-  }, [page, search]);
+  useEffect(() => { loadApps(); }, [page, search]);
 
-  // 传递 actions 给父容器
   useEffect(() => {
     onActionsReady?.(
-      <>
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="搜索应用..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-8 pl-9 pr-3 text-sm rounded-lg outline-none"
-            style={{
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              width: '200px',
-            }}
-          />
-        </div>
-        <Button variant="primary" size="sm" className="whitespace-nowrap" onClick={() => setCreateDialogOpen(true)}>
-          <Plus size={14} />
-          新建应用
-        </Button>
-      </>
+      <Button variant="secondary" size="sm" onClick={loadApps}>
+        <RefreshCw size={14} />
+      </Button>
     );
-  }, [search, onActionsReady]);
+  }, [onActionsReady]);
 
   const handleCreate = async (request: CreateAppRequest) => {
     try {
@@ -204,52 +199,87 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
   };
 
   return (
-    <div className="h-full flex flex-col gap-4">
-      <GlassCard glow className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-auto">
-          <table className="w-full">
-            <thead className="sticky top-0" style={{ background: 'rgba(0,0,0,0.4)' }}>
-              <tr>
-                <th className="px-4 py-3 text-left text-sm font-medium">应用名称</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">绑定信息</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">API Key</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">请求数</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">时间</th>
-                <th className="px-4 py-3 text-right text-sm font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {apps.map((app) => (
-                <tr
-                  key={app.id}
-                  className="transition-colors hover:bg-white/[0.02]"
-                  style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}
-                >
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{app.appName}</div>
-                    {app.description && <div className="text-sm text-muted-foreground">{app.description}</div>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2 text-sm">
-                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-semibold" style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}>
-                          {app.boundUserName.charAt(0).toUpperCase()}
-                        </div>
-                        <span>{app.boundUserName}</span>
+    <div className="h-full overflow-auto p-1">
+      <GlassCard glow className="min-h-full">
+        {/* 顶部提示栏 */}
+        <div className="p-4 border-b border-white/10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Key size={18} className="text-muted-foreground" />
+              <span>管理 OpenAI 兼容的 API 应用，支持第三方集成</span>
+            </div>
+            <a href="#" className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1">
+              API 文档 <ExternalLink size={12} />
+            </a>
+          </div>
+        </div>
+
+        <div className="p-5 space-y-5">
+          {/* 应用列表标题 */}
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium">应用列表</h3>
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="text"
+                    placeholder="搜索应用..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="h-8 pl-8 pr-3 text-sm rounded-lg outline-none"
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '180px' }}
+                  />
+                </div>
+                <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)}>
+                  <Plus size={14} />
+                  新建应用
+                </Button>
+              </div>
+            </div>
+
+            {/* 应用卡片列表 */}
+            <div className="space-y-2">
+              {apps.length === 0 && !loading ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  {search ? '未找到匹配的应用' : '暂无应用，点击上方按钮创建'}
+                </div>
+              ) : (
+                apps.map((app) => (
+                  <div
+                    key={app.id}
+                    className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/[0.03]"
+                    style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+                  >
+                    <div className="flex items-center gap-4 flex-1 min-w-0">
+                      <div
+                        className="w-10 h-10 rounded-lg flex items-center justify-center text-lg font-bold flex-shrink-0"
+                        style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}
+                      >
+                        {app.appName.charAt(0).toUpperCase()}
                       </div>
-                      <div className="text-xs text-muted-foreground">{app.boundGroupName || '-'}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{app.appName}</span>
+                          {!app.isActive && <Badge variant="subtle" size="sm">已禁用</Badge>}
+                        </div>
+                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                          <span>用户: {app.boundUserName}</span>
+                          {app.boundGroupName && <span>群组: {app.boundGroupName}</span>}
+                          <span>请求: <span className="text-blue-400">{app.totalRequests}</span></span>
+                        </div>
+                      </div>
+                      <div className="flex-shrink-0 text-right">
+                        <code className="text-xs px-2 py-1 rounded-lg" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                          {app.apiKeyMasked}
+                        </code>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          最后使用: {fmtDate(app.lastUsedAt)}
+                        </div>
+                      </div>
                     </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <code className="text-xs bg-muted px-2 py-1 rounded">{app.apiKeyMasked}</code>
-                  </td>
-                  <td className="px-4 py-3 text-sm">{app.totalRequests}</td>
-                  <td className="px-4 py-3 text-sm text-muted-foreground">
-                    <div>使用: {fmtDate(app.lastUsedAt)}</div>
-                    <div>创建: {fmtDate(app.createdAt)}</div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end items-center gap-2">
+
+                    <div className="flex items-center gap-3 ml-4">
                       <Switch
                         checked={app.isActive}
                         onCheckedChange={() => handleToggleStatus(app.id)}
@@ -257,7 +287,9 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                       />
                       <DropdownMenu.Root>
                         <DropdownMenu.Trigger asChild>
-                          <Button variant="ghost" size="sm"><MoreVertical size={14} /></Button>
+                          <button className="p-1.5 rounded hover:bg-white/10 transition-colors text-muted-foreground hover:text-foreground">
+                            <MoreVertical size={16} />
+                          </button>
                         </DropdownMenu.Trigger>
                         <DropdownMenu.Portal>
                           <DropdownMenu.Content
@@ -271,48 +303,53 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                               backdropFilter: 'blur(40px)',
                             }}
                           >
-                            <DropdownMenu.Item className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10" onSelect={() => handleEdit(app)}>
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10"
+                              onSelect={() => handleEdit(app)}
+                            >
                               <Pencil size={14} /> 编辑
                             </DropdownMenu.Item>
-                            <DropdownMenu.Item className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10" onSelect={showCurlCommand}>
-                              <Copy size={14} /> curl 命令
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10"
+                              onSelect={showCurlCommand}
+                            >
+                              <Code size={14} /> curl 命令
                             </DropdownMenu.Item>
-                            <DropdownMenu.Item className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10" onSelect={() => handleRegenerateKey(app.id, app.appName)}>
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10"
+                              onSelect={() => handleRegenerateKey(app.id, app.appName)}
+                            >
                               <RefreshCw size={14} /> 重新生成密钥
                             </DropdownMenu.Item>
                             <DropdownMenu.Separator className="my-1 h-px bg-white/10" />
-                            <DropdownMenu.Item className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10 text-red-400" onSelect={() => handleDelete(app.id, app.appName)}>
+                            <DropdownMenu.Item
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10 text-red-400"
+                              onSelect={() => handleDelete(app.id, app.appName)}
+                            >
                               <Trash2 size={14} /> 删除
                             </DropdownMenu.Item>
                           </DropdownMenu.Content>
                         </DropdownMenu.Portal>
                       </DropdownMenu.Root>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {apps.length === 0 && !loading && (
-            <div className="text-center py-12 text-muted-foreground">
-              {search ? '未找到匹配的应用' : '暂无应用，点击右上角"新建应用"开始使用'}
+                  </div>
+                ))
+              )}
             </div>
-          )}
+
+            {total > pageSize && (
+              <div className="flex justify-between items-center pt-4 mt-4 border-t border-white/10">
+                <div className="text-sm text-muted-foreground">共 {total} 条</div>
+                <div className="flex gap-2">
+                  <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>上一页</Button>
+                  <Button variant="secondary" size="sm" disabled={page >= Math.ceil(total / pageSize)} onClick={() => setPage(page + 1)}>下一页</Button>
+                </div>
+              </div>
+            )}
+          </section>
         </div>
-
-        {total > pageSize && (
-          <div className="p-4 border-t flex justify-between items-center" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-            <div className="text-sm text-muted-foreground">共 {total} 条</div>
-            <div className="flex gap-2">
-              <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>上一页</Button>
-              <Button variant="secondary" size="sm" disabled={page >= Math.ceil(total / pageSize)} onClick={() => setPage(page + 1)}>下一页</Button>
-            </div>
-          </div>
-        )}
       </GlassCard>
 
-      {/* 创建/编辑弹窗 */}
       <CreateAppDialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} onCreate={handleCreate} />
       <EditAppDialog open={editDialogOpen} onClose={() => { setEditDialogOpen(false); setEditingApp(null); }} onUpdate={handleUpdate} app={editingApp} />
       <ApiKeyDialog open={apiKeyDialogOpen} onClose={() => setApiKeyDialogOpen(false)} apiKey={newApiKey} />
@@ -321,7 +358,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
   );
 }
 
-// ============ 子组件：创建应用弹窗 ============
+// ============ 创建应用弹窗 ============
 function CreateAppDialog({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (req: CreateAppRequest) => void }) {
   const [appName, setAppName] = useState('');
   const [description, setDescription] = useState('');
@@ -384,47 +421,114 @@ function CreateAppDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
     setBoundGroupId('');
   };
 
+  const inputCls = "w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-sm";
+
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()} title="新建应用" maxWidth={800}
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => !isOpen && onClose()}
+      title="新建应用"
+      maxWidth={520}
+      contentClassName="max-h-[85vh] overflow-y-auto"
       content={
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">应用名称 *</label>
-              <input type="text" value={appName} onChange={(e) => setAppName(e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded-md" placeholder="输入应用名称" />
+        <div className="space-y-5">
+          {/* 应用信息预览 */}
+          <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)' }}>
+            <div
+              className="w-10 h-10 rounded-lg flex items-center justify-center text-lg font-bold"
+              style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}
+            >
+              {appName ? appName.charAt(0).toUpperCase() : 'A'}
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">绑定群组 *</label>
+              <div className="text-sm font-medium">{appName || '应用名称'}</div>
+              <div className="text-xs text-muted-foreground">{description || '应用描述'}</div>
+            </div>
+          </div>
+
+          {/* 基本信息 */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">应用名称 *</label>
+              <input
+                type="text"
+                value={appName}
+                onChange={(e) => setAppName(e.target.value)}
+                className={inputCls}
+                placeholder="输入应用名称"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">应用描述</label>
+              <input
+                type="text"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className={inputCls}
+                placeholder="可选"
+              />
+            </div>
+          </div>
+
+          {/* 绑定信息 */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">绑定群组 *</label>
               <Select value={boundGroupId} onChange={(e) => setBoundGroupId(e.target.value)} disabled={loadingGroups} uiSize="md">
                 <option value="">{loadingGroups ? '加载中...' : '请选择群组'}</option>
                 {groups.map((g) => <option key={g.groupId} value={g.groupId}>{g.groupName}</option>)}
               </Select>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">绑定用户 *</label>
+              <label className="block text-xs text-muted-foreground mb-1">绑定用户 *</label>
               <Select value={boundUserId} onChange={(e) => setBoundUserId(e.target.value)} disabled={loadingUsers} uiSize="md">
                 <option value="">{loadingUsers ? '加载中...' : '请选择用户'}</option>
                 {users.map((u) => <option key={u.userId} value={u.userId}>{u.displayName} (@{u.username})</option>)}
               </Select>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">应用描述</label>
-              <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded-md" placeholder="可选" />
-            </div>
           </div>
 
+          {/* 高级选项 */}
           <div className="flex gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={ignoreUserSystemPrompt} onChange={(e) => setIgnoreUserSystemPrompt(e.target.checked)} />
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={ignoreUserSystemPrompt}
+                onChange={(e) => setIgnoreUserSystemPrompt(e.target.checked)}
+                className="rounded"
+              />
               忽略外部系统提示词
+              <Tooltip.Provider>
+                <Tooltip.Root>
+                  <Tooltip.Trigger asChild>
+                    <HelpCircle size={12} className="text-muted-foreground" />
+                  </Tooltip.Trigger>
+                  <Tooltip.Portal>
+                    <Tooltip.Content
+                      className="px-3 py-2 text-xs rounded-lg max-w-xs"
+                      style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid rgba(255,255,255,0.1)' }}
+                      sideOffset={5}
+                    >
+                      忽略 API 请求中的 system message
+                      <Tooltip.Arrow style={{ fill: 'rgba(0,0,0,0.9)' }} />
+                    </Tooltip.Content>
+                  </Tooltip.Portal>
+                </Tooltip.Root>
+              </Tooltip.Provider>
             </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={disableGroupContext} onChange={(e) => setDisableGroupContext(e.target.checked)} />
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={disableGroupContext}
+                onChange={(e) => setDisableGroupContext(e.target.checked)}
+                className="rounded"
+              />
               禁用群上下文
             </label>
           </div>
 
-          <div className="flex justify-end gap-2 pt-4 border-t border-border">
+          {/* 操作按钮 */}
+          <div className="flex justify-end gap-2 pt-4 border-t border-white/10">
             <Button variant="secondary" onClick={onClose}>取消</Button>
             <Button onClick={handleSubmit}>创建</Button>
           </div>
@@ -434,7 +538,7 @@ function CreateAppDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
   );
 }
 
-// ============ 子组件：编辑应用弹窗 ============
+// ============ 编辑应用弹窗 ============
 function EditAppDialog({ open, onClose, onUpdate, app }: { open: boolean; onClose: () => void; onUpdate: (req: UpdateAppRequest) => void; app: OpenPlatformApp | null }) {
   const [appName, setAppName] = useState('');
   const [description, setDescription] = useState('');
@@ -473,35 +577,46 @@ function EditAppDialog({ open, onClose, onUpdate, app }: { open: boolean; onClos
     onUpdate({ appName: appName.trim(), description: description.trim() || undefined, boundUserId, boundGroupId });
   };
 
+  const inputCls = "w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-sm";
+
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()} title="编辑应用" maxWidth={600}
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => !isOpen && onClose()}
+      title="编辑应用"
+      maxWidth={480}
+      contentClassName="max-h-[85vh] overflow-y-auto"
       content={
-        <div className="space-y-4">
+        <div className="space-y-5">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">应用名称 *</label>
-              <input type="text" value={appName} onChange={(e) => setAppName(e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded-md" />
+              <label className="block text-xs text-muted-foreground mb-1">应用名称 *</label>
+              <input type="text" value={appName} onChange={(e) => setAppName(e.target.value)} className={inputCls} />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">应用描述</label>
-              <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded-md" />
+              <label className="block text-xs text-muted-foreground mb-1">应用描述</label>
+              <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} className={inputCls} />
             </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">绑定群组</label>
+              <label className="block text-xs text-muted-foreground mb-1">绑定群组</label>
               <Select value={boundGroupId} onChange={(e) => setBoundGroupId(e.target.value)} uiSize="md">
                 <option value="">请选择群组</option>
                 {groups.map((g) => <option key={g.groupId} value={g.groupId}>{g.groupName}</option>)}
               </Select>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">绑定用户</label>
+              <label className="block text-xs text-muted-foreground mb-1">绑定用户</label>
               <Select value={boundUserId} onChange={(e) => setBoundUserId(e.target.value)} uiSize="md">
                 <option value="">请选择用户</option>
                 {users.map((u) => <option key={u.userId} value={u.userId}>{u.displayName}</option>)}
               </Select>
             </div>
           </div>
-          <div className="flex justify-end gap-2 pt-4 border-t border-border">
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-white/10">
             <Button variant="secondary" onClick={onClose}>取消</Button>
             <Button onClick={handleSubmit}>保存</Button>
           </div>
@@ -511,43 +626,95 @@ function EditAppDialog({ open, onClose, onUpdate, app }: { open: boolean; onClos
   );
 }
 
-// ============ 子组件：API Key 弹窗 ============
+// ============ API Key 弹窗 ============
 function ApiKeyDialog({ open, onClose, apiKey }: { open: boolean; onClose: () => void; apiKey: string }) {
-  const copyKey = () => { navigator.clipboard.writeText(apiKey); toast.success('已复制到剪贴板'); };
+  const [copied, setCopied] = useState(false);
+
+  const copyKey = () => {
+    navigator.clipboard.writeText(apiKey);
+    setCopied(true);
+    toast.success('已复制到剪贴板');
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()} title="API Key"
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => !isOpen && onClose()}
+      title="API Key"
+      maxWidth={500}
       content={
         <div className="space-y-4">
-          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-md p-4">
-            <p className="text-sm text-yellow-400 font-medium">请立即复制此 API Key，关闭后将无法再次查看。</p>
+          <div className="p-3 rounded-lg flex items-start gap-3" style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)' }}>
+            <AlertTriangle size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-amber-400">请立即复制此 API Key，关闭后将无法再次查看。</p>
           </div>
+
           <div className="flex gap-2">
-            <code className="flex-1 px-3 py-2 bg-muted rounded-md text-sm break-all">{apiKey}</code>
-            <Button variant="secondary" size="sm" onClick={copyKey}><Copy size={14} /></Button>
+            <code
+              className="flex-1 px-3 py-2 rounded-lg text-sm break-all font-mono"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+            >
+              {apiKey}
+            </code>
+            <Button variant="secondary" size="sm" onClick={copyKey}>
+              {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+            </Button>
           </div>
-          <div className="flex justify-end"><Button onClick={onClose}>我已保存</Button></div>
+
+          <div className="flex justify-end pt-4 border-t border-white/10">
+            <Button onClick={onClose}>我已保存</Button>
+          </div>
         </div>
       }
     />
   );
 }
 
-// ============ 子组件：curl 命令弹窗 ============
+// ============ curl 命令弹窗 ============
 function CurlCommandDialog({ open, onClose, curlCommand }: { open: boolean; onClose: () => void; curlCommand: string }) {
-  const copyCommand = () => { navigator.clipboard.writeText(curlCommand); toast.success('已复制到剪贴板'); };
+  const [copied, setCopied] = useState(false);
+
+  const copyCommand = () => {
+    navigator.clipboard.writeText(curlCommand);
+    setCopied(true);
+    toast.success('已复制到剪贴板');
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()} title="curl 调用示例" maxWidth={700}
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => !isOpen && onClose()}
+      title="curl 调用示例"
+      maxWidth={650}
       content={
         <div className="space-y-4">
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-3">
-            <p className="text-sm text-amber-400">将 <code className="px-1 bg-amber-500/20 rounded">YOUR_API_KEY</code> 替换为真实密钥后执行。</p>
+          <div className="p-3 rounded-lg flex items-start gap-3" style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)' }}>
+            <AlertTriangle size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-amber-400">
+              将 <code className="px-1.5 py-0.5 rounded" style={{ background: 'rgba(251,191,36,0.15)' }}>YOUR_API_KEY</code> 替换为真实密钥后执行。
+            </p>
           </div>
+
           <div className="flex justify-between items-center">
             <span className="text-sm font-medium">命令</span>
-            <Button variant="secondary" size="sm" onClick={copyCommand}><Copy size={14} /> 复制</Button>
+            <Button variant="secondary" size="sm" onClick={copyCommand}>
+              {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+              复制
+            </Button>
           </div>
-          <pre className="p-4 rounded-lg text-xs overflow-x-auto bg-black/30 border border-white/10"><code>{curlCommand}</code></pre>
-          <div className="flex justify-end"><Button onClick={onClose}>关闭</Button></div>
+
+          <pre
+            className="p-4 rounded-lg text-xs overflow-x-auto font-mono"
+            style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)' }}
+          >
+            <code>{curlCommand}</code>
+          </pre>
+
+          <div className="flex justify-end pt-4 border-t border-white/10">
+            <Button onClick={onClose}>关闭</Button>
+          </div>
         </div>
       }
     />
