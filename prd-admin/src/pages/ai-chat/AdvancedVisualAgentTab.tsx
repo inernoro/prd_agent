@@ -6594,12 +6594,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               title="重试生成"
                               onClick={() => {
                                 if (!genError.prompt) return;
-                                // 只要有参考图就传入，不管 prompt 里有没有 @imgN
-                                // 因为重试时原始的 @imgN 引用可能已经失效
+                                // 重试时清理失效的 @imgN 标记（它们指向的图片可能已不存在）
+                                const cleanPrompt = genError.prompt.replace(/@img\d+\s*/gi, '').trim();
+                                if (!cleanPrompt) return;
+                                // 有参考图就传 inlineImage，确保 img2img 正确
                                 if (genError.refSrc) {
-                                  void sendText(genError.prompt, { inlineImage: { src: genError.refSrc } });
+                                  void sendText(cleanPrompt, { inlineImage: { src: genError.refSrc } });
                                 } else {
-                                  void sendText(genError.prompt);
+                                  void sendText(cleanPrompt);
                                 }
                               }}
                             >
@@ -6668,12 +6670,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               title="使用相同提示词重新生成"
                               onClick={() => {
                                 if (!genDone.prompt) return;
-                                // 只要有参考图就传入，不管 prompt 里有没有 @imgN
-                                // 因为重试时原始的 @imgN 引用可能已经失效
+                                // 重试时清理失效的 @imgN 标记（它们指向的图片可能已不存在）
+                                const cleanPrompt = genDone.prompt.replace(/@img\d+\s*/gi, '').trim();
+                                if (!cleanPrompt) return;
+                                // 有参考图就传 inlineImage，确保 img2img 正确
                                 if (genDone.refSrc) {
-                                  void sendText(genDone.prompt, { inlineImage: { src: genDone.refSrc } });
+                                  void sendText(cleanPrompt, { inlineImage: { src: genDone.refSrc } });
                                 } else {
-                                  void sendText(genDone.prompt);
+                                  void sendText(cleanPrompt);
                                 }
                               }}
                             >
