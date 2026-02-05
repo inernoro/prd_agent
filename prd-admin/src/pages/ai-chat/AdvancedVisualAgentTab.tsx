@@ -7682,7 +7682,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         mineTitle="配置管理"
         mineDescription="水印设置"
         marketplaceDescription="发现和下载社区分享的水印配置"
-        maxWidth={600}
+        maxWidth={1500}
         showColumnDividers={false}
         columns={[
           {

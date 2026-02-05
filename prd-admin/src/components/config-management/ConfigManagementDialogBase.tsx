@@ -215,14 +215,13 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
 
     // 渲染"我的"视图
     const renderMineView = () => {
-      // 根据栏数动态计算网格列数
-      const gridColsClass = columns.length === 1 ? 'lg:grid-cols-1' : columns.length === 2 ? 'lg:grid-cols-2' : 'lg:grid-cols-3';
+      // 使用 flex 均分栏宽，栏内卡片自适应
       return (
-        <div className={`grid grid-cols-1 ${gridColsClass} gap-4 h-full min-h-0`}>
+        <div className="flex gap-4 h-full min-h-0">
           {columns.map((col, idx) => (
             <div
               key={col.key}
-              className={`min-h-0 flex flex-col h-full ${showColumnDividers && idx > 0 ? 'border-l pl-4' : ''}`}
+              className={`flex-1 min-w-0 min-h-0 flex flex-col h-full ${showColumnDividers && idx > 0 ? 'border-l pl-4' : ''}`}
               style={showColumnDividers && idx > 0 ? { borderColor: 'var(--border-subtle)' } : undefined}
             >
               <div className="flex items-center justify-between mb-2">
@@ -231,7 +230,7 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
                 </div>
                 {col.titleAction}
               </div>
-              <div className="flex-1 min-h-0 overflow-hidden">{col.renderMineContent(mineContext)}</div>
+              <div className="flex-1 min-h-0 overflow-auto">{col.renderMineContent(mineContext)}</div>
             </div>
           ))}
         </div>
@@ -306,13 +305,13 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
               <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
             </div>
           ) : (
-            <div className={`grid grid-cols-1 ${visibleColumns.length === 1 ? 'lg:grid-cols-1' : visibleColumns.length === 2 ? 'lg:grid-cols-2' : 'lg:grid-cols-3'} gap-4 flex-1 min-h-0 overflow-auto`}>
+            <div className="flex gap-4 flex-1 min-h-0 overflow-auto">
               {visibleColumns.map((col, idx) => {
                 const items = (marketplaceData[col.key] || []) as unknown[];
                 return (
                   <div
                     key={col.key}
-                    className={`min-h-0 flex flex-col ${idx > 0 ? 'border-l pl-4' : ''}`}
+                    className={`flex-1 min-w-0 min-h-0 flex flex-col ${idx > 0 ? 'border-l pl-4' : ''}`}
                     style={idx > 0 ? { borderColor: 'var(--border-subtle)' } : undefined}
                   >
                     <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
@@ -326,8 +325,12 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
                         </div>
                       </div>
                     ) : (
-                      <div className="grid grid-cols-1 gap-3 overflow-auto">
-                        {items.map((item: any) => col.renderMarketplaceCard?.(item, marketplaceCardContext))}
+                      <div className="flex flex-wrap gap-3 overflow-auto content-start" style={{ minWidth: 0 }}>
+                        {items.map((item: any) => (
+                          <div key={item.id} style={{ width: 280, flexShrink: 0 }}>
+                            {col.renderMarketplaceCard?.(item, marketplaceCardContext)}
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
