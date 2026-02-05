@@ -197,14 +197,7 @@ public class MultiImageDomainService : IMultiImageDomainService
             return prompt;
         }
 
-        if (refs.Count == 1)
-        {
-            // 单图场景：可以直接使用原始 prompt
-            // 生图模型会结合图片理解用户意图
-            return prompt;
-        }
-
-        // 多图场景：调用意图分析
+        // 单图/多图场景：都需要调用意图分析来清理 @imgN 标记
         var intent = await AnalyzeIntentAsync(prompt, refs, ct);
         if (intent.Success)
         {
