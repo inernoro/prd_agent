@@ -12,8 +12,9 @@ import {
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
+import { ColorPicker } from '@/components/watermark/ColorPicker';
 import { Dialog } from '@/components/ui/Dialog';
-import { Tooltip } from '@/components/ui/Tooltip';
 import {
   deleteWatermarkFont,
   getWatermarks,
@@ -26,11 +27,13 @@ import {
   uploadWatermarkFont,
   uploadWatermarkIcon,
   testWatermark,
+  publishWatermark,
+  unpublishWatermark,
 } from '@/services';
 import type { WatermarkFontInfo, WatermarkConfig } from '@/services/contracts/watermark';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
-import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical } from 'lucide-react';
+import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Square, Droplet, Plus, CheckCircle2, FlaskConical, Share2, GitFork, Eye, PaintBucket } from 'lucide-react';
 
 const DEFAULT_CANVAS_SIZE = 320;
 const watermarkSizeCache = new Map<string, { width: number; height: number }>();
@@ -51,6 +54,11 @@ const anchorLabelMap: Record<WatermarkAnchor, string> = {
   'bottom-right': '右下',
 };
 
+const modeLabelMap: Record<WatermarkConfig['positionMode'], string> = {
+  pixel: '按像素',
+  ratio: '按比例',
+};
+
 // appKey 到显示名称的映射
 const appKeyLabelMap: Record<string, string> = {
   'literary-agent': '文学创作',
@@ -58,54 +66,21 @@ const appKeyLabelMap: Record<string, string> = {
   'prd-agent': '米多智能体平台',
 };
 
-const modeLabelMap: Record<WatermarkConfig['positionMode'], string> = {
-  pixel: '像素',
-  ratio: '比例',
-};
+const SectionLabel = ({ label }: { label: string }) => (
+  <div className="text-[12px] font-semibold self-center text-center" style={{ color: 'var(--text-muted)' }}>
+    {label}
+  </div>
+);
 
-function TitleWithTip(props: { label: string; tip: string }) {
-  const { label, tip } = props;
-  return (
-    <div className="flex items-start gap-1">
-      <span className="text-xs font-semibold pt-1" style={{ color: 'var(--text-muted)' }}>{label}</span>
-      <Tooltip content={tip} side="top" align="center" delayDuration={80} openOnClick>
-        <button
-          type="button"
-          className="mt-1 h-4 w-4 rounded-full inline-flex items-center justify-center text-[10px]"
-          style={{
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.18)',
-            color: 'rgba(255,255,255,0.6)',
-          }}
-        >
-          ?
-        </button>
-      </Tooltip>
-    </div>
-  );
-}
+const InlineLabel = ({ label }: { label: string }) => (
+  <div className="text-[11px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>
+    {label}
+  </div>
+);
 
-function InlineLabelWithTip(props: { label: string; tip: string }) {
-  const { label, tip } = props;
-  return (
-    <div className="flex items-start gap-1 w-10 shrink-0">
-      <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.7)' }}>{label}</span>
-      <Tooltip content={tip} side="top" align="center" delayDuration={80} openOnClick>
-        <button
-          type="button"
-          className="mt-[2px] h-3.5 w-3.5 rounded-full inline-flex items-center justify-center text-[9px]"
-          style={{
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.18)',
-            color: 'rgba(255,255,255,0.6)',
-          }}
-        >
-          ?
-        </button>
-      </Tooltip>
-    </div>
-  );
-}
+const SectionDivider = () => (
+  <div className="col-span-2 border-t my-1" style={{ borderColor: 'rgba(255,255,255,0.08)' }} />
+);
 
 const buildDefaultConfig = (fontKey: string): WatermarkConfig => ({
   id: createSpecId(),
@@ -301,6 +276,8 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             item.name || `水印配置 ${index + 1}`,
           )
         );
+        // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
+        normalizedConfigs.sort((a, b) => a.id.localeCompare(b.id));
         setConfigs(normalizedConfigs);
         // 刷新缓存时间戳，确保预览图不被浏览器缓存
         setPreviewEpoch(Date.now());
@@ -612,6 +589,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
   const handleDeleteConfig = useCallback(
     async (target: WatermarkConfig) => {
       if (saving) return;
+      // 第一次确认
       const confirmed = await systemDialog.confirm({
         title: '确认删除水印配置',
         message: `确定删除「${target.name || '水印配置'}」吗？`,
@@ -620,11 +598,69 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
         cancelText: '取消',
       });
       if (!confirmed) return;
+      // 已发布到海鲜市场的配置需要二次确认
+      if (target.isPublic) {
+        const doubleConfirmed = await systemDialog.confirm({
+          title: '⚠️ 该配置已发布到海鲜市场',
+          message: '删除后其他用户将无法再下载此配置，确定要删除吗？',
+          tone: 'danger',
+          confirmText: '确认删除',
+          cancelText: '取消',
+        });
+        if (!doubleConfirmed) return;
+      }
       setSaving(true);
       try {
         const res = await deleteWatermark({ id: target.id });
         if (res?.success) {
           await load();
+        }
+      } finally {
+        setSaving(false);
+      }
+    },
+    [load, saving]
+  );
+
+  // 发布水印到海鲜市场
+  const handlePublishWatermark = useCallback(
+    async (target: WatermarkConfig) => {
+      if (saving) return;
+      setSaving(true);
+      try {
+        const res = await publishWatermark({ id: target.id });
+        if (res?.success) {
+          await load();
+          toast.success('发布成功', '配置已发布到海鲜市场');
+        } else {
+          toast.error('发布失败', res?.error?.message || '未知错误');
+        }
+      } finally {
+        setSaving(false);
+      }
+    },
+    [load, saving]
+  );
+
+  // 取消发布水印
+  const handleUnpublishWatermark = useCallback(
+    async (target: WatermarkConfig) => {
+      if (saving) return;
+      const ok = await systemDialog.confirm({
+        title: '确认取消发布',
+        message: `确定要取消发布「${target.name || '水印配置'}」吗？取消后其他用户将无法看到此配置。`,
+        tone: 'neutral',
+      });
+      if (!ok) return;
+
+      setSaving(true);
+      try {
+        const res = await unpublishWatermark({ id: target.id });
+        if (res?.success) {
+          await load();
+          toast.success('已取消发布');
+        } else {
+          toast.error('取消发布失败', res?.error?.message || '未知错误');
         }
       } finally {
         setSaving(false);
@@ -692,96 +728,85 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
               const previewUrl = buildPreviewUrl(item.previewUrl);
               const previewError = Boolean(previewErrorById[item.id]);
               return (
-                <GlassCard key={item.id || `${item.text}-${index}`} className="p-0 overflow-hidden">
+                <GlassCard
+                  key={item.id || `${item.text}-${index}`}
+                  className="p-0 overflow-hidden"
+                  style={isActive ? {
+                    border: '2px solid rgba(34, 197, 94, 0.8)',
+                    boxShadow: '0 0 16px rgba(34, 197, 94, 0.3)',
+                  } : undefined}
+                >
                   <div className="flex flex-col">
                     <div className="p-2 pb-1 shrink-0">
                       <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1 flex items-center gap-1.5">
+                          <Droplet size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
                           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                             {item.name || `Watermark ${index + 1}`}
                           </div>
+                          {/* 授权应用查看按钮 */}
+                          <button
+                            type="button"
+                            className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                            title="点击查看授权应用"
+                            style={{ color: item.appKeys && item.appKeys.length > 0 ? 'var(--text-muted)' : 'rgba(239, 68, 68, 0.6)' }}
+                            onClick={() => {
+                              const appNames = item.appKeys && item.appKeys.length > 0
+                                ? item.appKeys.map(k => appKeyLabelMap[k] || k).join('、')
+                                : null;
+                              void systemDialog.alert({
+                                title: '授权应用',
+                                message: appNames ? `已授权给: ${appNames}` : '当前水印未授权给任何应用',
+                              });
+                            }}
+                          >
+                            <Eye size={12} />
+                          </button>
                         </div>
-                        <Button
-                          size="xs"
-                          variant="secondary"
-                          onClick={() => handleTestClick(item.id)}
-                          disabled={saving || testingId === item.id}
-                          title="上传图片测试水印效果"
-                        >
-                          <FlaskConical size={12} />
-                          {testingId === item.id ? '测试中...' : '测试'}
-                        </Button>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          {/* 测试按钮（图标形式） */}
+                          <button
+                            type="button"
+                            className="p-0.5 rounded hover:bg-white/10 transition-colors disabled:opacity-50"
+                            onClick={() => handleTestClick(item.id)}
+                            disabled={saving || testingId === item.id}
+                            title="上传图片测试水印效果"
+                            style={{ color: 'var(--text-muted)' }}
+                          >
+                            <FlaskConical size={14} />
+                          </button>
+                        </div>
                       </div>
-                      {/* 授权应用提示 */}
-                      {item.appKeys && item.appKeys.length > 0 ? (
-                        <div className="mt-1.5 flex flex-wrap gap-1">
-                          {item.appKeys.map((key) => (
-                            <span
-                              key={key}
-                              className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded"
-                              style={{
-                                background: 'rgba(99, 102, 241, 0.12)',
-                                color: 'rgba(99, 102, 241, 0.9)',
-                                border: '1px solid rgba(99, 102, 241, 0.2)',
-                              }}
-                            >
-                              {appKeyLabelMap[key] || key}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="mt-1.5 text-[10px]" style={{ color: 'rgba(239, 68, 68, 0.7)' }}>
-                          未授权任何应用
-                        </div>
-                      )}
                     </div>
 
-                    <div className="px-2 pb-1 shrink-0">
-                      <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 140px' }}>
-                        <div
-                          className="overflow-auto border rounded-[6px]"
-                          style={{
-                            borderColor: 'var(--border-subtle)',
-                            background: 'rgba(255,255,255,0.02)',
-                            minHeight: '120px',
-                            maxHeight: '160px',
+                    {/* 配置信息区（统一高度100px，左侧两列配置 + 右侧预览图，与风格图卡片保持一致） */}
+                    <div className="px-2 pb-1 flex-shrink-0">
+                      <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: '100px' }}>
+                        {/* 左侧：配置信息（使用共享组件，两列布局） */}
+                        <WatermarkDescriptionGrid
+                          data={{
+                            text: item.text,
+                            fontKey: item.fontKey,
+                            fontLabel,
+                            fontSizePx: item.fontSizePx,
+                            opacity: item.opacity,
+                            anchor: item.anchor,
+                            offsetX: item.offsetX,
+                            offsetY: item.offsetY,
+                            iconEnabled: item.iconEnabled,
+                            borderEnabled: item.borderEnabled,
+                            backgroundEnabled: item.backgroundEnabled,
+                            roundedBackgroundEnabled: item.roundedBackgroundEnabled,
                           }}
-                        >
-                          <div className="text-[11px] grid gap-2 grid-cols-1 p-2" style={{ color: 'var(--text-muted)' }}>
-                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
-                              <span>字体</span>
-                              <span className="truncate" style={{ color: 'var(--text-primary)', maxWidth: 160 }}>{fontLabel}</span>
-                            </div>
-                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
-                              <span>大小</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{item.fontSizePx}px</span>
-                            </div>
-                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
-                              <span>位置</span>
-                              <span className="truncate" style={{ color: 'var(--text-primary)', maxWidth: 200 }}>
-                                {anchorLabelMap[item.anchor]} · {modeLabelMap[item.positionMode]}
-                              </span>
-                            </div>
-                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
-                              <span>图标</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{item.iconEnabled ? '已启用' : '禁用'}</span>
-                            </div>
-                            <div className="grid items-center gap-3" style={{ gridTemplateColumns: '48px auto' }}>
-                              <span>透明度</span>
-                              <span style={{ color: 'var(--text-primary)' }}>{Math.round(item.opacity * 100)}%</span>
-                            </div>
-                          </div>
-                        </div>
+                        />
+                        {/* 右侧：预览图（水印是透明PNG，使用象棋格背景） */}
                         <div
-                          className="relative flex items-center justify-center overflow-hidden"
+                          className="flex items-center justify-center overflow-hidden rounded-[6px]"
                           style={{
-                            // 使用棋盘格图案表示透明背景
                             background: previewUrl && !previewError
-                              ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 16px 16px'
+                              ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
                               : 'rgba(255,255,255,0.02)',
                             border: previewUrl && !previewError ? 'none' : '1px solid rgba(255,255,255,0.08)',
-                            minHeight: '120px',
-                            maxHeight: '160px',
                             cursor: previewUrl && !previewError ? 'zoom-in' : 'default',
                           }}
                           onClick={() => {
@@ -795,7 +820,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             <img
                               src={previewUrl}
                               alt="Preview"
-                              className="block w-full h-auto object-contain"
+                              className="block w-full h-full object-contain"
                               onError={() => setPreviewErrorById((prev) => ({ ...prev, [item.id]: true }))}
                             />
                           ) : (
@@ -805,53 +830,77 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                       </div>
                     </div>
 
-                    <div className="px-2 pb-2 pt-1 shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                      <div className="flex flex-wrap gap-1.5 justify-end">
-                        {isActive ? (
+                    {/* 操作按钮区（图标化布局） */}
+                    <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                      <div className="flex items-center gap-1 justify-between">
+                        {/* 左侧：发布图标 + 下载次数 */}
+                        <div className="flex items-center gap-1.5">
                           <button
                             type="button"
-                            className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
                             style={{
-                              background: 'rgba(34, 197, 94, 0.15)',
-                              border: '1px solid rgba(34, 197, 94, 0.3)',
-                              color: 'rgba(34, 197, 94, 0.95)',
+                              color: item.isPublic ? 'rgba(251, 146, 60, 0.9)' : 'var(--text-muted)',
+                              background: item.isPublic ? 'rgba(251, 146, 60, 0.1)' : 'transparent',
                             }}
-                            onClick={() => handleDeactivate(item.id)}
+                            onClick={() => item.isPublic ? void handleUnpublishWatermark(item) : void handlePublishWatermark(item)}
                             disabled={saving}
-                            title="点击取消选择"
+                            title={item.isPublic ? '点击取消发布' : '发布到海鲜市场'}
                           >
-                            <CheckCircle2 size={12} />
-                            已选择
+                            <Share2 size={14} />
                           </button>
-                        ) : (
-                          <Button size="xs" variant="secondary" onClick={() => handleActivate(item.id)} disabled={saving}>
-                            <Check size={12} />
-                            选择
-                          </Button>
-                        )}
-                        <Button
-                          size="xs"
-                          variant="secondary"
-                          onClick={() => {
-                            setDraftConfig({ ...item });
-                            setIsNewConfig(false);
-                            setEditorOpen(true);
-                          }}
-                        >
-                          <Pencil size={12} />
-                          编辑
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="danger"
-                          onClick={() => {
-                            void handleDeleteConfig(item);
-                          }}
-                          disabled={saving}
-                        >
-                          <Trash2 size={12} />
-                          删除
-                        </Button>
+                          {/* 下载次数 */}
+                          {typeof item.forkCount === 'number' && (
+                            <span className="flex items-center gap-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                              <GitFork size={10} />
+                              {item.forkCount}
+                            </span>
+                          )}
+                        </div>
+                        {/* 右侧：选择 | 编辑/删除（用分隔线区分功能组） */}
+                        <div className="flex items-center gap-1">
+                          {/* 选择按钮 */}
+                          <button
+                            type="button"
+                            className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
+                            style={{
+                              color: isActive ? 'white' : 'rgba(34, 197, 94, 0.95)',
+                              background: isActive ? 'rgba(34, 197, 94, 0.95)' : 'rgba(34, 197, 94, 0.08)',
+                              border: isActive ? '1px solid rgba(34, 197, 94, 0.95)' : '1px solid rgba(34, 197, 94, 0.45)',
+                              minWidth: 40,
+                            }}
+                            onClick={() => isActive ? handleDeactivate(item.id) : handleActivate(item.id)}
+                            disabled={saving}
+                            title={isActive ? '取消选择' : '选择'}
+                          >
+                            {isActive ? <CheckCircle2 size={16} /> : <Check size={16} />}
+                          </button>
+                          {/* 分隔线 */}
+                          <div className="h-4 w-px mx-0.5" style={{ background: 'var(--border-subtle)' }} />
+                          {/* 编辑/删除按钮组 */}
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                            style={{ color: 'var(--text-muted)' }}
+                            onClick={() => {
+                              setDraftConfig({ ...item });
+                              setIsNewConfig(false);
+                              setEditorOpen(true);
+                            }}
+                            title="编辑"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-md transition-all duration-200 hover:bg-red-500/10 disabled:opacity-50"
+                            style={{ color: 'rgba(239, 68, 68, 0.7)' }}
+                            onClick={() => void handleDeleteConfig(item)}
+                            disabled={saving}
+                            title="删除"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1126,8 +1175,8 @@ function WatermarkEditor(props: {
           }}
         >
           <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 pt-2">
-            <div className="grid gap-2" style={{ gridTemplateColumns: '74px minmax(0, 1fr)' }}>
-              <TitleWithTip label="文本" tip="显示在图片上的水印文字。" />
+            <div className="grid gap-4" style={{ gridTemplateColumns: '48px minmax(0, 1fr)' }}>
+              <SectionLabel label="文本" />
               <input
                 value={config.text}
                 onChange={(e) => updateConfig({ text: e.target.value })}
@@ -1135,8 +1184,8 @@ function WatermarkEditor(props: {
                 placeholder="请输入水印文案"
               />
 
-              <TitleWithTip label="字体" tip="水印文字使用的字体。" />
-              <div className="flex items-center gap-2">
+              <SectionLabel label="字体" />
+              <div className="flex items-center gap-2" style={{ opacity: config.text ? 1 : 0.4, pointerEvents: config.text ? 'auto' : 'none' }}>
                 <FontSelect
                   value={config.fontKey}
                   fonts={fonts}
@@ -1160,13 +1209,13 @@ function WatermarkEditor(props: {
                   size="sm"
                   className="shrink-0 h-8! w-8! px-0!"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={fontUploading}
+                  disabled={fontUploading || !config.text}
                 >
                   <UploadCloud size={14} />
                 </Button>
               </div>
 
-              <TitleWithTip label="字号" tip="水印文字大小。" />
+              <SectionLabel label="大小" />
               <div className="flex items-center gap-2">
                 <input
                   type="range"
@@ -1177,12 +1226,12 @@ function WatermarkEditor(props: {
                   onChange={(e) => updateConfig({ fontSizePx: Number(e.target.value) })}
                   className="flex-1 min-w-0"
                 />
-                <div className="text-[11px] w-10 text-right" style={{ color: 'var(--text-muted)' }}>
-                  {Math.round(config.fontSizePx)}px
+                <div className="text-[11px] w-6 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                  {Math.round(config.fontSizePx)}
                 </div>
               </div>
 
-              <TitleWithTip label="透明" tip="水印整体透明度。" />
+              <SectionLabel label="透明" />
               <div className="flex items-center gap-2">
                 <input
                   type="range"
@@ -1198,37 +1247,49 @@ function WatermarkEditor(props: {
                 </div>
               </div>
 
-              <TitleWithTip label="定位" tip="按像素或按比例定位水印。" />
-              <div>
-                <PositionModeSwitch
-                  value={config.positionMode}
-                  onChange={(nextMode) => {
-                    if (nextMode === config.positionMode) return;
-                    if (nextMode === 'ratio') {
-                      updateConfig({
-                        positionMode: nextMode,
-                        offsetX: config.offsetX / baseCanvasSize,
-                        offsetY: config.offsetY / baseCanvasSize,
-                      });
+              <SectionLabel label="文字" />
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
+                  style={{
+                    background: config.text ? 'rgba(255,255,255,0.1)' : 'transparent',
+                    border: config.text ? '1.5px solid rgba(255,255,255,0.3)' : '1.5px solid rgba(255,255,255,0.1)',
+                    color: config.text ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.35)',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                  }}
+                  title={config.text ? '点击关闭文字' : '点击开启文字'}
+                  onClick={() => {
+                    if (config.text) {
+                      // 关闭文字时，图标间距设为0
+                      updateConfig({ text: '', iconGapPx: 0 });
                     } else {
-                      updateConfig({
-                        positionMode: nextMode,
-                        offsetX: config.offsetX * baseCanvasSize,
-                        offsetY: config.offsetY * baseCanvasSize,
-                      });
+                      updateConfig({ text: '米多AI生成' });
                     }
                   }}
-                />
+                >
+                  字
+                </button>
+                {config.text && (
+                  <ColorPicker
+                    value={config.textColor || '#ffffff'}
+                    onChange={(color) => updateConfig({ textColor: color })}
+                    title="文字颜色"
+                  />
+                )}
               </div>
 
-              <TitleWithTip label="装饰" tip="图标、填充、边框、文字颜色等装饰项。" />
-              <div className="flex flex-col gap-3 pt-2">
-                {/* 图标 */}
-                <div className="flex items-center gap-3">
-                  <InlineLabelWithTip label="图标" tip="上传/启用水印图标。" />
+              <SectionDivider />
+
+              <SectionLabel label="图标" />
+              <div className="flex flex-col gap-3">
+                {/* 图标 + 位置按钮 - 一行排列 */}
+                <div className="flex items-center gap-2">
+                  {/* 图标上传 */}
                   <div className="relative">
                     <label
-                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer overflow-hidden"
+                      className="h-8 w-8 rounded-full inline-flex items-center justify-center cursor-pointer overflow-hidden"
                       style={{
                         background: config.iconEnabled && config.iconImageRef ? 'transparent' : 'transparent',
                         border: config.iconEnabled && config.iconImageRef ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
@@ -1239,7 +1300,7 @@ function WatermarkEditor(props: {
                       title="上传图标"
                     >
                       {config.iconEnabled && config.iconImageRef ? (
-                        <img src={config.iconImageRef} alt="水印图标" className="h-full w-full object-cover" />
+                        <img src={config.iconImageRef} alt="水印图标" className="h-full w-full object-cover rounded-full" />
                       ) : (
                         <UploadCloud size={14} />
                       )}
@@ -1262,12 +1323,10 @@ function WatermarkEditor(props: {
                       </button>
                     ) : null}
                   </div>
-                </div>
 
-                {config.iconEnabled ? (
-                  <div className="flex items-center gap-3">
-                    <InlineLabelWithTip label="位置" tip="图标相对文字的位置。" />
-                    <div className="grid grid-cols-4 gap-2 flex-1">
+                  {/* 位置按钮 - 仅在有文字时显示（位置相对于文字） */}
+                  {config.iconEnabled && config.text && (
+                    <>
                       {([
                         { value: 'left', label: '左' },
                         { value: 'right', label: '右' },
@@ -1279,10 +1338,10 @@ function WatermarkEditor(props: {
                           <button
                             key={option.value}
                             type="button"
-                            className="h-7 rounded-[7px] text-[11px] font-semibold transition-all"
+                            className="h-8 w-8 rounded-full text-[11px] font-semibold transition-all"
                             style={{
                               background: active ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.06)',
-                              border: active ? '1px solid rgba(59,130,246,0.5)' : '1px solid rgba(255,255,255,0.12)',
+                              border: active ? '1.5px solid rgba(59,130,246,0.5)' : '1.5px solid rgba(255,255,255,0.12)',
                               color: active ? 'rgba(59,130,246,0.95)' : 'var(--text-muted)',
                             }}
                             onClick={() => updateConfig({ iconPosition: option.value })}
@@ -1291,196 +1350,164 @@ function WatermarkEditor(props: {
                           </button>
                         );
                       })}
-                    </div>
-                  </div>
-                ) : null}
-
-                {config.iconEnabled ? (
-                  <div className="flex items-center gap-3">
-                    <InlineLabelWithTip label="间距" tip="图标与文字的距离。" />
-                    <div className="flex items-center gap-2 flex-1">
-                      <input
-                        type="number"
-                        min={0}
-                        step={1}
-                        className="w-12 h-8 rounded-[8px] px-2 text-sm outline-none prd-field"
-                        value={iconGapValue}
-                        onChange={(e) => updateConfig({ iconGapPx: Number(e.target.value) })}
-                      />
-                      <InlineLabelWithTip label="缩放" tip="图标缩放倍数。" />
-                      <input
-                        type="number"
-                        min={0.2}
-                        max={3}
-                        step={0.1}
-                        className="w-16 h-8 rounded-[8px] px-2 text-sm outline-none prd-field"
-                        value={iconScaleValue}
-                        onChange={(e) => updateConfig({ iconScale: Number(e.target.value) })}
-                      />
-                    </div>
-                  </div>
-                ) : null}
-
-                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
-                  {/* 填充 + 背景色 */}
-                  <div className="flex items-center gap-3">
-                    <InlineLabelWithTip label="填充" tip="文字背景填充开关与颜色。" />
-                    <button
-                      type="button"
-                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
-                      style={{
-                        background: config.backgroundEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
-                        border: config.backgroundEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
-                        color: config.backgroundEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
-                      }}
-                      title="填充背景"
-                      onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
-                    >
-                      <div className="w-4 h-4 rounded-sm" style={{ background: config.backgroundEnabled ? 'currentColor' : 'transparent', border: '2px solid currentColor' }} />
-                    </button>
-                    {config.backgroundEnabled && (
-                      <label
-                        className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
-                        style={{
-                          background: config.backgroundColor || '#000000',
-                          border: '2px solid rgba(255,255,255,0.3)',
-                          color: 'rgba(255,255,255,0.9)',
-                        }}
-                        title="背景颜色"
-                      >
-                        <Droplet size={12} />
-                        <input
-                          type="color"
-                          value={(config.backgroundColor || '#000000') as string}
-                          className="absolute inset-0 opacity-0 cursor-pointer"
-                          onChange={(e) => updateConfig({ backgroundColor: e.target.value })}
-                        />
-                      </label>
-                    )}
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
-                  {/* 边框 + 边框色 */}
-                  <div className="flex items-center gap-3">
-                    <InlineLabelWithTip label="边框" tip="文字边框开关与颜色。" />
-                    <button
-                      type="button"
-                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
-                      style={{
-                        background: config.borderEnabled ? 'rgba(255,255,255,0.2)' : 'transparent',
-                        border: config.borderEnabled ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
-                        color: config.borderEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
-                      }}
-                      title="显示边框"
-                      onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
-                    >
-                      <Square size={14} />
-                    </button>
-                    {config.borderEnabled && (
-                      <label
-                        className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
-                        style={{
-                          background: config.borderColor || '#ffffff',
-                          border: '2px solid rgba(255,255,255,0.3)',
-                          color: 'rgba(0,0,0,0.7)',
-                        }}
-                        title="边框颜色"
-                      >
-                        <Droplet size={12} />
-                        <input
-                          type="color"
-                          value={(config.borderColor || '#ffffff') as string}
-                          className="absolute inset-0 opacity-0 cursor-pointer"
-                          onChange={(e) => updateConfig({ borderColor: e.target.value })}
-                        />
-                      </label>
-                    )}
-                  </div>
-
-                  {/* 边框宽度（启用边框时显示） */}
-                  {config.borderEnabled && (
-                    <div className="flex items-center gap-3">
-                      <InlineLabelWithTip label="粗细" tip="边框粗细。" />
-                      <input
-                        type="range"
-                        min="1"
-                        max="10"
-                        step="1"
-                        value={config.borderWidth ?? 2}
-                        onChange={(e) => updateConfig({ borderWidth: Number(e.target.value) })}
-                        className="flex-1 h-1.5 appearance-none rounded-full cursor-pointer"
-                        style={{
-                          background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) 100%)`,
-                        }}
-                      />
-                      <span className="text-[11px] w-6 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                        {config.borderWidth ?? 2}
-                      </span>
-                    </div>
+                    </>
                   )}
-
-                  {/* 圆角 */}
-                  {(config.backgroundEnabled || config.borderEnabled) ? (
-                    <div className="flex items-center gap-3 min-w-0 overflow-hidden">
-                    <InlineLabelWithTip label="圆角" tip="背景/边框圆角半径。" />
-                      <input
-                        type="range"
-                        min="0"
-                        max="50"
-                        step="1"
-                        value={config.cornerRadius ?? 0}
-                        onChange={(e) => updateConfig({ cornerRadius: Number(e.target.value) })}
-                        className="flex-1 min-w-0 h-1.5 appearance-none rounded-full cursor-pointer"
-                        style={{
-                          background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) 100%)`,
-                        }}
-                      />
-                      <span className="text-[11px] w-10 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                        {Math.round(((config.cornerRadius ?? 0) / 50) * 100)}%
-                      </span>
-                    </div>
-                  ) : null}
                 </div>
 
-                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
-                  {/* 文字 + 文字色 */}
+                {/* 间距和缩放 - 仅在有文字+图标时显示 */}
+                {config.iconEnabled && config.text && (
                   <div className="flex items-center gap-3">
-                    <InlineLabelWithTip label="文字" tip="文字颜色与样式。" />
-                    <div
-                      className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
-                      style={{
-                        background: 'rgba(255,255,255,0.1)',
-                        border: '1.5px solid rgba(255,255,255,0.2)',
-                        color: 'rgba(255,255,255,0.8)',
-                        fontSize: '12px',
-                        fontWeight: 500,
-                      }}
-                    >
-                      字
-                    </div>
-                    <label
-                      className="relative h-8 w-8 rounded-lg inline-flex items-center justify-center cursor-pointer"
-                      style={{
-                        background: config.textColor || '#ffffff',
-                        border: '2px solid rgba(255,255,255,0.3)',
-                        color: 'rgba(0,0,0,0.7)',
-                      }}
-                      title="文字颜色"
-                    >
-                      <Droplet size={12} />
-                      <input
-                        type="color"
-                        value={(config.textColor || '#ffffff') as string}
-                        className="absolute inset-0 opacity-0 cursor-pointer"
-                        onChange={(e) => updateConfig({ textColor: e.target.value })}
-                      />
-                    </label>
+                    <InlineLabel label="间距" />
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      className="w-14 h-8 rounded-[8px] px-2 text-sm outline-none prd-field"
+                      value={iconGapValue}
+                      onChange={(e) => updateConfig({ iconGapPx: Number(e.target.value) })}
+                    />
+                    <InlineLabel label="缩放" />
+                    <input
+                      type="number"
+                      min={0.2}
+                      max={3}
+                      step={0.1}
+                      className="w-14 h-8 rounded-[8px] px-2 text-sm outline-none prd-field"
+                      value={iconScaleValue}
+                      onChange={(e) => updateConfig({ iconScale: Number(e.target.value) })}
+                    />
                   </div>
-                </div>
+                )}
               </div>
 
-              <TitleWithTip label="适应" tip="开启后按图片尺寸自适应缩放。" />
+              <SectionDivider />
+
+              <SectionLabel label="填充" />
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
+                  style={{
+                    background: config.backgroundEnabled ? 'rgba(255,255,255,0.1)' : 'transparent',
+                    border: config.backgroundEnabled ? '1.5px solid rgba(255,255,255,0.3)' : '1.5px solid rgba(255,255,255,0.1)',
+                    color: config.backgroundEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
+                  }}
+                  title="填充背景"
+                  onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
+                >
+                  <PaintBucket size={16} />
+                </button>
+                {config.backgroundEnabled && (
+                  <ColorPicker
+                    value={config.backgroundColor || '#000000'}
+                    onChange={(color) => updateConfig({ backgroundColor: color })}
+                    title="背景颜色"
+                  />
+                )}
+              </div>
+
+              <SectionLabel label="边框" />
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
+                    style={{
+                      background: config.borderEnabled ? 'rgba(255,255,255,0.1)' : 'transparent',
+                      border: config.borderEnabled ? '1.5px solid rgba(255,255,255,0.3)' : '1.5px solid rgba(255,255,255,0.1)',
+                    }}
+                    title="显示边框"
+                    onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
+                  >
+                    <div
+                      className="h-4 w-5 rounded-[3px]"
+                      style={{
+                        border: config.borderEnabled ? '2px solid rgba(255,255,255,0.95)' : '2px solid rgba(255,255,255,0.35)',
+                      }}
+                    />
+                  </button>
+                  {config.borderEnabled && (
+                    <ColorPicker
+                      value={config.borderColor || '#ffffff'}
+                      onChange={(color) => updateConfig({ borderColor: color })}
+                      title="边框颜色"
+                    />
+                  )}
+                </div>
+
+                {/* 边框宽度（启用边框时显示） */}
+                {config.borderEnabled && (
+                  <div className="flex items-center gap-3">
+                    <InlineLabel label="粗细" />
+                    <input
+                      type="range"
+                      min="1"
+                      max="10"
+                      step="1"
+                      value={config.borderWidth ?? 2}
+                      onChange={(e) => updateConfig({ borderWidth: Number(e.target.value) })}
+                      className="flex-1 h-1.5 appearance-none rounded-full cursor-pointer"
+                      style={{
+                        background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) 100%)`,
+                      }}
+                    />
+                    <span className="text-[11px] w-6 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
+                      {config.borderWidth ?? 2}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* 圆角 - 填充和边框共用，仅在启用时显示 */}
+              {(config.backgroundEnabled || config.borderEnabled) && (
+                <>
+                  <SectionLabel label="圆角" />
+                  <div className="flex items-center gap-3 min-w-0 overflow-hidden">
+                    <input
+                      type="range"
+                      min="0"
+                      max="50"
+                      step="1"
+                      value={config.cornerRadius ?? 0}
+                      onChange={(e) => updateConfig({ cornerRadius: Number(e.target.value) })}
+                      className="flex-1 min-w-0 h-1.5 appearance-none rounded-full cursor-pointer"
+                      style={{
+                        background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) 100%)`,
+                      }}
+                    />
+                    <span className="text-[11px] w-10 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
+                      {Math.round(((config.cornerRadius ?? 0) / 50) * 100)}%
+                    </span>
+                  </div>
+                </>
+              )}
+
+              <SectionDivider />
+
+              <SectionLabel label="定位" />
+              <div>
+                <PositionModeSwitch
+                  value={config.positionMode}
+                  onChange={(nextMode) => {
+                    if (nextMode === config.positionMode) return;
+                    if (nextMode === 'ratio') {
+                      updateConfig({
+                        positionMode: nextMode,
+                        offsetX: config.offsetX / baseCanvasSize,
+                        offsetY: config.offsetY / baseCanvasSize,
+                      });
+                    } else {
+                      updateConfig({
+                        positionMode: nextMode,
+                        offsetX: config.offsetX * baseCanvasSize,
+                        offsetY: config.offsetY * baseCanvasSize,
+                      });
+                    }
+                  }}
+                />
+              </div>
+
+              <SectionLabel label="适应" />
               <div className="flex flex-col gap-2 pt-1">
                 <div>
                   <ScaleModeSwitch
@@ -1492,7 +1519,7 @@ function WatermarkEditor(props: {
                 </div>
                 {adaptiveEnabled ? (
                   <div className="flex items-center gap-2">
-                  <InlineLabelWithTip label="方式" tip="自适应缩放的基准边。" />
+                  <InlineLabel label="方式" />
                     <div className="grid grid-cols-4 gap-2 flex-1">
                       {adaptiveScaleOptions.map((option) => {
                         const active = adaptiveScaleMode === option.value;
@@ -1868,13 +1895,17 @@ function WatermarkPreview(props: {
   const textRef = useRef<HTMLSpanElement | null>(null);
   const iconRef = useRef<HTMLImageElement | null>(null);
   const lastMeasuredSizeRef = useRef({ width: 0, height: 0 });
+  const sizeStableRef = useRef(false);  // 用于 updateSize 闭包访问
   const [watermarkSize, setWatermarkSize] = useState({ width: 0, height: 0 });
   const [measureTick, setMeasureTick] = useState(0);
   const [measuredSignature, setMeasuredSignature] = useState('');
   const [fontReady, setFontReady] = useState(false);
+  const [sizeStable, setSizeStable] = useState(false);  // 尺寸是否稳定
+  // 缓存版本号：修改测量逻辑时需要更新，使旧缓存失效
   const measureSignature = useMemo(
     () =>
       [
+        'v3',  // 版本号：v3 = 只有延迟两帧后才写入缓存，避免缓存被错误小尺寸污染
         spec.text,
         spec.iconEnabled ? '1' : '0',
         spec.iconImageRef ?? '',
@@ -1895,11 +1926,16 @@ function WatermarkPreview(props: {
     if (cachedSize) {
       setWatermarkSize(cachedSize);
       setMeasuredSignature(measureSignature);
+      setSizeStable(true);  // 有缓存说明尺寸已经稳定过
+      sizeStableRef.current = true;
     } else {
       setWatermarkSize({ width: 0, height: 0 });
       setMeasuredSignature('');
+      setSizeStable(false);  // 需要重新测量并等待稳定
+      sizeStableRef.current = false;
     }
-    setFontReady(false);
+    // 注意：不要在这里 setFontReady(false)，否则会和字体加载 effect 形成循环
+    // 字体状态由专门的 useEffect 管理
   }, [cachedSize, measureSignature]);
 
   useEffect(() => {
@@ -1922,6 +1958,58 @@ function WatermarkPreview(props: {
     };
   }, [fontFamily, fontSize, measureSignature]);
 
+  // 关键修复：当 fontReady 变为 true 时，等待尺寸稳定后再写入缓存
+  // 因为字体加载完成后，浏览器渲染时间不可预测，可能需要多个渲染周期
+  useEffect(() => {
+    if (!fontReady || !contentRef.current) return;
+
+    let cancelled = false;
+    let lastSize = { width: 0, height: 0 };
+    let stabilityTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const measureAndCheck = () => {
+      if (cancelled || !contentRef.current) return;
+
+      const contentRect = contentRef.current.getBoundingClientRect();
+      if (!contentRect.width || !contentRect.height) return;
+
+      const measuredWidth = Math.ceil(contentRect.width);
+      const measuredHeight = Math.ceil(contentRect.height);
+
+      // 如果尺寸与上次不同，继续等待稳定（不更新状态，避免抖动）
+      if (measuredWidth !== lastSize.width || measuredHeight !== lastSize.height) {
+        lastSize = { width: measuredWidth, height: measuredHeight };
+        // 100ms 后再检查
+        stabilityTimer = setTimeout(measureAndCheck, 100);
+      } else {
+        // 尺寸稳定，更新状态并写入缓存
+        setWatermarkSize({ width: measuredWidth, height: measuredHeight });
+        lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
+        setMeasuredSignature(measureSignature);
+        setSizeStable(true);
+        sizeStableRef.current = true;
+        watermarkSizeCache.set(measureSignature, { width: measuredWidth, height: measuredHeight });
+      }
+    };
+
+    // 延迟两帧后开始测量
+    const raf1 = requestAnimationFrame(() => {
+      if (cancelled) return;
+      const raf2 = requestAnimationFrame(() => {
+        if (cancelled) return;
+        measureAndCheck();
+      });
+
+      return () => cancelAnimationFrame(raf2);
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf1);
+      if (stabilityTimer) clearTimeout(stabilityTimer);
+    };
+  }, [fontReady, measureSignature]);
+
   const estimatedTextWidth = Math.max(spec.text.length, 1) * fontSize * 1.0;
   const hasIcon = Boolean(spec.iconEnabled && spec.iconImageRef);
   const estimatedContentWidth = hasIcon
@@ -1934,15 +2022,24 @@ function WatermarkPreview(props: {
       ? fontSize + iconSize + gap
       : Math.max(fontSize, iconSize))
     : fontSize;
-  const estimatedWidth = estimatedContentWidth + decorationPadding * 2;
-  const estimatedHeight = estimatedContentHeight + decorationPadding * 2;
-  const measuredWidth = watermarkSize.width || cachedSize?.width || estimatedWidth;
-  const measuredHeight = watermarkSize.height || cachedSize?.height || estimatedHeight;
+  // 估算尺寸需要包含边框宽度，确保 fallback 值更准确
+  const estimatedBorderExtra = spec.borderEnabled ? borderWidth * 2 : 0;
+  const estimatedWidth = estimatedContentWidth + decorationPadding * 2 + estimatedBorderExtra;
+  const estimatedHeight = estimatedContentHeight + decorationPadding * 2 + estimatedBorderExtra;
+  // 关键修复：只有当 measuredSignature 匹配当前配置时，才使用 watermarkSize
+  // 否则可能是旧配置的尺寸（组件实例复用时 state 被保留）
+  const isWatermarkSizeValid = measuredSignature === measureSignature;
+  const validatedWidth = isWatermarkSizeValid ? watermarkSize.width : 0;
+  const validatedHeight = isWatermarkSizeValid ? watermarkSize.height : 0;
+  const measuredWidth = validatedWidth || cachedSize?.width || estimatedWidth;
+  const measuredHeight = validatedHeight || cachedSize?.height || estimatedHeight;
   const hasLastMeasured = lastMeasuredSizeRef.current.width > 0 && lastMeasuredSizeRef.current.height > 0;
   const pendingMeasure = measuredSignature !== measureSignature;
   const effectiveWidth = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.width : measuredWidth;
   const effectiveHeight = pendingMeasure && hasLastMeasured ? lastMeasuredSizeRef.current.height : measuredHeight;
-  const hideUntilMeasured = (!fontReady && !cachedSize) || measuredSignature !== measureSignature;
+  // 必须同时满足：字体加载完成 AND 尺寸稳定，才显示水印
+  // 这样可以避免在尺寸稳定前显示，导致位置抖动
+  const hideUntilMeasured = !fontReady || !sizeStable;
 
   const offsetX = spec.positionMode === 'ratio' ? spec.offsetX * width : spec.offsetX;
   const offsetY = spec.positionMode === 'ratio' ? spec.offsetY * canvasHeight : spec.offsetY;
@@ -2007,35 +2104,33 @@ function WatermarkPreview(props: {
     const target = contentRef.current;
 
     const updateSize = () => {
-      const textRect = textRef.current?.getBoundingClientRect();
-      if (!textRect || !textRect.width || !textRect.height) return;
-      const iconRect = iconRef.current?.getBoundingClientRect();
-      const iconWidth = iconRect?.width ?? 0;
-      const iconHeight = iconRect?.height ?? 0;
-      // 边框宽度会增加元素整体尺寸（CSS border 在 padding 外面）
-      const borderExtra = spec.borderEnabled ? borderWidth * 2 : 0;
-      const hasIcon = iconWidth > 0 && iconHeight > 0;
-      const combinedWidth = hasIcon
-        ? (isVerticalIcon
-          ? Math.max(textRect.width, iconWidth) + decorationPadding * 2 + borderExtra
-          : textRect.width + iconWidth + gap + decorationPadding * 2 + borderExtra)
-        : textRect.width + decorationPadding * 2 + borderExtra;
-      const combinedHeight = hasIcon
-        ? (isVerticalIcon
-          ? textRect.height + iconHeight + gap + decorationPadding * 2 + borderExtra
-          : Math.max(textRect.height, iconHeight) + decorationPadding * 2 + borderExtra)
-        : textRect.height + decorationPadding * 2 + borderExtra;
+      // 直接测量 contentRef 的实际渲染尺寸，避免手动计算带来的 subpixel 误差
+      // 这样可以确保定位计算使用的尺寸与浏览器实际渲染的尺寸完全一致
+      const contentRect = contentRef.current?.getBoundingClientRect();
+      if (!contentRect || !contentRect.width || !contentRect.height) return;
+
+      // 关键修复：只有当字体加载完成时才更新尺寸状态
+      // 否则会用字体未加载时的错误小尺寸覆盖正确尺寸
+      if (!fontReady) return;
+
+      // 关键修复：如果尺寸已经稳定（从缓存加载），不再更新状态
+      // 否则会导致第二次进入编辑时的抖动
+      if (sizeStableRef.current) return;
+
+      // 使用 ceil 确保不会因为 subpixel 渲染导致边缘被截断
+      const measuredWidth = Math.ceil(contentRect.width);
+      const measuredHeight = Math.ceil(contentRect.height);
+
       setWatermarkSize((prev) => {
-        if (Math.abs(prev.width - combinedWidth) < 0.5 && Math.abs(prev.height - combinedHeight) < 0.5) {
+        if (Math.abs(prev.width - measuredWidth) < 0.5 && Math.abs(prev.height - measuredHeight) < 0.5) {
           return prev;
         }
-        return { width: combinedWidth, height: combinedHeight };
+        return { width: measuredWidth, height: measuredHeight };
       });
-      watermarkSizeCache.set(measureSignature, { width: combinedWidth, height: combinedHeight });
-      lastMeasuredSizeRef.current = { width: combinedWidth, height: combinedHeight };
-      if (fontReady) {
-        setMeasuredSignature(measureSignature);
-      }
+      // 注意：不在这里写入缓存！缓存只在 fontReady effect 延迟两帧后写入
+      // 否则会用 fontReady=true 但字体还没渲染完成时的错误小尺寸污染缓存
+      lastMeasuredSizeRef.current = { width: measuredWidth, height: measuredHeight };
+      setMeasuredSignature(measureSignature);
     };
 
     updateSize();

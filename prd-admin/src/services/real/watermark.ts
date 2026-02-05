@@ -15,6 +15,10 @@ import type {
   DeleteWatermarkFontContract,
   WatermarkFontInfo,
   UploadWatermarkIconContract,
+  ListWatermarksMarketplaceContract,
+  PublishWatermarkContract,
+  UnpublishWatermarkContract,
+  ForkWatermarkContract,
 } from '@/services/contracts/watermark';
 import type { ApiResponse } from '@/types/api';
 
@@ -130,6 +134,45 @@ export const uploadWatermarkIconReal: UploadWatermarkIconContract = async (input
 export const getModelSizesReal: GetModelSizesContract = async (input) => {
   const key = encodeURIComponent(input.modelKey);
   return await apiRequest(api.modelSizes(key), { method: 'GET' });
+};
+
+// ============ 海鲜市场 API ============
+
+/**
+ * 获取海鲜市场公开的水印配置列表
+ */
+export const listWatermarksMarketplaceReal: ListWatermarksMarketplaceContract = async (input) => {
+  const params = new URLSearchParams();
+  if (input.keyword) params.append('keyword', input.keyword);
+  if (input.sort) params.append('sort', input.sort);
+  const query = params.toString();
+  const url = query ? `${api.watermark.marketplace()}?${query}` : api.watermark.marketplace();
+  return await apiRequest(url, { method: 'GET' });
+};
+
+/**
+ * 发布水印配置到海鲜市场
+ */
+export const publishWatermarkReal: PublishWatermarkContract = async (input) => {
+  return await apiRequest(api.watermark.publish(encodeURIComponent(input.id)), { method: 'POST' });
+};
+
+/**
+ * 取消发布水印配置
+ */
+export const unpublishWatermarkReal: UnpublishWatermarkContract = async (input) => {
+  return await apiRequest(api.watermark.unpublish(encodeURIComponent(input.id)), { method: 'POST' });
+};
+
+/**
+ * 从海鲜市场免费下载（Fork）水印配置
+ */
+export const forkWatermarkReal: ForkWatermarkContract = async (input) => {
+  const body = input.name ? { Name: input.name } : {};
+  return await apiRequest(api.watermark.fork(encodeURIComponent(input.id)), { 
+    method: 'POST',
+    body,
+  });
 };
 
 /**

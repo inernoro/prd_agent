@@ -305,7 +305,7 @@ public async Task StreamGenerateAsync(CancellationToken ct)
 
 ## Codebase Skill（代码库快照 — 供 AI 增量维护用）
 
-> **最后更新**：2026-01-25 | **总提交数**：111 | **文档版本**：SRS v3.0, PRD v2.0
+> **最后更新**：2026-02-03 | **总提交数**：116 | **文档版本**：SRS v3.0, PRD v3.0
 >
 > **用途**：AI 在后续会话中读取此段落即可跳过全盘扫描，仅对增量变更进行定点校验。
 > **维护规则**：每次代码结构性变更（新增模块、重命名、废弃功能）后，需同步更新此段落。
@@ -343,6 +343,7 @@ prd_agent/
 | **RBAC** | `SystemRole` + `AdminPermissionCatalog` (60+ permissions) + `AdminPermissionMiddleware` |
 | **Watermark** | appKey 绑定 + 字体管理 + SixLabors.ImageSharp 渲染 |
 | **LLM Gateway** | `ILlmGateway` + `ModelResolver` + 三级调度 + 健康管理 |
+| **Marketplace Registry** | `CONFIG_TYPE_REGISTRY` 类型注册 + `IForkable` 白名单复制 |
 
 ### 功能注册表
 
@@ -365,6 +366,7 @@ prd_agent/
 | 数据管理面板 | ✅ DONE | DataManagePage |
 | 管理通知 | ✅ DONE | NotificationsController, admin_notifications |
 | 缺陷管理 Agent | ✅ DONE | DefectAgentController, DefectAgentTests (25 tests) |
+| 配置市场 (海鲜市场) | ✅ DONE | CONFIG_TYPE_REGISTRY, MarketplaceCard, IForkable, ForkService |
 | **附件上传** | ⚠️ PARTIAL | Model 定义 + Message.AttachmentIds 关联，无通用上传 Controller |
 | **知识库** | ⚠️ PARTIAL | KnowledgeBasePage UI 占位，"资料文件"标注开发中 |
 | **i18n** | ❌ NOT_IMPL | 无任何 i18n 基础设施，文案硬编码中文 |
@@ -415,3 +417,144 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 4. **DB→数据字典**：MongoDbContext 集合 → rule.data-dictionary.md 有记录
 5. **目录结构→文档**：实际目录 → SRS 目录结构图一致
 6. **未实现标注**：文档中描述但代码不存在的功能 → 必须标注 ⚠️ 状态
+
+---
+
+## 海鲜市场 (Configuration Marketplace) 扩展指南
+
+**触发场景**：当需要将新的配置类型（如画布模板、工作流模板等）发布到海鲜市场时。
+
+### 核心文件
+
+| 文件 | 用途 |
+|------|------|
+| `prd-admin/src/lib/marketplaceTypes.tsx` | 前端类型注册表 + 预览渲染器 |
+| `prd-admin/src/components/marketplace/MarketplaceCard.tsx` | 通用卡片组件 |
+| `prd-api/src/PrdAgent.Core/Interfaces/IMarketplaceItem.cs` | `IMarketplaceItem` + `IForkable` 接口 |
+| `prd-api/src/PrdAgent.Infrastructure/Services/ForkService.cs` | 通用 Fork 服务 |
+| `doc/prd.marketplace.md` | 设计文档 (v3.0) |
+
+### 添加新类型步骤
+
+#### 1. 前端：注册类型定义
+
+```typescript
+// prd-admin/src/lib/marketplaceTypes.tsx
+export const CONFIG_TYPE_REGISTRY: Record<string, ConfigTypeDefinition<any>> = {
+  // 已有类型: prompt, refImage, watermark
+
+  // 新增类型示例
+  canvasTemplate: {
+    key: 'canvasTemplate',
+    label: '画布模板',
+    icon: Layout,  // lucide-react 图标
+    color: {
+      bg: 'rgba(34, 197, 94, 0.12)',
+      text: 'rgba(34, 197, 94, 0.95)',
+      border: 'rgba(34, 197, 94, 0.25)',
+    },
+    api: {
+      listMarketplace: listCanvasTemplatesMarketplace,
+      publish: publishCanvasTemplate,
+      unpublish: unpublishCanvasTemplate,
+      fork: forkCanvasTemplate,
+    },
+    getDisplayName: (item) => item.name,
+    PreviewRenderer: CanvasTemplatePreview,  // 自定义预览组件
+  },
+};
+```
+
+#### 2. 前端：实现预览渲染器
+
+```typescript
+// prd-admin/src/lib/marketplaceTypes.tsx
+const CanvasTemplatePreview: React.FC<{ item: CanvasTemplate }> = ({ item }) => (
+  <div className="space-y-2">
+    <img src={item.thumbnailUrl} className="w-full h-32 object-cover rounded" />
+    <div className="text-xs text-muted-foreground">
+      {item.width} × {item.height} px
+    </div>
+  </div>
+);
+```
+
+#### 3. 后端：实现 IForkable 接口
+
+```csharp
+// Model 类实现 IForkable
+public class CanvasTemplate : IForkable
+{
+    // 业务字段
+    public string Name { get; set; }
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public List<CanvasObject> Objects { get; set; }
+
+    // IMarketplaceItem 字段 (必须实现)
+    public string Id { get; set; }
+    public string? OwnerUserId { get; set; }
+    public bool IsPublic { get; set; }
+    public int ForkCount { get; set; }
+    public string? ForkedFromId { get; set; }
+    public string? ForkedFromOwnerName { get; set; }
+    public string? ForkedFromOwnerAvatar { get; set; }
+
+    // 白名单：Fork 时只复制这些字段
+    public string[] GetCopyableFields() => new[]
+    {
+        "Name", "Width", "Height", "Objects"
+    };
+
+    public string GetConfigType() => "canvasTemplate";
+    public string GetDisplayName() => Name;
+    public string? GetOwnerUserId() => OwnerUserId;
+    public void SetOwnerUserId(string userId) => OwnerUserId = userId;
+
+    public void OnForked()
+    {
+        // Fork 后处理（如重命名）
+        Name = $"{Name} (副本)";
+    }
+}
+```
+
+#### 4. 后端：添加 API 端点
+
+```csharp
+[HttpGet("marketplace")]
+public async Task<IActionResult> ListMarketplace([FromQuery] string? keyword, [FromQuery] string sort = "hot")
+{
+    var items = await _service.ListPublicAsync(keyword, sort);
+    return Ok(ApiResponse.Success(new { items }));
+}
+
+[HttpPost("{id}/publish")]
+public async Task<IActionResult> Publish(string id)
+{
+    await _service.PublishAsync(id, CurrentUserId);
+    return Ok(ApiResponse.Success());
+}
+
+[HttpPost("{id}/fork")]
+public async Task<IActionResult> Fork(string id)
+{
+    var forked = await _forkService.ForkAsync<CanvasTemplate>(id, CurrentUserId);
+    return Ok(ApiResponse.Success(forked));
+}
+```
+
+### 已注册类型
+
+| 类型 Key | 标签 | 数据源集合 |
+|----------|------|-----------|
+| `prompt` | 提示词 | `literary_prompts` |
+| `refImage` | 参考图 | `reference_image_configs` |
+| `watermark` | 水印 | `watermark_configs` |
+
+### 设计原则
+
+1. **前端类型注册表**：所有类型在 `CONFIG_TYPE_REGISTRY` 统一注册，卡片渲染自动适配
+2. **白名单字段复制**：`GetCopyableFields()` 定义可 Fork 的业务字段，避免复制敏感信息
+3. **预览渲染器委托**：每种类型有独立的 `PreviewRenderer`，支持完全不同的展示样式
+4. **统一市场字段**：`IMarketplaceItem` 定义公共字段（ForkCount、IsPublic 等）

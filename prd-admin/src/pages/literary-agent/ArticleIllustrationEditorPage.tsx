@@ -4,6 +4,15 @@ import { Dialog } from '@/components/ui/Dialog';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
+import { MarketplaceCard } from '@/components/marketplace';
+import {
+  CONFIG_TYPE_REGISTRY,
+  getCategoryFilterOptions,
+  mergeMarketplaceData,
+  sortMarketplaceItems,
+  filterMarketplaceItems,
+  type MarketplaceItemBase,
+} from '@/lib/marketplaceTypes';
 import {
   createLiteraryAgentImageGenRun,
   generateArticleMarkers,
@@ -28,9 +37,14 @@ import {
   activateReferenceImageConfig,
   deactivateReferenceImageConfig,
   getLiteraryAgentAllModels,
+  // 海鲜市场 API
+  publishLiteraryPrompt,
+  unpublishLiteraryPrompt,
+  publishReferenceImageConfig,
+  unpublishReferenceImageConfig,
 } from '@/services';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2 } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
@@ -99,6 +113,14 @@ type PromptTemplate = {
   isSystem?: boolean;
   scenarioType?: string | null;
   order?: number;
+  // 海鲜市场字段
+  isPublic?: boolean;
+  forkCount?: number;
+  forkedFromId?: string | null;
+  forkedFromUserId?: string | null;
+  forkedFromUserName?: string | null;
+  forkedFromUserAvatar?: string | null;
+  isModifiedAfterFork?: boolean;
 };
 
 // 将 PanelCard 移到组件外部定义，避免每次渲染时重新创建组件导致子组件卸载/重新挂载
@@ -159,7 +181,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const editRefImageInputRef = useRef<HTMLInputElement | null>(null);
   const [editingRefConfig, setEditingRefConfig] = useState<ReferenceImageConfig | null>(null);
   const [editingRefConfigOpen, setEditingRefConfigOpen] = useState(false);
-  
+  const [enlargedRefImageUrl, setEnlargedRefImageUrl] = useState<string | null>(null);
+
+  // 海鲜市场状态（使用类型注册表）
+  const [configViewMode, setConfigViewMode] = useState<'mine' | 'marketplace'>('mine');
+  const [marketplaceSearchKeyword, setMarketplaceSearchKeyword] = useState('');
+  const [marketplaceSortBy, setMarketplaceSortBy] = useState<'hot' | 'new'>('hot');
+  const [marketplaceCategoryFilter, setMarketplaceCategoryFilter] = useState<string>('all');
+  const [marketplaceDataByType, setMarketplaceDataByType] = useState<Record<string, MarketplaceItemBase[]>>({});
+  const [marketplaceLoading, setMarketplaceLoading] = useState(false);
+  const [forkingId, setForkingId] = useState<string | null>(null);
+
   // 文件上传相关状态
   const [uploadedFileName, setUploadedFileName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -305,13 +337,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     };
   }, []);
 
-  // 加载风格图配置列表
+  // 加载风格图配置列表（按 ID 稳定排序，避免操作后重排序导致闪烁）
   const loadReferenceImageConfigs = useCallback(async () => {
     setReferenceImageLoading(true);
     try {
       const res = await listReferenceImageConfigs();
       if (res?.success && res.data?.items) {
-        setReferenceImageConfigs(res.data.items);
+        // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
+        const sorted = [...res.data.items].sort((a, b) => a.id.localeCompare(b.id));
+        setReferenceImageConfigs(sorted);
       }
     } finally {
       setReferenceImageLoading(false);
@@ -321,6 +355,74 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   useEffect(() => {
     void loadReferenceImageConfigs();
   }, [loadReferenceImageConfigs]);
+
+  // 将 loadReferenceImageConfigs 赋值给 ref 以便 handleMarketplaceFork 使用
+  useEffect(() => {
+    loadReferenceImageConfigsRef.current = loadReferenceImageConfigs;
+  }, [loadReferenceImageConfigs]);
+
+  // 加载海鲜市场数据（使用类型注册表）
+  const loadMarketplaceData = useCallback(async () => {
+    setMarketplaceLoading(true);
+    try {
+      const typeKeys = Object.keys(CONFIG_TYPE_REGISTRY);
+      const results = await Promise.all(
+        typeKeys.map(async (typeKey) => {
+          const typeDef = CONFIG_TYPE_REGISTRY[typeKey];
+          const res = await typeDef.api.listMarketplace({
+            keyword: marketplaceSearchKeyword || undefined,
+            sort: marketplaceSortBy,
+          });
+          return { typeKey, items: res.success && res.data ? res.data.items : [] };
+        })
+      );
+
+      const dataByType: Record<string, MarketplaceItemBase[]> = {};
+      for (const { typeKey, items } of results) {
+        dataByType[typeKey] = items;
+      }
+      setMarketplaceDataByType(dataByType);
+    } finally {
+      setMarketplaceLoading(false);
+    }
+  }, [marketplaceSearchKeyword, marketplaceSortBy]);
+
+  // 处理 Fork 下载 - 使用 ref 存储回调以避免声明顺序问题
+  const loadLiteraryPromptsRef = useRef<() => Promise<void>>();
+  const loadReferenceImageConfigsRef = useRef<() => Promise<void>>();
+
+  const handleMarketplaceFork = useCallback(async (typeKey: string, id: string, customName?: string) => {
+    const typeDef = CONFIG_TYPE_REGISTRY[typeKey];
+    if (!typeDef) return;
+
+    setForkingId(id);
+    try {
+      const res = await typeDef.api.fork({ id, name: customName });
+      if (res.success) {
+        toast.success('下载成功，已添加到「我的」');
+        // 刷新市场数据
+        void loadMarketplaceData();
+        // 刷新对应类型的"我的"数据
+        if (typeKey === 'prompt' && loadLiteraryPromptsRef.current) {
+          void loadLiteraryPromptsRef.current();
+        } else if (typeKey === 'refImage' && loadReferenceImageConfigsRef.current) {
+          void loadReferenceImageConfigsRef.current();
+        }
+        // watermark 由 WatermarkSettingsPanel 自己管理刷新
+      } else {
+        toast.error('下载失败', res.error?.message || '未知错误');
+      }
+    } finally {
+      setForkingId(null);
+    }
+  }, [loadMarketplaceData]);
+
+  // 当切换到海鲜市场视图或搜索/排序变化时加载数据
+  useEffect(() => {
+    if (promptPreviewOpen && configViewMode === 'marketplace') {
+      void loadMarketplaceData();
+    }
+  }, [promptPreviewOpen, configViewMode, loadMarketplaceData]);
 
   async function loadWorkspace() {
     try {
@@ -463,7 +565,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     });
   }, [markers, markerRunItemsRestored]);
 
-  // 加载文学创作提示词（从后端）
+  // 加载文学创作提示词（从后端，按 ID 稳定排序避免闪烁）
   const loadLiteraryPrompts = useCallback(async () => {
     try {
       const res = await listLiteraryPrompts({ scenarioType: 'article-illustration' });
@@ -476,6 +578,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           scenarioType: p.scenarioType,
           order: p.order,
         }));
+        // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
+        prompts.sort((a, b) => a.id.localeCompare(b.id));
         setUserPrompts(prompts);
         // 如果有提示词但没有选中，自动选中第一个
         if (prompts.length > 0 && !selectedPrompt) {
@@ -486,6 +590,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       console.error('Failed to load literary prompts:', error);
     }
   }, [selectedPrompt]);
+
+  // 将 loadLiteraryPrompts 赋值给 ref 以便 handleMarketplaceFork 使用
+  useEffect(() => {
+    loadLiteraryPromptsRef.current = loadLiteraryPrompts;
+  }, [loadLiteraryPrompts]);
 
   const isBusy = generating || markerStreaming;
 
@@ -1587,6 +1696,18 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     });
     if (!ok) return;
 
+    // 已发布到海鲜市场的配置需要二次确认
+    if (prompt.isPublic) {
+      const doubleConfirmed = await systemDialog.confirm({
+        title: '⚠️ 该配置已发布到海鲜市场',
+        message: '删除后其他用户将无法再下载此配置，确定要删除吗？',
+        tone: 'danger',
+        confirmText: '确认删除',
+        cancelText: '取消',
+      });
+      if (!doubleConfirmed) return;
+    }
+
     try {
       const res = await deleteLiteraryPrompt({ id: prompt.id });
 
@@ -1603,6 +1724,94 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     } catch (error) {
       console.error('Failed to delete prompt:', error);
       toast.error('删除失败');
+    }
+  };
+
+  // 发布提示词到海鲜市场
+  const handlePublishPrompt = async (prompt: PromptTemplate) => {
+    try {
+      const res = await publishLiteraryPrompt({ id: prompt.id });
+      if (res.success) {
+        // 更新本地状态
+        setUserPrompts((prev) =>
+          prev.map((p) =>
+            p.id === prompt.id ? { ...p, isPublic: true, forkCount: res.data.prompt.forkCount ?? 0 } : p
+          )
+        );
+        toast.success('发布成功', '配置已发布到海鲜市场');
+      } else {
+        toast.error('发布失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Failed to publish prompt:', error);
+      toast.error('发布失败');
+    }
+  };
+
+  // 取消发布提示词
+  const handleUnpublishPrompt = async (prompt: PromptTemplate) => {
+    const ok = await systemDialog.confirm({
+      title: '确认取消发布',
+      message: `确定要取消发布「${prompt.title}」吗？取消后其他用户将无法看到此配置。`,
+      tone: 'neutral',
+    });
+    if (!ok) return;
+
+    try {
+      const res = await unpublishLiteraryPrompt({ id: prompt.id });
+      if (res.success) {
+        // 更新本地状态
+        setUserPrompts((prev) =>
+          prev.map((p) =>
+            p.id === prompt.id ? { ...p, isPublic: false } : p
+          )
+        );
+        toast.success('已取消发布');
+      } else {
+        toast.error('取消发布失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Failed to unpublish prompt:', error);
+      toast.error('取消发布失败');
+    }
+  };
+
+  // 发布风格图到海鲜市场
+  const handlePublishRefConfig = async (config: ReferenceImageConfig) => {
+    try {
+      const res = await publishReferenceImageConfig({ id: config.id });
+      if (res.success) {
+        await loadReferenceImageConfigs();
+        toast.success('发布成功', '配置已发布到海鲜市场');
+      } else {
+        toast.error('发布失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Failed to publish reference image config:', error);
+      toast.error('发布失败');
+    }
+  };
+
+  // 取消发布风格图
+  const handleUnpublishRefConfig = async (config: ReferenceImageConfig) => {
+    const ok = await systemDialog.confirm({
+      title: '确认取消发布',
+      message: `确定要取消发布「${config.name}」吗？取消后其他用户将无法看到此配置。`,
+      tone: 'neutral',
+    });
+    if (!ok) return;
+
+    try {
+      const res = await unpublishReferenceImageConfig({ id: config.id });
+      if (res.success) {
+        await loadReferenceImageConfigs();
+        toast.success('已取消发布');
+      } else {
+        toast.error('取消发布失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Failed to unpublish reference image config:', error);
+      toast.error('取消发布失败');
     }
   };
 
@@ -2631,14 +2840,43 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       {/* 系统提示词、底图与水印配置对话框 */}
       <Dialog
         open={promptPreviewOpen}
-        onOpenChange={setPromptPreviewOpen}
+        onOpenChange={(open) => {
+          setPromptPreviewOpen(open);
+          if (!open) setConfigViewMode('mine'); // 关闭时重置为"我的"视图
+        }}
         title="配置管理"
-        description="系统提示词、风格图与水印设置"
-        maxWidth={1400}
+        maxWidth={1500}
         contentClassName="overflow-hidden !p-4"
-        contentStyle={{ maxHeight: '70vh', height: '70vh' }}
+        contentStyle={{ maxHeight: '75vh', height: '75vh' }}
+        titleCenter={
+          <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
+            <button
+              type="button"
+              onClick={() => setConfigViewMode('mine')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                configViewMode === 'mine' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
+              }`}
+            >
+              <User size={14} />
+              我的
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfigViewMode('marketplace')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                configViewMode === 'marketplace' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
+              }`}
+            >
+              <Globe size={14} />
+              海鲜市场
+            </button>
+          </div>
+        }
         content={
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-2 h-full min-h-0">
+          <div className="flex flex-col h-full min-h-0">
+            {/* 我的配置视图 */}
+            {configViewMode === 'mine' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
             {/* 左侧：系统提示词 */}
             <div className="min-h-0 flex flex-col h-full">
               <div className="flex items-center justify-between mb-2">
@@ -2664,8 +2902,18 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               ) : (
                 <div className="flex-1 min-h-0 overflow-auto pr-1">
                   <div className="grid grid-cols-1 gap-3">
-                    {allPrompts.map((prompt) => (
-                      <GlassCard glow key={prompt.id} className="p-0 overflow-hidden">
+                    {allPrompts.map((prompt) => {
+                      const isPromptSelected = selectedPrompt?.id === prompt.id;
+                      return (
+                      <GlassCard
+                        glow
+                        key={prompt.id}
+                        className="p-0 overflow-hidden"
+                        style={isPromptSelected ? {
+                          border: '2px solid rgba(34, 197, 94, 0.8)',
+                          boxShadow: '0 0 16px rgba(34, 197, 94, 0.3)',
+                        } : undefined}
+                      >
                         <div className="group relative flex flex-col h-full">
                           {/* 上栏：标题区 */}
                           <div className="p-2 pb-1 flex-shrink-0">
@@ -2686,73 +2934,30 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   {prompt.title}
                                 </div>
                               </div>
-
-                              <div className="flex items-center gap-1 flex-shrink-0">
-                                {/* 分类标签 */}
-                                {(!prompt.scenarioType || prompt.scenarioType === 'global') ? (
-                                  <span
-                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                    style={{
-                                      background: 'rgba(168, 85, 247, 0.12)',
-                                      color: 'rgba(168, 85, 247, 0.95)',
-                                      border: '1px solid rgba(168, 85, 247, 0.28)',
-                                    }}
-                                    title="全局共享（所有场景可用）"
-                                  >
-                                    全局
-                                  </span>
-                                ) : prompt.scenarioType === 'article-illustration' ? (
-                                  <span
-                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                    style={{
-                                      background: 'rgba(34, 197, 94, 0.12)',
-                                      color: 'rgba(34, 197, 94, 0.95)',
-                                      border: '1px solid rgba(34, 197, 94, 0.28)',
-                                    }}
-                                    title="文章配图专用"
-                                  >
-                                    文章配图
-                                  </span>
-                                ) : null}
-
-                                {/* 当前选中标签 */}
-                                {selectedPrompt?.id === prompt.id && (
-                                  <span
-                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                    style={{
-                                      background: 'var(--accent-primary)',
-                                      color: 'white',
-                                    }}
-                                  >
-                                    当前
-                                  </span>
-                                )}
-                              </div>
                             </div>
                           </div>
 
-                          {/* 中栏：内容预览区 */}
-                          <div className="px-2 pb-1 flex-1 min-h-0 overflow-hidden">
+                          {/* 中栏：内容预览区（压缩高度以与风格图卡片等高） */}
+                          <div className="px-2 pb-1 flex-shrink-0">
                             <div
-                              className="h-full overflow-auto border rounded-[6px]"
+                              className="overflow-auto border rounded-[6px]"
                               style={{
                                 borderColor: 'var(--border-subtle)',
                                 background: 'rgba(255,255,255,0.02)',
-                                minHeight: '120px',
-                                maxHeight: '160px',
+                                height: '100px',
                               }}
                             >
                               <style>{`
-                                .modal-prompt-md { font-size: 11px; line-height: 1.5; color: var(--text-secondary); padding: 8px; }
-                                .modal-prompt-md h1,.modal-prompt-md h2,.modal-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 8px 0 4px; }
-                                .modal-prompt-md h1 { font-size: 13px; }
-                                .modal-prompt-md h2 { font-size: 12px; }
+                                .modal-prompt-md { font-size: 11px; line-height: 1.4; color: var(--text-secondary); padding: 6px 8px; white-space: pre-wrap; }
+                                .modal-prompt-md h1,.modal-prompt-md h2,.modal-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 4px 0 2px; }
+                                .modal-prompt-md h1 { font-size: 12px; }
+                                .modal-prompt-md h2 { font-size: 11px; }
                                 .modal-prompt-md h3 { font-size: 11px; }
-                                .modal-prompt-md p { margin: 4px 0; }
-                                .modal-prompt-md ul,.modal-prompt-md ol { margin: 4px 0; padding-left: 16px; }
-                                .modal-prompt-md li { margin: 2px 0; }
-                                .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-                                .modal-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; padding: 8px; overflow: auto; margin: 4px 0; }
+                                .modal-prompt-md p { margin: 2px 0; white-space: pre-wrap; }
+                                .modal-prompt-md ul,.modal-prompt-md ol { margin: 2px 0; padding-left: 14px; }
+                                .modal-prompt-md li { margin: 1px 0; }
+                                .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 3px; border-radius: 3px; }
+                                .modal-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 4px; padding: 4px 6px; overflow: auto; margin: 2px 0; }
                                 .modal-prompt-md pre code { background: transparent; border: 0; padding: 0; }
                               `}</style>
                               <div className="modal-prompt-md">
@@ -2767,62 +2972,76 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
 
-                          {/* 下栏：操作按钮区 */}
+                          {/* 下栏：操作按钮区（图标化布局） */}
                           <div className="px-2 pb-2 pt-1 flex-shrink-0">
-                            <div className="flex gap-1.5 justify-end">
-                              {selectedPrompt?.id !== prompt.id ? (
-                                <Button
-                                  size="xs"
-                                  variant="secondary"
-                                  onClick={() => {
-                                    setSelectedPrompt(prompt);
-                                    // 不关闭配置管理弹窗，选择后仍可继续配置其他项
-                                  }}
-                                >
-                                  <Check size={12} />
-                                  选择
-                                </Button>
-                              ) : (
+                            <div className="flex items-center gap-1 justify-between">
+                              {/* 左侧：发布图标 + 下载次数 */}
+                              <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
                                   style={{
-                                    background: 'rgba(34, 197, 94, 0.15)',
-                                    border: '1px solid rgba(34, 197, 94, 0.3)',
-                                    color: 'rgba(34, 197, 94, 0.95)',
+                                    color: prompt.isPublic ? 'rgba(251, 146, 60, 0.9)' : 'var(--text-muted)',
+                                    background: prompt.isPublic ? 'rgba(251, 146, 60, 0.1)' : 'transparent',
                                   }}
-                                  title="当前选中"
+                                  onClick={() => prompt.isPublic ? void handleUnpublishPrompt(prompt) : void handlePublishPrompt(prompt)}
+                                  title={prompt.isPublic ? '点击取消发布' : '发布到海鲜市场'}
                                 >
-                                  <CheckCircle2 size={12} />
-                                  已选择
+                                  <Share2 size={14} />
                                 </button>
-                              )}
-                              <Button
-                                size="xs"
-                                variant="secondary"
-                                onClick={() => {
-                                  handleEditPrompt(prompt);
-                                  // 不关闭配置管理弹窗，编辑完成后仍可继续配置
-                                }}
-                              >
-                                <Edit2 size={12} />
-                                编辑
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant="danger"
-                                onClick={() => {
-                                  void handleDeletePrompt(prompt);
-                                }}
-                              >
-                                <Trash2 size={12} />
-                                删除
-                              </Button>
+                                {/* 下载次数 */}
+                                {typeof prompt.forkCount === 'number' && (
+                                  <span className="flex items-center gap-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                    <GitFork size={10} />
+                                    {prompt.forkCount}
+                                  </span>
+                                )}
+                              </div>
+                              {/* 右侧：选择 | 编辑/删除（用分隔线区分功能组） */}
+                              <div className="flex items-center gap-1">
+                                {/* 选择按钮 */}
+                                <button
+                                  type="button"
+                                  className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                                  style={{
+                                    color: isPromptSelected ? 'white' : 'rgba(34, 197, 94, 0.95)',
+                                    background: isPromptSelected ? 'rgba(34, 197, 94, 0.95)' : 'rgba(34, 197, 94, 0.08)',
+                                    border: isPromptSelected ? '1px solid rgba(34, 197, 94, 0.95)' : '1px solid rgba(34, 197, 94, 0.45)',
+                                    minWidth: 40,
+                                  }}
+                                  onClick={() => setSelectedPrompt(prompt)}
+                                  title={isPromptSelected ? '取消选择' : '选择'}
+                                >
+                                  {isPromptSelected ? <CheckCircle2 size={16} /> : <Check size={16} />}
+                                </button>
+                                {/* 分隔线 */}
+                                <div className="h-4 w-px mx-0.5" style={{ background: 'var(--border-subtle)' }} />
+                                {/* 编辑/删除按钮组 */}
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                                  style={{ color: 'var(--text-muted)' }}
+                                  onClick={() => handleEditPrompt(prompt)}
+                                  title="编辑"
+                                >
+                                  <Edit2 size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-red-500/10"
+                                  style={{ color: 'rgba(239, 68, 68, 0.7)' }}
+                                  onClick={() => void handleDeletePrompt(prompt)}
+                                  title="删除"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </div>
                           </div>
                         </div>
                       </GlassCard>
-                    ))}
+                    );
+                    })}
                   </div>
                 </div>
               )}
@@ -2894,12 +3113,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 ) : (
                   <div className="grid grid-cols-1 gap-3">
                     {referenceImageConfigs.map((config) => (
-                      <GlassCard key={config.id} className="p-0 overflow-hidden">
+                      <GlassCard
+                        key={config.id}
+                        className="p-0 overflow-hidden"
+                        style={config.isActive ? {
+                          border: '2px solid rgba(34, 197, 94, 0.8)',
+                          boxShadow: '0 0 16px rgba(34, 197, 94, 0.3)',
+                        } : undefined}
+                      >
                         <div className="flex flex-col">
                           {/* 标题栏 */}
                           <div className="p-2 pb-1 flex-shrink-0">
                             <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
+                              <div className="min-w-0 flex-1 flex items-center gap-1.5">
+                                <ImageIcon size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
                                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                                   {config.name}
                                 </div>
@@ -2907,40 +3134,37 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
 
-                          {/* 内容区：左侧提示词 + 右侧图片预览 */}
+                          {/* 内容区：左侧提示词 + 右侧图片预览（统一高度100px） */}
                           <div className="px-2 pb-1 flex-shrink-0">
-                            <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px' }}>
+                            <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: '100px' }}>
                               {/* 左侧：提示词预览 */}
                               <div
                                 className="overflow-auto border rounded-[6px] p-2"
                                 style={{
                                   borderColor: 'var(--border-subtle)',
                                   background: 'rgba(255,255,255,0.02)',
-                                  minHeight: '80px',
-                                  maxHeight: '100px',
                                 }}
                               >
                                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                                   {config.prompt || '（无提示词）'}
                                 </div>
                               </div>
-                              {/* 右侧：图片预览 */}
+                              {/* 右侧：图片预览（风格图使用简单边框，点击放大） */}
                               <div
-                                className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
+                                className="flex items-center justify-center overflow-hidden rounded-[6px]"
                                 style={{
-                                  background: config.imageUrl
-                                    ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                                    : 'rgba(255,255,255,0.02)',
-                                  border: config.imageUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
-                                  minHeight: '80px',
-                                  maxHeight: '100px',
+                                  background: 'rgba(255,255,255,0.02)',
+                                  border: '1px solid rgba(255,255,255,0.08)',
+                                  cursor: config.imageUrl ? 'zoom-in' : 'default',
                                 }}
+                                onClick={() => config.imageUrl && setEnlargedRefImageUrl(config.imageUrl)}
+                                title={config.imageUrl ? '点击放大' : undefined}
                               >
                                 {config.imageUrl ? (
                                   <img
                                     src={config.imageUrl}
                                     alt={config.name}
-                                    className="block w-full h-full object-contain"
+                                    className="block w-full h-full object-cover"
                                   />
                                 ) : (
                                   <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
@@ -2949,43 +3173,50 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
 
-                          {/* 操作按钮区 */}
+                          {/* 操作按钮区（图标化布局） */}
                           <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                            <div className="flex flex-wrap gap-1.5 justify-end">
-                              {config.isActive ? (
+                            <div className="flex items-center gap-1 justify-between">
+                              {/* 左侧：发布图标 + 下载次数 */}
+                              <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
                                   style={{
-                                    background: 'rgba(34, 197, 94, 0.15)',
-                                    border: '1px solid rgba(34, 197, 94, 0.3)',
-                                    color: 'rgba(34, 197, 94, 0.95)',
+                                    color: config.isPublic ? 'rgba(251, 146, 60, 0.9)' : 'var(--text-muted)',
+                                    background: config.isPublic ? 'rgba(251, 146, 60, 0.1)' : 'transparent',
                                   }}
-                                  onClick={async () => {
-                                    setReferenceImageSaving(true);
-                                    try {
-                                      const res = await deactivateReferenceImageConfig({ id: config.id });
-                                      if (res.success) {
-                                        await loadReferenceImageConfigs();
-                                      }
-                                    } finally {
-                                      setReferenceImageSaving(false);
-                                    }
-                                  }}
+                                  onClick={() => config.isPublic ? void handleUnpublishRefConfig(config) : void handlePublishRefConfig(config)}
                                   disabled={referenceImageSaving}
-                                  title="点击取消选择"
+                                  title={config.isPublic ? '点击取消发布' : '发布到海鲜市场'}
                                 >
-                                  <CheckCircle2 size={12} />
-                                  已选择
+                                  <Share2 size={14} />
                                 </button>
-                              ) : (
-                                <Button
-                                  size="xs"
-                                  variant="secondary"
+                                {/* 下载次数 */}
+                                {typeof config.forkCount === 'number' && (
+                                  <span className="flex items-center gap-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                    <GitFork size={10} />
+                                    {config.forkCount}
+                                  </span>
+                                )}
+                              </div>
+                              {/* 右侧：选择 | 编辑/删除（用分隔线区分功能组） */}
+                              <div className="flex items-center gap-1">
+                                {/* 选择按钮 */}
+                                <button
+                                  type="button"
+                                  className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
+                                  style={{
+                                    color: config.isActive ? 'white' : 'rgba(34, 197, 94, 0.95)',
+                                    background: config.isActive ? 'rgba(34, 197, 94, 0.95)' : 'rgba(34, 197, 94, 0.08)',
+                                    border: config.isActive ? '1px solid rgba(34, 197, 94, 0.95)' : '1px solid rgba(34, 197, 94, 0.45)',
+                                    minWidth: 40,
+                                  }}
                                   onClick={async () => {
                                     setReferenceImageSaving(true);
                                     try {
-                                      const res = await activateReferenceImageConfig({ id: config.id });
+                                      const res = config.isActive
+                                        ? await deactivateReferenceImageConfig({ id: config.id })
+                                        : await activateReferenceImageConfig({ id: config.id });
                                       if (res.success) {
                                         await loadReferenceImageConfigs();
                                       }
@@ -2994,51 +3225,66 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     }
                                   }}
                                   disabled={referenceImageSaving}
+                                  title={config.isActive ? '取消选择' : '选择'}
                                 >
-                                  <Check size={12} />
-                                  选择
-                                </Button>
-                              )}
-                              <Button
-                                size="xs"
-                                variant="secondary"
-                                onClick={() => {
-                                  setEditingRefConfig({ ...config });
-                                  setEditingRefConfigOpen(true);
-                                }}
-                              >
-                                <Pencil size={12} />
-                                编辑
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant="danger"
-                                onClick={async () => {
-                                  const confirmed = await systemDialog.confirm({
-                                    title: '删除风格图配置',
-                                    message: `确定要删除「${config.name}」吗？`,
-                                    confirmText: '确定删除',
-                                    tone: 'danger',
-                                  });
-                                  if (!confirmed) return;
-                                  setReferenceImageSaving(true);
-                                  try {
-                                    const res = await deleteReferenceImageConfig({ id: config.id });
-                                    if (res.success) {
-                                      await loadReferenceImageConfigs();
-                                      toast.success('已删除');
-                                    } else {
-                                      toast.error('删除失败', res.error?.message || '未知错误');
+                                  {config.isActive ? <CheckCircle2 size={16} /> : <Check size={16} />}
+                                </button>
+                                {/* 分隔线 */}
+                                <div className="h-4 w-px mx-0.5" style={{ background: 'var(--border-subtle)' }} />
+                                {/* 编辑/删除按钮组 */}
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                                  style={{ color: 'var(--text-muted)' }}
+                                  onClick={() => {
+                                    setEditingRefConfig({ ...config });
+                                    setEditingRefConfigOpen(true);
+                                  }}
+                                  title="编辑"
+                                >
+                                  <Pencil size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-red-500/10 disabled:opacity-50"
+                                  style={{ color: 'rgba(239, 68, 68, 0.7)' }}
+                                  onClick={async () => {
+                                    const confirmed = await systemDialog.confirm({
+                                      title: '删除风格图配置',
+                                      message: `确定要删除「${config.name}」吗？`,
+                                      confirmText: '确定删除',
+                                      tone: 'danger',
+                                    });
+                                    if (!confirmed) return;
+                                    if (config.isPublic) {
+                                      const doubleConfirmed = await systemDialog.confirm({
+                                        title: '⚠️ 该配置已发布到海鲜市场',
+                                        message: '删除后其他用户将无法再下载此配置，确定要删除吗？',
+                                        tone: 'danger',
+                                        confirmText: '确认删除',
+                                        cancelText: '取消',
+                                      });
+                                      if (!doubleConfirmed) return;
                                     }
-                                  } finally {
-                                    setReferenceImageSaving(false);
-                                  }
-                                }}
-                                disabled={referenceImageSaving}
-                              >
-                                <Trash2 size={12} />
-                                删除
-                              </Button>
+                                    setReferenceImageSaving(true);
+                                    try {
+                                      const res = await deleteReferenceImageConfig({ id: config.id });
+                                      if (res.success) {
+                                        await loadReferenceImageConfigs();
+                                        toast.success('已删除');
+                                      } else {
+                                        toast.error('删除失败', res.error?.message || '未知错误');
+                                      }
+                                    } finally {
+                                      setReferenceImageSaving(false);
+                                    }
+                                  }}
+                                  disabled={referenceImageSaving}
+                                  title="删除"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -3069,6 +3315,110 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
           </div>
+            )}
+
+            {/* 海鲜市场视图 - 使用类型注册表实现扩展性 */}
+            {configViewMode === 'marketplace' && (
+              <div className="flex flex-col h-full min-h-0 flex-1">
+                {/* 搜索、分类筛选和排序栏 */}
+                <div className="flex items-center gap-3 mb-4 flex-shrink-0 flex-wrap">
+                  {/* 搜索框 */}
+                  <div className="relative flex-1 min-w-[180px] max-w-xs">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                    <input
+                      type="text"
+                      placeholder="搜索配置名称..."
+                      value={marketplaceSearchKeyword}
+                      onChange={(e) => setMarketplaceSearchKeyword(e.target.value)}
+                      className="w-full h-8 pl-9 pr-3 rounded-lg text-sm"
+                      style={{ background: 'var(--input-bg)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    />
+                  </div>
+                  {/* 分类筛选 - 使用类型注册表动态生成 */}
+                  <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
+                    {getCategoryFilterOptions().map(({ key, label, icon: Icon }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setMarketplaceCategoryFilter(key)}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
+                          marketplaceCategoryFilter === key ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                        }`}
+                        style={{ color: marketplaceCategoryFilter === key ? undefined : 'var(--text-muted)' }}
+                      >
+                        {Icon && <Icon size={11} />}
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* 排序 */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setMarketplaceSortBy('hot')}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        marketplaceSortBy === 'hot' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                      }`}
+                      style={{ color: marketplaceSortBy === 'hot' ? undefined : 'var(--text-muted)' }}
+                    >
+                      <TrendingUp size={12} />
+                      热门
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMarketplaceSortBy('new')}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        marketplaceSortBy === 'new' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                      }`}
+                      style={{ color: marketplaceSortBy === 'new' ? undefined : 'var(--text-muted)' }}
+                    >
+                      <Clock size={12} />
+                      最新
+                    </button>
+                  </div>
+                </div>
+
+                {marketplaceLoading ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+                  </div>
+                ) : (
+                  <div className="flex-1 min-h-0 overflow-auto">
+                    {/* 使用类型注册表合并、过滤、排序数据 */}
+                    {(() => {
+                      // 1. 合并数据
+                      const merged = mergeMarketplaceData(marketplaceDataByType, marketplaceCategoryFilter);
+                      // 2. 排序
+                      const sorted = sortMarketplaceItems(merged, marketplaceSortBy);
+                      // 3. 搜索过滤
+                      const filtered = filterMarketplaceItems(sorted, marketplaceSearchKeyword);
+
+                      if (filtered.length === 0) {
+                        return (
+                          <div className="text-sm py-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                            暂无公开配置
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                          {filtered.map((item) => (
+                            <MarketplaceCard
+                              key={`${item.type}-${item.data.id}`}
+                              item={item}
+                              onFork={handleMarketplaceFork}
+                              forking={forkingId === item.data.id}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         }
       />
 
@@ -3083,6 +3433,25 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         initialIndex={imagePreviewIndex}
         open={imagePreviewOpen}
         onClose={() => setImagePreviewOpen(false)}
+      />
+
+      {/* 风格图放大预览对话框 */}
+      <Dialog
+        open={!!enlargedRefImageUrl}
+        onOpenChange={(open) => !open && setEnlargedRefImageUrl(null)}
+        title="图片预览"
+        maxWidth={800}
+        content={
+          enlargedRefImageUrl && (
+            <div className="flex items-center justify-center p-4">
+              <img
+                src={enlargedRefImageUrl}
+                alt="Preview"
+                className="max-w-full max-h-[70vh] object-contain rounded-lg"
+              />
+            </div>
+          )
+        }
       />
 
       {/* 风格图配置编辑对话框 */}

@@ -1,0 +1,535 @@
+# 海鲜市场（Configuration Marketplace）
+
+> 文档版本：3.0
+> 最后更新：2026-02-03
+> 状态：✅ 已实现（支持扩展）
+
+---
+
+## 一、功能概述
+
+海鲜市场是文学创作 Agent 的配置共享平台，用户可以：
+- 将自己的配置（提示词、风格图、水印）发布到公共市场
+- 从市场免费下载（Fork）其他用户的配置
+- 管理已发布的配置（查看 Fork 次数、取消发布）
+
+### 1.1 用户角色
+
+| 角色 | 描述 |
+|------|------|
+| 配置创建者 | 创建并管理自己的配置，可选择发布到市场 |
+| 配置消费者 | 浏览市场，下载他人分享的配置 |
+
+## 二、UI 布局规范
+
+### 2.1 弹窗标题栏布局
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 配置管理                        [🔘 我的 | ○ 海鲜市场]              ✕   │
+│ 系统提示词、风格图与水印设置    ← 副标题随Tab切换变化                    │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+- Tab切换器位于**标题右侧**（不是内容区顶部）
+- 副标题随Tab变化：
+  - 我的：`系统提示词、风格图与水印设置`
+  - 海鲜市场：`发现优质配置，一键免费下载`
+
+### 2.2 「我的」视图布局
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 系统提示词        + 新建 │ 风格图设置      + 新增配置 │ 水印设置  + 新增 │
+├─────────────────────────┼─────────────────────────────┼─────────────────┤
+│ ┌─────────────────────┐ │ ┌─────────────────────────┐ │ ┌─────────────┐ │
+│ │ ✨ 标题    [文章配图]│ │ │ 风格名称                │ │ │ 水印名称    │ │
+│ │ [已公开] [当前]     │ │ │ [已公开]                │ │ │ [已公开]    │ │
+│ │                     │ │ │                         │ │ │             │ │
+│ │ 内容预览...         │ │ │ [图片预览] [提示词预览] │ │ │ [预览区]    │ │
+│ │                     │ │ │                         │ │ │             │ │
+│ │ 🔀 12次下载         │ │ │ 🔀 5次下载              │ │ │ 🔀 3次下载  │ │
+│ │ [发布/取消发布]     │ │ │ [发布/取消发布]         │ │ │ [发布/取消] │ │
+│ │ [选择] [编辑] [删除]│ │ │ [选择] [编辑] [删除]    │ │ │ [选择]...   │ │
+│ └─────────────────────┘ │ └─────────────────────────┘ │ └─────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**卡片元素**：
+1. 标题 + 分类标签（全局/文章配图）
+2. 已公开徽章（isPublic=true时显示）
+3. 当前选中徽章
+4. 内容预览区
+5. Fork次数（已发布时显示）
+6. 操作按钮：
+   - 未发布：`[发布]`
+   - 已发布：`[取消发布]`
+   - 通用：`[选择] [编辑] [删除]`
+
+### 2.3 「海鲜市场」视图布局
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 🔍 搜索配置名称...    [全部▼] [提示词] [风格图] [水印]    [🔥热门] [🕐最新] │
+├─────────────────────────────────────────────────────────────────────────┤
+│ ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐         │
+│ │ ✨ 生图刘文波     │ │ 🎨 赛博朋克风格  │ │ 💧 极简水印      │         │
+│ │ 📝 提示词        │ │    风格图        │ │    水印          │         │
+│ │                  │ │                  │ │                  │         │
+│ │ 输入是一篇完整...│ │ [图片缩略图]     │ │ [水印预览]       │         │
+│ │                  │ │                  │ │                  │         │
+│ │ 👤 张三  1/15    │ │ 👤 李四  1/10    │ │ 👤 王五  1/12    │         │
+│ │ 🔀 12次下载      │ │ 🔀 8次下载       │ │ 🔀 5次下载       │         │
+│ │ [🤚 免费下载]    │ │ [🤚 免费下载]    │ │ [🤚 免费下载]    │         │
+│ └──────────────────┘ └──────────────────┘ └──────────────────┘         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**筛选栏**：
+- 搜索框：按名称搜索
+- 分类筛选：全部 / 提示词 / 风格图 / 水印
+- 排序：热门（按Fork次数）/ 最新（按发布时间）
+
+**卡片元素**：
+1. 标题
+2. 类型标签：📝提示词 / 🎨风格图 / 💧水印
+3. 内容预览
+4. 作者信息：头像 + 昵称 + 发布日期
+5. Fork次数
+6. 免费下载按钮（Hand图标）
+
+**布局方式**：混合展示所有类型，按筛选和排序条件显示
+
+## 三、功能清单
+
+### 3.1 「我的」视图功能
+
+| 序号 | 功能 | 描述 | 状态 |
+|------|------|------|------|
+| M1 | Tab切换移到标题栏 | Tab在标题右侧，不在内容区 | ✅ 已实现 |
+| M2 | 提示词卡片-发布按钮 | 未发布显示「发布」，点击后发布到市场 | ✅ 已实现 |
+| M3 | 提示词卡片-取消发布按钮 | 已发布显示「取消发布」 | ✅ 已实现 |
+| M4 | 提示词卡片-已公开徽章 | isPublic=true时显示蓝色「已公开」徽章 | ✅ 已实现 |
+| M5 | 提示词卡片-Fork次数 | 已发布时显示「🔀 N次下载」 | ✅ 已实现 |
+| M6 | 风格图卡片-发布/取消发布 | 同M2/M3 | ✅ 已实现 |
+| M7 | 风格图卡片-已公开徽章 | 同M4 | ✅ 已实现 |
+| M8 | 风格图卡片-Fork次数 | 同M5 | ✅ 已实现 |
+| M9 | 水印卡片-发布/取消发布 | WatermarkSettingsPanel已支持 | ✅ 已实现 |
+| M10 | 水印卡片-已公开徽章 | 同M4 | ✅ 已实现 |
+| M11 | 水印卡片-Fork次数 | 同M5 | ✅ 已实现 |
+
+### 3.2 「海鲜市场」视图功能
+
+| 序号 | 功能 | 描述 | 状态 |
+|------|------|------|------|
+| K1 | 搜索框 | 按配置名称搜索 | ✅ 已实现 |
+| K2 | 分类筛选 | 全部/提示词/风格图/水印 | ✅ 已实现 |
+| K3 | 排序切换 | 热门/最新 | ✅ 已实现 |
+| K4 | 混合展示 | 所有类型混合在一起展示，不分三栏 | ✅ 已实现 |
+| K5 | 卡片-类型标签 | 📝提示词 / 🎨风格图 / 💧水印 | ✅ 已实现 |
+| K6 | 卡片-作者信息 | 头像 + 昵称 + 发布日期 | ✅ 已实现 |
+| K7 | 卡片-Fork次数 | 显示下载次数 | ✅ 已实现 |
+| K8 | 卡片-免费下载按钮 | Hand图标 + "免费下载" | ✅ 已实现 |
+| K9 | 下载后刷新 | 下载后刷新市场数据和我的数据 | ✅ 已实现 |
+
+### 3.3 后端API（已实现）
+
+| 序号 | API | 描述 | 状态 |
+|------|-----|------|------|
+| A1 | GET /prompts/marketplace | 获取市场提示词列表 | ✅ |
+| A2 | POST /prompts/{id}/publish | 发布提示词 | ✅ |
+| A3 | POST /prompts/{id}/unpublish | 取消发布 | ✅ |
+| A4 | POST /prompts/{id}/fork | Fork提示词 | ✅ |
+| A5 | GET /reference-images/marketplace | 获取市场风格图列表 | ✅ |
+| A6 | POST /reference-images/{id}/publish | 发布风格图 | ✅ |
+| A7 | POST /reference-images/{id}/unpublish | 取消发布 | ✅ |
+| A8 | POST /reference-images/{id}/fork | Fork风格图 | ✅ |
+| A9 | GET /watermarks/marketplace | 获取市场水印列表 | ✅ |
+| A10 | POST /watermarks/{id}/publish | 发布水印 | ✅ |
+| A11 | POST /watermarks/{id}/unpublish | 取消发布 | ✅ |
+| A12 | POST /watermarks/{id}/fork | Fork水印 | ✅ |
+
+## 四、开发任务清单
+
+### Phase 1: UI布局调整
+
+- [x] **T1**: 将Tab切换器移到Dialog标题栏右侧
+- [x] **T2**: 副标题随Tab切换变化
+
+### Phase 2: 「我的」视图功能增强
+
+- [x] **T3**: 提示词卡片添加「发布/取消发布」按钮
+- [x] **T4**: 提示词卡片添加「已公开」徽章
+- [x] **T5**: 提示词卡片添加Fork次数显示
+- [x] **T6**: 风格图卡片添加「发布/取消发布」按钮
+- [x] **T7**: 风格图卡片添加「已公开」徽章和Fork次数
+- [x] **T8**: 水印面板增加发布功能（WatermarkSettingsPanel）
+
+### Phase 3: 「海鲜市场」视图重构
+
+- [x] **T9**: 添加分类筛选按钮（全部/提示词/风格图/水印）
+- [x] **T10**: 重构为混合展示布局（不分三栏）
+- [x] **T11**: 卡片添加类型标签（📝/🎨/💧）
+- [x] **T12**: 卡片添加发布日期显示
+
+### Phase 4: 测试验证
+
+- [x] **T13**: 添加e2e测试脚本
+- [ ] **T14**: 手动测试全流程
+
+## 五、数据模型补充
+
+需要确保后端API返回以下字段：
+
+```typescript
+// 市场配置项通用字段
+interface MarketplaceItem {
+  id: string;
+  name: string;         // 配置名称
+  type: 'prompt' | 'reference-image' | 'watermark';  // 配置类型
+  forkCount: number;    // Fork次数
+  createdAt: string;    // 发布时间
+  ownerUserId: string;
+  ownerUserName: string;
+  ownerUserAvatar?: string;
+}
+```
+
+---
+
+## 六、用户故事
+
+### US-001：发布配置到海鲜市场
+
+**作为** 配置创建者
+**我想要** 将我的配置发布到海鲜市场
+**以便** 其他用户可以使用我的配置
+
+#### 操作流程
+1. 进入「文学创作」页面
+2. 点击「配置管理」按钮，打开配置管理弹窗
+3. 确保当前在「我的」标签页
+4. 找到要发布的配置卡片
+5. 点击卡片底部的「发布」按钮
+6. 系统提示「发布成功，配置已发布到海鲜市场」
+7. 卡片上出现「已公开」徽章
+8. 显示「0 次下载」计数
+
+#### 验收标准
+- [x] 发布后卡片显示「已公开」蓝色徽章
+- [x] 发布后显示 Fork 次数（初始为 0）
+- [x] 发布按钮变为「取消发布」按钮
+- [x] 配置出现在海鲜市场列表中
+
+---
+
+### US-002：取消发布配置
+
+**作为** 配置创建者
+**我想要** 取消已发布的配置
+**以便** 不再让其他用户看到和下载
+
+#### 操作流程
+1. 在「我的」标签页找到已发布的配置
+2. 点击「取消发布」按钮
+3. 系统弹出确认对话框
+4. 点击「确定」
+5. 系统提示「已取消发布」
+6. 「已公开」徽章消失
+
+#### 验收标准
+- [x] 取消发布需要二次确认
+- [x] 取消后「已公开」徽章消失
+- [x] 取消后配置从海鲜市场列表中移除
+- [x] Fork 次数数据保留
+
+---
+
+### US-003：浏览海鲜市场
+
+**作为** 配置消费者
+**我想要** 浏览海鲜市场中的公开配置
+**以便** 找到适合我需求的配置
+
+#### 操作流程
+1. 进入「文学创作」页面
+2. 点击「配置管理」按钮
+3. 点击标题栏右侧的「海鲜市场」标签
+4. 看到混合展示的配置列表
+5. 使用分类筛选：全部 / 提示词 / 风格图 / 水印
+6. 使用排序：热门（按下载次数）/ 最新（按发布时间）
+7. 使用搜索框搜索配置名称
+
+#### 验收标准
+- [x] 默认显示所有类型的配置（混合展示）
+- [x] 每个卡片显示类型标签（📝提示词 / 🎨风格图 / 💧水印）
+- [x] 显示作者头像、昵称、发布日期
+- [x] 显示下载次数
+- [x] 分类筛选正常工作
+- [x] 排序正常工作
+- [x] 搜索正常工作
+
+---
+
+### US-004：免费下载（Fork）配置
+
+**作为** 配置消费者
+**我想要** 下载海鲜市场中的配置
+**以便** 在自己的创作中使用
+
+#### 操作流程
+1. 在海鲜市场找到想要的配置
+2. 点击「免费下载」按钮
+3. 系统提示「下载成功，已添加到「我的」」
+4. 切换到「我的」标签页
+5. 看到新增的配置
+
+#### 验收标准
+- [x] 下载后配置出现在「我的」列表
+- [x] 原配置的下载次数 +1
+- [x] 下载的配置属于当前用户（可编辑/删除）
+- [x] 下载的配置初始为私有状态
+
+#### 数据隔离验证
+```
+原配置（用户A）:
+  OwnerUserId: "user-A"
+  IsPublic: true
+  ForkCount: 10 → 11
+
+Fork后的配置（用户B）:
+  OwnerUserId: "user-B"        ← 新所有者
+  IsPublic: false              ← 默认私有
+  ForkedFromId: "原配置ID"     ← 来源追溯
+  ForkCount: 0
+```
+
+---
+
+## 七、数据隔离规则
+
+### 7.1 私有配置隔离
+
+```sql
+-- 用户只能看到自己的私有配置
+SELECT * FROM configs
+WHERE OwnerUserId = :currentUserId
+```
+
+### 7.2 海鲜市场列表
+
+```sql
+-- 海鲜市场只显示公开配置
+SELECT * FROM configs
+WHERE IsPublic = true
+ORDER BY ForkCount DESC  -- 热门排序
+```
+
+### 7.3 发布权限验证
+
+```csharp
+// 只有所有者才能发布/取消发布
+if (config.OwnerUserId != currentUserId)
+    return 403 Forbidden;
+```
+
+### 7.4 Fork 数据变更
+
+| 字段 | 原配置变更 | 新配置值 |
+|------|-----------|---------|
+| OwnerUserId | 不变 | 当前用户 ID |
+| ForkCount | +1 | 0 |
+| IsPublic | 不变 | false |
+| ForkedFromId | 不变 | 原配置 ID |
+
+---
+
+## 八、测试检查清单
+
+### 8.1 功能测试
+
+- [ ] 创建提示词 → 发布 → 出现在市场
+- [ ] 创建风格图 → 发布 → 出现在市场
+- [ ] 创建水印 → 发布 → 出现在市场
+- [ ] 取消发布 → 从市场消失
+- [ ] Fork 提示词 → 出现在我的列表
+- [ ] Fork 风格图 → 出现在我的列表
+- [ ] Fork 水印 → 出现在我的列表
+
+### 8.2 隔离测试
+
+- [ ] 用户A的私有配置，用户B看不到
+- [ ] 用户A发布后，用户B能看到
+- [ ] 用户B Fork 后，配置属于用户B
+- [ ] 用户A取消发布后，用户B看不到（但已 Fork 的保留）
+- [ ] 用户B无法修改用户A的配置
+- [ ] 用户B无法取消发布用户A的配置
+
+### 8.3 边界测试
+
+- [ ] 搜索空关键词 → 显示全部
+- [ ] 搜索不存在的关键词 → 显示空
+- [ ] 切换排序 → 列表重新排序
+- [ ] 切换分类 → 列表正确过滤
+
+---
+
+## 九、扩展性设计
+
+### 9.1 架构概述
+
+海鲜市场采用**类型注册表模式**，支持在不修改核心代码的情况下新增配置类型。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        前端展示层                                │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  MarketplaceCard (通用容器)                               │   │
+│  │  ├─ header: 标题 + 类型标签 + Fork次数                    │   │
+│  │  ├─ preview: 委托给类型专属渲染器                         │   │
+│  │  └─ footer: 作者信息 + 下载按钮                           │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                             ↓                                    │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  CONFIG_TYPE_REGISTRY (类型注册表)                        │   │
+│  │  ├─ prompt   → PromptPreviewRenderer                     │   │
+│  │  ├─ refImage → RefImagePreviewRenderer                   │   │
+│  │  └─ watermark→ WatermarkPreviewRenderer                  │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        后端数据层                                │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  IForkable 接口 + ForkService                             │   │
+│  │  ├─ GetCopyableFields(): 白名单字段拷贝                   │   │
+│  │  ├─ OnForked(): 类型特定后处理                            │   │
+│  │  └─ ClearForkSource(): 修改后清除来源                     │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 9.2 新增类型步骤
+
+#### 前端（3 步）
+
+```typescript
+// 1. 在 marketplaceTypes.tsx 中定义数据类型
+export interface MarketplaceWorkflow extends MarketplaceItemBase {
+  name: string;
+  nodes: WorkflowNode[];
+  connections: WorkflowConnection[];
+}
+
+// 2. 创建预览渲染器
+const WorkflowPreviewRenderer: React.FC<{ item: MarketplaceWorkflow }> = ({ item }) => (
+  <div className="workflow-preview">
+    <WorkflowMinimap nodes={item.nodes} />
+  </div>
+);
+
+// 3. 在 CONFIG_TYPE_REGISTRY 中注册
+workflow: {
+  key: 'workflow',
+  label: '工作流',
+  icon: GitBranch,
+  color: { bg: '...', text: '...', border: '...', iconColor: '...' },
+  api: {
+    listMarketplace: listWorkflowsMarketplace,
+    publish: publishWorkflow,
+    unpublish: unpublishWorkflow,
+    fork: forkWorkflow,
+  },
+  getDisplayName: (item) => item.name,
+  PreviewRenderer: WorkflowPreviewRenderer,
+}
+```
+
+#### 后端（3 步）
+
+```csharp
+// 1. Model 实现 IForkable 接口
+public class Workflow : IForkable
+{
+    public string Id { get; set; }
+    public string Name { get; set; }
+    public List<WorkflowNode> Nodes { get; set; }
+    // ... 其他字段
+
+    // 实现接口
+    public string GetDisplayName() => Name;
+    public string GetConfigType() => "workflow";
+    public string[] GetCopyableFields() => new[] { nameof(Name), nameof(Nodes), nameof(Connections) };
+    public void OnForked() { /* 特殊处理 */ }
+}
+
+// 2. Controller 中使用 ForkService
+[HttpPost("{id}/fork")]
+public async Task<IActionResult> Fork(string id)
+{
+    var source = await _db.Workflows.Find(...).FirstOrDefaultAsync();
+    var forked = _forkService.Fork(source, currentUserId, ownerName, ownerAvatar);
+    await _db.Workflows.InsertOneAsync(forked);
+    return Ok(forked);
+}
+
+// 3. 添加 Marketplace API 端点
+[HttpGet("marketplace")]
+public async Task<IActionResult> ListMarketplace(...) { ... }
+
+[HttpPost("{id}/publish")]
+public async Task<IActionResult> Publish(...) { ... }
+
+[HttpPost("{id}/unpublish")]
+public async Task<IActionResult> Unpublish(...) { ... }
+```
+
+### 9.3 白名单字段拷贝机制
+
+Fork 时只拷贝 `GetCopyableFields()` 返回的字段，其他字段自动重置：
+
+| 字段类型 | 处理方式 |
+|---------|---------|
+| 业务字段（白名单内） | 拷贝 |
+| Id | 新生成 |
+| OwnerUserId | 设为当前用户 |
+| IsPublic | 重置为 false |
+| ForkCount | 重置为 0 |
+| ForkedFrom* | 设置来源信息 |
+| CreatedAt/UpdatedAt | 重置为当前时间 |
+
+### 9.4 关键文件
+
+| 文件 | 用途 |
+|------|------|
+| `prd-admin/src/lib/marketplaceTypes.tsx` | 前端类型注册表 |
+| `prd-admin/src/components/marketplace/MarketplaceCard.tsx` | 通用卡片组件 |
+| `prd-api/src/PrdAgent.Core/Interfaces/IMarketplaceItem.cs` | 后端接口定义 |
+| `prd-api/src/PrdAgent.Infrastructure/Services/ForkService.cs` | 通用 Fork 服务 |
+
+---
+
+## 十、相关文件
+
+| 文件 | 用途 |
+|------|------|
+| `prd-admin/src/pages/literary-agent/ArticleIllustrationEditorPage.tsx` | 前端主页面 |
+| `prd-admin/src/components/watermark/WatermarkSettingsPanel.tsx` | 水印面板组件 |
+| `prd-admin/src/lib/marketplaceTypes.tsx` | 类型注册表 |
+| `prd-admin/src/components/marketplace/MarketplaceCard.tsx` | 通用卡片组件 |
+| `prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryPromptsController.cs` | 提示词 API |
+| `prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryAgentConfigController.cs` | 风格图 API |
+| `prd-api/src/PrdAgent.Api/Controllers/WatermarkController.cs` | 水印 API |
+| `prd-api/src/PrdAgent.Core/Interfaces/IMarketplaceItem.cs` | 后端接口定义 |
+| `prd-api/src/PrdAgent.Infrastructure/Services/ForkService.cs` | 通用 Fork 服务 |
+
+---
+
+## 十一、变更历史
+
+| 日期 | 版本 | 变更内容 | 作者 |
+|------|------|---------|------|
+| 2026-02-03 | 3.0 | 实现类型注册表扩展性设计；新增前端 MarketplaceCard 组件和 marketplaceTypes.tsx；新增后端 IForkable 接口和 ForkService | Claude |
+| 2026-02-02 | 2.0 | 整合用户故事、数据隔离规则、测试清单；更新功能状态为已实现 | Claude |
+| 2026-02-01 | 1.0 | 初始版本 | Claude |

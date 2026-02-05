@@ -113,16 +113,22 @@ public class LlmGatewayTests
     {
         // Arrange
         var gateway = CreateTestGateway();
+        // 从 appCallerCode 中提取 modelType（:: 后的部分）
+        var modelType = "chat";
+        if (!string.IsNullOrEmpty(appCallerCode) && appCallerCode.Contains("::"))
+        {
+            modelType = appCallerCode.Split("::").Last();
+        }
 
         // Act & Assert
         if (shouldSucceed)
         {
-            var client = gateway.CreateClient(appCallerCode, "chat");
+            var client = gateway.CreateClient(appCallerCode, modelType);
             Assert.NotNull(client);
         }
         else
         {
-            Assert.Throws<InvalidOperationException>(() => gateway.CreateClient(appCallerCode, "chat"));
+            Assert.Throws<InvalidOperationException>(() => gateway.CreateClient(appCallerCode, modelType));
         }
     }
 

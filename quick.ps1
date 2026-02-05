@@ -256,13 +256,13 @@ function Check-Desktop {
     }
 
     Write-Info "Type check frontend (tsc --noEmit)..."
-    pnpm -C "$desktopDir" tsc --noEmit
+    pnpm -C "$desktopDir" exec tsc --noEmit
 
     Write-Info "Build frontend..."
-    pnpm -C "$desktopDir" build
+    pnpm -C "$desktopDir" run build
 
     Write-Info "Generate Tauri icons..."
-    pnpm -C "$desktopDir" tauri:icons
+    pnpm -C "$desktopDir" run tauri:icons
 
     Write-Info "Cargo check..."
     cargo check --manifest-path "$tauriManifest"
@@ -285,7 +285,7 @@ function Check-CI {
     $slnPath = Join-Path $ScriptDir "prd-api\PrdAgent.sln"
     dotnet restore "$slnPath"
     dotnet build "$slnPath" -c Release --no-restore
-    dotnet test "$slnPath" -c Release --no-build --verbosity normal
+    dotnet test "$slnPath" -c Release --no-build --verbosity normal --filter "Category!=Integration"
 
     # admin checks
     Write-Info "Admin: install/typecheck/build..."
@@ -294,8 +294,8 @@ function Check-CI {
         Write-Warn "node_modules not found, running pnpm install..."
         pnpm -C "$adminDir" install
     }
-    pnpm -C "$adminDir" tsc --noEmit
-    pnpm -C "$adminDir" build
+    pnpm -C "$adminDir" exec tsc --noEmit
+    pnpm -C "$adminDir" run build
 
     # desktop checks
     Check-Desktop

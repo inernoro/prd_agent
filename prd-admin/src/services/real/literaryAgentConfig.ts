@@ -350,3 +350,49 @@ export const streamLiteraryAgentImageGenRunWithRetryReal: StreamLiteraryAgentIma
 
   return ok(true);
 };
+
+// ========== 风格图配置海鲜市场 API ==========
+
+import type {
+  ListReferenceImageConfigsMarketplaceContract,
+  PublishReferenceImageConfigContract,
+  UnpublishReferenceImageConfigContract,
+  ForkReferenceImageConfigContract,
+  MarketplaceReferenceImageConfig,
+} from '../contracts/literaryAgentConfig';
+
+export const listReferenceImageConfigsMarketplaceReal: ListReferenceImageConfigsMarketplaceContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.keyword) qs.set('keyword', input.keyword);
+  if (input.sort) qs.set('sort', input.sort);
+  const q = qs.toString();
+  return await apiRequest<{ items: MarketplaceReferenceImageConfig[] }>(
+    `${api.literaryAgent.config.referenceImages.list()}/marketplace${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const publishReferenceImageConfigReal: PublishReferenceImageConfigContract = async (input) => {
+  return await apiRequest<{ config: ReferenceImageConfig }>(
+    `${api.literaryAgent.config.referenceImages.byId(encodeURIComponent(input.id))}/publish`,
+    { method: 'POST' }
+  );
+};
+
+export const unpublishReferenceImageConfigReal: UnpublishReferenceImageConfigContract = async (input) => {
+  return await apiRequest<{ config: ReferenceImageConfig }>(
+    `${api.literaryAgent.config.referenceImages.byId(encodeURIComponent(input.id))}/unpublish`,
+    { method: 'POST' }
+  );
+};
+
+export const forkReferenceImageConfigReal: ForkReferenceImageConfigContract = async (input) => {
+  const body = input.name ? { Name: input.name } : {};
+  return await apiRequest<{ config: ReferenceImageConfig }>(
+    `${api.literaryAgent.config.referenceImages.byId(encodeURIComponent(input.id))}/fork`,
+    { 
+      method: 'POST',
+      body,
+    }
+  );
+};

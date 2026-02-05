@@ -26,8 +26,31 @@ export interface ReferenceImageConfig {
   isActive: boolean;
   appKey: string;
   createdByAdminId?: string | null;
+  // 海鲜市场字段
+  isPublic?: boolean;
+  forkCount?: number;
+  forkedFromId?: string | null;
+  forkedFromUserId?: string | null;
+  forkedFromUserName?: string | null;
+  forkedFromUserAvatar?: string | null;
+  isModifiedAfterFork?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * 海鲜市场风格图配置项（包含作者信息）
+ */
+export interface MarketplaceReferenceImageConfig {
+  id: string;
+  name: string;
+  prompt: string;
+  imageUrl?: string | null;
+  forkCount: number;
+  createdAt: string;
+  ownerUserId?: string | null;
+  ownerUserName: string;
+  ownerUserAvatar?: string | null;
 }
 
 /**
@@ -235,3 +258,36 @@ export type StreamLiteraryAgentImageGenRunWithRetryContract = (params: {
   signal: AbortSignal;
   maxAttempts?: number;
 }) => Promise<ApiResponse<true>>;
+
+// ========== 风格图配置海鲜市场 API ==========
+
+/**
+ * 海鲜市场 - 获取公开风格图配置列表
+ */
+export type ListReferenceImageConfigsMarketplaceContract = (input: {
+  keyword?: string;
+  sort?: 'hot' | 'new';
+}) => Promise<ApiResponse<{ items: MarketplaceReferenceImageConfig[] }>>;
+
+/**
+ * 海鲜市场 - 发布风格图配置
+ */
+export type PublishReferenceImageConfigContract = (input: {
+  id: string;
+}) => Promise<ApiResponse<{ config: ReferenceImageConfig }>>;
+
+/**
+ * 海鲜市场 - 取消发布风格图配置
+ */
+export type UnpublishReferenceImageConfigContract = (input: {
+  id: string;
+}) => Promise<ApiResponse<{ config: ReferenceImageConfig }>>;
+
+/**
+ * 海鲜市场 - 免费下载（Fork）风格图配置
+ */
+export type ForkReferenceImageConfigContract = (input: {
+  id: string;
+  /** 可选的自定义名称，不传则使用原名称 */
+  name?: string;
+}) => Promise<ApiResponse<{ config: ReferenceImageConfig }>>;

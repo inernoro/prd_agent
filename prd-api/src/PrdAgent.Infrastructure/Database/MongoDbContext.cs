@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Models.Toolbox;
 
 namespace PrdAgent.Infrastructure.Database;
 
@@ -92,6 +93,9 @@ public class MongoDbContext
     public IMongoCollection<WatermarkFontAsset> WatermarkFontAssets => _database.GetCollection<WatermarkFontAsset>("watermark_font_assets");
     public IMongoCollection<WatermarkConfig> WatermarkConfigs => _database.GetCollection<WatermarkConfig>("watermark_configs");
 
+    // 海鲜市场 Fork 下载记录
+    public IMongoCollection<MarketplaceForkLog> MarketplaceForkLogs => _database.GetCollection<MarketplaceForkLog>("marketplace_fork_logs");
+
     // Literary Agent 文学创作配置
     public IMongoCollection<LiteraryAgentConfig> LiteraryAgentConfigs => _database.GetCollection<LiteraryAgentConfig>("literary_agent_configs");
     public IMongoCollection<ReferenceImageConfig> ReferenceImageConfigs => _database.GetCollection<ReferenceImageConfig>("reference_image_configs");
@@ -117,6 +121,8 @@ public class MongoDbContext
     // App Registry 应用注册中心
     public IMongoCollection<RegisteredApp> RegisteredApps => _database.GetCollection<RegisteredApp>("registered_apps");
     public IMongoCollection<RoutingRule> RoutingRules => _database.GetCollection<RoutingRule>("routing_rules");
+    // AI Toolbox 百宝箱
+    public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
 
     private void CreateIndexes()
     {
@@ -752,5 +758,12 @@ public class MongoDbContext
         ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
             Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
             new CreateIndexOptions { Name = "ttl_channel_request_logs", ExpireAfter = TimeSpan.FromDays(30) }));
+        // ToolboxRuns：按 userId + createdAt 查询；按 status + createdAt 查询
+        ToolboxRuns.Indexes.CreateOne(new CreateIndexModel<ToolboxRun>(
+            Builders<ToolboxRun>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_toolbox_runs_user_created" }));
+        ToolboxRuns.Indexes.CreateOne(new CreateIndexModel<ToolboxRun>(
+            Builders<ToolboxRun>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_toolbox_runs_status_created" }));
     }
 }
