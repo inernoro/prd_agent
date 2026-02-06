@@ -53,7 +53,7 @@ export function Dialog({
             ...contentStyle,
           }}
         >
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center justify-between gap-4 relative">
             <div className="min-w-0 flex-shrink-0">
               <DialogPrimitive.Title className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
                 {title}
@@ -65,7 +65,7 @@ export function Dialog({
               )}
             </div>
             {titleCenter && (
-              <div className="flex-1 flex justify-center">
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
                 {titleCenter}
               </div>
             )}
