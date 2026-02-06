@@ -103,6 +103,7 @@ public class LiteraryAgentAdapter : IAgentAdapter
                     - 保持原意不变
                     - 提升文字的流畅性和表达力
                     - 修正语法和用词问题
+                    - 必须使用换行符分隔不同的段落和章节，保持良好的文本结构和可读性
                     直接输出润色后的内容。
                     """;
                 var textToPolish = previousOutput ?? userMessage;
