@@ -4,6 +4,7 @@ import {
   Expand,
   Eraser,
   Maximize,
+  Settings,
   Wand2,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -38,6 +39,8 @@ export type ImageQuickActionBarProps = {
   onAction: (action: QuickAction) => void;
   /** 下载 */
   onDownload: () => void;
+  /** 打开快捷指令配置 */
+  onOpenConfig?: () => void;
 };
 
 export function ImageQuickActionBar({
@@ -48,6 +51,7 @@ export function ImageQuickActionBar({
   actions,
   onAction,
   onDownload,
+  onOpenConfig,
 }: ImageQuickActionBarProps) {
   const barRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
@@ -133,6 +137,19 @@ export function ImageQuickActionBar({
       >
         <Download size={14} />
       </button>
+
+      {/* 快捷指令管理 */}
+      {onOpenConfig ? (
+        <button
+          type="button"
+          className="inline-flex items-center justify-center w-[28px] h-[28px] rounded-[7px] transition-colors hover:bg-white/10"
+          style={{ color: 'rgba(255, 255, 255, 0.72)' }}
+          title="管理快捷指令"
+          onClick={onOpenConfig}
+        >
+          <Settings size={14} />
+        </button>
+      ) : null}
     </div>
   );
 }

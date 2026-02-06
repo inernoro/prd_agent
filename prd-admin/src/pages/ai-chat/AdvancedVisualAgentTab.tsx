@@ -1042,6 +1042,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     return [...BUILTIN_QUICK_ACTIONS, ...diyMapped];
   }, [diyQuickActions]);
   const [quickEditRunning, setQuickEditRunning] = useState(false);
+  const [quickActionDialogOpen, setQuickActionDialogOpen] = useState(false);
   // 提示词模式：按账号持久化（不写 DB）
   // - 关闭：先调用 planImageGen 解析/改写成候选提示词，再生图
   // - 开启：跳过解析，直接把输入原样作为 prompt 发给生图模型
@@ -7978,6 +7979,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             actions={mergedQuickActions}
             onAction={handleQuickAction}
             onDownload={() => void downloadImage(selected.src, selected.prompt || 'image')}
+            onOpenConfig={() => setQuickActionDialogOpen(true)}
           />
           <ImageQuickEditInput
             imageRect={{
@@ -8381,8 +8383,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       <ConfigManagementDialogBase
         ref={configDialogRef}
         mineTitle="配置管理"
-        mineDescription="水印与快捷指令设置"
-        maxWidth={1500}
+        mineDescription="水印设置"
+        maxWidth={1200}
         showColumnDividers={false}
         columns={[
           {
@@ -8424,18 +8426,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               />
             ),
           } as ConfigColumn<MarketplaceWatermarkConfig>,
-          {
-            key: 'quickActions',
-            title: '快捷指令',
-            filterLabel: '快捷指令',
-            renderMineContent: () => (
-              <QuickActionConfigPanel
-                actions={diyQuickActions}
-                onChange={setDiyQuickActions}
-              />
-            ),
-          } as ConfigColumn<any>,
         ]}
+      />
+
+      {/* 快捷指令管理弹窗 */}
+      <QuickActionConfigPanel
+        open={quickActionDialogOpen}
+        onOpenChange={setQuickActionDialogOpen}
+        actions={diyQuickActions}
+        onChange={setDiyQuickActions}
       />
     </div>
   );
