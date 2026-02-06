@@ -16,14 +16,18 @@ import PromptStagesPage from '@/pages/PromptStagesPage';
 import VisualAgentFullscreenPage from '@/pages/visual-agent/VisualAgentFullscreenPage';
 import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
 import { DefectAgentPage } from '@/pages/defect-agent';
+import { AgentDashboardPage } from '@/pages/agent-dashboard';
+import { MarketplacePage } from '@/pages/marketplace';
+import { AiToolboxPage } from '@/pages/ai-toolbox';
 import { LandingPage } from '@/pages/home';
 import AssetsManagePage from '@/pages/AssetsManagePage';
-import OpenPlatformPage from '@/pages/OpenPlatformPage';
+import OpenPlatformTabsPage from '@/pages/OpenPlatformTabsPage';
 import AuthzPage from '@/pages/AuthzPage';
 import SettingsPage from '@/pages/SettingsPage';
 import RichComposerLab from '@/pages/_dev/RichComposerLab';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
+import { AgentSwitcherProvider } from '@/components/agent-switcher';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -130,7 +134,7 @@ export default function App() {
   }, [isAuthenticated, menuCatalogLoaded, setMenuCatalog]);
 
   return (
-    <>
+    <AgentSwitcherProvider>
       <ToastContainer />
       <Routes>
         {/* Landing page - public */}
@@ -184,6 +188,18 @@ export default function App() {
           }
         />
 
+        {/* 海鲜市场 - 独立全屏页面 */}
+        <Route
+          path="/marketplace"
+          element={
+            <RequireAuth>
+              <RequirePermission perm="access">
+                <MarketplacePage />
+              </RequirePermission>
+            </RequireAuth>
+          }
+        />
+
       <Route
         path="/"
         element={
@@ -195,6 +211,7 @@ export default function App() {
         }
       >
         <Route index element={<DashboardPage />} />
+        <Route path="agent-dashboard" element={<AgentDashboardPage />} />
         <Route path="users" element={<RequirePermission perm="users.read"><UsersPage /></RequirePermission>} />
         <Route path="groups" element={<RequirePermission perm="groups.read"><GroupsPage /></RequirePermission>} />
         <Route path="mds" element={<RequirePermission perm="mds.read"><ModelManageTabsPage /></RequirePermission>} />
@@ -202,9 +219,10 @@ export default function App() {
         <Route path="literary-agent" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentWorkspaceListPage /></RequirePermission>} />
         <Route path="literary-agent/:workspaceId" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentEditorPageWrapper /></RequirePermission>} />
         <Route path="defect-agent" element={<RequirePermission perm="defect-agent.use"><DefectAgentPage /></RequirePermission>} />
+        <Route path="ai-toolbox" element={<RequirePermission perm="ai-toolbox.use"><AiToolboxPage /></RequirePermission>} />
         <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />
         <Route path="data" element={<RequirePermission perm="data.read"><DataManagePage /></RequirePermission>} />
-        <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformPage /></RequirePermission>} />
+        <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
         <Route path="prompts" element={<RequirePermission perm="prompts.read"><PromptStagesPage /></RequirePermission>} />
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
@@ -215,6 +233,6 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
-    </>
+    </AgentSwitcherProvider>
   );
 }

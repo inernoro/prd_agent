@@ -60,7 +60,7 @@ export default function VisualAgentFullscreenPage() {
           e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
         }}
       >
-        <ArrowLeft size={18} /> 
+        <ArrowLeft size={18} />
       </button>
 
       {/* 根据路由显示列表页或编辑页 */}

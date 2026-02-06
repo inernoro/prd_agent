@@ -126,6 +126,50 @@ function MessageMarkdown({ content }: { content: string }) {
   );
 }
 
+/** 头像堆叠组件 - 柔和配色 (保留供后续使用) */
+export function AvatarStack({ members, total, max = 4 }: { members: TopMember[]; total: number; max?: number }) {
+  const displayed = members.slice(0, max);
+
+  const getAvatarUrl = (fileName?: string | null) => {
+    if (!fileName) return null;
+    return `/avatars/${fileName}`;
+  };
+
+  // 柔和的灰蓝色调 (name 参数保留供后续扩展)
+  const getGradient = (_name: string, index: number) => {
+    const baseHues = [210, 230, 190, 260, 180]; // 蓝、靛、青、紫、青绿
+    const hue = baseHues[index % baseHues.length];
+    return `linear-gradient(135deg, hsl(${hue}, 25%, 45%), hsl(${hue}, 30%, 35%))`;
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="flex -space-x-1">
+        {displayed.map((member, i) => {
+          const avatarUrl = getAvatarUrl(member.avatarFileName);
+          return (
+            <div
+              key={member.userId}
+              className="w-5 h-5 rounded-full border flex items-center justify-center text-[9px] font-medium text-white/90 overflow-hidden"
+              style={{
+                borderColor: 'rgba(255,255,255,0.15)',
+                background: avatarUrl ? `url(${avatarUrl}) center/cover` : getGradient(member.displayName, i),
+                zIndex: max - i,
+              }}
+              title={member.displayName}
+            >
+              {!avatarUrl && (member.displayName?.[0] || '?').toUpperCase()}
+            </div>
+          );
+        })}
+      </div>
+      {total > displayed.length && (
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>+{total - displayed.length}</span>
+      )}
+    </div>
+  );
+}
+
 /** 相对时间格式化 */
 function formatRelativeTime(dateStr?: string | null): string {
   if (!dateStr) return '无活动';

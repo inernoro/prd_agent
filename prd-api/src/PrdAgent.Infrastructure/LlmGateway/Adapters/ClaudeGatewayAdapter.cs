@@ -176,7 +176,8 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
                         stopReason = sr.GetString();
                     }
 
-                    if (root.TryGetProperty("usage", out var usageEl))
+                    if (root.TryGetProperty("usage", out var usageEl) &&
+                        usageEl.ValueKind == JsonValueKind.Object)
                     {
                         usage = ParseUsageElement(usageEl);
                     }
@@ -221,7 +222,8 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
         try
         {
             using var doc = JsonDocument.Parse(responseBody);
-            if (doc.RootElement.TryGetProperty("usage", out var usage))
+            if (doc.RootElement.TryGetProperty("usage", out var usage) &&
+                usage.ValueKind == JsonValueKind.Object)
             {
                 return ParseUsageElement(usage);
             }
@@ -240,16 +242,16 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
         int? cacheCreation = null;
         int? cacheRead = null;
 
-        if (usage.TryGetProperty("input_tokens", out var it))
+        if (usage.TryGetProperty("input_tokens", out var it) && it.ValueKind == JsonValueKind.Number)
             inputTokens = it.GetInt32();
 
-        if (usage.TryGetProperty("output_tokens", out var ot))
+        if (usage.TryGetProperty("output_tokens", out var ot) && ot.ValueKind == JsonValueKind.Number)
             outputTokens = ot.GetInt32();
 
-        if (usage.TryGetProperty("cache_creation_input_tokens", out var cc))
+        if (usage.TryGetProperty("cache_creation_input_tokens", out var cc) && cc.ValueKind == JsonValueKind.Number)
             cacheCreation = cc.GetInt32();
 
-        if (usage.TryGetProperty("cache_read_input_tokens", out var cr))
+        if (usage.TryGetProperty("cache_read_input_tokens", out var cr) && cr.ValueKind == JsonValueKind.Number)
             cacheRead = cr.GetInt32();
 
         return new GatewayTokenUsage

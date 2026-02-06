@@ -220,14 +220,17 @@ type WatermarkSettingsPanelProps = {
   appKey: string;
   onStatusChange?: (status: WatermarkStatus) => void;
   hideAddButton?: boolean;
+  /** 固定列数布局（与 cardWidth 互斥） */
   columns?: number;
+  /** 固定卡片宽度（启用 flex-wrap 自适应布局） */
+  cardWidth?: number;
 };
 
 export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel(
   props: WatermarkSettingsPanelProps,
   ref: ForwardedRef<WatermarkSettingsPanelHandle>
 ) {
-  const { appKey, onStatusChange, hideAddButton = false, columns = 1 } = props;
+  const { appKey, onStatusChange, hideAddButton = false, columns = 1, cardWidth } = props;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [fonts, setFonts] = useState<WatermarkFontInfo[]>([]);
@@ -716,8 +719,8 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
       {configs.length > 0 ? (
         <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-hidden">
           <div
-            className="grid gap-3 flex-1 min-h-0 overflow-auto overflow-x-hidden pr-1 content-start items-start"
-            style={{
+            className={cardWidth ? "flex flex-wrap gap-3 flex-1 min-h-0 overflow-auto pr-1 content-start items-start" : "grid gap-3 flex-1 min-h-0 overflow-auto overflow-x-hidden pr-1 content-start items-start"}
+            style={cardWidth ? { minWidth: 0 } : {
               gridTemplateColumns: columns > 1 ? `repeat(${columns}, minmax(0, 1fr))` : '1fr',
               gridAutoRows: 'min-content'
             }}
@@ -727,14 +730,15 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
               const fontLabel = fontMap.get(item.fontKey)?.displayName || item.fontKey;
               const previewUrl = buildPreviewUrl(item.previewUrl);
               const previewError = Boolean(previewErrorById[item.id]);
+              const cardStyle = {
+                ...(cardWidth ? { width: cardWidth, flexShrink: 0 } : {}),
+                ...(isActive ? { border: '2px solid rgba(34, 197, 94, 0.8)', boxShadow: '0 0 16px rgba(34, 197, 94, 0.3)' } : {}),
+              };
               return (
                 <GlassCard
                   key={item.id || `${item.text}-${index}`}
                   className="p-0 overflow-hidden"
-                  style={isActive ? {
-                    border: '2px solid rgba(34, 197, 94, 0.8)',
-                    boxShadow: '0 0 16px rgba(34, 197, 94, 0.3)',
-                  } : undefined}
+                  style={Object.keys(cardStyle).length > 0 ? cardStyle : undefined}
                 >
                   <div className="flex flex-col">
                     <div className="p-2 pb-1 shrink-0">
@@ -793,6 +797,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             anchor: item.anchor,
                             offsetX: item.offsetX,
                             offsetY: item.offsetY,
+                            positionMode: item.positionMode,
                             iconEnabled: item.iconEnabled,
                             borderEnabled: item.borderEnabled,
                             backgroundEnabled: item.backgroundEnabled,
@@ -863,16 +868,16 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             type="button"
                             className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
                             style={{
-                              color: isActive ? 'white' : 'rgba(34, 197, 94, 0.95)',
-                              background: isActive ? 'rgba(34, 197, 94, 0.95)' : 'rgba(34, 197, 94, 0.08)',
-                              border: isActive ? '1px solid rgba(34, 197, 94, 0.95)' : '1px solid rgba(34, 197, 94, 0.45)',
+                              color: isActive ? 'white' : 'rgba(156, 163, 175, 0.6)',
+                              background: isActive ? 'rgba(34, 197, 94, 0.95)' : 'transparent',
+                              border: isActive ? '1px solid rgba(34, 197, 94, 0.95)' : 'none',
                               minWidth: 40,
                             }}
                             onClick={() => isActive ? handleDeactivate(item.id) : handleActivate(item.id)}
                             disabled={saving}
                             title={isActive ? '取消选择' : '选择'}
                           >
-                            {isActive ? <CheckCircle2 size={16} /> : <Check size={16} />}
+                            <CheckCircle2 size={16} />
                           </button>
                           {/* 分隔线 */}
                           <div className="h-4 w-px mx-0.5" style={{ background: 'var(--border-subtle)' }} />

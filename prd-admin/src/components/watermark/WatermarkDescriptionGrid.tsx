@@ -22,6 +22,7 @@ export interface WatermarkDescriptionData {
   anchor?: string;
   offsetX?: number;
   offsetY?: number;
+  positionMode?: 'pixel' | 'ratio'; // 定位模式，用于格式化偏移值
   iconEnabled?: boolean;
   borderEnabled?: boolean;
   backgroundEnabled?: boolean;
@@ -45,6 +46,16 @@ export const WatermarkDescriptionGrid: React.FC<WatermarkDescriptionGridProps> =
 }) => {
   const fontDisplay = data.fontLabel || data.fontKey || 'Default';
 
+  // 格式化偏移值：pixel 模式显示整数，ratio 模式显示 2 位小数
+  const formatOffset = (x?: number, y?: number, mode?: 'pixel' | 'ratio') => {
+    if (x === undefined || y === undefined) return '-';
+    if (mode === 'ratio') {
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    }
+    // pixel 模式或未指定模式，显示整数
+    return `${Math.round(x)},${Math.round(y)}`;
+  };
+
   return (
     <div
       className={`overflow-auto border rounded-[6px] ${className}`}
@@ -59,7 +70,7 @@ export const WatermarkDescriptionGrid: React.FC<WatermarkDescriptionGridProps> =
         <InfoRow label="大小" value={data.fontSizePx !== undefined ? `${data.fontSizePx}px` : '-'} />
         <InfoRow label="透明度" value={data.opacity !== undefined ? `${Math.round(data.opacity * 100)}%` : '-'} />
         <InfoRow label="位置" value={data.anchor ? (anchorLabelMap[data.anchor] || data.anchor) : '-'} />
-        <InfoRow label="偏移" value={data.offsetX !== undefined && data.offsetY !== undefined ? `${data.offsetX},${data.offsetY}` : '-'} />
+        <InfoRow label="偏移" value={formatOffset(data.offsetX, data.offsetY, data.positionMode)} />
         <InfoRow label="图标" value={data.iconEnabled !== undefined ? (data.iconEnabled ? '启用' : '禁用') : '-'} />
         <InfoRow label="边框" value={data.borderEnabled !== undefined ? (data.borderEnabled ? '启用' : '禁用') : '-'} />
         <InfoRow label="背景" value={data.backgroundEnabled !== undefined ? (data.backgroundEnabled ? '启用' : '禁用') : '-'} />
