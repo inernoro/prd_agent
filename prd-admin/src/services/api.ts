@@ -511,6 +511,29 @@ export const api = {
   // ============ Model Sizes ============
   modelSizes: (modelKey: string) => `/api/model/${modelKey}/sizes`,
 
+  // ============ Tutorial Email 教程邮件 ============
+  tutorialEmail: {
+    sequences: {
+      list: () => '/api/tutorial-email/sequences',
+      byId: (id: string) => `/api/tutorial-email/sequences/${id}`,
+    },
+    templates: {
+      list: () => '/api/tutorial-email/templates',
+      byId: (id: string) => `/api/tutorial-email/templates/${id}`,
+    },
+    assets: {
+      list: () => '/api/tutorial-email/assets',
+      byId: (id: string) => `/api/tutorial-email/assets/${id}`,
+    },
+    enrollments: {
+      list: () => '/api/tutorial-email/enrollments',
+      byId: (id: string) => `/api/tutorial-email/enrollments/${id}`,
+      unsubscribe: (id: string) => `/api/tutorial-email/enrollments/${id}/unsubscribe`,
+      batch: () => '/api/tutorial-email/enrollments/batch',
+    },
+    testSend: () => '/api/tutorial-email/test-send',
+  },
+
   // ============ Settings 系统设置 ============
   settings: {
     init: {

@@ -48,6 +48,9 @@ public static class AdminMenuCatalog
         // 数据管理
         new("data", "/data", "数据管理", "数据概览、清理与迁移", "Database", 110),
 
+        // 教程邮件
+        new("tutorial-email", "/tutorial-email", "教程邮件", "截图教程邮件序列管理", "Mail", 112),
+
         // 系统设置
         new("settings", "/settings", "系统设置", "系统初始化与配置", "Settings", 115),
 

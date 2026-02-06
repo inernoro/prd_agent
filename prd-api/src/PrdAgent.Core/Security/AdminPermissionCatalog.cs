@@ -97,6 +97,16 @@ public static class AdminPermissionCatalog
     public const string ExecutiveRead = "executive.read";
 
     /// <summary>
+    /// 教程邮件管理权限（读）：查看序列、模板、发送记录
+    /// </summary>
+    public const string TutorialEmailRead = "tutorial-email.read";
+
+    /// <summary>
+    /// 教程邮件管理权限（写）：编辑序列、模板、触发发送
+    /// </summary>
+    public const string TutorialEmailWrite = "tutorial-email.write";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -146,6 +156,9 @@ public static class AdminPermissionCatalog
         new(LabWrite, "实验室-写", "使用实验室功能"),
 
         new(ExecutiveRead, "总裁面板-读", "查看总裁面板和周报"),
+
+        new(TutorialEmailRead, "教程邮件-读", "查看教程邮件序列、模板与发送记录"),
+        new(TutorialEmailWrite, "教程邮件-写", "编辑序列、模板、触发发送"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };
