@@ -313,7 +313,9 @@ public class ClaudeClient : ILLMClient
 
                 var eventData = JsonSerializer.Deserialize(data, LLMJsonContext.Default.ClaudeStreamEvent);
 
-                if (eventData?.Type == "content_block_delta" && eventData.Delta?.Text != null)
+                if (eventData?.Type == "content_block_delta"
+                    && eventData.Delta?.Type == "text_delta"
+                    && eventData.Delta?.Text != null)
                 {
                     if (logId != null && !firstByteMarked)
                     {

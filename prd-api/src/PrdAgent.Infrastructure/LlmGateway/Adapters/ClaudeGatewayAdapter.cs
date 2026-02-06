@@ -159,6 +159,8 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
             {
                 case "content_block_delta":
                     if (root.TryGetProperty("delta", out var delta) &&
+                        delta.TryGetProperty("type", out var deltaType) &&
+                        deltaType.GetString() == "text_delta" &&
                         delta.TryGetProperty("text", out var textEl))
                     {
                         return GatewayStreamChunk.Text(textEl.GetString() ?? "");

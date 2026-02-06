@@ -142,6 +142,7 @@ internal class ClaudeMessage
 /// </summary>
 internal class ClaudeDelta
 {
+    public string? Type { get; set; }
     public string? Text { get; set; }
 }
 
