@@ -16,6 +16,7 @@ import PromptStagesPage from '@/pages/PromptStagesPage';
 import VisualAgentFullscreenPage from '@/pages/visual-agent/VisualAgentFullscreenPage';
 import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
 import { DefectAgentPage } from '@/pages/defect-agent';
+import { MarketplacePage } from '@/pages/marketplace';
 import { AiToolboxPage } from '@/pages/ai-toolbox';
 import { LandingPage } from '@/pages/home';
 import AssetsManagePage from '@/pages/AssetsManagePage';
@@ -180,6 +181,18 @@ export default function App() {
             <RequireAuth>
               <RequirePermission perm="visual-agent.use">
                 <VisualAgentFullscreenPage />
+              </RequirePermission>
+            </RequireAuth>
+          }
+        />
+
+        {/* 海鲜市场 - 独立全屏页面 */}
+        <Route
+          path="/marketplace"
+          element={
+            <RequireAuth>
+              <RequirePermission perm="access">
+                <MarketplacePage />
               </RequirePermission>
             </RequireAuth>
           }

@@ -56,6 +56,7 @@ export interface MarketplaceWatermarkConfig {
   fontSizePx: number;
   anchor?: string;
   opacity?: number;
+  positionMode?: 'pixel' | 'ratio';
   offsetX?: number;
   offsetY?: number;
   iconEnabled?: boolean;

@@ -6,6 +6,14 @@ import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
+import {
+  ConfigManagementDialogBase,
+  MarketplaceWatermarkCard,
+  type ConfigManagementDialogHandle as ConfigDialogHandle,
+  type ConfigColumn,
+  type MarketplaceCardContext,
+} from '@/components/config-management';
+import type { MarketplaceWatermarkConfig } from '@/services/contracts/watermark';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Popover from '@radix-ui/react-popover';
 import {
@@ -18,6 +26,8 @@ import {
   getModels,
   getUserPreferences,
   getWatermarkByApp,
+  listWatermarksMarketplace,
+  forkWatermark,
   modelGroupsService,
   planImageGen,
   refreshVisualAgentWorkspaceCover,
@@ -56,7 +66,6 @@ import {
   ChevronDown,
   Copy,
   Download,
-  Droplet,
   Eye,
   Grid3X3,
   Hand,
@@ -66,6 +75,7 @@ import {
   MousePointer2,
   Plus,
   Send,
+  Settings,
   Sparkles,
   Square,
   Type,
@@ -861,7 +871,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     setWatermarkStatus({ enabled: status.hasActiveConfig, name: status.activeName ?? null });
   }, []);
   const watermarkPanelRef = useRef<WatermarkSettingsPanelHandle | null>(null);
-  const [watermarkSettingsOpen, setWatermarkSettingsOpen] = useState(false);
+  const configDialogRef = useRef<ConfigDialogHandle | null>(null);
   const enabledImageModels = useMemo(() => allImageGenModels.filter((m) => m.enabled), [allImageGenModels]);
   // 提示词模式：按账号持久化（不写 DB）
   // - 关闭：先调用 planImageGen 解析/改写成候选提示词，再生图
@@ -7300,7 +7310,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
 
-                  {/* 水印设置按钮 */}
+                  {/* 设置按钮 */}
                   <button
                     type="button"
                     className="h-7 w-7 rounded-full inline-flex items-center justify-center"
@@ -7309,11 +7319,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       background: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.12)' : 'rgba(255,255,255,0.04)',
                       color: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.85)' : 'var(--text-secondary)',
                     }}
-                    aria-label="水印设置"
-                    title={watermarkStatus.enabled ? `水印: ${watermarkStatus.name || '已启用'}` : '水印设置'}
-                    onClick={() => setWatermarkSettingsOpen(true)}
+                    aria-label="设置"
+                    title={watermarkStatus.enabled ? `设置 (水印: ${watermarkStatus.name || '已启用'})` : '设置'}
+                    onClick={() => configDialogRef.current?.open()}
                   >
-                    <Droplet size={14} />
+                    <Settings size={14} />
                   </button>
 
                   {(runningCount > 0 || pendingCount > 0) ? (
@@ -7666,32 +7676,54 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       />
       </GlassCard>
 
-      {/* 水印设置对话框 */}
-      <Dialog
-        open={watermarkSettingsOpen}
-        onOpenChange={setWatermarkSettingsOpen}
-        title="水印设置"
-        titleAction={
-          <Button variant="secondary" size="xs" onClick={() => watermarkPanelRef.current?.addSpec()}>
-            <Plus size={14} />
-            新增配置
-          </Button>
-        }
-        content={
-          <div className="flex flex-col h-full min-h-0">
-            <div className="text-[12px] mb-3" style={{ color: 'var(--text-muted)' }}>
-              配置生成图片时自动叠加的水印。水印配置与"视觉创作"应用绑定。
-            </div>
-            <div className="flex-1 min-h-0 overflow-hidden">
+      {/* 设置对话框 - 使用通用 ConfigManagementDialogBase */}
+      <ConfigManagementDialogBase
+        ref={configDialogRef}
+        mineTitle="配置管理"
+        mineDescription="水印设置"
+        maxWidth={1500}
+        showColumnDividers={false}
+        columns={[
+          {
+            key: 'watermark',
+            title: '水印设置',
+            filterLabel: '水印',
+            titleAction: (
+              <Button variant="secondary" size="xs" onClick={() => watermarkPanelRef.current?.addSpec()}>
+                <Plus size={14} />
+                新增配置
+              </Button>
+            ),
+            renderMineContent: () => (
               <WatermarkSettingsPanel
                 ref={watermarkPanelRef}
                 appKey="visual-agent"
                 onStatusChange={handleWatermarkStatusChange}
                 hideAddButton
+                cardWidth={460}
               />
-            </div>
-          </div>
-        }
+            ),
+            loadMarketplace: async ({ keyword, sort }) => {
+              const res = await listWatermarksMarketplace({ keyword, sort });
+              return res.success && res.data?.items ? res.data.items : [];
+            },
+            renderMarketplaceCard: (config: MarketplaceWatermarkConfig, ctx: MarketplaceCardContext) => (
+              <MarketplaceWatermarkCard
+                key={config.id}
+                config={config}
+                ctx={ctx}
+                onFork={async () => {
+                  const res = await forkWatermark({ id: config.id });
+                  if (res.success) {
+                    toast.success('下载成功，已添加到「我的」');
+                    return true;
+                  }
+                  return false;
+                }}
+              />
+            ),
+          } as ConfigColumn<MarketplaceWatermarkConfig>,
+        ]}
       />
     </div>
   );
