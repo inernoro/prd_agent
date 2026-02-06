@@ -5285,14 +5285,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     {/* 鼠标悬停边框效果（仅未选中 + 非 pending 时显示） */}
                     {!active && !isPending && (kind === 'image' || kind === 'generator') && it.src ? (
                       <div
-                        className="absolute rounded-[14px] opacity-0 group-hover/citem:opacity-100 transition-opacity duration-200 pointer-events-none"
+                        className="absolute rounded-[14px] opacity-0 group-hover/citem:opacity-100 transition-all duration-200 pointer-events-none"
                         style={{
                           left: selX,
                           top: selY,
                           width: selW,
                           height: selH,
-                          border: '2px solid rgba(255,255,255,0.25)',
-                          boxShadow: '0 0 12px rgba(255,255,255,0.06)',
+                          border: '2px solid rgba(147,197,253,0.55)',
+                          boxShadow: '0 0 16px rgba(96,165,250,0.18), inset 0 0 8px rgba(96,165,250,0.06)',
                           zIndex: 30,
                         }}
                       />
@@ -6766,7 +6766,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     <div key={m.id} className="flex flex-col items-start gap-0.5">
                       <div
                         className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
-                        style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgb(45, 30, 30)' }}
+                        style={{ border: '1px solid rgba(239,68,68,0.30)', background: 'rgba(55, 35, 35, 0.80)' }}
                       >
                         {/* 引用用户提示词 + 重试按钮 */}
                         {genError.prompt ? (
@@ -6867,7 +6867,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     <div key={m.id} className="flex flex-col items-start gap-0.5">
                       <div
                         className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
-                        style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgb(35, 35, 40)' }}
+                        style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(44, 44, 50, 0.78)' }}
                       >
                         {/* 引用用户提示词 + 重试按钮（Top） */}
                         {(genDone.prompt || genDone.refSrc) ? (
@@ -7022,7 +7022,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     <div key={m.id} className="flex flex-col items-start gap-0.5">
                       <div
                         className="group relative max-w-[85%] rounded-[10px] overflow-hidden px-2.5 pt-2 pb-2"
-                        style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgb(45, 30, 30)' }}
+                        style={{ border: '1px solid rgba(239,68,68,0.30)', background: 'rgba(55, 35, 35, 0.80)' }}
                       >
                         <div className="text-[12px] font-medium" style={{ color: 'rgba(239,68,68,0.92)' }}>生成失败</div>
                         <div className="mt-0.5 text-[11px]" style={{ color: 'rgba(239,68,68,0.72)', wordBreak: 'break-word' }}>
@@ -7057,9 +7057,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       className="group relative max-w-[85%] rounded-[10px] px-2.5 py-1.5 text-[12px] leading-[16px]"
                       style={{
                         background: isUser
-                          ? 'rgb(50, 45, 35)'
-                          : 'rgb(35, 35, 40)',
-                        border: '1px solid var(--border-subtle)',
+                          ? 'rgba(60, 54, 42, 0.82)'
+                          : 'rgba(44, 44, 50, 0.78)',
+                        border: '1px solid rgba(255,255,255,0.10)',
                         color: 'var(--text-primary)',
                         whiteSpace: 'pre-wrap',
                         wordBreak: 'break-word',
@@ -7118,7 +7118,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               className="mt-2 rounded-[12px] p-2 relative shrink-0"
               style={{
                 border: directPrompt ? '1px solid var(--border-subtle)' : '1px solid rgba(251,146,60,0.55)',
-                background: directPrompt ? 'rgba(0,0,0,0.14)' : 'rgba(251,146,60,0.06)',
+                background: directPrompt ? 'rgba(20,20,24,0.72)' : 'rgba(251,146,60,0.06)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
               }}
             >
               {/* 若直连被关闭（auto/解析模式）：做明显提示，避免用户误以为"直连默认开启" */}
