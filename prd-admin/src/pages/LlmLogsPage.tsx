@@ -961,6 +961,17 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
+  // 下拉筛选框变更时自动触发筛选（重置到第 1 页）
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    load({ resetPage: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qModel, qStatus, qRequestPurpose, qUserId]);
+
   useEffect(() => {
     if (autoRefreshTimerRef.current) {
       window.clearTimeout(autoRefreshTimerRef.current);

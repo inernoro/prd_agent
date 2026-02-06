@@ -31,6 +31,9 @@ export const selectTriggerStyle: React.CSSProperties = {
   background: 'var(--bg-input)',
   border: '1px solid rgba(255,255,255,0.12)',
   color: 'var(--text-primary)',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
 };
 
 export const selectContentClass = 'z-[120] rounded-[14px] overflow-hidden';
@@ -53,7 +56,7 @@ export const selectViewportStyle: React.CSSProperties = {
 };
 
 export const selectItemClass = cn(
-  'px-3 py-2 rounded-[8px] text-sm cursor-pointer outline-none',
+  'px-3 py-2 rounded-[8px] text-sm cursor-pointer outline-none whitespace-nowrap',
   'hover:bg-white/8',
   'focus:bg-white/8',
   'data-[highlighted]:bg-white/8',

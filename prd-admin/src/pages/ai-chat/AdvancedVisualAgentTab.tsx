@@ -63,11 +63,14 @@ import {
   ArrowDownToLine,
   Bug,
   Check,
+  ChevronRight,
   ChevronUp,
   ChevronDown,
+  Clipboard,
   Copy,
   Download,
   Eye,
+  FileImage,
   Grid3X3,
   Hand,
   ImagePlus,
@@ -77,6 +80,7 @@ import {
   Plus,
   Send,
   Settings,
+  Share,
   Sparkles,
   Square,
   Type,
@@ -643,6 +647,131 @@ async function downloadImage(src: string, filename: string) {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+  }
+}
+
+async function copyImageToClipboard(src: string) {
+  if (!src) return;
+  try {
+    const response = await fetch(src, { mode: 'cors' });
+    if (!response.ok) throw new Error('Fetch failed');
+    const blob = await response.blob();
+    // ClipboardItem 要求 image/png 格式
+    let pngBlob = blob;
+    if (blob.type !== 'image/png') {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      const loaded = await new Promise<HTMLImageElement>((resolve, reject) => {
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = URL.createObjectURL(blob);
+      });
+      const cvs = document.createElement('canvas');
+      cvs.width = loaded.naturalWidth;
+      cvs.height = loaded.naturalHeight;
+      const ctx = cvs.getContext('2d')!;
+      ctx.drawImage(loaded, 0, 0);
+      URL.revokeObjectURL(img.src);
+      pngBlob = await new Promise<Blob>((resolve, reject) =>
+        cvs.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png')
+      );
+    }
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+  } catch {
+    // fallback：复制图片链接
+    await copyToClipboard(src);
+  }
+}
+
+async function exportImageAs(src: string, filename: string, format: 'jpg' | 'png' | 'svg') {
+  if (!src) return;
+  const safe = String(filename || 'image')
+    .trim()
+    .replaceAll('/', '-')
+    .replaceAll('\\', '-')
+    .replaceAll(':', '-')
+    .replaceAll('*', '-')
+    .replaceAll('?', '-')
+    .replaceAll('"', '-')
+    .replaceAll('<', '-')
+    .replaceAll('>', '-')
+    .replaceAll('|', '-')
+    .slice(0, 80);
+
+  if (format === 'svg') {
+    // SVG 导出：将图片嵌入 SVG 内联
+    try {
+      const response = await fetch(src, { mode: 'cors' });
+      if (!response.ok) throw new Error('Fetch failed');
+      const blob = await response.blob();
+      const dataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = reject;
+        img.src = dataUrl;
+      });
+      const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="${img.naturalWidth}" height="${img.naturalHeight}"><image href="${dataUrl}" width="${img.naturalWidth}" height="${img.naturalHeight}"/></svg>`;
+      const svgBlob = new Blob([svgContent], { type: 'image/svg+xml' });
+      const blobUrl = URL.createObjectURL(svgBlob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `${safe || 'image'}.svg`;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } catch {
+      // fallback
+      void downloadImage(src, safe);
+    }
+    return;
+  }
+
+  // PNG / JPG 导出
+  try {
+    const response = await fetch(src, { mode: 'cors' });
+    if (!response.ok) throw new Error('Fetch failed');
+    const blob = await response.blob();
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const loaded = await new Promise<HTMLImageElement>((resolve, reject) => {
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = URL.createObjectURL(blob);
+    });
+    const cvs = document.createElement('canvas');
+    cvs.width = loaded.naturalWidth;
+    cvs.height = loaded.naturalHeight;
+    const ctx = cvs.getContext('2d')!;
+    if (format === 'jpg') {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, cvs.width, cvs.height);
+    }
+    ctx.drawImage(loaded, 0, 0);
+    URL.revokeObjectURL(img.src);
+    const mime = format === 'jpg' ? 'image/jpeg' : 'image/png';
+    const ext = format === 'jpg' ? 'jpg' : 'png';
+    const exported = await new Promise<Blob>((resolve, reject) =>
+      cvs.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), mime, format === 'jpg' ? 0.92 : undefined)
+    );
+    const blobUrl = URL.createObjectURL(exported);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `${safe || 'image'}.${ext}`;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  } catch {
+    void downloadImage(src, safe);
   }
 }
 
@@ -4756,7 +4885,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 return (
                   <div
                     key={it.key}
-                    className="absolute rounded-[16px]"
+                    className="absolute rounded-[16px] group/citem"
                     style={{
                       left: Math.round(x),
                       top: Math.round(y),
@@ -5152,6 +5281,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         )}
                       </div>
                     )}
+
+                    {/* 鼠标悬停边框效果（仅未选中 + 非 pending 时显示） */}
+                    {!active && !isPending && (kind === 'image' || kind === 'generator') && it.src ? (
+                      <div
+                        className="absolute rounded-[14px] opacity-0 group-hover/citem:opacity-100 transition-opacity duration-200 pointer-events-none"
+                        style={{
+                          left: selX,
+                          top: selY,
+                          width: selW,
+                          height: selH,
+                          border: '2px solid rgba(255,255,255,0.25)',
+                          boxShadow: '0 0 12px rgba(255,255,255,0.06)',
+                          zIndex: 30,
+                        }}
+                      />
+                    ) : null}
 
                     {/* 两阶段选择：pending 状态遮罩（灰色边框 + 对勾标记） */}
                     {isPending && kind === 'image' ? (
@@ -7551,7 +7696,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           }}
         >
           <div
-            className="absolute rounded-[12px] py-1.5 min-w-[140px] shadow-2xl"
+            className="absolute rounded-[12px] py-1.5 min-w-[170px] shadow-2xl"
             style={{
               left: imgContextMenu.x,
               top: imgContextMenu.y,
@@ -7574,6 +7719,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               <Download size={16} />
               下载图片
             </button>
+            {imgContextMenu.src ? (
+              <button
+                type="button"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+                style={{ color: 'rgba(255,255,255,0.88)' }}
+                onClick={() => {
+                  void copyImageToClipboard(imgContextMenu.src);
+                  setImgContextMenu((p) => ({ ...p, open: false }));
+                }}
+              >
+                <Clipboard size={16} />
+                复制到剪贴板
+              </button>
+            ) : null}
             <button
               type="button"
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
@@ -7599,6 +7758,70 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <Maximize2 size={16} />
                 预览大图
               </button>
+            ) : null}
+
+            {/* 导出子菜单 */}
+            {imgContextMenu.src ? (
+              <>
+                <div className="my-1.5 mx-2 h-px" style={{ background: 'rgba(255,255,255,0.12)' }} />
+                <div className="group/export relative">
+                  <button
+                    type="button"
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+                    style={{ color: 'rgba(255,255,255,0.88)' }}
+                  >
+                    <Share size={16} />
+                    导出
+                    <ChevronRight size={14} className="ml-auto opacity-50" />
+                  </button>
+                  <div
+                    className="absolute left-full top-0 ml-1 rounded-[10px] py-1 min-w-[120px] shadow-2xl opacity-0 pointer-events-none group-hover/export:opacity-100 group-hover/export:pointer-events-auto transition-opacity duration-150"
+                    style={{
+                      background: 'rgba(32,32,38,0.96)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      backdropFilter: 'blur(12px)',
+                      WebkitBackdropFilter: 'blur(12px)',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
+                      style={{ color: 'rgba(255,255,255,0.88)' }}
+                      onClick={() => {
+                        void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'png');
+                        setImgContextMenu((p) => ({ ...p, open: false }));
+                      }}
+                    >
+                      <FileImage size={14} />
+                      PNG
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
+                      style={{ color: 'rgba(255,255,255,0.88)' }}
+                      onClick={() => {
+                        void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'jpg');
+                        setImgContextMenu((p) => ({ ...p, open: false }));
+                      }}
+                    >
+                      <FileImage size={14} />
+                      JPG
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
+                      style={{ color: 'rgba(255,255,255,0.88)' }}
+                      onClick={() => {
+                        void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'svg');
+                        setImgContextMenu((p) => ({ ...p, open: false }));
+                      }}
+                    >
+                      <FileImage size={14} />
+                      SVG
+                    </button>
+                  </div>
+                </div>
+              </>
             ) : null}
 
             {/* 分隔线 */}
