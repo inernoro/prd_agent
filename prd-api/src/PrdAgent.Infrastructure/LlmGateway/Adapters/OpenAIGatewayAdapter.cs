@@ -85,10 +85,12 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
 
             // 检查是否有 choices
             if (!root.TryGetProperty("choices", out var choices) ||
+                choices.ValueKind != JsonValueKind.Array ||
                 choices.GetArrayLength() == 0)
             {
-                // 可能是 usage 块
-                if (root.TryGetProperty("usage", out var usageEl))
+                // 可能是 usage 块（stream_options.include_usage 最后一个独立块）
+                if (root.TryGetProperty("usage", out var usageEl) &&
+                    usageEl.ValueKind == JsonValueKind.Object)
                 {
                     return new GatewayStreamChunk
                     {
@@ -109,13 +111,24 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
                 finishReason = fr.GetString();
             }
 
-            // 提取 delta 内容（优先使用 delta.content，备选 message.content）
+            // 提取 delta 内容（优先使用 delta.content，备选 reasoning_content、message.content）
             string? content = null;
-            if (choice.TryGetProperty("delta", out var delta) &&
-                delta.TryGetProperty("content", out var contentEl) &&
-                contentEl.ValueKind == JsonValueKind.String)
+            if (choice.TryGetProperty("delta", out var delta))
             {
-                content = contentEl.GetString();
+                // 标准 content 字段
+                if (delta.TryGetProperty("content", out var contentEl) &&
+                    contentEl.ValueKind == JsonValueKind.String)
+                {
+                    content = contentEl.GetString();
+                }
+                // DeepSeek reasoning 模式：reasoning_content 字段（思考过程）
+                // 当 content 为 null 时，可能有 reasoning_content
+                if (string.IsNullOrEmpty(content) &&
+                    delta.TryGetProperty("reasoning_content", out var reasoningEl) &&
+                    reasoningEl.ValueKind == JsonValueKind.String)
+                {
+                    content = reasoningEl.GetString();
+                }
             }
             // 某些 OpenAI 兼容 API 可能使用 message.content 而不是 delta.content
             else if (choice.TryGetProperty("message", out var message) &&
@@ -132,8 +145,11 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
             }
 
             // 检查 usage（可能在最后一个 chunk）
+            // 注意：当 stream_options.include_usage=true 时，中间 chunk 会携带 "usage": null，
+            // 必须检查 ValueKind 为 Object 才能安全解析，否则 TryGetProperty 会抛异常。
             GatewayTokenUsage? usage = null;
-            if (root.TryGetProperty("usage", out var usageEl2))
+            if (root.TryGetProperty("usage", out var usageEl2) &&
+                usageEl2.ValueKind == JsonValueKind.Object)
             {
                 usage = ParseUsageElement(usageEl2);
             }
@@ -167,7 +183,8 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
         try
         {
             using var doc = JsonDocument.Parse(responseBody);
-            if (doc.RootElement.TryGetProperty("usage", out var usage))
+            if (doc.RootElement.TryGetProperty("usage", out var usage) &&
+                usage.ValueKind == JsonValueKind.Object)
             {
                 return ParseUsageElement(usage);
             }
@@ -184,10 +201,10 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
         int? inputTokens = null;
         int? outputTokens = null;
 
-        if (usage.TryGetProperty("prompt_tokens", out var pt))
+        if (usage.TryGetProperty("prompt_tokens", out var pt) && pt.ValueKind == JsonValueKind.Number)
             inputTokens = pt.GetInt32();
 
-        if (usage.TryGetProperty("completion_tokens", out var ct))
+        if (usage.TryGetProperty("completion_tokens", out var ct) && ct.ValueKind == JsonValueKind.Number)
             outputTokens = ct.GetInt32();
 
         return new GatewayTokenUsage

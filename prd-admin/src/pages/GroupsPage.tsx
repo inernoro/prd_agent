@@ -19,7 +19,7 @@ import {
   simulateStreamMessages,
   updateAdminGapStatus,
 } from '@/services';
-import { Trash2, RefreshCw, Copy, Search, Users2, MessageSquareText, AlertTriangle, Send, FolderKanban } from 'lucide-react';
+import { Trash2, RefreshCw, Copy, Search, Users2, MessageSquareText, AlertTriangle, Send, FolderKanban, FileText } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import ReactMarkdown from 'react-markdown';
@@ -27,12 +27,26 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { LlmRequestDetailDialog } from '@/components/llm/LlmRequestDetailDialog';
 
+type TopMember = {
+  userId: string;
+  displayName: string;
+  avatarFileName?: string | null;
+};
+
+type RoleDistribution = {
+  pm: number;
+  dev: number;
+  qa: number;
+  admin: number;
+};
+
 type GroupRow = {
   groupId: string;
   groupName: string;
-  owner?: { userId: string; username: string; displayName: string };
+  owner?: { userId: string; username: string; displayName: string; role?: string };
   memberCount: number;
   prdTitle?: string | null;
+  prdTokenEstimate?: number | null;
   inviteCode: string;
   inviteLink: string;
   inviteExpireAt?: string | null;
@@ -41,6 +55,8 @@ type GroupRow = {
   lastMessageAt?: string | null;
   messageCount?: number;
   pendingGapCount?: number;
+  topMembers?: TopMember[];
+  roleDistribution?: RoleDistribution | null;
 };
 
 type MemberRow = {
@@ -110,6 +126,135 @@ function MessageMarkdown({ content }: { content: string }) {
   );
 }
 
+/** 头像堆叠组件 - 柔和配色 (保留供后续使用) */
+export function AvatarStack({ members, total, max = 4 }: { members: TopMember[]; total: number; max?: number }) {
+  const displayed = members.slice(0, max);
+
+  const getAvatarUrl = (fileName?: string | null) => {
+    if (!fileName) return null;
+    return `/avatars/${fileName}`;
+  };
+
+  // 柔和的灰蓝色调 (name 参数保留供后续扩展)
+  const getGradient = (_name: string, index: number) => {
+    const baseHues = [210, 230, 190, 260, 180]; // 蓝、靛、青、紫、青绿
+    const hue = baseHues[index % baseHues.length];
+    return `linear-gradient(135deg, hsl(${hue}, 25%, 45%), hsl(${hue}, 30%, 35%))`;
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="flex -space-x-1">
+        {displayed.map((member, i) => {
+          const avatarUrl = getAvatarUrl(member.avatarFileName);
+          return (
+            <div
+              key={member.userId}
+              className="w-5 h-5 rounded-full border flex items-center justify-center text-[9px] font-medium text-white/90 overflow-hidden"
+              style={{
+                borderColor: 'rgba(255,255,255,0.15)',
+                background: avatarUrl ? `url(${avatarUrl}) center/cover` : getGradient(member.displayName, i),
+                zIndex: max - i,
+              }}
+              title={member.displayName}
+            >
+              {!avatarUrl && (member.displayName?.[0] || '?').toUpperCase()}
+            </div>
+          );
+        })}
+      </div>
+      {total > displayed.length && (
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>+{total - displayed.length}</span>
+      )}
+    </div>
+  );
+}
+
+/** 相对时间格式化 */
+function formatRelativeTime(dateStr?: string | null): string {
+  if (!dateStr) return '无活动';
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return '刚刚';
+  if (diffMins < 60) return `${diffMins}分钟前`;
+  if (diffHours < 24) return `${diffHours}小时前`;
+  if (diffDays < 30) return `${diffDays}天前`;
+  return `${Math.floor(diffDays / 30)}月前`;
+}
+
+/** 邀请状态计算 */
+function getInviteStatus(expireAt?: string | null): { label: string; variant: 'success' | 'discount' | 'subtle' } {
+  if (!expireAt) return { label: '长期有效', variant: 'success' };
+  const exp = new Date(expireAt);
+  const now = new Date();
+  if (exp < now) return { label: '已过期', variant: 'subtle' };
+  return { label: '有效', variant: 'success' };
+}
+
+/** 热度计算 - 基于消息量和最近活跃时间 */
+function getHeatLevel(messageCount: number, lastMessageAt?: string | null): { icon: string; label: string; color: string } {
+  const now = new Date();
+  const last = lastMessageAt ? new Date(lastMessageAt) : null;
+  const daysSinceActive = last ? Math.floor((now.getTime() - last.getTime()) / 86400000) : 999;
+
+  if (messageCount >= 50 && daysSinceActive <= 3) {
+    return { icon: '🔥', label: '热门', color: 'rgba(239, 68, 68, 0.9)' };
+  }
+  if (messageCount >= 10 && daysSinceActive <= 7) {
+    return { icon: '⚡', label: '活跃', color: 'rgba(245, 158, 11, 0.9)' };
+  }
+  if (daysSinceActive > 30 || messageCount === 0) {
+    return { icon: '💤', label: '静默', color: 'rgba(156, 163, 175, 0.7)' };
+  }
+  return { icon: '✨', label: '正常', color: 'rgba(147, 197, 253, 0.9)' };
+}
+
+/** 角色分布条组件 */
+function RoleBar({ distribution }: { distribution?: RoleDistribution | null }) {
+  if (!distribution) return null;
+  const { pm, dev, qa, admin } = distribution;
+  const total = pm + dev + qa + admin;
+  if (total === 0) return null;
+
+  const segments = [
+    { count: pm, label: 'PM', color: 'rgba(168, 85, 247, 0.8)' },
+    { count: dev, label: 'DEV', color: 'rgba(59, 130, 246, 0.8)' },
+    { count: qa, label: 'QA', color: 'rgba(34, 197, 94, 0.8)' },
+    { count: admin, label: 'ADMIN', color: 'rgba(245, 158, 11, 0.8)' },
+  ].filter(s => s.count > 0);
+
+  return (
+    <div className="flex items-center gap-1">
+      <div className="flex h-1.5 flex-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.1)' }}>
+        {segments.map((seg) => (
+          <div
+            key={seg.label}
+            style={{ width: `${(seg.count / total) * 100}%`, background: seg.color }}
+            title={`${seg.label}: ${seg.count}`}
+          />
+        ))}
+      </div>
+      <div className="flex items-center gap-1 text-[9px]" style={{ color: 'var(--text-muted)' }}>
+        {segments.slice(0, 2).map(seg => (
+          <span key={seg.label} style={{ color: seg.color }}>{seg.label}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 格式化 Token 数量 */
+function formatTokens(n?: number | null): string {
+  if (!n) return '-';
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+
 export default function GroupsPage() {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<GroupRow[]>([]);
@@ -156,9 +301,10 @@ export default function GroupsPage() {
           res.data.items.map((g) => ({
             groupId: g.groupId,
             groupName: g.groupName,
-            owner: g.owner ? { userId: g.owner.userId, username: g.owner.username, displayName: g.owner.displayName } : undefined,
+            owner: g.owner ? { userId: g.owner.userId, username: g.owner.username, displayName: g.owner.displayName, role: g.owner.role } : undefined,
             memberCount: g.memberCount,
             prdTitle: g.prdTitleSnapshot ?? null,
+            prdTokenEstimate: g.prdTokenEstimateSnapshot ?? null,
             inviteCode: g.inviteCode,
             inviteLink: `prdagent://join/${g.inviteCode}`,
             inviteExpireAt: g.inviteExpireAt ?? null,
@@ -167,6 +313,12 @@ export default function GroupsPage() {
             lastMessageAt: g.lastMessageAt ?? null,
             messageCount: g.messageCount,
             pendingGapCount: g.pendingGapCount,
+            topMembers: g.topMembers?.map(m => ({
+              userId: m.userId,
+              displayName: m.displayName,
+              avatarFileName: m.avatarFileName ?? null,
+            })) ?? [],
+            roleDistribution: g.roleDistribution ?? null,
           }))
         );
       }
@@ -180,10 +332,10 @@ export default function GroupsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query.page, query.search, query.inviteStatus]);
 
-  const openDetail = async (g: GroupRow) => {
+  const openDetail = async (g: GroupRow, initialTab: 'members' | 'gaps' | 'messages' = 'members') => {
     setSelected(g);
     setOpen(true);
-    setTab('members');
+    setTab(initialTab);
     // members
     const mRes = await getAdminGroupMembers(g.groupId);
     if (mRes.success) {
@@ -249,21 +401,19 @@ export default function GroupsPage() {
       />
 
       <GlassCard glow className="flex-1 min-h-0 flex flex-col">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex-1 min-w-[240px]">
-            <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-              <input
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setPage(1);
-                }}
-                className="h-10 w-full rounded-[14px] pl-9 pr-4 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                placeholder="搜索群组名/群组ID/群主"
-              />
-            </div>
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <input
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              className="h-8 w-full rounded-lg pl-8 pr-3 text-xs outline-none"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)' }}
+              placeholder="搜索群组名/群组ID/群主"
+            />
           </div>
 
           <Select
@@ -272,91 +422,140 @@ export default function GroupsPage() {
               setInviteStatus(e.target.value as 'all' | 'valid' | 'expired');
               setPage(1);
             }}
-            uiSize="md"
+            uiSize="sm"
           >
-            <option value="all">邀请状态</option>
+            <option value="all">全部状态</option>
             <option value="valid">有效</option>
             <option value="expired">已过期</option>
           </Select>
-
-          {null}
         </div>
 
-        <div className="mt-5 flex-1 min-h-0 overflow-auto rounded-[16px]" style={{ border: '1px solid var(--border-subtle)' }}>
-          <table className="w-full text-sm">
-            <thead style={{ background: 'rgba(255,255,255,0.03)' }}>
-              <tr>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>群组</th>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>PRD</th>
-                <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>成员</th>
-                <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>消息</th>
-                <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>待处理缺失</th>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>邀请</th>
-                <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</td>
-                </tr>
-              ) : items.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无数据</td>
-                </tr>
-              ) : (
-                items.map((g) => (
-                  <tr key={g.groupId} className="hover:bg-white/2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                    <td className="px-4 py-3">
-                      <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{g.groupName}</div>
-                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{g.groupId}</div>
-                      {g.owner && (
-                        <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                          群主：{g.owner.displayName}（{g.owner.username}）
+        <div className="mt-3 flex-1 min-h-0 overflow-auto">
+          {loading ? (
+            <div className="flex items-center justify-center py-16" style={{ color: 'var(--text-muted)' }}>
+              加载中...
+            </div>
+          ) : items.length === 0 ? (
+            <div className="flex items-center justify-center py-16" style={{ color: 'var(--text-muted)' }}>
+              暂无数据
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2.5">
+              {items.map((g) => {
+                const status = getInviteStatus(g.inviteExpireAt);
+                const hasWarning = (g.pendingGapCount ?? 0) > 0;
+                const heat = getHeatLevel(g.messageCount ?? 0, g.lastMessageAt);
+                return (
+                  <GlassCard
+                    key={g.groupId}
+                    variant="default"
+                    padding="sm"
+                    interactive
+                    glow={hasWarning}
+                    accentHue={hasWarning ? 35 : undefined}
+                    onClick={() => openDetail(g)}
+                    className="flex flex-col"
+                  >
+                    {/* 头部：热度图标 + 群组名 + 状态 */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span title={heat.label} style={{ fontSize: 12 }}>{heat.icon}</span>
+                          <h3 className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            {g.groupName}
+                          </h3>
                         </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
+                        <div className="text-[10px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                          {g.owner ? `${g.owner.role || 'PM'} · ${g.owner.displayName}` : g.groupId}
+                        </div>
+                      </div>
+                      <Badge variant={status.variant}>{status.label}</Badge>
+                    </div>
+
+                    {/* 统计数据网格 - 4列 */}
+                    <div className="grid grid-cols-4 gap-1 my-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                      <div className="text-center">
+                        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g.memberCount}</div>
+                        <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>成员</div>
+                      </div>
+                      <div className="text-center" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g.messageCount ?? 0}</div>
+                        <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>消息</div>
+                      </div>
+                      <div className="text-center" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div className="text-sm font-semibold" style={{ color: hasWarning ? 'rgba(245,158,11,0.95)' : 'var(--text-primary)' }}>
+                          {g.pendingGapCount ?? 0}
+                        </div>
+                        <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>缺失</div>
+                      </div>
+                      <div className="text-center" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{formatTokens(g.prdTokenEstimate)}</div>
+                        <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>Tokens</div>
+                      </div>
+                    </div>
+
+                    {/* 角色分布条 */}
+                    <RoleBar distribution={g.roleDistribution} />
+
+                    {/* PRD 标签 + 活跃时间 */}
+                    <div className="flex items-center justify-between gap-2 mt-2 mb-2">
                       {g.prdTitle ? (
-                        <div className="text-sm font-semibold truncate max-w-[320px]" style={{ color: 'var(--text-primary)' }}>
-                          {g.prdTitle}
+                        <div
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] truncate"
+                          style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.85)' }}
+                        >
+                          <FileText size={9} className="shrink-0" />
+                          <span className="truncate max-w-[80px]">{g.prdTitle}</span>
                         </div>
                       ) : (
-                        <div className="text-sm" style={{ color: 'var(--text-muted)' }}>文档已过期/未快照</div>
+                        <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>无 PRD</div>
                       )}
-                      <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>创建：{fmtDate(g.createdAt)}</div>
-                    </td>
-                    <td className="px-4 py-3 text-right" style={{ color: 'var(--text-secondary)' }}>{g.memberCount}</td>
-                    <td className="px-4 py-3 text-right" style={{ color: 'var(--accent-green)' }}>{g.messageCount ?? 0}</td>
-                    <td
-                      className="px-4 py-3 text-right"
-                      style={{ color: (g.pendingGapCount ?? 0) > 0 ? 'rgba(245,158,11,0.95)' : 'rgba(247,247,251,0.45)' }}
-                    >
-                      {g.pendingGapCount ?? 0}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <code className="text-xs" style={{ color: 'var(--text-secondary)' }}>{g.inviteCode}</code>
-                        {g.inviteExpireAt ? <Badge variant="new">可能已过期</Badge> : <Badge variant="success">长期有效</Badge>}
+                      <div className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        {formatRelativeTime(g.lastMessageAt)}
                       </div>
-                      <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>到期：{fmtDate(g.inviteExpireAt)}</div>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="inline-flex items-center gap-2">
-                        <Button variant="secondary" size="sm" onClick={() => openDetail(g)}>
-                          <Users2 size={16} />
-                          详情
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => onCopy(g.inviteLink)} title="复制邀请链接" aria-label="复制邀请链接">
-                          <Copy size={16} />
-                        </Button>
+                    </div>
+
+                    {/* Footer：快捷操作 + 复制 */}
+                    <div className="flex items-center justify-between pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div className="flex items-center gap-1">
+                        <button
+                          className="px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors hover:brightness-110"
+                          style={{ background: 'rgba(59, 130, 246, 0.15)', color: 'rgba(96, 165, 250, 0.95)' }}
+                          onClick={(e) => { e.stopPropagation(); openDetail(g, 'members'); }}
+                          title="查看成员"
+                        >
+                          成员
+                        </button>
+                        <button
+                          className="px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors hover:brightness-110"
+                          style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'rgba(251, 191, 36, 0.95)' }}
+                          onClick={(e) => { e.stopPropagation(); openDetail(g, 'gaps'); }}
+                          title="查看缺失"
+                        >
+                          缺失
+                        </button>
+                        <button
+                          className="px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors hover:brightness-110"
+                          style={{ background: 'rgba(34, 197, 94, 0.15)', color: 'rgba(74, 222, 128, 0.95)' }}
+                          onClick={(e) => { e.stopPropagation(); openDetail(g, 'messages'); }}
+                          title="查看消息"
+                        >
+                          消息
+                        </button>
                       </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                      <button
+                        className="p-1 rounded hover:bg-white/10 transition-colors"
+                        onClick={(e) => { e.stopPropagation(); onCopy(g.inviteLink); }}
+                        title="复制邀请链接"
+                      >
+                        <Copy size={12} style={{ color: 'var(--text-muted)' }} />
+                      </button>
+                    </div>
+                  </GlassCard>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="mt-4 flex items-center justify-between">

@@ -29,7 +29,12 @@ public class WatermarkRenderer
     public async Task<(byte[] bytes, string mime)> ApplyAsync(byte[] inputBytes, string inputMime, WatermarkConfig config, CancellationToken ct)
     {
         if (inputBytes.Length == 0) return (inputBytes, inputMime);
-        if (string.IsNullOrWhiteSpace(config.Text)) return (inputBytes, inputMime);
+
+        var hasText = !string.IsNullOrWhiteSpace(config.Text);
+        var hasIcon = config.IconEnabled && !string.IsNullOrWhiteSpace(config.IconImageRef);
+
+        // 至少需要文字或图标之一
+        if (!hasText && !hasIcon) return (inputBytes, inputMime);
 
         var format = Image.DetectFormat(inputBytes);
         using var image = Image.Load<Rgba32>(inputBytes);
@@ -38,16 +43,29 @@ public class WatermarkRenderer
         var fontResolved = _fontRegistry.ResolveFont(config.FontKey, fontSize);
         var font = fontResolved.Font;
 
-        var textOptions = new TextOptions(font)
-        {
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Top
-        };
-        var textSize = TextMeasurer.MeasureSize(config.Text, textOptions);
-        var textHeight = textSize.Height;
-        var textWidth = textSize.Width;
+        double textHeight;
+        double textWidth;
 
-        var baseGap = config.IconGapPx > 0 ? config.IconGapPx : config.FontSizePx / 4d;
+        if (hasText)
+        {
+            var textOptions = new TextOptions(font)
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top
+            };
+            var textSize = TextMeasurer.MeasureSize(config.Text, textOptions);
+            textHeight = textSize.Height;
+            textWidth = textSize.Width;
+        }
+        else
+        {
+            // 仅图标模式：使用 fontSizePx 作为基准尺寸
+            textHeight = fontSize;
+            textWidth = 0;
+        }
+
+        // 仅图标模式时，间距为0
+        var baseGap = hasText && hasIcon ? (config.IconGapPx > 0 ? config.IconGapPx : config.FontSizePx / 4d) : 0d;
         var gap = baseGap * scale;
         var iconScale = config.IconScale > 0 ? config.IconScale : 1d;
         var iconSize = config.IconEnabled ? textHeight * iconScale : 0d;
@@ -56,12 +74,28 @@ public class WatermarkRenderer
         var padding = (config.BackgroundEnabled || config.BorderEnabled) ? textHeight * 0.3d : 0d;
         // 计算边框占用的额外空间（边框完全在外面）
         var borderExtra = config.BorderEnabled ? config.BorderWidth * scale * 2d : 0d;
-        var contentWidth = config.IconEnabled
-            ? (isVerticalIcon ? Math.Max(textWidth, iconSize) : textWidth + iconSize + gap)
-            : textWidth;
-        var contentHeight = config.IconEnabled
-            ? (isVerticalIcon ? textHeight + iconSize + gap : Math.Max(textHeight, iconSize))
-            : textHeight;
+
+        double contentWidth;
+        double contentHeight;
+
+        if (!hasText && hasIcon)
+        {
+            // 仅图标模式：内容就是图标本身
+            contentWidth = iconSize;
+            contentHeight = iconSize;
+        }
+        else if (hasIcon)
+        {
+            // 文字+图标模式
+            contentWidth = isVerticalIcon ? Math.Max(textWidth, iconSize) : textWidth + iconSize + gap;
+            contentHeight = isVerticalIcon ? textHeight + iconSize + gap : Math.Max(textHeight, iconSize);
+        }
+        else
+        {
+            // 仅文字模式
+            contentWidth = textWidth;
+            contentHeight = textHeight;
+        }
         var watermarkWidth = contentWidth + padding * 2d + borderExtra;
         var watermarkHeight = contentHeight + padding * 2d + borderExtra;
         var (watermarkLeft, watermarkTop) = WatermarkLayoutCalculator.CalculateWatermarkTopLeft(
@@ -186,7 +220,11 @@ public class WatermarkRenderer
                 }
             }
 
-            ctx.DrawText(config.Text, font, textColor, new PointF(textLeft, textTop));
+            // 仅在有文字时绘制文字
+            if (hasText)
+            {
+                ctx.DrawText(config.Text, font, textColor, new PointF(textLeft, textTop));
+            }
         });
 
         if (config.IconEnabled && !string.IsNullOrWhiteSpace(config.IconImageRef))

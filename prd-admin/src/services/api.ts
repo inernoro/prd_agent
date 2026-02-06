@@ -390,6 +390,38 @@ export const api = {
     },
   },
 
+  // ============ Channels 多通道适配器 ============
+  channels: {
+    settings: {
+      get: () => '/api/admin/channels/settings',
+      update: () => '/api/admin/channels/settings',
+      test: () => '/api/admin/channels/settings/test',
+      poll: () => '/api/admin/channels/settings/poll',
+    },
+    workflows: {
+      list: () => '/api/admin/channels/workflows',
+      byId: (id: string) => `/api/admin/channels/workflows/${id}`,
+      toggle: (id: string) => `/api/admin/channels/workflows/${id}/toggle`,
+    },
+    whitelists: {
+      list: () => '/api/admin/channels/whitelist',
+      byId: (id: string) => `/api/admin/channels/whitelist/${id}`,
+      toggle: (id: string) => `/api/admin/channels/whitelist/${id}/toggle`,
+    },
+    identityMappings: {
+      list: () => '/api/admin/channels/identity-mappings',
+      byId: (id: string) => `/api/admin/channels/identity-mappings/${id}`,
+    },
+    tasks: {
+      list: () => '/api/admin/channels/tasks',
+      byId: (id: string) => `/api/admin/channels/tasks/${id}`,
+      retry: (id: string) => `/api/admin/channels/tasks/${id}/retry`,
+      cancel: (id: string) => `/api/admin/channels/tasks/${id}/cancel`,
+      stats: () => '/api/admin/channels/tasks/stats',
+    },
+    stats: () => '/api/admin/channels/stats',
+  },
+
   // ============ Watermark 水印 ============
   watermark: {
     list: () => '/api/watermarks',
@@ -423,6 +455,22 @@ export const api = {
       scan: () => '/api/settings/init/scan',
       migratePermissions: () => '/api/settings/init/migrate-permissions',
     },
+  },
+
+  // ============ AI Toolbox 百宝箱 ============
+  aiToolbox: {
+    // 工具管理
+    items: () => '/api/ai-toolbox/items',
+    item: (id: string) => `/api/ai-toolbox/items/${id}`,
+    runItem: (itemId: string) => `/api/ai-toolbox/items/${itemId}/run`,
+    agents: () => '/api/ai-toolbox/agents',
+    // Legacy - 运行记录
+    chat: () => '/api/ai-toolbox/chat',
+    analyze: () => '/api/ai-toolbox/analyze',
+    runs: () => '/api/ai-toolbox/runs',
+    run: (runId: string) => `/api/ai-toolbox/runs/${runId}`,
+    execute: (runId: string) => `/api/ai-toolbox/runs/${runId}/execute`,
+    stream: (runId: string) => `/api/ai-toolbox/runs/${runId}/stream`,
   },
 
   // ============ V1 API (用户端) ============

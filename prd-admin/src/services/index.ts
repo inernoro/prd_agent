@@ -826,3 +826,34 @@ export const getUserRateLimit: GetUserRateLimitContract = withAuth(getUserRateLi
 export const updateUserRateLimit: UpdateUserRateLimitContract = withAuth(updateUserRateLimitReal);
 export const getExemptUsers: GetExemptUsersContract = withAuth(getExemptUsersReal);
 export const getCustomConfigs: GetCustomConfigsContract = withAuth(getCustomConfigsReal);
+
+// Channel Adapter 多通道适配器服务
+import type { IChannelService } from '@/services/contracts/channels';
+import { ChannelService } from '@/services/real/channels';
+export const channelService: IChannelService = new ChannelService();
+// AI Toolbox 百宝箱
+export {
+  // 新版工具集合 API
+  listToolboxItems,
+  getToolboxItem,
+  createToolboxItem,
+  updateToolboxItem,
+  deleteToolboxItem,
+  runToolboxItem,
+  listToolboxAgents,
+  subscribeToolboxRunEvents,
+  // Legacy API
+  getToolboxRun,
+  listToolboxRuns,
+} from '@/services/real/aiToolbox';
+export type {
+  ToolboxItem,
+  ToolboxItemRun,
+  AgentInfo,
+  ToolboxRunEvent,
+  // Legacy types
+  IntentResult,
+  ToolboxArtifact,
+  ToolboxRun,
+  ToolboxRunStep,
+} from '@/services/real/aiToolbox';

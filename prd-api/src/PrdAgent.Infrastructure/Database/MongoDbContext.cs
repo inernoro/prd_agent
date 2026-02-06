@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Models.Toolbox;
 
 namespace PrdAgent.Infrastructure.Database;
 
@@ -104,6 +105,24 @@ public class MongoDbContext
     public IMongoCollection<DefectReport> DefectReports => _database.GetCollection<DefectReport>("defect_reports");
     public IMongoCollection<DefectMessage> DefectMessages => _database.GetCollection<DefectMessage>("defect_messages");
     public IMongoCollection<DefectFolder> DefectFolders => _database.GetCollection<DefectFolder>("defect_folders");
+
+    // Channel Adapter 多通道适配器
+    public IMongoCollection<ChannelWhitelist> ChannelWhitelists => _database.GetCollection<ChannelWhitelist>("channel_whitelist");
+    public IMongoCollection<ChannelIdentityMapping> ChannelIdentityMappings => _database.GetCollection<ChannelIdentityMapping>("channel_identity_mappings");
+    public IMongoCollection<ChannelTask> ChannelTasks => _database.GetCollection<ChannelTask>("channel_tasks");
+    public IMongoCollection<ChannelRequestLog> ChannelRequestLogs => _database.GetCollection<ChannelRequestLog>("channel_request_logs");
+    public IMongoCollection<ChannelSettings> ChannelSettings => _database.GetCollection<ChannelSettings>("channel_settings");
+
+    // Email Channel 邮件通道
+    public IMongoCollection<TodoItem> TodoItems => _database.GetCollection<TodoItem>("todo_items");
+    public IMongoCollection<EmailClassification> EmailClassifications => _database.GetCollection<EmailClassification>("email_classifications");
+    public IMongoCollection<EmailWorkflow> EmailWorkflows => _database.GetCollection<EmailWorkflow>("email_workflows");
+
+    // App Registry 应用注册中心
+    public IMongoCollection<RegisteredApp> RegisteredApps => _database.GetCollection<RegisteredApp>("registered_apps");
+    public IMongoCollection<RoutingRule> RoutingRules => _database.GetCollection<RoutingRule>("routing_rules");
+    // AI Toolbox 百宝箱
+    public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
 
     private void CreateIndexes()
     {
@@ -677,5 +696,74 @@ public class MongoDbContext
         DefectMessages.Indexes.CreateOne(new CreateIndexModel<DefectMessage>(
             Builders<DefectMessage>.IndexKeys.Ascending(x => x.DefectId).Ascending(x => x.Seq),
             new CreateIndexOptions { Name = "idx_defect_messages_defect_seq" }));
+
+        // ========== Channel Adapter 多通道适配器索引 ==========
+
+        // ChannelWhitelists：按 channelType + identifierPattern 查询；按 isActive + priority 排序
+        ChannelWhitelists.Indexes.CreateOne(new CreateIndexModel<ChannelWhitelist>(
+            Builders<ChannelWhitelist>.IndexKeys.Ascending(x => x.ChannelType).Ascending(x => x.IdentifierPattern),
+            new CreateIndexOptions { Name = "idx_channel_whitelist_type_pattern" }));
+        ChannelWhitelists.Indexes.CreateOne(new CreateIndexModel<ChannelWhitelist>(
+            Builders<ChannelWhitelist>.IndexKeys.Ascending(x => x.IsActive).Ascending(x => x.Priority),
+            new CreateIndexOptions { Name = "idx_channel_whitelist_active_priority" }));
+        ChannelWhitelists.Indexes.CreateOne(new CreateIndexModel<ChannelWhitelist>(
+            Builders<ChannelWhitelist>.IndexKeys.Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_channel_whitelist_created" }));
+
+        // ChannelIdentityMappings：按 channelType + channelIdentifier 唯一
+        try
+        {
+            ChannelIdentityMappings.Indexes.CreateOne(new CreateIndexModel<ChannelIdentityMapping>(
+                Builders<ChannelIdentityMapping>.IndexKeys.Ascending(x => x.ChannelType).Ascending(x => x.ChannelIdentifier),
+                new CreateIndexOptions
+                {
+                    Name = "uniq_channel_identity_type_identifier",
+                    Unique = true
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        ChannelIdentityMappings.Indexes.CreateOne(new CreateIndexModel<ChannelIdentityMapping>(
+            Builders<ChannelIdentityMapping>.IndexKeys.Ascending(x => x.UserId),
+            new CreateIndexOptions { Name = "idx_channel_identity_user" }));
+
+        // ChannelTasks：按 status + createdAt 查询；按 senderIdentifier + createdAt 查询
+        ChannelTasks.Indexes.CreateOne(new CreateIndexModel<ChannelTask>(
+            Builders<ChannelTask>.IndexKeys.Ascending(x => x.Status).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_channel_tasks_status_created" }));
+        ChannelTasks.Indexes.CreateOne(new CreateIndexModel<ChannelTask>(
+            Builders<ChannelTask>.IndexKeys.Ascending(x => x.ChannelType).Ascending(x => x.SenderIdentifier).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_channel_tasks_type_sender_created" }));
+        ChannelTasks.Indexes.CreateOne(new CreateIndexModel<ChannelTask>(
+            Builders<ChannelTask>.IndexKeys.Ascending(x => x.MappedUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_channel_tasks_user_created" }));
+        // TTL（默认保留 30 天）
+        ChannelTasks.Indexes.CreateOne(new CreateIndexModel<ChannelTask>(
+            Builders<ChannelTask>.IndexKeys.Ascending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "ttl_channel_tasks", ExpireAfter = TimeSpan.FromDays(30) }));
+
+        // ChannelRequestLogs：按 channelType + createdAt 查询；按 mappedUserId + createdAt 查询
+        ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
+            Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.ChannelType).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_channel_request_logs_type_created" }));
+        ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
+            Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.MappedUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_channel_request_logs_user_created" }));
+        ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
+            Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.TaskId),
+            new CreateIndexOptions { Name = "idx_channel_request_logs_task" }));
+        // TTL（默认保留 30 天）
+        ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
+            Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
+            new CreateIndexOptions { Name = "ttl_channel_request_logs", ExpireAfter = TimeSpan.FromDays(30) }));
+        // ToolboxRuns：按 userId + createdAt 查询；按 status + createdAt 查询
+        ToolboxRuns.Indexes.CreateOne(new CreateIndexModel<ToolboxRun>(
+            Builders<ToolboxRun>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_toolbox_runs_user_created" }));
+        ToolboxRuns.Indexes.CreateOne(new CreateIndexModel<ToolboxRun>(
+            Builders<ToolboxRun>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_toolbox_runs_status_created" }));
     }
 }
