@@ -16,6 +16,7 @@ import PromptStagesPage from '@/pages/PromptStagesPage';
 import VisualAgentFullscreenPage from '@/pages/visual-agent/VisualAgentFullscreenPage';
 import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
 import { DefectAgentPage } from '@/pages/defect-agent';
+import { AgentDashboardPage } from '@/pages/agent-dashboard';
 import { MarketplacePage } from '@/pages/marketplace';
 import { AiToolboxPage } from '@/pages/ai-toolbox';
 import { LandingPage } from '@/pages/home';
@@ -26,6 +27,7 @@ import SettingsPage from '@/pages/SettingsPage';
 import RichComposerLab from '@/pages/_dev/RichComposerLab';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
+import { AgentSwitcherProvider } from '@/components/agent-switcher';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -132,7 +134,7 @@ export default function App() {
   }, [isAuthenticated, menuCatalogLoaded, setMenuCatalog]);
 
   return (
-    <>
+    <AgentSwitcherProvider>
       <ToastContainer />
       <Routes>
         {/* Landing page - public */}
@@ -209,6 +211,7 @@ export default function App() {
         }
       >
         <Route index element={<DashboardPage />} />
+        <Route path="agent-dashboard" element={<AgentDashboardPage />} />
         <Route path="users" element={<RequirePermission perm="users.read"><UsersPage /></RequirePermission>} />
         <Route path="groups" element={<RequirePermission perm="groups.read"><GroupsPage /></RequirePermission>} />
         <Route path="mds" element={<RequirePermission perm="mds.read"><ModelManageTabsPage /></RequirePermission>} />
@@ -230,6 +233,6 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
-    </>
+    </AgentSwitcherProvider>
   );
 }
