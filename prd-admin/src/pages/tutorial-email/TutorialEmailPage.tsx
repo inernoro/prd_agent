@@ -30,7 +30,7 @@ import type {
   TutorialEmailEnrollment,
   TutorialEmailStep,
 } from '@/services';
-import { showToast } from '@/lib/toast';
+import { toast } from '@/lib/toast';
 
 const tabs = [
   { key: 'sequences', label: '邮件序列', icon: <Mail size={14} /> },
@@ -94,18 +94,18 @@ function SequencesTab() {
   }) => {
     const res = await createTutorialEmailSequence(data);
     if (res.success) {
-      showToast({ type: 'success', message: '序列创建成功' });
+      toast.success('序列创建成功');
       setShowCreate(false);
       void load();
     } else {
-      showToast({ type: 'error', message: res.error?.message || '创建失败' });
+      toast.error(res.error?.message || '创建失败');
     }
   };
 
   const handleToggle = async (seq: TutorialEmailSequence) => {
     const res = await updateTutorialEmailSequence(seq.id, { isActive: !seq.isActive });
     if (res.success) {
-      showToast({ type: 'success', message: seq.isActive ? '已暂停' : '已启用' });
+      toast.success(seq.isActive ? '已暂停' : '已启用');
       void load();
     }
   };
@@ -114,7 +114,7 @@ function SequencesTab() {
     if (!confirm('确定删除此序列？')) return;
     const res = await deleteTutorialEmailSequence(id);
     if (res.success) {
-      showToast({ type: 'success', message: '已删除' });
+      toast.success('已删除');
       void load();
     }
   };
@@ -302,18 +302,18 @@ function TemplatesTab() {
   const handleCreate = async (data: { name: string; htmlContent: string }) => {
     const res = await createTutorialEmailTemplate(data);
     if (res.success) {
-      showToast({ type: 'success', message: '模板创建成功' });
+      toast.success('模板创建成功');
       setShowCreate(false);
       void load();
     } else {
-      showToast({ type: 'error', message: res.error?.message || '创建失败' });
+      toast.error(res.error?.message || '创建失败');
     }
   };
 
   const handleUpdate = async (id: string, data: { name?: string; htmlContent?: string }) => {
     const res = await updateTutorialEmailTemplate(id, data);
     if (res.success) {
-      showToast({ type: 'success', message: '已保存' });
+      toast.success('已保存');
       setEditingId(null);
       void load();
     }
@@ -323,7 +323,7 @@ function TemplatesTab() {
     if (!confirm('确定删除此模板？')) return;
     const res = await deleteTutorialEmailTemplate(id);
     if (res.success) {
-      showToast({ type: 'success', message: '已删除' });
+      toast.success('已删除');
       void load();
     }
   };
@@ -333,9 +333,9 @@ function TemplatesTab() {
     if (!email) return;
     const res = await testSendTutorialEmail({ email, templateId });
     if (res.success && res.data.success) {
-      showToast({ type: 'success', message: '测试邮件已发送' });
+      toast.success('测试邮件已发送');
     } else {
-      showToast({ type: 'error', message: '发送失败，请检查 SMTP 配置' });
+      toast.error('发送失败，请检查 SMTP 配置');
     }
   };
 
@@ -504,11 +504,11 @@ function AssetsTab() {
   const handleCreate = async (data: { fileName: string; fileUrl: string; tags?: string[] }) => {
     const res = await createTutorialEmailAsset(data);
     if (res.success) {
-      showToast({ type: 'success', message: '素材添加成功' });
+      toast.success('素材添加成功');
       setShowCreate(false);
       void load();
     } else {
-      showToast({ type: 'error', message: res.error?.message || '添加失败' });
+      toast.error(res.error?.message || '添加失败');
     }
   };
 
@@ -516,7 +516,7 @@ function AssetsTab() {
     if (!confirm('确定删除此素材？')) return;
     const res = await deleteTutorialEmailAsset(id);
     if (res.success) {
-      showToast({ type: 'success', message: '已删除' });
+      toast.success('已删除');
       void load();
     }
   };
@@ -655,7 +655,7 @@ function EnrollmentsTab() {
 
   const handleBatchEnroll = async () => {
     if (sequences.length === 0) {
-      showToast({ type: 'error', message: '请先创建邮件序列' });
+      toast.error('请先创建邮件序列');
       return;
     }
     const seqKey = prompt(
@@ -666,17 +666,17 @@ function EnrollmentsTab() {
     if (!confirm(`将为所有有邮箱的活跃用户注册序列 "${seqKey}"，继续？`)) return;
     const res = await batchEnrollTutorialEmail({ sequenceKey: seqKey });
     if (res.success) {
-      showToast({ type: 'success', message: `已注册 ${res.data.enrolled} 人，跳过 ${res.data.skipped} 人` });
+      toast.success(`已注册 ${res.data.enrolled} 人，跳过 ${res.data.skipped} 人`);
       void load();
     } else {
-      showToast({ type: 'error', message: res.error?.message || '批量注册失败' });
+      toast.error(res.error?.message || '批量注册失败');
     }
   };
 
   const handleUnsubscribe = async (id: string) => {
     const res = await unsubscribeTutorialEmailEnrollment(id);
     if (res.success) {
-      showToast({ type: 'success', message: '已退订' });
+      toast.success('已退订');
       void load();
     }
   };
