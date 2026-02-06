@@ -2,8 +2,11 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Models;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.ModelPool;
+using PrdAgent.Infrastructure.ModelPool.Models;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -19,11 +22,13 @@ public class ModelGroupsController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly ILogger<ModelGroupsController> _logger;
+    private readonly IConfiguration _config;
 
-    public ModelGroupsController(MongoDbContext db, ILogger<ModelGroupsController> logger)
+    public ModelGroupsController(MongoDbContext db, ILogger<ModelGroupsController> logger, IConfiguration config)
     {
         _db = db;
         _logger = logger;
+        _config = config;
     }
 
     private static bool IsRegisteredAppCallerForType(string appCallerCode, string modelType)
@@ -391,6 +396,7 @@ public class ModelGroupsController : ControllerBase
             Priority = request.Priority ?? 50,
             ModelType = request.ModelType,
             IsDefaultForType = request.IsDefaultForType,
+            StrategyType = request.StrategyType ?? 0,
             Description = request.Description,
             Models = request.Models ?? new List<ModelGroupItem>(),
             CreatedAt = DateTime.UtcNow,
@@ -449,6 +455,12 @@ public class ModelGroupsController : ControllerBase
         if (request.Description != null)
         {
             group.Description = request.Description;
+        }
+
+        // 更新策略类型
+        if (request.StrategyType.HasValue)
+        {
+            group.StrategyType = request.StrategyType.Value;
         }
 
         // 更新模型列表
@@ -650,6 +662,137 @@ public class ModelGroupsController : ControllerBase
             models = resetModels.Select(m => new { m.ModelId, newStatus = "Healthy" })
         }));
     }
+
+    /// <summary>
+    /// 测试模型池端点连通性
+    /// 向池中所有端点（或指定端点）发送测试请求，返回连通性和延迟信息
+    /// </summary>
+    /// <param name="id">模型池 ID</param>
+    /// <param name="endpointId">可选：指定要测试的端点 ID（格式: platformId:modelId）</param>
+    /// <param name="prompt">测试提示词（默认: "Say hello in 10 words."）</param>
+    [HttpPost("{id}/test")]
+    public async Task<IActionResult> TestModelPool(
+        string id,
+        [FromQuery] string? endpointId = null,
+        [FromQuery] string prompt = "Say hello in 10 words.")
+    {
+        var group = await _db.ModelGroups.Find(g => g.Id == id).FirstOrDefaultAsync();
+        if (group == null)
+            return NotFound(ApiResponse<object>.Fail("MODEL_GROUP_NOT_FOUND", "模型分组不存在"));
+
+        if (group.Models == null || group.Models.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail("EMPTY_POOL", "模型池中没有配置模型"));
+
+        // 获取平台配置
+        var platformIds = group.Models.Select(m => m.PlatformId).Distinct().ToList();
+        var platforms = await _db.LLMPlatforms
+            .Find(p => platformIds.Contains(p.Id))
+            .ToListAsync();
+
+        var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
+
+        // 构建模型池
+        var httpDispatcher = new HttpPoolDispatcher(new DefaultHttpClientFactory());
+        var factory = new ModelPoolFactory(httpDispatcher, _logger);
+        var pool = factory.Create(group, platforms, jwtSecret);
+
+        // 执行测试
+        var testRequest = new PoolTestRequest
+        {
+            Prompt = prompt,
+            ModelType = group.ModelType,
+            TimeoutSeconds = 30,
+            MaxTokens = 100
+        };
+
+        var results = await pool.TestEndpointsAsync(endpointId, testRequest);
+        var healthSnapshot = pool.GetHealthSnapshot();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            poolId = id,
+            poolName = group.Name,
+            strategyType = ((PoolStrategyType)group.StrategyType).ToString(),
+            testResults = results.Select(r => new
+            {
+                r.EndpointId,
+                r.ModelId,
+                r.PlatformName,
+                r.Success,
+                r.StatusCode,
+                r.LatencyMs,
+                r.ResponsePreview,
+                r.ErrorMessage,
+                tokenUsage = r.TokenUsage != null ? new
+                {
+                    r.TokenUsage.InputTokens,
+                    r.TokenUsage.OutputTokens,
+                    r.TokenUsage.TotalTokens
+                } : null,
+                r.TestedAt
+            }),
+            healthSnapshot = new
+            {
+                healthSnapshot.HealthyCount,
+                healthSnapshot.DegradedCount,
+                healthSnapshot.UnavailableCount,
+                healthSnapshot.TotalCount,
+                healthSnapshot.IsFullyUnavailable,
+                endpoints = healthSnapshot.Endpoints.Select(e => new
+                {
+                    e.EndpointId,
+                    e.ModelId,
+                    status = e.Status.ToString(),
+                    e.HealthScore,
+                    e.AverageLatencyMs
+                })
+            }
+        }));
+    }
+
+    /// <summary>
+    /// 获取模型池健康快照
+    /// </summary>
+    [HttpGet("{id}/health")]
+    public async Task<IActionResult> GetPoolHealth(string id)
+    {
+        var group = await _db.ModelGroups.Find(g => g.Id == id).FirstOrDefaultAsync();
+        if (group == null)
+            return NotFound(ApiResponse<object>.Fail("MODEL_GROUP_NOT_FOUND", "模型分组不存在"));
+
+        // 直接从 ModelGroupItem 构建健康快照（不需要实例化模型池）
+        var snapshot = new
+        {
+            poolId = id,
+            poolName = group.Name,
+            strategyType = ((PoolStrategyType)group.StrategyType).ToString(),
+            totalEndpoints = group.Models?.Count ?? 0,
+            healthyCount = group.Models?.Count(m => m.HealthStatus == ModelHealthStatus.Healthy) ?? 0,
+            degradedCount = group.Models?.Count(m => m.HealthStatus == ModelHealthStatus.Degraded) ?? 0,
+            unavailableCount = group.Models?.Count(m => m.HealthStatus == ModelHealthStatus.Unavailable) ?? 0,
+            endpoints = group.Models?.Select(m => new
+            {
+                endpointId = $"{m.PlatformId}:{m.ModelId}",
+                m.ModelId,
+                m.PlatformId,
+                status = m.HealthStatus.ToString(),
+                m.ConsecutiveFailures,
+                m.ConsecutiveSuccesses,
+                m.LastSuccessAt,
+                m.LastFailedAt
+            })
+        };
+
+        return Ok(ApiResponse<object>.Ok(snapshot));
+    }
+}
+
+/// <summary>
+/// 简单的 HttpClientFactory 实现，用于测试端点
+/// </summary>
+internal class DefaultHttpClientFactory : IHttpClientFactory
+{
+    public HttpClient CreateClient(string name) => new();
 }
 
 public class CreateModelGroupRequest
@@ -664,6 +807,8 @@ public class CreateModelGroupRequest
     public string? Description { get; set; }
     /// <summary>模型列表</summary>
     public List<ModelGroupItem>? Models { get; set; }
+    /// <summary>调度策略类型 (0=FailFast, 1=Race, 2=Sequential, 3=RoundRobin, 4=WeightedRandom, 5=LeastLatency)</summary>
+    public int? StrategyType { get; set; }
 }
 
 public class UpdateModelGroupRequest
@@ -678,6 +823,8 @@ public class UpdateModelGroupRequest
     public string? Description { get; set; }
     public List<ModelGroupItem>? Models { get; set; }
     public bool? IsDefaultForType { get; set; }
+    /// <summary>调度策略类型 (0=FailFast, 1=Race, 2=Sequential, 3=RoundRobin, 4=WeightedRandom, 5=LeastLatency)</summary>
+    public int? StrategyType { get; set; }
 }
 
 /// <summary>
