@@ -126,8 +126,8 @@ export function ImageQuickEditInput({
       <input
         ref={inputRef}
         type="text"
-        className="flex-1 min-w-0 h-full bg-transparent text-[13px] outline-none placeholder:text-white/25"
-        style={{ color: 'rgba(255, 255, 255, 0.88)' }}
+        className="flex-1 min-w-0 h-full bg-transparent text-[13px] placeholder:text-white/25"
+        style={{ color: 'rgba(255, 255, 255, 0.88)', outline: 'none', border: 'none', boxShadow: 'none' }}
         placeholder="Describe your edit here"
         value={text}
         onChange={(e) => setText(e.target.value)}
