@@ -6627,48 +6627,58 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               title="重试生成"
                               onClick={() => {
                                 if (!genError.prompt) return;
-                                // 清理失效的 @imgN 标记，使用干净的 prompt
-                                const cleanPrompt = genError.prompt.replace(/@img\d+\s*/gi, '').trim();
-                                if (!cleanPrompt) return;
+                                const prompt = genError.prompt.trim();
+                                if (!prompt) return;
 
                                 // 根据 genType 决定重试方式
                                 const gt = genError.genType || (genError.refSrc ? 'img2img' : 'text2img');
                                 const shas = genError.imageRefShas || [];
 
                                 if (gt === 'text2img') {
-                                  // 纯文生图：直接发送 prompt
-                                  void sendText(cleanPrompt);
+                                  // 纯文生图：清理可能残留的 @imgN，直接发送
+                                  const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
+                                  if (cleanPrompt) void sendText(cleanPrompt);
                                 } else if (gt === 'img2img') {
-                                  // 单图参考：使用 refSrc 或从 sha256 构建 URL
+                                  // 单图参考：清理 @imgN（后端单图模式不处理 @imgN），使用 inlineImage
+                                  const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
                                   const imgUrl = genError.refSrc || (shas[0] ? `/api/visual-agent/image-master/assets/file/${shas[0]}.png` : '');
-                                  if (imgUrl) {
+                                  if (imgUrl && cleanPrompt) {
                                     void sendText(cleanPrompt, { inlineImage: { src: imgUrl } });
-                                  } else {
+                                  } else if (cleanPrompt) {
+                                    // 找不到图片，降级为 text2img
                                     void sendText(cleanPrompt);
                                   }
                                 } else if (gt === 'vision') {
-                                  // 多图场景：尝试通过 sha256 在 canvas 中找到图片并重建引用
+                                  // 多图场景：保留原始 prompt，从中解析 refIds，然后构建 chipRefs
+                                  // 解析 prompt 中的 @imgN（按出现顺序）
+                                  const refIdMatches = [...prompt.matchAll(/@img(\d+)/gi)];
+                                  const originalRefIds = refIdMatches.map((m) => parseInt(m[1], 10));
+
+                                  // 通过 sha256 找到 canvas 中的图片（按 imageRefShas 顺序）
                                   const foundItems = shas
                                     .map((sha) => canvas.find((c) => c.sha256 === sha || c.originalSha256 === sha))
                                     .filter((c): c is CanvasImageItem => !!c && !!c.src);
-                                  if (foundItems.length >= 2) {
-                                    // 找到了多张图，构建 chipRefs
+
+                                  if (foundItems.length >= 2 && originalRefIds.length >= 2) {
+                                    // 构建 chipRefs，使用原始 refId（保持和 prompt 中的 @imgN 一致）
                                     const chipRefs = foundItems.map((c, idx) => ({
-                                      refId: c.refId ?? (idx + 1),
+                                      refId: originalRefIds[idx] ?? c.refId ?? (idx + 1),
                                       canvasKey: c.key,
                                     }));
-                                    void sendText(cleanPrompt, { chipRefs });
+                                    void sendText(prompt, { chipRefs });
                                   } else if (foundItems.length === 1 || genError.refSrc) {
-                                    // 只找到一张或有 refSrc，降级为 img2img
+                                    // 只找到一张或有 refSrc，降级为 img2img（需清理 @imgN）
+                                    const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
                                     const imgUrl = foundItems[0]?.src || genError.refSrc || '';
-                                    if (imgUrl) {
+                                    if (imgUrl && cleanPrompt) {
                                       void sendText(cleanPrompt, { inlineImage: { src: imgUrl } });
-                                    } else {
+                                    } else if (cleanPrompt) {
                                       void sendText(cleanPrompt);
                                     }
                                   } else {
-                                    // 找不到图片，降级为 text2img
-                                    void sendText(cleanPrompt);
+                                    // 找不到图片，清理 @imgN 降级为 text2img
+                                    const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
+                                    if (cleanPrompt) void sendText(cleanPrompt);
                                   }
                                 }
                               }}
@@ -6738,48 +6748,58 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               title="使用相同提示词重新生成"
                               onClick={() => {
                                 if (!genDone.prompt) return;
-                                // 清理失效的 @imgN 标记，使用干净的 prompt
-                                const cleanPrompt = genDone.prompt.replace(/@img\d+\s*/gi, '').trim();
-                                if (!cleanPrompt) return;
+                                const prompt = genDone.prompt.trim();
+                                if (!prompt) return;
 
                                 // 根据 genType 决定重试方式
                                 const gt = genDone.genType || (genDone.refSrc ? 'img2img' : 'text2img');
                                 const shas = genDone.imageRefShas || [];
 
                                 if (gt === 'text2img') {
-                                  // 纯文生图：直接发送 prompt
-                                  void sendText(cleanPrompt);
+                                  // 纯文生图：清理可能残留的 @imgN，直接发送
+                                  const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
+                                  if (cleanPrompt) void sendText(cleanPrompt);
                                 } else if (gt === 'img2img') {
-                                  // 单图参考：使用 refSrc 或从 sha256 构建 URL
+                                  // 单图参考：清理 @imgN（后端单图模式不处理 @imgN），使用 inlineImage
+                                  const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
                                   const imgUrl = genDone.refSrc || (shas[0] ? `/api/visual-agent/image-master/assets/file/${shas[0]}.png` : '');
-                                  if (imgUrl) {
+                                  if (imgUrl && cleanPrompt) {
                                     void sendText(cleanPrompt, { inlineImage: { src: imgUrl } });
-                                  } else {
+                                  } else if (cleanPrompt) {
+                                    // 找不到图片，降级为 text2img
                                     void sendText(cleanPrompt);
                                   }
                                 } else if (gt === 'vision') {
-                                  // 多图场景：尝试通过 sha256 在 canvas 中找到图片并重建引用
+                                  // 多图场景：保留原始 prompt，从中解析 refIds，然后构建 chipRefs
+                                  // 解析 prompt 中的 @imgN（按出现顺序）
+                                  const refIdMatches = [...prompt.matchAll(/@img(\d+)/gi)];
+                                  const originalRefIds = refIdMatches.map((m) => parseInt(m[1], 10));
+
+                                  // 通过 sha256 找到 canvas 中的图片（按 imageRefShas 顺序）
                                   const foundItems = shas
                                     .map((sha) => canvas.find((c) => c.sha256 === sha || c.originalSha256 === sha))
                                     .filter((c): c is CanvasImageItem => !!c && !!c.src);
-                                  if (foundItems.length >= 2) {
-                                    // 找到了多张图，构建 chipRefs
+
+                                  if (foundItems.length >= 2 && originalRefIds.length >= 2) {
+                                    // 构建 chipRefs，使用原始 refId（保持和 prompt 中的 @imgN 一致）
                                     const chipRefs = foundItems.map((c, idx) => ({
-                                      refId: c.refId ?? (idx + 1),
+                                      refId: originalRefIds[idx] ?? c.refId ?? (idx + 1),
                                       canvasKey: c.key,
                                     }));
-                                    void sendText(cleanPrompt, { chipRefs });
+                                    void sendText(prompt, { chipRefs });
                                   } else if (foundItems.length === 1 || genDone.refSrc) {
-                                    // 只找到一张或有 refSrc，降级为 img2img
+                                    // 只找到一张或有 refSrc，降级为 img2img（需清理 @imgN）
+                                    const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
                                     const imgUrl = foundItems[0]?.src || genDone.refSrc || '';
-                                    if (imgUrl) {
+                                    if (imgUrl && cleanPrompt) {
                                       void sendText(cleanPrompt, { inlineImage: { src: imgUrl } });
-                                    } else {
+                                    } else if (cleanPrompt) {
                                       void sendText(cleanPrompt);
                                     }
                                   } else {
-                                    // 找不到图片，降级为 text2img
-                                    void sendText(cleanPrompt);
+                                    // 找不到图片，清理 @imgN 降级为 text2img
+                                    const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
+                                    if (cleanPrompt) void sendText(cleanPrompt);
                                   }
                                 }
                               }}
