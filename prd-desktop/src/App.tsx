@@ -16,6 +16,7 @@ import GroupInfoDrawer from './components/Group/GroupInfoDrawer';
 import SystemErrorModal from './components/Feedback/SystemErrorModal';
 import SettingsModal from './components/Settings/SettingsModal';
 import AssetsDiagPage from './components/Assets/AssetsDiagPage';
+import DefectListPage from './components/Defect/DefectListPage';
 import StartLoadOverlay from './components/Assets/StartLoadOverlay';
 import { isSystemErrorCode } from './lib/systemError';
 import { useConnectionStore } from './stores/connectionStore';
@@ -432,8 +433,10 @@ function App() {
           */}
           {mode === 'AssetsDiag' ? (
             <AssetsDiagPage />
+          ) : mode === 'Defect' ? (
+            <DefectListPage />
           ) : groupsLoading ? (
-            // 冷启动加载时由 StartLoadOverlay 统一覆盖；主区保持空，避免重复“加载中...”
+            // 冷启动加载时由 StartLoadOverlay 统一覆盖；主区保持空，避免重复"加载中..."
             <div className="flex-1" />
           ) : groups.length === 0 ? (
             <DocumentUpload />
