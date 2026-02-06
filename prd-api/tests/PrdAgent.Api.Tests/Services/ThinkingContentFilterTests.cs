@@ -1,5 +1,4 @@
 using System.Text.Json;
-using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Adapters;
@@ -10,11 +9,8 @@ namespace PrdAgent.Api.Tests.Services;
 
 /// <summary>
 /// 思考内容过滤测试
-/// 验证 Claude thinking_delta 和 DeepSeek/doubao reasoning_content 的正确处理：
-/// - Claude: thinking_delta 在适配器层直接过滤
-/// - OpenAI 兼容模型: reasoning_content 标记为 Reasoning 类型，由 GatewayLLMClient 智能决策
-///   - 有 content → 只输出 content（DeepSeek R1 场景）
-///   - 无 content → 将 reasoning 作为回复输出（doubao-seed 场景）
+/// - Claude: thinking_delta 在适配器层过滤，只输出 text_delta
+/// - OpenAI 兼容模型: reasoning_content 直接透传为正文，不干预模型输出
 ///
 /// 运行方式:
 ///   dotnet test --filter "ThinkingContentFilterTests"
@@ -168,14 +164,14 @@ public class ThinkingContentFilterTests
     }
 
     [Fact]
-    public void OpenAI_ReasoningContent_ShouldReturnReasoningType()
+    public void OpenAI_ReasoningContent_ShouldPassThrough()
     {
-        // reasoning_content 应标记为 Reasoning 类型（不是 Text，也不是 null）
+        // reasoning_content 直接透传为 Text，不干预模型输出
         var adapter = new OpenAIGatewayAdapter();
         var sseData = """
         {
             "choices": [{
-                "delta": { "reasoning_content": "让我仔细想想这个问题的解法..." }
+                "delta": { "reasoning_content": "推理过程直接输出" }
             }]
         }
         """;
@@ -183,14 +179,14 @@ public class ThinkingContentFilterTests
         var chunk = adapter.ParseStreamChunk(sseData);
 
         chunk.ShouldNotBeNull();
-        chunk.Type.ShouldBe(GatewayChunkType.Reasoning);
-        chunk.Content.ShouldBe("让我仔细想想这个问题的解法...");
+        chunk.Type.ShouldBe(GatewayChunkType.Text);
+        chunk.Content.ShouldBe("推理过程直接输出");
     }
 
     [Fact]
     public void OpenAI_ContentAndReasoning_ShouldPreferContent()
     {
-        // 同时有 content 和 reasoning_content 时，优先返回 content（Text 类型）
+        // 同时有 content 和 reasoning_content 时，优先使用 content
         var adapter = new OpenAIGatewayAdapter();
         var sseData = """
         {
@@ -211,16 +207,16 @@ public class ThinkingContentFilterTests
     }
 
     [Fact]
-    public void OpenAI_EmptyContentWithReasoning_ShouldReturnReasoning()
+    public void OpenAI_EmptyContentWithReasoning_ShouldUseReasoning()
     {
-        // content 为空字符串 + reasoning_content 有值 → 返回 Reasoning
+        // content 为空字符串时回退到 reasoning_content
         var adapter = new OpenAIGatewayAdapter();
         var sseData = """
         {
             "choices": [{
                 "delta": {
                     "content": "",
-                    "reasoning_content": "推理过程内容"
+                    "reasoning_content": "回退到推理内容"
                 }
             }]
         }
@@ -229,8 +225,8 @@ public class ThinkingContentFilterTests
         var chunk = adapter.ParseStreamChunk(sseData);
 
         chunk.ShouldNotBeNull();
-        chunk.Type.ShouldBe(GatewayChunkType.Reasoning);
-        chunk.Content.ShouldBe("推理过程内容");
+        chunk.Type.ShouldBe(GatewayChunkType.Text);
+        chunk.Content.ShouldBe("回退到推理内容");
     }
 
     [Fact]
@@ -289,8 +285,7 @@ public class ThinkingContentFilterTests
         var evt = JsonSerializer.Deserialize(json, LLMJsonContext.Default.ClaudeStreamEvent);
 
         evt.ShouldNotBeNull();
-        evt!.Type.ShouldBe("content_block_delta");
-        evt.Delta.ShouldNotBeNull();
+        evt!.Delta.ShouldNotBeNull();
         evt.Delta!.Type.ShouldBe("text_delta");
         evt.Delta.Text.ShouldBe("hello");
     }
@@ -346,7 +341,7 @@ public class ThinkingContentFilterTests
 
     #endregion
 
-    #region End-to-End: Claude Extended Thinking (adapter layer)
+    #region End-to-End: Claude Extended Thinking
 
     [Fact]
     public void Claude_ExtendedThinking_FullStream_OnlyTextShouldPass()
@@ -369,144 +364,58 @@ public class ThinkingContentFilterTests
         };
 
         var textChunks = new List<string>();
-        var allChunks = new List<GatewayStreamChunk>();
 
         foreach (var sse in sseEvents)
         {
             var chunk = adapter.ParseStreamChunk(sse);
-            if (chunk != null)
-            {
-                allChunks.Add(chunk);
-                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
-                {
-                    textChunks.Add(chunk.Content);
-                }
-            }
+            if (chunk?.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                textChunks.Add(chunk.Content);
         }
 
         var assembled = string.Join("", textChunks);
         assembled.ShouldBe("根据分析，答案是42。");
         assembled.ShouldNotContain("首先分析");
         assembled.ShouldNotContain("逐步推理");
-        allChunks.ShouldContain(c => c.Type == GatewayChunkType.Done);
     }
 
     #endregion
 
-    #region End-to-End: DeepSeek R1 (adapter + consumer layer)
+    #region End-to-End: OpenAI Reasoning Models (passthrough)
 
     [Fact]
-    public void DeepSeek_R1_AdapterLevel_ReasoningAndTextSeparated()
+    public void DeepSeek_R1_FullStream_AllContentPassedThrough()
     {
-        // DeepSeek R1: reasoning_content 标记为 Reasoning，content 标记为 Text
+        // OpenAI 兼容模型的 reasoning_content 直接透传
         var adapter = new OpenAIGatewayAdapter();
 
         var sseEvents = new[]
         {
-            """{ "choices": [{ "delta": { "reasoning_content": "好的，让我分析一下。" } }] }""",
+            """{ "choices": [{ "delta": { "reasoning_content": "好的，让我分析。" } }] }""",
             """{ "choices": [{ "delta": { "reasoning_content": "考虑边界条件..." } }] }""",
             """{ "choices": [{ "delta": { "content": "经过分析，" } }] }""",
             """{ "choices": [{ "delta": { "content": "结论是可行。" } }] }""",
             """{ "choices": [{ "finish_reason": "stop", "delta": {} }] }""",
         };
 
-        var textChunks = new List<string>();
-        var reasoningChunks = new List<string>();
-
+        var allText = new List<string>();
         foreach (var sse in sseEvents)
         {
             var chunk = adapter.ParseStreamChunk(sse);
-            if (chunk == null) continue;
-
-            if (chunk.Type == GatewayChunkType.Text)
-                textChunks.Add(chunk.Content!);
-            else if (chunk.Type == GatewayChunkType.Reasoning)
-                reasoningChunks.Add(chunk.Content!);
+            if (chunk?.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                allText.Add(chunk.Content);
         }
 
-        // 适配器层：两种类型分开标记
-        string.Join("", textChunks).ShouldBe("经过分析，结论是可行。");
-        string.Join("", reasoningChunks).ShouldBe("好的，让我分析一下。考虑边界条件...");
+        // reasoning_content 和 content 都透传
+        var assembled = string.Join("", allText);
+        assembled.ShouldBe("好的，让我分析。考虑边界条件...经过分析，结论是可行。");
     }
 
     [Fact]
-    public async Task DeepSeek_R1_ConsumerLevel_OnlyContentOutput()
+    public void DoubaoSeed_ReasoningOnly_ShouldPassThrough()
     {
-        // GatewayLLMClient 消费层：有 content 时，丢弃 reasoning，只输出 content
-        var chunks = new GatewayStreamChunk[]
-        {
-            GatewayStreamChunk.Start(new GatewayModelResolution { Success = true, ResolutionType = "DefaultPool", ActualModel = "deepseek-r1" }),
-            GatewayStreamChunk.ReasoningContent("让我分析一下。"),
-            GatewayStreamChunk.ReasoningContent("考虑边界条件..."),
-            GatewayStreamChunk.Text("经过分析，"),
-            GatewayStreamChunk.Text("结论是可行。"),
-            GatewayStreamChunk.Done("stop", null),
-        };
-
-        var gateway = new FakeGateway(chunks);
-        var client = new GatewayLLMClient(gateway, "test.chat::chat", "chat");
-
-        var output = new List<string>();
-        await foreach (var chunk in client.StreamGenerateAsync("system", new List<LLMMessage>()))
-        {
-            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
-                output.Add(chunk.Content);
-        }
-
-        var assembled = string.Join("", output);
-        assembled.ShouldBe("经过分析，结论是可行。");
-        assembled.ShouldNotContain("让我分析");
-        assembled.ShouldNotContain("边界条件");
-    }
-
-    #endregion
-
-    #region End-to-End: Doubao Seed (reasoning-only model)
-
-    [Fact]
-    public async Task DoubaoSeed_ReasoningOnly_ShouldFlushAsContent()
-    {
-        // doubao-seed 场景：所有输出都走 reasoning_content，content 始终为空
-        // GatewayLLMClient 应该在流结束时将 reasoning 作为回复 flush 输出
-        var chunks = new GatewayStreamChunk[]
-        {
-            GatewayStreamChunk.Start(new GatewayModelResolution { Success = true, ResolutionType = "DefaultPool", ActualModel = "doubao-seed-1-8" }),
-            GatewayStreamChunk.ReasoningContent("这是"),
-            GatewayStreamChunk.ReasoningContent("完整的"),
-            GatewayStreamChunk.ReasoningContent("回复内容。"),
-            GatewayStreamChunk.Done("stop", new GatewayTokenUsage { InputTokens = 100, OutputTokens = 50 }),
-        };
-
-        var gateway = new FakeGateway(chunks);
-        var client = new GatewayLLMClient(gateway, "test.chat::chat", "chat");
-
-        var output = new List<string>();
-        LLMStreamChunk? doneChunk = null;
-        await foreach (var chunk in client.StreamGenerateAsync("system", new List<LLMMessage>()))
-        {
-            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
-                output.Add(chunk.Content);
-            if (chunk.Type == "done")
-                doneChunk = chunk;
-        }
-
-        // reasoning 被当作回复输出（因为没有 content）
-        var assembled = string.Join("", output);
-        assembled.ShouldBe("这是完整的回复内容。");
-
-        // token 统计正常
-        doneChunk.ShouldNotBeNull();
-        doneChunk!.InputTokens.ShouldBe(100);
-        doneChunk.OutputTokens.ShouldBe(50);
-    }
-
-    [Fact]
-    public async Task DoubaoSeed_AdapterToConsumer_FullPipeline()
-    {
-        // 完整管线测试：OpenAI 适配器解析 → GatewayLLMClient 智能过滤
+        // doubao-seed: 所有输出走 reasoning_content，直接透传
         var adapter = new OpenAIGatewayAdapter();
 
-        // 模拟 doubao-seed 的 SSE 事件
         var sseEvents = new[]
         {
             """{ "choices": [{ "delta": { "reasoning_content": "## 分析结果\n" } }] }""",
@@ -515,124 +424,16 @@ public class ThinkingContentFilterTests
             """{ "choices": [{ "finish_reason": "stop", "delta": {} }] }""",
         };
 
-        // 解析 SSE 事件
-        var gatewayChunks = new List<GatewayStreamChunk>
-        {
-            GatewayStreamChunk.Start(new GatewayModelResolution { Success = true, ResolutionType = "DefaultPool", ActualModel = "doubao-seed" })
-        };
+        var allText = new List<string>();
         foreach (var sse in sseEvents)
         {
             var chunk = adapter.ParseStreamChunk(sse);
-            if (chunk != null) gatewayChunks.Add(chunk);
+            if (chunk?.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                allText.Add(chunk.Content);
         }
 
-        // 通过 GatewayLLMClient 消费
-        var gateway = new FakeGateway(gatewayChunks.ToArray());
-        var client = new GatewayLLMClient(gateway, "test.chat::chat", "chat");
-
-        var output = new List<string>();
-        await foreach (var chunk in client.StreamGenerateAsync("system", new List<LLMMessage>()))
-        {
-            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
-                output.Add(chunk.Content);
-        }
-
-        var assembled = string.Join("", output);
+        var assembled = string.Join("", allText);
         assembled.ShouldBe("## 分析结果\n1. 第一点\n2. 第二点\n");
-    }
-
-    #endregion
-
-    #region Edge Cases
-
-    [Fact]
-    public async Task NormalModel_NoReasoning_ShouldStreamNormally()
-    {
-        // 普通模型（如 GPT-4o）：没有 reasoning，直接输出 content
-        var chunks = new GatewayStreamChunk[]
-        {
-            GatewayStreamChunk.Start(new GatewayModelResolution { Success = true, ResolutionType = "DefaultPool", ActualModel = "gpt-4o" }),
-            GatewayStreamChunk.Text("你好，"),
-            GatewayStreamChunk.Text("世界！"),
-            GatewayStreamChunk.Done("stop", null),
-        };
-
-        var gateway = new FakeGateway(chunks);
-        var client = new GatewayLLMClient(gateway, "test.chat::chat", "chat");
-
-        var output = new List<string>();
-        await foreach (var chunk in client.StreamGenerateAsync("system", new List<LLMMessage>()))
-        {
-            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
-                output.Add(chunk.Content);
-        }
-
-        string.Join("", output).ShouldBe("你好，世界！");
-    }
-
-    [Fact]
-    public async Task ReasoningAfterContent_ShouldBeDiscarded()
-    {
-        // 边界情况：content 之后又出现 reasoning（理论上不会发生，但要安全处理）
-        var chunks = new GatewayStreamChunk[]
-        {
-            GatewayStreamChunk.Start(new GatewayModelResolution { Success = true, ResolutionType = "DefaultPool", ActualModel = "test-model" }),
-            GatewayStreamChunk.Text("正文内容"),
-            GatewayStreamChunk.ReasoningContent("这段 reasoning 应该被丢弃"),
-            GatewayStreamChunk.Done("stop", null),
-        };
-
-        var gateway = new FakeGateway(chunks);
-        var client = new GatewayLLMClient(gateway, "test.chat::chat", "chat");
-
-        var output = new List<string>();
-        await foreach (var chunk in client.StreamGenerateAsync("system", new List<LLMMessage>()))
-        {
-            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
-                output.Add(chunk.Content);
-        }
-
-        string.Join("", output).ShouldBe("正文内容");
-    }
-
-    #endregion
-
-    #region Test Helpers
-
-    /// <summary>
-    /// 假 Gateway，直接返回预设的 chunks
-    /// </summary>
-    private sealed class FakeGateway : ILlmGateway
-    {
-        private readonly GatewayStreamChunk[] _chunks;
-
-        public FakeGateway(GatewayStreamChunk[] chunks)
-        {
-            _chunks = chunks;
-        }
-
-        public async IAsyncEnumerable<GatewayStreamChunk> StreamAsync(
-            GatewayRequest request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
-        {
-            foreach (var chunk in _chunks)
-            {
-                yield return chunk;
-            }
-            await Task.CompletedTask;
-        }
-
-        // 以下方法不在测试范围内
-        public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
-            => throw new NotImplementedException();
-        public Task<GatewayRawResponse> SendRawAsync(GatewayRawRequest request, CancellationToken ct = default)
-            => throw new NotImplementedException();
-        public Task<GatewayModelResolution> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModel = null, CancellationToken ct = default)
-            => throw new NotImplementedException();
-        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType, CancellationToken ct = default)
-            => throw new NotImplementedException();
-        public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2)
-            => throw new NotImplementedException();
     }
 
     #endregion

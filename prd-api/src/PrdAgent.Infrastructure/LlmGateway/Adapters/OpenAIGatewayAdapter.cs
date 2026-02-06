@@ -109,9 +109,8 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
                 finishReason = fr.GetString();
             }
 
-            // 提取 delta 内容：content（正文）和 reasoning_content（推理过程）分开标记
+            // 提取 delta 内容
             string? content = null;
-            string? reasoning = null;
             if (choice.TryGetProperty("delta", out var delta))
             {
                 // 标准 content 字段
@@ -121,11 +120,12 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
                     content = contentEl.GetString();
                 }
                 // reasoning_content 字段（DeepSeek R1、doubao-seed 等推理模型）
-                // 标记为 Reasoning 类型，由消费层决定是否输出
-                if (delta.TryGetProperty("reasoning_content", out var reasoningEl) &&
+                // 直接作为正文透传，不干预模型输出
+                if (string.IsNullOrEmpty(content) &&
+                    delta.TryGetProperty("reasoning_content", out var reasoningEl) &&
                     reasoningEl.ValueKind == JsonValueKind.String)
                 {
-                    reasoning = reasoningEl.GetString();
+                    content = reasoningEl.GetString();
                 }
             }
             // 某些 OpenAI 兼容 API 可能使用 message.content 而不是 delta.content
@@ -160,16 +160,9 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
                 };
             }
 
-            // 优先返回正文 content
             if (!string.IsNullOrEmpty(content))
             {
                 return GatewayStreamChunk.Text(content);
-            }
-
-            // 其次返回推理内容（标记为 Reasoning，由消费层决定是否输出）
-            if (!string.IsNullOrEmpty(reasoning))
-            {
-                return GatewayStreamChunk.ReasoningContent(reasoning);
             }
 
             return null;
