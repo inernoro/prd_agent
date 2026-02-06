@@ -1,9 +1,13 @@
 /**
- * Agent Switcher 浮层组件 v11.0
+ * Agent Switcher 浮层组件 v12.0
  *
  * 改进：
  * - 真正的边缘发光（不是背光）
- * - 山洞穿越过渡效果（点击后卡片放大填满屏幕）
+ * - 传送门穿越过渡效果（灵感来自可灵 AI 传送门）
+ *   - Canvas 绘制的椭圆发光环从卡片中心展开
+ *   - 环内显示 Agent 主题色渐变 + 光线效果
+ *   - 白色核心光环 + 主题色外发光
+ *   - 最终白光闪烁完成过渡
  */
 
 import { useCallback, useEffect, useState, useRef } from 'react';
@@ -193,8 +197,8 @@ function AgentCard({
   );
 }
 
-/** 山洞穿越过渡层 */
-function TunnelTransition({
+/** 传送门穿越过渡层 — 灵感来自可灵 AI 的传送门效果 */
+function PortalTransition({
   agent,
   startRect,
   onComplete,
@@ -203,101 +207,197 @@ function TunnelTransition({
   startRect: DOMRect;
   onComplete: () => void;
 }) {
-  const [phase, setPhase] = useState<'expand' | 'tunnel' | 'done'>('expand');
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const iconUrl = ICON_URLS[agent.key];
 
+  // 传送门中心 = 卡片中心
+  const cx = startRect.left + startRect.width / 2;
+  const cy = startRect.top + startRect.height / 2;
+
   useEffect(() => {
-    // 阶段1: 卡片扩展 (0.4s)
-    const expandTimer = setTimeout(() => {
-      setPhase('tunnel');
-    }, 400);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    // 阶段2: 隧道穿越 (0.5s)
-    const tunnelTimer = setTimeout(() => {
-      setPhase('done');
-      onComplete();
-    }, 900);
+    // 高 DPI 适配
+    const dpr = window.devicePixelRatio || 1;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    canvas.width = vw * dpr;
+    canvas.height = vh * dpr;
+    const ctx = canvas.getContext('2d')!;
+    ctx.scale(dpr, dpr);
 
-    return () => {
-      clearTimeout(expandTimer);
-      clearTimeout(tunnelTimer);
-    };
-  }, [onComplete]);
+    // 预加载 Agent 图标
+    const iconImg = new Image();
+    iconImg.crossOrigin = 'anonymous';
+    iconImg.src = iconUrl;
+
+    // 计算覆盖全屏需要的最大半径
+    const maxR = Math.hypot(
+      Math.max(cx, vw - cx),
+      Math.max(cy, vh - cy)
+    ) * 1.3;
+
+    const startRadius = 55;
+    const tiltAngle = -0.15; // 椭圆倾斜角，模拟 3D 透视感
+    const color = agent.color.text;
+
+    // 解析 hex 颜色
+    const cr = parseInt(color.slice(1, 3), 16);
+    const cg = parseInt(color.slice(3, 5), 16);
+    const cb = parseInt(color.slice(5, 7), 16);
+
+    // 光线角度预计算
+    const rays = Array.from({ length: 18 }, (_, i) => ({
+      angle: (i / 18) * Math.PI * 2,
+      width: 0.03 + Math.random() * 0.02,
+      brightness: 0.5 + Math.random() * 0.5,
+    }));
+
+    const duration = 950;
+    const startTime = performance.now();
+    let frame: number;
+
+    function draw(now: number) {
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / duration, 1);
+
+      // 缓动：ease-out cubic
+      const ease = 1 - Math.pow(1 - t, 3);
+
+      const radius = startRadius + (maxR - startRadius) * ease;
+      const rx = radius * 1.15; // 水平轴稍宽
+      const ry = radius * 0.9;  // 垂直轴稍短，形成 3D 透视椭圆
+
+      ctx.clearRect(0, 0, vw, vh);
+
+      // ═══ 层1: 传送门内部（通过环可见的内容）═══
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, tiltAngle, 0, Math.PI * 2);
+      ctx.clip();
+
+      // 径向渐变背景
+      const portalGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 0.85);
+      portalGrad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, 0.4)`);
+      portalGrad.addColorStop(0.3, `rgba(${cr}, ${cg}, ${cb}, 0.2)`);
+      portalGrad.addColorStop(0.6, `rgba(${Math.floor(cr * 0.3)}, ${Math.floor(cg * 0.3)}, ${Math.floor(cb * 0.3)}, 0.25)`);
+      portalGrad.addColorStop(1, 'rgba(10, 10, 18, 0.95)');
+      ctx.fillStyle = portalGrad;
+      ctx.fillRect(0, 0, vw, vh);
+
+      // 从中心向外的光线效果
+      const rayAlpha = Math.max(0, 1 - ease * 1.6) * 0.25;
+      if (rayAlpha > 0.01) {
+        for (const ray of rays) {
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(ray.angle + ease * 0.3);
+          const rayLen = radius * 0.85;
+          const rayW = radius * ray.width;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(rayW, rayLen);
+          ctx.lineTo(-rayW, rayLen);
+          ctx.closePath();
+          const rGrad = ctx.createLinearGradient(0, 0, 0, rayLen);
+          rGrad.addColorStop(0, `rgba(255, 255, 255, ${rayAlpha * ray.brightness})`);
+          rGrad.addColorStop(0.2, `rgba(${cr}, ${cg}, ${cb}, ${rayAlpha * ray.brightness * 0.5})`);
+          rGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+          ctx.fillStyle = rGrad;
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      // Agent 图标（淡出 + 缩放穿越效果）
+      if (iconImg.complete && iconImg.naturalWidth > 0) {
+        const iconAlpha = Math.max(0, 1 - t * 2.5);
+        if (iconAlpha > 0.01) {
+          const iconScale = 1 + ease * 3;
+          const iconSize = 80 * iconScale;
+          ctx.save();
+          ctx.globalAlpha = iconAlpha;
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 20 + ease * 40;
+          ctx.drawImage(iconImg, cx - iconSize / 2, cy - iconSize / 2, iconSize, iconSize);
+          ctx.restore();
+        }
+      }
+
+      ctx.restore(); // 结束传送门内部裁剪
+
+      // ═══ 层2: 暗色遮罩（椭圆孔洞）═══
+      const overlayAlpha = Math.max(0, 1 - ease * 1.3);
+      if (overlayAlpha > 0.01) {
+        ctx.save();
+        ctx.globalAlpha = overlayAlpha;
+        ctx.fillStyle = '#0a0a0f';
+        ctx.beginPath();
+        ctx.rect(0, 0, vw, vh);
+        ctx.ellipse(cx, cy, rx, ry, tiltAngle, 0, Math.PI * 2, true);
+        ctx.fill('evenodd');
+        ctx.restore();
+      }
+
+      // ═══ 层3: 发光传送门环 ═══
+      const ringAlpha = t < 0.6 ? 1 : Math.max(0, 1 - ((t - 0.6) / 0.4));
+      if (ringAlpha > 0.01) {
+        const ringW = Math.max(1.5, 3.5 * (1 - ease) + 1.5);
+        // 微弱脉动效果
+        const pulse = 1 + Math.sin(t * Math.PI * 4) * 0.15 * (1 - ease);
+
+        // 主题色发光层
+        for (let i = 0; i < 2; i++) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, rx, ry, tiltAngle, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${ringAlpha * (0.7 - i * 0.3)})`;
+          ctx.lineWidth = ringW + i * 3;
+          ctx.shadowColor = color;
+          ctx.shadowBlur = (35 + i * 30) * pulse;
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // 白色核心光环
+        ctx.save();
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, tiltAngle, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255, 255, 255, ${ringAlpha * 0.9})`;
+        ctx.lineWidth = ringW * 0.5;
+        ctx.shadowColor = '#ffffff';
+        ctx.shadowBlur = 12 * pulse;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // ═══ 层4: 结束白光闪烁 ═══
+      if (t > 0.85) {
+        ctx.save();
+        ctx.globalAlpha = (t - 0.85) / 0.15;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, vw, vh);
+        ctx.restore();
+      }
+
+      if (t < 1) {
+        frame = requestAnimationFrame(draw);
+      } else {
+        onComplete();
+      }
+    }
+
+    frame = requestAnimationFrame(draw);
+
+    return () => cancelAnimationFrame(frame);
+  }, [cx, cy, agent, iconUrl, onComplete]);
 
   return (
     <div className="fixed inset-0 z-[300] pointer-events-none">
-      {/* 扩展的卡片 */}
-      <div
-        className="absolute rounded-[28px] overflow-hidden"
-        style={{
-          // 起始位置
-          left: startRect.left,
-          top: startRect.top,
-          width: startRect.width,
-          height: startRect.height,
-          background: 'linear-gradient(145deg, rgba(25, 28, 40, 1) 0%, rgba(15, 17, 25, 1) 100%)',
-          boxShadow: `
-            inset 0 0 0 1.5px ${agent.color.text}60,
-            0 0 60px 20px ${agent.color.text}30
-          `,
-          // 动画到全屏
-          animation: phase === 'expand' || phase === 'tunnel'
-            ? 'tunnelExpand 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards'
-            : 'none',
-        }}
-      >
-        {/* 居中的图标 */}
-        <div
-          className="absolute inset-0 flex items-center justify-center"
-          style={{
-            animation: phase === 'tunnel'
-              ? 'iconZoomIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards'
-              : 'none',
-          }}
-        >
-          <img
-            src={iconUrl}
-            alt={agent.name}
-            className="w-[100px] h-[100px] object-contain"
-            style={{
-              filter: `drop-shadow(0 0 40px ${agent.color.text}80)`,
-            }}
-          />
-        </div>
-
-        {/* 速度线效果 */}
-        {phase === 'tunnel' && (
-          <div className="absolute inset-0 overflow-hidden">
-            {Array.from({ length: 20 }).map((_, i) => (
-              <div
-                key={i}
-                className="absolute"
-                style={{
-                  left: '50%',
-                  top: '50%',
-                  width: '2px',
-                  height: '100px',
-                  background: `linear-gradient(to bottom, transparent, ${agent.color.text}60, transparent)`,
-                  transformOrigin: 'center top',
-                  transform: `rotate(${(i * 18)}deg) translateY(-50%)`,
-                  animation: `speedLine 0.5s ease-out ${i * 20}ms forwards`,
-                }}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* 白色闪光 */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background: '#fff',
-          opacity: 0,
-          animation: phase === 'tunnel'
-            ? 'flashWhite 0.5s ease-out 0.3s forwards'
-            : 'none',
-        }}
+      <canvas
+        ref={canvasRef}
+        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
       />
     </div>
   );
@@ -652,62 +752,12 @@ export function AgentSwitcher() {
               transform: translate(calc(var(--entry-x) * 0.5), calc(var(--entry-y) * 0.5)) rotate(calc(var(--entry-rotate) * 0.5)) scale(0.9);
             }
           }
-          /* 隧道扩展动画 */
-          @keyframes tunnelExpand {
-            0% {
-              border-radius: 28px;
-            }
-            100% {
-              left: 0 !important;
-              top: 0 !important;
-              width: 100vw !important;
-              height: 100vh !important;
-              border-radius: 0;
-            }
-          }
-          /* 图标放大动画 */
-          @keyframes iconZoomIn {
-            0% {
-              transform: scale(1);
-              opacity: 1;
-            }
-            100% {
-              transform: scale(3);
-              opacity: 0;
-            }
-          }
-          /* 速度线动画 */
-          @keyframes speedLine {
-            0% {
-              height: 0;
-              opacity: 0;
-            }
-            50% {
-              opacity: 1;
-            }
-            100% {
-              height: 200vh;
-              opacity: 0;
-            }
-          }
-          /* 白色闪光 */
-          @keyframes flashWhite {
-            0% {
-              opacity: 0;
-            }
-            50% {
-              opacity: 0.8;
-            }
-            100% {
-              opacity: 1;
-            }
-          }
         `}</style>
       </div>
 
-      {/* 穿越过渡层 */}
+      {/* 传送门穿越过渡层 */}
       {transitionAgent && transitionRect && (
-        <TunnelTransition
+        <PortalTransition
           agent={transitionAgent}
           startRect={transitionRect}
           onComplete={handleTransitionComplete}
