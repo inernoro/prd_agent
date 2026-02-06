@@ -93,7 +93,6 @@ import {
   Type,
   Trash,
   Video,
-  Wand2,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -5967,7 +5966,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 position: 'absolute',
                                 left: '50%',
                                 top: 0,
-                                transform: 'translate(-50%, calc(-100% - 52px)) scale(var(--invZoom))',
+                                transform: 'translate(-50%, calc(-100% - 104px)) scale(var(--invZoom))',
                                 transformOrigin: 'center bottom',
                                 pointerEvents: 'auto',
                               }}
@@ -7823,7 +7822,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     <DropdownMenu.Trigger asChild>
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 rounded-full px-2 h-7 text-[11px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
+                        className="inline-flex items-center gap-1 rounded-full px-2 h-7 text-[11px] font-medium truncate max-w-[140px] cursor-pointer hover:opacity-80 transition-opacity"
                         style={{
                           background: 'rgba(99, 102, 241, 0.12)',
                           border: '1px solid rgba(99, 102, 241, 0.35)',
@@ -8428,8 +8427,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       <ConfigManagementDialogBase
         ref={configDialogRef}
         mineTitle="配置管理"
-        mineDescription="水印与快捷指令设置"
-        maxWidth={1500}
+        mineDescription="水印设置"
+        maxWidth={1200}
         showColumnDividers={false}
         columns={[
           {
@@ -8471,80 +8470,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               />
             ),
           } as ConfigColumn<MarketplaceWatermarkConfig>,
-          {
-            key: 'quickActions',
-            title: '快捷指令',
-            filterLabel: '快捷指令',
-            titleAction: (
-              <Button
-                variant="secondary"
-                size="xs"
-                onClick={() => setQuickActionDialogOpen(true)}
-              >
-                <Plus size={14} />
-                新建指令
-              </Button>
-            ),
-            renderMineContent: () => (
-              <div className="space-y-3">
-                {diyQuickActions.length === 0 ? (
-                  <div
-                    className="rounded-[12px] px-4 py-8 text-center text-[13px]"
-                    style={{
-                      border: '1px dashed rgba(255,255,255,0.12)',
-                      color: 'var(--text-muted)',
-                    }}
-                  >
-                    <Wand2 size={28} className="mx-auto mb-2.5 opacity-40" />
-                    <div>暂无自定义快捷指令</div>
-                    <div className="mt-1.5 text-[11px] opacity-60">
-                      点击「新建指令」添加你的第一个快捷指令
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="space-y-1.5">
-                      {diyQuickActions.map((a, idx) => (
-                        <div
-                          key={a.id}
-                          className="flex items-center gap-2 px-3 py-2 rounded-[8px]"
-                          style={{
-                            border: '1px solid rgba(255,255,255,0.08)',
-                            background: 'rgba(255,255,255,0.02)',
-                          }}
-                        >
-                          <span
-                            className="inline-flex items-center justify-center w-5 h-5 rounded-full shrink-0"
-                            style={{
-                              background: 'rgba(250, 204, 21, 0.14)',
-                              border: '1px solid rgba(250, 204, 21, 0.30)',
-                            }}
-                          >
-                            <Wand2 size={10} style={{ color: 'rgba(250, 204, 21, 0.85)' }} />
-                          </span>
-                          <span
-                            className="flex-1 text-[13px] truncate"
-                            style={{ color: a.name ? 'var(--text-primary)' : 'var(--text-muted)' }}
-                          >
-                            {a.name || `指令 ${idx + 1}（未命名）`}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="w-full"
-                      onClick={() => setQuickActionDialogOpen(true)}
-                    >
-                      <Settings size={14} />
-                      管理快捷指令
-                    </Button>
-                  </>
-                )}
-              </div>
-            ),
-          } as ConfigColumn<any>,
         ]}
       />
 
