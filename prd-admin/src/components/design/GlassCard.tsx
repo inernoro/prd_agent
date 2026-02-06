@@ -145,7 +145,7 @@ export function GlassCard({
   return (
     <div
       className={cn(
-        'rounded-[16px] transition-all duration-200 relative',
+        'rounded-[16px] transition-all duration-200 relative no-focus-ring',
         overflowClass[overflow],
         paddingClass[padding],
         interactive && 'cursor-pointer hover:scale-[1.01] active:scale-[0.99]',
@@ -153,6 +153,7 @@ export function GlassCard({
       )}
       style={getGlassStyle()}
       onClick={onClick}
+      tabIndex={interactive ? 0 : undefined}
     >
       {children}
     </div>

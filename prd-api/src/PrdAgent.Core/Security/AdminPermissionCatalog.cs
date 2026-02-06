@@ -69,6 +69,16 @@ public static class AdminPermissionCatalog
     public const string DefectAgentManage = "defect-agent.manage";
 
     /// <summary>
+    /// AI 百宝箱权限：使用百宝箱功能
+    /// </summary>
+    public const string AiToolboxUse = "ai-toolbox.use";
+
+    /// <summary>
+    /// AI 百宝箱管理权限：管理工作流、配置等
+    /// </summary>
+    public const string AiToolboxManage = "ai-toolbox.manage";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -82,6 +92,8 @@ public static class AdminPermissionCatalog
         new(LiteraryAgentUse, "文学创作 Agent", "文章配图智能生成"),
         new(DefectAgentUse, "缺陷管理 Agent", "提交和查看缺陷"),
         new(DefectAgentManage, "缺陷管理 Agent-管理", "设置模板、指派处理人"),
+        new(AiToolboxUse, "AI 百宝箱", "使用 AI 百宝箱功能"),
+        new(AiToolboxManage, "AI 百宝箱-管理", "管理工作流、配置等"),
 
         new(UsersRead, "用户管理-读", "查看用户列表/详情"),
         new(UsersWrite, "用户管理-写", "创建/编辑/禁用/重置密码等"),

@@ -1,0 +1,152 @@
+/* 容器 */
+.ripple-switch-container {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  box-shadow: 0 0 88px 5px rgba(0, 0, 0, 0.75);
+  background: #000;
+}
+
+/* 水波纹 SVG */
+.ripple-switch-svg {
+  position: absolute;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.ripple-switch-circle {
+  stroke: #fff;
+  fill: none;
+  stroke-width: 0;
+  /* 默认无过渡，这样回到 0 时瞬间消失 */
+  transition: none;
+}
+
+.ripple-switch-circle.animate {
+  stroke-width: 82px;
+  /* 只在扩散时有过渡动画 */
+  transition: stroke-width 0.2s linear;
+}
+
+/* 图片幻灯片 */
+.ripple-switch-slides {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.ripple-switch-slide {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  z-index: 10;
+  opacity: 0;
+}
+
+.ripple-switch-slide.active {
+  opacity: 1;
+  z-index: 20;
+}
+
+/* 顶部按钮组 */
+.ripple-switch-buttons {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ripple-switch-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+.ripple-switch-btn:hover:not(:disabled) {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.ripple-switch-btn.active {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.ripple-switch-btn:disabled {
+  cursor: not-allowed;
+}
+
+.ripple-switch-btn:focus {
+  outline: none;
+}
+
+.ripple-switch-btn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.4;
+  transition: all 0.25s ease;
+}
+
+.ripple-switch-btn.active .ripple-switch-btn-dot {
+  opacity: 1;
+  box-shadow: 0 0 8px currentColor;
+}
+
+/* 底部指示器 */
+.ripple-switch-indicators {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  gap: 8px;
+}
+
+.ripple-switch-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  padding: 0;
+}
+
+.ripple-switch-indicator:hover {
+  border-color: rgba(255, 255, 255, 0.8);
+}
+
+.ripple-switch-indicator:focus {
+  outline: none;
+}
+
+.ripple-switch-indicator.active {
+  background: #fff;
+  border-color: #fff;
+}
+
+.ripple-switch-indicator:disabled {
+  cursor: not-allowed;
+}

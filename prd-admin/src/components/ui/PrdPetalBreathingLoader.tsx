@@ -70,7 +70,7 @@ export function PrdPetalBreathingLoader({
   style,
 }: {
   size?: number;
-  /** 为 true 时，组件铺满父容器，并按容器最短边自适应缩放 */
+  /** 为 true 时，铺满父容器（cover 效果：按较大边拉伸，裁剪溢出） */
   fill?: boolean;
   /** 主题色 */
   variant?: keyof typeof petalPalettes;
@@ -97,6 +97,9 @@ export function PrdPetalBreathingLoader({
           display: 'grid',
           placeItems: 'center',
           pointerEvents: 'none',
+          // fill 模式：启用容器查询 + 裁剪溢出，保持花瓣正圆
+          containerType: fill ? 'size' : undefined,
+          overflow: fill ? 'hidden' : undefined,
           // 外层不做背景，避免覆盖你现有卡片/画布
           ...style,
           ['--prdPetalUnitPx']: `${unitPx}px`,
@@ -106,12 +109,23 @@ export function PrdPetalBreathingLoader({
       role="status"
     >
       <style>{`
+/* 非 fill 模式：使用 grid 布局居中 */
 .prd-petal-breath__petal {
   grid-row: 1 / -1;
   grid-column: 1 / -1;
   box-sizing: border-box;
   animation: prd-petal-breath 2s ease alternate infinite;
   transform: rotate(var(--prdPetalRot)) scale(1);
+}
+
+/* fill 模式：使用绝对定位 + translate 居中，溢出裁剪时保持中心对齐 */
+.prd-petal-breath__petal--fill {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  box-sizing: border-box;
+  animation: prd-petal-breath-fill 2s ease alternate infinite;
+  transform: translate(-50%, -50%) rotate(var(--prdPetalRot)) scale(1);
 }
 
 .prd-petal-breath__petal--paused {
@@ -124,8 +138,15 @@ export function PrdPetalBreathingLoader({
   }
 }
 
+@keyframes prd-petal-breath-fill {
+  to {
+    transform: translate(-50%, -50%) rotate(var(--prdPetalRot)) scale(0.6);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .prd-petal-breath__petal {
+  .prd-petal-breath__petal,
+  .prd-petal-breath__petal--fill {
     animation: none !important;
   }
 }
@@ -136,21 +157,27 @@ export function PrdPetalBreathingLoader({
         const rot = i * 36;
         const delayMs = i * 80;
         const zIndex = 100 - i;
-        // fill 模式下：跳过最外层深色底板（会形成一个近黑的圆角矩形背景）
-        // - 不依赖具体色值：直接跳过最后 3 层（最深色）
-        if (fill && idx >= 17) return null;
+        // 保留所有 20 层花瓣，不跳过任何层
+
+        // fill 模式：使用 max(cqw, cqh) 按较大边拉伸，溢出部分被父容器裁剪（cover 效果）
+        // 非 fill 模式：使用固定 px 单位
+        const petalSizeFill = `max(${i * 5}cqw, ${i * 5}cqh)`;
+        const petalSizeFixed = `calc(${i} * 4 * var(--prdPetalUnitPx))`;
+
+        // fill 模式用 --fill 类（绝对定位居中），非 fill 用普通类（grid 布局）
+        const petalClass = fill ? 'prd-petal-breath__petal--fill' : 'prd-petal-breath__petal';
 
         return (
           <div
             key={c}
-            className={`prd-petal-breath__petal${paused ? ' prd-petal-breath__petal--paused' : ''}`}
+            className={`${petalClass}${paused ? ' prd-petal-breath__petal--paused' : ''}`}
             style={
               {
-                // 关键：fill 模式不用 JS 测量，直接按容器百分比铺满（20 层 => 每层 +5%，最大 100%）
-                width: fill ? `${i * 5}%` : `calc(${i} * 4 * var(--prdPetalUnitPx))`,
-                height: fill ? `${i * 5}%` : `calc(${i} * 4 * var(--prdPetalUnitPx))`,
-                // fill 模式用百分比近似圆角（box-shadow 用 px，避免 % 不支持）
-                borderRadius: fill ? `${Math.min(50, Math.round(8 + i * 0.9))}%` : `calc(${1 + 0.2 * i} * var(--prdPetalUnitPx))`,
+                // fill 模式：按较大边拉伸，居中后裁剪溢出
+                width: fill ? petalSizeFill : petalSizeFixed,
+                height: fill ? petalSizeFill : petalSizeFixed,
+                // 尖锐花瓣：圆角要小（2-4%），不要太圆（原来8-26%太胖）
+                borderRadius: fill ? `${2 + i * 0.1}%` : `calc(${1 + 0.2 * i} * var(--prdPetalUnitPx))`,
                 boxShadow: fill
                   ? `0 0 ${Math.max(1, Math.round(i * 0.9))}px rgba(0,0,0,0.10)`
                   : `0 0 calc(${0.5 * i} * var(--prdPetalUnitPx)) rgba(0,0,0,0.1)`,
