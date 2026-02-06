@@ -301,6 +301,7 @@ public class GatewayStreamChunk
     public string? RawData { get; init; }
 
     public static GatewayStreamChunk Text(string content) => new() { Type = GatewayChunkType.Text, Content = content };
+    public static GatewayStreamChunk ReasoningContent(string content) => new() { Type = GatewayChunkType.Reasoning, Content = content };
     public static GatewayStreamChunk Start(GatewayModelResolution resolution) => new() { Type = GatewayChunkType.Start, Resolution = resolution };
     public static GatewayStreamChunk Done(string? finishReason, GatewayTokenUsage? usage) => new() { Type = GatewayChunkType.Done, FinishReason = finishReason, TokenUsage = usage };
     public static GatewayStreamChunk Fail(string error) => new() { Type = GatewayChunkType.Error, Error = error };
@@ -320,6 +321,12 @@ public enum GatewayChunkType
     /// 文本内容
     /// </summary>
     Text,
+
+    /// <summary>
+    /// 推理过程（reasoning_content）
+    /// 用于区分思考过程和正文，由消费层决定是否输出
+    /// </summary>
+    Reasoning,
 
     /// <summary>
     /// 工具调用

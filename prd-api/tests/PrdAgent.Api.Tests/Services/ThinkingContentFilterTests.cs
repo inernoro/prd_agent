@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Adapters;
@@ -9,7 +10,11 @@ namespace PrdAgent.Api.Tests.Services;
 
 /// <summary>
 /// 思考内容过滤测试
-/// 验证 Claude thinking_delta 和 DeepSeek reasoning_content 不会泄漏到用户输出
+/// 验证 Claude thinking_delta 和 DeepSeek/doubao reasoning_content 的正确处理：
+/// - Claude: thinking_delta 在适配器层直接过滤
+/// - OpenAI 兼容模型: reasoning_content 标记为 Reasoning 类型，由 GatewayLLMClient 智能决策
+///   - 有 content → 只输出 content（DeepSeek R1 场景）
+///   - 无 content → 将 reasoning 作为回复输出（doubao-seed 场景）
 ///
 /// 运行方式:
 ///   dotnet test --filter "ThinkingContentFilterTests"
@@ -21,7 +26,6 @@ public class ThinkingContentFilterTests
     [Fact]
     public void Claude_TextDelta_ShouldReturnContent()
     {
-        // Arrange - 正常的 text_delta 事件
         var adapter = new ClaudeGatewayAdapter();
         var sseData = """
         {
@@ -31,10 +35,8 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act
         var chunk = adapter.ParseStreamChunk(sseData);
 
-        // Assert
         chunk.ShouldNotBeNull();
         chunk.Type.ShouldBe(GatewayChunkType.Text);
         chunk.Content.ShouldBe("你好世界");
@@ -43,7 +45,6 @@ public class ThinkingContentFilterTests
     [Fact]
     public void Claude_ThinkingDelta_ShouldBeFiltered()
     {
-        // Arrange - thinking_delta 事件（必须被过滤）
         var adapter = new ClaudeGatewayAdapter();
         var sseData = """
         {
@@ -53,17 +54,14 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act
         var chunk = adapter.ParseStreamChunk(sseData);
 
-        // Assert - thinking 内容不应产生任何输出
         chunk.ShouldBeNull();
     }
 
     [Fact]
     public void Claude_ThinkingDelta_WithTextFieldToo_ShouldBeFiltered()
     {
-        // Arrange - 某些代理可能在 thinking_delta 中也带 text 字段
         var adapter = new ClaudeGatewayAdapter();
         var sseData = """
         {
@@ -73,17 +71,14 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act
         var chunk = adapter.ParseStreamChunk(sseData);
 
-        // Assert - 即使有 text 字段，thinking_delta 也不应产生输出
         chunk.ShouldBeNull();
     }
 
     [Fact]
     public void Claude_DeltaWithoutType_ShouldBeFiltered()
     {
-        // Arrange - delta 缺少 type 字段
         var adapter = new ClaudeGatewayAdapter();
         var sseData = """
         {
@@ -93,24 +88,19 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act
         var chunk = adapter.ParseStreamChunk(sseData);
 
-        // Assert - 缺少 type 字段应该被过滤（安全优先）
         chunk.ShouldBeNull();
     }
 
     [Fact]
     public void Claude_MessageStop_ShouldStillWork()
     {
-        // Arrange - 回归：确保非 delta 事件不受影响
         var adapter = new ClaudeGatewayAdapter();
         var sseData = """{ "type": "message_stop" }""";
 
-        // Act
         var chunk = adapter.ParseStreamChunk(sseData);
 
-        // Assert
         chunk.ShouldNotBeNull();
         chunk.Type.ShouldBe(GatewayChunkType.Done);
     }
@@ -118,7 +108,6 @@ public class ThinkingContentFilterTests
     [Fact]
     public void Claude_MessageDelta_WithUsage_ShouldStillWork()
     {
-        // Arrange - 回归：message_delta 带 usage 和 stop_reason
         var adapter = new ClaudeGatewayAdapter();
         var sseData = """
         {
@@ -128,10 +117,8 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act
         var chunk = adapter.ParseStreamChunk(sseData);
 
-        // Assert
         chunk.ShouldNotBeNull();
         chunk.Type.ShouldBe(GatewayChunkType.Done);
         chunk.FinishReason.ShouldBe("end_turn");
@@ -143,7 +130,6 @@ public class ThinkingContentFilterTests
     [InlineData("input_json_delta")]
     public void Claude_OtherDeltaTypes_ShouldBeFiltered(string deltaType)
     {
-        // Arrange - 其他非 text_delta 类型也不应泄漏
         var adapter = new ClaudeGatewayAdapter();
         var sseData = $$"""
         {
@@ -153,10 +139,8 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act
         var chunk = adapter.ParseStreamChunk(sseData);
 
-        // Assert
         chunk.ShouldBeNull();
     }
 
@@ -165,9 +149,8 @@ public class ThinkingContentFilterTests
     #region OpenAIGatewayAdapter Tests
 
     [Fact]
-    public void OpenAI_NormalContent_ShouldReturnContent()
+    public void OpenAI_NormalContent_ShouldReturnText()
     {
-        // Arrange - 正常的 content 字段
         var adapter = new OpenAIGatewayAdapter();
         var sseData = """
         {
@@ -177,19 +160,17 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act
         var chunk = adapter.ParseStreamChunk(sseData);
 
-        // Assert
         chunk.ShouldNotBeNull();
         chunk.Type.ShouldBe(GatewayChunkType.Text);
         chunk.Content.ShouldBe("正常回复内容");
     }
 
     [Fact]
-    public void OpenAI_ReasoningContent_ShouldBeFiltered()
+    public void OpenAI_ReasoningContent_ShouldReturnReasoningType()
     {
-        // Arrange - DeepSeek 的 reasoning_content（思考过程，不应输出）
+        // reasoning_content 应标记为 Reasoning 类型（不是 Text，也不是 null）
         var adapter = new OpenAIGatewayAdapter();
         var sseData = """
         {
@@ -199,37 +180,17 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act
         var chunk = adapter.ParseStreamChunk(sseData);
 
-        // Assert - reasoning_content 不应产生输出
-        chunk.ShouldBeNull();
+        chunk.ShouldNotBeNull();
+        chunk.Type.ShouldBe(GatewayChunkType.Reasoning);
+        chunk.Content.ShouldBe("让我仔细想想这个问题的解法...");
     }
 
     [Fact]
-    public void OpenAI_ReasoningContentOnly_NoContent_ShouldBeFiltered()
+    public void OpenAI_ContentAndReasoning_ShouldPreferContent()
     {
-        // Arrange - DeepSeek R1 典型场景：只有 reasoning_content，没有 content
-        var adapter = new OpenAIGatewayAdapter();
-        var sseData = """
-        {
-            "choices": [{
-                "delta": { "reasoning_content": "step 1: 分析问题\nstep 2: 推理过程" }
-            }]
-        }
-        """;
-
-        // Act
-        var chunk = adapter.ParseStreamChunk(sseData);
-
-        // Assert
-        chunk.ShouldBeNull();
-    }
-
-    [Fact]
-    public void OpenAI_ContentAndReasoning_ShouldOnlyReturnContent()
-    {
-        // Arrange - 同时有 content 和 reasoning_content
+        // 同时有 content 和 reasoning_content 时，优先返回 content（Text 类型）
         var adapter = new OpenAIGatewayAdapter();
         var sseData = """
         {
@@ -242,42 +203,39 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act
         var chunk = adapter.ParseStreamChunk(sseData);
 
-        // Assert - 只返回正式 content
         chunk.ShouldNotBeNull();
+        chunk.Type.ShouldBe(GatewayChunkType.Text);
         chunk.Content.ShouldBe("最终答案");
     }
 
     [Fact]
-    public void OpenAI_EmptyContentWithReasoning_ShouldBeFiltered()
+    public void OpenAI_EmptyContentWithReasoning_ShouldReturnReasoning()
     {
-        // Arrange - content 为空字符串 + reasoning_content 有值
-        // 修复前这里会回退到 reasoning_content
+        // content 为空字符串 + reasoning_content 有值 → 返回 Reasoning
         var adapter = new OpenAIGatewayAdapter();
         var sseData = """
         {
             "choices": [{
                 "delta": {
                     "content": "",
-                    "reasoning_content": "不应该被当作正文"
+                    "reasoning_content": "推理过程内容"
                 }
             }]
         }
         """;
 
-        // Act
         var chunk = adapter.ParseStreamChunk(sseData);
 
-        // Assert - 空 content 不应回退到 reasoning_content
-        chunk.ShouldBeNull();
+        chunk.ShouldNotBeNull();
+        chunk.Type.ShouldBe(GatewayChunkType.Reasoning);
+        chunk.Content.ShouldBe("推理过程内容");
     }
 
     [Fact]
     public void OpenAI_FinishReason_ShouldStillWork()
     {
-        // Arrange - 回归：finish_reason 事件不受影响
         var adapter = new OpenAIGatewayAdapter();
         var sseData = """
         {
@@ -288,10 +246,8 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act
         var chunk = adapter.ParseStreamChunk(sseData);
 
-        // Assert
         chunk.ShouldNotBeNull();
         chunk.Type.ShouldBe(GatewayChunkType.Done);
         chunk.FinishReason.ShouldBe("stop");
@@ -300,7 +256,6 @@ public class ThinkingContentFilterTests
     [Fact]
     public void OpenAI_UsageChunk_ShouldStillWork()
     {
-        // Arrange - 回归：usage 事件不受影响
         var adapter = new OpenAIGatewayAdapter();
         var sseData = """
         {
@@ -308,10 +263,8 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act
         var chunk = adapter.ParseStreamChunk(sseData);
 
-        // Assert
         chunk.ShouldNotBeNull();
         chunk.Type.ShouldBe(GatewayChunkType.Done);
         chunk.TokenUsage.ShouldNotBeNull();
@@ -326,7 +279,6 @@ public class ThinkingContentFilterTests
     [Fact]
     public void ClaudeDelta_TextDelta_ShouldDeserializeCorrectly()
     {
-        // Arrange - 验证 ClaudeDelta 的 Type 字段能正确反序列化
         var json = """
         {
             "type": "content_block_delta",
@@ -334,10 +286,8 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act
         var evt = JsonSerializer.Deserialize(json, LLMJsonContext.Default.ClaudeStreamEvent);
 
-        // Assert
         evt.ShouldNotBeNull();
         evt!.Type.ShouldBe("content_block_delta");
         evt.Delta.ShouldNotBeNull();
@@ -348,7 +298,6 @@ public class ThinkingContentFilterTests
     [Fact]
     public void ClaudeDelta_ThinkingDelta_ShouldDeserializeWithNullText()
     {
-        // Arrange - thinking_delta 没有 text 字段，只有 thinking 字段
         var json = """
         {
             "type": "content_block_delta",
@@ -356,20 +305,17 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act
         var evt = JsonSerializer.Deserialize(json, LLMJsonContext.Default.ClaudeStreamEvent);
 
-        // Assert
         evt.ShouldNotBeNull();
         evt!.Delta.ShouldNotBeNull();
         evt.Delta!.Type.ShouldBe("thinking_delta");
-        evt.Delta.Text.ShouldBeNull(); // thinking 字段不映射到 Text
+        evt.Delta.Text.ShouldBeNull();
     }
 
     [Fact]
     public void ClaudeDelta_TextDelta_TypeCheckPreventsThinkingLeak()
     {
-        // Arrange - 模拟 ClaudeClient 中的过滤逻辑
         var textJson = """
         {
             "type": "content_block_delta",
@@ -383,7 +329,6 @@ public class ThinkingContentFilterTests
         }
         """;
 
-        // Act - 模拟 ClaudeClient.StreamGenerateAsync 中的过滤条件
         var textEvt = JsonSerializer.Deserialize(textJson, LLMJsonContext.Default.ClaudeStreamEvent);
         var thinkingEvt = JsonSerializer.Deserialize(thinkingJson, LLMJsonContext.Default.ClaudeStreamEvent);
 
@@ -395,55 +340,34 @@ public class ThinkingContentFilterTests
                               && thinkingEvt.Delta?.Type == "text_delta"
                               && thinkingEvt.Delta?.Text != null;
 
-        // Assert
         textPasses.ShouldBeTrue("text_delta 应该通过过滤");
         thinkingPasses.ShouldBeFalse("thinking_delta 不应通过过滤");
     }
 
     #endregion
 
-    #region End-to-End Simulation: Claude Extended Thinking
+    #region End-to-End: Claude Extended Thinking (adapter layer)
 
     [Fact]
     public void Claude_ExtendedThinking_FullStream_OnlyTextShouldPass()
     {
-        // 模拟完整的 Claude Extended Thinking 流
-        // 真实场景：先输出 thinking blocks，再输出 text blocks
         var adapter = new ClaudeGatewayAdapter();
 
         var sseEvents = new[]
         {
-            // 1. message_start
             """{ "type": "message_start", "message": { "usage": { "input_tokens": 50 } } }""",
-
-            // 2. content_block_start (thinking)
             """{ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking", "thinking": "" } }""",
-
-            // 3. thinking_delta chunks (思考过程)
             """{ "type": "content_block_delta", "index": 0, "delta": { "type": "thinking_delta", "thinking": "首先分析问题的要求，" } }""",
             """{ "type": "content_block_delta", "index": 0, "delta": { "type": "thinking_delta", "thinking": "然后逐步推理出解决方案..." } }""",
-
-            // 4. content_block_stop (thinking)
             """{ "type": "content_block_stop", "index": 0 }""",
-
-            // 5. content_block_start (text)
             """{ "type": "content_block_start", "index": 1, "content_block": { "type": "text", "text": "" } }""",
-
-            // 6. text_delta chunks (正文 — 只有这些应该输出)
             """{ "type": "content_block_delta", "index": 1, "delta": { "type": "text_delta", "text": "根据分析，" } }""",
             """{ "type": "content_block_delta", "index": 1, "delta": { "type": "text_delta", "text": "答案是42。" } }""",
-
-            // 7. content_block_stop (text)
             """{ "type": "content_block_stop", "index": 1 }""",
-
-            // 8. message_delta (done)
             """{ "type": "message_delta", "delta": { "stop_reason": "end_turn" }, "usage": { "output_tokens": 200 } }""",
-
-            // 9. message_stop
             """{ "type": "message_stop" }""",
         };
 
-        // Act - 收集所有 Text 类型的 chunk
         var textChunks = new List<string>();
         var allChunks = new List<GatewayStreamChunk>();
 
@@ -460,64 +384,255 @@ public class ThinkingContentFilterTests
             }
         }
 
-        // Assert
         var assembled = string.Join("", textChunks);
         assembled.ShouldBe("根据分析，答案是42。");
-
-        // 确保没有思考内容泄漏
         assembled.ShouldNotContain("首先分析");
         assembled.ShouldNotContain("逐步推理");
-
-        // 确保 Done 事件正常
         allChunks.ShouldContain(c => c.Type == GatewayChunkType.Done);
     }
 
     #endregion
 
-    #region End-to-End Simulation: DeepSeek R1
+    #region End-to-End: DeepSeek R1 (adapter + consumer layer)
 
     [Fact]
-    public void DeepSeek_R1_FullStream_OnlyContentShouldPass()
+    public void DeepSeek_R1_AdapterLevel_ReasoningAndTextSeparated()
     {
-        // 模拟完整的 DeepSeek R1 流
-        // 真实场景：先输出 reasoning_content，再输出 content
+        // DeepSeek R1: reasoning_content 标记为 Reasoning，content 标记为 Text
         var adapter = new OpenAIGatewayAdapter();
 
         var sseEvents = new[]
         {
-            // 1. reasoning_content 阶段（思考过程）
-            """{ "choices": [{ "delta": { "reasoning_content": "好的，让我分析一下这个问题。" } }] }""",
-            """{ "choices": [{ "delta": { "reasoning_content": "首先需要考虑边界条件..." } }] }""",
-            """{ "choices": [{ "delta": { "reasoning_content": "综合以上分析，结论是..." } }] }""",
-
-            // 2. content 阶段（正文 — 只有这些应该输出）
+            """{ "choices": [{ "delta": { "reasoning_content": "好的，让我分析一下。" } }] }""",
+            """{ "choices": [{ "delta": { "reasoning_content": "考虑边界条件..." } }] }""",
             """{ "choices": [{ "delta": { "content": "经过分析，" } }] }""",
-            """{ "choices": [{ "delta": { "content": "最终结论是：可行。" } }] }""",
-
-            // 3. 结束
+            """{ "choices": [{ "delta": { "content": "结论是可行。" } }] }""",
             """{ "choices": [{ "finish_reason": "stop", "delta": {} }] }""",
         };
 
-        // Act
         var textChunks = new List<string>();
+        var reasoningChunks = new List<string>();
 
         foreach (var sse in sseEvents)
         {
             var chunk = adapter.ParseStreamChunk(sse);
-            if (chunk?.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
-            {
-                textChunks.Add(chunk.Content);
-            }
+            if (chunk == null) continue;
+
+            if (chunk.Type == GatewayChunkType.Text)
+                textChunks.Add(chunk.Content!);
+            else if (chunk.Type == GatewayChunkType.Reasoning)
+                reasoningChunks.Add(chunk.Content!);
         }
 
-        // Assert
-        var assembled = string.Join("", textChunks);
-        assembled.ShouldBe("经过分析，最终结论是：可行。");
+        // 适配器层：两种类型分开标记
+        string.Join("", textChunks).ShouldBe("经过分析，结论是可行。");
+        string.Join("", reasoningChunks).ShouldBe("好的，让我分析一下。考虑边界条件...");
+    }
 
-        // 确保没有思考内容泄漏
+    [Fact]
+    public async Task DeepSeek_R1_ConsumerLevel_OnlyContentOutput()
+    {
+        // GatewayLLMClient 消费层：有 content 时，丢弃 reasoning，只输出 content
+        var chunks = new GatewayStreamChunk[]
+        {
+            GatewayStreamChunk.Start(new GatewayModelResolution { Success = true, ResolutionType = "DefaultPool", ActualModel = "deepseek-r1" }),
+            GatewayStreamChunk.ReasoningContent("让我分析一下。"),
+            GatewayStreamChunk.ReasoningContent("考虑边界条件..."),
+            GatewayStreamChunk.Text("经过分析，"),
+            GatewayStreamChunk.Text("结论是可行。"),
+            GatewayStreamChunk.Done("stop", null),
+        };
+
+        var gateway = new FakeGateway(chunks);
+        var client = new GatewayLLMClient(gateway, "test.chat::chat", "chat");
+
+        var output = new List<string>();
+        await foreach (var chunk in client.StreamGenerateAsync("system", new List<LLMMessage>()))
+        {
+            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                output.Add(chunk.Content);
+        }
+
+        var assembled = string.Join("", output);
+        assembled.ShouldBe("经过分析，结论是可行。");
         assembled.ShouldNotContain("让我分析");
         assembled.ShouldNotContain("边界条件");
-        assembled.ShouldNotContain("综合以上");
+    }
+
+    #endregion
+
+    #region End-to-End: Doubao Seed (reasoning-only model)
+
+    [Fact]
+    public async Task DoubaoSeed_ReasoningOnly_ShouldFlushAsContent()
+    {
+        // doubao-seed 场景：所有输出都走 reasoning_content，content 始终为空
+        // GatewayLLMClient 应该在流结束时将 reasoning 作为回复 flush 输出
+        var chunks = new GatewayStreamChunk[]
+        {
+            GatewayStreamChunk.Start(new GatewayModelResolution { Success = true, ResolutionType = "DefaultPool", ActualModel = "doubao-seed-1-8" }),
+            GatewayStreamChunk.ReasoningContent("这是"),
+            GatewayStreamChunk.ReasoningContent("完整的"),
+            GatewayStreamChunk.ReasoningContent("回复内容。"),
+            GatewayStreamChunk.Done("stop", new GatewayTokenUsage { InputTokens = 100, OutputTokens = 50 }),
+        };
+
+        var gateway = new FakeGateway(chunks);
+        var client = new GatewayLLMClient(gateway, "test.chat::chat", "chat");
+
+        var output = new List<string>();
+        LLMStreamChunk? doneChunk = null;
+        await foreach (var chunk in client.StreamGenerateAsync("system", new List<LLMMessage>()))
+        {
+            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                output.Add(chunk.Content);
+            if (chunk.Type == "done")
+                doneChunk = chunk;
+        }
+
+        // reasoning 被当作回复输出（因为没有 content）
+        var assembled = string.Join("", output);
+        assembled.ShouldBe("这是完整的回复内容。");
+
+        // token 统计正常
+        doneChunk.ShouldNotBeNull();
+        doneChunk!.InputTokens.ShouldBe(100);
+        doneChunk.OutputTokens.ShouldBe(50);
+    }
+
+    [Fact]
+    public async Task DoubaoSeed_AdapterToConsumer_FullPipeline()
+    {
+        // 完整管线测试：OpenAI 适配器解析 → GatewayLLMClient 智能过滤
+        var adapter = new OpenAIGatewayAdapter();
+
+        // 模拟 doubao-seed 的 SSE 事件
+        var sseEvents = new[]
+        {
+            """{ "choices": [{ "delta": { "reasoning_content": "## 分析结果\n" } }] }""",
+            """{ "choices": [{ "delta": { "reasoning_content": "1. 第一点\n" } }] }""",
+            """{ "choices": [{ "delta": { "reasoning_content": "2. 第二点\n" } }] }""",
+            """{ "choices": [{ "finish_reason": "stop", "delta": {} }] }""",
+        };
+
+        // 解析 SSE 事件
+        var gatewayChunks = new List<GatewayStreamChunk>
+        {
+            GatewayStreamChunk.Start(new GatewayModelResolution { Success = true, ResolutionType = "DefaultPool", ActualModel = "doubao-seed" })
+        };
+        foreach (var sse in sseEvents)
+        {
+            var chunk = adapter.ParseStreamChunk(sse);
+            if (chunk != null) gatewayChunks.Add(chunk);
+        }
+
+        // 通过 GatewayLLMClient 消费
+        var gateway = new FakeGateway(gatewayChunks.ToArray());
+        var client = new GatewayLLMClient(gateway, "test.chat::chat", "chat");
+
+        var output = new List<string>();
+        await foreach (var chunk in client.StreamGenerateAsync("system", new List<LLMMessage>()))
+        {
+            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                output.Add(chunk.Content);
+        }
+
+        var assembled = string.Join("", output);
+        assembled.ShouldBe("## 分析结果\n1. 第一点\n2. 第二点\n");
+    }
+
+    #endregion
+
+    #region Edge Cases
+
+    [Fact]
+    public async Task NormalModel_NoReasoning_ShouldStreamNormally()
+    {
+        // 普通模型（如 GPT-4o）：没有 reasoning，直接输出 content
+        var chunks = new GatewayStreamChunk[]
+        {
+            GatewayStreamChunk.Start(new GatewayModelResolution { Success = true, ResolutionType = "DefaultPool", ActualModel = "gpt-4o" }),
+            GatewayStreamChunk.Text("你好，"),
+            GatewayStreamChunk.Text("世界！"),
+            GatewayStreamChunk.Done("stop", null),
+        };
+
+        var gateway = new FakeGateway(chunks);
+        var client = new GatewayLLMClient(gateway, "test.chat::chat", "chat");
+
+        var output = new List<string>();
+        await foreach (var chunk in client.StreamGenerateAsync("system", new List<LLMMessage>()))
+        {
+            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                output.Add(chunk.Content);
+        }
+
+        string.Join("", output).ShouldBe("你好，世界！");
+    }
+
+    [Fact]
+    public async Task ReasoningAfterContent_ShouldBeDiscarded()
+    {
+        // 边界情况：content 之后又出现 reasoning（理论上不会发生，但要安全处理）
+        var chunks = new GatewayStreamChunk[]
+        {
+            GatewayStreamChunk.Start(new GatewayModelResolution { Success = true, ResolutionType = "DefaultPool", ActualModel = "test-model" }),
+            GatewayStreamChunk.Text("正文内容"),
+            GatewayStreamChunk.ReasoningContent("这段 reasoning 应该被丢弃"),
+            GatewayStreamChunk.Done("stop", null),
+        };
+
+        var gateway = new FakeGateway(chunks);
+        var client = new GatewayLLMClient(gateway, "test.chat::chat", "chat");
+
+        var output = new List<string>();
+        await foreach (var chunk in client.StreamGenerateAsync("system", new List<LLMMessage>()))
+        {
+            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                output.Add(chunk.Content);
+        }
+
+        string.Join("", output).ShouldBe("正文内容");
+    }
+
+    #endregion
+
+    #region Test Helpers
+
+    /// <summary>
+    /// 假 Gateway，直接返回预设的 chunks
+    /// </summary>
+    private sealed class FakeGateway : ILlmGateway
+    {
+        private readonly GatewayStreamChunk[] _chunks;
+
+        public FakeGateway(GatewayStreamChunk[] chunks)
+        {
+            _chunks = chunks;
+        }
+
+        public async IAsyncEnumerable<GatewayStreamChunk> StreamAsync(
+            GatewayRequest request,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            foreach (var chunk in _chunks)
+            {
+                yield return chunk;
+            }
+            await Task.CompletedTask;
+        }
+
+        // 以下方法不在测试范围内
+        public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+            => throw new NotImplementedException();
+        public Task<GatewayRawResponse> SendRawAsync(GatewayRawRequest request, CancellationToken ct = default)
+            => throw new NotImplementedException();
+        public Task<GatewayModelResolution> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModel = null, CancellationToken ct = default)
+            => throw new NotImplementedException();
+        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType, CancellationToken ct = default)
+            => throw new NotImplementedException();
+        public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2)
+            => throw new NotImplementedException();
     }
 
     #endregion

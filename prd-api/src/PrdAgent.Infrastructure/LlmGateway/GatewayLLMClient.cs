@@ -96,6 +96,13 @@ public class GatewayLLMClient : ILLMClient
             }
         };
 
+        // 推理内容缓冲策略：
+        // - 推理模型（DeepSeek R1、doubao-seed）会先输出 reasoning_content，再输出 content
+        // - 如果有 content，说明模型区分了思考和正文 → 只输出 content（丢弃 reasoning）
+        // - 如果整个流都没有 content（如 doubao-seed），则 reasoning 就是回复 → flush 输出
+        var hasSeenTextContent = false;
+        List<string>? reasoningBuffer = null;
+
         await foreach (var chunk in _gateway.StreamAsync(request, cancellationToken))
         {
             if (chunk.Type == GatewayChunkType.Error)
@@ -114,14 +121,34 @@ public class GatewayLLMClient : ILLMClient
             }
             else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
             {
+                hasSeenTextContent = true;
                 yield return new LLMStreamChunk
                 {
                     Type = "delta",
                     Content = chunk.Content
                 };
             }
+            else if (chunk.Type == GatewayChunkType.Reasoning && !string.IsNullOrEmpty(chunk.Content))
+            {
+                // 缓冲推理内容，等待判断模型是否会输出正文 content
+                if (!hasSeenTextContent)
+                {
+                    reasoningBuffer ??= new List<string>();
+                    reasoningBuffer.Add(chunk.Content);
+                }
+                // 如果已经收到过正文 content，则丢弃后续 reasoning（它是思考过程）
+            }
             else if (chunk.Type == GatewayChunkType.Done)
             {
+                // 流结束：如果从未收到 content，则 reasoning 就是模型的回复（如 doubao-seed）
+                if (!hasSeenTextContent && reasoningBuffer is { Count: > 0 })
+                {
+                    foreach (var r in reasoningBuffer)
+                    {
+                        yield return new LLMStreamChunk { Type = "delta", Content = r };
+                    }
+                }
+
                 yield return new LLMStreamChunk
                 {
                     Type = "done",
