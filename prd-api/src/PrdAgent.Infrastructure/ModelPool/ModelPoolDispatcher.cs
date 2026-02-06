@@ -229,8 +229,14 @@ public class ModelPoolDispatcher : IModelPool
         };
     }
 
-    private static async IAsyncEnumerable<PoolStreamChunk> SingleError(string error)
+    private static IAsyncEnumerable<PoolStreamChunk> SingleError(string error)
     {
-        yield return PoolStreamChunk.Fail(error);
+        return SingleErrorCore(error);
+
+        static async IAsyncEnumerable<PoolStreamChunk> SingleErrorCore(string err)
+        {
+            await Task.CompletedTask;
+            yield return PoolStreamChunk.Fail(err);
+        }
     }
 }

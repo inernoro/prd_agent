@@ -87,7 +87,6 @@ public class SequentialStrategy : IPoolStrategy
         {
             var startedAt = DateTime.UtcNow;
             bool success = false;
-            bool hasError = false;
             var chunks = new List<PoolStreamChunk>();
 
             try
@@ -96,7 +95,6 @@ public class SequentialStrategy : IPoolStrategy
                 {
                     if (chunk.Type == PoolChunkType.Error)
                     {
-                        hasError = true;
                         healthTracker.RecordFailure(endpoint.EndpointId);
                         errors.Add($"{endpoint.ModelId}: {chunk.Error}");
                         break;
@@ -118,7 +116,6 @@ public class SequentialStrategy : IPoolStrategy
             }
             catch (Exception ex)
             {
-                hasError = true;
                 healthTracker.RecordFailure(endpoint.EndpointId);
                 errors.Add($"{endpoint.ModelId}: {ex.Message}");
             }

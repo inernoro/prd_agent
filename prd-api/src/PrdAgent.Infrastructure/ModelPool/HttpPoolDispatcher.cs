@@ -130,14 +130,21 @@ public class HttpPoolDispatcher : IPoolHttpDispatcher
         var httpClient = _httpClientFactory.CreateClient();
         httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
 
-        HttpResponseMessage response;
+        // C# 不允许在 catch 中 yield return，用变量捕获错误后在外部处理
+        HttpResponseMessage? response = null;
+        string? sendError = null;
         try
         {
             response = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         }
         catch (Exception ex)
         {
-            yield return PoolStreamChunk.Fail(ex.Message);
+            sendError = ex.Message;
+        }
+
+        if (sendError != null)
+        {
+            yield return PoolStreamChunk.Fail(sendError);
             yield break;
         }
 

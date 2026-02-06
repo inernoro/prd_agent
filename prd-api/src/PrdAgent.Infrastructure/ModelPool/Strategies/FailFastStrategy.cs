@@ -50,7 +50,6 @@ public class FailFastStrategy : IPoolStrategy
 
         var endpoint = available[0];
         var startedAt = DateTime.UtcNow;
-        bool hasContent = false;
 
         yield return PoolStreamChunk.Start(StrategyHelper.ToDispatchedInfo(endpoint));
 
@@ -62,9 +61,6 @@ public class FailFastStrategy : IPoolStrategy
                 yield return chunk;
                 yield break;
             }
-
-            if (chunk.Type == PoolChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
-                hasContent = true;
 
             yield return chunk;
 
