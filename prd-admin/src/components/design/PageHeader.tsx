@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
+import { GlassBackdrop } from './GlassBackdrop';
 
 /**
  * PageHeader 组件
- * 
+ *
  * 注意：完全避免使用 color-mix() 函数（兼容性问题，详见 Card.tsx 注释）
  */
 type PageHeaderProps = {
@@ -78,24 +79,24 @@ export function PageHeader(props: PageHeaderProps) {
     return null;
   }
 
+  const blur = 'blur(40px) saturate(200%) brightness(1.1)';
+  const background = variant === 'gold'
+    ? 'linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%)'
+    : 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)';
+
   return (
     <div
       className="h-[46px] rounded-[14px] px-4 transition-all duration-200 relative overflow-hidden"
       style={{
-        // macOS 风格的多层背景
-        background: variant === 'gold'
-          ? 'linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%)'
-          : 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)',
         border: '1px solid rgba(255, 255, 255, 0.12)',
-        // 增强的模糊效果
-        backdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
-        WebkitBackdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
-        // 更精致的阴影层次
         boxShadow: variant === 'gold'
           ? '0 8px 32px -4px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset, 0 1px 0 0 rgba(255, 255, 255, 0.15) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.1) inset'
           : '0 8px 32px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 1px 0 0 rgba(255, 255, 255, 0.1) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.08) inset',
+        transform: 'translateZ(0)',
+        isolation: 'isolate',
       }}
     >
+      <GlassBackdrop blur={blur} background={background} />
       <div className="h-full flex items-center justify-between gap-4">
         {/* 左侧：tabs（如果有的话） */}
         {tabsElement}

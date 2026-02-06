@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { GlassBackdrop } from './GlassBackdrop';
 
 export interface TabBarItem {
   key: string;
@@ -73,24 +74,24 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
     }
   }, [hasTabs]);
 
+  const blur = 'blur(40px) saturate(200%) brightness(1.1)';
+  const background = variant === 'gold'
+    ? 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.04)) 100%)'
+    : 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.06)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.02)) 100%)';
+
   return (
     <div
       className="h-[46px] rounded-[14px] px-4 transition-all duration-200 relative overflow-hidden shrink-0"
       style={{
-        // 液态大玻璃效果 - 使用主题系统 CSS 变量
-        background: variant === 'gold'
-          ? 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.04)) 100%)'
-          : 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.06)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.02)) 100%)',
         border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
-        // 增强的模糊效果
-        backdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
-        WebkitBackdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
-        // 更精致的阴影层次
         boxShadow: variant === 'gold'
           ? '0 8px 32px -4px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset, 0 1px 0 0 rgba(255, 255, 255, 0.15) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.1) inset'
           : '0 8px 32px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 1px 0 0 rgba(255, 255, 255, 0.1) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.08) inset',
+        transform: 'translateZ(0)',
+        isolation: 'isolate',
       }}
     >
+      <GlassBackdrop blur={blur} background={background} />
       <div className="h-full flex items-center justify-between gap-4">
         {/* 左侧：标题或切换栏 */}
         {hasTabs ? (
@@ -119,7 +120,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
                 WebkitBackdropFilter: 'blur(8px)',
               }}
             />
-            
+
             {/* Tab 按钮 */}
             {items.map((item) => {
               const isActive = item.key === currentKey;

@@ -1,5 +1,6 @@
 import { cn } from '@/lib/cn';
 import React from 'react';
+import { GlassBackdrop } from './GlassBackdrop';
 
 export type GlassCardVariant = 'default' | 'gold' | 'frost' | 'subtle';
 
@@ -39,7 +40,7 @@ export interface GlassCardProps {
  * - 顶部光晕效果
  * - 交互动效
  *
- * 渲染架构：采用双层渲染——backdrop-filter 隔离到内部 overflow:hidden 子层，
+ * 渲染架构：通过 GlassBackdrop 隔离层实现双层渲染，
  * 避免各浏览器 backdrop-filter + border-radius 合成时的边缘溢出与闪烁。
  */
 export function GlassCard({
@@ -86,11 +87,10 @@ export function GlassCard({
     }
   }
 
-  // 构建玻璃背景渐变（渲染在 backdrop 隔离层上）
+  // 构建玻璃背景渐变（渲染在 GlassBackdrop 隔离层上）
   let background = `linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)`;
 
   if (glow) {
-    // 更明显的光晕：椭圆更大、渐变更柔和
     background = `
       radial-gradient(ellipse 100% 50% at 50% -5%, ${glowColor} 0%, transparent 60%),
       ${background}
@@ -112,14 +112,12 @@ export function GlassCard({
     shadowLayers.push(`0 6px 32px -8px hsla(${accentHue}, 75%, 55%, 0.25)`);
   }
 
-  // 容器样式 — 仅保留边框、阴影和合成层控制，不含 background / backdropFilter
+  // 容器样式 — 仅保留边框、阴影和合成层控制
   const containerStyle: React.CSSProperties = {
     border: `1px solid var(--glass-border, rgba(255, 255, 255, ${0.14 * borderMult}))`,
     boxShadow: shadowLayers.join(', '),
-    // 强制创建持久的 GPU 合成层，避免状态变化时频繁创建/销毁合成层导致闪烁
     transform: 'translateZ(0)',
     willChange: 'transform',
-    // 创建独立的堆叠上下文，使 backdrop 层的 zIndex:-1 仅在此上下文内生效
     isolation: 'isolate',
     backfaceVisibility: 'hidden',
     ...style,
@@ -153,23 +151,7 @@ export function GlassCard({
       onClick={onClick}
       tabIndex={interactive ? 0 : undefined}
     >
-      {/* backdrop-filter 隔离层：独立 overflow:hidden 将模糊效果裁剪到圆角内，
-          规避各浏览器 backdrop-filter + border-radius 合成时的边缘溢出问题 */}
-      <div
-        aria-hidden="true"
-        style={{
-          position: 'absolute',
-          inset: 0,
-          borderRadius: 'inherit',
-          overflow: 'hidden',
-          backdropFilter: blur,
-          WebkitBackdropFilter: blur,
-          background,
-          pointerEvents: 'none',
-          backfaceVisibility: 'hidden',
-          zIndex: -1,
-        }}
-      />
+      <GlassBackdrop blur={blur} background={background} />
       {children}
     </div>
   );
