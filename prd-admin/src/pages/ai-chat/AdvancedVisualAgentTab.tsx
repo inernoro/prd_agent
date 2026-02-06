@@ -3022,20 +3022,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const uiModelToken = modelPoolName ? `(@model:${modelPoolName}) ` : '';
     pushMsg('User', `${uiSizeToken}${uiModelToken}${display || reqText}`);
 
-    // 计算生成类型和参考图 sha256 数组（用于重试时恢复）
-    const imageRefShas = imageRefs
+    // ========== 统一图片引用：如果有选中图片但没有 @imgN，也加入 imageRefs ==========
+    // 这样后端只需处理 imageRefs，无需区分 initImageAssetSha256
+    let unifiedImageRefs = [...imageRefs];
+    if (unifiedImageRefs.length === 0 && selectedAtSend) {
+      const selSha = selectedAtSend.originalSha256 || selectedAtSend.sha256 || '';
+      if (selSha.length === 64) {
+        // 将选中的图片作为隐式的 @img1 加入引用列表
+        unifiedImageRefs = [{ ...selectedAtSend, refId: 1 } as CanvasImageItem];
+      }
+    }
+
+    // 收集所有参考图的 sha256（用于重试时恢复）
+    const imageRefShas = unifiedImageRefs
       .map((img) => img.originalSha256 || img.sha256 || '')
       .filter((sha) => sha.length === 64);
-    const genType: 'text2img' | 'img2img' | 'vision' =
-      imageRefs.length > 1 ? 'vision' :
-      imageRefs.length === 1 ? 'img2img' :
-      (selectedAtSend && (selectedAtSend.sha256 || selectedAtSend.originalSha256)) ? 'img2img' :
-      'text2img';
-    // 如果是通过选中图片触发的 img2img，也要记录 sha
-    if (genType === 'img2img' && imageRefShas.length === 0 && selectedAtSend) {
-      const selSha = selectedAtSend.originalSha256 || selectedAtSend.sha256 || '';
-      if (selSha.length === 64) imageRefShas.push(selSha);
-    }
 
     let items: Array<{ prompt: string }> = [];
     let firstPrompt = '';
@@ -3043,7 +3044,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
       if (!firstPrompt) {
         const msg = '内容为空';
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined, genType, imageRefShas }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined, imageRefShas }));
         return;
       }
     } else {
@@ -3052,13 +3053,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         const pres = await planImageGen({ text: reqText, maxItems: 8 });
         if (!pres.success) {
           const msg = pres.error?.message || '解析失败';
-          pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined, genType, imageRefShas }));
+          pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined, imageRefShas }));
           return;
         }
         plan = pres.data ?? null;
       } catch (e) {
         const msg = e instanceof Error ? e.message : '网络错误';
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined, genType, imageRefShas }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined, imageRefShas }));
         return;
       }
 
@@ -3321,9 +3322,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }
       }
 
-      // 构建多图引用数组（新架构）
+      // ========== 统一构建 imageRefs（使用 unifiedImageRefs）==========
+      // 如果通过选中图片触发且刚上传成功，需要更新 unifiedImageRefs 中的 sha256
+      if (initImageAssetSha256 && unifiedImageRefs.length > 0 && !unifiedImageRefs[0].sha256) {
+        unifiedImageRefs = unifiedImageRefs.map((img, idx) =>
+          idx === 0 ? { ...img, sha256: initImageAssetSha256, originalSha256: initImageAssetSha256 } : img
+        );
+      }
+
+      // 构建发送给后端的 imageRefs
       // label 使用顺序号（第1张图、第2张图），避免 VLM 描述与用户称呼不一致导致语义混乱
-      const imageRefsForBackend = imageRefs
+      const imageRefsForBackend = unifiedImageRefs
         .filter((img) => img.sha256 || img.originalSha256) // 只传有 sha256 的图片
         .map((img, idx) => ({
           refId: img.refId ?? (idx + 1),
@@ -3346,9 +3355,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             : { configModelId: pickedModel!.id }),
           size: resolvedSizeForGen,
           responseFormat: 'url',
-          // 向后兼容：单图场景使用 initImageAssetSha256
-          initImageAssetSha256: initImageAssetSha256,
-          // 多图引用（新架构）
+          // 统一使用 imageRefs（后端兼容层会处理 initImageAssetSha256）
           imageRefs: imageRefsForBackend.length > 0 ? imageRefsForBackend : undefined,
         },
         idempotencyKey: `imRun_${workspaceId}_${key}`,
@@ -3356,7 +3363,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (!runRes.success) {
         const msg = runRes.error?.message || '生成失败';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, genType, imageRefShas }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, imageRefShas }));
         triggerDefectFlash();
         return;
       }
@@ -3365,7 +3372,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (!runId) {
         const msg = '未返回 runId';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, genType, imageRefShas }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, imageRefShas }));
         triggerDefectFlash();
         return;
       }
@@ -3424,12 +3431,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               )
             );
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, genType, imageRefShas }));
+            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
           } else if (t === 'imageError' || t === 'error') {
             const msg = String(o.errorMessage ?? '生成失败');
             setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, genType, imageRefShas }));
+            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
             triggerDefectFlash();
           }
         },
@@ -3447,7 +3454,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     } catch (e) {
       const msg = e instanceof Error ? e.message : '生成失败';
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-      pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, genType, imageRefShas }));
+      pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, imageRefShas }));
       triggerDefectFlash();
     }
   };
@@ -6630,56 +6637,36 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 const prompt = genError.prompt.trim();
                                 if (!prompt) return;
 
-                                // 根据 genType 决定重试方式
-                                const gt = genError.genType || (genError.refSrc ? 'img2img' : 'text2img');
+                                // ========== 统一重试逻辑 ==========
+                                // 保留原始 prompt（含 @imgN），通过 sha256 找图片，构建 chipRefs
+                                // 后端会根据 imageRefs 数量自动判断 text2img / img2img / vision
                                 const shas = genError.imageRefShas || [];
 
-                                if (gt === 'text2img') {
-                                  // 纯文生图：清理可能残留的 @imgN，直接发送
-                                  const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
-                                  if (cleanPrompt) void sendText(cleanPrompt);
-                                } else if (gt === 'img2img') {
-                                  // 单图参考：清理 @imgN（后端单图模式不处理 @imgN），使用 inlineImage
-                                  const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
-                                  const imgUrl = genError.refSrc || (shas[0] ? `/api/visual-agent/image-master/assets/file/${shas[0]}.png` : '');
-                                  if (imgUrl && cleanPrompt) {
-                                    void sendText(cleanPrompt, { inlineImage: { src: imgUrl } });
-                                  } else if (cleanPrompt) {
-                                    // 找不到图片，降级为 text2img
-                                    void sendText(cleanPrompt);
-                                  }
-                                } else if (gt === 'vision') {
-                                  // 多图场景：保留原始 prompt，从中解析 refIds，然后构建 chipRefs
-                                  // 解析 prompt 中的 @imgN（按出现顺序）
-                                  const refIdMatches = [...prompt.matchAll(/@img(\d+)/gi)];
-                                  const originalRefIds = refIdMatches.map((m) => parseInt(m[1], 10));
+                                if (shas.length === 0) {
+                                  // 无参考图：直接发送（text2img）
+                                  void sendText(prompt);
+                                  return;
+                                }
 
-                                  // 通过 sha256 找到 canvas 中的图片（按 imageRefShas 顺序）
-                                  const foundItems = shas
-                                    .map((sha) => canvas.find((c) => c.sha256 === sha || c.originalSha256 === sha))
-                                    .filter((c): c is CanvasImageItem => !!c && !!c.src);
+                                // 解析 prompt 中的 @imgN（用于恢复原始 refId）
+                                const refIdMatches = [...prompt.matchAll(/@img(\d+)/gi)];
+                                const originalRefIds = refIdMatches.map((m) => parseInt(m[1], 10));
 
-                                  if (foundItems.length >= 2 && originalRefIds.length >= 2) {
-                                    // 构建 chipRefs，使用原始 refId（保持和 prompt 中的 @imgN 一致）
-                                    const chipRefs = foundItems.map((c, idx) => ({
-                                      refId: originalRefIds[idx] ?? c.refId ?? (idx + 1),
-                                      canvasKey: c.key,
-                                    }));
-                                    void sendText(prompt, { chipRefs });
-                                  } else if (foundItems.length === 1 || genError.refSrc) {
-                                    // 只找到一张或有 refSrc，降级为 img2img（需清理 @imgN）
-                                    const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
-                                    const imgUrl = foundItems[0]?.src || genError.refSrc || '';
-                                    if (imgUrl && cleanPrompt) {
-                                      void sendText(cleanPrompt, { inlineImage: { src: imgUrl } });
-                                    } else if (cleanPrompt) {
-                                      void sendText(cleanPrompt);
-                                    }
-                                  } else {
-                                    // 找不到图片，清理 @imgN 降级为 text2img
-                                    const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
-                                    if (cleanPrompt) void sendText(cleanPrompt);
-                                  }
+                                // 通过 sha256 找到 canvas 中的图片
+                                const foundItems = shas
+                                  .map((sha) => canvas.find((c) => c.sha256 === sha || c.originalSha256 === sha))
+                                  .filter((c): c is CanvasImageItem => !!c && !!c.src);
+
+                                if (foundItems.length > 0) {
+                                  // 构建 chipRefs，使用原始 refId（如果有），否则使用顺序号
+                                  const chipRefs = foundItems.map((c, idx) => ({
+                                    refId: originalRefIds[idx] ?? c.refId ?? (idx + 1),
+                                    canvasKey: c.key,
+                                  }));
+                                  void sendText(prompt, { chipRefs });
+                                } else {
+                                  // 找不到图片，仅发送 prompt（后端会处理为 text2img）
+                                  void sendText(prompt);
                                 }
                               }}
                             >
@@ -6751,56 +6738,36 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 const prompt = genDone.prompt.trim();
                                 if (!prompt) return;
 
-                                // 根据 genType 决定重试方式
-                                const gt = genDone.genType || (genDone.refSrc ? 'img2img' : 'text2img');
+                                // ========== 统一重试逻辑 ==========
+                                // 保留原始 prompt（含 @imgN），通过 sha256 找图片，构建 chipRefs
+                                // 后端会根据 imageRefs 数量自动判断 text2img / img2img / vision
                                 const shas = genDone.imageRefShas || [];
 
-                                if (gt === 'text2img') {
-                                  // 纯文生图：清理可能残留的 @imgN，直接发送
-                                  const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
-                                  if (cleanPrompt) void sendText(cleanPrompt);
-                                } else if (gt === 'img2img') {
-                                  // 单图参考：清理 @imgN（后端单图模式不处理 @imgN），使用 inlineImage
-                                  const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
-                                  const imgUrl = genDone.refSrc || (shas[0] ? `/api/visual-agent/image-master/assets/file/${shas[0]}.png` : '');
-                                  if (imgUrl && cleanPrompt) {
-                                    void sendText(cleanPrompt, { inlineImage: { src: imgUrl } });
-                                  } else if (cleanPrompt) {
-                                    // 找不到图片，降级为 text2img
-                                    void sendText(cleanPrompt);
-                                  }
-                                } else if (gt === 'vision') {
-                                  // 多图场景：保留原始 prompt，从中解析 refIds，然后构建 chipRefs
-                                  // 解析 prompt 中的 @imgN（按出现顺序）
-                                  const refIdMatches = [...prompt.matchAll(/@img(\d+)/gi)];
-                                  const originalRefIds = refIdMatches.map((m) => parseInt(m[1], 10));
+                                if (shas.length === 0) {
+                                  // 无参考图：直接发送（text2img）
+                                  void sendText(prompt);
+                                  return;
+                                }
 
-                                  // 通过 sha256 找到 canvas 中的图片（按 imageRefShas 顺序）
-                                  const foundItems = shas
-                                    .map((sha) => canvas.find((c) => c.sha256 === sha || c.originalSha256 === sha))
-                                    .filter((c): c is CanvasImageItem => !!c && !!c.src);
+                                // 解析 prompt 中的 @imgN（用于恢复原始 refId）
+                                const refIdMatches = [...prompt.matchAll(/@img(\d+)/gi)];
+                                const originalRefIds = refIdMatches.map((m) => parseInt(m[1], 10));
 
-                                  if (foundItems.length >= 2 && originalRefIds.length >= 2) {
-                                    // 构建 chipRefs，使用原始 refId（保持和 prompt 中的 @imgN 一致）
-                                    const chipRefs = foundItems.map((c, idx) => ({
-                                      refId: originalRefIds[idx] ?? c.refId ?? (idx + 1),
-                                      canvasKey: c.key,
-                                    }));
-                                    void sendText(prompt, { chipRefs });
-                                  } else if (foundItems.length === 1 || genDone.refSrc) {
-                                    // 只找到一张或有 refSrc，降级为 img2img（需清理 @imgN）
-                                    const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
-                                    const imgUrl = foundItems[0]?.src || genDone.refSrc || '';
-                                    if (imgUrl && cleanPrompt) {
-                                      void sendText(cleanPrompt, { inlineImage: { src: imgUrl } });
-                                    } else if (cleanPrompt) {
-                                      void sendText(cleanPrompt);
-                                    }
-                                  } else {
-                                    // 找不到图片，清理 @imgN 降级为 text2img
-                                    const cleanPrompt = prompt.replace(/@img\d+\s*/gi, '').trim();
-                                    if (cleanPrompt) void sendText(cleanPrompt);
-                                  }
+                                // 通过 sha256 找到 canvas 中的图片
+                                const foundItems = shas
+                                  .map((sha) => canvas.find((c) => c.sha256 === sha || c.originalSha256 === sha))
+                                  .filter((c): c is CanvasImageItem => !!c && !!c.src);
+
+                                if (foundItems.length > 0) {
+                                  // 构建 chipRefs，使用原始 refId（如果有），否则使用顺序号
+                                  const chipRefs = foundItems.map((c, idx) => ({
+                                    refId: originalRefIds[idx] ?? c.refId ?? (idx + 1),
+                                    canvasKey: c.key,
+                                  }));
+                                  void sendText(prompt, { chipRefs });
+                                } else {
+                                  // 找不到图片，仅发送 prompt（后端会处理为 text2img）
+                                  void sendText(prompt);
                                 }
                               }}
                             >
