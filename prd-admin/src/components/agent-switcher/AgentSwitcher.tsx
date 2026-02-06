@@ -1,10 +1,10 @@
 /**
- * Agent Switcher 浮层组件 v9.0
+ * Agent Switcher 浮层组件 v10.0
  *
- * Linear 风格设计：
- * - 大卡片，图片为背景
- * - 功能描述
- * - 四向飞入动画
+ * 融合设计：
+ * - Apple 风格动画曲线 (先快后慢，有呼吸感)
+ * - GlowingCard 彩虹流光边框 (选中状态)
+ * - 更紧凑的入场距离，更短的动画时长
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -32,12 +32,12 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
   'defect-agent': '缺陷管理专家，高效追踪问题闭环',
 };
 
-/** 入场方向配置 */
+/** 入场方向配置 - 更紧凑的距离 */
 const ENTRY_DIRECTIONS = [
-  { x: -120, y: -80, rotate: -8 },   // 左上
-  { x: 120, y: -80, rotate: 8 },     // 右上
-  { x: -120, y: 80, rotate: 8 },     // 左下
-  { x: 120, y: 80, rotate: -8 },     // 右下
+  { x: -60, y: -40, rotate: -5 },   // 左上
+  { x: 60, y: -40, rotate: 5 },     // 右上
+  { x: -60, y: 40, rotate: 5 },     // 左下
+  { x: 60, y: 40, rotate: -5 },     // 右下
 ];
 
 /** Agent 卡片组件 */
@@ -67,46 +67,68 @@ function AgentCard({
       onMouseEnter={onMouseEnter}
       className="group relative outline-none focus:outline-none"
       style={{
+        // Apple 风格动画: 0.45s + cubic-bezier(0.22, 1, 0.36, 1) = 快速启动，平滑到位
         animation: isClosing
-          ? `cardExit 0.3s cubic-bezier(0.4, 0, 1, 1) ${index * 50}ms both`
-          : `cardEnter 0.6s cubic-bezier(0.16, 1, 0.3, 1) ${150 + index * 100}ms both`,
+          ? `cardExit 0.25s cubic-bezier(0.55, 0, 1, 0.45) ${index * 30}ms both`
+          : `cardEnter 0.45s cubic-bezier(0.22, 1, 0.36, 1) ${80 + index * 60}ms both`,
         ['--entry-x' as string]: `${direction.x}px`,
         ['--entry-y' as string]: `${direction.y}px`,
         ['--entry-rotate' as string]: `${direction.rotate}deg`,
       }}
     >
-      {/* 主卡片 - 无边框，图片为主体 */}
+      {/* 彩虹流光边框层 - 仅选中时显示 */}
       <div
-        className="relative w-[200px] h-[260px] rounded-[28px] overflow-hidden transition-all duration-500 ease-out cursor-pointer"
+        className="absolute -inset-[2px] rounded-[30px] opacity-0 transition-opacity duration-300"
         style={{
-          background: 'linear-gradient(145deg, rgba(25, 28, 40, 0.95) 0%, rgba(15, 17, 25, 0.98) 100%)',
+          opacity: isSelected ? 1 : 0,
+          background: `conic-gradient(
+            from var(--glow-angle, 0deg),
+            ${agent.color.text},
+            #a855f7,
+            #3b82f6,
+            #10b981,
+            #f59e0b,
+            ${agent.color.text}
+          )`,
+          animation: isSelected ? 'glowRotate 3s linear infinite' : 'none',
+          filter: 'blur(4px)',
+        }}
+      />
+
+      {/* 主卡片 */}
+      <div
+        className="relative w-[200px] h-[260px] rounded-[28px] overflow-hidden transition-all duration-400 ease-out cursor-pointer"
+        style={{
+          background: 'linear-gradient(145deg, rgba(25, 28, 40, 0.98) 0%, rgba(15, 17, 25, 0.99) 100%)',
           boxShadow: isSelected
-            ? `0 0 0 2px ${agent.color.text}, 0 25px 50px -12px rgba(0, 0, 0, 0.6), 0 0 80px -20px ${agent.color.text}50`
+            ? `0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 60px -15px ${agent.color.text}40`
             : '0 20px 40px -12px rgba(0, 0, 0, 0.5)',
           transform: isSelected
-            ? 'translateY(-12px) scale(1.02)'
+            ? 'translateY(-8px) scale(1.02)'
             : 'translateY(0) scale(1)',
         }}
       >
         {/* 顶部渐变光效 */}
         <div
-          className="absolute top-0 left-0 right-0 h-32 pointer-events-none transition-opacity duration-500"
+          className="absolute top-0 left-0 right-0 h-32 pointer-events-none transition-opacity duration-400"
           style={{
             background: isSelected
-              ? `linear-gradient(180deg, ${agent.color.text}25 0%, transparent 100%)`
-              : 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%)',
+              ? `linear-gradient(180deg, ${agent.color.text}20 0%, transparent 100%)`
+              : 'linear-gradient(180deg, rgba(255,255,255,0.02) 0%, transparent 100%)',
           }}
         />
 
         {/* 图标区域 */}
         <div className="relative pt-8 pb-4 flex justify-center">
           <div
-            className="relative w-[100px] h-[100px] transition-all duration-500 ease-out"
+            className="relative w-[100px] h-[100px] transition-all duration-400"
             style={{
-              transform: isSelected ? 'scale(1.1) translateY(-4px)' : 'scale(1)',
+              // 选中时图标有轻微的浮动呼吸效果
+              transform: isSelected ? 'scale(1.08) translateY(-2px)' : 'scale(1)',
               filter: isSelected
-                ? `drop-shadow(0 0 30px ${agent.color.text}80)`
+                ? `drop-shadow(0 0 25px ${agent.color.text}70)`
                 : 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))',
+              animation: isSelected ? 'iconBreathe 2s ease-in-out infinite' : 'none',
             }}
           >
             <img
@@ -143,10 +165,10 @@ function AgentCard({
 
         {/* 底部渐变 */}
         <div
-          className="absolute bottom-0 left-0 right-0 h-20 pointer-events-none transition-opacity duration-500"
+          className="absolute bottom-0 left-0 right-0 h-20 pointer-events-none transition-opacity duration-400"
           style={{
             background: isSelected
-              ? `linear-gradient(0deg, ${agent.color.text}15 0%, transparent 100%)`
+              ? `linear-gradient(0deg, ${agent.color.text}12 0%, transparent 100%)`
               : 'transparent',
           }}
         />
@@ -155,8 +177,9 @@ function AgentCard({
         <div
           className="absolute top-4 right-4 w-8 h-8 rounded-xl flex items-center justify-center text-[13px] font-bold transition-all duration-300"
           style={{
-            background: isSelected ? `${agent.color.text}40` : 'rgba(255, 255, 255, 0.08)',
+            background: isSelected ? `${agent.color.text}35` : 'rgba(255, 255, 255, 0.06)',
             color: isSelected ? '#fff' : 'rgba(255,255,255,0.5)',
+            boxShadow: isSelected ? `0 0 12px ${agent.color.text}30` : 'none',
           }}
         >
           {index + 1}
@@ -193,7 +216,7 @@ export function AgentSwitcher() {
         close();
         setIsClosing(false);
         navigate(agent.route);
-      }, 350);
+      }, 280);
     },
     [navigate, close, addRecentVisit]
   );
@@ -203,7 +226,7 @@ export function AgentSwitcher() {
     setTimeout(() => {
       close();
       setIsClosing(false);
-    }, 350);
+    }, 280);
   }, [close]);
 
   useEffect(() => {
@@ -259,7 +282,9 @@ export function AgentSwitcher() {
       className="fixed inset-0 z-[200] flex items-center justify-center"
       onClick={handleBackdropClick}
       style={{
-        animation: isClosing ? 'bgFadeOut 0.35s ease-out both' : 'bgFadeIn 0.4s ease-out both',
+        animation: isClosing
+          ? 'bgFadeOut 0.25s cubic-bezier(0.55, 0, 1, 0.45) both'
+          : 'bgFadeIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) both',
       }}
     >
       {/* Linear 风格深黑背景 */}
@@ -272,7 +297,7 @@ export function AgentSwitcher() {
 
       {/* 微妙的网格背景 */}
       <div
-        className="absolute inset-0 opacity-[0.02]"
+        className="absolute inset-0 opacity-[0.015]"
         style={{
           backgroundImage: `
             linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
@@ -282,16 +307,16 @@ export function AgentSwitcher() {
         }}
       />
 
-      {/* 中央光晕 */}
+      {/* 中央光晕 - 更柔和 */}
       <div
         className="absolute pointer-events-none"
         style={{
-          width: '800px',
-          height: '600px',
+          width: '900px',
+          height: '700px',
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          background: 'radial-gradient(ellipse at center, rgba(100, 120, 255, 0.06) 0%, transparent 60%)',
+          background: 'radial-gradient(ellipse at center, rgba(100, 120, 255, 0.05) 0%, transparent 55%)',
         }}
       />
 
@@ -299,7 +324,9 @@ export function AgentSwitcher() {
       <div
         className="relative"
         style={{
-          animation: isClosing ? 'contentFadeOut 0.25s ease-in both' : 'contentFadeIn 0.5s ease-out both',
+          animation: isClosing
+            ? 'contentFadeOut 0.2s cubic-bezier(0.55, 0, 1, 0.45) both'
+            : 'contentFadeIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both',
         }}
         role="dialog"
         aria-modal="true"
@@ -308,7 +335,7 @@ export function AgentSwitcher() {
         <div
           className="text-center mb-12"
           style={{
-            animation: isClosing ? 'none' : 'titleSlideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both',
+            animation: isClosing ? 'none' : 'titleSlideIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.05s both',
           }}
         >
           <h2
@@ -349,7 +376,7 @@ export function AgentSwitcher() {
         <div
           className="mt-12 flex justify-center gap-8"
           style={{
-            animation: isClosing ? 'none' : 'hintFadeIn 0.6s ease-out 0.5s both',
+            animation: isClosing ? 'none' : 'hintFadeIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.35s both',
           }}
         >
           <div
@@ -411,7 +438,7 @@ export function AgentSwitcher() {
         </div>
       </div>
 
-      {/* 动画样式 */}
+      {/* 动画样式 - Apple 风格曲线 */}
       <style>{`
         @keyframes bgFadeIn {
           from { opacity: 0; }
@@ -422,17 +449,29 @@ export function AgentSwitcher() {
           to { opacity: 0; }
         }
         @keyframes contentFadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
+          from {
+            opacity: 0;
+            transform: scale(0.98);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1);
+          }
         }
         @keyframes contentFadeOut {
-          from { opacity: 1; }
-          to { opacity: 0; }
+          from {
+            opacity: 1;
+            transform: scale(1);
+          }
+          to {
+            opacity: 0;
+            transform: scale(0.98);
+          }
         }
         @keyframes titleSlideIn {
           from {
             opacity: 0;
-            transform: translateY(-20px);
+            transform: translateY(-15px);
           }
           to {
             opacity: 1;
@@ -440,15 +479,22 @@ export function AgentSwitcher() {
           }
         }
         @keyframes hintFadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-        @keyframes cardEnter {
           from {
             opacity: 0;
-            transform: translate(var(--entry-x), var(--entry-y)) rotate(var(--entry-rotate)) scale(0.8);
+            transform: translateY(8px);
           }
           to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        /* Apple 风格入场: 快速启动 → 平滑减速 → 精准到位 */
+        @keyframes cardEnter {
+          0% {
+            opacity: 0;
+            transform: translate(var(--entry-x), var(--entry-y)) rotate(var(--entry-rotate)) scale(0.85);
+          }
+          100% {
             opacity: 1;
             transform: translate(0, 0) rotate(0deg) scale(1);
           }
@@ -460,8 +506,32 @@ export function AgentSwitcher() {
           }
           to {
             opacity: 0;
-            transform: translate(var(--entry-x), var(--entry-y)) rotate(var(--entry-rotate)) scale(0.8);
+            transform: translate(calc(var(--entry-x) * 0.5), calc(var(--entry-y) * 0.5)) rotate(calc(var(--entry-rotate) * 0.5)) scale(0.9);
           }
+        }
+        /* 彩虹流光旋转 */
+        @keyframes glowRotate {
+          from {
+            --glow-angle: 0deg;
+          }
+          to {
+            --glow-angle: 360deg;
+          }
+        }
+        /* 图标呼吸效果 */
+        @keyframes iconBreathe {
+          0%, 100% {
+            transform: scale(1.08) translateY(-2px);
+          }
+          50% {
+            transform: scale(1.1) translateY(-4px);
+          }
+        }
+        /* CSS 变量声明 for 流光角度 */
+        @property --glow-angle {
+          syntax: "<angle>";
+          inherits: false;
+          initial-value: 0deg;
         }
       `}</style>
     </div>,
