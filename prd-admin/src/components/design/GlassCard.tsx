@@ -1,6 +1,6 @@
 import { cn } from '@/lib/cn';
 import React from 'react';
-import { GlassBackdrop } from './GlassBackdrop';
+import { glassContainerStyle } from './GlassBackdrop';
 
 export type GlassCardVariant = 'default' | 'gold' | 'frost' | 'subtle';
 
@@ -27,7 +27,7 @@ export interface GlassCardProps {
   onClick?: React.MouseEventHandler<HTMLDivElement>;
   /** 自定义样式 */
   style?: React.CSSProperties;
-  /** 是否隐藏溢出内容（默认 false，不裁剪内容） */
+  /** 溢出行为（默认 hidden，裁剪 backdrop-filter 到圆角区域内防止边缘渲染异常） */
   overflow?: 'hidden' | 'visible' | 'auto';
 }
 
@@ -39,9 +39,6 @@ export interface GlassCardProps {
  * - 自定义强调色
  * - 顶部光晕效果
  * - 交互动效
- *
- * 渲染架构：通过 GlassBackdrop 隔离层实现双层渲染，
- * 避免各浏览器 backdrop-filter + border-radius 合成时的边缘溢出与闪烁。
  */
 export function GlassCard({
   className,
@@ -53,74 +50,76 @@ export function GlassCard({
   interactive = false,
   onClick,
   style,
-  overflow = 'visible',
+  overflow = 'hidden',
 }: GlassCardProps) {
-  // 基础模糊参数
-  const blurValues = {
-    default: 'blur(40px) saturate(180%) brightness(1.1)',
-    gold: 'blur(40px) saturate(200%) brightness(1.15)',
-    frost: 'blur(60px) saturate(220%) brightness(1.12)',
-    subtle: 'blur(24px) saturate(160%) brightness(1.05)',
-  };
+  // 根据变体和强调色计算样式
+  const getGlassStyle = (): React.CSSProperties => {
+    // 基础模糊参数
+    const blurValues = {
+      default: 'blur(40px) saturate(180%) brightness(1.1)',
+      gold: 'blur(40px) saturate(200%) brightness(1.15)',
+      frost: 'blur(60px) saturate(220%) brightness(1.12)',
+      subtle: 'blur(24px) saturate(160%) brightness(1.05)',
+    };
 
-  // 边框透明度系数（相对于全局变量的倍数）
-  const borderMultiplier = {
-    default: 1,
-    gold: 1.3,
-    frost: 1.4,
-    subtle: 0.7,
-  };
+    // 边框透明度系数（相对于全局变量的倍数）
+    const borderMultiplier = {
+      default: 1,
+      gold: 1.3,
+      frost: 1.4,
+      subtle: 0.7,
+    };
 
-  const blur = blurValues[variant];
-  const borderMult = borderMultiplier[variant];
-
-  // 计算光晕颜色 - 增强可见度的光晕效果
-  let glowColor = 'rgba(255, 255, 255, 0.05)';
-  if (glow) {
-    if (variant === 'gold') {
-      glowColor = 'rgba(214, 178, 106, 0.25)'; // 金色光晕，更明显
-    } else if (accentHue !== undefined) {
-      // 使用自定义色相，透明度提高到 0.2
-      glowColor = `hsla(${accentHue}, 70%, 65%, 0.2)`;
-    } else {
-      glowColor = 'rgba(255, 255, 255, 0.15)'; // 白色光晕
+    // 计算光晕颜色 - 增强可见度的光晕效果
+    let glowColor = 'rgba(255, 255, 255, 0.05)';
+    if (glow) {
+      if (variant === 'gold') {
+        glowColor = 'rgba(214, 178, 106, 0.25)'; // 金色光晕，更明显
+      } else if (accentHue !== undefined) {
+        // 使用自定义色相，透明度提高到 0.2
+        glowColor = `hsla(${accentHue}, 70%, 65%, 0.2)`;
+      } else {
+        glowColor = 'rgba(255, 255, 255, 0.15)'; // 白色光晕
+      }
     }
-  }
 
-  // 构建玻璃背景渐变（渲染在 GlassBackdrop 隔离层上）
-  let background = `linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)`;
+    const blur = blurValues[variant];
+    const borderMult = borderMultiplier[variant];
 
-  if (glow) {
-    background = `
-      radial-gradient(ellipse 100% 50% at 50% -5%, ${glowColor} 0%, transparent 60%),
-      ${background}
-    `;
-  }
+    // 构建背景 - 使用全局 CSS 变量，支持系统设置调控
+    let background = `linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)`;
 
-  // 阴影层次 - 增强立体感
-  const shadowLayers = [
-    '0 8px 32px -4px rgba(0, 0, 0, 0.35)',
-    '0 4px 16px -2px rgba(0, 0, 0, 0.25)',
-    `0 0 0 1px rgba(255, 255, 255, ${0.14 * borderMult * 0.6}) inset`,
-    '0 1px 0 0 rgba(255, 255, 255, 0.15) inset',
-    '0 -1px 0 0 rgba(0, 0, 0, 0.12) inset',
-  ];
+    if (glow) {
+      // 更明显的光晕：椭圆更大、渐变更柔和
+      background = `
+        radial-gradient(ellipse 100% 50% at 50% -5%, ${glowColor} 0%, transparent 60%),
+        ${background}
+      `;
+    }
 
-  if (variant === 'gold') {
-    shadowLayers.push('0 6px 32px -8px rgba(214, 178, 106, 0.3)');
-  } else if (accentHue !== undefined) {
-    shadowLayers.push(`0 6px 32px -8px hsla(${accentHue}, 75%, 55%, 0.25)`);
-  }
+    // 阴影层次 - 增强立体感
+    const shadowLayers = [
+      '0 8px 32px -4px rgba(0, 0, 0, 0.35)',
+      '0 4px 16px -2px rgba(0, 0, 0, 0.25)',
+      `0 0 0 1px rgba(255, 255, 255, ${0.14 * borderMult * 0.6}) inset`,
+      '0 1px 0 0 rgba(255, 255, 255, 0.15) inset',
+      '0 -1px 0 0 rgba(0, 0, 0, 0.12) inset',
+    ];
 
-  // 容器样式 — 仅保留边框、阴影和合成层控制
-  const containerStyle: React.CSSProperties = {
-    border: `1px solid var(--glass-border, rgba(255, 255, 255, ${0.14 * borderMult}))`,
-    boxShadow: shadowLayers.join(', '),
-    transform: 'translateZ(0)',
-    willChange: 'transform',
-    isolation: 'isolate',
-    backfaceVisibility: 'hidden',
-    ...style,
+    if (variant === 'gold') {
+      shadowLayers.push('0 6px 32px -8px rgba(214, 178, 106, 0.3)');
+    } else if (accentHue !== undefined) {
+      shadowLayers.push(`0 6px 32px -8px hsla(${accentHue}, 75%, 55%, 0.25)`);
+    }
+
+    return {
+      // 统一的玻璃容器基础样式（backdrop-filter + background + GPU 合成层）
+      ...glassContainerStyle(blur, background),
+      // 使用全局 CSS 变量的边框
+      border: `1px solid var(--glass-border, rgba(255, 255, 255, ${0.14 * borderMult}))`,
+      boxShadow: shadowLayers.join(', '),
+      ...style,
+    };
   };
 
   // padding 映射
@@ -147,11 +146,10 @@ export function GlassCard({
         interactive && 'cursor-pointer hover:scale-[1.01] active:scale-[0.99]',
         className
       )}
-      style={containerStyle}
+      style={getGlassStyle()}
       onClick={onClick}
       tabIndex={interactive ? 0 : undefined}
     >
-      <GlassBackdrop blur={blur} background={background} />
       {children}
     </div>
   );

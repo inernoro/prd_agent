@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { GlassBackdrop } from './GlassBackdrop';
+import { glassContainerStyle } from './GlassBackdrop';
 
 export interface TabBarItem {
   key: string;
@@ -83,15 +83,13 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
     <div
       className="h-[46px] rounded-[14px] px-4 transition-all duration-200 relative overflow-hidden shrink-0"
       style={{
+        ...glassContainerStyle(blur, background),
         border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
         boxShadow: variant === 'gold'
           ? '0 8px 32px -4px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset, 0 1px 0 0 rgba(255, 255, 255, 0.15) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.1) inset'
           : '0 8px 32px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 1px 0 0 rgba(255, 255, 255, 0.1) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.08) inset',
-        transform: 'translateZ(0)',
-        isolation: 'isolate',
       }}
     >
-      <GlassBackdrop blur={blur} background={background} />
       <div className="h-full flex items-center justify-between gap-4">
         {/* 左侧：标题或切换栏 */}
         {hasTabs ? (
