@@ -5,6 +5,7 @@ import type {
   CreateModelGroupRequest,
   UpdateModelGroupRequest,
   ModelGroupMonitoringData,
+  PoolPrediction,
 } from '../../types/modelGroup';
 
 export interface IModelGroupsService {
@@ -67,4 +68,9 @@ export interface IModelGroupsService {
     platformId: string,
     successCount: number
   ): Promise<ApiResponse<void>>;
+
+  /**
+   * 预测下一次请求的调度路径
+   */
+  predictNextDispatch(groupId: string): Promise<ApiResponse<PoolPrediction>>;
 }

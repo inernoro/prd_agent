@@ -785,6 +785,213 @@ public class ModelGroupsController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(snapshot));
     }
+
+    /// <summary>
+    /// 预测下一次请求的调度路径
+    /// 根据当前策略和健康状态，模拟下一次请求会命中哪些端点
+    /// </summary>
+    [HttpGet("{id}/predict")]
+    public async Task<IActionResult> PredictNextDispatch(string id)
+    {
+        var group = await _db.ModelGroups.Find(g => g.Id == id).FirstOrDefaultAsync();
+        if (group == null)
+            return NotFound(ApiResponse<object>.Fail("MODEL_GROUP_NOT_FOUND", "模型分组不存在"));
+
+        if (group.Models == null || group.Models.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { poolId = id, endpoints = Array.Empty<object>(), strategy = "FailFast", description = "模型池为空" }));
+
+        var strategyType = (PoolStrategyType)group.StrategyType;
+        var platformIds = group.Models.Select(m => m.PlatformId).Distinct().ToList();
+        var platforms = await _db.LLMPlatforms.Find(p => platformIds.Contains(p.Id)).ToListAsync();
+        var platformMap = platforms.ToDictionary(p => p.Id);
+
+        // 构建端点列表并计算健康分数
+        var endpoints = group.Models.Select((m, idx) =>
+        {
+            var platform = platformMap.GetValueOrDefault(m.PlatformId);
+            var healthStatus = m.HealthStatus.ToString();
+            var isAvailable = m.HealthStatus != ModelHealthStatus.Unavailable;
+            var isHealthy = m.HealthStatus == ModelHealthStatus.Healthy;
+
+            // 计算健康分数 (100 = 完美, 0 = 不可用)
+            double healthScore = isAvailable
+                ? (isHealthy ? 100.0 - m.ConsecutiveFailures * 10 : 50.0 - m.ConsecutiveFailures * 5)
+                : 0;
+            healthScore = Math.Max(0, Math.Min(100, healthScore));
+
+            return new
+            {
+                endpointId = $"{m.PlatformId}:{m.ModelId}",
+                modelId = m.ModelId,
+                platformId = m.PlatformId,
+                platformName = platform?.Name ?? m.PlatformId,
+                priority = m.Priority,
+                healthStatus,
+                isAvailable,
+                healthScore,
+                consecutiveFailures = m.ConsecutiveFailures,
+                index = idx
+            };
+        }).ToList();
+
+        var available = endpoints.Where(e => e.isAvailable)
+            .OrderBy(e => e.healthStatus == "Healthy" ? 0 : 1)
+            .ThenBy(e => e.priority)
+            .Select(e => new PredictEndpointInfo(e.endpointId, e.modelId, e.priority, e.healthStatus))
+            .ToList();
+
+        // 根据策略预测调度路径
+        var prediction = strategyType switch
+        {
+            PoolStrategyType.FailFast => PredictFailFast(available),
+            PoolStrategyType.Race => PredictRace(available),
+            PoolStrategyType.Sequential => PredictSequential(available),
+            PoolStrategyType.RoundRobin => PredictRoundRobin(available),
+            PoolStrategyType.WeightedRandom => PredictWeightedRandom(available),
+            PoolStrategyType.LeastLatency => PredictLeastLatency(available),
+            _ => PredictFailFast(available)
+        };
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            poolId = id,
+            poolName = group.Name,
+            strategy = strategyType.ToString(),
+            strategyDescription = GetStrategyDescription(strategyType),
+            allEndpoints = endpoints,
+            prediction
+        }));
+    }
+
+    private record PredictEndpointInfo(string EndpointId, string ModelId, int Priority, string HealthStatus);
+
+    private static object PredictFailFast(List<PredictEndpointInfo> available)
+    {
+        if (available.Count == 0)
+            return new { type = "FailFast", description = "无可用端点", steps = Array.Empty<object>() };
+
+        var ep = available[0];
+        return new
+        {
+            type = "FailFast",
+            description = "选择最优端点，失败直接返回错误",
+            steps = new object[]
+            {
+                new { order = 1, ep.EndpointId, ep.ModelId, action = "request", label = "发送请求", isTarget = true }
+            }
+        };
+    }
+
+    private static object PredictRace(List<PredictEndpointInfo> available)
+    {
+        if (available.Count == 0)
+            return new { type = "Race", description = "无可用端点", steps = Array.Empty<object>() };
+
+        var steps = available.Select(ep => (object)new
+        {
+            order = 1, ep.EndpointId, ep.ModelId, action = "parallel", label = "并行请求", isTarget = true
+        }).ToList();
+
+        return new { type = "Race", description = "同时请求所有端点，取最快返回的结果", steps };
+    }
+
+    private static object PredictSequential(List<PredictEndpointInfo> available)
+    {
+        if (available.Count == 0)
+            return new { type = "Sequential", description = "无可用端点", steps = Array.Empty<object>() };
+
+        var steps = available.Select((ep, i) => (object)new
+        {
+            order = i + 1,
+            ep.EndpointId,
+            ep.ModelId,
+            action = i == 0 ? "request" : "fallback",
+            label = i == 0 ? "首选请求" : $"第{i + 1}备选",
+            isTarget = i == 0
+        }).ToList();
+
+        return new { type = "Sequential", description = "按优先级依次尝试，失败则顺延", steps };
+    }
+
+    private static object PredictRoundRobin(List<PredictEndpointInfo> available)
+    {
+        if (available.Count == 0)
+            return new { type = "RoundRobin", description = "无可用端点", steps = Array.Empty<object>() };
+
+        var steps = available.Select((ep, i) => (object)new
+        {
+            order = i + 1,
+            ep.EndpointId,
+            ep.ModelId,
+            action = "rotate",
+            label = $"轮询 #{i + 1}",
+            isTarget = i == 0,
+            weight = 1.0 / available.Count
+        }).ToList();
+
+        return new { type = "RoundRobin", description = "在健康端点间均匀轮转", steps };
+    }
+
+    private static object PredictWeightedRandom(List<PredictEndpointInfo> available)
+    {
+        if (available.Count == 0)
+            return new { type = "WeightedRandom", description = "无可用端点", steps = Array.Empty<object>() };
+
+        var weights = available.Select(ep =>
+        {
+            double w = 1.0 / Math.Max(1, ep.Priority);
+            if (ep.HealthStatus != "Healthy") w *= 0.5;
+            return w;
+        }).ToList();
+        var totalWeight = weights.Sum();
+
+        var steps = available.Select((ep, i) =>
+        {
+            double pct = totalWeight > 0 ? weights[i] / totalWeight * 100 : 0;
+            return (object)new
+            {
+                order = i + 1,
+                ep.EndpointId,
+                ep.ModelId,
+                action = "weighted",
+                label = $"概率 {pct:F1}%",
+                isTarget = i == 0,
+                weight = weights[i],
+                probability = Math.Round(pct, 1)
+            };
+        }).ToList();
+
+        return new { type = "WeightedRandom", description = "按权重随机选择端点", steps };
+    }
+
+    private static object PredictLeastLatency(List<PredictEndpointInfo> available)
+    {
+        if (available.Count == 0)
+            return new { type = "LeastLatency", description = "无可用端点", steps = Array.Empty<object>() };
+
+        var steps = available.Select((ep, i) => (object)new
+        {
+            order = i + 1,
+            ep.EndpointId,
+            ep.ModelId,
+            action = i == 0 ? "request" : "standby",
+            label = i == 0 ? "最低延迟（首选）" : "备选",
+            isTarget = i == 0
+        }).ToList();
+
+        return new { type = "LeastLatency", description = "优先选择历史延迟最低的端点", steps };
+    }
+
+    private static string GetStrategyDescription(PoolStrategyType type) => type switch
+    {
+        PoolStrategyType.FailFast => "选择最优端点发送请求，失败直接返回错误",
+        PoolStrategyType.Race => "同时向所有端点发送请求，取最快成功的结果",
+        PoolStrategyType.Sequential => "按优先级依次尝试端点，失败后自动切换下一个",
+        PoolStrategyType.RoundRobin => "在所有健康端点间均匀轮转分配请求",
+        PoolStrategyType.WeightedRandom => "根据优先级权重随机选择端点",
+        PoolStrategyType.LeastLatency => "跟踪历史延迟数据，优先选择响应最快的端点",
+        _ => "未知策略"
+    };
 }
 
 /// <summary>

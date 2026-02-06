@@ -6,15 +6,17 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
 import { ModelListItem } from '@/components/model/ModelListItem';
+import { PoolPredictionDialog } from '@/components/model/PoolPredictionDialog';
 import {
   getModelGroups,
   getPlatforms,
   createModelGroup,
   updateModelGroup,
   deleteModelGroup,
+  predictNextDispatch,
 } from '@/services';
-import type { ModelGroup, ModelGroupItem, Platform } from '@/types';
-import { ModelHealthStatus } from '@/types/modelGroup';
+import type { ModelGroup, ModelGroupItem, Platform, PoolPrediction } from '@/types';
+import { ModelHealthStatus, PoolStrategyType } from '@/types/modelGroup';
 import {
   Copy,
   Database,
@@ -22,12 +24,22 @@ import {
   Plus,
   Search,
   Trash2,
+  Radar,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 // Note: systemDialog 仅用于 confirm 确认框，toast 用于轻量级提示
 import { getModelTypeDisplayName, getModelTypeIcon } from '@/lib/appCallerUtils';
+
+const STRATEGY_TYPES = [
+  { value: PoolStrategyType.FailFast, label: '快速失败', description: '选最优端点，失败直接返回' },
+  { value: PoolStrategyType.Race, label: '竞速模式', description: '并行请求所有端点，取最快' },
+  { value: PoolStrategyType.Sequential, label: '顺序容灾', description: '按顺序尝试，失败自动切换' },
+  { value: PoolStrategyType.RoundRobin, label: '轮询均衡', description: '均匀分配到所有端点' },
+  { value: PoolStrategyType.WeightedRandom, label: '加权随机', description: '按优先级权重随机选择' },
+  { value: PoolStrategyType.LeastLatency, label: '最低延迟', description: '优先选择响应最快的端点' },
+];
 
 const MODEL_TYPES = [
   { value: 'chat', label: '对话模型' },
@@ -74,6 +86,11 @@ export function ModelPoolManagePage() {
   // 模型选择弹窗（使用公共组件）
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
 
+  // 预测弹窗
+  const [predictionOpen, setPredictionOpen] = useState(false);
+  const [predictionData, setPredictionData] = useState<PoolPrediction | null>(null);
+  const [predictionLoading, setPredictionLoading] = useState(false);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -103,6 +120,7 @@ export function ModelPoolManagePage() {
       code: '',
       priority: 50,
       modelType: 'chat',
+      strategyType: PoolStrategyType.FailFast,
       isDefaultForType: false,
       description: '',
       models: [],
@@ -117,6 +135,7 @@ export function ModelPoolManagePage() {
       code: pool.code || '',
       priority: pool.priority ?? 50,
       modelType: pool.modelType || 'chat',
+      strategyType: pool.strategyType ?? PoolStrategyType.FailFast,
       isDefaultForType: pool.isDefaultForType || false,
       description: pool.description || '',
       models: pool.models || [],
@@ -131,6 +150,7 @@ export function ModelPoolManagePage() {
       code: '',
       priority: 50,
       modelType: pool.modelType || 'chat',
+      strategyType: pool.strategyType ?? PoolStrategyType.FailFast,
       isDefaultForType: false,
       description: '',
       models: (pool.models || []).map((m, idx) => ({
@@ -160,6 +180,25 @@ export function ModelPoolManagePage() {
     }
   };
 
+  const handlePredict = useCallback(async (pool: ModelGroup) => {
+    if (pool.models?.length === 0) {
+      toast.warning('无法预测', '模型池为空');
+      return;
+    }
+    setPredictionLoading(true);
+    setPredictionOpen(true);
+    setPredictionData(null);
+    try {
+      const data = await predictNextDispatch(pool.id);
+      setPredictionData(data);
+    } catch (error) {
+      toast.error('预测失败', String(error));
+      setPredictionOpen(false);
+    } finally {
+      setPredictionLoading(false);
+    }
+  }, []);
+
   const handleSavePool = async () => {
     if (!poolForm.name.trim()) {
       toast.warning('验证失败', '模型池名称不能为空');
@@ -181,6 +220,7 @@ export function ModelPoolManagePage() {
           code: poolForm.code,
           priority: poolForm.priority,
           modelType: poolForm.modelType,
+          strategyType: poolForm.strategyType,
           isDefaultForType: poolForm.isDefaultForType,
           description: poolForm.description,
           models: poolForm.models,
@@ -191,6 +231,7 @@ export function ModelPoolManagePage() {
           code: poolForm.code,
           priority: poolForm.priority,
           modelType: poolForm.modelType,
+          strategyType: poolForm.strategyType,
           isDefaultForType: poolForm.isDefaultForType,
           description: poolForm.description,
           models: poolForm.models,
@@ -314,10 +355,23 @@ export function ModelPoolManagePage() {
                                   默认
                                 </span>
                               )}
+                              {pool.strategyType != null && pool.strategyType !== PoolStrategyType.FailFast && (
+                                <span className="ml-2 px-1.5 py-0.5 rounded text-[10px]" style={{ background: 'rgba(56,189,248,0.12)', color: 'rgba(56,189,248,0.95)' }}>
+                                  {STRATEGY_TYPES.find(s => s.value === pool.strategyType)?.label || '快速失败'}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
+                          <Tooltip content="预测下次调度路径">
+                            <button
+                              className="p-1.5 rounded-lg hover:bg-white/10 transition-colors group"
+                              onClick={() => handlePredict(pool)}
+                            >
+                              <Radar size={14} style={{ color: 'rgba(56,189,248,0.85)' }} className="group-hover:animate-pulse" />
+                            </button>
+                          </Tooltip>
                           <Tooltip content="复制为新模型池">
                             <button
                               className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
@@ -391,6 +445,15 @@ export function ModelPoolManagePage() {
         </div>
       </GlassCard>
 
+      {/* 调度预测弹窗 */}
+      <PoolPredictionDialog
+        open={predictionOpen}
+        onOpenChange={setPredictionOpen}
+        prediction={predictionData}
+        loading={predictionLoading}
+        platformNameById={platformNameById}
+      />
+
       {/* 新建/编辑模型池弹窗 */}
       {showPoolDialog && (
         <Dialog
@@ -440,7 +503,7 @@ export function ModelPoolManagePage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
                     模型类型
@@ -457,6 +520,24 @@ export function ModelPoolManagePage() {
                   </Select>
                 </div>
 
+                <div>
+                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                    调度策略
+                  </label>
+                  <Select
+                    value={String(poolForm.strategyType ?? 0)}
+                    onChange={(e) => setPoolForm({ ...poolForm, strategyType: parseInt(e.target.value) })}
+                  >
+                    {STRATEGY_TYPES.map((s) => (
+                      <option key={s.value} value={String(s.value)}>
+                        {s.label} — {s.description}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
                     优先级
