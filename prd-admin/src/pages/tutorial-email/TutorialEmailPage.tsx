@@ -359,15 +359,21 @@ function TemplatesTab() {
         </GlassCard>
       )}
 
-      {/* Preview modal */}
+      {/* Preview modal - 使用 sandbox iframe 隔离 HTML 内容 */}
       {previewHtml && (
         <div className="fixed inset-0 z-50 flex items-center justify-center"
           style={{ background: 'rgba(0,0,0,0.5)' }}
           onClick={() => setPreviewHtml(null)}>
-          <div className="max-w-2xl w-full max-h-[80vh] overflow-auto rounded-lg p-1"
+          <div className="max-w-2xl w-full max-h-[80vh] rounded-lg overflow-hidden"
             style={{ background: 'white' }}
             onClick={(e) => e.stopPropagation()}>
-            <div dangerouslySetInnerHTML={{ __html: previewHtml }} />
+            <iframe
+              srcDoc={previewHtml}
+              sandbox=""
+              className="w-full border-0"
+              style={{ height: '70vh' }}
+              title="邮件模板预览"
+            />
           </div>
         </div>
       )}
@@ -652,12 +658,18 @@ function EnrollmentsTab() {
       showToast({ type: 'error', message: '请先创建邮件序列' });
       return;
     }
-    const seqKey = sequences[0]?.sequenceKey;
+    const seqKey = prompt(
+      `请输入要批量注册的序列 Key：\n可选: ${sequences.map((s) => s.sequenceKey).join(', ')}`,
+      sequences[0]?.sequenceKey,
+    );
+    if (!seqKey) return;
     if (!confirm(`将为所有有邮箱的活跃用户注册序列 "${seqKey}"，继续？`)) return;
     const res = await batchEnrollTutorialEmail({ sequenceKey: seqKey });
     if (res.success) {
       showToast({ type: 'success', message: `已注册 ${res.data.enrolled} 人，跳过 ${res.data.skipped} 人` });
       void load();
+    } else {
+      showToast({ type: 'error', message: res.error?.message || '批量注册失败' });
     }
   };
 
