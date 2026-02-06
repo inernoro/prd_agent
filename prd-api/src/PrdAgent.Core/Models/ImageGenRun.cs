@@ -1,3 +1,4 @@
+using PrdAgent.Core.Attributes;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models.MultiImage;
 
@@ -6,6 +7,8 @@ namespace PrdAgent.Core.Models;
 /// <summary>
 /// 生图任务（可断线继续执行；通过 runId 查询/续订阅）
 /// </summary>
+[AppOwnership(AppNames.VisualAgent, AppNames.VisualAgentDisplay, IsPrimary = true)]
+[AppOwnership(AppNames.LiteraryAgent, AppNames.LiteraryAgentDisplay)]
 public class ImageGenRun
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

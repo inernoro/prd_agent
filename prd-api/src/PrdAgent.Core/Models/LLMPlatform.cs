@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// LLM平台实体
 /// </summary>
+[AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
 public class LLMPlatform
 {
     /// <summary>平台ID（通过 IIdGenerator 生成）</summary>

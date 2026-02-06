@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// LLM应用调用者 - 标识每个使用LLM能力的应用
 /// </summary>
+[AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
 public class LLMAppCaller
 {
     /// <summary>应用ID</summary>

@@ -857,3 +857,28 @@ export type {
   ToolboxRun,
   ToolboxRunStep,
 } from '@/services/real/aiToolbox';
+
+// 数据迁移服务
+import type {
+  GetCollectionMappingsContract,
+  GetCollectionDataContract,
+  ValidateCollectionContract,
+  DeleteCollectionContract,
+  DeleteDocumentContract,
+  DeleteAppDataContract,
+} from '@/services/contracts/data-migration';
+import {
+  getCollectionMappingsReal,
+  getCollectionDataReal,
+  validateCollectionReal,
+  deleteCollectionReal,
+  deleteDocumentReal,
+  deleteAppDataReal,
+} from '@/services/real/data-migration';
+
+export const getCollectionMappings: GetCollectionMappingsContract = withAuth(getCollectionMappingsReal);
+export const getCollectionData: GetCollectionDataContract = withAuth(getCollectionDataReal);
+export const validateCollection: ValidateCollectionContract = withAuth(validateCollectionReal);
+export const deleteCollection: DeleteCollectionContract = withAuth(deleteCollectionReal);
+export const deleteDocument: DeleteDocumentContract = withAuth(deleteDocumentReal);
+export const deleteAppData: DeleteAppDataContract = withAuth(deleteAppDataReal);

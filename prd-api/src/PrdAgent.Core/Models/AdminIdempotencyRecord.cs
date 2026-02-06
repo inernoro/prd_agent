@@ -1,3 +1,5 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -5,6 +7,7 @@ namespace PrdAgent.Core.Models;
 /// - 按用户要求：不使用 Redis/内存等时效缓存；幂等记录落 MongoDB。
 /// - 通过唯一索引 (ownerAdminId, scope, idempotencyKey) 保证幂等键唯一。
 /// </summary>
+[AppOwnership(AppNames.System, AppNames.SystemDisplay, IsPrimary = true)]
 public class AdminIdempotencyRecord
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

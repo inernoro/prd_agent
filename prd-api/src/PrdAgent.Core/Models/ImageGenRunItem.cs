@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 生图任务 - 单张图片结果（单独存储，避免超过 Mongo 单文档 16MB 限制）
 /// </summary>
+[AppOwnership(AppNames.VisualAgent, AppNames.VisualAgentDisplay, IsPrimary = true)]
 public class ImageGenRunItem
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
