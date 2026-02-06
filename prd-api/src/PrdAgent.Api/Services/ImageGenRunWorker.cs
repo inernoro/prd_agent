@@ -268,7 +268,24 @@ public class ImageGenRunWorker : BackgroundService
                         var loadedImageRefs = new List<Core.Models.MultiImage.ImageRefData>();
                         var isMultiImageVisionMode = false;
 
-                        // 1. 如果有 ImageRefs（新架构），使用 MultiImageDomainService 处理
+                        // ========== 兼容层：统一 InitImageAssetSha256 → ImageRefs ==========
+                        // 如果 ImageRefs 为空但 InitImageAssetSha256 存在，自动转换为 ImageRefs
+                        // 这样后续逻辑只需处理 ImageRefs，无需分支
+                        if ((run.ImageRefs == null || run.ImageRefs.Count == 0) &&
+                            !string.IsNullOrWhiteSpace(run.InitImageAssetSha256))
+                        {
+                            var initSha = run.InitImageAssetSha256.Trim().ToLowerInvariant();
+                            if (initSha.Length == 64 && Regex.IsMatch(initSha, "^[0-9a-f]{64}$"))
+                            {
+                                run.ImageRefs = new List<ImageRefInput>
+                                {
+                                    new() { RefId = 1, AssetSha256 = initSha, Label = "参考图" }
+                                };
+                                _logger.LogDebug("[兼容层] 已将 InitImageAssetSha256 转换为 ImageRefs[0]: sha={Sha}", initSha);
+                            }
+                        }
+
+                        // 1. 统一使用 ImageRefs 处理所有图片场景
                         if (run.ImageRefs != null && run.ImageRefs.Count > 0)
                         {
                             var parseResult = multiImageService.ParsePromptRefs(curPrompt, run.ImageRefs);
@@ -346,21 +363,58 @@ public class ImageGenRunWorker : BackgroundService
                             {
                                 _logger.LogWarning("[多图处理] 解析警告: {Warnings}", string.Join("; ", parseResult.Warnings));
                             }
-                        }
-                        // 2. 回退：使用 InitImageAssetSha256（单图兼容）
-                        else
-                        {
-                            var initSha = (run.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
-                            if (!string.IsNullOrWhiteSpace(initSha) && initSha.Length == 64 && Regex.IsMatch(initSha, "^[0-9a-f]{64}$"))
+
+                            // ========== 无 @imgN 但有图片的场景 ==========
+                            // 如果 ImageRefs 有图但 prompt 没有 @imgN，直接加载所有图片使用
+                            // 这种场景下不做 prompt 增强（因为没有 @imgN 可以替换）
+                            if (parseResult.ResolvedRefs.Count == 0 && run.ImageRefs.Count > 0)
                             {
-                                var found = await assetStorage.TryReadByShaAsync(initSha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                                if (found != null && found.Value.bytes.Length > 0)
+                                _logger.LogInformation("[无@imgN场景] prompt 无 @imgN 引用，但有 {Count} 张图片，直接加载使用", run.ImageRefs.Count);
+
+                                foreach (var imgRef in run.ImageRefs)
                                 {
-                                    var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
-                                    var b64 = Convert.ToBase64String(found.Value.bytes);
-                                    initImageBase64 = $"data:{mime};base64,{b64}";
+                                    if (string.IsNullOrWhiteSpace(imgRef.AssetSha256)) continue;
+
+                                    var sha = imgRef.AssetSha256.Trim().ToLowerInvariant();
+                                    if (sha.Length != 64 || !Regex.IsMatch(sha, "^[0-9a-f]{64}$")) continue;
+
+                                    var found = await assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                                    if (found != null && found.Value.bytes.Length > 0)
+                                    {
+                                        var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
+                                        var b64 = Convert.ToBase64String(found.Value.bytes);
+                                        var dataUrl = $"data:{mime};base64,{b64}";
+                                        var cosUrl = assetStorage.TryBuildUrlBySha(sha, mime, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+
+                                        loadedImageRefs.Add(new Core.Models.MultiImage.ImageRefData
+                                        {
+                                            RefId = imgRef.RefId,
+                                            Base64 = dataUrl,
+                                            MimeType = mime,
+                                            Label = imgRef.Label ?? $"图片{imgRef.RefId}",
+                                            Sha256 = sha,
+                                            CosUrl = cosUrl
+                                        });
+                                    }
+                                }
+
+                                // 根据加载的图片数量决定模式
+                                if (loadedImageRefs.Count > 1)
+                                {
+                                    isMultiImageVisionMode = true;
+                                    _logger.LogInformation("[无@imgN场景] 启用 Vision API，共 {Count} 张图片", loadedImageRefs.Count);
+                                }
+                                else if (loadedImageRefs.Count == 1)
+                                {
+                                    initImageBase64 = loadedImageRefs[0].Base64;
+                                    _logger.LogInformation("[无@imgN场景] 单图模式，使用参考图 sha={Sha}", loadedImageRefs[0].Sha256);
                                 }
                             }
+                        }
+                        // 2. 无图片场景：text2img（兼容层已处理 InitImageAssetSha256，这里只剩真正的无图情况）
+                        else
+                        {
+                            _logger.LogDebug("[text2img] 无参考图，使用纯文生图模式");
                         }
 
                         _logger.LogInformation("[ImageGenRunWorker Debug] Run {RunId}: AppKey={AppKey}, UserId={UserId}, AppCallerCode={AppCallerCode}",
