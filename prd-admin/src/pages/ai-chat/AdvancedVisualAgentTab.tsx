@@ -5967,7 +5967,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 position: 'absolute',
                                 left: '50%',
                                 top: 0,
-                                transform: 'translate(-50%, calc(-100% - 10px)) scale(var(--invZoom))',
+                                transform: 'translate(-50%, calc(-100% - 26px)) scale(var(--invZoom))',
                                 transformOrigin: 'center bottom',
                                 pointerEvents: 'auto',
                               }}
@@ -5987,7 +5987,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 position: 'absolute',
                                 left: '50%',
                                 bottom: 0,
-                                transform: 'translate(-50%, calc(100% + 10px)) scale(var(--invZoom))',
+                                transform: 'translate(-50%, calc(100% + 26px)) scale(var(--invZoom))',
                                 transformOrigin: 'center top',
                                 pointerEvents: 'auto',
                               }}
