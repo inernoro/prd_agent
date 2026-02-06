@@ -1471,6 +1471,7 @@ public class DefectAgentController : ControllerBase
             systemPrompt.AppendLine("2. 如果描述不完整，补充必要的信息（如复现步骤、期望结果、实际结果）");
             systemPrompt.AppendLine("3. 使用简洁明了的语言");
             systemPrompt.AppendLine("4. 直接输出润色后的内容，不要添加额外的解释或标记");
+            systemPrompt.AppendLine("5. 必须使用换行符分隔不同的段落和章节（如缺陷描述、复现步骤、期望结果、实际结果之间要有空行），保持良好的文本结构和可读性");
 
             if (template != null)
             {
