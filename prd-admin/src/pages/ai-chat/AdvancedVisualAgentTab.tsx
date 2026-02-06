@@ -48,7 +48,7 @@ import {
 import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
-import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
+import { ASPECT_OPTIONS, getSizeForTier } from '@/lib/imageAspectOptions';
 import {
   computeRequestedSizeByRefRatio,
   extractInlineImageToken,
@@ -3628,19 +3628,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   // ── 快捷操作执行（不写入消息列表，复制一份图片进行 img2img） ──
   const executeQuickAction = useCallback(
-    async (prompt: string, sourceItem: CanvasImageItem) => {
+    async (prompt: string, sourceItem: CanvasImageItem, sizeOverride?: string) => {
       if (!prompt.trim()) return;
       const pickedModel = effectiveModel;
       if (!pickedModel) {
         toast.error('暂无可用生图模型');
         return;
       }
-      // 尺寸自适应：基于源图原始尺寸
+      // 尺寸自适应：基于源图原始尺寸（支持外部覆盖，如 HD 放大需要升档）
       const refDim =
         sourceItem.naturalW && sourceItem.naturalH
           ? { w: sourceItem.naturalW, h: sourceItem.naturalH }
           : null;
-      const resolvedSize = computeRequestedSizeByRefRatio(refDim) ?? imageGenSize;
+      const resolvedSize = sizeOverride ?? computeRequestedSizeByRefRatio(refDim) ?? imageGenSize;
       const parsedSize = tryParseWxH(resolvedSize);
       const genW = parsedSize?.w ?? 1024;
       const genH = parsedSize?.h ?? 1024;
@@ -3690,19 +3690,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }
       }
 
-      // 画布占位：放在源图右侧
+      // 画布占位：固定放在源图右侧（间距 24px），与源图顶部对齐
       const key = `qa_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       const sourceX = sourceItem.x ?? 0;
       const sourceY = sourceItem.y ?? 0;
       const sourceW = sourceItem.w ?? 320;
+      const newX = sourceX + sourceW + 24;
+      const newY = sourceY;
 
       setCanvas((prev) => {
-        const existingRects = prev
-          .filter((x) => !!x.src || x.status === 'running' || x.status === 'error' || (x.kind ?? 'image') !== 'image')
-          .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
-        // 尝试放在源图右侧
-        const candidatePos = { x: sourceX + sourceW + 24, y: sourceY };
-        const pos = findNearestFreeTopLeft(existingRects, genW, genH, candidatePos);
         const placeholder: CanvasImageItem = {
           key,
           kind: 'image',
@@ -3712,24 +3708,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           status: 'running',
           w: genW,
           h: genH,
-          x: pos.x,
-          y: pos.y,
+          x: newX,
+          y: newY,
         };
         return [...prev, placeholder].slice(-60);
       });
       setSelectionWithoutChip([key]);
-      // 移动视角到新图位置
-      requestAnimationFrame(() => {
-        const cur = canvasRef.current.find((x) => x.key === key);
-        if (!cur) return;
-        const targetRect = { x: cur.x ?? 0, y: cur.y ?? 0, w: cur.w ?? genW, h: cur.h ?? genH };
-        const sourceRect = { x: sourceX, y: sourceY, w: sourceW, h: sourceItem.h ?? 220 };
-        const minX = Math.min(targetRect.x, sourceRect.x);
-        const minY = Math.min(targetRect.y, sourceRect.y);
-        const maxX = Math.max(targetRect.x + targetRect.w, sourceRect.x + sourceRect.w);
-        const maxY = Math.max(targetRect.y + targetRect.h, sourceRect.y + sourceRect.h);
-        animateCameraToFitRect({ x: minX, y: minY, w: maxX - minX, h: maxY - minY });
-      });
 
       // 强制保存 canvas（确保占位元素已持久化）
       {
@@ -3833,7 +3817,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         toast.error(msg);
       }
     },
-    [effectiveModel, imageGenSize, workspaceId, findNearestFreeTopLeft, setSelectionWithoutChip, animateCameraToFitRect],
+    [effectiveModel, imageGenSize, workspaceId, setSelectionWithoutChip],
   );
 
   /** 快捷操作栏：点击内置/DIY 操作 */
@@ -3843,9 +3827,30 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         toast.error('请先选中一张已完成的图片');
         return;
       }
-      void executeQuickAction(action.prompt, selected);
+      // HD 放大：自动升级尺寸档位（1K→2K, 2K→4K）
+      let sizeOverride: string | undefined;
+      if (action.id === 'hd-upscale') {
+        const refDim =
+          selected.naturalW && selected.naturalH
+            ? { w: selected.naturalW, h: selected.naturalH }
+            : null;
+        const currentSize = computeRequestedSizeByRefRatio(refDim) ?? imageGenSize;
+        const currentTier = detectTierFromSize(currentSize);
+        if (currentTier) {
+          // 找到当前比例
+          const matchedAspect = ASPECT_OPTIONS.find((opt) => {
+            const s = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
+            return s.toLowerCase() === currentSize.toLowerCase();
+          });
+          if (matchedAspect) {
+            const nextTier = currentTier === '1k' ? '2k' : currentTier === '2k' ? '4k' : '4k';
+            sizeOverride = getSizeForTier(matchedAspect.id, nextTier);
+          }
+        }
+      }
+      void executeQuickAction(action.prompt, selected, sizeOverride);
     },
-    [selected, executeQuickAction],
+    [selected, executeQuickAction, imageGenSize],
   );
 
   /** 快捷编辑：用户在输入框描述编辑内容 */

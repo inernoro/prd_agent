@@ -18,7 +18,7 @@ export type ImageQuickEditInputProps = {
 
 /** 快捷编辑输入框的固定宽度 */
 const BAR_WIDTH = 320;
-const BAR_HEIGHT = 42;
+const BAR_HEIGHT = 38;
 
 export function ImageQuickEditInput({
   imageRect,
@@ -29,6 +29,7 @@ export function ImageQuickEditInput({
   running,
 }: ImageQuickEditInputProps) {
   const [text, setText] = useState('');
+  const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
@@ -47,7 +48,7 @@ export function ImageQuickEditInput({
 
     // 水平 clamp
     left = Math.max(sr.left + 4, Math.min(left, sr.right - BAR_WIDTH - 4));
-    // 垂直不超出 stage 底部（如果超出就不显示）
+    // 垂直不超出 stage 底部
     if (top + BAR_HEIGHT > sr.bottom - 4) {
       setPos(null);
       return;
@@ -87,54 +88,52 @@ export function ImageQuickEditInput({
 
   if (!pos) return null;
 
+  const hasText = text.trim().length > 0;
+
   return (
     <div
       ref={containerRef}
-      className="fixed z-[8000] flex items-center rounded-[10px] overflow-hidden"
+      className="fixed z-[8000] flex items-center gap-1.5 rounded-[10px] px-2"
       style={{
         left: pos.left,
         top: pos.top,
         width: BAR_WIDTH,
         height: BAR_HEIGHT,
-        background: 'rgba(32, 32, 38, 0.95)',
-        border: '1px solid rgba(255, 255, 255, 0.14)',
+        background: focused
+          ? 'rgba(32, 32, 38, 0.98)'
+          : 'rgba(32, 32, 38, 0.92)',
+        border: focused
+          ? '1px solid rgba(99, 102, 241, 0.50)'
+          : '1px solid rgba(255, 255, 255, 0.14)',
         backdropFilter: 'blur(16px)',
         WebkitBackdropFilter: 'blur(16px)',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.06) inset',
+        boxShadow: focused
+          ? '0 8px 32px rgba(0,0,0,0.45), 0 0 0 2px rgba(99, 102, 241, 0.18)'
+          : '0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.06) inset',
         pointerEvents: 'auto',
+        transition: 'border-color 0.15s, box-shadow 0.15s',
       }}
     >
       {/* 快捷编辑标签 */}
-      <div
-        className="shrink-0 h-full flex items-center px-2.5 text-[11px] font-medium select-none"
-        style={{
-          color: 'rgba(255, 255, 255, 0.50)',
-          borderRight: '1px solid rgba(255,255,255,0.10)',
-        }}
+      <span
+        className="shrink-0 text-[11px] font-medium select-none whitespace-nowrap"
+        style={{ color: 'rgba(255, 255, 255, 0.40)' }}
       >
         快捷编辑
-        <kbd
-          className="ml-1.5 px-1 rounded text-[9px] font-mono"
-          style={{
-            background: 'rgba(255,255,255,0.08)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            color: 'rgba(255,255,255,0.45)',
-          }}
-        >
-          Tab
-        </kbd>
-      </div>
+      </span>
 
       {/* 输入框 */}
       <input
         ref={inputRef}
         type="text"
-        className="flex-1 h-full bg-transparent px-2.5 text-[13px] outline-none placeholder:text-white/30"
+        className="flex-1 min-w-0 h-full bg-transparent text-[13px] outline-none placeholder:text-white/25"
         style={{ color: 'rgba(255, 255, 255, 0.88)' }}
         placeholder="Describe your edit here"
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={handleKeyDown}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
         disabled={running}
@@ -143,18 +142,17 @@ export function ImageQuickEditInput({
       {/* 运行按钮 */}
       <button
         type="button"
-        className="shrink-0 inline-flex items-center gap-1 px-3 h-[30px] mx-1 rounded-[7px] text-[12px] font-semibold transition-colors"
+        className="shrink-0 inline-flex items-center gap-1 px-2.5 h-[26px] rounded-[6px] text-[11px] font-semibold transition-all"
         style={{
-          background: running ? 'rgba(99, 102, 241, 0.4)' : 'rgba(99, 102, 241, 0.85)',
-          color: 'rgba(255, 255, 255, 0.95)',
-          cursor: running || !text.trim() ? 'not-allowed' : 'pointer',
-          opacity: running || !text.trim() ? 0.5 : 1,
+          background: hasText && !running ? 'rgba(99, 102, 241, 0.85)' : 'rgba(99, 102, 241, 0.25)',
+          color: hasText && !running ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.40)',
+          cursor: running || !hasText ? 'not-allowed' : 'pointer',
         }}
         onClick={handleSubmit}
-        disabled={running || !text.trim()}
+        disabled={running || !hasText}
       >
         运行
-        <Play size={11} className="shrink-0" />
+        <Play size={10} className="shrink-0" />
       </button>
     </div>
   );

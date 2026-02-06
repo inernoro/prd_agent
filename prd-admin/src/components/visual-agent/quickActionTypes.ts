@@ -21,12 +21,6 @@ export const BUILTIN_QUICK_ACTIONS: QuickAction[] = [
     prompt: 'Remove the background of this image completely, keep only the main subject on a clean white background',
   },
   {
-    id: 'mockup',
-    name: 'Mockup',
-    icon: 'Monitor',
-    prompt: 'Place this design into a professional product mockup scene, make it look realistic',
-  },
-  {
     id: 'extend',
     name: '扩展',
     icon: 'Expand',

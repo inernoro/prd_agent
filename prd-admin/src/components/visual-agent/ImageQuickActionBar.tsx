@@ -4,7 +4,6 @@ import {
   Expand,
   Eraser,
   Maximize,
-  Monitor,
   Wand2,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -14,7 +13,6 @@ import type { QuickAction } from './quickActionTypes';
 const ICON_MAP: Record<string, LucideIcon> = {
   Maximize,
   Eraser,
-  Monitor,
   Expand,
   Wand2,
   Download,
