@@ -1,71 +1,23 @@
 import { Play } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 export type ImageQuickEditInputProps = {
-  /** 选中的图片在画布中的世界坐标 */
-  imageRect: { x: number; y: number; w: number; h: number };
-  /** 当前缩放比 */
-  zoom: number;
-  /** 摄像机偏移 */
-  camera: { x: number; y: number };
-  /** 舞台容器的 DOM 引用 */
-  stageEl: HTMLElement | null;
   /** 提交快捷编辑 */
   onSubmit: (text: string) => void;
   /** 是否正在执行 */
   running?: boolean;
 };
 
-/** 快捷编辑输入框的固定宽度 */
-const BAR_WIDTH = 320;
-const BAR_HEIGHT = 38;
-
+/**
+ * 快捷编辑输入框（纯内容组件，由父级控制定位）
+ */
 export function ImageQuickEditInput({
-  imageRect,
-  zoom,
-  camera,
-  stageEl,
   onSubmit,
   running,
 }: ImageQuickEditInputProps) {
   const [text, setText] = useState('');
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-
-  const recalcPosition = useCallback(() => {
-    if (!stageEl) return;
-    const sr = stageEl.getBoundingClientRect();
-    // 图片底部中心的屏幕坐标
-    const imgScreenX = imageRect.x * zoom + camera.x + sr.left;
-    const imgScreenY = imageRect.y * zoom + camera.y + sr.top;
-    const imgScreenW = imageRect.w * zoom;
-    const imgScreenH = imageRect.h * zoom;
-
-    let left = imgScreenX + imgScreenW / 2 - BAR_WIDTH / 2;
-    const top = imgScreenY + imgScreenH + 8;
-
-    // 水平 clamp
-    left = Math.max(sr.left + 4, Math.min(left, sr.right - BAR_WIDTH - 4));
-    // 垂直不超出 stage 底部
-    if (top + BAR_HEIGHT > sr.bottom - 4) {
-      setPos(null);
-      return;
-    }
-
-    setPos({ left, top: Math.max(sr.top + 4, top) });
-  }, [imageRect, zoom, camera, stageEl]);
-
-  useEffect(() => {
-    recalcPosition();
-  }, [recalcPosition]);
-
-  useEffect(() => {
-    const handler = () => recalcPosition();
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, [recalcPosition]);
 
   const handleSubmit = useCallback(() => {
     const trimmed = text.trim();
@@ -86,19 +38,14 @@ export function ImageQuickEditInput({
     [handleSubmit],
   );
 
-  if (!pos) return null;
-
   const hasText = text.trim().length > 0;
 
   return (
     <div
-      ref={containerRef}
-      className="fixed z-[8000] flex items-center gap-1.5 rounded-[10px] px-2"
+      className="flex items-center gap-1.5 rounded-[10px] px-2"
       style={{
-        left: pos.left,
-        top: pos.top,
-        width: BAR_WIDTH,
-        height: BAR_HEIGHT,
+        width: 320,
+        height: 38,
         background: focused
           ? 'rgba(32, 32, 38, 0.98)'
           : 'rgba(32, 32, 38, 0.92)',

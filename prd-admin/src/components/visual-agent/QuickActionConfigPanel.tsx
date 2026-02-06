@@ -120,10 +120,10 @@ export function QuickActionConfigPanel({
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            promptKey: null,
-            order: null,
-            role: null,
-            title: action.name || null,
+            promptKey: 'visual-agent.quick-action',
+            order: 1,
+            role: 'PM',
+            title: action.name || '快捷指令优化',
             promptTemplate: promptText,
             mode: 'strict',
           }),
@@ -328,7 +328,10 @@ export function QuickActionConfigPanel({
                       </div>
 
                       {/* AI 优化按钮 */}
-                      <div className="mt-2 flex justify-end" style={{ fontSize: '13px' }}>
+                      <div
+                        className="mt-2 flex justify-end"
+                        style={{ transform: 'scale(0.6)', transformOrigin: 'right center', marginBottom: -12 }}
+                      >
                         <SparkleButton
                           text={isOptimizing ? '优化中...' : 'AI 优化'}
                           onClick={() => {

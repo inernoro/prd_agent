@@ -93,6 +93,7 @@ import {
   Type,
   Trash,
   Video,
+  Wand2,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -5918,6 +5919,89 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         );
                       })
                   : null}
+
+                {/* ── 快捷操作栏 + 快捷编辑输入框（世界坐标，跟随画布 transform） ── */}
+                {selectedKeys.length === 1 &&
+                  !imgContextMenu.open &&
+                  effectiveTool !== 'hand' &&
+                  !panning
+                  ? canvas
+                      .filter(
+                        (it) =>
+                          (it.kind ?? 'image') === 'image' &&
+                          isSelectedKey(it.key) &&
+                          it.status === 'done' &&
+                          Boolean(it.src),
+                      )
+                      .map((it) => {
+                        const ix = it.x ?? 0;
+                        const iy = it.y ?? 0;
+                        const iw = it.w ?? 320;
+                        const ih = it.h ?? 220;
+                        const bW = Math.max(40, Math.round(iw));
+                        const bH = Math.max(40, Math.round(ih));
+                        const nw = typeof it.naturalW === 'number' ? it.naturalW : 0;
+                        const nh = typeof it.naturalH === 'number' ? it.naturalH : 0;
+                        const hasN = nw > 0 && nh > 0;
+                        const fitImg = it.status === 'done' && Boolean(it.src) && hasN;
+                        const inn = fitImg ? computeObjectFitContainRect(bW, bH, nw, nh) : { x: 0, y: 0, w: bW, h: bH };
+                        const sX = inn.x;
+                        const sY = inn.y;
+                        const sW = Math.max(1, inn.w);
+                        const sH = Math.max(1, inn.h);
+                        return (
+                          <div
+                            key={`quickbar_${it.key}`}
+                            className="absolute"
+                            style={{
+                              left: Math.round(ix) + sX,
+                              top: Math.round(iy) + sY,
+                              width: sW,
+                              height: sH,
+                              pointerEvents: 'none',
+                            }}
+                          >
+                            {/* 快捷操作栏：选区上方居中 */}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: '50%',
+                                top: 0,
+                                transform: 'translate(-50%, calc(-100% - 10px)) scale(var(--invZoom))',
+                                transformOrigin: 'center bottom',
+                                pointerEvents: 'auto',
+                              }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                            >
+                              <ImageQuickActionBar
+                                actions={mergedQuickActions}
+                                onAction={handleQuickAction}
+                                onDownload={() => void downloadImage(it.src, it.prompt || 'image')}
+                                onOpenConfig={() => setQuickActionDialogOpen(true)}
+                              />
+                            </div>
+
+                            {/* 快捷编辑输入框：选区下方居中 */}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: '50%',
+                                bottom: 0,
+                                transform: 'translate(-50%, calc(100% + 10px)) scale(var(--invZoom))',
+                                transformOrigin: 'center top',
+                                pointerEvents: 'auto',
+                              }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                            >
+                              <ImageQuickEditInput
+                                onSubmit={handleQuickEditSubmit}
+                                running={quickEditRunning}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })
+                  : null}
               </div>
             </div>
 
@@ -7956,46 +8040,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         </div>
       </div>
 
-      {/* ── 快捷操作栏 + 快捷编辑输入框（单选已完成图片时显示） ── */}
-      {selectedKeys.length === 1 &&
-        selected &&
-        (selected.kind ?? 'image') === 'image' &&
-        selected.status === 'done' &&
-        selected.src &&
-        !imgContextMenu.open &&
-        effectiveTool !== 'hand' &&
-        !panning ? (
-        <>
-          <ImageQuickActionBar
-            imageRect={{
-              x: selected.x ?? 0,
-              y: selected.y ?? 0,
-              w: selected.w ?? 320,
-              h: selected.h ?? 220,
-            }}
-            zoom={zoom}
-            camera={camera}
-            stageEl={stageRef.current}
-            actions={mergedQuickActions}
-            onAction={handleQuickAction}
-            onDownload={() => void downloadImage(selected.src, selected.prompt || 'image')}
-            onOpenConfig={() => setQuickActionDialogOpen(true)}
-          />
-          <ImageQuickEditInput
-            imageRect={{
-              x: selected.x ?? 0,
-              y: selected.y ?? 0,
-              w: selected.w ?? 320,
-              h: selected.h ?? 220,
-            }}
-            zoom={zoom}
-            camera={camera}
-            stageEl={stageRef.current}
-            onSubmit={handleQuickEditSubmit}
-            running={quickEditRunning}
-          />
-        </>
-      ) : null}
+      {/* 快捷操作栏 + 快捷编辑输入框 已移至 worldUiRef 层 */}
 
       {/* 图片右键菜单 */}
       {imgContextMenu.open ? (
@@ -8383,8 +8428,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       <ConfigManagementDialogBase
         ref={configDialogRef}
         mineTitle="配置管理"
-        mineDescription="水印设置"
-        maxWidth={1200}
+        mineDescription="水印与快捷指令设置"
+        maxWidth={1500}
         showColumnDividers={false}
         columns={[
           {
@@ -8426,6 +8471,80 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               />
             ),
           } as ConfigColumn<MarketplaceWatermarkConfig>,
+          {
+            key: 'quickActions',
+            title: '快捷指令',
+            filterLabel: '快捷指令',
+            titleAction: (
+              <Button
+                variant="secondary"
+                size="xs"
+                onClick={() => setQuickActionDialogOpen(true)}
+              >
+                <Plus size={14} />
+                新建指令
+              </Button>
+            ),
+            renderMineContent: () => (
+              <div className="space-y-3">
+                {diyQuickActions.length === 0 ? (
+                  <div
+                    className="rounded-[12px] px-4 py-8 text-center text-[13px]"
+                    style={{
+                      border: '1px dashed rgba(255,255,255,0.12)',
+                      color: 'var(--text-muted)',
+                    }}
+                  >
+                    <Wand2 size={28} className="mx-auto mb-2.5 opacity-40" />
+                    <div>暂无自定义快捷指令</div>
+                    <div className="mt-1.5 text-[11px] opacity-60">
+                      点击「新建指令」添加你的第一个快捷指令
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-1.5">
+                      {diyQuickActions.map((a, idx) => (
+                        <div
+                          key={a.id}
+                          className="flex items-center gap-2 px-3 py-2 rounded-[8px]"
+                          style={{
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            background: 'rgba(255,255,255,0.02)',
+                          }}
+                        >
+                          <span
+                            className="inline-flex items-center justify-center w-5 h-5 rounded-full shrink-0"
+                            style={{
+                              background: 'rgba(250, 204, 21, 0.14)',
+                              border: '1px solid rgba(250, 204, 21, 0.30)',
+                            }}
+                          >
+                            <Wand2 size={10} style={{ color: 'rgba(250, 204, 21, 0.85)' }} />
+                          </span>
+                          <span
+                            className="flex-1 text-[13px] truncate"
+                            style={{ color: a.name ? 'var(--text-primary)' : 'var(--text-muted)' }}
+                          >
+                            {a.name || `指令 ${idx + 1}（未命名）`}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => setQuickActionDialogOpen(true)}
+                    >
+                      <Settings size={14} />
+                      管理快捷指令
+                    </Button>
+                  </>
+                )}
+              </div>
+            ),
+          } as ConfigColumn<any>,
         ]}
       />
 
