@@ -291,7 +291,49 @@ public class OpenAIImageClient
             // 定义发送函数（支持重试）
             async Task<GatewayRawResponse> SendViaGatewayAsync(CancellationToken token)
             {
-                if (initImageBase64 == null)
+                // Exchange 统一路径：文生图/图生图统一用标准 JSON 格式，不使用 multipart
+                if (resolution.IsExchange)
+                {
+                    var exchangeBody = new JsonObject
+                    {
+                        ["prompt"] = prompt,
+                        ["n"] = n,
+                    };
+                    if (!string.IsNullOrWhiteSpace(requestedSizeNorm))
+                        exchangeBody["size"] = requestedSizeNorm;
+
+                    // 图生图：将参考图转为 data URI 放入 image_urls
+                    if (initImageBase64 != null)
+                    {
+                        var dataUri = initImageBase64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                            ? initImageBase64
+                            : $"data:image/png;base64,{initImageBase64}";
+                        exchangeBody["image_urls"] = new JsonArray { dataUri };
+                    }
+
+                    _logger.LogInformation(
+                        "[OpenAIImageClient] Exchange 统一请求: AppCallerCode={AppCallerCode}, HasImage={HasImage}, Size={Size}",
+                        appCallerCode, initImageBase64 != null, requestedSizeNorm);
+
+                    return await _gateway.SendRawAsync(new GatewayRawRequest
+                    {
+                        AppCallerCode = appCallerCode,
+                        ModelType = "generation",
+                        RequestBody = exchangeBody,
+                        IsMultipart = false,
+                        TimeoutSeconds = imageGenTimeoutSeconds,
+                        Context = new GatewayRequestContext
+                        {
+                            RequestId = requestId,
+                            SessionId = ctx?.SessionId,
+                            GroupId = ctx?.GroupId,
+                            UserId = ctx?.UserId,
+                            ViewRole = ctx?.ViewRole,
+                            QuestionText = prompt.Trim()
+                        }
+                    }, token);
+                }
+                else if (initImageBase64 == null)
                 {
                     // 文生图请求（JSON）
                     JsonObject requestBody;
@@ -757,6 +799,170 @@ public class OpenAIImageClient
         var effectiveModelName = resolution.ActualModel!;
         var platformIdForLog = resolution.ActualPlatformId;
         var platformNameForLog = resolution.ActualPlatformName;
+
+        // Exchange 统一路径：多图也用标准 JSON 格式（不走 Vision Chat API）
+        if (resolution.IsExchange)
+        {
+            var exchangeBody = new JsonObject
+            {
+                ["prompt"] = prompt,
+                ["n"] = 1,
+            };
+            if (!string.IsNullOrWhiteSpace(size))
+                exchangeBody["size"] = NormalizeSizeString(size) ?? size;
+
+            // 所有参考图 → image_urls 数组
+            var imageUrlsArray = new JsonArray();
+            foreach (var imgRef in imageRefs)
+            {
+                var dataUri = imgRef.Base64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                    ? imgRef.Base64
+                    : $"data:{imgRef.MimeType ?? "image/png"};base64,{imgRef.Base64}";
+                imageUrlsArray.Add(dataUri);
+            }
+            exchangeBody["image_urls"] = imageUrlsArray;
+
+            _logger.LogInformation(
+                "[OpenAIImageClient] Exchange 统一多图请求: AppCallerCode={AppCallerCode}, ImageCount={Count}, Size={Size}",
+                appCallerCode, imageRefs.Count, size);
+
+            var exchangeTimeout = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
+            exchangeTimeout = Math.Clamp(exchangeTimeout, 60, 3600);
+
+            try
+            {
+                var gatewayResp = await _gateway.SendRawAsync(new GatewayRawRequest
+                {
+                    AppCallerCode = appCallerCode,
+                    ModelType = "generation",
+                    RequestBody = exchangeBody,
+                    IsMultipart = false,
+                    TimeoutSeconds = exchangeTimeout,
+                    Context = new GatewayRequestContext
+                    {
+                        RequestId = requestId,
+                        SessionId = ctx?.SessionId,
+                        GroupId = ctx?.GroupId,
+                        UserId = ctx?.UserId,
+                        ViewRole = ctx?.ViewRole,
+                        QuestionText = prompt.Trim()
+                    }
+                }, ct);
+
+                var respBody = gatewayResp.Content ?? string.Empty;
+                if (!gatewayResp.Success)
+                {
+                    var errorMsg = TryExtractUpstreamErrorMessage(respBody, out var em)
+                        ? $"Exchange 生图错误: {em}"
+                        : $"Exchange 生图请求失败: HTTP {gatewayResp.StatusCode}";
+                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, errorMsg);
+                }
+
+                // 解析 OpenAI 图片响应格式 { "data": [{"url": "...", "b64_json": "..."}] }
+                using var doc = JsonDocument.Parse(respBody);
+                var root = doc.RootElement;
+                var dataArr = root.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == JsonValueKind.Array
+                    ? dataEl.EnumerateArray().ToList()
+                    : new List<JsonElement>();
+
+                var images = new List<ImageGenImage>();
+                var idx = 0;
+                foreach (var it in dataArr)
+                {
+                    string? b64 = null, url = null;
+                    if (it.TryGetProperty("b64_json", out var b64El) && b64El.ValueKind == JsonValueKind.String)
+                        b64 = b64El.GetString();
+                    if (string.IsNullOrWhiteSpace(b64) && it.TryGetProperty("base64", out var b64El2) && b64El2.ValueKind == JsonValueKind.String)
+                        b64 = b64El2.GetString();
+                    if (it.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String)
+                        url = urlEl.GetString();
+                    images.Add(new ImageGenImage
+                    {
+                        Index = idx++,
+                        Base64 = string.IsNullOrWhiteSpace(b64) ? null : b64,
+                        Url = string.IsNullOrWhiteSpace(url) ? null : url,
+                    });
+                }
+
+                _logger.LogInformation(
+                    "[OpenAIImageClient] Exchange 多图生成成功: ImageCount={Count}, Duration={Duration}ms",
+                    images.Count, gatewayResp.DurationMs);
+
+                // 水印 + COS 上传（与标准路径相同逻辑）
+                var appKeyForWm = TryResolveAppKeyFromAppCallerCode(appCallerCode);
+                var wmConfig = string.IsNullOrWhiteSpace(appKeyForWm) ? null : await TryGetWatermarkConfigAsync(appKeyForWm, ct);
+
+                for (var i = 0; i < images.Count; i++)
+                {
+                    byte[]? bytes = null;
+                    var outMime = "image/png";
+
+                    if (!string.IsNullOrWhiteSpace(images[i].Base64))
+                    {
+                        if (TryDecodeDataUrlOrBase64(images[i].Base64!, out var decoded, out var decodedMime))
+                        {
+                            bytes = decoded;
+                            if (!string.IsNullOrWhiteSpace(decodedMime)) outMime = decodedMime;
+                        }
+                    }
+                    else if (!string.IsNullOrWhiteSpace(images[i].Url))
+                    {
+                        var dl = await TryDownloadImageBytesAsync(images[i].Url!, ct);
+                        if (dl.bytes != null && dl.bytes.Length > 0)
+                        {
+                            bytes = dl.bytes;
+                            if (!string.IsNullOrWhiteSpace(dl.mime)) outMime = dl.mime!;
+                        }
+                    }
+
+                    if (bytes == null || bytes.Length == 0) continue;
+
+                    var stored = await _assetStorage.SaveAsync(bytes, outMime, ct,
+                        domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                    var displayUrl = stored.Url;
+
+                    if (wmConfig != null)
+                    {
+                        try
+                        {
+                            var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, wmConfig, ct);
+                            var wmStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct,
+                                domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
+                            displayUrl = wmStored.Url;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "[Exchange] 水印应用失败，使用原图");
+                        }
+                    }
+
+                    images[i].Url = displayUrl;
+                    images[i].Base64 = null;
+                    images[i].OriginalUrl = stored.Url;
+                    images[i].OriginalSha256 = stored.Sha256;
+                }
+
+                return ApiResponse<ImageGenResult>.Ok(new ImageGenResult
+                {
+                    Images = images,
+                    Meta = new ImageGenResultMeta
+                    {
+                        RequestedSize = size,
+                        EffectiveSize = size
+                    }
+                });
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogError(ex, "[Exchange] 多图网络请求失败");
+                return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Exchange] 多图生成失败");
+                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, ex.Message);
+            }
+        }
 
         // 构建 Vision API 请求
         var visionRequest = new Core.Models.MultiImage.VisionRequest
