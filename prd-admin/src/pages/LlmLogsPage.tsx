@@ -1312,7 +1312,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                             title={it.requestPurpose}
                           >
                             <AppCallerKeyIcon size={10} className="opacity-60" />
-                            appcallercode
+                            {it.requestPurpose}
                           </span>
                         )}
                       </div>
@@ -1642,7 +1642,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                     { k: 'status', v: detail.status || '—' },
                     { k: 'requestId', v: detail.requestId || '—' },
                     { k: 'requestType', v: detail.requestType || '—' },
-                    { k: 'appcallercode', v: detail.requestPurpose || '—' },
+                    { k: 'acc', v: detail.requestPurpose || '—' },
                     { k: 'groupId', v: detail.groupId || '—' },
                     { k: 'sessionId', v: detail.sessionId || '—' },
                     { k: 'startedAt', v: formatLocalTime(detail.startedAt) },
