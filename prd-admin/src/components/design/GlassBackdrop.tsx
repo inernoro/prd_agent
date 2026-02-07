@@ -24,5 +24,9 @@ export function glassContainerStyle(blur: string, background: string): CSSProper
     isolation: 'isolate',
     // 稳定合成层渲染，减少 repaint 闪烁
     backfaceVisibility: 'hidden',
+    // 强制浏览器将 backdrop-filter 合成层裁剪到 border-radius 内，
+    // 消除圆角外的白边/矩形泄漏（Chromium & WebKit 已知渲染问题）
+    WebkitMaskImage: '-webkit-radial-gradient(white, black)',
+    maskImage: 'radial-gradient(white, black)',
   };
 }
