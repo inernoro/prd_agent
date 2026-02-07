@@ -36,6 +36,10 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    // Safari 兼容：确保现代 JS 语法降级到 Safari 14+ 支持的范围
+    target: ['es2021', 'chrome100', 'safari14'],
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

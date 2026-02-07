@@ -1,0 +1,24 @@
+# docker-compose.ssl.yml —— HTTPS 支持（解决 Safari 无法访问问题）
+#
+# 使用方法：
+#   1. 将 SSL 证书放到 deploy/nginx/ssl/ 目录：
+#      - fullchain.pem（证书链）
+#      - privkey.pem（私钥）
+#
+#   2. 启动时合并此文件：
+#      docker compose -f docker-compose.yml -f docker-compose.ssl.yml up -d
+#
+#   3. 获取免费证书（Let's Encrypt）：
+#      sudo certbot certonly --standalone -d pa.759800.com
+#      sudo cp /etc/letsencrypt/live/pa.759800.com/fullchain.pem deploy/nginx/ssl/
+#      sudo cp /etc/letsencrypt/live/pa.759800.com/privkey.pem deploy/nginx/ssl/
+
+services:
+  gateway:
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/nginx-ssl.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx/ssl:/etc/nginx/ssl:ro
+      - ./deploy/web/dist:/usr/share/nginx/html:ro
