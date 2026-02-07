@@ -377,8 +377,8 @@ function App() {
           return;
         }
 
-        // Deep link 加入群组后强制刷新列表
-        await useGroupListStore.getState().loadGroups({ force: true });
+        // Deep link 加入群组后强制刷新列表（silent 避免 ChatContainer 卸载重挂）
+        await useGroupListStore.getState().loadGroups({ force: true, silent: true });
 
         const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; currentRole: string }>>(
           'open_group_session',

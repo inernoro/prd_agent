@@ -233,8 +233,8 @@ export default function Sidebar() {
         return;
       }
 
-      // 加入群组后强制刷新列表
-      await loadGroups({ force: true });
+      // 加入群组后强制刷新列表（silent 避免 loading→true 导致 ChatContainer 卸载重挂）
+      await loadGroups({ force: true, silent: true });
       await openGroupSession(resp.data.groupId);
       setJoinOpen(false);
     } catch (err) {
@@ -312,15 +312,15 @@ export default function Sidebar() {
           return;
         }
 
-        // 创建群组后强制刷新列表
-        await loadGroups({ force: true });
+        // 创建群组后强制刷新列表（silent 避免 loading→true 导致 ChatContainer 卸载重挂）
+        await loadGroups({ force: true, silent: true });
         await openGroupSession(resp.data.groupId);
         setCreateOpen(false);
 
         // 启动短期轮询以获取后台生成的群名（轮询 3 次，每次间隔 2 秒）
         for (let i = 0; i < 3; i++) {
           await new Promise((resolve) => setTimeout(resolve, 2000));
-          await loadGroups({ force: true });
+          await loadGroups({ force: true, silent: true });
         }
         return;
       }
@@ -346,14 +346,14 @@ export default function Sidebar() {
       const inviteLink = `prdagent://join/${resp.data.inviteCode}`;
       alert(`群组创建成功\\n邀请码：${resp.data.inviteCode}\\n邀请链接：${inviteLink}`);
 
-      // 创建群组后强制刷新列表
-      await loadGroups({ force: true });
+      // 创建群组后强制刷新列表（silent 避免 loading→true 导致 ChatContainer 卸载重挂）
+      await loadGroups({ force: true, silent: true });
       setCreateOpen(false);
 
       // 启动短期轮询以获取后台生成的群名（轮询 3 次，每次间隔 2 秒）
       for (let i = 0; i < 3; i++) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
-        await loadGroups({ force: true });
+        await loadGroups({ force: true, silent: true });
       }
     } catch (err) {
       console.error('Failed to create group:', err);
@@ -418,8 +418,8 @@ export default function Sidebar() {
         return;
       }
 
-      // 绑定 PRD 后强制刷新列表（群组名称可能变化）
-      await loadGroups({ force: true });
+      // 绑定 PRD 后强制刷新列表（silent 避免 loading→true 导致 ChatContainer 卸载重挂）
+      await loadGroups({ force: true, silent: true });
       await openGroupSession(activeGroupId);
     } catch (err) {
       console.error('Failed to upload/bind PRD:', err);
