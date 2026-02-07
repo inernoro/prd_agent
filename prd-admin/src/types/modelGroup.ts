@@ -22,6 +22,18 @@ export interface ModelGroupItem {
 }
 
 /**
+ * 调度策略类型
+ */
+export enum PoolStrategyType {
+  FailFast = 0,
+  Race = 1,
+  Sequential = 2,
+  RoundRobin = 3,
+  WeightedRandom = 4,
+  LeastLatency = 5,
+}
+
+/**
  * 模型分组
  */
 export interface ModelGroup {
@@ -35,6 +47,8 @@ export interface ModelGroup {
   modelType: string;
   /** 后端：是否为该类型默认分组 */
   isDefaultForType: boolean;
+  /** 调度策略类型 */
+  strategyType: PoolStrategyType;
   models: ModelGroupItem[];
   description?: string;
   createdAt: string;
@@ -68,6 +82,8 @@ export interface CreateModelGroupRequest {
   priority?: number;
   modelType: string;
   isDefaultForType?: boolean;
+  /** 调度策略类型 */
+  strategyType?: PoolStrategyType;
   description?: string;
   /** 后端创建会初始化为空 */
   models?: ModelGroupItem[];
@@ -86,6 +102,8 @@ export interface UpdateModelGroupRequest {
   description?: string;
   models?: ModelGroupItem[];
   isDefaultForType?: boolean;
+  /** 调度策略类型 */
+  strategyType?: PoolStrategyType;
 }
 
 /**
@@ -105,6 +123,52 @@ export interface ModelGroupMonitoringData {
     lastFailedAt?: string;
     lastSuccessAt?: string;
   }>;
+}
+
+/**
+ * 调度预测 - 端点预测步骤
+ */
+export interface PredictionStep {
+  order: number;
+  endpointId: string;
+  modelId: string;
+  action: 'request' | 'parallel' | 'fallback' | 'rotate' | 'weighted' | 'standby';
+  label: string;
+  isTarget: boolean;
+  weight?: number;
+  probability?: number;
+}
+
+/**
+ * 调度预测 - 端点信息
+ */
+export interface PredictionEndpoint {
+  endpointId: string;
+  modelId: string;
+  platformId: string;
+  platformName: string;
+  priority: number;
+  healthStatus: string;
+  isAvailable: boolean;
+  healthScore: number;
+  consecutiveFailures: number;
+  index: number;
+}
+
+/**
+ * 调度预测结果
+ */
+export interface PoolPrediction {
+  poolId: string;
+  poolName: string;
+  strategy: string;
+  strategyDescription: string;
+  allEndpoints: PredictionEndpoint[];
+  prediction: {
+    type: string;
+    description: string;
+    steps: PredictionStep[];
+  };
 }
 
 /**

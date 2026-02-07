@@ -92,6 +92,7 @@ export const api = {
       list: () => '/api/mds/model-groups',
       byId: (id: string) => `/api/mds/model-groups/${id}`,
       forApp: () => '/api/mds/model-groups/for-app',
+      predict: (id: string) => `/api/mds/model-groups/${id}/predict`,
     },
 
     // LLM 配置

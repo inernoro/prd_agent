@@ -5,6 +5,7 @@ import type {
   CreateModelGroupRequest,
   UpdateModelGroupRequest,
   ModelGroupMonitoringData,
+  PoolPrediction,
 } from '../../types/modelGroup';
 import type { IModelGroupsService } from '../contracts/modelGroups';
 import { useAuthStore } from '@/stores/authStore';
@@ -38,6 +39,7 @@ function mapGroupFromApi(g: any): ModelGroup {
     isDefaultForType,
     code: g?.code || '',
     priority: g?.priority ?? 50,
+    strategyType: g?.strategyType ?? 0,
     isSystemGroup: isDefaultForType,
   } as ModelGroup;
 }
@@ -108,6 +110,7 @@ export class ModelGroupsService implements IModelGroupsService {
       priority: request.priority ?? 50,
       modelType: String(request.modelType ?? '').trim(),
       isDefaultForType: !!request.isDefaultForType,
+      strategyType: request.strategyType ?? 0,
       description: request.description ?? undefined,
       models: request.models ?? [],
     };
@@ -139,6 +142,7 @@ export class ModelGroupsService implements IModelGroupsService {
     if (request.description !== undefined) payload.description = request.description;
     if (request.models !== undefined) payload.models = request.models;
     if (request.isDefaultForType !== undefined) payload.isDefaultForType = !!request.isDefaultForType;
+    if (request.strategyType !== undefined) payload.strategyType = request.strategyType;
 
     const res = await fetch(api.mds.modelGroups.byId(id), {
       method: 'PUT',
@@ -221,6 +225,18 @@ export class ModelGroupsService implements IModelGroupsService {
     const json = await readApiJson<void>(res);
     if (!res.ok || !json.success) {
       throw new Error(json.error?.message || `模拟恢复失败: ${res.status}`);
+    }
+    return json;
+  }
+
+  async predictNextDispatch(groupId: string): Promise<ApiResponse<PoolPrediction>> {
+    const res = await fetch(api.mds.modelGroups.predict(groupId), {
+      headers: getAuthHeaders(),
+    });
+
+    const json = await readApiJson<PoolPrediction>(res);
+    if (!res.ok || !json.success) {
+      throw new Error(json.error?.message || `获取调度预测失败: ${res.status}`);
     }
     return json;
   }

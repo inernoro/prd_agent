@@ -305,7 +305,7 @@ public async Task StreamGenerateAsync(CancellationToken ct)
 
 ## Codebase Skill（代码库快照 — 供 AI 增量维护用）
 
-> **最后更新**：2026-02-03 | **总提交数**：116 | **文档版本**：SRS v3.0, PRD v3.0
+> **最后更新**：2026-02-07 | **总提交数**：329 | **文档版本**：SRS v3.0, PRD v3.0
 >
 > **用途**：AI 在后续会话中读取此段落即可跳过全盘扫描，仅对增量变更进行定点校验。
 > **维护规则**：每次代码结构性变更（新增模块、重命名、废弃功能）后，需同步更新此段落。
@@ -318,7 +318,7 @@ prd_agent/
 │   └── src/
 │       ├── PrdAgent.Api/             # Controllers + Middleware + Services(Workers)
 │       ├── PrdAgent.Core/            # Models + Interfaces + Security
-│       └── PrdAgent.Infrastructure/  # LLM clients + DB + Services 实现
+│       └── PrdAgent.Infrastructure/  # LLM clients + DB + Services 实现 + ModelPool/
 ├── prd-admin/        # React 18 管理后台 (TypeScript, Vite, Zustand, Radix UI)
 │   └── src/
 │       ├── pages/        # 19 个顶级页面 + 8 个子目录
@@ -343,6 +343,7 @@ prd_agent/
 | **RBAC** | `SystemRole` + `AdminPermissionCatalog` (60+ permissions) + `AdminPermissionMiddleware` |
 | **Watermark** | appKey 绑定 + 字体管理 + SixLabors.ImageSharp 渲染 |
 | **LLM Gateway** | `ILlmGateway` + `ModelResolver` + 三级调度 + 健康管理 |
+| **ModelPool** | 独立策略引擎组件 (`Infrastructure/ModelPool/`)，6 种策略 (FailFast/Race/Sequential/RoundRobin/WeightedRandom/LeastLatency)，`ModelPoolFactory` 桥接 `ModelGroup` + `LLMPlatform` |
 | **Marketplace Registry** | `CONFIG_TYPE_REGISTRY` 类型注册 + `IForkable` 白名单复制 |
 
 ### 功能注册表
@@ -358,7 +359,9 @@ prd_agent/
 | 速率限制 | ✅ DONE | RedisRateLimitService (Lua 滑动窗口) |
 | 液态玻璃主题 | ✅ DONE | themeStore, GlassCard, ThemeSkinEditor |
 | Open Platform | ✅ DONE | OpenPlatformChatController, LLMAppCaller |
-| 模型组/Gateway | ✅ DONE | ModelGroupsController, LlmGateway, ModelResolver |
+| 模型组/Gateway | ✅ DONE | ModelGroupsController, LlmGateway, ModelResolver, ModelPoolFactory |
+| 模型池策略引擎 | ✅ DONE | `Infrastructure/ModelPool/` (IModelPool, 6 Strategies, PoolHealthTracker, HttpPoolDispatcher) |
+| 模型池管理 UI | ✅ DONE | ModelPoolManagePage (策略配置 + 调度预测可视化 + PoolPredictionDialog) |
 | 桌面自动更新 | ✅ DONE | tauri.conf.json updater, updater.rs |
 | PRD 评论 | ✅ DONE | PrdCommentsController, PrdCommentsPanel |
 | 内容缺失检测 | ✅ DONE | GapsController, GapDetectionService |
