@@ -397,7 +397,7 @@ public class OpenAIImageClient
                     var (googleAspectRatio, googleImageSize) = GooglePlatformAdapter.ParseSizeToGoogleParams(requestedSizeNorm);
                     var googleImages = initImageBase64 != null ? new List<string> { initImageBase64 } : null;
                     var googleBody = GooglePlatformAdapter.BuildGoogleRequestBody(
-                        prompt, googleAspectRatio, googleImageSize, googleImages);
+                        effectiveModelName, prompt, googleAspectRatio, googleImageSize, googleImages);
                     var googleEndpointPath = GooglePlatformAdapter.BuildGoogleEndpointPath(effectiveModelName);
 
                     _logger.LogInformation(
@@ -1150,7 +1150,7 @@ public class OpenAIImageClient
                 ).ToList();
 
                 var googleBody = GooglePlatformAdapter.BuildGoogleRequestBody(
-                    prompt, googleAspectRatio, googleImageSize, googleImages);
+                    effectiveModelName, prompt, googleAspectRatio, googleImageSize, googleImages);
                 var googleEndpointPath = GooglePlatformAdapter.BuildGoogleEndpointPath(effectiveModelName);
 
                 _logger.LogInformation(

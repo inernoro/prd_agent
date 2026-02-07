@@ -102,11 +102,13 @@ public class GooglePlatformAdapter : IImageGenPlatformAdapter
     /// <summary>
     /// 构建 Google generateContent 请求体
     /// </summary>
+    /// <param name="modelName">模型名称（部分代理需要 body 中也包含 model 字段）</param>
     /// <param name="prompt">文本提示</param>
     /// <param name="aspectRatio">宽高比（如 16:9、1:1）</param>
     /// <param name="imageSize">图片尺寸级别（1K、2K、4K）</param>
     /// <param name="images">参考图列表（data URI 或 raw base64），null/空 表示文生图</param>
     public static JsonObject BuildGoogleRequestBody(
+        string modelName,
         string prompt,
         string? aspectRatio,
         string? imageSize,
@@ -114,7 +116,10 @@ public class GooglePlatformAdapter : IImageGenPlatformAdapter
     {
         var parts = new JsonArray();
 
-        // 先放参考图（inline_data parts）
+        // 文本提示放在最前面（遵循 Google 文档推荐顺序）
+        parts.Add(new JsonObject { ["text"] = prompt });
+
+        // 参考图作为 inline_data parts（text 之后）
         if (images is { Count: > 0 })
         {
             foreach (var img in images)
@@ -130,9 +135,6 @@ public class GooglePlatformAdapter : IImageGenPlatformAdapter
                 });
             }
         }
-
-        // 文本提示
-        parts.Add(new JsonObject { ["text"] = prompt });
 
         // generationConfig
         var imageConfig = new JsonObject();
@@ -151,7 +153,8 @@ public class GooglePlatformAdapter : IImageGenPlatformAdapter
             {
                 ["responseModalities"] = new JsonArray { "IMAGE" },
                 ["imageConfig"] = imageConfig
-            }
+            },
+            ["model"] = modelName
         };
 
         return body;
