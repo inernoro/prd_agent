@@ -450,6 +450,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 var rawBody = request.RequestBody ?? new JsonObject();
 
+                // Exchange 模式下处理 multipart 请求：将字段和文件合并到 JSON
+                if (request.IsMultipart)
+                {
+                    rawBody = ConsolidateMultipartToJson(request);
+                    _logger.LogInformation(
+                        "[LlmGateway.Exchange] Multipart → JSON 合并完成，字段数: {FieldCount}, 文件数: {FileCount}",
+                        request.MultipartFields?.Count ?? 0,
+                        request.MultipartFiles?.Count ?? 0);
+                }
+
                 // 智能路由：根据请求内容决定实际目标 URL
                 var resolvedUrl = transformer.ResolveTargetUrl(endpoint, rawBody, resolution.ExchangeTransformerConfig);
                 if (resolvedUrl != null) endpoint = resolvedUrl;
@@ -712,6 +722,51 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
                 break;
         }
+    }
+
+    /// <summary>
+    /// 将 multipart 请求的字段和文件合并为 JSON 对象，供 Exchange 转换器使用。
+    /// MultipartFields → JSON 属性，MultipartFiles 中的图片 → base64 data URI 放入 image_urls。
+    /// </summary>
+    private static JsonObject ConsolidateMultipartToJson(GatewayRawRequest request)
+    {
+        var body = new JsonObject();
+
+        // 合并 MultipartFields 到 JSON
+        if (request.MultipartFields != null)
+        {
+            foreach (var (key, value) in request.MultipartFields)
+            {
+                if (string.Equals(key, "model", StringComparison.OrdinalIgnoreCase))
+                    continue; // model 由 Gateway 调度管理，不透传
+
+                body[key] = value switch
+                {
+                    int i => JsonValue.Create(i),
+                    long l => JsonValue.Create(l),
+                    double d => JsonValue.Create(d),
+                    float f => JsonValue.Create(f),
+                    bool b => JsonValue.Create(b),
+                    string s => JsonValue.Create(s),
+                    _ => JsonValue.Create(value?.ToString())
+                };
+            }
+        }
+
+        // 将 MultipartFiles 中的图片转换为 base64 data URI，放入 image_urls
+        if (request.MultipartFiles is { Count: > 0 })
+        {
+            var imageUrls = new JsonArray();
+            foreach (var (_, fileInfo) in request.MultipartFiles)
+            {
+                var base64 = Convert.ToBase64String(fileInfo.Content);
+                var dataUri = $"data:{fileInfo.MimeType};base64,{base64}";
+                imageUrls.Add(dataUri);
+            }
+            body["image_urls"] = imageUrls;
+        }
+
+        return body;
     }
 
     private IGatewayAdapter? GetAdapter(string? platformType)
