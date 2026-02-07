@@ -391,6 +391,39 @@ public class OpenAIImageClient
                         }
                     }, token);
                 }
+                // Google 原生路径：文生图/图生图统一用 generateContent 格式
+                else if (platformType == "google" || platformType == "gemini")
+                {
+                    var (googleAspectRatio, googleImageSize) = GooglePlatformAdapter.ParseSizeToGoogleParams(requestedSizeNorm);
+                    var googleImages = initImageBase64 != null ? new List<string> { initImageBase64 } : null;
+                    var googleBody = GooglePlatformAdapter.BuildGoogleRequestBody(
+                        prompt, googleAspectRatio, googleImageSize, googleImages);
+                    var googleEndpointPath = GooglePlatformAdapter.BuildGoogleEndpointPath(effectiveModelName);
+
+                    _logger.LogInformation(
+                        "[OpenAIImageClient] Google 原生请求: AppCallerCode={AppCallerCode}, HasImage={HasImage}, " +
+                        "AspectRatio={AspectRatio}, ImageSize={ImageSize}, Endpoint={Endpoint}",
+                        appCallerCode, initImageBase64 != null, googleAspectRatio, googleImageSize, googleEndpointPath);
+
+                    return await _gateway.SendRawAsync(new GatewayRawRequest
+                    {
+                        AppCallerCode = appCallerCode,
+                        ModelType = "generation",
+                        EndpointPath = googleEndpointPath,
+                        RequestBody = googleBody,
+                        IsMultipart = false,
+                        TimeoutSeconds = imageGenTimeoutSeconds,
+                        Context = new GatewayRequestContext
+                        {
+                            RequestId = requestId,
+                            SessionId = ctx?.SessionId,
+                            GroupId = ctx?.GroupId,
+                            UserId = ctx?.UserId,
+                            ViewRole = ctx?.ViewRole,
+                            QuestionText = prompt.Trim()
+                        }
+                    }, token);
+                }
                 else if (initImageBase64 == null)
                 {
                     // 文生图请求（JSON）
@@ -611,6 +644,86 @@ public class OpenAIImageClient
 
         try
         {
+            // Google 响应格式检测：{ candidates: [{ content: { parts: [{ inlineData: { data } }] } }] }
+            var isGoogleResponse = (platformType == "google" || platformType == "gemini");
+            if (isGoogleResponse)
+            {
+                var googleImages = GooglePlatformAdapter.ParseGoogleResponseImages(body);
+                if (googleImages.Count == 0)
+                {
+                    _logger.LogWarning("[Google] 响应中未找到图片数据。Body length={Len}", body.Length);
+                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, "Google 生图响应中未包含图片数据");
+                }
+
+                var images = new List<ImageGenImage>();
+                for (var gi = 0; gi < googleImages.Count; gi++)
+                {
+                    images.Add(new ImageGenImage
+                    {
+                        Index = gi,
+                        Base64 = googleImages[gi].Base64,
+                        Url = null,
+                    });
+                }
+
+                // 水印 + COS 上传（与标准路径相同逻辑）
+                var appKeyForGoogleWm = TryResolveAppKeyFromAppCallerCode(appCallerCode);
+                var wmConfigGoogle = string.IsNullOrWhiteSpace(appKeyForGoogleWm)
+                    ? null : await TryGetWatermarkConfigAsync(appKeyForGoogleWm, ct);
+                var cosInfosGoogle = new List<object>();
+
+                for (var i = 0; i < images.Count; i++)
+                {
+                    byte[]? bytes = null;
+                    var outMime = googleImages[i].MimeType;
+
+                    if (!string.IsNullOrWhiteSpace(images[i].Base64))
+                    {
+                        try { bytes = Convert.FromBase64String(images[i].Base64!); }
+                        catch { bytes = null; }
+                    }
+
+                    if (bytes == null || bytes.Length == 0) continue;
+
+                    var stored = await _assetStorage.SaveAsync(bytes, outMime, ct,
+                        domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                    var displayUrl = stored.Url;
+
+                    if (wmConfigGoogle != null)
+                    {
+                        try
+                        {
+                            var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, wmConfigGoogle, ct);
+                            var wmStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct,
+                                domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
+                            displayUrl = wmStored.Url;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "[Google] 水印应用失败，使用原图");
+                        }
+                    }
+
+                    images[i].Url = displayUrl;
+                    images[i].Base64 = null;
+                    images[i].OriginalUrl = stored.Url;
+                    images[i].OriginalSha256 = stored.Sha256;
+                    cosInfosGoogle.Add(new { index = i, url = stored.Url, sha256 = stored.Sha256, mime = stored.Mime, sizeBytes = stored.SizeBytes });
+                }
+
+                _logger.LogInformation("[Google] 生图成功: ImageCount={Count}, COS={CosCount}", images.Count, cosInfosGoogle.Count);
+
+                return ApiResponse<ImageGenResult>.Ok(new ImageGenResult
+                {
+                    Images = images,
+                    Meta = new ImageGenResultMeta
+                    {
+                        RequestedSize = requestedSizeRaw,
+                        EffectiveSize = requestedSizeRaw,
+                    }
+                });
+            }
+
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
             var data = root.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == JsonValueKind.Array
@@ -1018,6 +1131,144 @@ public class OpenAIImageClient
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[Exchange] 多图生成失败");
+                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, ex.Message);
+            }
+        }
+
+        // Google 原生路径：多图也用 generateContent 格式（inline_data parts）
+        var visionPlatformType = resolution.PlatformType?.ToLowerInvariant();
+        if (visionPlatformType == "google" || visionPlatformType == "gemini")
+        {
+            try
+            {
+                var (googleAspectRatio, googleImageSize) = GooglePlatformAdapter.ParseSizeToGoogleParams(size);
+                // 收集所有参考图
+                var googleImages = imageRefs.Select(r =>
+                    r.Base64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                        ? r.Base64
+                        : $"data:{r.MimeType ?? "image/png"};base64,{r.Base64}"
+                ).ToList();
+
+                var googleBody = GooglePlatformAdapter.BuildGoogleRequestBody(
+                    prompt, googleAspectRatio, googleImageSize, googleImages);
+                var googleEndpointPath = GooglePlatformAdapter.BuildGoogleEndpointPath(effectiveModelName);
+
+                _logger.LogInformation(
+                    "[OpenAIImageClient] Google 原生多图请求: AppCallerCode={AppCallerCode}, ImageCount={Count}, " +
+                    "AspectRatio={AspectRatio}, ImageSize={ImageSize}",
+                    appCallerCode, imageRefs.Count, googleAspectRatio, googleImageSize);
+
+                var googleTimeout = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
+                googleTimeout = Math.Clamp(googleTimeout, 60, 3600);
+
+                var gatewayResp = await _gateway.SendRawAsync(new GatewayRawRequest
+                {
+                    AppCallerCode = appCallerCode,
+                    ModelType = "generation",
+                    EndpointPath = googleEndpointPath,
+                    RequestBody = googleBody,
+                    IsMultipart = false,
+                    TimeoutSeconds = googleTimeout,
+                    Context = new GatewayRequestContext
+                    {
+                        RequestId = requestId,
+                        SessionId = ctx?.SessionId,
+                        GroupId = ctx?.GroupId,
+                        UserId = ctx?.UserId,
+                        ViewRole = ctx?.ViewRole,
+                        QuestionText = prompt.Trim()
+                    }
+                }, ct);
+
+                var respBody = gatewayResp.Content ?? string.Empty;
+                if (!gatewayResp.Success)
+                {
+                    var errorMsg = TryExtractUpstreamErrorMessage(respBody, out var em)
+                        ? $"Google 生图错误: {em}"
+                        : $"Google 生图请求失败: HTTP {gatewayResp.StatusCode}";
+                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, errorMsg);
+                }
+
+                // 解析 Google candidates 响应
+                var googleImgResults = GooglePlatformAdapter.ParseGoogleResponseImages(respBody);
+                if (googleImgResults.Count == 0)
+                {
+                    _logger.LogWarning("[Google] 多图响应中未找到图片数据");
+                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, "Google 生图响应中未包含图片数据");
+                }
+
+                var images = new List<ImageGenImage>();
+                for (var gi = 0; gi < googleImgResults.Count; gi++)
+                {
+                    images.Add(new ImageGenImage
+                    {
+                        Index = gi,
+                        Base64 = googleImgResults[gi].Base64,
+                    });
+                }
+
+                // 水印 + COS 上传
+                var appKeyForWm = TryResolveAppKeyFromAppCallerCode(appCallerCode);
+                var wmConfig = string.IsNullOrWhiteSpace(appKeyForWm) ? null : await TryGetWatermarkConfigAsync(appKeyForWm, ct);
+
+                for (var i = 0; i < images.Count; i++)
+                {
+                    byte[]? bytes = null;
+                    var outMime = googleImgResults[i].MimeType;
+
+                    if (!string.IsNullOrWhiteSpace(images[i].Base64))
+                    {
+                        try { bytes = Convert.FromBase64String(images[i].Base64!); }
+                        catch { bytes = null; }
+                    }
+
+                    if (bytes == null || bytes.Length == 0) continue;
+
+                    var stored = await _assetStorage.SaveAsync(bytes, outMime, ct,
+                        domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                    var displayUrl = stored.Url;
+
+                    if (wmConfig != null)
+                    {
+                        try
+                        {
+                            var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, wmConfig, ct);
+                            var wmStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct,
+                                domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
+                            displayUrl = wmStored.Url;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "[Google] 水印应用失败，使用原图");
+                        }
+                    }
+
+                    images[i].Url = displayUrl;
+                    images[i].Base64 = null;
+                    images[i].OriginalUrl = stored.Url;
+                    images[i].OriginalSha256 = stored.Sha256;
+                }
+
+                _logger.LogInformation("[Google] 多图生成成功: ImageCount={Count}", images.Count);
+
+                return ApiResponse<ImageGenResult>.Ok(new ImageGenResult
+                {
+                    Images = images,
+                    Meta = new ImageGenResultMeta
+                    {
+                        RequestedSize = size,
+                        EffectiveSize = size
+                    }
+                });
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogError(ex, "[Google] 多图网络请求失败");
+                return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Google] 多图生成失败");
                 return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, ex.Message);
             }
         }

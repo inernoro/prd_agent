@@ -418,12 +418,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
                 else
                 {
-                    // baseUrl 没有版本号（如 https://api.vveai.com）
-                    // 需要添加 /v1 前缀
-                    if (endpointPath.StartsWith("/v1/", StringComparison.OrdinalIgnoreCase) ||
-                        endpointPath.StartsWith("v1/", StringComparison.OrdinalIgnoreCase))
+                    // baseUrl 没有版本号（如 https://api.vveai.com 或 https://api.apiyi.com）
+                    // 检测 endpointPath 是否已包含版本号（v1, v1beta, v2 等）
+                    if (System.Text.RegularExpressions.Regex.IsMatch(
+                        endpointPath, @"^/?v\d+", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
                     {
-                        // endpointPath 已包含 v1，直接拼接
+                        // endpointPath 已包含版本号，直接拼接
                         endpoint = $"{baseUrl}{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
                     }
                     else
