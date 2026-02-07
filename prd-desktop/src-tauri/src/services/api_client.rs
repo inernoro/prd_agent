@@ -106,7 +106,7 @@ fn start_desktop_presence_heartbeat() {
     });
 }
 
-fn stop_desktop_presence_heartbeat() {
+pub fn stop_desktop_presence_heartbeat() {
     let mut guard = HEARTBEAT_TOKEN.lock().unwrap();
     if let Some(t) = guard.take() {
         t.cancel();
