@@ -407,6 +407,71 @@ public class ExchangeController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 上传测试图片到目标平台 CDN（用于图生图测试）
+    /// 目前支持 fal.ai 相关转换器，通过 fal.ai Storage API 上传
+    /// </summary>
+    [HttpPost("{id}/upload-test-image")]
+    public async Task<IActionResult> UploadTestImage(string id, IFormFile file, CancellationToken ct)
+    {
+        var exchange = await _db.ModelExchanges.Find(e => e.Id == id).FirstOrDefaultAsync(ct);
+        if (exchange == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Exchange 不存在"));
+
+        // 目前只有 fal.ai 相关转换器支持图片上传
+        var supportedTypes = new[] { "fal-image", "fal-image-edit" };
+        if (!supportedTypes.Contains(exchange.TransformerType, StringComparer.OrdinalIgnoreCase))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"转换器类型 '{exchange.TransformerType}' 不支持图片上传"));
+
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择要上传的图片"));
+
+        // 读取文件
+        using var ms = new MemoryStream();
+        await file.CopyToAsync(ms, ct);
+        var bytes = ms.ToArray();
+
+        // 上传到 fal.ai CDN Storage
+        var apiKey = ApiKeyCrypto.Decrypt(exchange.TargetApiKeyEncrypted, GetJwtSecret());
+        var httpClient = _httpClientFactory.CreateClient();
+        httpClient.Timeout = TimeSpan.FromSeconds(60);
+
+        const string falStorageUrl = "https://rest.alpha.fal.ai/storage/upload";
+        var uploadRequest = new HttpRequestMessage(HttpMethod.Post, falStorageUrl)
+        {
+            Content = new ByteArrayContent(bytes)
+        };
+        uploadRequest.Content.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType ?? "image/png");
+
+        // fal.ai Storage API 始终使用 Key 认证
+        uploadRequest.Headers.Authorization = new AuthenticationHeaderValue("Key", apiKey);
+
+        try
+        {
+            var response = await httpClient.SendAsync(uploadRequest, ct);
+            var responseBody = await response.Content.ReadAsStringAsync(ct);
+
+            if (!response.IsSuccessStatusCode)
+                return Ok(ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR,
+                    $"图片上传失败 (HTTP {(int)response.StatusCode}): {responseBody}"));
+
+            var json = JsonNode.Parse(responseBody);
+            var url = json?["url"]?.GetValue<string>();
+
+            if (string.IsNullOrEmpty(url))
+                return Ok(ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR,
+                    $"上传响应中未找到 URL: {responseBody}"));
+
+            return Ok(ApiResponse<object>.Ok(new { url }));
+        }
+        catch (Exception ex)
+        {
+            return Ok(ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, $"上传请求失败: {ex.Message}"));
+        }
+    }
+
     private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 }
 
