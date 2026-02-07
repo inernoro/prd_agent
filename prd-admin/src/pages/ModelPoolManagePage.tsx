@@ -15,6 +15,7 @@ import {
   updateModelGroup,
   deleteModelGroup,
   predictNextDispatch,
+  resetModelHealth,
 } from '@/services';
 import { getExchanges } from '@/services/real/exchanges';
 import type { ModelGroup, ModelGroupItem, Platform, PoolPrediction } from '@/types';
@@ -457,12 +458,32 @@ export function ModelPoolManagePage() {
                                 total={pool.models.length}
                                 size="sm"
                                 suffix={
-                                  <span
-                                    className="text-[10px] px-1.5 py-0.5 rounded"
-                                    style={{ background: status.bg, color: status.color }}
-                                  >
-                                    {status.label}
-                                  </span>
+                                  model.healthStatus !== 'Healthy' ? (
+                                    <button
+                                      className="text-[10px] px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
+                                      style={{ background: status.bg, color: status.color }}
+                                      title="点击重置为健康状态"
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        try {
+                                          await resetModelHealth(pool.id, `${model.platformId}:${model.modelId}`);
+                                          toast.success('已重置为健康状态');
+                                          loadData();
+                                        } catch (err: any) {
+                                          toast.error(err.message || '重置失败');
+                                        }
+                                      }}
+                                    >
+                                      {status.label} ↻
+                                    </button>
+                                  ) : (
+                                    <span
+                                      className="text-[10px] px-1.5 py-0.5 rounded"
+                                      style={{ background: status.bg, color: status.color }}
+                                    >
+                                      {status.label}
+                                    </span>
+                                  )
                                 }
                               />
                             );

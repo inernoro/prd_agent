@@ -93,6 +93,10 @@ export const api = {
       byId: (id: string) => `/api/mds/model-groups/${id}`,
       forApp: () => '/api/mds/model-groups/for-app',
       predict: (id: string) => `/api/mds/model-groups/${id}/predict`,
+      resetModelHealth: (groupId: string, modelId: string) =>
+        `/api/mds/model-groups/${groupId}/models/${encodeURIComponent(modelId)}/reset-health`,
+      resetAllHealth: (groupId: string) =>
+        `/api/mds/model-groups/${groupId}/reset-all-health`,
     },
 
     // LLM 配置

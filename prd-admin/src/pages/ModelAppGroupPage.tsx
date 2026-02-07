@@ -16,6 +16,7 @@ import {
   updateModelGroup,
   // deleteModelGroup, // 暂时未使用
   getGroupMonitoring,
+  resetModelHealth,
   // simulateDowngrade, // 暂时未使用
   // simulateRecover, // 暂时未使用
   getSchedulerConfig,
@@ -1310,13 +1311,33 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                   暂无统计
                                                 </span>
                                               )}
-                                              {/* 状态 */}
-                                              <span
-                                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
-                                                style={{ background: defaultStatus.bg, color: defaultStatus.color }}
-                                              >
-                                                {defaultStatus.label}
-                                              </span>
+                                              {/* 状态（非 Healthy 时可点击重置） */}
+                                              {resolvedModel.healthStatus !== 'Healthy' && resolvedModel.modelGroupId ? (
+                                                <button
+                                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                                                  style={{ background: defaultStatus.bg, color: defaultStatus.color }}
+                                                  title="点击重置为健康状态"
+                                                  onClick={async (e) => {
+                                                    e.stopPropagation();
+                                                    try {
+                                                      await resetModelHealth(resolvedModel.modelGroupId!, `${resolvedModel.platformId}:${resolvedModel.modelId}`);
+                                                      toast.success('已重置为健康状态');
+                                                      loadData();
+                                                    } catch (err: any) {
+                                                      toast.error(err.message || '重置失败');
+                                                    }
+                                                  }}
+                                                >
+                                                  {defaultStatus.label} ↻
+                                                </button>
+                                              ) : (
+                                                <span
+                                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
+                                                  style={{ background: defaultStatus.bg, color: defaultStatus.color }}
+                                                >
+                                                  {defaultStatus.label}
+                                                </span>
+                                              )}
                                               {/* 查看日志按钮 - hover 显示 */}
                                               <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                                                 <button
@@ -1503,13 +1524,33 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                         暂无统计
                                                       </span>
                                                     )}
-                                                    {/* 状态 */}
-                                                    <span
-                                                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
-                                                      style={{ background: status.bg, color: status.color }}
-                                                    >
-                                                      {status.label}
-                                                    </span>
+                                                    {/* 状态（非 Healthy 时可点击重置） */}
+                                                    {model.healthStatus !== 'Healthy' ? (
+                                                      <button
+                                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                                                        style={{ background: status.bg, color: status.color }}
+                                                        title="点击重置为健康状态"
+                                                        onClick={async (e) => {
+                                                          e.stopPropagation();
+                                                          try {
+                                                            await resetModelHealth(poolGroup.id, `${model.platformId}:${model.modelId}`);
+                                                            toast.success('已重置为健康状态');
+                                                            loadData();
+                                                          } catch (err: any) {
+                                                            toast.error(err.message || '重置失败');
+                                                          }
+                                                        }}
+                                                      >
+                                                        {status.label} ↻
+                                                      </button>
+                                                    ) : (
+                                                      <span
+                                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
+                                                        style={{ background: status.bg, color: status.color }}
+                                                      >
+                                                        {status.label}
+                                                      </span>
+                                                    )}
                                                     {/* 操作按钮 - hover 显示 */}
                                                     <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                                                       {/* 查看日志 */}
