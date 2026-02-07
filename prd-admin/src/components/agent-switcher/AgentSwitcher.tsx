@@ -53,6 +53,7 @@ function AgentCard({
   onMouseEnter,
   isClosing,
   cardRef,
+  convergeOffset,
 }: {
   agent: AgentDefinition;
   index: number;
@@ -61,7 +62,8 @@ function AgentCard({
   onClick: () => void;
   onMouseEnter: () => void;
   isClosing: boolean;
-  cardRef?: React.RefObject<HTMLButtonElement>;
+  cardRef?: React.Ref<HTMLButtonElement>;
+  convergeOffset?: { x: number; y: number };
 }) {
   const iconUrl = ICON_URLS[agent.key];
   const description = AGENT_DESCRIPTIONS[agent.key];
@@ -83,9 +85,14 @@ function AgentCard({
         ['--entry-x' as string]: `${direction.x}px`,
         ['--entry-y' as string]: `${direction.y}px`,
         ['--entry-rotate' as string]: `${direction.rotate}deg`,
-        // 穿越动画时隐藏所有卡片（canvas 接管视觉）
+        // 穿越动画时: 4张卡片向选中卡片中心汇聚
+        transform: isTransitioning && convergeOffset
+          ? `translate(${convergeOffset.x}px, ${convergeOffset.y}px) scale(0.15)`
+          : undefined,
         opacity: isTransitioning ? 0 : undefined,
-        transition: isTransitioning ? 'opacity 0.25s ease-out' : undefined,
+        transition: isTransitioning
+          ? 'transform 0.28s cubic-bezier(0.4, 0, 1, 1), opacity 0.22s ease-out 0.06s'
+          : undefined,
       }}
     >
       {/* 主卡片 */}
@@ -255,18 +262,14 @@ function PortalTransition({
     const cg = parseInt(color.slice(3, 5), 16);
     const cb = parseInt(color.slice(5, 7), 16);
 
-    // 门内光线
-    const innerRays = Array.from({ length: 16 }, (_, i) => ({
-      angle: (i / 16) * Math.PI * 2,
-      width: 0.04 + Math.random() * 0.03,
-      brightness: 0.5 + Math.random() * 0.5,
-    }));
-    // 门外泄漏光线 — 粗、长、亮，四面八方
-    const leakRays = Array.from({ length: 32 }, (_, i) => ({
-      angle: (i / 32) * Math.PI * 2 + (Math.random() - 0.5) * 0.08,
-      length: 150 + Math.random() * 300,
-      width: 3 + Math.random() * 6,
-      brightness: 0.4 + Math.random() * 0.6,
+    // 速度线 — 从中心辐射的细线，营造穿越飞行感
+    const speedLines = Array.from({ length: 50 }, () => ({
+      angle: Math.random() * Math.PI * 2,
+      startDist: 20 + Math.random() * 180,
+      length: 50 + Math.random() * 150,
+      width: 0.5 + Math.random() * 1.5,
+      brightness: 0.2 + Math.random() * 0.8,
+      isThemed: Math.random() > 0.6,
     }));
 
     const duration = 600; // 600ms 快速过渡
@@ -311,30 +314,6 @@ function PortalTransition({
       ctx.fillStyle = pg;
       ctx.fillRect(0, 0, vw, vh);
 
-      // 门内放射光线
-      const irAlpha = Math.max(0, 1 - ease * 1.5) * 0.4;
-      if (irAlpha > 0.01) {
-        for (const ray of innerRays) {
-          ctx.save();
-          ctx.translate(cx, cy);
-          ctx.rotate(ray.angle + ease * 0.5);
-          const len = radius * 0.85;
-          const w = radius * ray.width;
-          ctx.beginPath();
-          ctx.moveTo(0, 0);
-          ctx.lineTo(w, len);
-          ctx.lineTo(-w, len);
-          ctx.closePath();
-          const g = ctx.createLinearGradient(0, 0, 0, len);
-          g.addColorStop(0, `rgba(255,255,255,${irAlpha * ray.brightness})`);
-          g.addColorStop(0.15, `rgba(${cr},${cg},${cb},${irAlpha * ray.brightness * 0.6})`);
-          g.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = g;
-          ctx.fill();
-          ctx.restore();
-        }
-      }
-
       // Agent 图标穿越
       if (iconImg.complete && iconImg.naturalWidth > 0) {
         const ia = Math.max(0, 1 - t * 3);
@@ -350,31 +329,25 @@ function PortalTransition({
       }
       ctx.restore(); // 结束门内 clip
 
-      // ═══ 层2: 光泄漏（门外暗色表面上，四面八方辐射）═══
-      const la = t < 0.55 ? Math.min(1, t * 5) : Math.max(0, 1 - ((t - 0.55) / 0.45));
-      if (la > 0.01) {
-        for (const ray of leakRays) {
-          ctx.save();
-          ctx.translate(cx, cy);
-          ctx.rotate(ray.angle);
-          // 椭圆边缘距离（简化计算）
-          const a2 = (rx * Math.cos(ray.angle - tiltAngle)) ** 2;
-          const b2 = (ry * Math.sin(ray.angle - tiltAngle)) ** 2;
-          const edge = Math.sqrt(a2 + b2);
-          const len = ray.length * (0.5 + ease * 2);
-          // 从边缘起的三角形光束
+      // ═══ 层2: 速度线（穿越飞行感）═══
+      const slAlpha = t < 0.1 ? t * 10 : t > 0.7 ? Math.max(0, 1 - (t - 0.7) / 0.3) : 1;
+      if (slAlpha > 0.01) {
+        for (const line of speedLines) {
+          const lineLen = line.length * (0.3 + ease * 2.5);
+          const sd = line.startDist * (1 + ease * 0.5);
+          const x1 = cx + Math.cos(line.angle) * sd;
+          const y1 = cy + Math.sin(line.angle) * sd;
+          const x2 = cx + Math.cos(line.angle) * (sd + lineLen);
+          const y2 = cy + Math.sin(line.angle) * (sd + lineLen);
+
           ctx.beginPath();
-          ctx.moveTo(-ray.width, edge);
-          ctx.lineTo(0, edge + len);
-          ctx.lineTo(ray.width, edge);
-          ctx.closePath();
-          const g = ctx.createLinearGradient(0, edge, 0, edge + len);
-          g.addColorStop(0, `rgba(255,255,255,${la * ray.brightness * 0.5})`);
-          g.addColorStop(0.15, `rgba(${cr},${cg},${cb},${la * ray.brightness * 0.35})`);
-          g.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = g;
-          ctx.fill();
-          ctx.restore();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.strokeStyle = line.isThemed
+            ? `rgba(${cr},${cg},${cb},${slAlpha * line.brightness * 0.7})`
+            : `rgba(255,255,255,${slAlpha * line.brightness * 0.5})`;
+          ctx.lineWidth = line.width;
+          ctx.stroke();
         }
       }
 
@@ -418,13 +391,13 @@ function PortalTransition({
 
       // ═══ canvas 整体淡出（露出已导航的目标页面）═══
       if (t > 0.5) {
-        canvas.style.opacity = String(Math.max(0, 1 - ((t - 0.5) / 0.5)));
+        canvas!.style.opacity = String(Math.max(0, 1 - ((t - 0.5) / 0.5)));
       }
 
       if (t < 1) {
         frame = requestAnimationFrame(draw);
       } else {
-        canvas.style.opacity = '0';
+        canvas!.style.opacity = '0';
         cbRef.current.onComplete();
       }
     }
@@ -449,6 +422,8 @@ export function AgentSwitcher() {
   const [isClosing, setIsClosing] = useState(false);
   const [transitionAgent, setTransitionAgent] = useState<AgentDefinition | null>(null);
   const [transitionRect, setTransitionRect] = useState<DOMRect | null>(null);
+  const [convergeOffsets, setConvergeOffsets] = useState<Record<number, { x: number; y: number }>>({});
+  const [showPortal, setShowPortal] = useState(false);
   const cardRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const {
@@ -469,13 +444,28 @@ export function AgentSwitcher() {
         path: agent.route,
       });
 
-      // 获取卡片位置，启动穿越动画
-      const cardEl = cardRefs.current[index];
-      if (cardEl) {
-        const rect = cardEl.getBoundingClientRect();
-        setTransitionRect(rect);
-        setTransitionAgent(agent);
-      }
+      // 获取点击卡片位置
+      const clickedEl = cardRefs.current[index];
+      if (!clickedEl) return;
+
+      const clickedRect = clickedEl.getBoundingClientRect();
+      const targetCx = clickedRect.left + clickedRect.width / 2;
+      const targetCy = clickedRect.top + clickedRect.height / 2;
+
+      // 计算所有卡片向选中卡片中心汇聚的偏移量
+      const offsets: Record<number, { x: number; y: number }> = {};
+      cardRefs.current.forEach((el, i) => {
+        if (el) {
+          const r = el.getBoundingClientRect();
+          const cardCx = r.left + r.width / 2;
+          const cardCy = r.top + r.height / 2;
+          offsets[i] = { x: targetCx - cardCx, y: targetCy - cardCy };
+        }
+      });
+
+      setConvergeOffsets(offsets);
+      setTransitionRect(clickedRect);
+      setTransitionAgent(agent);
     },
     [addRecentVisit]
   );
@@ -492,7 +482,16 @@ export function AgentSwitcher() {
     close();
     setTransitionAgent(null);
     setTransitionRect(null);
+    setConvergeOffsets({});
+    setShowPortal(false);
   }, [close]);
+
+  // 卡片先汇聚 250ms，然后再展示传送门
+  useEffect(() => {
+    if (!transitionAgent) return;
+    const timer = setTimeout(() => setShowPortal(true), 250);
+    return () => clearTimeout(timer);
+  }, [transitionAgent]);
 
   const handleClose = useCallback(() => {
     setIsClosing(true);
@@ -655,6 +654,7 @@ export function AgentSwitcher() {
                 onMouseEnter={() => !isTransitioning && setSelectedIndex(index)}
                 isClosing={isClosing}
                 cardRef={el => { cardRefs.current[index] = el; }}
+                convergeOffset={convergeOffsets[index]}
               />
             ))}
           </div>
@@ -800,8 +800,8 @@ export function AgentSwitcher() {
         `}</style>
       </div>
 
-      {/* 传送门穿越过渡层 */}
-      {transitionAgent && transitionRect && (
+      {/* 传送门穿越过渡层 — 卡片汇聚 250ms 后展示 */}
+      {showPortal && transitionAgent && transitionRect && (
         <PortalTransition
           agent={transitionAgent}
           startRect={transitionRect}
