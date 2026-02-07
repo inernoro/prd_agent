@@ -1320,7 +1320,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                   onClick={async (e) => {
                                                     e.stopPropagation();
                                                     try {
-                                                      await resetModelHealth(resolvedModel.modelGroupId!, `${resolvedModel.platformId}:${resolvedModel.modelId}`);
+                                                      await resetModelHealth(resolvedModel.modelGroupId!, resolvedModel.modelId);
                                                       toast.success('已重置为健康状态');
                                                       loadData();
                                                     } catch (err: any) {
@@ -1533,7 +1533,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                         onClick={async (e) => {
                                                           e.stopPropagation();
                                                           try {
-                                                            await resetModelHealth(poolGroup.id, `${model.platformId}:${model.modelId}`);
+                                                            await resetModelHealth(poolGroup.id, model.modelId);
                                                             toast.success('已重置为健康状态');
                                                             loadData();
                                                           } catch (err: any) {

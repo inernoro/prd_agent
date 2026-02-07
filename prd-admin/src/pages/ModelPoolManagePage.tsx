@@ -466,7 +466,7 @@ export function ModelPoolManagePage() {
                                       onClick={async (e) => {
                                         e.stopPropagation();
                                         try {
-                                          await resetModelHealth(pool.id, `${model.platformId}:${model.modelId}`);
+                                          await resetModelHealth(pool.id, model.modelId);
                                           toast.success('已重置为健康状态');
                                           loadData();
                                         } catch (err: any) {
