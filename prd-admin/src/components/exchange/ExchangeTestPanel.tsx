@@ -1,8 +1,7 @@
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
-import { testExchange, uploadTestImage } from '@/services/real/exchanges';
+import { testExchange } from '@/services/real/exchanges';
 import type { ModelExchange, ExchangeTestResult } from '@/types/exchange';
-import { toast } from '@/lib/toast';
 import {
   ArrowRight,
   Check,
@@ -23,12 +22,28 @@ function isFalImageType(type: string) {
   return ['fal-image', 'fal-image-edit'].includes(type);
 }
 
+/** 将 File 转为 base64 data URI（fal.ai 原生支持） */
+function fileToDataUri(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 const SIZE_OPTIONS = [
   { value: '512x512', label: '512 × 512' },
   { value: '1024x1024', label: '1024 × 1024' },
   { value: '1024x1792', label: '1024 × 1792 (竖版)' },
   { value: '1792x1024', label: '1792 × 1024 (横版)' },
 ];
+
+/** 截断长 URL/DataURI 用于展示 */
+function truncateUrl(url: string, max = 35): string {
+  if (url.startsWith('data:')) return `data:image/… (${Math.round(url.length / 1024)}KB)`;
+  return url.length > max ? url.slice(0, max) + '…' : url;
+}
 
 export function ExchangeTestPanel({
   exchange,
@@ -122,19 +137,14 @@ export function ExchangeTestPanel({
     }
   };
 
-  // Image upload via fal.ai CDN proxy
+  // Image upload → base64 data URI（fal.ai 原生支持 data URI）
   const handleFileUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
-        const res = await uploadTestImage(exchange.id, file);
-        if (res.success && res.data?.url) {
-          setImageUrls(prev => [...prev, res.data.url]);
-          toast.success(`已上传: ${file.name}`);
-        } else {
-          toast.error(res.error?.message ?? `上传失败: ${file.name}`);
-        }
+        const dataUri = await fileToDataUri(file);
+        setImageUrls(prev => [...prev, dataUri]);
       }
     } finally {
       setUploading(false);
@@ -153,7 +163,6 @@ export function ExchangeTestPanel({
     setImageUrls(prev => prev.filter((_, i) => i !== idx));
   };
 
-  // Handle drag & drop
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -224,112 +233,126 @@ export function ExchangeTestPanel({
         </div>
       </div>
 
-      {/* ===== 可视化模式 ===== */}
+      {/* ===== 可视化模式：左右两栏 ===== */}
       {mode === 'visual' && showVisual && (
         <div className="space-y-3">
-          {/* Prompt */}
-          <div>
-            <label className="block text-sm font-medium mb-1">提示词 (Prompt)</label>
-            <textarea
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm resize-none"
-              rows={3}
-              placeholder="描述你想生成的图片..."
-              value={prompt}
-              onChange={e => setPrompt(e.target.value)}
-            />
-          </div>
+          {/* 两栏：左边 prompt，右边图片 */}
+          <div className="grid grid-cols-2 gap-4">
+            {/* 左栏：提示词 */}
+            <div className="space-y-1">
+              <label className="block text-sm font-medium">提示词 (Prompt)</label>
+              <textarea
+                className="w-full h-[200px] px-3 py-2 rounded-lg border border-border bg-background text-sm resize-none"
+                placeholder="描述你想生成的图片..."
+                value={prompt}
+                onChange={e => setPrompt(e.target.value)}
+              />
+            </div>
 
-          {/* 参考图片 */}
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              参考图片
-              <span className="text-muted-foreground font-normal ml-1.5">(有图片 → 图生图，无图片 → 文生图)</span>
-            </label>
+            {/* 右栏：参考图片 */}
+            <div className="space-y-1">
+              <label className="block text-sm font-medium">
+                参考图片
+                <span className="text-muted-foreground font-normal ml-1">(有 → 图生图，无 → 文生图)</span>
+              </label>
 
-            {/* 已添加的图片 */}
-            {imageUrls.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-2">
-                {imageUrls.map((url, idx) => (
-                  <div key={idx} className="group relative">
-                    <div className="w-20 h-20 rounded-lg border border-border overflow-hidden bg-muted/30">
-                      <img
-                        src={url}
-                        alt={`参考图 ${idx + 1}`}
-                        className="w-full h-full object-cover"
-                        onError={e => {
-                          const el = e.target as HTMLImageElement;
-                          el.style.display = 'none';
-                          const parent = el.parentElement;
-                          if (parent) {
-                            const fallback = document.createElement('div');
-                            fallback.className = 'w-full h-full flex items-center justify-center text-muted-foreground text-[9px] p-1 text-center break-all leading-tight';
-                            fallback.textContent = url.length > 40 ? url.slice(0, 40) + '…' : url;
-                            parent.appendChild(fallback);
-                          }
-                        }}
-                      />
-                    </div>
-                    <button
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-destructive text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => removeImage(idx)}
-                    >
-                      <X size={10} />
-                    </button>
+              <div className="h-[200px] flex flex-col">
+                {/* 已添加的图片 */}
+                {imageUrls.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-1.5 max-h-[100px] overflow-auto">
+                    {imageUrls.map((url, idx) => (
+                      <div key={idx} className="group relative">
+                        <div className="w-[72px] h-[72px] rounded-lg border border-border overflow-hidden bg-muted/30 flex items-center justify-center">
+                          {url.startsWith('data:') ? (
+                            <img src={url} alt={`图 ${idx + 1}`} className="w-full h-full object-cover" />
+                          ) : (
+                            <img
+                              src={url}
+                              alt={`图 ${idx + 1}`}
+                              className="w-full h-full object-cover"
+                              onError={e => {
+                                const el = e.target as HTMLImageElement;
+                                el.style.display = 'none';
+                                const parent = el.parentElement;
+                                if (parent) {
+                                  const fallback = document.createElement('div');
+                                  fallback.className = 'text-muted-foreground text-[8px] p-1 text-center break-all leading-tight';
+                                  fallback.textContent = truncateUrl(url, 30);
+                                  parent.appendChild(fallback);
+                                }
+                              }}
+                            />
+                          )}
+                        </div>
+                        <button
+                          className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-destructive text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => removeImage(idx)}
+                        >
+                          <X size={8} />
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
+
+                {/* 上传拖拽区 */}
+                <div
+                  className={`flex-1 min-h-[60px] border-2 border-dashed border-border/60 rounded-lg flex items-center justify-center hover:border-primary/40 transition-colors cursor-pointer ${
+                    imageUrls.length > 0 ? '' : ''
+                  }`}
+                  onClick={() => !uploading && fileInputRef.current?.click()}
+                  onDrop={handleDrop}
+                  onDragOver={handleDragOver}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={e => handleFileUpload(e.target.files)}
+                  />
+                  {uploading ? (
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Loader2 size={13} className="animate-spin" /> 转换中...
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Upload size={13} />
+                      点击或拖拽上传
+                      <span className="text-[10px] text-muted-foreground/50">(转为 Base64)</span>
+                    </span>
+                  )}
+                </div>
+
+                {/* URL 粘贴 */}
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  <Link size={11} className="text-muted-foreground shrink-0" />
+                  <input
+                    className="flex-1 px-2 py-1 rounded border border-border bg-background text-[11px]"
+                    placeholder="粘贴图片 URL..."
+                    value={urlInput}
+                    onChange={e => setUrlInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') addUrlInput(); }}
+                  />
+                  <button
+                    className="px-2 py-1 text-[11px] rounded border border-border hover:bg-muted/50 text-muted-foreground disabled:opacity-40"
+                    onClick={addUrlInput}
+                    disabled={!urlInput.trim()}
+                  >
+                    添加
+                  </button>
+                </div>
               </div>
-            )}
-
-            {/* 上传区域 */}
-            <div
-              className="border-2 border-dashed border-border/60 rounded-lg p-3 text-center hover:border-primary/40 transition-colors cursor-pointer"
-              onClick={() => !uploading && fileInputRef.current?.click()}
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={e => handleFileUpload(e.target.files)}
-              />
-              {uploading ? (
-                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground py-1">
-                  <Loader2 size={14} className="animate-spin" /> 上传中...
-                </div>
-              ) : (
-                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground py-1">
-                  <Upload size={14} />
-                  <span>点击或拖拽上传图片</span>
-                  <span className="text-[11px] text-muted-foreground/60">(上传到 fal.ai CDN)</span>
-                </div>
-              )}
-            </div>
-
-            {/* URL 输入 */}
-            <div className="flex items-center gap-2 mt-2">
-              <Link size={13} className="text-muted-foreground shrink-0" />
-              <input
-                className="flex-1 px-2.5 py-1.5 rounded-lg border border-border bg-background text-xs"
-                placeholder="或粘贴图片 URL..."
-                value={urlInput}
-                onChange={e => setUrlInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') addUrlInput(); }}
-              />
-              <Button variant="secondary" size="sm" onClick={addUrlInput} disabled={!urlInput.trim()}>
-                添加
-              </Button>
             </div>
           </div>
 
-          {/* 尺寸 + 数量 */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* 底部一行：尺寸 + 数量 */}
+          <div className="grid grid-cols-4 gap-3">
             <div>
-              <label className="block text-sm font-medium mb-1">尺寸</label>
+              <label className="block text-xs font-medium mb-1 text-muted-foreground">尺寸</label>
               <select
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                className="w-full px-2.5 py-1.5 rounded-lg border border-border bg-background text-sm"
                 value={size}
                 onChange={e => setSize(e.target.value)}
               >
@@ -339,12 +362,12 @@ export function ExchangeTestPanel({
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">生成数量</label>
+              <label className="block text-xs font-medium mb-1 text-muted-foreground">生成数量</label>
               <input
                 type="number"
                 min={1}
                 max={4}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                className="w-full px-2.5 py-1.5 rounded-lg border border-border bg-background text-sm"
                 value={numImages}
                 onChange={e => setNumImages(Math.max(1, parseInt(e.target.value) || 1))}
               />
