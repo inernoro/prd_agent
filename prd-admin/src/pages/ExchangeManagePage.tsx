@@ -32,9 +32,20 @@ type ExchangeForm = {
   targetApiKey: string;
   targetAuthScheme: string;
   transformerType: string;
+  imageTransferMode: string;
   enabled: boolean;
   description: string;
 };
+
+function isFalImageType(type: string) {
+  return ['fal-image', 'fal-image-edit'].includes(type);
+}
+
+const IMAGE_TRANSFER_MODE_OPTIONS = [
+  { value: 'auto', label: '自动 (推荐)', desc: '上传 → Base64，URL → 保持原样' },
+  { value: 'base64', label: '仅 Base64', desc: '全部转为 Base64 data URI，确保对方可接收' },
+  { value: 'url', label: '仅 URL', desc: '只允许 URL 输入，日志更干净' },
+];
 
 const defaultForm: ExchangeForm = {
   name: '',
@@ -43,6 +54,7 @@ const defaultForm: ExchangeForm = {
   targetApiKey: '',
   targetAuthScheme: 'Bearer',
   transformerType: 'passthrough',
+  imageTransferMode: 'auto',
   enabled: true,
   description: '',
 };
@@ -87,6 +99,7 @@ export function ExchangeManagePage() {
       targetApiKey: '', // 不回填密钥
       targetAuthScheme: exchange.targetAuthScheme,
       transformerType: exchange.transformerType,
+      imageTransferMode: (exchange.transformerConfig?.imageTransferMode as string) ?? 'auto',
       enabled: exchange.enabled,
       description: exchange.description ?? '',
     });
@@ -118,12 +131,17 @@ export function ExchangeManagePage() {
     setSaving(true);
     try {
       if (editingId) {
+        const transformerConfig: Record<string, unknown> = {};
+        if (isFalImageType(form.transformerType)) {
+          transformerConfig.imageTransferMode = form.imageTransferMode;
+        }
         const req: UpdateExchangeRequest = {
           name: form.name.trim(),
           modelAlias: form.modelAlias.trim(),
           targetUrl: form.targetUrl.trim(),
           targetAuthScheme: form.targetAuthScheme,
           transformerType: form.transformerType,
+          transformerConfig,
           enabled: form.enabled,
           description: form.description.trim() || undefined,
         };
@@ -139,6 +157,10 @@ export function ExchangeManagePage() {
           toast.error(res.error?.message ?? '更新失败');
         }
       } else {
+        const createConfig: Record<string, unknown> = {};
+        if (isFalImageType(form.transformerType)) {
+          createConfig.imageTransferMode = form.imageTransferMode;
+        }
         const req: CreateExchangeRequest = {
           name: form.name.trim(),
           modelAlias: form.modelAlias.trim(),
@@ -146,6 +168,7 @@ export function ExchangeManagePage() {
           targetApiKey: form.targetApiKey.trim() || undefined,
           targetAuthScheme: form.targetAuthScheme,
           transformerType: form.transformerType,
+          transformerConfig: createConfig,
           enabled: form.enabled,
           description: form.description.trim() || undefined,
         };
@@ -372,6 +395,22 @@ export function ExchangeManagePage() {
                 </select>
               </div>
             </div>
+
+            {/* 图片传输模式（仅图片类型转换器显示） */}
+            {isFalImageType(form.transformerType) && (
+              <div>
+                <label className="block text-sm font-medium mb-1">图片传输模式</label>
+                <select
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                  value={form.imageTransferMode}
+                  onChange={e => setForm(f => ({ ...f, imageTransferMode: e.target.value }))}
+                >
+                  {IMAGE_TRANSFER_MODE_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label} — {opt.desc}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* 启用 */}
             <div className="flex items-center gap-2">

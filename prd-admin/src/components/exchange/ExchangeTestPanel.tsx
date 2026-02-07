@@ -32,6 +32,14 @@ function fileToDataUri(file: File): Promise<string> {
   });
 }
 
+type ImageTransferMode = 'auto' | 'base64' | 'url';
+
+const TRANSFER_MODE_OPTIONS: { value: ImageTransferMode; label: string; short: string }[] = [
+  { value: 'auto', label: '自动', short: '自动' },
+  { value: 'base64', label: 'Base64', short: 'B64' },
+  { value: 'url', label: 'URL', short: 'URL' },
+];
+
 const SIZE_OPTIONS = [
   { value: '512x512', label: '512 × 512' },
   { value: '1024x1024', label: '1024 × 1024' },
@@ -54,6 +62,10 @@ export function ExchangeTestPanel({
 }) {
   const showVisual = isFalImageType(exchange.transformerType);
   const [mode, setMode] = useState<'visual' | 'json'>(showVisual ? 'visual' : 'json');
+
+  // 图片传输模式：从 Exchange 配置读取默认值
+  const configDefault = (exchange.transformerConfig?.imageTransferMode as ImageTransferMode) ?? 'auto';
+  const [transferMode, setTransferMode] = useState<ImageTransferMode>(configDefault);
 
   // ===== Visual form state =====
   const [prompt, setPrompt] = useState('a futuristic city skyline at sunset with flying cars');
@@ -251,10 +263,29 @@ export function ExchangeTestPanel({
 
             {/* 右栏：参考图片 */}
             <div className="space-y-1">
-              <label className="block text-sm font-medium">
-                参考图片
-                <span className="text-muted-foreground font-normal ml-1">(有 → 图生图，无 → 文生图)</span>
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium">
+                  参考图片
+                  <span className="text-muted-foreground font-normal ml-1">(有 → 图生图)</span>
+                </label>
+                {/* 传输模式选择 */}
+                <div className="flex items-center gap-0.5">
+                  {TRANSFER_MODE_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                        transferMode === opt.value
+                          ? 'bg-primary/15 text-primary border border-primary/30'
+                          : 'text-muted-foreground/60 hover:text-muted-foreground border border-transparent'
+                      }`}
+                      onClick={() => setTransferMode(opt.value)}
+                      title={opt.label}
+                    >
+                      {opt.short}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               <div className="h-[200px] flex flex-col">
                 {/* 已添加的图片 */}
@@ -295,54 +326,63 @@ export function ExchangeTestPanel({
                   </div>
                 )}
 
-                {/* 上传拖拽区 */}
-                <div
-                  className={`flex-1 min-h-[60px] border-2 border-dashed border-border/60 rounded-lg flex items-center justify-center hover:border-primary/40 transition-colors cursor-pointer ${
-                    imageUrls.length > 0 ? '' : ''
-                  }`}
-                  onClick={() => !uploading && fileInputRef.current?.click()}
-                  onDrop={handleDrop}
-                  onDragOver={handleDragOver}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={e => handleFileUpload(e.target.files)}
-                  />
-                  {uploading ? (
-                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Loader2 size={13} className="animate-spin" /> 转换中...
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Upload size={13} />
-                      点击或拖拽上传
-                      <span className="text-[10px] text-muted-foreground/50">(转为 Base64)</span>
-                    </span>
-                  )}
-                </div>
-
-                {/* URL 粘贴 */}
-                <div className="flex items-center gap-1.5 mt-1.5">
-                  <Link size={11} className="text-muted-foreground shrink-0" />
-                  <input
-                    className="flex-1 px-2 py-1 rounded border border-border bg-background text-[11px]"
-                    placeholder="粘贴图片 URL..."
-                    value={urlInput}
-                    onChange={e => setUrlInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') addUrlInput(); }}
-                  />
-                  <button
-                    className="px-2 py-1 text-[11px] rounded border border-border hover:bg-muted/50 text-muted-foreground disabled:opacity-40"
-                    onClick={addUrlInput}
-                    disabled={!urlInput.trim()}
+                {/* 上传拖拽区（auto / base64 模式显示） */}
+                {transferMode !== 'url' && (
+                  <div
+                    className="flex-1 min-h-[60px] border-2 border-dashed border-border/60 rounded-lg flex items-center justify-center hover:border-primary/40 transition-colors cursor-pointer"
+                    onClick={() => !uploading && fileInputRef.current?.click()}
+                    onDrop={handleDrop}
+                    onDragOver={handleDragOver}
                   >
-                    添加
-                  </button>
-                </div>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={e => handleFileUpload(e.target.files)}
+                    />
+                    {uploading ? (
+                      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Loader2 size={13} className="animate-spin" /> 转换中...
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Upload size={13} />
+                        点击或拖拽上传
+                        <span className="text-[10px] text-muted-foreground/50">(→ Base64)</span>
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* URL 粘贴（auto / url 模式显示） */}
+                {transferMode !== 'base64' && (
+                  <div className="flex items-center gap-1.5 mt-1.5">
+                    <Link size={11} className="text-muted-foreground shrink-0" />
+                    <input
+                      className="flex-1 px-2 py-1 rounded border border-border bg-background text-[11px]"
+                      placeholder="粘贴图片 URL..."
+                      value={urlInput}
+                      onChange={e => setUrlInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') addUrlInput(); }}
+                    />
+                    <button
+                      className="px-2 py-1 text-[11px] rounded border border-border hover:bg-muted/50 text-muted-foreground disabled:opacity-40"
+                      onClick={addUrlInput}
+                      disabled={!urlInput.trim()}
+                    >
+                      添加
+                    </button>
+                  </div>
+                )}
+
+                {/* url-only 模式下占满空间的提示 */}
+                {transferMode === 'url' && imageUrls.length === 0 && (
+                  <div className="flex-1 min-h-[60px] border-2 border-dashed border-border/60 rounded-lg flex items-center justify-center">
+                    <span className="text-xs text-muted-foreground/50">URL 模式：请在上方粘贴图片链接</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
