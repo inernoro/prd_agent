@@ -25,21 +25,36 @@ import {
   Search,
   Trash2,
   Radar,
+  Zap,
+  GitBranch,
+  ArrowRight,
+  RotateCw,
+  CircleDot,
+  Check,
+  ChevronRight,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
-// Note: systemDialog 仅用于 confirm 确认框，toast 用于轻量级提示
 import { getModelTypeDisplayName, getModelTypeIcon } from '@/lib/appCallerUtils';
 
-const STRATEGY_TYPES = [
-  { value: PoolStrategyType.FailFast, label: '快速失败', description: '选最优端点，失败直接返回' },
-  { value: PoolStrategyType.Race, label: '竞速模式', description: '并行请求所有端点，取最快' },
-  { value: PoolStrategyType.Sequential, label: '顺序容灾', description: '按顺序尝试，失败自动切换' },
-  { value: PoolStrategyType.RoundRobin, label: '轮询均衡', description: '均匀分配到所有端点' },
-  { value: PoolStrategyType.WeightedRandom, label: '加权随机', description: '按优先级权重随机选择' },
-  { value: PoolStrategyType.LeastLatency, label: '最低延迟', description: '优先选择响应最快的端点' },
+/* ── 4 种可预测的调度策略（icon 选择器） ── */
+const STRATEGY_OPTIONS = [
+  { value: PoolStrategyType.FailFast, label: '快速失败', desc: '选最优，失败即止', icon: Zap, color: 'rgba(251,146,60,0.95)' },
+  { value: PoolStrategyType.Race, label: '竞速', desc: '并行发送，取最快', icon: GitBranch, color: 'rgba(168,85,247,0.95)' },
+  { value: PoolStrategyType.Sequential, label: '顺序容灾', desc: '逐个尝试，失败切换', icon: ArrowRight, color: 'rgba(56,189,248,0.95)' },
+  { value: PoolStrategyType.RoundRobin, label: '轮询', desc: '均匀分配', icon: RotateCw, color: 'rgba(34,197,94,0.95)' },
 ];
+
+/* 卡片列表中显示策略标签时也需要文案映射 */
+const STRATEGY_LABEL_MAP: Record<number, string> = {
+  [PoolStrategyType.FailFast]: '快速失败',
+  [PoolStrategyType.Race]: '竞速',
+  [PoolStrategyType.Sequential]: '顺序容灾',
+  [PoolStrategyType.RoundRobin]: '轮询',
+  [PoolStrategyType.WeightedRandom]: '加权随机',
+  [PoolStrategyType.LeastLatency]: '最低延迟',
+};
 
 const MODEL_TYPES = [
   { value: 'chat', label: '对话模型' },
@@ -78,6 +93,7 @@ export function ModelPoolManagePage() {
     code: '',
     priority: 50,
     modelType: 'chat',
+    strategyType: PoolStrategyType.FailFast as PoolStrategyType,
     isDefaultForType: false,
     description: '',
     models: [] as ModelGroupItem[],
@@ -357,7 +373,7 @@ export function ModelPoolManagePage() {
                               )}
                               {pool.strategyType != null && pool.strategyType !== PoolStrategyType.FailFast && (
                                 <span className="ml-2 px-1.5 py-0.5 rounded text-[10px]" style={{ background: 'rgba(56,189,248,0.12)', color: 'rgba(56,189,248,0.95)' }}>
-                                  {STRATEGY_TYPES.find(s => s.value === pool.strategyType)?.label || '快速失败'}
+                                  {STRATEGY_LABEL_MAP[pool.strategyType!] || '快速失败'}
                                 </span>
                               )}
                             </div>
@@ -460,12 +476,13 @@ export function ModelPoolManagePage() {
           open={showPoolDialog}
           onOpenChange={setShowPoolDialog}
           title={editingPool ? '编辑模型池' : '新建模型池'}
-          maxWidth={720}
+          maxWidth={760}
           content={
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              {/* ── 第一行：名称 / 代码 / 模型类型 ── */}
+              <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                     模型池名称
                   </label>
                   <input
@@ -473,17 +490,12 @@ export function ModelPoolManagePage() {
                     value={poolForm.name}
                     onChange={(e) => setPoolForm({ ...poolForm, name: e.target.value })}
                     placeholder="例如：主对话模型池"
-                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
-                    style={{
-                      background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
-                      color: 'var(--text-primary)',
-                    }}
+                    className="w-full h-9 px-3 rounded-[10px] outline-none text-[13px]"
+                    style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                   />
                 </div>
-
                 <div>
-                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                     模型池代码
                   </label>
                   <input
@@ -492,54 +504,29 @@ export function ModelPoolManagePage() {
                     onChange={(e) => setPoolForm({ ...poolForm, code: e.target.value })}
                     placeholder="例如：main-chat-pool"
                     disabled={!!editingPool}
-                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
-                    style={{
-                      background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
-                      color: 'var(--text-primary)',
-                      opacity: editingPool ? 0.6 : 1,
-                    }}
+                    className="w-full h-9 px-3 rounded-[10px] outline-none text-[13px]"
+                    style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)', opacity: editingPool ? 0.6 : 1 }}
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                     模型类型
                   </label>
                   <Select
                     value={poolForm.modelType}
                     onChange={(e) => setPoolForm({ ...poolForm, modelType: e.target.value })}
                   >
-                    {MODEL_TYPES.map((type) => (
-                      <option key={type.value} value={type.value}>
-                        {type.label}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-
-                <div>
-                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
-                    调度策略
-                  </label>
-                  <Select
-                    value={String(poolForm.strategyType ?? 0)}
-                    onChange={(e) => setPoolForm({ ...poolForm, strategyType: parseInt(e.target.value) })}
-                  >
-                    {STRATEGY_TYPES.map((s) => (
-                      <option key={s.value} value={String(s.value)}>
-                        {s.label} — {s.description}
-                      </option>
+                    {MODEL_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
                     ))}
                   </Select>
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+              {/* ── 第二行：优先级 / 调度策略 icons / 设为默认 ── */}
+              <div className="flex items-end gap-3">
+                <div className="w-[80px] shrink-0">
+                  <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                     优先级
                   </label>
                   <input
@@ -549,34 +536,60 @@ export function ModelPoolManagePage() {
                     placeholder="50"
                     min={1}
                     max={100}
-                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
-                    style={{
-                      background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
-                      color: 'var(--text-primary)',
-                    }}
+                    className="w-full h-9 px-3 rounded-[10px] outline-none text-[13px] text-center"
+                    style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                     title="数字越小优先级越高"
                   />
                 </div>
 
-                <div className="flex items-end">
-                  <div className="flex items-center gap-2 h-10">
-                    <input
-                      type="checkbox"
-                      id="isDefaultForType"
-                      checked={poolForm.isDefaultForType}
-                      onChange={(e) => setPoolForm({ ...poolForm, isDefaultForType: e.target.checked })}
-                      className="h-4 w-4 rounded"
-                    />
-                    <label htmlFor="isDefaultForType" className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                      设为默认
-                    </label>
+                {/* 策略 icon 选择器 */}
+                <div className="flex-1 min-w-0">
+                  <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                    调度策略
+                  </label>
+                  <div className="flex gap-2">
+                    {STRATEGY_OPTIONS.map((opt) => {
+                      const Icon = opt.icon;
+                      const selected = (poolForm.strategyType ?? 0) === opt.value;
+                      return (
+                        <Tooltip key={opt.value} content={`${opt.label} — ${opt.desc}`}>
+                          <button
+                            type="button"
+                            className="flex items-center gap-1.5 px-3 h-9 rounded-[10px] transition-all duration-300 text-[12px] font-medium"
+                            style={{
+                              background: selected ? `${opt.color}15` : 'rgba(255,255,255,0.04)',
+                              border: `1.5px solid ${selected ? `${opt.color}60` : 'rgba(255,255,255,0.08)'}`,
+                              color: selected ? opt.color : 'var(--text-muted)',
+                              boxShadow: selected ? `0 0 12px ${opt.color}18` : 'none',
+                            }}
+                            onClick={() => setPoolForm({ ...poolForm, strategyType: opt.value })}
+                          >
+                            <Icon size={14} />
+                            <span className="hidden sm:inline">{opt.label}</span>
+                          </button>
+                        </Tooltip>
+                      );
+                    })}
                   </div>
+                </div>
+
+                <div className="shrink-0 flex items-center gap-2 h-9 pb-px">
+                  <input
+                    type="checkbox"
+                    id="isDefaultForType"
+                    checked={poolForm.isDefaultForType}
+                    onChange={(e) => setPoolForm({ ...poolForm, isDefaultForType: e.target.checked })}
+                    className="h-4 w-4 rounded"
+                  />
+                  <label htmlFor="isDefaultForType" className="text-[12px] whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>
+                    设为默认
+                  </label>
                 </div>
               </div>
 
+              {/* ── 第三行：描述 ── */}
               <div>
-                <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                   描述
                 </label>
                 <textarea
@@ -584,82 +597,87 @@ export function ModelPoolManagePage() {
                   onChange={(e) => setPoolForm({ ...poolForm, description: e.target.value })}
                   placeholder="模型池用途说明..."
                   rows={2}
-                  className="w-full px-3 py-2 rounded-[12px] outline-none text-[13px] resize-none"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="w-full px-3 py-2 rounded-[10px] outline-none text-[13px] resize-none"
+                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                 />
               </div>
 
-              {/* 模型列表 */}
+              {/* ── 第四行：统一的「调度与模型」区域 ── */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                    模型列表 ({poolForm.models.length})
+                    调度与模型 ({poolForm.models.length})
                   </label>
-                  <Button
-                    variant="secondary"
-                    size="xs"
-                    onClick={() => setModelPickerOpen(true)}
-                  >
+                  <Button variant="secondary" size="xs" onClick={() => setModelPickerOpen(true)}>
                     <Plus size={12} />
                     添加模型
                   </Button>
                 </div>
 
                 <div
-                  className="rounded-[12px] p-3 min-h-[100px] max-h-[200px] overflow-auto"
+                  className="rounded-[12px] overflow-hidden"
                   style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}
                 >
                   {poolForm.models.length === 0 ? (
-                    <div className="py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                      暂无模型，点击"添加模型"按钮选择平台添加
+                    <div className="py-10 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                      暂无模型，点击"添加模型"按钮选择
                     </div>
                   ) : (
-                    <div className="space-y-2">
-                      {poolForm.models.map((m, idx) => (
-                        <ModelListItem
-                          key={keyOfModel(m)}
-                          model={{
-                            platformId: m.platformId,
-                            platformName: platformNameById.get(m.platformId),
-                            modelId: m.modelId,
-                          }}
-                          index={idx + 1}
-                          total={poolForm.models.length}
-                          size="md"
-                          suffix={
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="number"
-                                value={Number(m.priority ?? 0)}
-                                onChange={(e) => {
-                                  const v = parseInt(e.target.value) || 0;
-                                  setPoolForm((prev) => ({
-                                    ...prev,
-                                    models: prev.models.map((x) =>
-                                      keyOfModel(x) === keyOfModel(m) ? { ...x, priority: v } : x
-                                    ),
-                                  }));
-                                }}
-                                className="h-8 w-16 px-2 rounded-lg outline-none text-[12px] text-center"
-                                style={{
-                                  background: 'var(--bg-input)',
-                                  border: '1px solid rgba(255,255,255,0.12)',
-                                  color: 'var(--text-primary)',
-                                }}
-                                title="优先级"
-                              />
-                              <Button variant="ghost" size="sm" onClick={() => toggleModel(m.platformId, m.modelId)} title="移除">
-                                <Trash2 size={14} />
-                              </Button>
-                            </div>
-                          }
-                        />
-                      ))}
-                    </div>
+                    <>
+                      {/* 模型列表（可编辑） */}
+                      <div className="p-2 space-y-1 max-h-[180px] overflow-auto">
+                        {poolForm.models.map((m, idx) => (
+                          <ModelListItem
+                            key={keyOfModel(m)}
+                            model={{
+                              platformId: m.platformId,
+                              platformName: platformNameById.get(m.platformId),
+                              modelId: m.modelId,
+                            }}
+                            index={idx + 1}
+                            total={poolForm.models.length}
+                            size="sm"
+                            suffix={
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="number"
+                                  value={Number(m.priority ?? 0)}
+                                  onChange={(e) => {
+                                    const v = parseInt(e.target.value) || 0;
+                                    setPoolForm((prev) => ({
+                                      ...prev,
+                                      models: prev.models.map((x) =>
+                                        keyOfModel(x) === keyOfModel(m) ? { ...x, priority: v } : x
+                                      ),
+                                    }));
+                                  }}
+                                  className="h-7 w-14 px-1 rounded-md outline-none text-[11px] text-center"
+                                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
+                                  title="优先级（越小越优先）"
+                                />
+                                <button
+                                  className="p-1 rounded-md hover:bg-white/10 transition-colors"
+                                  onClick={() => toggleModel(m.platformId, m.modelId)}
+                                  title="移除"
+                                >
+                                  <Trash2 size={13} style={{ color: 'var(--text-muted)' }} />
+                                </button>
+                              </div>
+                            }
+                          />
+                        ))}
+                      </div>
+
+                      {/* 虚线分隔 */}
+                      <div className="mx-3" style={{ borderTop: '1px dashed rgba(255,255,255,0.10)' }} />
+
+                      {/* 调度预测可视化（本地计算） */}
+                      <InlineDispatchPreview
+                        models={poolForm.models}
+                        strategyType={poolForm.strategyType ?? PoolStrategyType.FailFast}
+                        platformNameById={platformNameById}
+                      />
+                    </>
                   )}
                 </div>
               </div>
@@ -688,7 +706,6 @@ export function ModelPoolManagePage() {
                 title="添加模型"
                 description="通过平台把模型加入下方选择池，确认后一次性加入模型池"
                 onConfirm={(models: SelectedModelItem[]) => {
-                  // 将选中的模型合并到 poolForm.models
                   const newModels: ModelGroupItem[] = models.map((m, idx) => ({
                     platformId: m.platformId,
                     modelId: m.modelId,
@@ -697,19 +714,293 @@ export function ModelPoolManagePage() {
                     consecutiveFailures: 0,
                     consecutiveSuccesses: 0,
                   }));
-                  // 去重合并
                   const existingKeys = new Set(poolForm.models.map((x) => keyOfModel(x)));
                   const toAdd = newModels.filter((x) => !existingKeys.has(keyOfModel(x)));
-                  setPoolForm((prev) => ({
-                    ...prev,
-                    models: [...prev.models, ...toAdd],
-                  }));
+                  setPoolForm((prev) => ({ ...prev, models: [...prev.models, ...toAdd] }));
                 }}
               />
             </div>
           }
         />
       )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   InlineDispatchPreview — 编辑弹窗内的本地调度预测可视化
+   基于 poolForm.models 和 strategyType 实时计算，不调用 API
+   ═══════════════════════════════════════════════════════════════════ */
+
+function InlineDispatchPreview({
+  models,
+  strategyType,
+  platformNameById,
+}: {
+  models: ModelGroupItem[];
+  strategyType: PoolStrategyType;
+  platformNameById: Map<string, string>;
+}) {
+  const sorted = useMemo(
+    () => [...models].sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99)),
+    [models],
+  );
+
+  const meta = STRATEGY_OPTIONS.find((s) => s.value === strategyType) || STRATEGY_OPTIONS[0];
+  const Icon = meta.icon;
+  const color = meta.color;
+
+  // animation phase — restart when strategy or model count changes
+  const [phase, setPhase] = useState(0);
+  const animKey = `${strategyType}-${models.length}`;
+  useEffect(() => {
+    setPhase(0);
+    const timers = sorted.map((_, i) =>
+      setTimeout(() => setPhase(i + 1), 200 + i * 220),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [animKey, sorted.length]);
+
+  // RoundRobin rotation
+  const [rrIdx, setRrIdx] = useState(0);
+  useEffect(() => {
+    if (strategyType !== PoolStrategyType.RoundRobin || phase < sorted.length) return;
+    const iv = setInterval(() => setRrIdx((p) => (p + 1) % sorted.length), 1200);
+    return () => clearInterval(iv);
+  }, [strategyType, phase, sorted.length]);
+
+  return (
+    <div className="px-3 py-3 transition-all duration-300" key={animKey}>
+      {/* 策略标题 */}
+      <div className="flex items-center gap-2 mb-2.5">
+        <div
+          className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
+          style={{ background: `${color}15` }}
+        >
+          <Icon size={13} style={{ color }} />
+        </div>
+        <span className="text-[12px] font-semibold" style={{ color }}>{meta.label}</span>
+        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{meta.desc}</span>
+      </div>
+
+      {/* ── FailFast / Sequential: 线性流 ── */}
+      {(strategyType === PoolStrategyType.FailFast || strategyType === PoolStrategyType.Sequential) && (
+        <div>
+          {/* 请求入口 */}
+          <div className="flex items-center gap-2 mb-2">
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-semibold"
+              style={{ background: `${color}12`, border: `1px solid ${color}25`, color }}
+            >
+              <CircleDot size={10} />
+              请求入口
+            </div>
+            <div className="flex-1 relative h-px">
+              <div className="absolute inset-0" style={{ background: `linear-gradient(to right, ${color}30, transparent)` }} />
+              <div
+                className="absolute top-[-2px] w-1.5 h-1.5 rounded-full"
+                style={{ background: color, boxShadow: `0 0 6px ${color}`, animation: 'flowDot 2s ease-in-out infinite' }}
+              />
+            </div>
+          </div>
+          {/* 端点列表 */}
+          <div className="space-y-1 ml-1">
+            {sorted.map((m, i) => {
+              const isTarget = i === 0;
+              const isActive = phase > i;
+              return (
+                <div key={keyOfModel(m)} className="flex items-center gap-2">
+                  <div className="flex flex-col items-center w-4 shrink-0 self-stretch">
+                    <div className="w-px flex-1 transition-all duration-400" style={{ background: isActive ? `${color}40` : 'rgba(255,255,255,0.06)' }} />
+                    <div
+                      className="w-2 h-2 rounded-full border-[1.5px] shrink-0 transition-all duration-400"
+                      style={{
+                        borderColor: isActive ? color : 'rgba(255,255,255,0.15)',
+                        background: isTarget && isActive ? color : 'transparent',
+                        boxShadow: isTarget && isActive ? `0 0 8px ${color}50` : 'none',
+                      }}
+                    />
+                    <div className="w-px flex-1" style={{ background: i < sorted.length - 1 ? 'rgba(255,255,255,0.06)' : 'transparent' }} />
+                  </div>
+                  <div
+                    className="flex-1 flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all duration-400"
+                    style={{
+                      opacity: isActive ? 1 : 0.15,
+                      transform: isActive ? 'translateX(0)' : 'translateX(-6px)',
+                      background: isTarget ? `${color}10` : 'rgba(255,255,255,0.03)',
+                      border: `1px solid ${isTarget ? `${color}25` : 'rgba(255,255,255,0.05)'}`,
+                    }}
+                  >
+                    {platformNameById.get(m.platformId) && (
+                      <span className="text-[9px] px-1 py-0.5 rounded shrink-0" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                        {platformNameById.get(m.platformId)}
+                      </span>
+                    )}
+                    <span className="text-[11px] font-mono truncate flex-1" style={{ color: 'var(--text-primary)' }}>{m.modelId}</span>
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded-md shrink-0"
+                      style={{
+                        background: isTarget ? `${color}18` : 'rgba(255,255,255,0.05)',
+                        color: isTarget ? color : 'var(--text-muted)',
+                      }}
+                    >
+                      {isTarget ? '发送请求' : `第${i + 1}备选`}
+                    </span>
+                    {isTarget && isActive && <Check size={12} style={{ color }} className="shrink-0" />}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {strategyType === PoolStrategyType.Sequential && sorted.length > 1 && (
+            <div className="mt-2 ml-5 text-[10px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+              <ChevronRight size={9} />
+              失败自动顺延到下一个端点
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Race: 并行竞速 ── */}
+      {strategyType === PoolStrategyType.Race && (
+        <div>
+          <div className="flex justify-center mb-2">
+            <div
+              className="flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-semibold"
+              style={{ background: `${color}12`, border: `1px solid ${color}25`, color }}
+            >
+              <CircleDot size={10} />
+              同时发送到 {sorted.length} 个端点
+            </div>
+          </div>
+          {/* SVG 扇出线 */}
+          <div className="flex justify-center mb-1">
+            <svg width="100%" height="20" viewBox="0 0 400 20" preserveAspectRatio="xMidYMid meet" className="max-w-[400px]">
+              <defs>
+                <linearGradient id="raceLineInline" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={color} stopOpacity="0.5" />
+                  <stop offset="100%" stopColor={color} stopOpacity="0.15" />
+                </linearGradient>
+              </defs>
+              {sorted.map((_, i) => {
+                const x = sorted.length === 1 ? 200 : 40 + (320 / (sorted.length - 1)) * i;
+                return (
+                  <line
+                    key={i} x1="200" y1="0" x2={x} y2="20"
+                    stroke="url(#raceLineInline)" strokeWidth={phase > i ? 2 : 1}
+                    strokeOpacity={phase > i ? 1 : 0.15}
+                    strokeDasharray={phase > i ? 'none' : '4 3'}
+                    className="transition-all duration-400"
+                  />
+                );
+              })}
+            </svg>
+          </div>
+          <div className="flex gap-2 flex-wrap justify-center">
+            {sorted.map((m, i) => {
+              const isActive = phase > i;
+              const isWinner = phase >= sorted.length && i === 0;
+              return (
+                <div
+                  key={keyOfModel(m)}
+                  className="flex flex-col items-center gap-1 px-3 py-2 rounded-lg transition-all duration-400 min-w-[90px] max-w-[140px]"
+                  style={{
+                    opacity: isActive ? 1 : 0.15,
+                    transform: isActive ? 'translateY(0) scale(1)' : 'translateY(-4px) scale(0.96)',
+                    background: isWinner ? `${color}12` : 'rgba(255,255,255,0.03)',
+                    border: `1px solid ${isWinner ? `${color}35` : 'rgba(255,255,255,0.06)'}`,
+                  }}
+                >
+                  {platformNameById.get(m.platformId) && (
+                    <span className="text-[9px] px-1 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                      {platformNameById.get(m.platformId)}
+                    </span>
+                  )}
+                  <span className="font-mono text-[10px] truncate max-w-full text-center" style={{ color: 'var(--text-primary)' }}>
+                    {m.modelId}
+                  </span>
+                  {isWinner ? (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-md flex items-center gap-0.5" style={{ background: `${color}18`, color }}>
+                      <Check size={9} /> 最快返回
+                    </span>
+                  ) : isActive ? (
+                    <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>竞争中...</span>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── RoundRobin: 轮询 ── */}
+      {strategyType === PoolStrategyType.RoundRobin && (
+        <div>
+          <div className="flex justify-center mb-2">
+            <div
+              className="flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-semibold"
+              style={{ background: `${color}12`, border: `1px solid ${color}25`, color }}
+            >
+              <RotateCw size={10} className={phase >= sorted.length ? 'animate-spin' : ''} style={{ animationDuration: '3s' }} />
+              轮询调度
+            </div>
+          </div>
+          <div className="space-y-1">
+            {sorted.map((m, i) => {
+              const isCurrent = phase >= sorted.length && rrIdx === i;
+              const isActive = phase > i;
+              return (
+                <div
+                  key={keyOfModel(m)}
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all duration-300"
+                  style={{
+                    opacity: isActive ? 1 : 0.15,
+                    background: isCurrent ? `${color}10` : 'rgba(255,255,255,0.03)',
+                    border: `1px solid ${isCurrent ? `${color}30` : 'rgba(255,255,255,0.05)'}`,
+                  }}
+                >
+                  <div
+                    className="w-5 h-5 rounded-md flex items-center justify-center shrink-0 transition-all duration-300"
+                    style={{
+                      background: isCurrent ? `${color}20` : 'rgba(255,255,255,0.04)',
+                      border: `1px solid ${isCurrent ? `${color}40` : 'rgba(255,255,255,0.08)'}`,
+                    }}
+                  >
+                    {isCurrent ? (
+                      <ArrowRight size={9} style={{ color }} />
+                    ) : (
+                      <span className="text-[9px] tabular-nums" style={{ color: 'var(--text-muted)' }}>{i + 1}</span>
+                    )}
+                  </div>
+                  {platformNameById.get(m.platformId) && (
+                    <span className="text-[9px] px-1 py-0.5 rounded shrink-0" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                      {platformNameById.get(m.platformId)}
+                    </span>
+                  )}
+                  <span className="font-mono text-[11px] truncate flex-1" style={{ color: 'var(--text-primary)' }}>{m.modelId}</span>
+                  {isCurrent && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-md shrink-0" style={{ background: `${color}18`, color }}>
+                      当前
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-2 text-center text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            请求按顺序均匀分配到 {sorted.length} 个端点
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes flowDot {
+          0% { left: 0; opacity: 0; }
+          10% { opacity: 1; }
+          90% { opacity: 1; }
+          100% { left: 100%; opacity: 0; }
+        }
+      `}</style>
     </div>
   );
 }
