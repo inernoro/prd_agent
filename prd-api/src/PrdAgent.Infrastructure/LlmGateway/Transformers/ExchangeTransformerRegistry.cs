@@ -14,7 +14,11 @@ public class ExchangeTransformerRegistry
     {
         // 注册内置转换器
         Register(new PassthroughTransformer());
-        Register(new FalImageEditTransformer());
+
+        var falImage = new FalImageTransformer();
+        Register(falImage);
+        // 向后兼容：旧类型名 fal-image-edit 也指向同一个转换器
+        _transformers["fal-image-edit"] = falImage;
     }
 
     public void Register(IExchangeTransformer transformer)

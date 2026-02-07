@@ -449,6 +449,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
 
                 var rawBody = request.RequestBody ?? new JsonObject();
+
+                // 智能路由：根据请求内容决定实际目标 URL
+                var resolvedUrl = transformer.ResolveTargetUrl(endpoint, rawBody, resolution.ExchangeTransformerConfig);
+                if (resolvedUrl != null) endpoint = resolvedUrl;
+
                 var transformedBody = transformer.TransformRequest(rawBody, resolution.ExchangeTransformerConfig);
 
                 _logger.LogInformation(

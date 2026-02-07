@@ -11,6 +11,11 @@ public class PassthroughTransformer : IExchangeTransformer
 {
     public string TransformerType => "passthrough";
 
+    public string? ResolveTargetUrl(string baseUrl, JsonObject standardBody, Dictionary<string, object>? config)
+    {
+        return null; // 使用原始 TargetUrl
+    }
+
     public JsonObject TransformRequest(JsonObject standardBody, Dictionary<string, object>? config)
     {
         return standardBody;

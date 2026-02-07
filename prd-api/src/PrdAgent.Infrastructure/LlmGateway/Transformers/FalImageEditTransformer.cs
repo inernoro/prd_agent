@@ -4,18 +4,42 @@ using PrdAgent.Core.Interfaces;
 namespace PrdAgent.Infrastructure.LlmGateway.Transformers;
 
 /// <summary>
-/// fal.ai 图片编辑转换器
-/// 标准 OpenAI 图片生成格式 ↔ fal.ai Nano Banana Pro Edit 格式
+/// fal.ai 图片转换器（文生图 + 图生图智能路由）
+/// 标准 OpenAI 图片生成格式 ↔ fal.ai Nano Banana Pro 格式
+///
+/// 智能路由逻辑：
+/// - 请求中包含 image_urls 且非空 → 追加 /edit（图生图）
+/// - 请求中无 image_urls → 使用基础 URL（文生图）
 /// </summary>
-public class FalImageEditTransformer : IExchangeTransformer
+public class FalImageTransformer : IExchangeTransformer
 {
-    public string TransformerType => "fal-image-edit";
+    public string TransformerType => "fal-image";
 
     /// <summary>
-    /// OpenAI 图片生成格式 → fal.ai 图片编辑格式
+    /// 根据请求内容决定实际目标 URL。
+    /// 有 image_urls → baseUrl/edit（图生图），否则 → baseUrl（文生图）。
+    /// </summary>
+    public string? ResolveTargetUrl(string baseUrl, JsonObject standardBody, Dictionary<string, object>? config)
+    {
+        var hasImageUrls = standardBody.TryGetPropertyValue("image_urls", out var imageUrlsNode)
+                           && imageUrlsNode is JsonArray arr
+                           && arr.Count > 0;
+
+        if (hasImageUrls)
+        {
+            // 图生图：追加 /edit
+            return baseUrl.TrimEnd('/') + "/edit";
+        }
+
+        // 文生图：使用基础 URL
+        return baseUrl.TrimEnd('/');
+    }
+
+    /// <summary>
+    /// OpenAI 图片生成格式 → fal.ai 格式
     ///
     /// OpenAI input:
-    /// { "prompt": "...", "model": "...", "n": 1, "size": "1024x1024", "response_format": "url" }
+    /// { "prompt": "...", "model": "...", "n": 1, "size": "1024x1024", "image_urls": [...] }
     ///
     /// fal.ai output:
     /// { "prompt": "...", "num_images": 1, "image_urls": [...], "resolution": "1K", "output_format": "png" }
@@ -34,10 +58,11 @@ public class FalImageEditTransformer : IExchangeTransformer
         else
             falBody["num_images"] = 1;
 
-        // image_urls: 从 config 或 standardBody 的扩展字段获取
-        if (standardBody.TryGetPropertyValue("image_urls", out var imageUrls))
+        // image_urls: 图生图时传递（文生图时自动忽略）
+        if (standardBody.TryGetPropertyValue("image_urls", out var imageUrls)
+            && imageUrls is JsonArray imageUrlsArr && imageUrlsArr.Count > 0)
         {
-            falBody["image_urls"] = imageUrls?.DeepClone();
+            falBody["image_urls"] = imageUrls.DeepClone();
         }
         else if (config?.TryGetValue("image_urls", out var configUrls) == true)
         {

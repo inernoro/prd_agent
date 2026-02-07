@@ -306,9 +306,12 @@ public class ExchangeController : ControllerBase
             }));
         }
 
-        // 4. 发送到目标 API
+        // 4. 智能路由：根据请求内容决定实际目标 URL
+        var actualTargetUrl = transformer.ResolveTargetUrl(exchange.TargetUrl, standardBody, exchange.TransformerConfig)
+                              ?? exchange.TargetUrl;
+
         var apiKey = ApiKeyCrypto.Decrypt(exchange.TargetApiKeyEncrypted, GetJwtSecret());
-        var httpRequest = new HttpRequestMessage(HttpMethod.Post, exchange.TargetUrl)
+        var httpRequest = new HttpRequestMessage(HttpMethod.Post, actualTargetUrl)
         {
             Content = new StringContent(transformedRequest.ToJsonString(), System.Text.Encoding.UTF8, "application/json")
         };

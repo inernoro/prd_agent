@@ -5,38 +5,64 @@ import type { ModelExchange, ExchangeTestResult } from '@/types/exchange';
 import {
   ArrowRight,
   Check,
+  Image,
   Loader2,
   Play,
   Eye,
+  Type,
   X,
   Clock,
 } from 'lucide-react';
 import { useState } from 'react';
 
-const SAMPLE_REQUESTS: Record<string, string> = {
-  passthrough: JSON.stringify(
-    {
-      messages: [{ role: 'user', content: 'Hello, how are you?' }],
-      model: 'gpt-4o',
-      max_tokens: 100,
-    },
-    null,
-    2
-  ),
-  'fal-image-edit': JSON.stringify(
-    {
-      prompt: 'make a photo of the man driving the car down the california coastline',
-      model: 'nano-banana-pro',
-      n: 1,
-      size: '1024x1024',
-      image_urls: [
-        'https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input.png',
-        'https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input-2.png',
-      ],
-    },
-    null,
-    2
-  ),
+const SAMPLE_REQUESTS: Record<string, string[]> = {
+  passthrough: [
+    JSON.stringify(
+      {
+        messages: [{ role: 'user', content: 'Hello, how are you?' }],
+        model: 'gpt-4o',
+        max_tokens: 100,
+      },
+      null,
+      2
+    ),
+  ],
+  'fal-image': [
+    // 文生图（无 image_urls → 路由到基础 URL）
+    JSON.stringify(
+      {
+        prompt: 'a futuristic city skyline at sunset with flying cars',
+        model: 'nano-banana-pro',
+        n: 1,
+        size: '1024x1024',
+      },
+      null,
+      2
+    ),
+    // 图生图（有 image_urls → 路由到 /edit）
+    JSON.stringify(
+      {
+        prompt: 'make a photo of the man driving the car down the california coastline',
+        model: 'nano-banana-pro',
+        n: 1,
+        size: '1024x1024',
+        image_urls: [
+          'https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input.png',
+          'https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input-2.png',
+        ],
+      },
+      null,
+      2
+    ),
+  ],
+};
+
+// 向后兼容旧类型名
+SAMPLE_REQUESTS['fal-image-edit'] = SAMPLE_REQUESTS['fal-image'];
+
+const SAMPLE_LABELS: Record<string, string[]> = {
+  'fal-image': ['文生图', '图生图'],
+  'fal-image-edit': ['文生图', '图生图'],
 };
 
 export function ExchangeTestPanel({
@@ -46,11 +72,17 @@ export function ExchangeTestPanel({
   exchange: ModelExchange;
   onClose: () => void;
 }) {
-  const [requestBody, setRequestBody] = useState(
-    SAMPLE_REQUESTS[exchange.transformerType] ?? SAMPLE_REQUESTS.passthrough ?? '{}'
-  );
+  const samples = SAMPLE_REQUESTS[exchange.transformerType] ?? SAMPLE_REQUESTS.passthrough ?? ['{}'];
+  const labels = SAMPLE_LABELS[exchange.transformerType];
+  const [sampleIndex, setSampleIndex] = useState(0);
+  const [requestBody, setRequestBody] = useState(samples[0]);
   const [result, setResult] = useState<ExchangeTestResult | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const switchSample = (idx: number) => {
+    setSampleIndex(idx);
+    setRequestBody(samples[idx]);
+  };
 
   const handleTest = async (dryRun: boolean) => {
     setLoading(true);
@@ -96,7 +128,27 @@ export function ExchangeTestPanel({
       {/* 输入区域 */}
       <div>
         <div className="flex items-center justify-between mb-1.5">
-          <label className="text-sm font-medium">标准请求体 (OpenAI 格式)</label>
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium">标准请求体 (OpenAI 格式)</label>
+            {samples.length > 1 && labels && (
+              <div className="flex items-center gap-1 ml-2">
+                {labels.map((label, idx) => (
+                  <button
+                    key={idx}
+                    className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full transition-colors ${
+                      sampleIndex === idx
+                        ? 'bg-primary/15 text-primary border border-primary/30'
+                        : 'bg-muted/40 text-muted-foreground hover:bg-muted/60 border border-transparent'
+                    }`}
+                    onClick={() => switchSample(idx)}
+                  >
+                    {idx === 0 ? <Type size={10} /> : <Image size={10} />}
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             <Button
               variant="secondary"

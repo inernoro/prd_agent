@@ -9,23 +9,27 @@ namespace PrdAgent.Core.Interfaces;
 public interface IExchangeTransformer
 {
     /// <summary>
-    /// 转换器类型标识（如 "fal-image-edit", "passthrough"）
+    /// 转换器类型标识（如 "fal-image", "passthrough"）
     /// </summary>
     string TransformerType { get; }
 
     /// <summary>
-    /// 转换请求：标准格式 → 目标格式
+    /// 根据请求内容解析实际目标 URL（智能路由）。
+    /// 返回 null 表示使用 Exchange 配置中的原始 TargetUrl。
     /// </summary>
+    /// <param name="baseUrl">Exchange 配置中的 TargetUrl（基础 URL）</param>
     /// <param name="standardBody">标准 OpenAI 格式的请求体</param>
     /// <param name="config">转换器配置（可选）</param>
-    /// <returns>转换后的请求体</returns>
+    /// <returns>实际目标 URL，null 则使用 baseUrl</returns>
+    string? ResolveTargetUrl(string baseUrl, JsonObject standardBody, Dictionary<string, object>? config);
+
+    /// <summary>
+    /// 转换请求：标准格式 → 目标格式
+    /// </summary>
     JsonObject TransformRequest(JsonObject standardBody, Dictionary<string, object>? config);
 
     /// <summary>
     /// 转换响应：目标格式 → 标准格式
     /// </summary>
-    /// <param name="rawResponse">目标 API 返回的原始响应</param>
-    /// <param name="config">转换器配置（可选）</param>
-    /// <returns>标准 OpenAI 格式的响应</returns>
     JsonObject TransformResponse(JsonObject rawResponse, Dictionary<string, object>? config);
 }
