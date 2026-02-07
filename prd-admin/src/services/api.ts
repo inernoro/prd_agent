@@ -300,6 +300,9 @@ export const api = {
         upload: () => '/api/visual-agent/image-master/assets',
         byId: (id: string) => `/api/visual-agent/image-master/assets/${id}`,
       },
+      drawingBoard: {
+        chat: () => '/api/visual-agent/image-master/drawing-board/chat',
+      },
     },
     imageGen: {
       plan: () => '/api/visual-agent/image-gen/plan',

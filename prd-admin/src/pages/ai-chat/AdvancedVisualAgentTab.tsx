@@ -43,6 +43,7 @@ import {
   ImageQuickEditInput,
   QuickActionConfigPanel,
   MaskPaintCanvas,
+  DrawingBoardDialog,
   BUILTIN_QUICK_ACTIONS,
   type QuickAction,
 } from '@/components/visual-agent';
@@ -93,6 +94,7 @@ import {
   Square,
   Type,
   Trash,
+  PenTool,
   Video,
   ZoomIn,
   ZoomOut,
@@ -1182,6 +1184,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [mentionAtPos, setMentionAtPos] = useState<number | null>(null);
   const [asciiOpen, setAsciiOpen] = useState(false);
   const [asciiSource, setAsciiSource] = useState('');
+  const [drawingBoardOpen, setDrawingBoardOpen] = useState(false);
 
   const [canvas, setCanvas] = useState<CanvasImageItem[]>([]);
   const canvasRef = useRef<CanvasImageItem[]>([]);
@@ -6979,18 +6982,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <ImagePlus size={18} />
               </button>
 
-              {/* 视频生成器 */}
+              {/* 手绘板 */}
               <button
                 type="button"
                 className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
                 style={{ color: 'rgba(255,255,255,0.86)' }}
-                title="视频生成器"
-                aria-label="视频生成器"
-                onClick={() => {
-                  pushMsg('Assistant', '视频生成器：占位（后续接入后端）。');
-                }}
+                title="手绘板"
+                aria-label="手绘板"
+                onClick={() => setDrawingBoardOpen(true)}
               >
-                <Video size={18} />
+                <PenTool size={18} />
               </button>
 
               {/* 删除选中（放到底部） */}
@@ -8472,6 +8473,177 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           }}
         />
       )}
+
+      {/* 手绘板 */}
+      <DrawingBoardDialog
+        open={drawingBoardOpen}
+        onOpenChange={setDrawingBoardOpen}
+        onConfirm={async (dataUri) => {
+          setDrawingBoardOpen(false);
+
+          // 弹出提示词输入
+          const desc = window.prompt('请描述你想基于这张草图生成的图片（如：一只猫坐在窗台上，水彩风格）');
+          if (!desc?.trim()) {
+            toast.error('请输入生成描述');
+            return;
+          }
+
+          const pickedModel = effectiveModel;
+          if (!pickedModel) {
+            toast.error('暂无可用生图模型');
+            return;
+          }
+
+          // 添加草图到画布（用于展示参考）
+          const sketchKey = `sketch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+          const near = stageCenterWorld();
+          const sketchW = 680;
+          const sketchH = 480;
+          setCanvas(prev => [
+            ...prev,
+            {
+              key: sketchKey,
+              kind: 'image' as const,
+              createdAt: Date.now(),
+              prompt: `手绘草图: ${desc.trim()}`,
+              src: dataUri,
+              status: 'done' as const,
+              syncStatus: 'pending' as const,
+              syncError: null,
+              w: sketchW,
+              h: sketchH,
+              naturalW: sketchW,
+              naturalH: sketchH,
+              x: near.x - sketchW / 2 - sketchW / 2 - 16,
+              y: near.y - sketchH / 2,
+            },
+          ].slice(-60));
+
+          // 上传草图作为资产
+          const up = await uploadVisualAgentWorkspaceAsset({
+            id: workspaceId,
+            data: dataUri,
+            prompt: `手绘草图: ${desc.trim()}`,
+            width: sketchW,
+            height: sketchH,
+          });
+
+          if (!up.success) {
+            toast.error('草图上传失败：' + (up.error?.message || '未知错误'));
+            return;
+          }
+
+          const assetSha256 = up.data.asset.sha256;
+          setCanvas(prev =>
+            prev.map(x =>
+              x.key === sketchKey
+                ? { ...x, assetId: up.data.asset.id, sha256: up.data.asset.sha256, src: up.data.asset.url || x.src, syncStatus: 'synced' as const, syncError: null }
+                : x
+            )
+          );
+
+          // 生成占位
+          const genKey = `sketch_gen_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+          const resolvedSize = imageGenSize;
+          const parsedSize = tryParseWxH(resolvedSize);
+          const genW = parsedSize?.w ?? 1024;
+          const genH = parsedSize?.h ?? 1024;
+
+          setCanvas(prev => [
+            ...prev,
+            {
+              key: genKey,
+              kind: 'image' as const,
+              createdAt: Date.now(),
+              prompt: desc.trim(),
+              src: '',
+              status: 'running' as const,
+              w: genW,
+              h: genH,
+              x: near.x - genW / 2 + genW / 2 + 16,
+              y: near.y - genH / 2,
+            },
+          ].slice(-60));
+          setSelectionWithoutChip([genKey]);
+
+          // 创建生图任务
+          try {
+            const runRes = await createWorkspaceImageGenRun({
+              id: workspaceId,
+              input: {
+                prompt: desc.trim(),
+                targetKey: genKey,
+                ...(pickedModel.id.startsWith('pool_')
+                  ? { platformId: pickedModel.platformId, modelId: pickedModel.modelName }
+                  : { configModelId: pickedModel.id }),
+                size: resolvedSize,
+                responseFormat: 'url',
+                imageRefs: [
+                  {
+                    refId: 1,
+                    assetSha256,
+                    url: up.data.asset.url || '',
+                    label: '手绘草图',
+                  },
+                ],
+              },
+              idempotencyKey: `sketchRun_${workspaceId}_${genKey}`,
+            });
+
+            if (!runRes.success) {
+              toast.error(runRes.error?.message || '草图生图失败');
+              setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, status: 'error' as const } : x));
+              return;
+            }
+
+            // 订阅 Run 事件流（复用现有 SSE 逻辑）
+            const runId = runRes.data.runId;
+            setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, runId } : x));
+            const sketchAc = new AbortController();
+            void streamImageGenRunWithRetry({
+              runId,
+              signal: sketchAc.signal,
+              onEvent: (evt) => {
+                const evData = String(evt.data ?? '').trim();
+                if (!evData) return;
+                let obj: unknown = null;
+                try { obj = JSON.parse(evData); } catch { return; }
+                const o = obj as ImageGenRunStreamPayload;
+                const t = String(o.type ?? '');
+                if (t === 'imageDone') {
+                  const assetRaw = o.asset ?? null;
+                  const asset = assetRaw
+                    ? { id: String(assetRaw.id ?? ''), sha256: String(assetRaw.sha256 ?? ''), url: String(assetRaw.url ?? ''), originalUrl: String(assetRaw.originalUrl ?? ''), originalSha256: String(assetRaw.originalSha256 ?? '') }
+                    : null;
+                  const u = String(asset?.url ?? o.url ?? '');
+                  const originalU = String(asset?.originalUrl || o.originalUrl || u || '');
+                  const originalSha = String(asset?.originalSha256 || o.originalSha256 || asset?.sha256 || '');
+                  if (!u) return;
+                  setCanvas(prev => prev.map(x =>
+                    x.key === genKey
+                      ? { ...x, kind: 'image' as const, status: 'done' as const, src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, syncStatus: 'synced' as const, syncError: null }
+                      : x
+                  ));
+                  pushMsg('Assistant', '草图生图完成。');
+                } else if (t === 'imageError' || t === 'error') {
+                  const msg = String(o.errorMessage ?? '草图生图失败');
+                  setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, status: 'error' as const, errorMessage: msg } : x));
+                  toast.error(msg);
+                }
+              },
+            }).then(() => {
+              setCanvas(prev => prev.map(x =>
+                x.key === genKey && x.status === 'running'
+                  ? { ...x, status: 'error' as const, errorMessage: '生成超时或连接中断，请重试' }
+                  : x
+              ));
+            });
+          } catch (e) {
+            toast.error('草图生图异常: ' + ((e as Error).message || ''));
+            setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, status: 'error' as const } : x));
+          }
+        }}
+      />
     </div>
   );
 }

@@ -2402,6 +2402,117 @@ public class ImageMasterController : ControllerBase
         Response.ContentType = "application/json";
         await Response.WriteAsync(JsonSerializer.Serialize(data, JsonOptions), ct);
     }
+
+    // ────────────────────────────────────────────
+    // 手绘板 AI 对话（SSE 流式）
+    // ────────────────────────────────────────────
+
+    /// <summary>
+    /// 手绘板 AI 助手：流式对话（SSE）
+    /// 用于辅助用户绘制草图 / 生成字符画
+    /// </summary>
+    [HttpPost("drawing-board/chat")]
+    [Produces("text/event-stream")]
+    public async Task DrawingBoardChat([FromBody] DrawingBoardChatRequest request, CancellationToken ct)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        const string systemPrompt = """
+            你是一位专业的手绘助手和字符画艺术家。用户正在使用手绘画板创建草图/字符画，作为 AI 图片生成的参考底图。
+
+            你的职责：
+            1. 当用户描述想要的画面时，生成对应的字符画（ASCII art），用 ```ascii 代码块包裹
+            2. 提供绘画建议和构图指导
+            3. 帮助用户理清想法，将模糊的描述转化为具体的视觉方案
+
+            字符画规范：
+            - 使用等宽字符组成图案，尽量使用简单字符（/ \ | - _ = + * . : 空格）
+            - 宽度控制在 40-70 字符，高度控制在 15-35 行
+            - 重点表达主体轮廓和空间关系，不需要过度细节
+            - 如果用户要求修改，只输出修改后的完整字符画
+
+            请用简洁、友好的中文回答。当用户的描述足够清晰时，优先生成字符画而非长篇解释。
+            """;
+
+        var messages = new JsonArray
+        {
+            new JsonObject { ["role"] = "system", ["content"] = systemPrompt }
+        };
+
+        if (request.Messages is { Count: > 0 })
+        {
+            foreach (var msg in request.Messages)
+            {
+                if (string.IsNullOrWhiteSpace(msg.Content)) continue;
+                messages.Add(new JsonObject
+                {
+                    ["role"] = msg.Role?.ToLowerInvariant() switch { "assistant" => "assistant", _ => "user" },
+                    ["content"] = msg.Content
+                });
+            }
+        }
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = "visual-agent.drawing-board::chat",
+            ModelType = "chat",
+            Stream = true,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = messages,
+                ["temperature"] = 0.8,
+                ["max_tokens"] = 4000
+            }
+        };
+
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (!string.IsNullOrEmpty(chunk.Content))
+                {
+                    var data = JsonSerializer.Serialize(new { type = "text", content = chunk.Content });
+                    try
+                    {
+                        await Response.WriteAsync($"data: {data}\n\n", ct);
+                        await Response.Body.FlushAsync(ct);
+                    }
+                    catch (OperationCanceledException) { /* 客户端断开，继续处理 */ }
+                    catch (ObjectDisposedException) { }
+                }
+                else if (chunk.Type == Infrastructure.LlmGateway.GatewayChunkType.Error)
+                {
+                    var data = JsonSerializer.Serialize(new { type = "error", content = chunk.Error ?? "未知错误" });
+                    try
+                    {
+                        await Response.WriteAsync($"data: {data}\n\n", ct);
+                        await Response.Body.FlushAsync(ct);
+                    }
+                    catch { }
+                }
+            }
+
+            try
+            {
+                await Response.WriteAsync("data: [DONE]\n\n", ct);
+                await Response.Body.FlushAsync(ct);
+            }
+            catch { }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Drawing board chat streaming error");
+            var errData = JsonSerializer.Serialize(new { type = "error", content = $"对话失败: {ex.Message}" });
+            try
+            {
+                await Response.WriteAsync($"data: {errData}\n\n", ct);
+                await Response.Body.FlushAsync(ct);
+            }
+            catch { }
+        }
+    }
 }
 
 public class CreateWorkspaceImageGenRunRequest
@@ -2524,4 +2635,15 @@ public class SaveViewportRequest
     public double? Z { get; set; }
     public double? X { get; set; }
     public double? Y { get; set; }
+}
+
+public class DrawingBoardChatRequest
+{
+    public List<DrawingBoardChatMessage>? Messages { get; set; }
+}
+
+public class DrawingBoardChatMessage
+{
+    public string? Role { get; set; }
+    public string Content { get; set; } = string.Empty;
 }
