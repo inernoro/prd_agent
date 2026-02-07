@@ -22,8 +22,8 @@
   --border-focus: rgba(214, 178, 106, 0.55);
 
   /* 玻璃效果变量（默认值，可被主题系统覆盖） */
-  --glass-bg-start: rgba(255, 255, 255, 0.08);
-  --glass-bg-end: rgba(255, 255, 255, 0.03);
+  --glass-bg-start: rgba(255, 255, 255, 0.10);
+  --glass-bg-end: rgba(255, 255, 255, 0.05);
   --glass-border: rgba(255, 255, 255, 0.14);
 
   --text-primary: #f7f7fb;

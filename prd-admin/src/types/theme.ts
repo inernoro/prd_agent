@@ -169,8 +169,8 @@ export const OPACITY_MAP: Record<
     label: '不透明',
   },
   default: {
-    glassStart: 0.08,
-    glassEnd: 0.03,
+    glassStart: 0.10,
+    glassEnd: 0.05,
     border: 0.14,
     label: '默认',
   },

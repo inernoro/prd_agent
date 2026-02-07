@@ -34,11 +34,10 @@ export interface GlassCardProps {
 /**
  * GlassCard - 液态玻璃效果容器
  *
- * macOS 26 风格的液态玻璃效果，支持：
- * - 多种预设变体
- * - 自定义强调色
- * - 顶部光晕效果
- * - 交互动效
+ * Apple Liquid Glass 风格，核心视觉要素：
+ * 1. 高 brightness 增益 backdrop-filter — 在深色背景上放大模糊内容可见度
+ * 2. 顶部高光弧线 (specular highlight) — 模拟光打在曲面玻璃上的反射
+ * 3. 多层 inset shadow — 模拟玻璃厚度与边缘折射
  */
 export function GlassCard({
   className,
@@ -52,17 +51,15 @@ export function GlassCard({
   style,
   overflow = 'hidden',
 }: GlassCardProps) {
-  // 根据变体和强调色计算样式
   const getGlassStyle = (): React.CSSProperties => {
-    // 基础模糊参数
+    // backdrop-filter — brightness 大幅提升以在深色背景上显现模糊质感
     const blurValues = {
-      default: 'blur(40px) saturate(180%) brightness(1.1)',
-      gold: 'blur(40px) saturate(200%) brightness(1.15)',
-      frost: 'blur(60px) saturate(220%) brightness(1.12)',
-      subtle: 'blur(24px) saturate(160%) brightness(1.05)',
+      default: 'blur(40px) saturate(180%) brightness(1.4)',
+      gold: 'blur(40px) saturate(200%) brightness(1.45)',
+      frost: 'blur(60px) saturate(220%) brightness(1.5)',
+      subtle: 'blur(24px) saturate(160%) brightness(1.2)',
     };
 
-    // 边框透明度系数（相对于全局变量的倍数）
     const borderMultiplier = {
       default: 1,
       gold: 1.3,
@@ -70,40 +67,48 @@ export function GlassCard({
       subtle: 0.7,
     };
 
-    // 计算光晕颜色 - 增强可见度的光晕效果
+    // 光晕颜色
     let glowColor = 'rgba(255, 255, 255, 0.05)';
     if (glow) {
       if (variant === 'gold') {
-        glowColor = 'rgba(214, 178, 106, 0.25)'; // 金色光晕，更明显
+        glowColor = 'rgba(214, 178, 106, 0.25)';
       } else if (accentHue !== undefined) {
-        // 使用自定义色相，透明度提高到 0.2
         glowColor = `hsla(${accentHue}, 70%, 65%, 0.2)`;
       } else {
-        glowColor = 'rgba(255, 255, 255, 0.15)'; // 白色光晕
+        glowColor = 'rgba(255, 255, 255, 0.15)';
       }
     }
 
     const blur = blurValues[variant];
     const borderMult = borderMultiplier[variant];
 
-    // 构建背景 - 使用全局 CSS 变量，支持系统设置调控
-    let background = `linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)`;
+    // --- Apple-style specular highlight (顶部高光弧线) ---
+    // 薄亮条从顶部 0%→3% 快速衰减，模拟曲面玻璃反射
+    const specular =
+      'linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.04) 3%, transparent 45%)';
+
+    // 玻璃本体渐变（使用主题系统 CSS 变量）
+    const glassBody = `linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.10)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.05)) 100%)`;
+
+    // 组合背景层
+    let background = `${specular}, ${glassBody}`;
 
     if (glow) {
-      // 更明显的光晕：椭圆更大、渐变更柔和
-      background = `
-        radial-gradient(ellipse 100% 50% at 50% -5%, ${glowColor} 0%, transparent 60%),
-        ${background}
-      `;
+      const glowGradient = `radial-gradient(ellipse 100% 50% at 50% -5%, ${glowColor} 0%, transparent 60%)`;
+      background = `${glowGradient}, ${background}`;
     }
 
-    // 阴影层次 - 增强立体感
+    // 阴影层次 — 增强浮起感与玻璃厚度
     const shadowLayers = [
-      '0 8px 32px -4px rgba(0, 0, 0, 0.35)',
-      '0 4px 16px -2px rgba(0, 0, 0, 0.25)',
-      `0 0 0 1px rgba(255, 255, 255, ${0.14 * borderMult * 0.6}) inset`,
-      '0 1px 0 0 rgba(255, 255, 255, 0.15) inset',
-      '0 -1px 0 0 rgba(0, 0, 0, 0.12) inset',
+      // 外阴影：浮起深度
+      '0 8px 32px -4px rgba(0, 0, 0, 0.4)',
+      '0 4px 16px -2px rgba(0, 0, 0, 0.3)',
+      // 内边框光：模拟玻璃边缘折射
+      `0 0 0 1px rgba(255, 255, 255, ${0.14 * borderMult * 0.7}) inset`,
+      // 顶部高光线：Apple 风格的顶端亮线
+      '0 1px 0 0 rgba(255, 255, 255, 0.28) inset',
+      // 底部暗线：玻璃底面
+      '0 -1px 0 0 rgba(0, 0, 0, 0.15) inset',
     ];
 
     if (variant === 'gold') {
@@ -113,16 +118,13 @@ export function GlassCard({
     }
 
     return {
-      // 统一的玻璃容器基础样式（backdrop-filter + background + GPU 合成层）
       ...glassContainerStyle(blur, background),
-      // 使用全局 CSS 变量的边框
       border: `1px solid var(--glass-border, rgba(255, 255, 255, ${0.14 * borderMult}))`,
       boxShadow: shadowLayers.join(', '),
       ...style,
     };
   };
 
-  // padding 映射
   const paddingClass = {
     none: '',
     sm: 'p-3',
@@ -130,7 +132,6 @@ export function GlassCard({
     lg: 'p-6',
   };
 
-  // overflow 映射
   const overflowClass = {
     hidden: 'overflow-hidden',
     visible: 'overflow-visible',
