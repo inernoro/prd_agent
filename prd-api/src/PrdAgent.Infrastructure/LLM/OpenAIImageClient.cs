@@ -78,7 +78,8 @@ public class OpenAIImageClient
         List<string>? images = null,
         string? modelId = null,
         string? platformId = null,
-        string? modelName = null)
+        string? modelName = null,
+        string? maskBase64 = null)
     {
         if (images == null || images.Count == 0)
         {
@@ -89,10 +90,11 @@ public class OpenAIImageClient
 
         if (images.Count == 1)
         {
-            // 图生图：单张参考图（data URI）
+            // 图生图：单张参考图（data URI），可选蒙版
             return await GenerateAsync(prompt, n, size, responseFormat, ct, appCallerCode,
                 modelId, platformId, modelName,
-                initImageBase64: images[0], initImageProvided: true);
+                initImageBase64: images[0], initImageProvided: true,
+                maskBase64: maskBase64);
         }
 
         // 多图生图（2+ 张参考图）→ 转为 ImageRefData 列表
@@ -130,7 +132,8 @@ public class OpenAIImageClient
         string? platformId = null,
         string? modelName = null,
         string? initImageBase64 = null,
-        bool initImageProvided = false)
+        bool initImageProvided = false,
+        string? maskBase64 = null)
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
@@ -391,19 +394,19 @@ public class OpenAIImageClient
                         }
                     }, token);
                 }
-                // Google 原生路径：文生图/图生图统一用 generateContent 格式
+                // Google 原生路径：文生图/图生图/局部重绘统一用 generateContent 格式
                 else if (platformType == "google" || platformType == "gemini")
                 {
                     var (googleAspectRatio, googleImageSize) = GooglePlatformAdapter.ParseSizeToGoogleParams(requestedSizeNorm);
                     var googleImages = initImageBase64 != null ? new List<string> { initImageBase64 } : null;
                     var googleBody = GooglePlatformAdapter.BuildGoogleRequestBody(
-                        effectiveModelName, prompt, googleAspectRatio, googleImageSize, googleImages);
+                        effectiveModelName, prompt, googleAspectRatio, googleImageSize, googleImages, maskBase64);
                     var googleEndpointPath = GooglePlatformAdapter.BuildGoogleEndpointPath(effectiveModelName);
 
                     _logger.LogInformation(
-                        "[OpenAIImageClient] Google 原生请求: AppCallerCode={AppCallerCode}, HasImage={HasImage}, " +
+                        "[OpenAIImageClient] Google 原生请求: AppCallerCode={AppCallerCode}, HasImage={HasImage}, HasMask={HasMask}, " +
                         "AspectRatio={AspectRatio}, ImageSize={ImageSize}, Endpoint={Endpoint}",
-                        appCallerCode, initImageBase64 != null, googleAspectRatio, googleImageSize, googleEndpointPath);
+                        appCallerCode, initImageBase64 != null, maskBase64 != null, googleAspectRatio, googleImageSize, googleEndpointPath);
 
                     return await _gateway.SendRawAsync(new GatewayRawRequest
                     {

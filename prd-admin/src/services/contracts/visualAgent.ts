@@ -174,6 +174,8 @@ export type CreateWorkspaceImageGenRunInput = {
   initImageAssetSha256?: string;
   /** 多图引用列表（新架构） */
   imageRefs?: ImageRefForBackend[];
+  /** 局部重绘蒙版（data URI，白色=重绘区域，黑色=保持） */
+  maskBase64?: string;
 };
 
 /** 图片引用（发送给后端） */

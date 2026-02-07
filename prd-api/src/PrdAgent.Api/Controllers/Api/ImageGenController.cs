@@ -373,8 +373,9 @@ public class ImageGenController : ControllerBase
         {
             images.Add(initImageBase64);
         }
+        var maskB64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim();
         var res = await _imageClient.GenerateUnifiedAsync(prompt, n, size, responseFormat, ct, appCallerCode,
-            images: images.Count > 0 ? images : null, modelId, platformId, modelName);
+            images: images.Count > 0 ? images : null, modelId, platformId, modelName, maskBase64: maskB64);
         if (!res.Success)
         {
             // 将 LLM_ERROR 映射为 502，其他保持 400
@@ -1140,6 +1141,7 @@ public class ImageGenController : ControllerBase
             AppKey = appKey,
             ArticleMarkerIndex = articleMarkerIndex,
             InitImageAssetSha256 = initImageAssetSha256,
+            MaskBase64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim(),
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1493,6 +1495,11 @@ public class ImageGenGenerateRequest
     /// [兼容] 图生图首帧：已上传到系统资产的 sha256（服务端读取文件；用于规避浏览器 CORS）
     /// </summary>
     public string? InitImageAssetSha256 { get; set; }
+
+    /// <summary>
+    /// 可选：局部重绘蒙版（base64 data URI）。白色 = 重绘区域，黑色 = 保持。
+    /// </summary>
+    public string? MaskBase64 { get; set; }
 }
 
 public class ImageGenBatchRequest
@@ -1561,6 +1568,11 @@ public class CreateImageGenRunRequest
     /// 若提供，Worker 会从 COS 读取此图片作为参考图进行图生图。
     /// </summary>
     public string? InitImageAssetSha256 { get; set; }
+
+    /// <summary>
+    /// 可选：局部重绘蒙版（base64 data URI）。白色 = 重绘区域，黑色 = 保持。
+    /// </summary>
+    public string? MaskBase64 { get; set; }
 }
 
 public class ImageGenRunPlanItemInput

@@ -107,17 +107,26 @@ public class GooglePlatformAdapter : IImageGenPlatformAdapter
     /// <param name="aspectRatio">宽高比（如 16:9、1:1）</param>
     /// <param name="imageSize">图片尺寸级别（1K、2K、4K）</param>
     /// <param name="images">参考图列表（data URI 或 raw base64），null/空 表示文生图</param>
+    /// <param name="maskBase64">可选局部重绘蒙版（data URI 或 raw base64），白色=重绘，黑色=保持</param>
     public static JsonObject BuildGoogleRequestBody(
         string modelName,
         string prompt,
         string? aspectRatio,
         string? imageSize,
-        List<string>? images = null)
+        List<string>? images = null,
+        string? maskBase64 = null)
     {
         var parts = new JsonArray();
 
+        // 局部重绘：增强提示词（让模型理解蒙版语义）
+        var effectivePrompt = prompt;
+        if (!string.IsNullOrWhiteSpace(maskBase64) && images is { Count: > 0 })
+        {
+            effectivePrompt = $"请根据提供的蒙版对原图进行局部重绘。蒙版中白色区域是需要重新生成的部分，黑色区域保持不变。重绘内容：{prompt}";
+        }
+
         // 文本提示放在最前面（遵循 Google 文档推荐顺序）
-        parts.Add(new JsonObject { ["text"] = prompt });
+        parts.Add(new JsonObject { ["text"] = effectivePrompt });
 
         // 参考图作为 inline_data parts（text 之后）
         if (images is { Count: > 0 })
@@ -134,6 +143,20 @@ public class GooglePlatformAdapter : IImageGenPlatformAdapter
                     }
                 });
             }
+        }
+
+        // 蒙版作为额外的 inline_data part（在参考图之后）
+        if (!string.IsNullOrWhiteSpace(maskBase64))
+        {
+            var (maskMime, maskData) = ParseDataUri(maskBase64);
+            parts.Add(new JsonObject
+            {
+                ["inline_data"] = new JsonObject
+                {
+                    ["mime_type"] = maskMime,
+                    ["data"] = maskData
+                }
+            });
         }
 
         // generationConfig

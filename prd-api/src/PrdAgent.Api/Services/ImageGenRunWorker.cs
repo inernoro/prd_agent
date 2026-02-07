@@ -495,7 +495,8 @@ public class ImageGenRunWorker : BackgroundService
                             images: allImages.Count > 0 ? allImages : null,
                             modelId: requestedModelId,
                             platformId: run.PlatformId,
-                            modelName: run.ModelId);
+                            modelName: run.ModelId,
+                            maskBase64: run.MaskBase64);
 
                         if (!res.Success || res.Data == null)
                         {

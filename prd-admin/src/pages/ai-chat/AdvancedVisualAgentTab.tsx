@@ -42,6 +42,7 @@ import {
   ImageQuickActionBar,
   ImageQuickEditInput,
   QuickActionConfigPanel,
+  MaskPaintCanvas,
   BUILTIN_QUICK_ACTIONS,
   type QuickAction,
 } from '@/components/visual-agent';
@@ -1027,6 +1028,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [diyQuickActions]);
   const [quickEditRunning, setQuickEditRunning] = useState(false);
   const [quickActionDialogOpen, setQuickActionDialogOpen] = useState(false);
+  // 局部重绘（Inpainting）状态
+  const [inpaintTarget, setInpaintTarget] = useState<CanvasImageItem | null>(null);
   // 提示词模式：按账号持久化（不写 DB）
   // - 关闭：先调用 planImageGen 解析/改写成候选提示词，再生图
   // - 开启：跳过解析，直接把输入原样作为 prompt 发给生图模型
@@ -3616,7 +3619,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   // ── 快捷操作执行（不写入消息列表，复制一份图片进行 img2img） ──
   const executeQuickAction = useCallback(
-    async (prompt: string, sourceItem: CanvasImageItem, sizeOverride?: string) => {
+    async (prompt: string, sourceItem: CanvasImageItem, sizeOverride?: string, maskBase64?: string) => {
       if (!prompt.trim()) return;
       const pickedModel = effectiveModel;
       if (!pickedModel) {
@@ -3739,6 +3742,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 label: '原图',
               },
             ],
+            maskBase64: maskBase64 || undefined,
           },
           idempotencyKey: `qaRun_${workspaceId}_${key}`,
         });
@@ -5964,6 +5968,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 onAction={handleQuickAction}
                                 onDownload={() => void downloadImage(it.src, it.prompt || 'image')}
                                 onOpenConfig={() => setQuickActionDialogOpen(true)}
+                                onInpaint={() => {
+                                  if (it.status !== 'done' || !it.src) {
+                                    toast.error('请先选中一张已完成的图片');
+                                    return;
+                                  }
+                                  setInpaintTarget(it);
+                                }}
                               />
                             </div>
 
@@ -8440,6 +8451,27 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         actions={diyQuickActions}
         onChange={setDiyQuickActions}
       />
+
+      {/* 局部重绘蒙版编辑器 */}
+      {inpaintTarget && inpaintTarget.src && (
+        <MaskPaintCanvas
+          imageSrc={inpaintTarget.originalSrc || inpaintTarget.src}
+          imageWidth={inpaintTarget.naturalW || inpaintTarget.w || 1024}
+          imageHeight={inpaintTarget.naturalH || inpaintTarget.h || 1024}
+          onCancel={() => setInpaintTarget(null)}
+          onConfirm={(maskDataUri) => {
+            const target = inpaintTarget;
+            setInpaintTarget(null);
+            // 弹出提示词输入
+            const desc = window.prompt('请输入重绘区域的描述（如：将这里替换为蓝色的天空）');
+            if (!desc?.trim()) {
+              toast.error('请输入重绘描述');
+              return;
+            }
+            void executeQuickAction(desc.trim(), target, undefined, maskDataUri);
+          }}
+        />
+      )}
     </div>
   );
 }

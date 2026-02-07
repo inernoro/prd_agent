@@ -4,6 +4,7 @@ import {
   Expand,
   Eraser,
   Maximize,
+  Paintbrush,
   Settings,
   Wand2,
 } from 'lucide-react';
@@ -32,6 +33,8 @@ export type ImageQuickActionBarProps = {
   onDownload: () => void;
   /** 打开快捷指令配置 */
   onOpenConfig?: () => void;
+  /** 局部重绘 */
+  onInpaint?: () => void;
 };
 
 /**
@@ -42,6 +45,7 @@ export function ImageQuickActionBar({
   onAction,
   onDownload,
   onOpenConfig,
+  onInpaint,
 }: ImageQuickActionBarProps) {
   return (
     <div
@@ -75,6 +79,24 @@ export function ImageQuickActionBar({
           </button>
         );
       })}
+
+      {/* 局部重绘按钮 */}
+      {onInpaint ? (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 px-2 h-[28px] rounded-[7px] text-[12px] font-medium whitespace-nowrap transition-colors hover:bg-white/10"
+          style={{
+            color: 'rgba(239, 147, 62, 0.92)',
+            border: '1px solid rgba(239, 147, 62, 0.20)',
+            background: 'rgba(239, 147, 62, 0.06)',
+          }}
+          title="选择图片区域进行局部重绘"
+          onClick={onInpaint}
+        >
+          <Paintbrush size={14} className="shrink-0" />
+          <span>局部重绘</span>
+        </button>
+      ) : null}
 
       {/* 分隔线 */}
       <div className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.14)' }} />

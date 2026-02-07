@@ -1368,6 +1368,7 @@ public class ImageMasterController : ControllerBase
                 TargetCanvasKey = targetKey,
                 InitImageAssetSha256 = initSha,
                 ImageRefs = imageRefs, // 多图引用（新架构）
+                MaskBase64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim(),
                 TargetX = request?.X,
                 TargetY = request?.Y,
                 TargetW = request?.W,
@@ -2429,6 +2430,11 @@ public class CreateWorkspaceImageGenRunRequest
     /// 示例：[{"refId": 1, "assetSha256": "abc...", "url": "...", "label": "风格图"}]
     /// </summary>
     public List<ImageRefInputDto>? ImageRefs { get; set; }
+
+    /// <summary>
+    /// 可选：局部重绘蒙版（base64 data URI）。白色 = 重绘区域，黑色 = 保持。
+    /// </summary>
+    public string? MaskBase64 { get; set; }
 }
 
 /// <summary>
