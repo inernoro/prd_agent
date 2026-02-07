@@ -655,10 +655,10 @@ public class OpenAIImageClient
                     return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, "Google 生图响应中未包含图片数据");
                 }
 
-                var images = new List<ImageGenImage>();
+                var googleGenImages = new List<ImageGenImage>();
                 for (var gi = 0; gi < googleImages.Count; gi++)
                 {
-                    images.Add(new ImageGenImage
+                    googleGenImages.Add(new ImageGenImage
                     {
                         Index = gi,
                         Base64 = googleImages[gi].Base64,
@@ -672,14 +672,14 @@ public class OpenAIImageClient
                     ? null : await TryGetWatermarkConfigAsync(appKeyForGoogleWm, ct);
                 var cosInfosGoogle = new List<object>();
 
-                for (var i = 0; i < images.Count; i++)
+                for (var i = 0; i < googleGenImages.Count; i++)
                 {
                     byte[]? bytes = null;
                     var outMime = googleImages[i].MimeType;
 
-                    if (!string.IsNullOrWhiteSpace(images[i].Base64))
+                    if (!string.IsNullOrWhiteSpace(googleGenImages[i].Base64))
                     {
-                        try { bytes = Convert.FromBase64String(images[i].Base64!); }
+                        try { bytes = Convert.FromBase64String(googleGenImages[i].Base64!); }
                         catch { bytes = null; }
                     }
 
@@ -704,18 +704,18 @@ public class OpenAIImageClient
                         }
                     }
 
-                    images[i].Url = displayUrl;
-                    images[i].Base64 = null;
-                    images[i].OriginalUrl = stored.Url;
-                    images[i].OriginalSha256 = stored.Sha256;
+                    googleGenImages[i].Url = displayUrl;
+                    googleGenImages[i].Base64 = null;
+                    googleGenImages[i].OriginalUrl = stored.Url;
+                    googleGenImages[i].OriginalSha256 = stored.Sha256;
                     cosInfosGoogle.Add(new { index = i, url = stored.Url, sha256 = stored.Sha256, mime = stored.Mime, sizeBytes = stored.SizeBytes });
                 }
 
-                _logger.LogInformation("[Google] 生图成功: ImageCount={Count}, COS={CosCount}", images.Count, cosInfosGoogle.Count);
+                _logger.LogInformation("[Google] 生图成功: ImageCount={Count}, COS={CosCount}", googleGenImages.Count, cosInfosGoogle.Count);
 
                 return ApiResponse<ImageGenResult>.Ok(new ImageGenResult
                 {
-                    Images = images,
+                    Images = googleGenImages,
                     Meta = new ImageGenResultMeta
                     {
                         RequestedSize = requestedSizeRaw,
