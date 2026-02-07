@@ -10,7 +10,7 @@
  *   - 最终白光闪烁完成过渡
  */
 
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import {
@@ -83,9 +83,9 @@ function AgentCard({
         ['--entry-x' as string]: `${direction.x}px`,
         ['--entry-y' as string]: `${direction.y}px`,
         ['--entry-rotate' as string]: `${direction.rotate}deg`,
-        // 穿越动画时隐藏其他卡片
-        opacity: isTransitioning && !isSelected ? 0 : undefined,
-        transition: isTransitioning ? 'opacity 0.3s ease-out' : undefined,
+        // 穿越动画时隐藏所有卡片（canvas 接管视觉）
+        opacity: isTransitioning ? 0 : undefined,
+        transition: isTransitioning ? 'opacity 0.25s ease-out' : undefined,
       }}
     >
       {/* 主卡片 */}
@@ -214,7 +214,8 @@ function PortalTransition({
   const cx = startRect.left + startRect.width / 2;
   const cy = startRect.top + startRect.height / 2;
 
-  useEffect(() => {
+  // 用 useLayoutEffect 同步初始化 canvas，消除首帧延迟
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -247,16 +248,26 @@ function PortalTransition({
     const cg = parseInt(color.slice(3, 5), 16);
     const cb = parseInt(color.slice(5, 7), 16);
 
-    // 光线角度预计算
-    const rays = Array.from({ length: 18 }, (_, i) => ({
+    // 光线角度预计算（门内 + 泄漏到门外的）
+    const innerRays = Array.from({ length: 18 }, (_, i) => ({
       angle: (i / 18) * Math.PI * 2,
       width: 0.03 + Math.random() * 0.02,
       brightness: 0.5 + Math.random() * 0.5,
+    }));
+    const leakRays = Array.from({ length: 24 }, (_, i) => ({
+      angle: (i / 24) * Math.PI * 2 + (Math.random() - 0.5) * 0.15,
+      length: 60 + Math.random() * 120,
+      width: 1.5 + Math.random() * 2.5,
+      brightness: 0.3 + Math.random() * 0.7,
     }));
 
     const duration = 950;
     const startTime = performance.now();
     let frame: number;
+
+    // 同步绘制第一帧（全黑 + 小传送门），避免闪烁
+    ctx.fillStyle = '#0a0a0f';
+    ctx.fillRect(0, 0, vw, vh);
 
     function draw(now: number) {
       const elapsed = now - startTime;
@@ -277,19 +288,19 @@ function PortalTransition({
       ctx.ellipse(cx, cy, rx, ry, tiltAngle, 0, Math.PI * 2);
       ctx.clip();
 
-      // 径向渐变背景
+      // 径向渐变背景 — 更亮的内部，清晰的传送门世界
       const portalGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 0.85);
-      portalGrad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, 0.4)`);
-      portalGrad.addColorStop(0.3, `rgba(${cr}, ${cg}, ${cb}, 0.2)`);
-      portalGrad.addColorStop(0.6, `rgba(${Math.floor(cr * 0.3)}, ${Math.floor(cg * 0.3)}, ${Math.floor(cb * 0.3)}, 0.25)`);
-      portalGrad.addColorStop(1, 'rgba(10, 10, 18, 0.95)');
+      portalGrad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, 0.55)`);
+      portalGrad.addColorStop(0.25, `rgba(${cr}, ${cg}, ${cb}, 0.35)`);
+      portalGrad.addColorStop(0.5, `rgba(${Math.floor(cr * 0.5)}, ${Math.floor(cg * 0.5)}, ${Math.floor(cb * 0.5)}, 0.3)`);
+      portalGrad.addColorStop(1, 'rgba(10, 10, 18, 0.9)');
       ctx.fillStyle = portalGrad;
       ctx.fillRect(0, 0, vw, vh);
 
-      // 从中心向外的光线效果
-      const rayAlpha = Math.max(0, 1 - ease * 1.6) * 0.25;
-      if (rayAlpha > 0.01) {
-        for (const ray of rays) {
+      // 从中心向外的光线效果（门内）
+      const innerRayAlpha = Math.max(0, 1 - ease * 1.4) * 0.3;
+      if (innerRayAlpha > 0.01) {
+        for (const ray of innerRays) {
           ctx.save();
           ctx.translate(cx, cy);
           ctx.rotate(ray.angle + ease * 0.3);
@@ -301,8 +312,8 @@ function PortalTransition({
           ctx.lineTo(-rayW, rayLen);
           ctx.closePath();
           const rGrad = ctx.createLinearGradient(0, 0, 0, rayLen);
-          rGrad.addColorStop(0, `rgba(255, 255, 255, ${rayAlpha * ray.brightness})`);
-          rGrad.addColorStop(0.2, `rgba(${cr}, ${cg}, ${cb}, ${rayAlpha * ray.brightness * 0.5})`);
+          rGrad.addColorStop(0, `rgba(255, 255, 255, ${innerRayAlpha * ray.brightness})`);
+          rGrad.addColorStop(0.15, `rgba(${cr}, ${cg}, ${cb}, ${innerRayAlpha * ray.brightness * 0.6})`);
           rGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
           ctx.fillStyle = rGrad;
           ctx.fill();
@@ -327,8 +338,9 @@ function PortalTransition({
 
       ctx.restore(); // 结束传送门内部裁剪
 
-      // ═══ 层2: 暗色遮罩（椭圆孔洞）═══
-      const overlayAlpha = Math.max(0, 1 - ease * 1.3);
+      // ═══ 层2: 暗色遮罩（椭圆孔洞）— 维持足够久，让"坑"清晰可见 ═══
+      // 前55%保持全黑遮罩，之后逐渐淡出
+      const overlayAlpha = t < 0.55 ? 1.0 : Math.max(0, 1 - ((t - 0.55) / 0.45));
       if (overlayAlpha > 0.01) {
         ctx.save();
         ctx.globalAlpha = overlayAlpha;
@@ -340,8 +352,38 @@ function PortalTransition({
         ctx.restore();
       }
 
-      // ═══ 层3: 发光传送门环 ═══
-      const ringAlpha = t < 0.6 ? 1 : Math.max(0, 1 - ((t - 0.6) / 0.4));
+      // ═══ 层3: 光泄漏效果（从环边缘向四面八方扩散）═══
+      const leakAlpha = t < 0.7 ? Math.min(1, t * 4) : Math.max(0, 1 - ((t - 0.7) / 0.3));
+      if (leakAlpha > 0.01) {
+        for (const ray of leakRays) {
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(ray.angle + tiltAngle);
+
+          // 从椭圆边缘开始，向外辐射
+          const edgeDist = Math.sqrt(
+            (rx * Math.cos(ray.angle)) ** 2 + (ry * Math.sin(ray.angle)) ** 2
+          );
+          const leakLen = ray.length * (1 + ease * 2);
+
+          ctx.beginPath();
+          ctx.moveTo(0, edgeDist - 5);
+          ctx.lineTo(ray.width * 0.5, edgeDist + leakLen);
+          ctx.lineTo(-ray.width * 0.5, edgeDist + leakLen);
+          ctx.closePath();
+
+          const lGrad = ctx.createLinearGradient(0, edgeDist, 0, edgeDist + leakLen);
+          lGrad.addColorStop(0, `rgba(255, 255, 255, ${leakAlpha * ray.brightness * 0.5})`);
+          lGrad.addColorStop(0.3, `rgba(${cr}, ${cg}, ${cb}, ${leakAlpha * ray.brightness * 0.3})`);
+          lGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+          ctx.fillStyle = lGrad;
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      // ═══ 层4: 发光传送门环 ═══
+      const ringAlpha = t < 0.6 ? Math.min(1, t * 5) : Math.max(0, 1 - ((t - 0.6) / 0.4));
       if (ringAlpha > 0.01) {
         const ringW = Math.max(1.5, 3.5 * (1 - ease) + 1.5);
         // 微弱脉动效果
@@ -372,7 +414,7 @@ function PortalTransition({
         ctx.restore();
       }
 
-      // ═══ 层4: 结束白光闪烁 ═══
+      // ═══ 层5: 结束白光闪烁 ═══
       if (t > 0.85) {
         ctx.save();
         ctx.globalAlpha = (t - 0.85) / 0.15;
@@ -520,9 +562,7 @@ export function AgentSwitcher() {
           animation: isClosing
             ? 'bgFadeOut 0.25s cubic-bezier(0.55, 0, 1, 0.45) both'
             : 'bgFadeIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) both',
-          // 穿越时背景快速淡出
-          opacity: isTransitioning ? 0 : undefined,
-          transition: isTransitioning ? 'opacity 0.3s ease-out' : undefined,
+          // 穿越时不淡出背景 — canvas 遮罩层接管视觉，保持暗色底色稳定
         }}
       >
         {/* 深黑背景 */}
