@@ -205,12 +205,14 @@ function AgentCard({
 }
 
 /**
- * 传送门穿越过渡层 — 灵感来自可灵 AI 的传送门效果
+ * 传送门穿越过渡层 — 山洞/缝隙穿越效果
  *
- * 架构要点：
- * - onNavigate 在动画早期(150ms)触发，页面开始加载，用户不感受到延迟
- * - canvas 全程完全不透明(solid base fill)，不会透出背后的 UI
- * - 动画后半段 canvas 通过 CSS opacity 淡出，露出已加载的目标页面
+ * 核心原理：
+ * - canvas 作为透明遮罩层，用 evenodd 镂空一个不规则洞口
+ * - 洞口区域完全透明，露出下方已导航的目标页面
+ * - 洞口从极小的裂缝缓缓扩张至全屏
+ * - 洞口边缘有主题色发光，营造传送门感
+ * - onNavigate 在动画早期触发，页面在洞口扩张前已加载
  * - onComplete 在动画结束时触发，关闭 modal
  */
 function PortalTransition({
@@ -225,11 +227,9 @@ function PortalTransition({
   onComplete: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // 用 ref 持有回调，避免闭包过期 + 避免重新触发 effect
   const cbRef = useRef({ onNavigate, onComplete });
   cbRef.current = { onNavigate, onComplete };
   const navigatedRef = useRef(false);
-  const iconUrl = ICON_URLS[agent.key];
 
   const cx = startRect.left + startRect.width / 2;
   const cy = startRect.top + startRect.height / 2;
@@ -246,165 +246,128 @@ function PortalTransition({
     const ctx = canvas.getContext('2d')!;
     ctx.scale(dpr, dpr);
 
-    const iconImg = new Image();
-    iconImg.crossOrigin = 'anonymous';
-    iconImg.src = iconUrl;
-
+    // 洞口需要扩到足以覆盖全屏
     const maxR = Math.hypot(
       Math.max(cx, vw - cx),
       Math.max(cy, vh - cy)
-    ) * 1.3;
+    ) * 1.5;
 
-    const startRadius = 60;
-    const tiltAngle = -0.12;
     const color = agent.color.text;
     const cr = parseInt(color.slice(1, 3), 16);
     const cg = parseInt(color.slice(3, 5), 16);
     const cb = parseInt(color.slice(5, 7), 16);
 
-    // 速度线 — 从中心辐射的细线，营造穿越飞行感
-    const speedLines = Array.from({ length: 50 }, () => ({
-      angle: Math.random() * Math.PI * 2,
-      startDist: 20 + Math.random() * 180,
-      length: 50 + Math.random() * 150,
-      width: 0.5 + Math.random() * 1.5,
-      brightness: 0.2 + Math.random() * 0.8,
-      isThemed: Math.random() > 0.6,
-    }));
+    // 不规则洞口噪声 — 模拟山洞/缝隙的粗糙边缘
+    const N = 64;
+    let noiseArr = Array.from({ length: N }, () => (Math.random() - 0.5) * 0.4);
+    // 平滑3次，让边缘看起来自然
+    for (let s = 0; s < 3; s++) {
+      noiseArr = noiseArr.map((_, i) => {
+        const p = noiseArr[(i - 1 + N) % N];
+        const c = noiseArr[i];
+        const n = noiseArr[(i + 1) % N];
+        return p * 0.25 + c * 0.5 + n * 0.25;
+      });
+    }
 
-    const duration = 600; // 600ms 快速过渡
+    const duration = 900; // 稍长，营造"缓缓打开"
     const startTime = performance.now();
     let frame: number;
 
-    // 首帧：全黑，防止闪烁
-    ctx.fillStyle = '#0a0a0f';
+    // 首帧：全黑遮罩
+    ctx.fillStyle = '#080810';
     ctx.fillRect(0, 0, vw, vh);
+
+    /** 在当前路径上追加不规则椭圆洞口 */
+    function traceHole(radius: number, nScale: number) {
+      const pts: [number, number][] = [];
+      for (let i = 0; i < N; i++) {
+        const angle = (i / N) * Math.PI * 2;
+        const r = radius * (1 + noiseArr[i] * nScale);
+        pts.push([
+          cx + r * Math.cos(angle) * 1.15,
+          cy + r * Math.sin(angle) * 0.85,
+        ]);
+      }
+      const last = pts[pts.length - 1];
+      ctx.moveTo((last[0] + pts[0][0]) / 2, (last[1] + pts[0][1]) / 2);
+      for (let i = 0; i < pts.length; i++) {
+        const next = pts[(i + 1) % pts.length];
+        ctx.quadraticCurveTo(
+          pts[i][0], pts[i][1],
+          (pts[i][0] + next[0]) / 2, (pts[i][1] + next[1]) / 2
+        );
+      }
+      ctx.closePath();
+    }
 
     function draw(now: number) {
       const elapsed = now - startTime;
       const t = Math.min(elapsed / duration, 1);
-      const ease = 1 - Math.pow(1 - t, 3);
 
-      // ── 提前导航（150ms ~ 25%）──
-      if (t >= 0.25 && !navigatedRef.current) {
+      // 缓缓打开：前 35% 很慢（山洞裂缝感），后 65% 加速展开
+      const ease = t < 0.35
+        ? Math.pow(t / 0.35, 2) * 0.12
+        : 0.12 + 0.88 * (1 - Math.pow(1 - (t - 0.35) / 0.65, 2.5));
+
+      // 提前导航 — 洞口还很小时页面已开始加载
+      if (t >= 0.15 && !navigatedRef.current) {
         navigatedRef.current = true;
         cbRef.current.onNavigate();
       }
 
-      const radius = startRadius + (maxR - startRadius) * ease;
-      const rx = radius * 1.15;
-      const ry = radius * 0.9;
+      const radius = 6 + (maxR - 6) * ease;
+      // 洞口越大越规则（小 = 山洞粗糙感，大 = 平滑圆形收尾）
+      const nScale = Math.max(0, 1 - ease * 1.5);
 
-      // ═══ 底层：全画面实心暗色（完全不透明，杜绝穿透）═══
-      ctx.fillStyle = '#0a0a0f';
-      ctx.fillRect(0, 0, vw, vh);
+      // 清除为全透明
+      ctx.clearRect(0, 0, vw, vh);
 
-      // ═══ 层1: 传送门内部（clip 到椭圆）═══
-      ctx.save();
+      // ═══ 暗色遮罩 + evenodd 镂空 ═══
+      const overlayAlpha = t > 0.88 ? Math.max(0, 1 - (t - 0.88) / 0.12) : 1;
       ctx.beginPath();
-      ctx.ellipse(cx, cy, rx, ry, tiltAngle, 0, Math.PI * 2);
-      ctx.clip();
+      ctx.rect(0, 0, vw, vh);
+      traceHole(radius, nScale);
+      ctx.fillStyle = `rgba(8, 8, 15, ${overlayAlpha})`;
+      ctx.fill('evenodd');
 
-      // 不透明径向渐变 — 传送门里的世界
-      const pg = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 0.85);
-      pg.addColorStop(0, `rgb(${cr}, ${cg}, ${cb})`);
-      pg.addColorStop(0.3, `rgb(${(cr * 0.6) | 0}, ${(cg * 0.6) | 0}, ${(cb * 0.6) | 0})`);
-      pg.addColorStop(0.6, `rgb(${(cr * 0.25) | 0}, ${(cg * 0.25) | 0}, ${(cb * 0.25) | 0})`);
-      pg.addColorStop(1, 'rgb(10, 10, 18)');
-      ctx.fillStyle = pg;
-      ctx.fillRect(0, 0, vw, vh);
-
-      // Agent 图标穿越
-      if (iconImg.complete && iconImg.naturalWidth > 0) {
-        const ia = Math.max(0, 1 - t * 3);
-        if (ia > 0.01) {
-          const s = 80 * (1 + ease * 3);
-          ctx.save();
-          ctx.globalAlpha = ia;
-          ctx.shadowColor = color;
-          ctx.shadowBlur = 20 + ease * 40;
-          ctx.drawImage(iconImg, cx - s / 2, cy - s / 2, s, s);
-          ctx.restore();
-        }
-      }
-      ctx.restore(); // 结束门内 clip
-
-      // ═══ 层2: 速度线（穿越飞行感）═══
-      const slAlpha = t < 0.1 ? t * 10 : t > 0.7 ? Math.max(0, 1 - (t - 0.7) / 0.3) : 1;
-      if (slAlpha > 0.01) {
-        for (const line of speedLines) {
-          const lineLen = line.length * (0.3 + ease * 2.5);
-          const sd = line.startDist * (1 + ease * 0.5);
-          const x1 = cx + Math.cos(line.angle) * sd;
-          const y1 = cy + Math.sin(line.angle) * sd;
-          const x2 = cx + Math.cos(line.angle) * (sd + lineLen);
-          const y2 = cy + Math.sin(line.angle) * (sd + lineLen);
-
-          ctx.beginPath();
-          ctx.moveTo(x1, y1);
-          ctx.lineTo(x2, y2);
-          ctx.strokeStyle = line.isThemed
-            ? `rgba(${cr},${cg},${cb},${slAlpha * line.brightness * 0.7})`
-            : `rgba(255,255,255,${slAlpha * line.brightness * 0.5})`;
-          ctx.lineWidth = line.width;
-          ctx.stroke();
-        }
-      }
-
-      // ═══ 层3: 发光环 ═══
-      const ra = t < 0.45 ? Math.min(1, t * 6) : Math.max(0, 1 - ((t - 0.45) / 0.55));
-      if (ra > 0.01) {
-        const rw = Math.max(1.5, 4 * (1 - ease) + 1.5);
-        const pulse = 1 + Math.sin(t * Math.PI * 5) * 0.12 * (1 - ease);
+      // ═══ 洞口边缘发光 ═══
+      const glowAlpha = t < 0.08 ? t / 0.08 : t > 0.7 ? Math.max(0, 1 - (t - 0.7) / 0.3) : 1;
+      if (glowAlpha > 0.01) {
         // 主题色外发光
-        for (let i = 0; i < 2; i++) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.ellipse(cx, cy, rx, ry, tiltAngle, 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(${cr},${cg},${cb},${ra * (0.8 - i * 0.3)})`;
-          ctx.lineWidth = rw + i * 4;
-          ctx.shadowColor = color;
-          ctx.shadowBlur = (40 + i * 40) * pulse;
-          ctx.stroke();
-          ctx.restore();
-        }
-        // 白色核心
         ctx.save();
         ctx.beginPath();
-        ctx.ellipse(cx, cy, rx, ry, tiltAngle, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(255,255,255,${ra * 0.9})`;
-        ctx.lineWidth = rw * 0.6;
-        ctx.shadowColor = '#fff';
-        ctx.shadowBlur = 15 * pulse;
+        traceHole(radius, nScale);
+        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${glowAlpha * 0.7})`;
+        ctx.lineWidth = 4;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 40;
         ctx.stroke();
         ctx.restore();
-      }
 
-      // ═══ 层4: 白光闪 ═══
-      if (t > 0.8) {
+        // 白色内发光
         ctx.save();
-        ctx.globalAlpha = (t - 0.8) / 0.2;
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(0, 0, vw, vh);
+        ctx.beginPath();
+        traceHole(radius, nScale);
+        ctx.strokeStyle = `rgba(255,255,255,${glowAlpha * 0.5})`;
+        ctx.lineWidth = 1.5;
+        ctx.shadowColor = `rgba(${cr},${cg},${cb},0.8)`;
+        ctx.shadowBlur = 15;
+        ctx.stroke();
         ctx.restore();
-      }
-
-      // ═══ canvas 整体淡出（露出已导航的目标页面）═══
-      if (t > 0.5) {
-        canvas!.style.opacity = String(Math.max(0, 1 - ((t - 0.5) / 0.5)));
       }
 
       if (t < 1) {
         frame = requestAnimationFrame(draw);
       } else {
-        canvas!.style.opacity = '0';
+        ctx.clearRect(0, 0, vw, vh);
         cbRef.current.onComplete();
       }
     }
 
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [cx, cy, agent, iconUrl]);
+  }, [cx, cy, agent]);
 
   return (
     <div className="fixed inset-0 z-[300] pointer-events-none">
@@ -564,9 +527,9 @@ export function AgentSwitcher() {
           animation: isClosing
             ? 'bgFadeOut 0.25s cubic-bezier(0.55, 0, 1, 0.45) both'
             : 'bgFadeIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) both',
-          // 穿越时延迟淡出背景 — canvas 先接管视觉，300ms后背景也开始淡出露出目标页面
-          opacity: isTransitioning ? 0 : undefined,
-          transition: isTransitioning ? 'opacity 0.25s ease-out 0.25s' : undefined,
+          // 传送门打开后立即隐藏背景，让目标页面透过洞口可见
+          opacity: showPortal ? 0 : undefined,
+          transition: showPortal ? 'opacity 0.08s' : undefined,
         }}
       >
         {/* 深黑背景 */}
