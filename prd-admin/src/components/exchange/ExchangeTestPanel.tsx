@@ -25,10 +25,14 @@ const SAMPLE_REQUESTS: Record<string, string> = {
   ),
   'fal-image-edit': JSON.stringify(
     {
-      prompt: 'A beautiful sunset over the ocean',
+      prompt: 'make a photo of the man driving the car down the california coastline',
       model: 'nano-banana-pro',
       n: 1,
       size: '1024x1024',
+      image_urls: [
+        'https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input.png',
+        'https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input-2.png',
+      ],
     },
     null,
     2
