@@ -43,7 +43,7 @@ import { getModelTypeDisplayName, getModelTypeIcon } from '@/lib/appCallerUtils'
 
 /* ── 4 种可预测的调度策略（icon 选择器） ── */
 const STRATEGY_OPTIONS = [
-  { value: PoolStrategyType.FailFast, label: '快速失败', desc: '选最优，失败即止', icon: Zap, color: 'rgba(251,146,60,0.95)' },
+  { value: PoolStrategyType.FailFast, label: '快速', desc: '选最优，失败即止', icon: Zap, color: 'rgba(251,146,60,0.95)' },
   { value: PoolStrategyType.Race, label: '竞速', desc: '并行发送，取最快', icon: GitBranch, color: 'rgba(168,85,247,0.95)' },
   { value: PoolStrategyType.Sequential, label: '顺序容灾', desc: '逐个尝试，失败切换', icon: ArrowRight, color: 'rgba(56,189,248,0.95)' },
   { value: PoolStrategyType.RoundRobin, label: '轮询', desc: '均匀分配', icon: RotateCw, color: 'rgba(34,197,94,0.95)' },
@@ -51,7 +51,7 @@ const STRATEGY_OPTIONS = [
 
 /* 卡片列表中显示策略标签时也需要文案映射 */
 const STRATEGY_LABEL_MAP: Record<number, string> = {
-  [PoolStrategyType.FailFast]: '快速失败',
+  [PoolStrategyType.FailFast]: '快速',
   [PoolStrategyType.Race]: '竞速',
   [PoolStrategyType.Sequential]: '顺序容灾',
   [PoolStrategyType.RoundRobin]: '轮询',
@@ -391,7 +391,7 @@ export function ModelPoolManagePage() {
                               )}
                               {pool.strategyType != null && pool.strategyType !== PoolStrategyType.FailFast && (
                                 <span className="ml-2 px-1.5 py-0.5 rounded text-[10px]" style={{ background: 'rgba(56,189,248,0.12)', color: 'rgba(56,189,248,0.95)' }}>
-                                  {STRATEGY_LABEL_MAP[pool.strategyType!] || '快速失败'}
+                                  {STRATEGY_LABEL_MAP[pool.strategyType!] || '快速'}
                                 </span>
                               )}
                             </div>
