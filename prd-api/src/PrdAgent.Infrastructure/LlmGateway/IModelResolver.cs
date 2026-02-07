@@ -125,6 +125,26 @@ public class ModelResolutionResult
     /// </summary>
     public string? HealthStatus { get; init; }
 
+    // ========== Exchange 中继信息 ==========
+
+    /// <summary>是否为 Exchange 中继模型</summary>
+    public bool IsExchange { get; init; }
+
+    /// <summary>Exchange 配置 ID</summary>
+    public string? ExchangeId { get; init; }
+
+    /// <summary>Exchange 显示名称（自包含，用于日志）</summary>
+    public string? ExchangeName { get; init; }
+
+    /// <summary>Exchange 转换器类型（如 "fal-image-edit"）</summary>
+    public string? ExchangeTransformerType { get; init; }
+
+    /// <summary>Exchange 认证方案（如 "Bearer", "Key", "XApiKey"）</summary>
+    public string? ExchangeAuthScheme { get; init; }
+
+    /// <summary>Exchange 转换器配置</summary>
+    public Dictionary<string, object>? ExchangeTransformerConfig { get; init; }
+
     /// <summary>
     /// 是否匹配期望
     /// </summary>
@@ -192,7 +212,12 @@ public class ModelResolutionResult
                 HealthStatus = m.HealthStatus,
                 IsAvailable = m.IsAvailable,
                 ConsecutiveFailures = m.ConsecutiveFailures
-            }).ToList()
+            }).ToList(),
+            // Exchange 中继信息
+            IsExchange = IsExchange,
+            ExchangeId = ExchangeId,
+            ExchangeName = ExchangeName,
+            ExchangeTransformerType = ExchangeTransformerType
         };
     }
 
@@ -231,6 +256,40 @@ public class ModelResolutionResult
             ModelGroupCode = group.Code,
             ModelPriority = model.Priority,
             HealthStatus = model.HealthStatus.ToString()
+        };
+    }
+
+    public static ModelResolutionResult FromExchangePool(
+        string resolutionType,
+        string? expectedModel,
+        ModelGroupItem model,
+        ModelGroup group,
+        ModelExchange exchange,
+        string? apiKey)
+    {
+        return new ModelResolutionResult
+        {
+            Success = true,
+            ResolutionType = resolutionType,
+            ExpectedModel = expectedModel,
+            ActualModel = model.ModelId,
+            ActualPlatformId = model.PlatformId,
+            ActualPlatformName = $"Exchange:{exchange.Name}",
+            PlatformType = "exchange",
+            ApiUrl = exchange.TargetUrl,
+            ApiKey = apiKey,
+            ModelGroupId = group.Id,
+            ModelGroupName = group.Name,
+            ModelGroupCode = group.Code,
+            ModelPriority = model.Priority,
+            HealthStatus = model.HealthStatus.ToString(),
+            // Exchange 特有
+            IsExchange = true,
+            ExchangeId = exchange.Id,
+            ExchangeName = exchange.Name,
+            ExchangeTransformerType = exchange.TransformerType,
+            ExchangeAuthScheme = exchange.TargetAuthScheme,
+            ExchangeTransformerConfig = exchange.TransformerConfig
         };
     }
 

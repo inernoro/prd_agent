@@ -124,6 +124,9 @@ public class MongoDbContext
     // AI Toolbox 百宝箱
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
 
+    // 模型中继 (Exchange)
+    public IMongoCollection<ModelExchange> ModelExchanges => _database.GetCollection<ModelExchange>("model_exchanges");
+
     private void CreateIndexes()
     {
         static bool IsIndexConflict(MongoCommandException ex)
@@ -765,5 +768,21 @@ public class MongoDbContext
         ToolboxRuns.Indexes.CreateOne(new CreateIndexModel<ToolboxRun>(
             Builders<ToolboxRun>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_toolbox_runs_status_created" }));
+
+        // ModelExchanges：按 ModelAlias 唯一索引
+        try
+        {
+            ModelExchanges.Indexes.CreateOne(new CreateIndexModel<ModelExchange>(
+                Builders<ModelExchange>.IndexKeys.Ascending(x => x.ModelAlias),
+                new CreateIndexOptions
+                {
+                    Name = "uniq_exchange_model_alias",
+                    Unique = true
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
     }
 }

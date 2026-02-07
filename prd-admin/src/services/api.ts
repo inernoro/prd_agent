@@ -101,6 +101,14 @@ export const api = {
       activate: (id: string) => `/api/mds/llm-configs/${id}/activate`,
     },
 
+    // 模型中继 (Exchange)
+    exchanges: {
+      list: () => '/api/mds/exchanges',
+      byId: (id: string) => `/api/mds/exchanges/${id}`,
+      transformerTypes: () => '/api/mds/exchanges/transformer-types',
+      forPool: () => '/api/mds/exchanges/for-pool',
+    },
+
     // 调度器配置
     schedulerConfig: () => '/api/mds/scheduler-config',
   },

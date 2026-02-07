@@ -7,6 +7,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway.Adapters;
+using PrdAgent.Infrastructure.LlmGateway.Transformers;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
@@ -21,6 +22,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly ILogger<LlmGateway> _logger;
     private readonly ILlmRequestLogWriter? _logWriter;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private const string InvalidAppCallerErrorCode = "APP_CALLER_INVALID";
 
     public LlmGateway(
@@ -375,9 +377,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var gatewayResolution = resolution.ToGatewayResolution();
 
             // 2. 选择适配器并构建 endpoint
-            var adapter = GetAdapter(resolution.PlatformType);
+            var isExchange = resolution.IsExchange;
+            var adapter = isExchange ? null : GetAdapter(resolution.PlatformType);
             string endpoint;
-            if (string.IsNullOrWhiteSpace(request.EndpointPath))
+
+            if (isExchange)
+            {
+                // Exchange 模式：直接使用目标 URL
+                endpoint = resolution.ApiUrl!;
+            }
+            else if (string.IsNullOrWhiteSpace(request.EndpointPath))
             {
                 // 使用适配器构建默认 endpoint（处理不同平台的 URL 格式）
                 endpoint = adapter?.BuildEndpoint(resolution.ApiUrl!, request.ModelType)
@@ -429,7 +438,34 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             HttpRequestMessage httpRequest;
             string requestBodyForLog;
 
-            if (request.IsMultipart)
+            if (isExchange)
+            {
+                // ========== Exchange 中继模式 ==========
+                var transformer = _transformerRegistry.Get(resolution.ExchangeTransformerType);
+                if (transformer == null)
+                {
+                    return GatewayRawResponse.Fail("EXCHANGE_TRANSFORMER_NOT_FOUND",
+                        $"Exchange 转换器未找到: {resolution.ExchangeTransformerType}", 400);
+                }
+
+                var rawBody = request.RequestBody ?? new JsonObject();
+                var transformedBody = transformer.TransformRequest(rawBody, resolution.ExchangeTransformerConfig);
+
+                _logger.LogInformation(
+                    "[LlmGateway.Exchange] 请求转换完成\n" +
+                    "  Exchange: {ExchangeName}\n" +
+                    "  Transformer: {Transformer}\n" +
+                    "  TargetUrl: {TargetUrl}",
+                    resolution.ExchangeName, resolution.ExchangeTransformerType, endpoint);
+
+                var jsonContent = transformedBody.ToJsonString();
+                httpRequest = new HttpRequestMessage(new HttpMethod(request.HttpMethod), endpoint)
+                {
+                    Content = new StringContent(jsonContent, System.Text.Encoding.UTF8, "application/json")
+                };
+                requestBodyForLog = jsonContent;
+            }
+            else if (request.IsMultipart)
             {
                 // multipart/form-data 请求
                 var multipartContent = new MultipartFormDataContent();
@@ -480,11 +516,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 requestBodyForLog = jsonContent;
             }
 
-            // 4. 设置请求头
+            // 4. 设置请求头（支持 Exchange 可配置认证方案）
             if (!string.IsNullOrWhiteSpace(resolution.ApiKey))
             {
-                httpRequest.Headers.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", resolution.ApiKey);
+                var authScheme = isExchange ? resolution.ExchangeAuthScheme : "Bearer";
+                SetAuthHeader(httpRequest, authScheme ?? "Bearer", resolution.ApiKey);
             }
 
             if (request.ExtraHeaders != null)
@@ -534,10 +570,40 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
             }
 
-            // 8. 写入日志（完成）
-            await FinishRawLogAsync(logId, (int)response.StatusCode, responseBody, durationMs, ct);
+            // 8. Exchange 响应转换
+            var finalResponseBody = responseBody;
+            if (isExchange && response.IsSuccessStatusCode)
+            {
+                try
+                {
+                    var respTransformer = _transformerRegistry.Get(resolution.ExchangeTransformerType);
+                    if (respTransformer != null)
+                    {
+                        var rawJson = JsonNode.Parse(responseBody);
+                        if (rawJson is JsonObject rawObj)
+                        {
+                            var transformed = respTransformer.TransformResponse(rawObj, resolution.ExchangeTransformerConfig);
+                            finalResponseBody = transformed.ToJsonString();
 
-            // 9. 返回响应
+                            _logger.LogInformation(
+                                "[LlmGateway.Exchange] 响应转换完成: Exchange={ExchangeName}",
+                                resolution.ExchangeName);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "[LlmGateway.Exchange] 响应转换失败，返回原始响应: Exchange={ExchangeName}",
+                        resolution.ExchangeName);
+                    // 转换失败时使用原始响应，不阻断流程
+                }
+            }
+
+            // 9. 写入日志（完成）
+            await FinishRawLogAsync(logId, (int)response.StatusCode, finalResponseBody, durationMs, ct);
+
+            // 10. 返回响应
             var responseHeaders = new Dictionary<string, string>();
             foreach (var header in response.Headers)
             {
@@ -565,7 +631,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 Success = true,
                 StatusCode = (int)response.StatusCode,
-                Content = responseBody,
+                Content = finalResponseBody,
                 ResponseHeaders = responseHeaders,
                 Resolution = gatewayResolution,
                 DurationMs = durationMs,
@@ -620,6 +686,28 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     #region Private Methods
+
+    /// <summary>
+    /// 根据认证方案设置 HTTP 请求头
+    /// </summary>
+    private static void SetAuthHeader(HttpRequestMessage httpRequest, string authScheme, string apiKey)
+    {
+        switch (authScheme.ToLowerInvariant())
+        {
+            case "x-api-key":
+            case "xapikey":
+                httpRequest.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+                break;
+            case "key":
+                httpRequest.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Key", apiKey);
+                break;
+            default: // "bearer" or anything else
+                httpRequest.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+                break;
+        }
+    }
 
     private IGatewayAdapter? GetAdapter(string? platformType)
     {
@@ -681,7 +769,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     PlatformName: resolution.ActualPlatformName,
                     ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
-                    ModelGroupName: resolution.ModelGroupName),
+                    ModelGroupName: resolution.ModelGroupName,
+                    IsExchange: resolution.IsExchange ? true : null,
+                    ExchangeId: resolution.ExchangeId,
+                    ExchangeName: resolution.ExchangeName,
+                    ExchangeTransformerType: resolution.ExchangeTransformerType),
                 ct);
         }
         catch (Exception ex)
@@ -822,7 +914,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     PlatformName: resolution.ActualPlatformName,
                     ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
-                    ModelGroupName: resolution.ModelGroupName),
+                    ModelGroupName: resolution.ModelGroupName,
+                    IsExchange: resolution.IsExchange ? true : null,
+                    ExchangeId: resolution.ExchangeId,
+                    ExchangeName: resolution.ExchangeName,
+                    ExchangeTransformerType: resolution.ExchangeTransformerType),
                 ct);
         }
         catch (Exception ex)

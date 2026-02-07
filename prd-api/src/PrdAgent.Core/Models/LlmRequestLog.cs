@@ -116,6 +116,16 @@ public class LlmRequestLog
     public int? CacheCreationInputTokens { get; set; }
     public int? CacheReadInputTokens { get; set; }
 
+    // Exchange 中继信息
+    /// <summary>是否为 Exchange 中继请求</summary>
+    public bool? IsExchange { get; set; }
+    /// <summary>Exchange 配置 ID</summary>
+    public string? ExchangeId { get; set; }
+    /// <summary>Exchange 显示名称（自包含）</summary>
+    public string? ExchangeName { get; set; }
+    /// <summary>Exchange 转换器类型</summary>
+    public string? ExchangeTransformerType { get; set; }
+
     // 时序
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
     public DateTime? FirstByteAt { get; set; }
