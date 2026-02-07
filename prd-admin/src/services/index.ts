@@ -756,6 +756,13 @@ export const getGroupMonitoring = async (groupId: string) => {
 };
 export const simulateDowngrade = (groupId: string, modelId: string, platformId: string, failureCount: number) => modelGroupsService.simulateDowngrade(groupId, modelId, platformId, failureCount);
 export const simulateRecover = (groupId: string, modelId: string, platformId: string, successCount: number) => modelGroupsService.simulateRecover(groupId, modelId, platformId, successCount);
+export const predictNextDispatch = async (groupId: string) => {
+  const response = await modelGroupsService.predictNextDispatch(groupId);
+  if (response.success && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error?.message || '获取调度预测失败');
+};
 
 export const getAppCallers = async () => {
   const response = await appCallersService.getAppCallers();

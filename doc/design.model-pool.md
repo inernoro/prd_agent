@@ -67,6 +67,11 @@
 | **IModelResolver** | 模型解析接口 | `PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs` |
 | **GatewayLLMClient** | ILLMClient 实现（委托到 Gateway） | `PrdAgent.Infrastructure/LlmGateway/GatewayLLMClient.cs` |
 | **IGatewayAdapter** | 平台适配器接口 | `PrdAgent.Infrastructure/LlmGateway/Adapters/` |
+| **IModelPool** | 模型池策略引擎接口 | `PrdAgent.Infrastructure/ModelPool/IModelPool.cs` |
+| **ModelPoolFactory** | ModelGroup → IModelPool 桥接工厂 | `PrdAgent.Infrastructure/ModelPool/ModelPoolFactory.cs` |
+| **IPoolStrategy** | 调度策略接口 | `PrdAgent.Infrastructure/ModelPool/IPoolStrategy.cs` |
+| **IPoolHealthTracker** | 端点健康追踪器 | `PrdAgent.Infrastructure/ModelPool/IPoolHealthTracker.cs` |
+| **HttpPoolDispatcher** | HTTP 请求分发器 | `PrdAgent.Infrastructure/ModelPool/HttpPoolDispatcher.cs` |
 
 ### 4.2 两种调用方式
 
@@ -256,7 +261,10 @@ flowchart TB
 
 | API | 用途 |
 |-----|------|
-| `/api/mds/model-groups` | 模型池管理 |
+| `/api/mds/model-groups` | 模型池管理（CRUD） |
+| `POST /api/mds/model-groups/{id}/test` | 模型池连通性测试 |
+| `GET /api/mds/model-groups/{id}/health` | 模型池健康状态查询 |
+| `GET /api/mds/model-groups/{id}/predict` | 调度预测（模拟下次请求路径） |
 | `/api/open-platform/app-callers` | 应用调用者管理 |
 | `/api/logs/llm` | LLM 请求日志查询 |
 
@@ -273,6 +281,11 @@ flowchart TB
 | `ModelPoolSchedulingTests.cs` | 模型池选择、优先级、健康状态 |
 | `LlmSchedulingPolicyTests.cs` | 调度策略 |
 | `LlmSchedulingIntegrationTests.cs` | 端到端集成测试 |
+| `ModelPoolFactoryTests.cs` | ModelPoolFactory 桥接、策略选择 |
+| `PoolHealthTrackerTests.cs` | 健康追踪、状态转换 |
+| `FailFastStrategyTests.cs` | 快速失败策略单元测试 |
+| `SequentialStrategyTests.cs` | 顺序容灾策略单元测试 |
+| `RoundRobinStrategyTests.cs` | 轮询均衡策略单元测试 |
 
 ### 10.2 运行测试
 
@@ -329,3 +342,88 @@ builder.Services.AddScoped<Core.Interfaces.LlmGateway.ILlmGateway>(sp =>
 - **默认池**：`ModelGroup.IsDefaultForType = true`
 - **传统配置**：`LLMModel.IsMain/IsVision/IsImageGen/IsIntent` 标记
 - **直连**：仅用于 ModelLab 等测试场景
+
+---
+
+## 13. ModelPool 策略引擎（独立组件）
+
+> **新增于 2026-02-06**：将调度策略从 Gateway 中抽离为独立组件，支持 6 种策略、健康追踪、连通性测试。
+
+### 13.1 设计目标
+
+- **独立性**：`Infrastructure/ModelPool/` 不依赖 Gateway，可独立使用和测试
+- **可扩展**：新增策略只需实现 `IPoolStrategy` 接口
+- **桥接复用**：`ModelPoolFactory` 将现有 `ModelGroup` + `LLMPlatform` 转换为 `IModelPool`
+
+### 13.2 目录结构
+
+```
+PrdAgent.Infrastructure/ModelPool/
+├── IModelPool.cs              # 模型池顶层接口
+├── IPoolStrategy.cs           # 策略接口
+├── IPoolHealthTracker.cs      # 健康追踪接口
+├── IPoolHttpDispatcher.cs     # HTTP 分发接口
+├── ModelPoolFactory.cs        # ModelGroup → IModelPool 工厂
+├── ModelPoolDispatcher.cs     # 核心调度引擎
+├── HttpPoolDispatcher.cs      # HTTP 请求实际执行
+├── PoolHealthTracker.cs       # 内存健康追踪实现
+├── Models/
+│   ├── PoolStrategyType.cs    # 策略枚举 (6 种)
+│   ├── PoolEndpoint.cs        # 端点模型
+│   ├── PoolRequest.cs         # 请求模型
+│   ├── PoolResponse.cs        # 响应模型
+│   ├── PoolHealthSnapshot.cs  # 健康快照
+│   └── PoolTestResult.cs      # 测试结果
+├── Strategies/
+│   ├── StrategyHelper.cs      # 策略公共工具
+│   ├── FailFastStrategy.cs    # 快速失败（选最优，失败立即返回）
+│   ├── RaceStrategy.cs        # 竞速模式（并行请求，取最快）
+│   ├── SequentialStrategy.cs  # 顺序容灾（按序尝试，失败切换）
+│   ├── RoundRobinStrategy.cs  # 轮询均衡（均匀分配）
+│   ├── WeightedRandomStrategy.cs  # 加权随机（按权重概率选择）
+│   └── LeastLatencyStrategy.cs    # 最低延迟（优先最快端点）
+└── Testing/
+    ├── IPoolEndpointTester.cs     # 端点测试接口
+    └── HttpPoolEndpointTester.cs  # HTTP 连通性测试实现
+```
+
+### 13.3 策略类型（PoolStrategyType）
+
+| 枚举值 | 名称 | 说明 | 可预测 |
+|--------|------|------|--------|
+| 0 | FailFast | 选最优端点，失败直接返回错误 | ✅ |
+| 1 | Race | 并行请求所有端点，取最先成功返回的结果 | ✅ |
+| 2 | Sequential | 按优先级顺序尝试，失败自动切换下一个 | ✅ |
+| 3 | RoundRobin | 请求均匀分配到所有可用端点 | ✅ |
+| 4 | WeightedRandom | 按优先级权重随机选择端点 | ❌（随机） |
+| 5 | LeastLatency | 优先选择历史响应最快的端点 | ❌（运行时） |
+
+- `ModelGroup.StrategyType` 字段（int，默认 0=FailFast）控制该模型池使用的策略
+- 前端管理界面仅展示前 4 种可预测策略，后 2 种保留在后端供高级配置
+
+### 13.4 ModelPoolFactory 桥接
+
+```csharp
+// 将现有 ModelGroup 实体转换为独立 IModelPool
+var pool = _modelPoolFactory.Create(modelGroup, platforms);
+var response = await pool.SendAsync(request, ct);
+```
+
+工厂自动完成：
+1. 将 `ModelGroupItem[]` 转换为 `PoolEndpoint[]`
+2. 解密 API Key（通过 `ApiKeyCrypto`）
+3. 根据 `ModelGroup.StrategyType` 选择对应的 `IPoolStrategy`
+
+### 13.5 管理端 API
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/mds/model-groups/{id}/test` | POST | 向池内所有端点发送测试请求，返回连通性结果 |
+| `/api/mds/model-groups/{id}/health` | GET | 返回池内所有端点的健康快照 |
+| `/api/mds/model-groups/{id}/predict` | GET | 模拟下次调度路径（不发送真实请求） |
+
+### 13.6 前端可视化
+
+- **ModelPoolManagePage**：策略配置（icon 选择器）、模型列表管理
+- **PoolPredictionDialog**：调度预测可视化（4 种动画：Linear/Race/Weighted/RoundRobin）
+- 卡片右上角 Radar 图标：点击后查看该池的预测调度路径
