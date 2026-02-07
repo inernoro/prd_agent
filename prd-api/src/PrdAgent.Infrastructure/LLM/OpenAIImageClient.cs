@@ -61,6 +61,64 @@ public class OpenAIImageClient
     }
 
 
+    /// <summary>
+    /// 统一图片生成入口：文生图 / 图生图 / 多图生图由 images 参数自动决定。
+    /// 前端只需发送一种格式，后端根据 images 数量 + 平台类型自动路由。
+    /// - images 为空/null → 文生图
+    /// - images 包含 1 张  → 图生图
+    /// - images 包含 2+ 张 → 多图生图
+    /// </summary>
+    public async Task<ApiResponse<ImageGenResult>> GenerateUnifiedAsync(
+        string prompt,
+        int n,
+        string? size,
+        string? responseFormat,
+        CancellationToken ct,
+        string appCallerCode,
+        List<string>? images = null,
+        string? modelId = null,
+        string? platformId = null,
+        string? modelName = null)
+    {
+        if (images == null || images.Count == 0)
+        {
+            // 文生图：无参考图
+            return await GenerateAsync(prompt, n, size, responseFormat, ct, appCallerCode,
+                modelId, platformId, modelName);
+        }
+
+        if (images.Count == 1)
+        {
+            // 图生图：单张参考图（data URI）
+            return await GenerateAsync(prompt, n, size, responseFormat, ct, appCallerCode,
+                modelId, platformId, modelName,
+                initImageBase64: images[0], initImageProvided: true);
+        }
+
+        // 多图生图（2+ 张参考图）→ 转为 ImageRefData 列表
+        var imageRefs = images.Select((dataUri, idx) =>
+        {
+            var mimeType = "image/png";
+            if (dataUri.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                var semicolonIdx = dataUri.IndexOf(';');
+                if (semicolonIdx > 5)
+                    mimeType = dataUri[5..semicolonIdx];
+            }
+            return new Core.Models.MultiImage.ImageRefData
+            {
+                RefId = idx + 1,
+                Base64 = dataUri,
+                MimeType = mimeType,
+                Label = $"参考图 {idx + 1}"
+            };
+        }).ToList();
+
+        return await GenerateWithVisionAsync(prompt, imageRefs, size, ct, appCallerCode,
+            modelId, platformId, modelName);
+    }
+
+
     public async Task<ApiResponse<ImageGenResult>> GenerateAsync(
         string prompt,
         int n,

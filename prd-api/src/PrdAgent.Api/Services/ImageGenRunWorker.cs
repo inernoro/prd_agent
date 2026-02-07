@@ -470,43 +470,32 @@ public class ImageGenRunWorker : BackgroundService
                             isMultiImageVisionMode,
                             loadedImageRefs.Count);
 
-                        // 根据图片数量选择 API：
-                        // - 0张：文生图（GenerateAsync）
-                        // - 1张：图生图（GenerateAsync with initImageBase64）
-                        // - 2+张：多图Vision API（GenerateWithVisionAsync）
-                        ApiResponse<ImageGenResult> res;
-                        if (isMultiImageVisionMode && loadedImageRefs.Count > 1)
+                        // 统一图片生成：根据 images 数量自动路由（文生图/图生图/多图）
+                        // 将所有已加载的图片（含 initImageBase64 单图兼容）合并为 data URI 列表
+                        var allImages = new List<string>();
+                        if (loadedImageRefs.Count > 0)
                         {
-                            _logger.LogInformation(
-                                "[多图Vision] 使用 Vision API 发送 {Count} 张图片到模型",
-                                loadedImageRefs.Count);
+                            allImages.AddRange(loadedImageRefs.Select(r =>
+                                r.Base64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                                    ? r.Base64
+                                    : $"data:{r.MimeType ?? "image/png"};base64,{r.Base64}"));
+                        }
+                        else if (!string.IsNullOrWhiteSpace(initImageBase64))
+                        {
+                            allImages.Add(initImageBase64);
+                        }
 
-                            res = await imageClient.GenerateWithVisionAsync(
-                                finalPrompt,
-                                loadedImageRefs,
-                                reqSize,
-                                ct,
-                                appCallerCode,
-                                modelId: requestedModelId,
-                                platformId: run.PlatformId,
-                                modelName: run.ModelId);
-                        }
-                        else
-                        {
-                            // 使用传统 API（文生图或单图图生图）
-                            res = await imageClient.GenerateAsync(
-                                finalPrompt,
-                                n: 1,
-                                size: reqSize,
-                                responseFormat: run.ResponseFormat,
-                                ct,
-                                appCallerCode,
-                                modelId: requestedModelId,
-                                platformId: run.PlatformId,
-                                modelName: run.ModelId,
-                                initImageBase64: initImageBase64,
-                                initImageProvided: initImageBase64 != null);
-                        }
+                        var res = await imageClient.GenerateUnifiedAsync(
+                            finalPrompt,
+                            n: 1,
+                            size: reqSize,
+                            responseFormat: run.ResponseFormat,
+                            ct,
+                            appCallerCode,
+                            images: allImages.Count > 0 ? allImages : null,
+                            modelId: requestedModelId,
+                            platformId: run.PlatformId,
+                            modelName: run.ModelId);
 
                         if (!res.Success || res.Data == null)
                         {

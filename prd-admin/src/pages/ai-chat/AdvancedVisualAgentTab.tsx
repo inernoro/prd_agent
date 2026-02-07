@@ -37,7 +37,7 @@ import {
   uploadVisualAgentWorkspaceAsset,
 } from '@/services';
 import type { ModelGroupForApp } from '@/types/modelGroup';
-import type { VisualAgentGenerationType, QuickActionConfig } from '@/services/contracts/userPreferences';
+import type { QuickActionConfig } from '@/services/contracts/userPreferences';
 import {
   ImageQuickActionBar,
   ImageQuickEditInput,
@@ -915,14 +915,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [models, setModels] = useState<Model[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  // 按生成类型存储模型池：text2img, img2img, vision
-  const [imageGenPoolsByType, setImageGenPoolsByType] = useState<{
-    text2img: ModelGroupForApp[];
-    img2img: ModelGroupForApp[];
-    vision: ModelGroupForApp[];
-  }>({ text2img: [], img2img: [], vision: [] });
-  // 生成类型筛选：all=所有, text2img=文生图, img2img=图生图, vision=多图参考
-  const [generationType, setGenerationType] = useState<VisualAgentGenerationType>('all');
+  // 统一模型池列表（合并所有生成类型，去重）
+  const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
 
   // 将模型池转换为 Model 兼容对象，用于选择器展示
   // 扩展 Model 类型以包含来源标记
@@ -934,20 +928,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     /** 模型池中第一个模型的实际 modelId（用于查询适配器信息） */
     actualModelId?: string;
   };
-  // 根据 generationType 筛选模型池
+  // 直接使用统一的模型池列表
   const filteredPools = useMemo(() => {
-    if (generationType === 'text2img') return imageGenPoolsByType.text2img;
-    if (generationType === 'img2img') return imageGenPoolsByType.img2img;
-    if (generationType === 'vision') return imageGenPoolsByType.vision;
-    // 默认 'all'：合并所有类型并去重（按 id 去重）
-    const all = [...imageGenPoolsByType.text2img, ...imageGenPoolsByType.img2img, ...imageGenPoolsByType.vision];
-    const seen = new Set<string>();
-    return all.filter((p) => {
-      if (seen.has(p.id)) return false;
-      seen.add(p.id);
-      return true;
-    });
-  }, [imageGenPoolsByType, generationType]);
+    return imageGenPools;
+  }, [imageGenPools]);
 
   const poolModels = useMemo<ModelWithSource[]>(() => {
     if (filteredPools.length === 0) return [];
@@ -2112,27 +2096,35 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   useEffect(() => {
     setModelsLoading(true);
-    // 按生成类型加载模型池：text2img, img2img, vision
-    // 每种类型对应不同的 appCallerCode
-    const appCallerCodes = {
-      text2img: 'visual-agent.image.text2img::generation',
-      img2img: 'visual-agent.image.img2img::generation',
-      vision: 'visual-agent.image.vision::generation',
-    };
+    // 统一加载所有生成类型的模型池并合并去重
+    // 后端根据 images 数量自动路由（文生图/图生图/多图），前端不需要区分
+    const appCallerCodes = [
+      'visual-agent.image.text2img::generation',
+      'visual-agent.image.img2img::generation',
+      'visual-agent.image.vision::generation',
+    ];
     const emptyPools = { success: false, data: [] as ModelGroupForApp[] };
     Promise.all([
       getModels(),
-      modelGroupsService.getModelGroupsForApp(appCallerCodes.text2img, 'generation').catch(() => emptyPools),
-      modelGroupsService.getModelGroupsForApp(appCallerCodes.img2img, 'generation').catch(() => emptyPools),
-      modelGroupsService.getModelGroupsForApp(appCallerCodes.vision, 'generation').catch(() => emptyPools),
+      ...appCallerCodes.map((code) =>
+        modelGroupsService.getModelGroupsForApp(code, 'generation').catch(() => emptyPools)
+      ),
     ])
-      .then(([modelsRes, text2imgRes, img2imgRes, visionRes]) => {
-        if (modelsRes.success) setModels(modelsRes.data ?? []);
-        setImageGenPoolsByType({
-          text2img: text2imgRes.success ? text2imgRes.data ?? [] : [],
-          img2img: img2imgRes.success ? img2imgRes.data ?? [] : [],
-          vision: visionRes.success ? visionRes.data ?? [] : [],
-        });
+      .then(([modelsRes, ...poolResults]) => {
+        const mr = modelsRes as { success: boolean; data?: Model[] };
+        if (mr.success) setModels(mr.data ?? []);
+        // 合并所有池并按 id 去重
+        const seen = new Set<string>();
+        const merged: ModelGroupForApp[] = [];
+        for (const res of poolResults as { success: boolean; data?: ModelGroupForApp[] }[]) {
+          for (const pool of res.success ? res.data ?? [] : []) {
+            if (!seen.has(pool.id)) {
+              seen.add(pool.id);
+              merged.push(pool);
+            }
+          }
+        }
+        setImageGenPools(merged);
       })
       .finally(() => setModelsLoading(false));
   }, []);
@@ -2149,10 +2141,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           const prefs = res.data.visualAgentPreferences;
           setModelPrefAuto(prefs.modelAuto ?? true);
           setModelPrefModelId(prefs.modelId ?? '');
-          // 加载生成类型偏好
-          if (prefs.generationType && ['all', 'text2img', 'img2img', 'vision'].includes(prefs.generationType)) {
-            setGenerationType(prefs.generationType as VisualAgentGenerationType);
-          }
           // 加载 DIY 快捷指令
           if (Array.isArray(prefs.quickActions)) {
             setDiyQuickActions(prefs.quickActions);
@@ -2184,7 +2172,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       void updateVisualAgentPreferences({
         modelAuto: modelPrefAuto,
         modelId: modelPrefModelId || undefined,
-        generationType,
         quickActions: diyQuickActions,
       }).catch(() => {
         // 静默失败，不影响用户操作
@@ -2195,7 +2182,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         clearTimeout(modelPrefSaveRef.current);
       }
     };
-  }, [modelPrefAuto, modelPrefModelId, generationType, modelPrefReady, userId, diyQuickActions]);
+  }, [modelPrefAuto, modelPrefModelId, modelPrefReady, userId, diyQuickActions]);
 
   // 读取直连模式（仅在有 userId 时）
   useEffect(() => {
@@ -7893,33 +7880,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               ariaLabel="直连模式（固定开启）"
                             />
                           </div>
-                        </div>
-
-                        <div className="mt-3 flex items-center gap-1 rounded-[14px] p-1" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.03)' }}>
-                          {([
-                            { key: 'all', label: '默认' },
-                            { key: 'text2img', label: '文生图' },
-                            { key: 'img2img', label: '图生图' },
-                            { key: 'vision', label: '多图生图' },
-                          ] as const).map((tab) => (
-                            <button
-                              key={tab.key}
-                              type="button"
-                              className="h-8 px-2.5 rounded-[12px] text-[12px] font-semibold transition-all"
-                              style={generationType === tab.key ? {
-                                background: 'rgba(255,255,255,0.06)',
-                                border: '1px solid rgba(255,255,255,0.10)',
-                                color: 'var(--text-primary)',
-                              } : {
-                                background: 'transparent',
-                                border: '1px solid transparent',
-                                color: 'rgba(255,255,255,0.55)',
-                              }}
-                              onClick={() => setGenerationType(tab.key)}
-                            >
-                              {tab.label}
-                            </button>
-                          ))}
                         </div>
 
                         <div className="mt-3 max-h-[360px] overflow-auto pr-1">
