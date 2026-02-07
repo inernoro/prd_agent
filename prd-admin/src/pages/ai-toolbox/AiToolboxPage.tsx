@@ -20,11 +20,9 @@ const CATEGORY_OPTIONS: { key: ToolboxCategory; label: string; icon: React.React
   { key: 'custom', label: '我创建的', icon: <User size={12} /> },
 ];
 
-// 页面容器样式 - 不透明背景
+// 页面容器样式 - 透明背景，让 GlassCard 的 backdrop-filter 能穿透到 AppShell 背景
 const pageContainerStyle: React.CSSProperties = {
-  background: 'var(--bg-primary, #0f1419)',
   borderRadius: '16px',
-  border: '1px solid rgba(255, 255, 255, 0.06)',
 };
 
 export default function AiToolboxPage() {
