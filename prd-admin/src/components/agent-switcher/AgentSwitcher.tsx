@@ -270,7 +270,7 @@ function PortalTransition({
       });
     }
 
-    const duration = 900; // 稍长，营造"缓缓打开"
+    const duration = 700;
     const startTime = performance.now();
     let frame: number;
 
@@ -305,18 +305,18 @@ function PortalTransition({
       const elapsed = now - startTime;
       const t = Math.min(elapsed / duration, 1);
 
-      // 缓缓打开：前 35% 很慢（山洞裂缝感），后 65% 加速展开
-      const ease = t < 0.35
-        ? Math.pow(t / 0.35, 2) * 0.12
-        : 0.12 + 0.88 * (1 - Math.pow(1 - (t - 0.35) / 0.65, 2.5));
+      // 缓缓打开：前期稍慢营造裂缝感，后期加速展开
+      const ease = t < 0.2
+        ? Math.pow(t / 0.2, 1.5) * 0.15
+        : 0.15 + 0.85 * (1 - Math.pow(1 - (t - 0.2) / 0.8, 2));
 
-      // 提前导航 — 洞口还很小时页面已开始加载
-      if (t >= 0.15 && !navigatedRef.current) {
+      // 提前导航
+      if (t >= 0.12 && !navigatedRef.current) {
         navigatedRef.current = true;
         cbRef.current.onNavigate();
       }
 
-      const radius = 6 + (maxR - 6) * ease;
+      const radius = 30 + (maxR - 30) * ease;
       // 洞口越大越规则（小 = 山洞粗糙感，大 = 平滑圆形收尾）
       const nScale = Math.max(0, 1 - ease * 1.5);
 
@@ -386,7 +386,6 @@ export function AgentSwitcher() {
   const [transitionAgent, setTransitionAgent] = useState<AgentDefinition | null>(null);
   const [transitionRect, setTransitionRect] = useState<DOMRect | null>(null);
   const [convergeOffsets, setConvergeOffsets] = useState<Record<number, { x: number; y: number }>>({});
-  const [showPortal, setShowPortal] = useState(false);
   const cardRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const {
@@ -446,15 +445,7 @@ export function AgentSwitcher() {
     setTransitionAgent(null);
     setTransitionRect(null);
     setConvergeOffsets({});
-    setShowPortal(false);
   }, [close]);
-
-  // 卡片先汇聚 250ms，然后再展示传送门
-  useEffect(() => {
-    if (!transitionAgent) return;
-    const timer = setTimeout(() => setShowPortal(true), 250);
-    return () => clearTimeout(timer);
-  }, [transitionAgent]);
 
   const handleClose = useCallback(() => {
     setIsClosing(true);
@@ -524,12 +515,14 @@ export function AgentSwitcher() {
         className="fixed inset-0 z-[200] flex items-center justify-center"
         onClick={handleBackdropClick}
         style={{
-          animation: isClosing
+          // 穿越动画时：立即隐藏背景，让目标页面透过洞口可见
+          // 必须用 animation:none 清除 bgFadeIn 的 fill:both，否则其 opacity:1 会覆盖 inline style
+          animation: isTransitioning
+            ? 'none'
+            : isClosing
             ? 'bgFadeOut 0.25s cubic-bezier(0.55, 0, 1, 0.45) both'
             : 'bgFadeIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) both',
-          // 传送门打开后立即隐藏背景，让目标页面透过洞口可见
-          opacity: showPortal ? 0 : undefined,
-          transition: showPortal ? 'opacity 0.08s' : undefined,
+          visibility: isTransitioning ? 'hidden' : undefined,
         }}
       >
         {/* 深黑背景 */}
@@ -763,8 +756,8 @@ export function AgentSwitcher() {
         `}</style>
       </div>
 
-      {/* 传送门穿越过渡层 — 卡片汇聚 250ms 后展示 */}
-      {showPortal && transitionAgent && transitionRect && (
+      {/* 传送门穿越过渡层 — 点击后立即展示 */}
+      {transitionAgent && transitionRect && (
         <PortalTransition
           agent={transitionAgent}
           startRect={transitionRect}
