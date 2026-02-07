@@ -1,5 +1,6 @@
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
+import { GlassSwitch } from '@/components/design/GlassSwitch';
 import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
@@ -542,35 +543,21 @@ export function ModelPoolManagePage() {
                   />
                 </div>
 
-                {/* 策略 icon 选择器 */}
+                {/* 策略 icon 选择器 (GlassSwitch) */}
                 <div className="flex-1 min-w-0">
                   <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                     调度策略
                   </label>
-                  <div className="flex gap-2">
-                    {STRATEGY_OPTIONS.map((opt) => {
-                      const Icon = opt.icon;
-                      const selected = (poolForm.strategyType ?? 0) === opt.value;
-                      return (
-                        <Tooltip key={opt.value} content={`${opt.label} — ${opt.desc}`}>
-                          <button
-                            type="button"
-                            className="flex items-center gap-1.5 px-3 h-9 rounded-[10px] transition-all duration-300 text-[12px] font-medium"
-                            style={{
-                              background: selected ? `${opt.color}15` : 'rgba(255,255,255,0.04)',
-                              border: `1.5px solid ${selected ? `${opt.color}60` : 'rgba(255,255,255,0.08)'}`,
-                              color: selected ? opt.color : 'var(--text-muted)',
-                              boxShadow: selected ? `0 0 12px ${opt.color}18` : 'none',
-                            }}
-                            onClick={() => setPoolForm({ ...poolForm, strategyType: opt.value })}
-                          >
-                            <Icon size={14} />
-                            <span className="hidden sm:inline">{opt.label}</span>
-                          </button>
-                        </Tooltip>
-                      );
-                    })}
-                  </div>
+                  <GlassSwitch
+                    size="md"
+                    value={String(poolForm.strategyType ?? 0)}
+                    onChange={(key) => setPoolForm({ ...poolForm, strategyType: parseInt(key) as PoolStrategyType })}
+                    options={STRATEGY_OPTIONS.map((opt) => ({
+                      key: String(opt.value),
+                      label: opt.label,
+                      icon: <opt.icon size={13} />,
+                    }))}
+                  />
                 </div>
 
                 <div className="shrink-0 flex items-center gap-2 h-9 pb-px">
