@@ -185,7 +185,7 @@ export function ImageQuickActionBar({
         <button
           type="button"
           className="inline-flex items-center justify-center w-[28px] h-[28px] rounded-[7px] transition-colors hover:bg-white/10"
-          style={{ color: 'rgba(239, 147, 62, 0.88)' }}
+          style={{ color: 'rgba(255, 255, 255, 0.72)' }}
           title="局部重绘"
           onClick={onInpaint}
         >
