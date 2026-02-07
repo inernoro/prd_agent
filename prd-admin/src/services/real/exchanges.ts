@@ -4,6 +4,7 @@ import type {
   UpdateExchangeRequest,
   TransformerTypeOption,
   ExchangeForPool,
+  ExchangeTestResult,
 } from '@/types/exchange';
 import type { ApiResponse } from '@/types/api';
 import { apiRequest } from '@/services/real/apiClient';
@@ -56,4 +57,16 @@ export async function getExchangesForPool(): Promise<ApiResponse<ExchangeForPool
   const res = await apiRequest<{ items: ExchangeForPool[] }>(api.mds.exchanges.forPool());
   if (!res.success) return res as unknown as ApiResponse<ExchangeForPool[]>;
   return { success: true, data: res.data.items ?? [], error: null };
+}
+
+/** 测试 Exchange 转换管线 */
+export async function testExchange(
+  id: string,
+  standardRequestBody: string,
+  dryRun: boolean = false
+): Promise<ApiResponse<ExchangeTestResult>> {
+  return await apiRequest<ExchangeTestResult>(api.mds.exchanges.test(id), {
+    method: 'POST',
+    body: { standardRequestBody, dryRun },
+  });
 }

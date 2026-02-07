@@ -105,6 +105,7 @@ export const api = {
     exchanges: {
       list: () => '/api/mds/exchanges',
       byId: (id: string) => `/api/mds/exchanges/${id}`,
+      test: (id: string) => `/api/mds/exchanges/${id}/test`,
       transformerTypes: () => '/api/mds/exchanges/transformer-types',
       forPool: () => '/api/mds/exchanges/for-pool',
     },

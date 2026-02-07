@@ -10,10 +10,12 @@ import {
 } from '@/services/real/exchanges';
 import type { ModelExchange, CreateExchangeRequest, UpdateExchangeRequest, TransformerTypeOption } from '@/types/exchange';
 import { AUTH_SCHEME_OPTIONS } from '@/types/exchange';
+import { ExchangeTestPanel } from '@/components/exchange/ExchangeTestPanel';
 import {
   ArrowLeftRight,
   Copy,
   Edit,
+  FlaskConical,
   Plus,
   Trash2,
   Zap,
@@ -53,6 +55,7 @@ export function ExchangeManagePage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<ExchangeForm>(defaultForm);
   const [saving, setSaving] = useState(false);
+  const [testingExchange, setTestingExchange] = useState<ModelExchange | null>(null);
 
   const loadData = async () => {
     setLoading(true);
@@ -214,6 +217,10 @@ export function ExchangeManagePage() {
                 </div>
                 <div className="flex items-center gap-1 ml-2 shrink-0">
                   <button className="p-1 rounded hover:bg-muted/50 transition-colors text-muted-foreground hover:text-foreground"
+                    onClick={() => setTestingExchange(exchange)} title="测试">
+                    <FlaskConical size={14} />
+                  </button>
+                  <button className="p-1 rounded hover:bg-muted/50 transition-colors text-muted-foreground hover:text-foreground"
                     onClick={() => handleEdit(exchange)} title="编辑">
                     <Edit size={14} />
                   </button>
@@ -262,6 +269,22 @@ export function ExchangeManagePage() {
           ))}
         </div>
       )}
+
+      {/* 测试面板对话框 */}
+      <Dialog
+        open={testingExchange !== null}
+        onOpenChange={open => { if (!open) setTestingExchange(null); }}
+        title="Exchange 转换管线测试"
+        maxWidth={1100}
+        content={
+          testingExchange ? (
+            <ExchangeTestPanel
+              exchange={testingExchange}
+              onClose={() => setTestingExchange(null)}
+            />
+          ) : <div />
+        }
+      />
 
       {/* 新建/编辑对话框 */}
       <Dialog

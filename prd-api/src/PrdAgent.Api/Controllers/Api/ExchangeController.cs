@@ -7,6 +7,9 @@ using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Transformers;
+using System.Net.Http.Headers;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -22,13 +25,15 @@ public class ExchangeController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILogger<ExchangeController> _logger;
     private readonly IConfiguration _config;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
 
-    public ExchangeController(MongoDbContext db, ILogger<ExchangeController> logger, IConfiguration config)
+    public ExchangeController(MongoDbContext db, ILogger<ExchangeController> logger, IConfiguration config, IHttpClientFactory httpClientFactory)
     {
         _db = db;
         _logger = logger;
         _config = config;
+        _httpClientFactory = httpClientFactory;
     }
 
     /// <summary>
@@ -236,6 +241,169 @@ public class ExchangeController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items = result }));
     }
 
+    /// <summary>
+    /// 测试 Exchange 转换管线：标准请求 → 转换后请求 → 发送 → 响应转换
+    /// 返回三个阶段的数据供前端展示
+    /// </summary>
+    [HttpPost("{id}/test")]
+    public async Task<IActionResult> TestExchange(string id, [FromBody] ExchangeTestRequest request, CancellationToken ct)
+    {
+        var exchange = await _db.ModelExchanges.Find(e => e.Id == id).FirstOrDefaultAsync(ct);
+        if (exchange == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Exchange 不存在"));
+
+        var transformer = _transformerRegistry.Get(exchange.TransformerType);
+        if (transformer == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, $"转换器 '{exchange.TransformerType}' 未注册"));
+
+        // 1. 解析标准请求体
+        JsonObject standardBody;
+        try
+        {
+            standardBody = JsonNode.Parse(request.StandardRequestBody)?.AsObject()
+                           ?? new JsonObject();
+        }
+        catch (JsonException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"请求体 JSON 解析失败: {ex.Message}"));
+        }
+
+        // 2. 转换请求
+        JsonObject transformedRequest;
+        try
+        {
+            transformedRequest = transformer.TransformRequest(standardBody, exchange.TransformerConfig);
+        }
+        catch (Exception ex)
+        {
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                transformedRequest = (string?)null,
+                rawResponse = (string?)null,
+                transformedResponse = (string?)null,
+                error = $"请求转换失败: {ex.Message}",
+                httpStatus = (int?)null,
+                durationMs = (long?)null
+            }));
+        }
+
+        var transformedJson = transformedRequest.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+
+        // 3. 如果只做转换预览（不实际发送），直接返回
+        if (request.DryRun)
+        {
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                transformedRequest = transformedJson,
+                rawResponse = (string?)null,
+                transformedResponse = (string?)null,
+                error = (string?)null,
+                httpStatus = (int?)null,
+                durationMs = (long?)null,
+                isDryRun = true
+            }));
+        }
+
+        // 4. 发送到目标 API
+        var apiKey = ApiKeyCrypto.Decrypt(exchange.TargetApiKeyEncrypted, GetJwtSecret());
+        var httpRequest = new HttpRequestMessage(HttpMethod.Post, exchange.TargetUrl)
+        {
+            Content = new StringContent(transformedRequest.ToJsonString(), System.Text.Encoding.UTF8, "application/json")
+        };
+
+        // 设置认证头
+        if (!string.IsNullOrWhiteSpace(apiKey))
+        {
+            switch ((exchange.TargetAuthScheme ?? "Bearer").ToLowerInvariant())
+            {
+                case "x-api-key":
+                case "xapikey":
+                    httpRequest.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+                    break;
+                case "key":
+                    httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Key", apiKey);
+                    break;
+                default:
+                    httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                    break;
+            }
+        }
+
+        string rawResponseBody;
+        int httpStatus;
+        long durationMs;
+
+        try
+        {
+            var httpClient = _httpClientFactory.CreateClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(30);
+
+            var startedAt = DateTime.UtcNow;
+            var response = await httpClient.SendAsync(httpRequest, ct);
+            rawResponseBody = await response.Content.ReadAsStringAsync(ct);
+            httpStatus = (int)response.StatusCode;
+            durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+        }
+        catch (Exception ex)
+        {
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                transformedRequest = transformedJson,
+                rawResponse = (string?)null,
+                transformedResponse = (string?)null,
+                error = $"HTTP 请求失败: {ex.Message}",
+                httpStatus = (int?)null,
+                durationMs = (long?)null
+            }));
+        }
+
+        // 5. 转换响应
+        string? transformedResponseJson = null;
+        string? responseError = null;
+        try
+        {
+            if (httpStatus >= 200 && httpStatus < 300)
+            {
+                var rawJson = JsonNode.Parse(rawResponseBody)?.AsObject();
+                if (rawJson != null)
+                {
+                    var transformedResp = transformer.TransformResponse(rawJson, exchange.TransformerConfig);
+                    transformedResponseJson = transformedResp.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            responseError = $"响应转换失败: {ex.Message}";
+        }
+
+        // 格式化原始响应
+        string formattedRawResponse;
+        try
+        {
+            var parsed = JsonNode.Parse(rawResponseBody);
+            formattedRawResponse = parsed?.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) ?? rawResponseBody;
+        }
+        catch
+        {
+            formattedRawResponse = rawResponseBody;
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+            transformedRequest = transformedJson,
+            rawResponse = formattedRawResponse,
+            transformedResponse = transformedResponseJson,
+            error = responseError,
+            httpStatus = (int?)httpStatus,
+            durationMs = (long?)durationMs
+        }));
+    }
+
     private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 }
 
@@ -265,4 +433,12 @@ public class UpdateExchangeRequest
     public Dictionary<string, object>? TransformerConfig { get; set; }
     public bool? Enabled { get; set; }
     public string? Description { get; set; }
+}
+
+public class ExchangeTestRequest
+{
+    /// <summary>标准 OpenAI 格式的请求体 JSON 字符串</summary>
+    public string StandardRequestBody { get; set; } = "{}";
+    /// <summary>仅预览转换结果，不实际发送请求</summary>
+    public bool DryRun { get; set; }
 }

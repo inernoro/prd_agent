@@ -59,6 +59,26 @@ export interface ExchangeForPool {
   transformerType: string;
 }
 
+/** Exchange 测试结果 */
+export interface ExchangeTestResult {
+  /** 原始标准请求 (格式化 JSON) */
+  standardRequest: string;
+  /** 转换后的请求 (格式化 JSON) */
+  transformedRequest: string | null;
+  /** 目标 API 的原始响应 (格式化 JSON) */
+  rawResponse: string | null;
+  /** 转换后的标准响应 (格式化 JSON) */
+  transformedResponse: string | null;
+  /** 错误信息 */
+  error: string | null;
+  /** HTTP 状态码 */
+  httpStatus: number | null;
+  /** 耗时 (ms) */
+  durationMs: number | null;
+  /** 是否为预览模式 */
+  isDryRun?: boolean;
+}
+
 /** 认证方案选项 */
 export const AUTH_SCHEME_OPTIONS = [
   { value: 'Bearer', label: 'Bearer (Authorization: Bearer {key})' },
