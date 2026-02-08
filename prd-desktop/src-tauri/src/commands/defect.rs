@@ -81,9 +81,7 @@ pub async fn submit_defect(id: String) -> Result<ApiResponse<serde_json::Value>,
 #[command]
 pub async fn get_defect(id: String) -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
-    client
-        .get(&format!("/defect-agent/defects/{}", id))
-        .await
+    client.get(&format!("/defect-agent/defects/{}", id)).await
 }
 
 /// 获取缺陷消息列表（支持 afterSeq 增量拉取）

@@ -135,7 +135,7 @@ public class PoolHealthTrackerTests
     [Fact]
     public void GetSnapshot_ShouldReturnAllEndpointInfo()
     {
-        var tracker = new PoolHealthTracker();
+        var tracker = new PoolHealthTracker { DegradeThreshold = 1 };
         var endpoints = new List<PoolEndpoint>
         {
             TestDataHelper.CreateEndpoint("model-1", "plat-1"),

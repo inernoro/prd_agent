@@ -57,7 +57,7 @@ function AgentCard({
   onClick: () => void;
   onMouseEnter: () => void;
   isClosing: boolean;
-  cardRef?: React.RefObject<HTMLButtonElement>;
+  cardRef?: React.Ref<HTMLButtonElement>;
 }) {
   const iconUrl = ICON_URLS[agent.key];
   const description = AGENT_DESCRIPTIONS[agent.key];
