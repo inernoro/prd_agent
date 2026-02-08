@@ -53,7 +53,6 @@ import { toast } from '@/lib/toast';
 import { ASPECT_OPTIONS, getSizeForTier } from '@/lib/imageAspectOptions';
 import {
   computeRequestedSizeByRefRatio,
-  extractInlineImageToken,
   extractSizeToken,
   parseInlinePrompt,
   readImageSizeFromFile,
@@ -105,6 +104,7 @@ import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 
 import { MessageContentRenderer } from './components/MessageContentRenderer';
+import { ChatMessageItem } from './components/ChatMessageItem';
 import { LlmLogsPanel } from '@/pages/LlmLogsPage';
 
 type CanvasImageItem = {
@@ -518,23 +518,6 @@ function buildGenErrorContent(meta: GenErrorMeta): string {
 function buildGenDoneContent(meta: GenDoneMeta): string {
   return `${GEN_DONE_PREFIX}${JSON.stringify(meta)}`;
 }
-function parseGenError(content: string): GenErrorMeta | null {
-  if (!content.startsWith(GEN_ERROR_PREFIX)) return null;
-  try { return JSON.parse(content.slice(GEN_ERROR_PREFIX.length)) as GenErrorMeta; } catch { return null; }
-}
-function parseGenDone(content: string): GenDoneMeta | null {
-  if (!content.startsWith(GEN_DONE_PREFIX)) return null;
-  try { return JSON.parse(content.slice(GEN_DONE_PREFIX.length)) as GenDoneMeta; } catch { return null; }
-}
-
-// 提取用户消息中的模型池标记 (@model:xxx)
-function extractModelToken(text: string): { model: string | null; cleanText: string } {
-  const re = /\(@model:([^)]+)\)\s*/i;
-  const match = re.exec(text);
-  if (!match) return { model: null, cleanText: text };
-  return { model: match[1].trim(), cleanText: text.replace(re, '').trim() };
-}
-
 type CanvasTool = 'select' | 'hand' | 'mark';
 type CanvasPlacing =
   | null
@@ -544,19 +527,6 @@ type CanvasPlacing =
 const clampZoom = (z: number) => Math.max(0.05, Math.min(3, z));
 const clampZoomFactor = (f: number) => Math.max(0.93, Math.min(1.07, f));
 
-/** 格式化时间戳为 yyyy.MM.dd HH:mm:ss */
-function formatMsgTimestamp(ts: number): string {
-  const d = new Date(ts);
-  if (!d || Number.isNaN(d.getTime())) return '';
-  const pad2 = (n: number) => String(n).padStart(2, '0');
-  const y = d.getFullYear();
-  const mo = pad2(d.getMonth() + 1);
-  const day = pad2(d.getDate());
-  const h = pad2(d.getHours());
-  const mi = pad2(d.getMinutes());
-  const s = pad2(d.getSeconds());
-  return `${y}.${mo}.${day} ${h}:${mi}:${s}`;
-}
 const zoomFactorFromDeltaY = (deltaY: number) => {
   // 更细腻：factor = exp(-dy*k)，并限制单次变化幅度，避免"一滚就跳"
   // k=0.0024 适配 macOS 触控板手势（原 0.0016 提速 1.5 倍）
@@ -841,72 +811,6 @@ function buildTemplate(name: string) {
   return '';
 }
 
-// 提取元数据渲染组件
-function MessageMetadata({
-  size,
-  model,
-  className,
-  style,
-  sizeToAspectMap,
-}: {
-  size?: string;
-  model?: string;
-  className?: string;
-  style?: React.CSSProperties;
-  sizeToAspectMap?: Map<string, string>;
-}) {
-  if (!size && !model) return null;
-
-  const tier = detectTierFromSize(size || '');
-  const aspect = size ? ((sizeToAspectMap?.get(size.toLowerCase())) || detectAspectFromSize(size)) : '';
-  const tierLabel = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
-  const sizeLabel = aspect ? `${tierLabel} · ${aspect}` : size;
-
-  return (
-    <div className={`flex flex-wrap items-center justify-between w-full gap-1.5 mt-1 ${className || ''}`} style={style}>
-      {size ? (
-        <span
-          className="inline-flex items-center gap-1 px-1.5 rounded-full shrink-0"
-          style={{
-            height: 22, // 比编辑器底部按钮 (28px) 小一号
-            border: '1px solid rgba(255,255,255,0.1)',
-            background: 'rgba(255,255,255,0.04)',
-            color: 'var(--text-secondary)',
-            fontSize: 10,
-            fontWeight: 600,
-          }}
-          title={`尺寸：${size}`}
-        >
-          <span className="tabular-nums" style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>
-            {sizeLabel}
-          </span>
-        </span>
-      ) : <div />}
-
-      {/* 模型池标签 */}
-      {model ? (
-        <span
-          className="inline-flex items-center gap-1 px-1.5 rounded-full shrink-0 ml-auto"
-          style={{
-            height: 22, // 保持与尺寸标签高度一致，且比底部 (24px) 略小
-            border: '1px solid rgba(99, 102, 241, 0.35)',
-            background: 'rgba(99, 102, 241, 0.12)',
-            color: 'rgba(129, 140, 248, 0.95)',
-            fontSize: 10,
-            fontWeight: 500,
-          }}
-          title={`模型池：${model}`}
-        >
-          <Sparkles size={10} className="shrink-0" />
-          <span style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>
-            {model}
-          </span>
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
 export default function AdvancedVisualAgentTab(props: { workspaceId: string; initialPrompt?: string }) {
   // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
   const workspaceId = String(props.workspaceId ?? '').trim();
@@ -1138,8 +1042,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       ts: Date.now(),
     },
   ]);
-
-  const [expandedMsgIds, setExpandedMsgIds] = useState<Set<string>>(new Set());
 
   const [uploadToast, setUploadToast] = useState<{ text: string } | null>(null);
   const uploadToastTimerRef = useRef<number | null>(null);
@@ -1985,6 +1887,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [preview, setPreview] = useState<{ open: boolean; src: string; prompt: string; runId?: string }>({ open: false, src: '', prompt: '' });
 
+  // ── Stable callbacks for memoized ChatMessageItem ──────────────────
+  const handleMsgPreview = useCallback((src: string, prompt: string, runId?: string) => {
+    setPreview({ open: true, src, prompt, runId });
+  }, []);
+
+  // Retry: uses a ref so the callback identity never changes even when sendText/canvas update
+  const retryRef = useRef<(prompt: string, imageRefShas: string[], canvasSnapshot: { key: string; sha256?: string; originalSha256?: string; src: string; refId?: number }[]) => void>(() => {});
+
+  const handleMsgRetry = useCallback(
+    (prompt: string, imageRefShas: string[], canvasSnapshot: { key: string; sha256?: string; originalSha256?: string; src: string; refId?: number }[]) => {
+      retryRef.current(prompt, imageRefShas, canvasSnapshot);
+    },
+    [],
+  );
+
   // 图片右键菜单状态
   const [imgContextMenu, setImgContextMenu] = useState<{
     open: boolean;
@@ -2572,19 +2489,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [rightWidth, splitKey]);
 
   // 滚动到消息列表底部
-  // 使用 ResizeObserver 监听消息内容高度变化（图片加载会导致高度增加），自动滚动到底部
+  // ResizeObserver 监听消息内容高度变化（图片加载 / 新消息追加），自动滚动到底部
   const shouldAutoScrollRef = useRef(true);
   const programmaticScrollRef = useRef(false); // 标记是否为程序触发的滚动
+
+  // 稳定 effect：只在 mount 时创建一次 ResizeObserver + scroll listener
   useEffect(() => {
     const scrollEl = scrollRef.current;
     const contentEl = msgContentRef.current;
     if (!scrollEl || !contentEl) return;
 
-    // 判断用户是否手动滚动过（如果用户往上滚动了，就不自动滚动）
     const checkAutoScroll = () => {
-      // 如果是程序触发的滚动，不更新 shouldAutoScrollRef
       if (programmaticScrollRef.current) return;
-      const threshold = 100; // 距离底部 100px 以内视为"在底部"
+      const threshold = 100;
       shouldAutoScrollRef.current = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < threshold;
     };
 
@@ -2592,16 +2509,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (!shouldAutoScrollRef.current) return;
       programmaticScrollRef.current = true;
       scrollEl.scrollTop = scrollEl.scrollHeight;
-      // 延迟重置标记，确保 scroll 事件已处理完
       requestAnimationFrame(() => {
         programmaticScrollRef.current = false;
       });
     };
 
-    // 监听用户滚动
     scrollEl.addEventListener('scroll', checkAutoScroll);
 
-    // 监听消息内容高度变化（图片加载会触发 contentEl 高度增加）
+    // ResizeObserver 自动捕捉新消息 DOM 插入和图片加载导致的高度变化
     const ro = new ResizeObserver(() => {
       scrollToBottom();
     });
@@ -2615,7 +2530,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       scrollEl.removeEventListener('scroll', checkAutoScroll);
       ro.disconnect();
     };
-  }, [messages]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- mount-only, ResizeObserver handles dynamic content
 
   // 监听画布尺寸变化（用于居中/适配）
   useEffect(() => {
@@ -4072,6 +3987,30 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           }
         }).catch(() => { /* ignore */ });
       }
+    }
+  };
+
+  // ── Keep retryRef in sync with latest sendText + canvas ──────────
+  retryRef.current = (prompt, imageRefShas, canvasSnapshot) => {
+    if (!prompt) return;
+    const shas = imageRefShas || [];
+    if (shas.length === 0) {
+      void sendText(prompt);
+      return;
+    }
+    const refIdMatches = [...prompt.matchAll(/@img(\d+)/gi)];
+    const originalRefIds = refIdMatches.map((m) => parseInt(m[1], 10));
+    const foundItems = shas
+      .map((sha) => canvasSnapshot.find((c) => c.sha256 === sha || c.originalSha256 === sha))
+      .filter((c): c is NonNullable<typeof c> => !!c && !!c.src);
+    if (foundItems.length > 0) {
+      const chipRefs = foundItems.map((c, idx) => ({
+        refId: originalRefIds[idx] ?? c.refId ?? (idx + 1),
+        canvasKey: c.key,
+      }));
+      void sendText(prompt, { chipRefs });
+    } else {
+      void sendText(prompt);
     }
   };
 
@@ -7123,355 +7062,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
             <div ref={scrollRef} className="mt-2 flex-1 min-h-0 overflow-auto pr-1">
               <div ref={msgContentRef} className="space-y-1.5">
-              {messages.map((m) => {
-                const isUser = m.role === 'User';
-                // 过滤历史遗留的"本次使用模型/直连模式..."提示（用户要求移除）
-                if (!isUser && String(m.content ?? '').trim().startsWith('本次使用模型：')) return null;
-
-                // Assistant 富消息：生成错误
-                const genError = !isUser ? parseGenError(m.content) : null;
-                if (genError) {
-                  return (
-                    <div key={m.id} className="flex flex-col items-start gap-0.5">
-                      <div
-                        className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
-                        style={{ border: '1px solid rgba(239,68,68,0.30)', background: 'rgba(55, 35, 35, 0.80)' }}
-                      >
-                        {/* 引用用户提示词 + 重试按钮 */}
-                        {genError.prompt ? (
-                          <div className="px-2.5 pt-2 pb-1.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
-                            <div className="text-[11px] min-w-0 flex-1 line-clamp-2" style={{ color: 'rgba(255,255,255,0.5)' }} title={genError.prompt}>
-                              <MessageContentRenderer
-                                content={genError.prompt}
-                                canvasItems={canvas}
-                                onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
-                              />
-                            </div>
-                            <button
-                              type="button"
-                              className="shrink-0 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:bg-white/10"
-                              style={{
-                                border: '1px solid rgba(255,255,255,0.15)',
-                                background: 'rgba(255,255,255,0.05)',
-                                color: 'rgba(255,255,255,0.7)',
-                              }}
-                              title="重试生成"
-                              onClick={() => {
-                                if (!genError.prompt) return;
-                                const prompt = genError.prompt.trim();
-                                if (!prompt) return;
-
-                                // ========== 统一重试逻辑 ==========
-                                // 保留原始 prompt（含 @imgN），通过 sha256 找图片，构建 chipRefs
-                                // 后端会根据 imageRefs 数量自动判断 text2img / img2img / vision
-                                const shas = genError.imageRefShas || [];
-
-                                if (shas.length === 0) {
-                                  // 无参考图：直接发送（text2img）
-                                  void sendText(prompt);
-                                  return;
-                                }
-
-                                // 解析 prompt 中的 @imgN（用于恢复原始 refId）
-                                const refIdMatches = [...prompt.matchAll(/@img(\d+)/gi)];
-                                const originalRefIds = refIdMatches.map((m) => parseInt(m[1], 10));
-
-                                // 通过 sha256 找到 canvas 中的图片
-                                const foundItems = shas
-                                  .map((sha) => canvas.find((c) => c.sha256 === sha || c.originalSha256 === sha))
-                                  .filter((c): c is CanvasImageItem => !!c && !!c.src);
-
-                                if (foundItems.length > 0) {
-                                  // 构建 chipRefs，使用原始 refId（如果有），否则使用顺序号
-                                  const chipRefs = foundItems.map((c, idx) => ({
-                                    refId: originalRefIds[idx] ?? c.refId ?? (idx + 1),
-                                    canvasKey: c.key,
-                                  }));
-                                  void sendText(prompt, { chipRefs });
-                                } else {
-                                  // 找不到图片，仅发送 prompt（后端会处理为 text2img）
-                                  void sendText(prompt);
-                                }
-                              }}
-                            >
-                              重试
-                            </button>
-                          </div>
-                        ) : null}
-                        <div className="px-2.5 pt-2 pb-2 flex items-start gap-2.5">
-                          {/* 参考图缩略图 */}
-                          {genError.refSrc ? (
-                            <button
-                              type="button"
-                              className="shrink-0 rounded-[6px] overflow-hidden"
-                              style={{ width: 48, height: 48, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.2)' }}
-                              onClick={() => setPreview({ open: true, src: genError.refSrc!, prompt: '参照图' })}
-                              title="点击预览参照图"
-                            >
-                              <img src={genError.refSrc} alt="参照图" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                            </button>
-                          ) : null}
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[12px] font-medium" style={{ color: 'rgba(239,68,68,0.92)' }}>生成失败</div>
-                            <div className="mt-0.5 text-[11px]" style={{ color: 'rgba(239,68,68,0.72)', wordBreak: 'break-word' }}>
-                              {genError.msg}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <span
-                        className="text-[9px] tabular-nums select-none pl-1"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
-                      >
-                        {formatMsgTimestamp(m.ts)}
-                      </span>
-                    </div>
-                  );
-                }
-
-                // Assistant 富消息：生成成功
-                const genDone = !isUser ? parseGenDone(m.content) : null;
-                if (genDone) {
-                  return (
-                    <div key={m.id} className="flex flex-col items-start gap-0.5">
-                      <div
-                        className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
-                        style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(44, 44, 50, 0.78)' }}
-                      >
-                        {/* 引用用户提示词 + 重试按钮（Top） */}
-                        {(genDone.prompt || genDone.refSrc) ? (
-                          <div className="px-2.5 pb-2 pt-1 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                            <div className="text-[11px] min-w-0 flex-1 line-clamp-1" style={{ color: 'rgba(255,255,255,0.5)' }} title={genDone.prompt}>
-                              <MessageContentRenderer
-                                content={genDone.prompt || ''}
-                                canvasItems={canvas}
-                                onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
-                              />
-                            </div>
-                            <button
-                              type="button"
-                              className="shrink-0 px-2 py-0.5 text-[10px] rounded-md transition-all hover:brightness-110"
-                              style={{
-                                border: '1px solid rgba(255,255,255,0.15)',
-                                background: 'rgba(255,255,255,0.05)',
-                                color: 'rgba(255,255,255,0.7)',
-                              }}
-                              title="使用相同提示词重新生成"
-                              onClick={() => {
-                                if (!genDone.prompt) return;
-                                const prompt = genDone.prompt.trim();
-                                if (!prompt) return;
-
-                                // ========== 统一重试逻辑 ==========
-                                // 保留原始 prompt（含 @imgN），通过 sha256 找图片，构建 chipRefs
-                                // 后端会根据 imageRefs 数量自动判断 text2img / img2img / vision
-                                const shas = genDone.imageRefShas || [];
-
-                                if (shas.length === 0) {
-                                  // 无参考图：直接发送（text2img）
-                                  void sendText(prompt);
-                                  return;
-                                }
-
-                                // 解析 prompt 中的 @imgN（用于恢复原始 refId）
-                                const refIdMatches = [...prompt.matchAll(/@img(\d+)/gi)];
-                                const originalRefIds = refIdMatches.map((m) => parseInt(m[1], 10));
-
-                                // 通过 sha256 找到 canvas 中的图片
-                                const foundItems = shas
-                                  .map((sha) => canvas.find((c) => c.sha256 === sha || c.originalSha256 === sha))
-                                  .filter((c): c is CanvasImageItem => !!c && !!c.src);
-
-                                if (foundItems.length > 0) {
-                                  // 构建 chipRefs，使用原始 refId（如果有），否则使用顺序号
-                                  const chipRefs = foundItems.map((c, idx) => ({
-                                    refId: originalRefIds[idx] ?? c.refId ?? (idx + 1),
-                                    canvasKey: c.key,
-                                  }));
-                                  void sendText(prompt, { chipRefs });
-                                } else {
-                                  // 找不到图片，仅发送 prompt（后端会处理为 text2img）
-                                  void sendText(prompt);
-                                }
-                              }}
-                            >
-                              重试
-                            </button>
-                          </div>
-                        ) : null}
-
-                        {/* 生成的图片（Middle） */}
-                        <button
-                          type="button"
-                          className="block w-full"
-                          onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '', runId: genDone.runId })}
-                          title="点击放大"
-                        >
-                  <img
-                    src={genDone.src}
-                    alt={genDone.prompt || '生成结果'}
-                    style={{ width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block' }}
-                  />
-                        </button>
-
-                        {/* 元数据（Bottom） */}
-                        {(() => {
-                          const originalUserMsg = messages.find(om => om.id === m.id.replace('msg_a', 'msg_u')) || messages[messages.indexOf(m) - 1];
-                          // 强制渲染元数据（即使用户消息中没有显式 token，也显示默认值或提取的值）
-                          // 如果用户消息没找到，或者 role 不是 User，我们仍然尝试从 m.content (GenDoneMeta) 中找线索，
-                          // 但 GenDoneMeta 里通常没有 size/model。
-                          // 回退逻辑：如果提取不到，就使用当前上下文的 effectiveModel 和默认尺寸。
-                          // 但这里是在渲染历史消息，不能直接用当前 effectiveModel（因为可能已经变了）。
-                          // 只能依赖 originalUserMsg。如果 originalUserMsg 存在，就提取。
-                          
-                          let msgSize = '';
-                          let msgModel = '';
-
-                          if (originalUserMsg && originalUserMsg.role === 'User') {
-                            const parsed = extractInlineImageToken(originalUserMsg.content);
-                            const contentText = parsed ? parsed.clean : originalUserMsg.content;
-                            const sizedMsg = extractSizeToken(contentText);
-                            msgSize = String(sizedMsg.size ?? '').trim();
-                            const modeledMsg = extractModelToken(sizedMsg.cleanText);
-                            msgModel = String(modeledMsg.model ?? '').trim();
-                          }
-
-                          // 如果没提取到，尝试使用默认值（仅当有 originalUserMsg 时，避免凭空捏造）
-                          if (originalUserMsg && !msgSize) {
-                             // 如果消息里没写尺寸，系统通常默认用 1024x1024。
-                             // 这里硬编码回退显示，以保证 UI 一致性（用户要求“下栏”）
-                             msgSize = '1024x1024';
-                          }
-                          
-                          // 如果没提取到模型，尝试从 GenDoneMeta 中获取 modelPool
-                          if (!msgModel) {
-                            const meta = parseGenDone(m.content);
-                            if (meta && meta.modelPool) {
-                              msgModel = meta.modelPool;
-                            }
-                          }
-
-                          // 如果还是没有，且有 originalUserMsg，尝试回退到 effectiveModel（仅作参考，可能不准）
-                          // 但为了准确性，如果不确定，最好不显示。
-                          // 不过用户想要“模型呢？”，我们可以尝试显示 serverDefaultModel 或 effectiveModel 的名称作为兜底
-                          // 注意：这里无法准确知道当时生图用了哪个模型（除非后端返回在 GenDoneMeta 里）
-                          // 目前 GenDoneMeta 有 modelPool 字段，应该能取到。
-                          
-                          // 只有在明确有数据时才渲染元数据栏
-                          if (msgSize || msgModel) {
-                            return (
-                              <div className="px-2.5 pt-2 pb-1.5 flex" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                                <MessageMetadata 
-                                  size={msgSize} 
-                                  model={msgModel} 
-                                  className="!mt-0 w-full" 
-                                  sizeToAspectMap={sizeToAspectMap} 
-                                />
-                              </div>
-                            );
-                          }
-                          return null;
-                        })()}
-                      </div>
-                      <span
-                        className="text-[9px] tabular-nums select-none pl-1"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
-                      >
-                        {formatMsgTimestamp(m.ts)}
-                      </span>
-                    </div>
-                  );
-                }
-
-                // 兼容旧格式的纯文本错误消息（"生成失败：..." / "解析失败：..."）
-                const legacyErrorMatch = !isUser ? /^(?:生成失败|解析失败)[：:](.+)$/s.exec(String(m.content ?? '').trim()) : null;
-                if (legacyErrorMatch) {
-                  const legacyMsg = legacyErrorMatch[1].trim();
-                  return (
-                    <div key={m.id} className="flex flex-col items-start gap-0.5">
-                      <div
-                        className="group relative max-w-[85%] rounded-[10px] overflow-hidden px-2.5 pt-2 pb-2"
-                        style={{ border: '1px solid rgba(239,68,68,0.30)', background: 'rgba(55, 35, 35, 0.80)' }}
-                      >
-                        <div className="text-[12px] font-medium" style={{ color: 'rgba(239,68,68,0.92)' }}>生成失败</div>
-                        <div className="mt-0.5 text-[11px]" style={{ color: 'rgba(239,68,68,0.72)', wordBreak: 'break-word' }}>
-                          {legacyMsg}
-                        </div>
-                      </div>
-                      <span
-                        className="text-[9px] tabular-nums select-none pl-1"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
-                      >
-                        {formatMsgTimestamp(m.ts)}
-                      </span>
-                    </div>
-                  );
-                }
-
-                // 普通消息（用户/助手纯文本）
-                const parsed = isUser ? extractInlineImageToken(m.content) : null;
-                const contentText = parsed ? parsed.clean : m.content;
-                const sizedMsg = isUser ? extractSizeToken(contentText) : { size: null as string | null, cleanText: String(contentText ?? '') };
-                const msgSize = String(sizedMsg.size ?? '').trim();
-                // 解析模型池标记
-                const modeledMsg = isUser ? extractModelToken(sizedMsg.cleanText) : { model: null as string | null, cleanText: String(sizedMsg.cleanText ?? '') };
-                const msgModel = String(modeledMsg.model ?? '').trim();
-                const msgBody = String(modeledMsg.cleanText ?? '');
-                const MSG_COLLAPSE_THRESHOLD = 100;
-                const isLongMsg = msgBody.length > MSG_COLLAPSE_THRESHOLD;
-                const isExpanded = expandedMsgIds.has(m.id);
-                return (
-                  <div key={m.id} className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'}`}>
-                    <div
-                      className="group relative max-w-[85%] rounded-[10px] px-2.5 py-1.5 text-[12px] leading-[16px]"
-                      style={{
-                        background: isUser
-                          ? 'rgba(60, 54, 42, 0.82)'
-                          : 'rgba(44, 44, 50, 0.78)',
-                        border: '1px solid rgba(255,255,255,0.10)',
-                        color: 'var(--text-primary)',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      <div style={{ maxHeight: isLongMsg && !isExpanded ? 64 : undefined, overflow: isLongMsg && !isExpanded ? 'hidden' : undefined }}>
-                        <MessageContentRenderer
-                          content={msgBody}
-                          canvasItems={canvas}
-                          onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
-                        />
-                        
-                        {/* 气泡底部元数据：尺寸/模型 */}
-                        {isUser && (msgSize || msgModel) ? (
-                          null // 移除用户消息中的元数据
-                        ) : null}
-                      </div>
-                      {isLongMsg ? (
-                        <button
-                          type="button"
-                          className="mt-0.5 text-[10px] font-medium"
-                          style={{ color: 'rgba(99, 102, 241, 0.85)' }}
-                          onClick={() => setExpandedMsgIds((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(m.id)) next.delete(m.id);
-                            else next.add(m.id);
-                            return next;
-                          })}
-                        >
-                          {isExpanded ? '收起' : '展开'}
-                        </button>
-                      ) : null}
-                    </div>
-                    {/* 时间在气泡下方 */}
-                    <span
-                      className={`text-[9px] tabular-nums select-none ${isUser ? 'pr-1' : 'pl-1'}`}
-                      style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
-                    >
-                      {formatMsgTimestamp(m.ts)}
-                    </span>
-                  </div>
-                );
-              })}
+              {messages.map((m) => (
+                <ChatMessageItem
+                  key={m.id}
+                  msg={m}
+                  allMessages={messages}
+                  canvas={canvas}
+                  sizeToAspectMap={sizeToAspectMap}
+                  onPreview={handleMsgPreview}
+                  onRetry={handleMsgRetry}
+                />
+              ))}
               <div ref={bottomRef} />
               </div>
             </div>
