@@ -254,7 +254,7 @@ export function DrawingBoardDialog({
       reader.readAsDataURL(file);
     };
     input.click();
-  }, []);
+  }, [canvasDims.w, canvasDims.h]);
 
   // ── Render ASCII art on canvas ──
   const renderAsciiOnCanvas = useCallback((ascii: string) => {

@@ -1920,7 +1920,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const ws = workspaceRef.current;
     if (ws?.id) {
       const backendRole: VisualAgentMessage['role'] = role === 'User' ? 'User' : 'Assistant';
-      void addVisualAgentWorkspaceMessage({ id: ws.id, role: backendRole, content });
+      addVisualAgentWorkspaceMessage({ id: ws.id, role: backendRole, content }).catch((err) => {
+        console.warn('[pushMsg] 消息持久化失败（刷新后可能丢失）:', err);
+      });
     }
   }, []);
 
@@ -3604,13 +3606,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }).then(() => {
         // SSE 流结束后，检查该图片是否还在 running 状态
         // 如果是，说明服务端没有返回最终状态，需要标记为 error
-        setCanvas((prev) =>
-          prev.map((x) =>
+        setCanvas((prev) => {
+          const item = prev.find((x) => x.key === key);
+          if (item && item.status === 'running') {
+            pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: pickedModel?.name || pickedModel?.modelName || '', imageRefShas }));
+            triggerDefectFlash();
+          }
+          return prev.map((x) =>
             x.key === key && x.status === 'running'
               ? { ...x, status: 'error', errorMessage: '生成超时或连接中断，请重试' }
               : x
-          )
-        );
+          );
+        });
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : '生成失败';
@@ -3629,10 +3636,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         toast.error('暂无可用生图模型');
         return;
       }
-      // 记录用户操作到消息面板
+      // 记录用户操作到消息面板（包含参考图引用，便于追溯）
       const label = actionLabel || '快捷编辑';
       const refSrc = sourceItem.originalSrc || sourceItem.src || '';
-      pushMsg('User', `[${label}] ${prompt}`);
+      const refTag = sourceItem.refId ? ` @img${sourceItem.refId}` : '';
+      pushMsg('User', `[${label}]${refTag} ${prompt}`);
       // 尺寸自适应：基于源图原始尺寸（支持外部覆盖，如 HD 放大需要升档）
       const refDim =
         sourceItem.naturalW && sourceItem.naturalH
@@ -3804,13 +3812,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             }
           },
         }).then(() => {
-          setCanvas((prev) =>
-            prev.map((x) =>
+          setCanvas((prev) => {
+            const item = prev.find((x) => x.key === key);
+            if (item && item.status === 'running') {
+              pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc: refSrc || undefined, prompt, modelPool: modelPoolName }));
+            }
+            return prev.map((x) =>
               x.key === key && x.status === 'running'
                 ? { ...x, status: 'error', errorMessage: '生成超时或连接中断，请重试' }
                 : x
-            )
-          );
+            );
+          });
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : '快捷操作失败';
@@ -8650,11 +8662,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 }
               },
             }).then(() => {
-              setCanvas(prev => prev.map(x =>
-                x.key === genKey && x.status === 'running'
-                  ? { ...x, status: 'error' as const, errorMessage: '生成超时或连接中断，请重试' }
-                  : x
-              ));
+              setCanvas(prev => {
+                const item = prev.find(x => x.key === genKey);
+                if (item && item.status === 'running') {
+                  pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc, prompt: desc.trim(), modelPool: modelPoolName }));
+                }
+                return prev.map(x =>
+                  x.key === genKey && x.status === 'running'
+                    ? { ...x, status: 'error' as const, errorMessage: '生成超时或连接中断，请重试' }
+                    : x
+                );
+              });
             });
           } catch (e) {
             const msg = (e as Error).message || '草图生图异常';
