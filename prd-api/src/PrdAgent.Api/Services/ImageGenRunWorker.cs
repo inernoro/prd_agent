@@ -504,6 +504,14 @@ public class ImageGenRunWorker : BackgroundService
                             var msg = res.Error?.Message ?? "生图失败";
                             await UpsertRunItemAsync(run, curItemIndex, imageIndex, curPrompt, reqSize, ImageGenRunItemStatus.Error, null, null, null, code, msg, ct);
                             await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Failed, 1), cancellationToken: ct);
+
+                            // 服务器权威性：后端自动保存错误消息
+                            var errRefSrc = loadedImageRefs.FirstOrDefault()?.CosUrl;
+                            var errImageRefShas = loadedImageRefs.Count > 0 ? loadedImageRefs.Select(r => r.Sha256).Where(s => !string.IsNullOrEmpty(s)).ToList() : null;
+                            var errGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
+                            var errMsgContent = $"[GEN_ERROR]{JsonSerializer.Serialize(new { msg, refSrc = errRefSrc, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = errGenType, imageRefShas = errImageRefShas }, JsonOptions)}";
+                            var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
+
                             await AppendEventAsync(run, "image", new
                             {
                                 type = "imageError",
@@ -515,7 +523,8 @@ public class ImageGenRunWorker : BackgroundService
                                 modelId = run.ModelId,
                                 platformId = run.PlatformId,
                                 errorCode = code,
-                                errorMessage = msg
+                                errorMessage = msg,
+                                savedMessageId = errMsgId
                             }, ct);
 
                             // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 error
@@ -552,6 +561,13 @@ public class ImageGenRunWorker : BackgroundService
 
                         await UpsertRunItemAsync(run, curItemIndex, imageIndex, curPrompt, reqSize, ImageGenRunItemStatus.Done, base64, url, revisedPrompt, null, null, ct, effSize, sizeAdjusted, ratioAdjusted);
                         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Done, 1), cancellationToken: ct);
+                        // 服务器权威性：后端自动保存 Assistant 消息到 image_master_messages
+                        var doneRefSrc = loadedImageRefs.FirstOrDefault()?.CosUrl;
+                        var doneImageRefShas = loadedImageRefs.Count > 0 ? loadedImageRefs.Select(r => r.Sha256).Where(s => !string.IsNullOrEmpty(s)).ToList() : null;
+                        var doneGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
+                        var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
+                        var doneMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", doneMsgContent, ct);
+
                         await AppendEventAsync(run, "image", new
                         {
                             type = "imageDone",
@@ -577,7 +593,8 @@ public class ImageGenRunWorker : BackgroundService
                                 url = persisted.Url,
                                 originalUrl = persisted.OriginalUrl,
                                 originalSha256 = persisted.OriginalSha256
-                            }
+                            },
+                            savedMessageId = doneMsgId
                         }, ct);
 
                         // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 done
@@ -646,6 +663,37 @@ public class ImageGenRunWorker : BackgroundService
     {
         // 高频事件：写入 RunStore（Redis），避免每个 delta 都更新 Mongo 的 LastSeq / events
         _ = await _runStore.AppendEventAsync(RunKinds.ImageGen, run.Id, eventName, payload, ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
+    }
+
+    /// <summary>
+    /// 在 image_master_messages 中保存一条消息（服务器权威性：消息由后端保存，不依赖前端补存）
+    /// </summary>
+    private async Task<string?> SaveWorkspaceMessageAsync(string workspaceId, string ownerUserId, string role, string content, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(workspaceId)) return null;
+        try
+        {
+            var m = new ImageMasterMessage
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                WorkspaceId = workspaceId,
+                OwnerUserId = ownerUserId,
+                Role = role,
+                Content = content.Length > 64 * 1024 ? content[..(64 * 1024)] : content,
+                CreatedAt = DateTime.UtcNow
+            };
+            await _db.ImageMasterMessages.InsertOneAsync(m, cancellationToken: ct);
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                x => x.Id == workspaceId,
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+            return m.Id;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[ImageGenRunWorker] 保存消息失败: workspaceId={WorkspaceId}", workspaceId);
+            return null;
+        }
     }
 
     private async Task UpsertRunItemAsync(

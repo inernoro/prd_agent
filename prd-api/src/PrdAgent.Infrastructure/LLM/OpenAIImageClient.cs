@@ -1019,7 +1019,14 @@ public class OpenAIImageClient
                         GroupId = ctx?.GroupId,
                         UserId = ctx?.UserId,
                         ViewRole = ctx?.ViewRole,
-                        QuestionText = prompt.Trim()
+                        QuestionText = prompt.Trim(),
+                        ImageReferences = imageRefs.Select(r => new Core.Models.LlmImageReference
+                        {
+                            Sha256 = r.Sha256,
+                            CosUrl = r.CosUrl,
+                            Label = r.Label,
+                            MimeType = r.MimeType
+                        }).ToList()
                     }
                 }, ct);
 
@@ -1179,7 +1186,14 @@ public class OpenAIImageClient
                         GroupId = ctx?.GroupId,
                         UserId = ctx?.UserId,
                         ViewRole = ctx?.ViewRole,
-                        QuestionText = prompt.Trim()
+                        QuestionText = prompt.Trim(),
+                        ImageReferences = imageRefs.Select(r => new Core.Models.LlmImageReference
+                        {
+                            Sha256 = r.Sha256,
+                            CosUrl = r.CosUrl,
+                            Label = r.Label,
+                            MimeType = r.MimeType
+                        }).ToList()
                     }
                 }, ct);
 
@@ -1376,7 +1390,14 @@ public class OpenAIImageClient
                     GroupId = ctx?.GroupId,
                     UserId = ctx?.UserId,
                     ViewRole = ctx?.ViewRole,
-                    QuestionText = prompt.Trim()
+                    QuestionText = prompt.Trim(),
+                    ImageReferences = imageRefs.Select(r => new Core.Models.LlmImageReference
+                    {
+                        Sha256 = r.Sha256,
+                        CosUrl = r.CosUrl,
+                        Label = r.Label,
+                        MimeType = r.MimeType
+                    }).ToList()
                 }
             };
 

@@ -1096,11 +1096,25 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
     } catch { /* ignore */ }
     return null;
   }, [detail?.requestBodyRedacted]);
-  /** 从请求体中提取的内嵌图片（蒙版、参考图等） */
-  const bodyInlineImages = useMemo(
-    () => extractInlineImagesFromBody(detail?.requestBodyRedacted),
-    [detail?.requestBodyRedacted]
-  );
+  /** 从请求体中提取的内嵌图片（蒙版、参考图等）；优先使用 imageReferences COS URL */
+  const bodyInlineImages = useMemo(() => {
+    // 优先使用后端 imageReferences（COS URL，不含 base64）
+    const refs = detail?.imageReferences;
+    if (Array.isArray(refs) && refs.length > 0) {
+      return refs
+        .filter((r) => r.cosUrl)
+        .map((r, idx) => ({
+          label: r.label || '参考图',
+          src: r.cosUrl!,
+          cosUrl: r.cosUrl ?? undefined,
+          sha256: r.sha256 ?? undefined,
+          mimeType: r.mimeType ?? undefined,
+          sizeBytes: r.sizeBytes ?? undefined,
+        }));
+    }
+    // 回退：从请求体 JSON 提取（旧日志无 imageReferences 字段）
+    return extractInlineImagesFromBody(detail?.requestBodyRedacted);
+  }, [detail?.imageReferences, detail?.requestBodyRedacted]);
   const isImageLikeLog = isImageGenRequest || hasImageArtifacts || typeof detail?.imageSuccessCount === 'number';
   const prettyRequestBody = useMemo(() => {
     if (!detail) return '';
@@ -2344,6 +2358,13 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                                   alt={img.label}
                                   style={{ width: '100%', height: 200, objectFit: 'contain', display: 'block', background: 'rgba(0,0,0,0.08)' }}
                                 />
+                                {'cosUrl' in img && img.cosUrl ? (
+                                  <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div className="truncate" title={img.cosUrl}>{img.cosUrl}</div>
+                                    {img.sha256 ? <div className="mt-0.5 truncate" title={img.sha256}>sha256: {img.sha256}</div> : null}
+                                    {img.mimeType ? <div className="mt-0.5">{img.mimeType}{img.sizeBytes ? ` · ${fmtBytes(img.sizeBytes)}` : ''}</div> : null}
+                                  </div>
+                                ) : null}
                               </div>
                             ))}
                           </div>

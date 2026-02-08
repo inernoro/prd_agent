@@ -37,7 +37,9 @@ public record LlmLogStart(
     bool? IsExchange = null,
     string? ExchangeId = null,
     string? ExchangeName = null,
-    string? ExchangeTransformerType = null);
+    string? ExchangeTransformerType = null,
+    // 图片引用（参考图 COS URL，用于日志页展示）
+    List<LlmImageReference>? ImageReferences = null);
 
 public record LlmLogDone(
     int? StatusCode,

@@ -126,6 +126,12 @@ public class LlmRequestLog
     /// <summary>Exchange 转换器类型</summary>
     public string? ExchangeTransformerType { get; set; }
 
+    // 图片引用（用于管理后台日志页展示参考图 COS URL，不存 base64）
+    /// <summary>
+    /// 本次请求涉及的图片引用列表（参考图、蒙版等），仅存元数据和 COS URL
+    /// </summary>
+    public List<LlmImageReference>? ImageReferences { get; set; }
+
     // 时序
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
     public DateTime? FirstByteAt { get; set; }
@@ -134,5 +140,17 @@ public class LlmRequestLog
 
     // 状态
     public string Status { get; set; } = "running"; // running/succeeded/failed/cancelled
+}
+
+/// <summary>
+/// LLM 请求日志中的图片引用（不存 base64，仅存 COS URL 和元数据）
+/// </summary>
+public class LlmImageReference
+{
+    public string? Sha256 { get; set; }
+    public string? CosUrl { get; set; }
+    public string? Label { get; set; }
+    public string? MimeType { get; set; }
+    public long? SizeBytes { get; set; }
 }
 
