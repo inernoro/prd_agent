@@ -252,7 +252,7 @@ public class MultiImageDomainServiceTests
     }
 
     [Fact]
-    public async Task BuildFinalPromptAsync_SingleImage_ReturnsOriginal()
+    public async Task BuildFinalPromptAsync_SingleImage_ReplacesRefWithDescription()
     {
         var refs = new List<ResolvedImageRef>
         {
@@ -262,8 +262,8 @@ public class MultiImageDomainServiceTests
 
         var result = await _service.BuildFinalPromptAsync(prompt, refs);
 
-        // 单图场景保留原始 prompt
-        result.ShouldBe(prompt);
+        // 单图场景将 @imgN 替换为描述性文本
+        result.ShouldBe("修改 这张图（产品图） 的背景");
     }
 
     [Fact]
@@ -552,7 +552,9 @@ public class MultiImageDomainServiceTests
 
         parseResult.IsValid.ShouldBeTrue();
         parseResult.IsSingleImage.ShouldBeTrue();
-        finalPrompt.ShouldBe(userPrompt); // 单图场景保留原始 prompt
+        // 单图场景将 @imgN 替换为描述性文本
+        finalPrompt.ShouldNotContain("@img1");
+        finalPrompt.ShouldContain("产品图片");
 
         Log("All assertions passed!");
         Log("\n" + new string('=', 80) + "\n");
