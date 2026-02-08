@@ -1,12 +1,16 @@
 /**
- * Agent Switcher 浮层组件 v11.0
+ * Agent Switcher 浮层组件 v12.0
  *
  * 改进：
  * - 真正的边缘发光（不是背光）
- * - 山洞穿越过渡效果（点击后卡片放大填满屏幕）
+ * - 传送门穿越过渡效果（灵感来自可灵 AI 传送门）
+ *   - Canvas 绘制的椭圆发光环从卡片中心展开
+ *   - 环内显示 Agent 主题色渐变 + 光线效果
+ *   - 白色核心光环 + 主题色外发光
+ *   - 最终白光闪烁完成过渡
  */
 
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import {
@@ -49,6 +53,7 @@ function AgentCard({
   onMouseEnter,
   isClosing,
   cardRef,
+  convergeOffset,
 }: {
   agent: AgentDefinition;
   index: number;
@@ -58,6 +63,7 @@ function AgentCard({
   onMouseEnter: () => void;
   isClosing: boolean;
   cardRef?: React.Ref<HTMLButtonElement>;
+  convergeOffset?: { x: number; y: number };
 }) {
   const iconUrl = ICON_URLS[agent.key];
   const description = AGENT_DESCRIPTIONS[agent.key];
@@ -79,9 +85,14 @@ function AgentCard({
         ['--entry-x' as string]: `${direction.x}px`,
         ['--entry-y' as string]: `${direction.y}px`,
         ['--entry-rotate' as string]: `${direction.rotate}deg`,
-        // 穿越动画时隐藏其他卡片
-        opacity: isTransitioning && !isSelected ? 0 : undefined,
-        transition: isTransitioning ? 'opacity 0.3s ease-out' : undefined,
+        // 穿越动画时: 4张卡片向选中卡片中心汇聚
+        transform: isTransitioning && convergeOffset
+          ? `translate(${convergeOffset.x}px, ${convergeOffset.y}px) scale(0.15)`
+          : undefined,
+        opacity: isTransitioning ? 0 : undefined,
+        transition: isTransitioning
+          ? 'transform 0.28s cubic-bezier(0.4, 0, 1, 1), opacity 0.22s ease-out 0.06s'
+          : undefined,
       }}
     >
       {/* 主卡片 */}
@@ -193,111 +204,176 @@ function AgentCard({
   );
 }
 
-/** 山洞穿越过渡层 */
-function TunnelTransition({
+/**
+ * 传送门穿越过渡层 — 山洞/缝隙穿越效果
+ *
+ * 核心原理：
+ * - canvas 作为透明遮罩层，用 evenodd 镂空一个不规则洞口
+ * - 洞口区域完全透明，露出下方已导航的目标页面
+ * - 洞口从极小的裂缝缓缓扩张至全屏
+ * - 洞口边缘有主题色发光，营造传送门感
+ * - onNavigate 在动画早期触发，页面在洞口扩张前已加载
+ * - onComplete 在动画结束时触发，关闭 modal
+ */
+function PortalTransition({
   agent,
   startRect,
+  onNavigate,
   onComplete,
 }: {
   agent: AgentDefinition;
   startRect: DOMRect;
+  onNavigate: () => void;
   onComplete: () => void;
 }) {
-  const [phase, setPhase] = useState<'expand' | 'tunnel' | 'done'>('expand');
-  const iconUrl = ICON_URLS[agent.key];
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const cbRef = useRef({ onNavigate, onComplete });
+  cbRef.current = { onNavigate, onComplete };
+  const navigatedRef = useRef(false);
 
-  useEffect(() => {
-    // 阶段1: 卡片扩展 (0.4s)
-    const expandTimer = setTimeout(() => {
-      setPhase('tunnel');
-    }, 400);
+  const cx = startRect.left + startRect.width / 2;
+  const cy = startRect.top + startRect.height / 2;
 
-    // 阶段2: 隧道穿越 (0.5s)
-    const tunnelTimer = setTimeout(() => {
-      setPhase('done');
-      onComplete();
-    }, 900);
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    return () => {
-      clearTimeout(expandTimer);
-      clearTimeout(tunnelTimer);
-    };
-  }, [onComplete]);
+    const dpr = window.devicePixelRatio || 1;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    canvas.width = vw * dpr;
+    canvas.height = vh * dpr;
+    const ctx = canvas.getContext('2d')!;
+    ctx.scale(dpr, dpr);
+
+    // 洞口需要扩到足以覆盖全屏
+    const maxR = Math.hypot(
+      Math.max(cx, vw - cx),
+      Math.max(cy, vh - cy)
+    ) * 1.5;
+
+    const color = agent.color.text;
+    const cr = parseInt(color.slice(1, 3), 16);
+    const cg = parseInt(color.slice(3, 5), 16);
+    const cb = parseInt(color.slice(5, 7), 16);
+
+    // 不规则洞口噪声 — 模拟山洞/缝隙的粗糙边缘
+    const N = 64;
+    let noiseArr = Array.from({ length: N }, () => (Math.random() - 0.5) * 0.4);
+    // 平滑3次，让边缘看起来自然
+    for (let s = 0; s < 3; s++) {
+      noiseArr = noiseArr.map((_, i) => {
+        const p = noiseArr[(i - 1 + N) % N];
+        const c = noiseArr[i];
+        const n = noiseArr[(i + 1) % N];
+        return p * 0.25 + c * 0.5 + n * 0.25;
+      });
+    }
+
+    const duration = 700;
+    const startTime = performance.now();
+    let frame: number;
+
+    // 首帧：全黑遮罩
+    ctx.fillStyle = '#080810';
+    ctx.fillRect(0, 0, vw, vh);
+
+    /** 在当前路径上追加不规则椭圆洞口 */
+    function traceHole(radius: number, nScale: number) {
+      const pts: [number, number][] = [];
+      for (let i = 0; i < N; i++) {
+        const angle = (i / N) * Math.PI * 2;
+        const r = radius * (1 + noiseArr[i] * nScale);
+        pts.push([
+          cx + r * Math.cos(angle) * 1.15,
+          cy + r * Math.sin(angle) * 0.85,
+        ]);
+      }
+      const last = pts[pts.length - 1];
+      ctx.moveTo((last[0] + pts[0][0]) / 2, (last[1] + pts[0][1]) / 2);
+      for (let i = 0; i < pts.length; i++) {
+        const next = pts[(i + 1) % pts.length];
+        ctx.quadraticCurveTo(
+          pts[i][0], pts[i][1],
+          (pts[i][0] + next[0]) / 2, (pts[i][1] + next[1]) / 2
+        );
+      }
+      ctx.closePath();
+    }
+
+    function draw(now: number) {
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / duration, 1);
+
+      // 缓缓打开：前期稍慢营造裂缝感，后期加速展开
+      const ease = t < 0.2
+        ? Math.pow(t / 0.2, 1.5) * 0.15
+        : 0.15 + 0.85 * (1 - Math.pow(1 - (t - 0.2) / 0.8, 2));
+
+      // 提前导航
+      if (t >= 0.12 && !navigatedRef.current) {
+        navigatedRef.current = true;
+        cbRef.current.onNavigate();
+      }
+
+      const radius = 30 + (maxR - 30) * ease;
+      // 洞口越大越规则（小 = 山洞粗糙感，大 = 平滑圆形收尾）
+      const nScale = Math.max(0, 1 - ease * 1.5);
+
+      // 清除为全透明
+      ctx.clearRect(0, 0, vw, vh);
+
+      // ═══ 暗色遮罩 + evenodd 镂空 ═══
+      const overlayAlpha = t > 0.88 ? Math.max(0, 1 - (t - 0.88) / 0.12) : 1;
+      ctx.beginPath();
+      ctx.rect(0, 0, vw, vh);
+      traceHole(radius, nScale);
+      ctx.fillStyle = `rgba(8, 8, 15, ${overlayAlpha})`;
+      ctx.fill('evenodd');
+
+      // ═══ 洞口边缘发光 ═══
+      const glowAlpha = t < 0.08 ? t / 0.08 : t > 0.7 ? Math.max(0, 1 - (t - 0.7) / 0.3) : 1;
+      if (glowAlpha > 0.01) {
+        // 主题色外发光
+        ctx.save();
+        ctx.beginPath();
+        traceHole(radius, nScale);
+        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${glowAlpha * 0.7})`;
+        ctx.lineWidth = 4;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 40;
+        ctx.stroke();
+        ctx.restore();
+
+        // 白色内发光
+        ctx.save();
+        ctx.beginPath();
+        traceHole(radius, nScale);
+        ctx.strokeStyle = `rgba(255,255,255,${glowAlpha * 0.5})`;
+        ctx.lineWidth = 1.5;
+        ctx.shadowColor = `rgba(${cr},${cg},${cb},0.8)`;
+        ctx.shadowBlur = 15;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      if (t < 1) {
+        frame = requestAnimationFrame(draw);
+      } else {
+        ctx.clearRect(0, 0, vw, vh);
+        cbRef.current.onComplete();
+      }
+    }
+
+    frame = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(frame);
+  }, [cx, cy, agent]);
 
   return (
     <div className="fixed inset-0 z-[300] pointer-events-none">
-      {/* 扩展的卡片 */}
-      <div
-        className="absolute rounded-[28px] overflow-hidden"
-        style={{
-          // 起始位置
-          left: startRect.left,
-          top: startRect.top,
-          width: startRect.width,
-          height: startRect.height,
-          background: 'linear-gradient(145deg, rgba(25, 28, 40, 1) 0%, rgba(15, 17, 25, 1) 100%)',
-          boxShadow: `
-            inset 0 0 0 1.5px ${agent.color.text}60,
-            0 0 60px 20px ${agent.color.text}30
-          `,
-          // 动画到全屏
-          animation: phase === 'expand' || phase === 'tunnel'
-            ? 'tunnelExpand 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards'
-            : 'none',
-        }}
-      >
-        {/* 居中的图标 */}
-        <div
-          className="absolute inset-0 flex items-center justify-center"
-          style={{
-            animation: phase === 'tunnel'
-              ? 'iconZoomIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards'
-              : 'none',
-          }}
-        >
-          <img
-            src={iconUrl}
-            alt={agent.name}
-            className="w-[100px] h-[100px] object-contain"
-            style={{
-              filter: `drop-shadow(0 0 40px ${agent.color.text}80)`,
-            }}
-          />
-        </div>
-
-        {/* 速度线效果 */}
-        {phase === 'tunnel' && (
-          <div className="absolute inset-0 overflow-hidden">
-            {Array.from({ length: 20 }).map((_, i) => (
-              <div
-                key={i}
-                className="absolute"
-                style={{
-                  left: '50%',
-                  top: '50%',
-                  width: '2px',
-                  height: '100px',
-                  background: `linear-gradient(to bottom, transparent, ${agent.color.text}60, transparent)`,
-                  transformOrigin: 'center top',
-                  transform: `rotate(${(i * 18)}deg) translateY(-50%)`,
-                  animation: `speedLine 0.5s ease-out ${i * 20}ms forwards`,
-                }}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* 白色闪光 */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background: '#fff',
-          opacity: 0,
-          animation: phase === 'tunnel'
-            ? 'flashWhite 0.5s ease-out 0.3s forwards'
-            : 'none',
-        }}
+      <canvas
+        ref={canvasRef}
+        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
       />
     </div>
   );
@@ -309,6 +385,7 @@ export function AgentSwitcher() {
   const [isClosing, setIsClosing] = useState(false);
   const [transitionAgent, setTransitionAgent] = useState<AgentDefinition | null>(null);
   const [transitionRect, setTransitionRect] = useState<DOMRect | null>(null);
+  const [convergeOffsets, setConvergeOffsets] = useState<Record<number, { x: number; y: number }>>({});
   const cardRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const {
@@ -329,25 +406,46 @@ export function AgentSwitcher() {
         path: agent.route,
       });
 
-      // 获取卡片位置，启动穿越动画
-      const cardEl = cardRefs.current[index];
-      if (cardEl) {
-        const rect = cardEl.getBoundingClientRect();
-        setTransitionRect(rect);
-        setTransitionAgent(agent);
-      }
+      // 获取点击卡片位置
+      const clickedEl = cardRefs.current[index];
+      if (!clickedEl) return;
+
+      const clickedRect = clickedEl.getBoundingClientRect();
+      const targetCx = clickedRect.left + clickedRect.width / 2;
+      const targetCy = clickedRect.top + clickedRect.height / 2;
+
+      // 计算所有卡片向选中卡片中心汇聚的偏移量
+      const offsets: Record<number, { x: number; y: number }> = {};
+      cardRefs.current.forEach((el, i) => {
+        if (el) {
+          const r = el.getBoundingClientRect();
+          const cardCx = r.left + r.width / 2;
+          const cardCy = r.top + r.height / 2;
+          offsets[i] = { x: targetCx - cardCx, y: targetCy - cardCy };
+        }
+      });
+
+      setConvergeOffsets(offsets);
+      setTransitionRect(clickedRect);
+      setTransitionAgent(agent);
     },
     [addRecentVisit]
   );
 
-  const handleTransitionComplete = useCallback(() => {
+  // 动画早期触发：提前导航，页面开始加载
+  const handleNavigate = useCallback(() => {
     if (transitionAgent) {
-      close();
-      setTransitionAgent(null);
-      setTransitionRect(null);
       navigate(transitionAgent.route);
     }
-  }, [transitionAgent, close, navigate]);
+  }, [transitionAgent, navigate]);
+
+  // 动画结束触发：关闭 modal、清理状态
+  const handleTransitionComplete = useCallback(() => {
+    close();
+    setTransitionAgent(null);
+    setTransitionRect(null);
+    setConvergeOffsets({});
+  }, [close]);
 
   const handleClose = useCallback(() => {
     setIsClosing(true);
@@ -417,12 +515,14 @@ export function AgentSwitcher() {
         className="fixed inset-0 z-[200] flex items-center justify-center"
         onClick={handleBackdropClick}
         style={{
-          animation: isClosing
+          // 穿越动画时：立即隐藏背景，让目标页面透过洞口可见
+          // 必须用 animation:none 清除 bgFadeIn 的 fill:both，否则其 opacity:1 会覆盖 inline style
+          animation: isTransitioning
+            ? 'none'
+            : isClosing
             ? 'bgFadeOut 0.25s cubic-bezier(0.55, 0, 1, 0.45) both'
             : 'bgFadeIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) both',
-          // 穿越时背景快速淡出
-          opacity: isTransitioning ? 0 : undefined,
-          transition: isTransitioning ? 'opacity 0.3s ease-out' : undefined,
+          visibility: isTransitioning ? 'hidden' : undefined,
         }}
       >
         {/* 深黑背景 */}
@@ -510,6 +610,7 @@ export function AgentSwitcher() {
                 onMouseEnter={() => !isTransitioning && setSelectedIndex(index)}
                 isClosing={isClosing}
                 cardRef={el => { cardRefs.current[index] = el; }}
+                convergeOffset={convergeOffsets[index]}
               />
             ))}
           </div>
@@ -652,64 +753,15 @@ export function AgentSwitcher() {
               transform: translate(calc(var(--entry-x) * 0.5), calc(var(--entry-y) * 0.5)) rotate(calc(var(--entry-rotate) * 0.5)) scale(0.9);
             }
           }
-          /* 隧道扩展动画 */
-          @keyframes tunnelExpand {
-            0% {
-              border-radius: 28px;
-            }
-            100% {
-              left: 0 !important;
-              top: 0 !important;
-              width: 100vw !important;
-              height: 100vh !important;
-              border-radius: 0;
-            }
-          }
-          /* 图标放大动画 */
-          @keyframes iconZoomIn {
-            0% {
-              transform: scale(1);
-              opacity: 1;
-            }
-            100% {
-              transform: scale(3);
-              opacity: 0;
-            }
-          }
-          /* 速度线动画 */
-          @keyframes speedLine {
-            0% {
-              height: 0;
-              opacity: 0;
-            }
-            50% {
-              opacity: 1;
-            }
-            100% {
-              height: 200vh;
-              opacity: 0;
-            }
-          }
-          /* 白色闪光 */
-          @keyframes flashWhite {
-            0% {
-              opacity: 0;
-            }
-            50% {
-              opacity: 0.8;
-            }
-            100% {
-              opacity: 1;
-            }
-          }
         `}</style>
       </div>
 
-      {/* 穿越过渡层 */}
+      {/* 传送门穿越过渡层 — 点击后立即展示 */}
       {transitionAgent && transitionRect && (
-        <TunnelTransition
+        <PortalTransition
           agent={transitionAgent}
           startRect={transitionRect}
+          onNavigate={handleNavigate}
           onComplete={handleTransitionComplete}
         />
       )}
