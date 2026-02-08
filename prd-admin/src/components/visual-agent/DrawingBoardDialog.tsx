@@ -42,11 +42,13 @@ const CANVAS_H = 480;
 
 // ─── Props ────────────────────────────────────────────
 
+export type DrawingBoardChatMsg = { role: 'user' | 'assistant'; content: string };
+
 export interface DrawingBoardDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** 确认后回调：传出画布 data URI 供图片生成使用 */
-  onConfirm: (dataUri: string) => void;
+  /** 确认后回调：传出画布 data URI + 对话记录 供图片生成使用 */
+  onConfirm: (dataUri: string, chatHistory: DrawingBoardChatMsg[]) => void;
 }
 
 // ─── Helper: Parse ASCII art from markdown ───────────
@@ -370,8 +372,11 @@ export function DrawingBoardDialog({
     const cvs = canvasRef.current;
     if (!cvs) return;
     const dataUri = cvs.toDataURL('image/png');
-    onConfirm(dataUri);
-  }, [onConfirm]);
+    const chatHistory: DrawingBoardChatMsg[] = messages
+      .filter(m => m.content.trim())
+      .map(m => ({ role: m.role, content: m.content }));
+    onConfirm(dataUri, chatHistory);
+  }, [onConfirm, messages]);
 
   // ── Cleanup on close ──
   useEffect(() => {
