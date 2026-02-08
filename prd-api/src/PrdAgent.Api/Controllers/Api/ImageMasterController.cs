@@ -2456,7 +2456,7 @@ public class ImageMasterController : ControllerBase
 
         var gatewayRequest = new GatewayRequest
         {
-            AppCallerCode = "visual-agent.drawing-board::chat",
+            AppCallerCode = AppCallerRegistry.VisualAgent.DrawingBoard.Chat,
             ModelType = "chat",
             Stream = true,
             RequestBody = new JsonObject

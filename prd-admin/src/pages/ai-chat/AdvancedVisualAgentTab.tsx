@@ -8484,7 +8484,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       <DrawingBoardDialog
         open={drawingBoardOpen}
         onOpenChange={setDrawingBoardOpen}
-        onConfirm={async (dataUri, chatHistory) => {
+        onConfirm={async (dataUri, chatHistory, sizeHint) => {
           setDrawingBoardOpen(false);
 
           // 同步手绘板 AI 对话记录到消息面板（可追溯）
@@ -8511,8 +8511,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           // 添加草图到画布（用于展示参考）
           const sketchKey = `sketch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
           const near = stageCenterWorld();
-          const sketchW = 680;
-          const sketchH = 480;
+          const sketchParsed = tryParseWxH(sizeHint);
+          const sketchW = sketchParsed?.w ?? 640;
+          const sketchH = sketchParsed?.h ?? 480;
           setCanvas(prev => [
             ...prev,
             {
@@ -8560,7 +8561,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
           // 生成占位
           const genKey = `sketch_gen_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-          const resolvedSize = imageGenSize;
+          const resolvedSize = sizeHint || imageGenSize;
           const parsedSize = tryParseWxH(resolvedSize);
           const genW = parsedSize?.w ?? 1024;
           const genH = parsedSize?.h ?? 1024;

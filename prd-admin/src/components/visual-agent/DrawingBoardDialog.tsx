@@ -10,11 +10,13 @@ import {
   Plus,
   Loader2,
   Square,
+  RectangleHorizontal,
 } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { useAuthStore } from '@/stores/authStore';
 import { api } from '@/services/api';
 import { toast } from '@/lib/toast';
+import { ASPECT_OPTIONS, type AspectOptionId } from '@/lib/imageAspectOptions';
 
 // ─── Types ────────────────────────────────────────────
 
@@ -37,8 +39,37 @@ const PRESET_COLORS = [
 const BRUSH_SIZES = [2, 4, 8, 14, 24];
 const DEFAULT_BRUSH_IDX = 1;
 
-const CANVAS_W = 680;
-const CANVAS_H = 480;
+/** 画布背景色（柔和浅灰，替代纯白） */
+const CANVAS_BG = '#f0f0f0';
+
+/** 画布最大像素维度（内部分辨率） */
+const MAX_CANVAS_DIM = 640;
+
+/** 可选的画布比例子集 */
+const DRAWING_ASPECTS: { id: AspectOptionId; label: string; w: number; h: number }[] = [
+  { id: '1:1',  label: '1:1',  w: 1, h: 1 },
+  { id: '4:3',  label: '4:3',  w: 4, h: 3 },
+  { id: '3:4',  label: '3:4',  w: 3, h: 4 },
+  { id: '16:9', label: '16:9', w: 16, h: 9 },
+  { id: '9:16', label: '9:16', w: 9, h: 16 },
+  { id: '3:2',  label: '3:2',  w: 3, h: 2 },
+];
+
+/** 根据比例计算画布内部像素尺寸 */
+function computeCanvasDims(aspectId: AspectOptionId): { w: number; h: number } {
+  const a = DRAWING_ASPECTS.find(x => x.id === aspectId) ?? DRAWING_ASPECTS[0];
+  const ratio = a.w / a.h;
+  if (ratio >= 1) {
+    return { w: MAX_CANVAS_DIM, h: Math.round(MAX_CANVAS_DIM / ratio) };
+  }
+  return { w: Math.round(MAX_CANVAS_DIM * ratio), h: MAX_CANVAS_DIM };
+}
+
+/** 获取比例对应的1k生成尺寸字符串 */
+function getGenSize(aspectId: AspectOptionId): string {
+  const opt = ASPECT_OPTIONS.find(x => x.id === aspectId);
+  return opt?.size1k ?? '1024x1024';
+}
 
 // ─── Props ────────────────────────────────────────────
 
@@ -47,8 +78,8 @@ export type DrawingBoardChatMsg = { role: 'user' | 'assistant'; content: string 
 export interface DrawingBoardDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** 确认后回调：传出画布 data URI + 对话记录 供图片生成使用 */
-  onConfirm: (dataUri: string, chatHistory: DrawingBoardChatMsg[]) => void;
+  /** 确认后回调：传出画布 data URI + 对话记录 + 建议尺寸 供图片生成使用 */
+  onConfirm: (dataUri: string, chatHistory: DrawingBoardChatMsg[], sizeHint: string) => void;
 }
 
 // ─── Helper: Parse ASCII art from markdown ───────────
@@ -79,6 +110,10 @@ export function DrawingBoardDialog({
   const [isDrawing, setIsDrawing] = useState(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
 
+  // ── Aspect ratio ──
+  const [aspectId, setAspectId] = useState<AspectOptionId>('4:3');
+  const canvasDims = computeCanvasDims(aspectId);
+
   // ── Chat state ──
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [inputText, setInputText] = useState('');
@@ -88,23 +123,22 @@ export function DrawingBoardDialog({
 
   const brushSize = BRUSH_SIZES[brushIdx];
 
-  // ── Init canvas (white background) ──
+  // ── Init canvas ──
   useEffect(() => {
     if (!open) return;
-    // Defer to next tick so canvas is mounted
     const timer = setTimeout(() => {
       const cvs = canvasRef.current;
       if (!cvs) return;
-      cvs.width = CANVAS_W;
-      cvs.height = CANVAS_H;
+      cvs.width = canvasDims.w;
+      cvs.height = canvasDims.h;
       const ctx = cvs.getContext('2d');
       if (ctx) {
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+        ctx.fillStyle = CANVAS_BG;
+        ctx.fillRect(0, 0, canvasDims.w, canvasDims.h);
       }
     }, 50);
     return () => clearTimeout(timer);
-  }, [open]);
+  }, [open, canvasDims.w, canvasDims.h]);
 
   // ── Auto-scroll chat ──
   useEffect(() => {
@@ -116,15 +150,15 @@ export function DrawingBoardDialog({
     const cvs = canvasRef.current;
     if (!cvs) return null;
     const rect = cvs.getBoundingClientRect();
-    const scaleX = CANVAS_W / rect.width;
-    const scaleY = CANVAS_H / rect.height;
+    const scaleX = canvasDims.w / rect.width;
+    const scaleY = canvasDims.h / rect.height;
     const clientX = 'touches' in e ? e.touches[0]?.clientX ?? 0 : e.clientX;
     const clientY = 'touches' in e ? e.touches[0]?.clientY ?? 0 : e.clientY;
     return {
       x: (clientX - rect.left) * scaleX,
       y: (clientY - rect.top) * scaleY,
     };
-  }, []);
+  }, [canvasDims.w, canvasDims.h]);
 
   const drawAt = useCallback((x: number, y: number) => {
     const cvs = canvasRef.current;
@@ -137,7 +171,7 @@ export function DrawingBoardDialog({
       ctx.fillStyle = color;
       ctx.globalCompositeOperation = 'source-over';
     } else {
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = CANVAS_BG;
       ctx.globalCompositeOperation = 'source-over';
     }
     ctx.fill();
@@ -182,10 +216,10 @@ export function DrawingBoardDialog({
     if (!cvs) return;
     const ctx = cvs.getContext('2d');
     if (ctx) {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+      ctx.fillStyle = CANVAS_BG;
+      ctx.fillRect(0, 0, canvasDims.w, canvasDims.h);
     }
-  }, []);
+  }, [canvasDims.w, canvasDims.h]);
 
   // ── Upload reference image ──
   const handleUploadRef = useCallback(() => {
@@ -204,13 +238,15 @@ export function DrawingBoardDialog({
           const ctx = cvs.getContext('2d');
           if (!ctx) return;
           // Scale to fit canvas, centered
-          const scale = Math.min(CANVAS_W / img.width, CANVAS_H / img.height, 1);
+          const cw = canvasDims.w;
+          const ch = canvasDims.h;
+          const scale = Math.min(cw / img.width, ch / img.height, 1);
           const w = img.width * scale;
           const h = img.height * scale;
-          const x = (CANVAS_W - w) / 2;
-          const y = (CANVAS_H - h) / 2;
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+          const x = (cw - w) / 2;
+          const y = (ch - h) / 2;
+          ctx.fillStyle = CANVAS_BG;
+          ctx.fillRect(0, 0, cw, ch);
           ctx.drawImage(img, x, y, w, h);
         };
         img.src = reader.result as string;
@@ -227,15 +263,16 @@ export function DrawingBoardDialog({
     const ctx = cvs.getContext('2d');
     if (!ctx) return;
 
-    // Clear to white
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    const cw = canvasDims.w;
+    const ch = canvasDims.h;
+
+    ctx.fillStyle = CANVAS_BG;
+    ctx.fillRect(0, 0, cw, ch);
 
     const lines = ascii.split('\n');
-    // Calculate font size to fit
     const maxLineLen = Math.max(...lines.map(l => l.length), 1);
-    const fontSizeByW = Math.floor((CANVAS_W - 20) / (maxLineLen * 0.6));
-    const fontSizeByH = Math.floor((CANVAS_H - 20) / lines.length);
+    const fontSizeByW = Math.floor((cw - 20) / (maxLineLen * 0.6));
+    const fontSizeByH = Math.floor((ch - 20) / lines.length);
     const fontSize = Math.max(6, Math.min(fontSizeByW, fontSizeByH, 16));
 
     ctx.font = `${fontSize}px "Courier New", "SF Mono", monospace`;
@@ -243,15 +280,15 @@ export function DrawingBoardDialog({
     ctx.textBaseline = 'top';
 
     const lineHeight = fontSize * 1.2;
-    const startY = Math.max(4, (CANVAS_H - lines.length * lineHeight) / 2);
-    const startX = Math.max(4, (CANVAS_W - maxLineLen * fontSize * 0.6) / 2);
+    const startY = Math.max(4, (ch - lines.length * lineHeight) / 2);
+    const startX = Math.max(4, (cw - maxLineLen * fontSize * 0.6) / 2);
 
     for (let i = 0; i < lines.length; i++) {
       ctx.fillText(lines[i], startX, startY + i * lineHeight);
     }
 
     toast.success('字符画已渲染到画布');
-  }, []);
+  }, [canvasDims.w, canvasDims.h]);
 
   // ── Chat: send message via SSE ──
   const sendMessage = useCallback(async () => {
@@ -375,8 +412,8 @@ export function DrawingBoardDialog({
     const chatHistory: DrawingBoardChatMsg[] = messages
       .filter(m => m.content.trim())
       .map(m => ({ role: m.role, content: m.content }));
-    onConfirm(dataUri, chatHistory);
-  }, [onConfirm, messages]);
+    onConfirm(dataUri, chatHistory, getGenSize(aspectId));
+  }, [onConfirm, messages, aspectId]);
 
   // ── Cleanup on close ──
   useEffect(() => {
@@ -506,6 +543,35 @@ export function DrawingBoardDialog({
             <RotateCcw size={12} />
             清空
           </button>
+        </div>
+
+        {/* Aspect ratio selector */}
+        <div
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl"
+          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+        >
+          <RectangleHorizontal size={12} style={{ color: 'rgba(255,255,255,0.4)' }} />
+          <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>画布比例</span>
+          <div className="w-px h-3 mx-0.5" style={{ background: 'rgba(255,255,255,0.1)' }} />
+          {DRAWING_ASPECTS.map(a => (
+            <button
+              key={a.id}
+              type="button"
+              className="px-2 py-0.5 rounded-md text-[10px] font-medium transition-all"
+              style={{
+                background: aspectId === a.id ? 'rgba(59,130,246,0.2)' : 'transparent',
+                color: aspectId === a.id ? '#93c5fd' : 'rgba(255,255,255,0.45)',
+                border: aspectId === a.id ? '1px solid rgba(59,130,246,0.3)' : '1px solid transparent',
+              }}
+              onClick={() => setAspectId(a.id)}
+            >
+              {a.label}
+            </button>
+          ))}
+          <div className="flex-1" />
+          <span className="text-[10px] tabular-nums" style={{ color: 'rgba(255,255,255,0.3)' }}>
+            {canvasDims.w}×{canvasDims.h} → 生成 {getGenSize(aspectId)}
+          </span>
         </div>
 
         {/* Canvas */}
