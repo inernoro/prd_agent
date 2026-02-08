@@ -11,6 +11,7 @@ import type {
   GetVisualAgentSessionContract,
   GetVisualAgentWorkspaceCanvasContract,
   GetVisualAgentWorkspaceDetailContract,
+  ListVisualAgentWorkspaceMessagesContract,
   ListVisualAgentWorkspacesContract,
   SaveVisualAgentCanvasContract,
   SaveVisualAgentWorkspaceCanvasContract,
@@ -195,6 +196,17 @@ export const addVisualAgentWorkspaceMessageReal: AddVisualAgentWorkspaceMessageC
     method: 'POST',
     body: { role: input.role, content: input.content },
   });
+};
+
+export const listVisualAgentWorkspaceMessagesReal: ListVisualAgentWorkspaceMessagesContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.before) qs.set('before', input.before);
+  if (input.limit != null) qs.set('limit', String(input.limit));
+  const q = qs.toString();
+  return await apiRequest<{ messages: VisualAgentMessage[]; hasMore: boolean }>(
+    `${api.visualAgent.imageMaster.workspaces.messages(encodeURIComponent(input.id))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
 };
 
 export const getVisualAgentWorkspaceCanvasReal: GetVisualAgentWorkspaceCanvasContract = async (input) => {

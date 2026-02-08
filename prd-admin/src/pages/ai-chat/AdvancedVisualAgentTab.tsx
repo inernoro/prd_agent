@@ -22,6 +22,7 @@ import {
   createWorkspaceImageGenRun,
   generateVisualAgentWorkspaceTitle,
   getVisualAgentWorkspaceDetail,
+  listVisualAgentWorkspaceMessages,
   getAdapterInfoByModelName,
   getImageGenRun,
   getModels,
@@ -1033,15 +1034,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     };
   }, []);
 
+  const INITIAL_MSG_LIMIT = 50;
+  const LOAD_MORE_LIMIT = 50;
+
   const [messages, setMessages] = useState<UiMsg[]>([
     {
       id: 'assistant-hello',
       role: 'Assistant',
       content:
-        'Hi，我是你的 AI 设计师。描述你的需求，我会把它转成可执行的生图提示词并把结果放到左侧画板。若你想让输入直接作为提示词发送（不再二次解析/改写），可在“模型偏好”里开启“直连”。',
+        'Hi，我是你的 AI 设计师。描述你的需求，我会把它转成可执行的生图提示词并把结果放到左侧画板。若你想让输入直接作为提示词发送（不再二次解析/改写），可在"模型偏好"里开启"直连"。',
       ts: Date.now(),
     },
   ]);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const loadingMoreRef = useRef(false);
 
   const [uploadToast, setUploadToast] = useState<{ text: string } | null>(null);
   const uploadToastTimerRef = useRef<number | null>(null);
@@ -1927,9 +1933,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const reloadWorkspace = useCallback(async () => {
     if (!workspaceId) return;
-    const detail = await getVisualAgentWorkspaceDetail({ id: workspaceId, messageLimit: 200, assetLimit: 200 });
+    const detail = await getVisualAgentWorkspaceDetail({ id: workspaceId, messageLimit: INITIAL_MSG_LIMIT, assetLimit: 200 });
     if (!detail.success) return;
     setWorkspace(detail.data.workspace);
+    setHasMoreMessages(!!detail.data.hasMoreMessages);
 
     // 服务器下发视口（缩放/相机）：优先回放（避免每次回到默认 50%）
     const vp = detail.data.viewport;
@@ -2166,13 +2173,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     let cancelled = false;
     setBooting(true);
     (async () => {
-      const detail = await getVisualAgentWorkspaceDetail({ id: workspaceId, messageLimit: 200, assetLimit: 200 });
+      const detail = await getVisualAgentWorkspaceDetail({ id: workspaceId, messageLimit: INITIAL_MSG_LIMIT, assetLimit: 200 });
       if (!detail.success) {
         if (!cancelled) setError(detail.error?.message || '加载 Workspace 失败');
         return;
       }
       if (cancelled) return;
       setWorkspace(detail.data.workspace);
+      setHasMoreMessages(!!detail.data.hasMoreMessages);
 
       // 服务器下发视口（缩放/相机）：首次进入也要回放，否则会永远停在 DEFAULT_ZOOM=0.5
       const vp = detail.data.viewport;
@@ -2531,6 +2539,73 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       ro.disconnect();
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- mount-only, ResizeObserver handles dynamic content
+
+  // ── 向上滚动加载更早消息 ──────────────────────────────────────────
+  const loadOlderMessages = useCallback(async () => {
+    if (loadingMoreRef.current || !hasMoreMessages || !workspaceId) return;
+    loadingMoreRef.current = true;
+
+    try {
+      // 取最早消息的时间戳作为游标
+      const oldest = messages[0];
+      if (!oldest) return;
+      const beforeTs = new Date(oldest.ts).toISOString();
+
+      const res = await listVisualAgentWorkspaceMessages({
+        id: workspaceId,
+        before: beforeTs,
+        limit: LOAD_MORE_LIMIT,
+      });
+
+      if (!res.success || !Array.isArray(res.data?.messages)) return;
+
+      const olderMsgs: UiMsg[] = res.data.messages.map((m) => ({
+        id: m.id,
+        role: m.role === 'Assistant' ? ('Assistant' as const) : ('User' as const),
+        content: String(m.content ?? ''),
+        ts: Number.isFinite(Date.parse(m.createdAt)) ? Date.parse(m.createdAt) : Date.now(),
+      }));
+
+      if (olderMsgs.length === 0) {
+        setHasMoreMessages(false);
+        return;
+      }
+
+      setHasMoreMessages(res.data.hasMore);
+
+      // 保留滚动位置：记住 prepend 前的 scrollHeight
+      const scrollEl = scrollRef.current;
+      const prevScrollHeight = scrollEl?.scrollHeight ?? 0;
+
+      setMessages((prev) => [...olderMsgs, ...prev]);
+
+      // Prepend 后恢复滚动位置（保持用户看到的内容不跳动）
+      requestAnimationFrame(() => {
+        if (scrollEl) {
+          const newScrollHeight = scrollEl.scrollHeight;
+          scrollEl.scrollTop += newScrollHeight - prevScrollHeight;
+        }
+      });
+    } finally {
+      loadingMoreRef.current = false;
+    }
+  }, [hasMoreMessages, messages, workspaceId]);
+
+  // 滚动到顶部时触发加载
+  useEffect(() => {
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+
+    const onScroll = () => {
+      // 距离顶部 80px 以内时触发加载
+      if (scrollEl.scrollTop < 80 && hasMoreMessages && !loadingMoreRef.current) {
+        void loadOlderMessages();
+      }
+    };
+
+    scrollEl.addEventListener('scroll', onScroll, { passive: true });
+    return () => scrollEl.removeEventListener('scroll', onScroll);
+  }, [hasMoreMessages, loadOlderMessages]);
 
   // 监听画布尺寸变化（用于居中/适配）
   useEffect(() => {
@@ -7062,6 +7137,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
             <div ref={scrollRef} className="mt-2 flex-1 min-h-0 overflow-auto pr-1">
               <div ref={msgContentRef} className="space-y-1.5">
+              {/* 向上滚动加载指示器 */}
+              {hasMoreMessages ? (
+                <div className="flex justify-center py-2">
+                  <button
+                    type="button"
+                    className="text-[10px] px-3 py-1 rounded-full transition-colors hover:bg-white/10"
+                    style={{ color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.1)' }}
+                    onClick={() => void loadOlderMessages()}
+                  >
+                    {loadingMoreRef.current ? '加载中…' : '加载更早的消息'}
+                  </button>
+                </div>
+              ) : null}
               {messages.map((m) => (
                 <ChatMessageItem
                   key={m.id}
