@@ -89,6 +89,8 @@ export function ModelPoolManagePage() {
 
   // 列表展开状态
   const [expandedPoolId, setExpandedPoolId] = useState<string | null>(null);
+  // 类型分组折叠状态（默认全展开）
+  const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
 
   // 弹窗状态
   const [showPoolDialog, setShowPoolDialog] = useState(false);
@@ -325,6 +327,37 @@ export function ModelPoolManagePage() {
       )
     : pools;
 
+  // 按 modelType 分组，组内按优先级排序
+  const groupedByType = useMemo(() => {
+    const typeOrder = MODEL_TYPES.map(t => t.value);
+    const groups = new Map<string, ModelGroup[]>();
+    for (const pool of filteredPools) {
+      const type = pool.modelType || 'chat';
+      if (!groups.has(type)) groups.set(type, []);
+      groups.get(type)!.push(pool);
+    }
+    const ordered = typeOrder
+      .filter(type => groups.has(type))
+      .map(type => ({
+        type,
+        label: getModelTypeDisplayName(type),
+        Icon: getModelTypeIcon(type),
+        pools: groups.get(type)!.sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50)),
+      }));
+    // 追加不在 MODEL_TYPES 里的类型
+    for (const [type, pools] of groups) {
+      if (!typeOrder.includes(type)) {
+        ordered.push({
+          type,
+          label: getModelTypeDisplayName(type),
+          Icon: getModelTypeIcon(type),
+          pools: pools.sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50)),
+        });
+      }
+    }
+    return ordered;
+  }, [filteredPools]);
+
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       <TabBar
@@ -370,240 +403,291 @@ export function ModelPoolManagePage() {
             </div>
           ) : (
             <div className="flex flex-col">
-              {/* 表头 */}
+              {/* 列表头（池行对齐用） */}
               <div
-                className="flex items-center gap-3 px-4 py-2 text-[11px] font-semibold select-none"
+                className="flex items-center gap-3 pl-12 pr-4 py-2 text-[11px] font-semibold select-none"
                 style={{ color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
               >
                 <span className="w-5 shrink-0" />
-                <span className="w-5 shrink-0" />
-                <span className="min-w-[140px] flex-[2]">名称</span>
+                <span className="min-w-[120px] flex-[2]">名称</span>
                 <span className="min-w-[100px] flex-1">代码</span>
-                <span className="w-[60px] shrink-0 text-center">类型</span>
                 <span className="w-[70px] shrink-0 text-center">策略</span>
                 <span className="w-[50px] shrink-0 text-center">优先级</span>
                 <span className="min-w-[100px] flex-1">健康状态</span>
-                <span className="w-[120px] shrink-0 text-right">操作</span>
+                <span className="w-[120px] shrink-0" />
               </div>
 
-              {/* 数据行 */}
-              {filteredPools.map((pool) => {
-                const ModelTypeIcon = getModelTypeIcon(pool.modelType || 'chat');
-                const modelTypeLabel = getModelTypeDisplayName(pool.modelType || 'chat');
-                const isExpanded = expandedPoolId === pool.id;
-                const modelCount = pool.models?.length || 0;
-
-                // 健康状态汇总
-                const healthyCnt = pool.models?.filter(m => m.healthStatus === 'Healthy').length ?? 0;
-                const degradedCnt = pool.models?.filter(m => m.healthStatus === 'Degraded').length ?? 0;
-                const unavailableCnt = pool.models?.filter(m => m.healthStatus === 'Unavailable').length ?? 0;
-
-                const strategyOpt = STRATEGY_OPTIONS.find(s => s.value === pool.strategyType) || STRATEGY_OPTIONS[0];
-                const StrategyIcon = strategyOpt.icon;
+              {/* 按类型分组 */}
+              {groupedByType.map((group) => {
+                const GroupIcon = group.Icon;
+                const isTypeCollapsed = collapsedTypes.has(group.type);
+                const totalPools = group.pools.length;
+                const totalModels = group.pools.reduce((s, p) => s + (p.models?.length || 0), 0);
+                const totalHealthy = group.pools.reduce((s, p) => s + (p.models?.filter(m => m.healthStatus === 'Healthy').length ?? 0), 0);
+                const totalDegraded = group.pools.reduce((s, p) => s + (p.models?.filter(m => m.healthStatus === 'Degraded').length ?? 0), 0);
+                const totalUnavailable = group.pools.reduce((s, p) => s + (p.models?.filter(m => m.healthStatus === 'Unavailable').length ?? 0), 0);
 
                 return (
-                  <div key={pool.id}>
-                    {/* 主行 */}
+                  <div key={group.type}>
+                    {/* ── 第一级：类型分组头 ── */}
                     <div
-                      className="group flex items-center gap-3 px-4 py-2.5 transition-colors cursor-pointer"
-                      style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
-                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                      onClick={() => setExpandedPoolId(isExpanded ? null : pool.id)}
+                      className="flex items-center gap-3 px-4 py-2 cursor-pointer select-none"
+                      style={{ background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; }}
+                      onClick={() => setCollapsedTypes(prev => {
+                        const next = new Set(prev);
+                        if (next.has(group.type)) next.delete(group.type);
+                        else next.add(group.type);
+                        return next;
+                      })}
                     >
-                      {/* 展开箭头 */}
-                      <span className="w-5 shrink-0 flex items-center justify-center">
-                        {modelCount > 0 ? (
-                          isExpanded
-                            ? <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
-                            : <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
-                        ) : (
-                          <span className="w-3.5 h-px" style={{ background: 'rgba(255,255,255,0.1)' }} />
-                        )}
+                      {isTypeCollapsed
+                        ? <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
+                        : <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
+                      }
+                      <GroupIcon size={16} style={{ color: 'var(--text-secondary)' }} />
+                      <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        {group.label}
                       </span>
-
-                      {/* 类型图标 */}
-                      <span className="w-5 shrink-0 flex items-center justify-center" style={{ color: 'var(--text-secondary)' }} title={modelTypeLabel}>
-                        <ModelTypeIcon size={16} />
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        {totalPools} 个池 · {totalModels} 个模型
                       </span>
-
-                      {/* 名称 */}
-                      <div className="min-w-[140px] flex-[2] flex items-center gap-2 min-w-0">
-                        <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {pool.name}
-                        </span>
-                        {pool.isDefaultForType && (
-                          <span
-                            className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium"
-                            style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}
-                          >
-                            默认
-                          </span>
-                        )}
-                      </div>
-
-                      {/* 代码 */}
-                      <span
-                        className="min-w-[100px] flex-1 text-[12px] font-mono truncate"
-                        style={{ color: 'var(--text-muted)' }}
-                        title={pool.code || pool.id}
-                      >
-                        {pool.code || pool.id}
-                      </span>
-
-                      {/* 类型 */}
-                      <span className="w-[60px] shrink-0 text-center">
-                        <span
-                          className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium"
-                          style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)' }}
-                        >
-                          {modelTypeLabel}
-                        </span>
-                      </span>
-
-                      {/* 策略 */}
-                      <span className="w-[70px] shrink-0 text-center">
-                        <span
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
-                          style={{ background: `${strategyOpt.color}12`, color: strategyOpt.color }}
-                        >
-                          <StrategyIcon size={10} />
-                          {STRATEGY_LABEL_MAP[pool.strategyType ?? 0] || '快速'}
-                        </span>
-                      </span>
-
-                      {/* 优先级 */}
-                      <span
-                        className="w-[50px] shrink-0 text-center text-[12px] tabular-nums"
-                        style={{ color: 'var(--text-muted)' }}
-                      >
-                        {pool.priority ?? 50}
-                      </span>
-
-                      {/* 健康状态 */}
-                      <div className="min-w-[100px] flex-1 flex items-center gap-1.5">
-                        {modelCount === 0 ? (
-                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无模型</span>
-                        ) : healthyCnt === modelCount ? (
-                          <span className="text-[11px] flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
-                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(34,197,94,0.95)' }} />
-                            {modelCount} 模型 · 全部健康
-                          </span>
-                        ) : (
-                          <span className="text-[11px] flex items-center gap-2">
-                            {healthyCnt > 0 && (
-                              <span className="flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
-                                <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(34,197,94,0.95)' }} />
-                                {healthyCnt}
-                              </span>
-                            )}
-                            {degradedCnt > 0 && (
-                              <span className="flex items-center gap-1" style={{ color: 'rgba(251,191,36,0.95)' }}>
-                                <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(251,191,36,0.95)' }} />
-                                {degradedCnt} 降权
-                              </span>
-                            )}
-                            {unavailableCnt > 0 && (
-                              <span className="flex items-center gap-1" style={{ color: 'rgba(239,68,68,0.95)' }}>
-                                <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(239,68,68,0.95)' }} />
-                                {unavailableCnt} 不可用
-                              </span>
-                            )}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* 操作按钮 */}
-                      <div className="w-[120px] shrink-0 flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Tooltip content="预测下次调度路径">
-                          <button
-                            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-                            onClick={(e) => { e.stopPropagation(); handlePredict(pool); }}
-                          >
-                            <Radar size={14} style={{ color: 'rgba(56,189,248,0.85)' }} />
-                          </button>
-                        </Tooltip>
-                        <Tooltip content="复制为新模型池">
-                          <button
-                            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-                            onClick={(e) => { e.stopPropagation(); handleCopyPool(pool); }}
-                          >
-                            <Copy size={14} style={{ color: 'var(--text-muted)' }} />
-                          </button>
-                        </Tooltip>
-                        <Tooltip content="编辑模型池">
-                          <button
-                            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-                            onClick={(e) => { e.stopPropagation(); handleEditPool(pool); }}
-                          >
-                            <Edit size={14} style={{ color: 'var(--text-muted)' }} />
-                          </button>
-                        </Tooltip>
-                        <Tooltip content="删除模型池">
-                          <button
-                            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-                            onClick={(e) => { e.stopPropagation(); handleDeletePool(pool); }}
-                          >
-                            <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
-                          </button>
-                        </Tooltip>
-                      </div>
+                      <div className="flex-1" />
+                      {/* 分组健康摘要 */}
+                      {totalModels > 0 && (
+                        <div className="flex items-center gap-2 text-[11px]">
+                          {totalHealthy === totalModels ? (
+                            <span className="flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
+                              <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(34,197,94,0.95)' }} />
+                              全部健康
+                            </span>
+                          ) : (
+                            <>
+                              {totalHealthy > 0 && (
+                                <span className="flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(34,197,94,0.95)' }} />
+                                  {totalHealthy}
+                                </span>
+                              )}
+                              {totalDegraded > 0 && (
+                                <span className="flex items-center gap-1" style={{ color: 'rgba(251,191,36,0.95)' }}>
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(251,191,36,0.95)' }} />
+                                  {totalDegraded} 降权
+                                </span>
+                              )}
+                              {totalUnavailable > 0 && (
+                                <span className="flex items-center gap-1" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(239,68,68,0.95)' }} />
+                                  {totalUnavailable} 不可用
+                                </span>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
 
-                    {/* 展开的模型列表 */}
-                    {isExpanded && pool.models && pool.models.length > 0 && (
-                      <div
-                        className="py-2 px-4"
-                        style={{ background: 'rgba(255,255,255,0.015)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-                      >
-                        <div className="ml-10 space-y-1">
-                          {pool.models.map((model, idx) => {
-                            const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
-                            return (
-                              <ModelListItem
-                                key={keyOfModel(model)}
-                                model={{
-                                  platformId: model.platformId,
-                                  platformName: platformNameById.get(model.platformId),
-                                  modelId: model.modelId,
-                                }}
-                                index={idx + 1}
-                                total={pool.models.length}
-                                size="sm"
-                                suffix={
-                                  model.healthStatus !== 'Healthy' ? (
-                                    <button
-                                      className="text-[10px] px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
-                                      style={{ background: status.bg, color: status.color }}
-                                      title="点击重置为健康状态"
-                                      onClick={async (e) => {
-                                        e.stopPropagation();
-                                        try {
-                                          await resetModelHealth(pool.id, model.modelId);
-                                          toast.success('已重置为健康状态');
-                                          loadData();
-                                        } catch (err: any) {
-                                          toast.error(err.message || '重置失败');
-                                        }
-                                      }}
-                                    >
-                                      {status.label} ↻
-                                    </button>
-                                  ) : (
-                                    <span
-                                      className="text-[10px] px-1.5 py-0.5 rounded"
-                                      style={{ background: status.bg, color: status.color }}
-                                    >
-                                      {status.label}
+                    {/* ── 第二级：池行 ── */}
+                    {!isTypeCollapsed && group.pools.map((pool) => {
+                      const isExpanded = expandedPoolId === pool.id;
+                      const modelCount = pool.models?.length || 0;
+                      const healthyCnt = pool.models?.filter(m => m.healthStatus === 'Healthy').length ?? 0;
+                      const degradedCnt = pool.models?.filter(m => m.healthStatus === 'Degraded').length ?? 0;
+                      const unavailableCnt = pool.models?.filter(m => m.healthStatus === 'Unavailable').length ?? 0;
+                      const strategyOpt = STRATEGY_OPTIONS.find(s => s.value === pool.strategyType) || STRATEGY_OPTIONS[0];
+                      const StrategyIcon = strategyOpt.icon;
+
+                      return (
+                        <div key={pool.id}>
+                          <div
+                            className="group flex items-center gap-3 pl-12 pr-4 py-2.5 transition-colors cursor-pointer"
+                            style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                            onClick={() => setExpandedPoolId(isExpanded ? null : pool.id)}
+                          >
+                            {/* 展开箭头 */}
+                            <span className="w-5 shrink-0 flex items-center justify-center">
+                              {modelCount > 0 ? (
+                                isExpanded
+                                  ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
+                                  : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />
+                              ) : (
+                                <span className="w-3 h-px" style={{ background: 'rgba(255,255,255,0.1)' }} />
+                              )}
+                            </span>
+
+                            {/* 名称 */}
+                            <div className="min-w-[120px] flex-[2] flex items-center gap-2 min-w-0">
+                              <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                {pool.name}
+                              </span>
+                              {pool.isDefaultForType && (
+                                <span
+                                  className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium"
+                                  style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}
+                                >
+                                  备用
+                                </span>
+                              )}
+                            </div>
+
+                            {/* 代码 */}
+                            <span
+                              className="min-w-[100px] flex-1 text-[12px] font-mono truncate"
+                              style={{ color: 'var(--text-muted)' }}
+                              title={pool.code || pool.id}
+                            >
+                              {pool.code || pool.id}
+                            </span>
+
+                            {/* 策略 */}
+                            <span className="w-[70px] shrink-0 text-center">
+                              <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
+                                style={{ background: `${strategyOpt.color}12`, color: strategyOpt.color }}
+                              >
+                                <StrategyIcon size={10} />
+                                {STRATEGY_LABEL_MAP[pool.strategyType ?? 0] || '快速'}
+                              </span>
+                            </span>
+
+                            {/* 优先级 */}
+                            <span
+                              className="w-[50px] shrink-0 text-center text-[12px] tabular-nums"
+                              style={{ color: 'var(--text-muted)' }}
+                            >
+                              {pool.priority ?? 50}
+                            </span>
+
+                            {/* 健康状态 */}
+                            <div className="min-w-[100px] flex-1 flex items-center gap-1.5">
+                              {modelCount === 0 ? (
+                                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无模型</span>
+                              ) : healthyCnt === modelCount ? (
+                                <span className="text-[11px] flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(34,197,94,0.95)' }} />
+                                  {modelCount} 模型 · 全部健康
+                                </span>
+                              ) : (
+                                <span className="text-[11px] flex items-center gap-2">
+                                  {healthyCnt > 0 && (
+                                    <span className="flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
+                                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(34,197,94,0.95)' }} />
+                                      {healthyCnt}
                                     </span>
-                                  )
-                                }
-                              />
-                            );
-                          })}
+                                  )}
+                                  {degradedCnt > 0 && (
+                                    <span className="flex items-center gap-1" style={{ color: 'rgba(251,191,36,0.95)' }}>
+                                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(251,191,36,0.95)' }} />
+                                      {degradedCnt} 降权
+                                    </span>
+                                  )}
+                                  {unavailableCnt > 0 && (
+                                    <span className="flex items-center gap-1" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(239,68,68,0.95)' }} />
+                                      {unavailableCnt} 不可用
+                                    </span>
+                                  )}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* 操作按钮 */}
+                            <div className="w-[120px] shrink-0 flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <Tooltip content="预测下次调度路径">
+                                <button
+                                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                                  onClick={(e) => { e.stopPropagation(); handlePredict(pool); }}
+                                >
+                                  <Radar size={14} style={{ color: 'rgba(56,189,248,0.85)' }} />
+                                </button>
+                              </Tooltip>
+                              <Tooltip content="复制为新模型池">
+                                <button
+                                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                                  onClick={(e) => { e.stopPropagation(); handleCopyPool(pool); }}
+                                >
+                                  <Copy size={14} style={{ color: 'var(--text-muted)' }} />
+                                </button>
+                              </Tooltip>
+                              <Tooltip content="编辑模型池">
+                                <button
+                                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                                  onClick={(e) => { e.stopPropagation(); handleEditPool(pool); }}
+                                >
+                                  <Edit size={14} style={{ color: 'var(--text-muted)' }} />
+                                </button>
+                              </Tooltip>
+                              <Tooltip content="删除模型池">
+                                <button
+                                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                                  onClick={(e) => { e.stopPropagation(); handleDeletePool(pool); }}
+                                >
+                                  <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
+                                </button>
+                              </Tooltip>
+                            </div>
+                          </div>
+
+                          {/* ── 第三级：展开的模型列表 ── */}
+                          {isExpanded && pool.models && pool.models.length > 0 && (
+                            <div
+                              className="py-2 pr-4 pl-12"
+                              style={{ background: 'rgba(255,255,255,0.015)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+                            >
+                              <div className="ml-5 space-y-1">
+                                {pool.models.map((model, idx) => {
+                                  const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
+                                  return (
+                                    <ModelListItem
+                                      key={keyOfModel(model)}
+                                      model={{
+                                        platformId: model.platformId,
+                                        platformName: platformNameById.get(model.platformId),
+                                        modelId: model.modelId,
+                                      }}
+                                      index={idx + 1}
+                                      total={pool.models.length}
+                                      size="sm"
+                                      suffix={
+                                        model.healthStatus !== 'Healthy' ? (
+                                          <button
+                                            className="text-[10px] px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
+                                            style={{ background: status.bg, color: status.color }}
+                                            title="点击重置为健康状态"
+                                            onClick={async (e) => {
+                                              e.stopPropagation();
+                                              try {
+                                                await resetModelHealth(pool.id, model.modelId);
+                                                toast.success('已重置为健康状态');
+                                                loadData();
+                                              } catch (err: any) {
+                                                toast.error(err.message || '重置失败');
+                                              }
+                                            }}
+                                          >
+                                            {status.label} ↻
+                                          </button>
+                                        ) : (
+                                          <span
+                                            className="text-[10px] px-1.5 py-0.5 rounded"
+                                            style={{ background: status.bg, color: status.color }}
+                                          >
+                                            {status.label}
+                                          </span>
+                                        )
+                                      }
+                                    />
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    )}
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -719,7 +803,7 @@ export function ModelPoolManagePage() {
                     className="h-4 w-4 rounded"
                   />
                   <label htmlFor="isDefaultForType" className="text-[12px] whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>
-                    设为默认
+                    设为备用
                   </label>
                 </div>
               </div>
