@@ -19,7 +19,7 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using PrdAgent.Core.Security;
-using PrdAgent.Core.Interfaces.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -2482,7 +2482,7 @@ public class ImageMasterController : ControllerBase
                     catch (OperationCanceledException) { /* 客户端断开，继续处理 */ }
                     catch (ObjectDisposedException) { }
                 }
-                else if (chunk.Type == Infrastructure.LlmGateway.GatewayChunkType.Error)
+                else if (chunk.Type == GatewayChunkType.Error)
                 {
                     var data = JsonSerializer.Serialize(new { type = "error", content = chunk.Error ?? "未知错误" });
                     try
