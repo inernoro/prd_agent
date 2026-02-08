@@ -32,7 +32,12 @@ public record LlmLogStart(
     /// <summary>模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池）</summary>
     ModelResolutionType? ModelResolutionType = null,
     string? ModelGroupId = null,
-    string? ModelGroupName = null);
+    string? ModelGroupName = null,
+    // Exchange 中继信息
+    bool? IsExchange = null,
+    string? ExchangeId = null,
+    string? ExchangeName = null,
+    string? ExchangeTransformerType = null);
 
 public record LlmLogDone(
     int? StatusCode,

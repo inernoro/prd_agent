@@ -2,3 +2,5 @@ export { ImageQuickActionBar, type ImageQuickActionBarProps } from './ImageQuick
 export { ImageQuickEditInput, type ImageQuickEditInputProps } from './ImageQuickEditInput';
 export { QuickActionConfigPanel, type QuickActionConfigPanelProps } from './QuickActionConfigPanel';
 export { BUILTIN_QUICK_ACTIONS, MAX_DIY_QUICK_ACTIONS, type QuickAction } from './quickActionTypes';
+export { MaskPaintCanvas, type MaskPaintCanvasProps } from './MaskPaintCanvas';
+export { DrawingBoardDialog, type DrawingBoardDialogProps, type DrawingBoardChatMsg } from './DrawingBoardDialog';

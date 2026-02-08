@@ -16,7 +16,7 @@ interface PoolPredictionDialogProps {
 }
 
 const STRATEGY_META: Record<string, { icon: typeof Zap; label: string; color: string }> = {
-  FailFast:       { icon: Zap,       label: '快速失败',  color: 'rgba(251,146,60,0.95)' },
+  FailFast:       { icon: Zap,       label: '快速',      color: 'rgba(251,146,60,0.95)' },
   Race:           { icon: GitBranch, label: '竞速模式',  color: 'rgba(168,85,247,0.95)' },
   Sequential:     { icon: ArrowRight,label: '顺序容灾',  color: 'rgba(56,189,248,0.95)' },
   RoundRobin:     { icon: RotateCw,  label: '轮询均衡',  color: 'rgba(34,197,94,0.95)' },

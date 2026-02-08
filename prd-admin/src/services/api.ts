@@ -93,6 +93,10 @@ export const api = {
       byId: (id: string) => `/api/mds/model-groups/${id}`,
       forApp: () => '/api/mds/model-groups/for-app',
       predict: (id: string) => `/api/mds/model-groups/${id}/predict`,
+      resetModelHealth: (groupId: string, modelId: string) =>
+        `/api/mds/model-groups/${groupId}/models/${encodeURIComponent(modelId)}/reset-health`,
+      resetAllHealth: (groupId: string) =>
+        `/api/mds/model-groups/${groupId}/reset-all-health`,
     },
 
     // LLM 配置
@@ -100,6 +104,15 @@ export const api = {
       list: () => '/api/mds/llm-configs',
       byId: (id: string) => `/api/mds/llm-configs/${id}`,
       activate: (id: string) => `/api/mds/llm-configs/${id}/activate`,
+    },
+
+    // 模型中继 (Exchange)
+    exchanges: {
+      list: () => '/api/mds/exchanges',
+      byId: (id: string) => `/api/mds/exchanges/${id}`,
+      test: (id: string) => `/api/mds/exchanges/${id}/test`,
+      transformerTypes: () => '/api/mds/exchanges/transformer-types',
+      forPool: () => '/api/mds/exchanges/for-pool',
     },
 
     // 调度器配置
@@ -286,6 +299,9 @@ export const api = {
       assets: {
         upload: () => '/api/visual-agent/image-master/assets',
         byId: (id: string) => `/api/visual-agent/image-master/assets/${id}`,
+      },
+      drawingBoard: {
+        chat: () => '/api/visual-agent/image-master/drawing-board/chat',
       },
     },
     imageGen: {

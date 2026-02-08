@@ -15,7 +15,9 @@ import {
   updateModelGroup,
   deleteModelGroup,
   predictNextDispatch,
+  resetModelHealth,
 } from '@/services';
+import { getExchanges } from '@/services/real/exchanges';
 import type { ModelGroup, ModelGroupItem, Platform, PoolPrediction } from '@/types';
 import { ModelHealthStatus, PoolStrategyType } from '@/types/modelGroup';
 import {
@@ -41,7 +43,7 @@ import { getModelTypeDisplayName, getModelTypeIcon } from '@/lib/appCallerUtils'
 
 /* ── 4 种可预测的调度策略（icon 选择器） ── */
 const STRATEGY_OPTIONS = [
-  { value: PoolStrategyType.FailFast, label: '快速失败', desc: '选最优，失败即止', icon: Zap, color: 'rgba(251,146,60,0.95)' },
+  { value: PoolStrategyType.FailFast, label: '快速', desc: '选最优，失败即止', icon: Zap, color: 'rgba(251,146,60,0.95)' },
   { value: PoolStrategyType.Race, label: '竞速', desc: '并行发送，取最快', icon: GitBranch, color: 'rgba(168,85,247,0.95)' },
   { value: PoolStrategyType.Sequential, label: '顺序容灾', desc: '逐个尝试，失败切换', icon: ArrowRight, color: 'rgba(56,189,248,0.95)' },
   { value: PoolStrategyType.RoundRobin, label: '轮询', desc: '均匀分配', icon: RotateCw, color: 'rgba(34,197,94,0.95)' },
@@ -49,7 +51,7 @@ const STRATEGY_OPTIONS = [
 
 /* 卡片列表中显示策略标签时也需要文案映射 */
 const STRATEGY_LABEL_MAP: Record<number, string> = {
-  [PoolStrategyType.FailFast]: '快速失败',
+  [PoolStrategyType.FailFast]: '快速',
   [PoolStrategyType.Race]: '竞速',
   [PoolStrategyType.Sequential]: '顺序容灾',
   [PoolStrategyType.RoundRobin]: '轮询',
@@ -115,14 +117,29 @@ export function ModelPoolManagePage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [poolsData, platformsData] = await Promise.all([
+      const [poolsData, platformsData, exchangesData] = await Promise.all([
         getModelGroups(),
         getPlatforms(),
+        getExchanges(),
       ]);
       setPools(poolsData);
-      if (platformsData.success) {
-        setPlatforms(platformsData.data);
-      }
+      const realPlatforms = platformsData.success ? platformsData.data : [];
+      // 注入 Exchange 虚拟平台（仅当存在已启用的 Exchange 时）
+      const hasEnabledExchanges = exchangesData.success && exchangesData.data.some(e => e.enabled);
+      const allPlatforms = hasEnabledExchanges
+        ? [
+            ...realPlatforms,
+            {
+              id: '__exchange__',
+              name: '模型中继 (Exchange)',
+              platformType: 'exchange',
+              apiUrl: '',
+              apiKeyMasked: '',
+              enabled: true,
+            } satisfies Platform,
+          ]
+        : realPlatforms;
+      setPlatforms(allPlatforms);
     } catch (error) {
       toast.error('加载失败', String(error));
     } finally {
@@ -374,7 +391,7 @@ export function ModelPoolManagePage() {
                               )}
                               {pool.strategyType != null && pool.strategyType !== PoolStrategyType.FailFast && (
                                 <span className="ml-2 px-1.5 py-0.5 rounded text-[10px]" style={{ background: 'rgba(56,189,248,0.12)', color: 'rgba(56,189,248,0.95)' }}>
-                                  {STRATEGY_LABEL_MAP[pool.strategyType!] || '快速失败'}
+                                  {STRATEGY_LABEL_MAP[pool.strategyType!] || '快速'}
                                 </span>
                               )}
                             </div>
@@ -441,12 +458,32 @@ export function ModelPoolManagePage() {
                                 total={pool.models.length}
                                 size="sm"
                                 suffix={
-                                  <span
-                                    className="text-[10px] px-1.5 py-0.5 rounded"
-                                    style={{ background: status.bg, color: status.color }}
-                                  >
-                                    {status.label}
-                                  </span>
+                                  model.healthStatus !== 'Healthy' ? (
+                                    <button
+                                      className="text-[10px] px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
+                                      style={{ background: status.bg, color: status.color }}
+                                      title="点击重置为健康状态"
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        try {
+                                          await resetModelHealth(pool.id, model.modelId);
+                                          toast.success('已重置为健康状态');
+                                          loadData();
+                                        } catch (err: any) {
+                                          toast.error(err.message || '重置失败');
+                                        }
+                                      }}
+                                    >
+                                      {status.label} ↻
+                                    </button>
+                                  ) : (
+                                    <span
+                                      className="text-[10px] px-1.5 py-0.5 rounded"
+                                      style={{ background: status.bg, color: status.color }}
+                                    >
+                                      {status.label}
+                                    </span>
+                                  )
                                 }
                               />
                             );

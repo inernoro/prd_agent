@@ -229,6 +229,32 @@ export class ModelGroupsService implements IModelGroupsService {
     return json;
   }
 
+  async resetModelHealth(groupId: string, modelId: string): Promise<ApiResponse<void>> {
+    const res = await fetch(api.mds.modelGroups.resetModelHealth(groupId, modelId), {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+
+    const json = await readApiJson<void>(res);
+    if (!res.ok || !json.success) {
+      throw new Error(json.error?.message || `重置健康状态失败: ${res.status}`);
+    }
+    return json;
+  }
+
+  async resetAllModelsHealth(groupId: string): Promise<ApiResponse<void>> {
+    const res = await fetch(api.mds.modelGroups.resetAllHealth(groupId), {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+
+    const json = await readApiJson<void>(res);
+    if (!res.ok || !json.success) {
+      throw new Error(json.error?.message || `重置所有模型健康状态失败: ${res.status}`);
+    }
+    return json;
+  }
+
   async predictNextDispatch(groupId: string): Promise<ApiResponse<PoolPrediction>> {
     const res = await fetch(api.mds.modelGroups.predict(groupId), {
       headers: getAuthHeaders(),

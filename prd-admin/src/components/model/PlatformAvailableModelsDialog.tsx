@@ -229,6 +229,25 @@ export function PlatformAvailableModelsDialog({
     setAvailableLoading(true);
     setAvailableError(null);
     try {
+      // Exchange 虚拟平台：从 Exchange for-pool 端点获取模型列表
+      if (platform.id === '__exchange__') {
+        const r = await apiRequest<{ items: { modelId: string; displayName: string; transformerType: string }[] }>(
+          '/api/mds/exchanges/for-pool'
+        );
+        if (!r.success) {
+          setAvailableError(r.error?.message || '获取 Exchange 模型列表失败');
+          setAvailableModels([]);
+          return;
+        }
+        const models: AvailableModel[] = (r.data.items ?? []).map(e => ({
+          modelName: e.modelId,
+          displayName: e.displayName,
+          group: 'Exchange',
+        }));
+        setAvailableModels(models);
+        return;
+      }
+
       const isRefresh = !!opts?.refresh;
       const r = await apiRequest<AvailableModel[]>(
         isRefresh ? `/api/mds/platforms/${platform.id}/refresh-models` : `/api/mds/platforms/${platform.id}/available-models`,
@@ -335,16 +354,18 @@ export function PlatformAvailableModelsDialog({
             >
               <RefreshCw size={16} className={availableLoading ? 'animate-spin' : ''} />
             </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={reclassifyWithMainModel}
-              disabled={!platform?.id || availableLoading}
-              aria-label="主模型分类"
-              title="主模型分类（写回分组与标签）"
-            >
-              <Wand2 size={16} />
-            </Button>
+            {platform?.id !== '__exchange__' && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={reclassifyWithMainModel}
+                disabled={!platform?.id || availableLoading}
+                aria-label="主模型分类"
+                title="主模型分类（写回分组与标签）"
+              >
+                <Wand2 size={16} />
+              </Button>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-3">

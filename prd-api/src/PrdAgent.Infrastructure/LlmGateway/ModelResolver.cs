@@ -167,6 +167,44 @@ public class ModelResolver : IModelResolver
                 continue;
             }
 
+            // ========== Exchange 中继检测 ==========
+            // 检查模型是否为 Exchange 中继模型（PlatformId == "__exchange__"）
+            if (selectedModel.PlatformId == ModelResolverConstants.ExchangePlatformId)
+            {
+                var exchange = await _db.ModelExchanges
+                    .Find(e => e.ModelAlias == selectedModel.ModelId && e.Enabled)
+                    .FirstOrDefaultAsync(ct);
+
+                if (exchange == null)
+                {
+                    _logger.LogWarning(
+                        "[ModelResolver] Exchange 配置未找到或已禁用: ModelAlias={Alias}",
+                        selectedModel.ModelId);
+                    continue;
+                }
+
+                var exchangeApiKey = string.IsNullOrEmpty(exchange.TargetApiKeyEncrypted)
+                    ? null
+                    : ApiKeyCrypto.Decrypt(exchange.TargetApiKeyEncrypted, jwtSecret);
+
+                _logger.LogInformation(
+                    "[ModelResolver] Exchange 中继调度完成\n" +
+                    "  AppCallerCode: {AppCallerCode}\n" +
+                    "  ResolutionType: {ResolutionType}\n" +
+                    "  ModelGroup: {GroupName} ({GroupId})\n" +
+                    "  Exchange: {ExchangeName} ({ExchangeId})\n" +
+                    "  ModelAlias: {Alias}\n" +
+                    "  TargetUrl: {TargetUrl}\n" +
+                    "  Transformer: {Transformer}",
+                    appCallerCode, resolutionType, group.Name, group.Id,
+                    exchange.Name, exchange.Id,
+                    selectedModel.ModelId, exchange.TargetUrl, exchange.TransformerType);
+
+                return ModelResolutionResult.FromExchangePool(
+                    resolutionType, expectedModel, selectedModel, group, exchange, exchangeApiKey);
+            }
+
+            // ========== 普通平台模型 ==========
             var platform = await _db.LLMPlatforms
                 .Find(p => p.Id == selectedModel.PlatformId && p.Enabled)
                 .FirstOrDefaultAsync(ct);
@@ -807,4 +845,20 @@ public class InMemoryModelResolver : IModelResolver
                 .ToList()
         };
     }
+}
+
+/// <summary>
+/// Exchange 模型中继常量
+/// </summary>
+public static class ModelResolverConstants
+{
+    /// <summary>
+    /// Exchange 虚拟平台 ID（模型池中 Exchange 模型使用此 PlatformId）
+    /// </summary>
+    public const string ExchangePlatformId = "__exchange__";
+
+    /// <summary>
+    /// Exchange 虚拟平台显示名称
+    /// </summary>
+    public const string ExchangePlatformName = "模型中继 (Exchange)";
 }
