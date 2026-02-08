@@ -17,7 +17,6 @@ import type { MarketplaceWatermarkConfig } from '@/services/contracts/watermark'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Popover from '@radix-ui/react-popover';
 import {
-  addVisualAgentWorkspaceMessage,
   deleteVisualAgentWorkspaceAsset,
   createWorkspaceImageGenRun,
   generateVisualAgentWorkspaceTitle,
@@ -1914,16 +1913,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     workspaceRef.current = workspace;
   }, [workspace]);
 
+  // pushMsg：仅更新本地 UI 状态（消息持久化由后端 CreateRun / Worker 自动完成）
   const pushMsg = useCallback((role: UiMsg['role'], content: string) => {
     const msg: UiMsg = { id: `${role}-${Date.now()}`, role, content, ts: Date.now() };
     setMessages((prev) => prev.concat(msg));
-    const ws = workspaceRef.current;
-    if (ws?.id) {
-      const backendRole: VisualAgentMessage['role'] = role === 'User' ? 'User' : 'Assistant';
-      addVisualAgentWorkspaceMessage({ id: ws.id, role: backendRole, content }).catch((err) => {
-        console.warn('[pushMsg] 消息持久化失败（刷新后可能丢失）:', err);
-      });
-    }
   }, []);
 
   const MAX_GEN_CONCURRENCY = 3;
@@ -3183,7 +3176,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const uiSizeToken = forcedSize ? `(@size:${forcedSize}) ` : '';
     const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
     const uiModelToken = modelPoolName ? `(@model:${modelPoolName}) ` : '';
-    pushMsg('User', `${uiSizeToken}${uiModelToken}${display || reqText}`);
+    const userMsgForBackend = `${uiSizeToken}${uiModelToken}${display || reqText}`;
+    pushMsg('User', userMsgForBackend);
 
     // ========== 统一图片引用：如果有选中图片但没有 @imgN，也加入 imageRefs ==========
     // 这样后端只需处理 imageRefs，无需区分 initImageAssetSha256
@@ -3520,6 +3514,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           responseFormat: 'url',
           // 统一使用 imageRefs（后端兼容层会处理 initImageAssetSha256）
           imageRefs: imageRefsForBackend.length > 0 ? imageRefsForBackend : undefined,
+          userMessageContent: userMsgForBackend,
         },
         idempotencyKey: `imRun_${workspaceId}_${key}`,
       });
@@ -3640,7 +3635,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const label = actionLabel || '快捷编辑';
       const refSrc = sourceItem.originalSrc || sourceItem.src || '';
       const refTag = sourceItem.refId ? ` @img${sourceItem.refId}` : '';
-      pushMsg('User', `[${label}]${refTag} ${prompt}`);
+      const qaUserMsg = `[${label}]${refTag} ${prompt}`;
+      pushMsg('User', qaUserMsg);
       // 尺寸自适应：基于源图原始尺寸（支持外部覆盖，如 HD 放大需要升档）
       const refDim =
         sourceItem.naturalW && sourceItem.naturalH
@@ -3758,6 +3754,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               },
             ],
             maskBase64: maskBase64 || undefined,
+            userMessageContent: qaUserMsg,
           },
           idempotencyKey: `qaRun_${workspaceId}_${key}`,
         });
@@ -7300,19 +7297,47 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
                         ) : null}
 
-                        {/* 生成的图片（Middle） */}
-                        <button
-                          type="button"
-                          className="block w-full"
-                          onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '', runId: genDone.runId })}
-                          title="点击放大"
-                        >
-                  <img
-                    src={genDone.src}
-                    alt={genDone.prompt || '生成结果'}
-                    style={{ width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block' }}
-                  />
-                        </button>
+                        {/* 参考图 + 生成图（Middle） */}
+                        {genDone.refSrc ? (
+                          <div className="flex items-stretch" style={{ borderTop: genDone.prompt ? undefined : '1px solid rgba(255,255,255,0.08)' }}>
+                            {/* 参考图缩略图 */}
+                            <button
+                              type="button"
+                              className="shrink-0"
+                              style={{ width: 64, borderRight: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.15)' }}
+                              onClick={() => setPreview({ open: true, src: genDone.refSrc!, prompt: '参照图' })}
+                              title="点击预览参照图"
+                            >
+                              <img src={genDone.refSrc} alt="参照图" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                            </button>
+                            {/* 生成图 */}
+                            <button
+                              type="button"
+                              className="flex-1 min-w-0"
+                              onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '', runId: genDone.runId })}
+                              title="点击放大"
+                            >
+                              <img
+                                src={genDone.src}
+                                alt={genDone.prompt || '生成结果'}
+                                style={{ width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block' }}
+                              />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="block w-full"
+                            onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '', runId: genDone.runId })}
+                            title="点击放大"
+                          >
+                            <img
+                              src={genDone.src}
+                              alt={genDone.prompt || '生成结果'}
+                              style={{ width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block' }}
+                            />
+                          </button>
+                        )}
 
                         {/* 元数据（Bottom） */}
                         {(() => {
@@ -8518,7 +8543,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             return;
           }
           const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-          pushMsg('User', `[手绘板生图] ${desc.trim()}`);
+          const sketchUserMsg = `[手绘板生图] ${desc.trim()}`;
+          pushMsg('User', sketchUserMsg);
 
           // 添加草图到画布（用于展示参考）
           const sketchKey = `sketch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -8615,6 +8641,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     label: '手绘草图',
                   },
                 ],
+                userMessageContent: sketchUserMsg,
               },
               idempotencyKey: `sketchRun_${workspaceId}_${genKey}`,
             });

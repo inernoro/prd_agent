@@ -833,7 +833,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     IsExchange: resolution.IsExchange ? true : null,
                     ExchangeId: resolution.ExchangeId,
                     ExchangeName: resolution.ExchangeName,
-                    ExchangeTransformerType: resolution.ExchangeTransformerType),
+                    ExchangeTransformerType: resolution.ExchangeTransformerType,
+                    ImageReferences: request.Context?.ImageReferences),
                 ct);
         }
         catch (Exception ex)
@@ -978,7 +979,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     IsExchange: resolution.IsExchange ? true : null,
                     ExchangeId: resolution.ExchangeId,
                     ExchangeName: resolution.ExchangeName,
-                    ExchangeTransformerType: resolution.ExchangeTransformerType),
+                    ExchangeTransformerType: resolution.ExchangeTransformerType,
+                    ImageReferences: request.Context?.ImageReferences),
                 ct);
         }
         catch (Exception ex)

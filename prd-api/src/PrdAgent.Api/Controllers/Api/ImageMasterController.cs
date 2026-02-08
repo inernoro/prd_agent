@@ -1386,6 +1386,33 @@ public class ImageMasterController : ControllerBase
                 throw;
             }
 
+            // 服务器权威性：后端自动保存 User 消息到 image_master_messages
+            try
+            {
+                // 优先使用前端传入的完整用户消息（含标签/引用），回退到纯 prompt
+                var userMsgContent = !string.IsNullOrWhiteSpace(request?.UserMessageContent)
+                    ? request!.UserMessageContent!.Trim()
+                    : prompt;
+                var userMsg = new ImageMasterMessage
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    WorkspaceId = wid,
+                    OwnerUserId = adminId,
+                    Role = "User",
+                    Content = userMsgContent.Length > 64 * 1024 ? userMsgContent[..(64 * 1024)] : userMsgContent,
+                    CreatedAt = DateTime.UtcNow
+                };
+                await _db.ImageMasterMessages.InsertOneAsync(userMsg, cancellationToken: ct);
+                await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                    x => x.Id == wid,
+                    Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[CreateWorkspaceImageGenRun] 保存 User 消息失败: workspace={WorkspaceId}", wid);
+            }
+
             return Ok(ApiResponse<object>.Ok(new { runId = run.Id }));
         }
         catch (OperationCanceledException)
@@ -2546,6 +2573,13 @@ public class CreateWorkspaceImageGenRunRequest
     /// 可选：局部重绘蒙版（base64 data URI）。白色 = 重绘区域，黑色 = 保持。
     /// </summary>
     public string? MaskBase64 { get; set; }
+
+    /// <summary>
+    /// 可选：用户消息内容（用于 image_master_messages 中的 User 消息持久化）。
+    /// 由前端传入完整的用户操作描述（含标签如 [局部重绘]@img1 prompt），
+    /// 后端原样存储到消息记录中。若为空则使用 Prompt 作为消息内容。
+    /// </summary>
+    public string? UserMessageContent { get; set; }
 }
 
 /// <summary>

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -188,6 +189,11 @@ public class GatewayRequestContext
     /// 系统提示词文本（用于日志）
     /// </summary>
     public string? SystemPromptText { get; init; }
+
+    /// <summary>
+    /// 图片引用列表（参考图 COS URL 等元数据，用于日志页展示）
+    /// </summary>
+    public List<LlmImageReference>? ImageReferences { get; init; }
 }
 
 /// <summary>

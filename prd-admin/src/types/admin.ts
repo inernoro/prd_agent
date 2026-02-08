@@ -184,6 +184,16 @@ export type LlmRequestLog = {
   endedAt?: string | null;
   durationMs?: number | null;
   status: string;
+  /** 图片引用列表（参考图 COS URL 等元数据，用于日志页展示） */
+  imageReferences?: LlmImageReference[] | null;
+};
+
+export type LlmImageReference = {
+  sha256?: string | null;
+  cosUrl?: string | null;
+  label?: string | null;
+  mimeType?: string | null;
+  sizeBytes?: number | null;
 };
 
 export type UploadArtifact = {
