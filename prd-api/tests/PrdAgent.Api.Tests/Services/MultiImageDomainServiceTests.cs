@@ -217,7 +217,7 @@ public class MultiImageDomainServiceTests
     }
 
     [Fact]
-    public void TryMatchByRules_MultiImage_BuildsReferenceTable()
+    public void TryMatchByRules_MultiImage_ReplacesRefsWithOrderedLabels()
     {
         var refs = new List<ResolvedImageRef>
         {
@@ -230,10 +230,10 @@ public class MultiImageDomainServiceTests
 
         result.ShouldNotBeNull();
         result.Success.ShouldBeTrue();
-        result.EnhancedPrompt.ShouldContain("图片对照表");
-        result.EnhancedPrompt.ShouldContain("@img1 对应 目标图");
-        result.EnhancedPrompt.ShouldContain("@img2 对应 风格图");
-        result.Confidence.ShouldBe(0.8);
+        // 多图场景将 @imgN 替换为 图{order}（按 OccurrenceOrder+1）
+        result.EnhancedPrompt.ShouldBe("把 图1 的风格应用到 图2");
+        result.EnhancedPrompt.ShouldNotContain("@img");
+        result.Confidence.ShouldBe(1.0);
     }
 
     #endregion
@@ -278,8 +278,9 @@ public class MultiImageDomainServiceTests
 
         var result = await _service.BuildFinalPromptAsync(prompt, refs);
 
-        result.ShouldContain("图片对照表");
-        result.ShouldContain(prompt); // 保留原始 prompt
+        // 多图场景将 @imgN 替换为 图N
+        result.ShouldBe("把 图1 和 图2 融合");
+        result.ShouldNotContain("@img");
     }
 
     #endregion
@@ -329,9 +330,9 @@ public class MultiImageDomainServiceTests
         var intentResult = _service.TryMatchByRules(prompt, parseResult.ResolvedRefs);
         intentResult.ShouldNotBeNull();
         intentResult.Success.ShouldBeTrue();
-        intentResult.EnhancedPrompt.ShouldContain("图片对照表");
-        intentResult.EnhancedPrompt.ShouldContain("@img16 对应 风格参考");
-        intentResult.EnhancedPrompt.ShouldContain("@img17 对应 目标图片");
+        // 多图场景将 @imgN 替换为 图N
+        intentResult.EnhancedPrompt.ShouldBe("图1图2");
+        intentResult.EnhancedPrompt.ShouldNotContain("@img");
     }
 
     [Fact]
@@ -349,9 +350,9 @@ public class MultiImageDomainServiceTests
 
         var intentResult = _service.TryMatchByRules(prompt, parseResult.ResolvedRefs);
         intentResult.ShouldNotBeNull();
-        intentResult.EnhancedPrompt.ShouldContain("把 @img1 的风格应用到 @img2");
-        intentResult.EnhancedPrompt.ShouldContain("@img1 对应 风景背景.jpg");
-        intentResult.EnhancedPrompt.ShouldContain("@img2 对应 产品图.jpg");
+        // 多图场景将 @imgN 替换为 图N
+        intentResult.EnhancedPrompt.ShouldBe("把 图1 的风格应用到 图2");
+        intentResult.EnhancedPrompt.ShouldNotContain("@img");
     }
 
     #endregion
@@ -482,9 +483,10 @@ public class MultiImageDomainServiceTests
         parseResult.IsMultiImage.ShouldBeTrue();
         intentResult.ShouldNotBeNull();
         intentResult!.Success.ShouldBeTrue();
-        finalPrompt.ShouldContain("图片对照表");
-        finalPrompt.ShouldContain("@img16 对应 风格参考图");
-        finalPrompt.ShouldContain("@img17 对应 目标图片");
+        // 多图场景将 @imgN 替换为 图N
+        finalPrompt.ShouldContain("图1");
+        finalPrompt.ShouldContain("图2");
+        finalPrompt.ShouldNotContain("@img");
 
         Log("All assertions passed!");
 
@@ -595,9 +597,10 @@ public class MultiImageDomainServiceTests
         Log(new string('-', 40));
 
         parseResult.IsMultiImage.ShouldBeTrue();
-        finalPrompt.ShouldContain("图片对照表");
-        finalPrompt.ShouldContain("@img1 对应 梵高星空.jpg");
-        finalPrompt.ShouldContain("@img2 对应 我的照片.jpg");
+        // 多图场景将 @imgN 替换为 图N
+        finalPrompt.ShouldContain("图1");
+        finalPrompt.ShouldContain("图2");
+        finalPrompt.ShouldNotContain("@img");
 
         Log("\nTest passed!\n");
     }
