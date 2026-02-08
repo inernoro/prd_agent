@@ -37,11 +37,20 @@ import {
   uploadVisualAgentWorkspaceAsset,
 } from '@/services';
 import type { ModelGroupForApp } from '@/types/modelGroup';
-import type { VisualAgentGenerationType } from '@/services/contracts/userPreferences';
+import type { QuickActionConfig } from '@/services/contracts/userPreferences';
+import {
+  ImageQuickActionBar,
+  ImageQuickEditInput,
+  QuickActionConfigPanel,
+  MaskPaintCanvas,
+  DrawingBoardDialog,
+  BUILTIN_QUICK_ACTIONS,
+  type QuickAction,
+} from '@/components/visual-agent';
 import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
-import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
+import { ASPECT_OPTIONS, getSizeForTier } from '@/lib/imageAspectOptions';
 import {
   computeRequestedSizeByRefRatio,
   extractInlineImageToken,
@@ -85,6 +94,7 @@ import {
   Square,
   Type,
   Trash,
+  PenTool,
   Video,
   ZoomIn,
   ZoomOut,
@@ -908,14 +918,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [models, setModels] = useState<Model[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  // 按生成类型存储模型池：text2img, img2img, vision
-  const [imageGenPoolsByType, setImageGenPoolsByType] = useState<{
-    text2img: ModelGroupForApp[];
-    img2img: ModelGroupForApp[];
-    vision: ModelGroupForApp[];
-  }>({ text2img: [], img2img: [], vision: [] });
-  // 生成类型筛选：all=所有, text2img=文生图, img2img=图生图, vision=多图参考
-  const [generationType, setGenerationType] = useState<VisualAgentGenerationType>('all');
+  // 统一模型池列表（合并所有生成类型，去重）
+  const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
 
   // 将模型池转换为 Model 兼容对象，用于选择器展示
   // 扩展 Model 类型以包含来源标记
@@ -927,20 +931,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     /** 模型池中第一个模型的实际 modelId（用于查询适配器信息） */
     actualModelId?: string;
   };
-  // 根据 generationType 筛选模型池
+  // 直接使用统一的模型池列表
   const filteredPools = useMemo(() => {
-    if (generationType === 'text2img') return imageGenPoolsByType.text2img;
-    if (generationType === 'img2img') return imageGenPoolsByType.img2img;
-    if (generationType === 'vision') return imageGenPoolsByType.vision;
-    // 默认 'all'：合并所有类型并去重（按 id 去重）
-    const all = [...imageGenPoolsByType.text2img, ...imageGenPoolsByType.img2img, ...imageGenPoolsByType.vision];
-    const seen = new Set<string>();
-    return all.filter((p) => {
-      if (seen.has(p.id)) return false;
-      seen.add(p.id);
-      return true;
-    });
-  }, [imageGenPoolsByType, generationType]);
+    return imageGenPools;
+  }, [imageGenPools]);
 
   const poolModels = useMemo<ModelWithSource[]>(() => {
     if (filteredPools.length === 0) return [];
@@ -1023,6 +1017,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const watermarkPanelRef = useRef<WatermarkSettingsPanelHandle | null>(null);
   const configDialogRef = useRef<ConfigDialogHandle | null>(null);
   const enabledImageModels = useMemo(() => allImageGenModels.filter((m) => m.enabled), [allImageGenModels]);
+
+  // ── 快捷操作 (Quick Actions) ──
+  const [diyQuickActions, setDiyQuickActions] = useState<QuickActionConfig[]>([]);
+  const diyQuickActionsReadyRef = useRef(false);
+  /** 合并后的快捷操作列表：内置 + DIY */
+  const mergedQuickActions = useMemo<QuickAction[]>(() => {
+    const diyMapped: QuickAction[] = diyQuickActions
+      .filter((a) => a.name.trim() && a.prompt.trim())
+      .map((a) => ({ ...a, isDiy: true }));
+    return [...BUILTIN_QUICK_ACTIONS, ...diyMapped];
+  }, [diyQuickActions]);
+  const [quickEditRunning, setQuickEditRunning] = useState(false);
+  const [quickActionDialogOpen, setQuickActionDialogOpen] = useState(false);
+  // 局部重绘（Inpainting）状态
+  const [inpaintTarget, setInpaintTarget] = useState<CanvasImageItem | null>(null);
   // 提示词模式：按账号持久化（不写 DB）
   // - 关闭：先调用 planImageGen 解析/改写成候选提示词，再生图
   // - 开启：跳过解析，直接把输入原样作为 prompt 发给生图模型
@@ -1175,6 +1184,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [mentionAtPos, setMentionAtPos] = useState<number | null>(null);
   const [asciiOpen, setAsciiOpen] = useState(false);
   const [asciiSource, setAsciiSource] = useState('');
+  const [drawingBoardOpen, setDrawingBoardOpen] = useState(false);
 
   const [canvas, setCanvas] = useState<CanvasImageItem[]>([]);
   const canvasRef = useRef<CanvasImageItem[]>([]);
@@ -1910,7 +1920,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const ws = workspaceRef.current;
     if (ws?.id) {
       const backendRole: VisualAgentMessage['role'] = role === 'User' ? 'User' : 'Assistant';
-      void addVisualAgentWorkspaceMessage({ id: ws.id, role: backendRole, content });
+      addVisualAgentWorkspaceMessage({ id: ws.id, role: backendRole, content }).catch((err) => {
+        console.warn('[pushMsg] 消息持久化失败（刷新后可能丢失）:', err);
+      });
     }
   }, []);
 
@@ -2092,27 +2104,35 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   useEffect(() => {
     setModelsLoading(true);
-    // 按生成类型加载模型池：text2img, img2img, vision
-    // 每种类型对应不同的 appCallerCode
-    const appCallerCodes = {
-      text2img: 'visual-agent.image.text2img::generation',
-      img2img: 'visual-agent.image.img2img::generation',
-      vision: 'visual-agent.image.vision::generation',
-    };
+    // 统一加载所有生成类型的模型池并合并去重
+    // 后端根据 images 数量自动路由（文生图/图生图/多图），前端不需要区分
+    const appCallerCodes = [
+      'visual-agent.image.text2img::generation',
+      'visual-agent.image.img2img::generation',
+      'visual-agent.image.vision::generation',
+    ];
     const emptyPools = { success: false, data: [] as ModelGroupForApp[] };
     Promise.all([
       getModels(),
-      modelGroupsService.getModelGroupsForApp(appCallerCodes.text2img, 'generation').catch(() => emptyPools),
-      modelGroupsService.getModelGroupsForApp(appCallerCodes.img2img, 'generation').catch(() => emptyPools),
-      modelGroupsService.getModelGroupsForApp(appCallerCodes.vision, 'generation').catch(() => emptyPools),
+      ...appCallerCodes.map((code) =>
+        modelGroupsService.getModelGroupsForApp(code, 'generation').catch(() => emptyPools)
+      ),
     ])
-      .then(([modelsRes, text2imgRes, img2imgRes, visionRes]) => {
-        if (modelsRes.success) setModels(modelsRes.data ?? []);
-        setImageGenPoolsByType({
-          text2img: text2imgRes.success ? text2imgRes.data ?? [] : [],
-          img2img: img2imgRes.success ? img2imgRes.data ?? [] : [],
-          vision: visionRes.success ? visionRes.data ?? [] : [],
-        });
+      .then(([modelsRes, ...poolResults]) => {
+        const mr = modelsRes as { success: boolean; data?: Model[] };
+        if (mr.success) setModels(mr.data ?? []);
+        // 合并所有池并按 id 去重
+        const seen = new Set<string>();
+        const merged: ModelGroupForApp[] = [];
+        for (const res of poolResults as { success: boolean; data?: ModelGroupForApp[] }[]) {
+          for (const pool of res.success ? res.data ?? [] : []) {
+            if (!seen.has(pool.id)) {
+              seen.add(pool.id);
+              merged.push(pool);
+            }
+          }
+        }
+        setImageGenPools(merged);
       })
       .finally(() => setModelsLoading(false));
   }, []);
@@ -2129,15 +2149,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           const prefs = res.data.visualAgentPreferences;
           setModelPrefAuto(prefs.modelAuto ?? true);
           setModelPrefModelId(prefs.modelId ?? '');
-          // 加载生成类型偏好
-          if (prefs.generationType && ['all', 'text2img', 'img2img', 'vision'].includes(prefs.generationType)) {
-            setGenerationType(prefs.generationType as VisualAgentGenerationType);
+          // 加载 DIY 快捷指令
+          if (Array.isArray(prefs.quickActions)) {
+            setDiyQuickActions(prefs.quickActions);
           }
+          diyQuickActionsReadyRef.current = true;
         }
       } catch {
         // ignore
       } finally {
-        if (!cancelled) setModelPrefReady(true);
+        if (!cancelled) {
+          setModelPrefReady(true);
+          diyQuickActionsReadyRef.current = true;
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -2156,7 +2180,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       void updateVisualAgentPreferences({
         modelAuto: modelPrefAuto,
         modelId: modelPrefModelId || undefined,
-        generationType,
+        quickActions: diyQuickActions,
       }).catch(() => {
         // 静默失败，不影响用户操作
       });
@@ -2166,7 +2190,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         clearTimeout(modelPrefSaveRef.current);
       }
     };
-  }, [modelPrefAuto, modelPrefModelId, generationType, modelPrefReady, userId]);
+  }, [modelPrefAuto, modelPrefModelId, modelPrefReady, userId, diyQuickActions]);
 
   // 读取直连模式（仅在有 userId 时）
   useEffect(() => {
@@ -3582,13 +3606,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }).then(() => {
         // SSE 流结束后，检查该图片是否还在 running 状态
         // 如果是，说明服务端没有返回最终状态，需要标记为 error
-        setCanvas((prev) =>
-          prev.map((x) =>
+        setCanvas((prev) => {
+          const item = prev.find((x) => x.key === key);
+          if (item && item.status === 'running') {
+            pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: pickedModel?.name || pickedModel?.modelName || '', imageRefShas }));
+            triggerDefectFlash();
+          }
+          return prev.map((x) =>
             x.key === key && x.status === 'running'
               ? { ...x, status: 'error', errorMessage: '生成超时或连接中断，请重试' }
               : x
-          )
-        );
+          );
+        });
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : '生成失败';
@@ -3597,6 +3626,258 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       triggerDefectFlash();
     }
   };
+
+  // ── 快捷操作执行（写入消息列表以便追溯） ──
+  const executeQuickAction = useCallback(
+    async (prompt: string, sourceItem: CanvasImageItem, sizeOverride?: string, maskBase64?: string, actionLabel?: string) => {
+      if (!prompt.trim()) return;
+      const pickedModel = effectiveModel;
+      if (!pickedModel) {
+        toast.error('暂无可用生图模型');
+        return;
+      }
+      // 记录用户操作到消息面板（包含参考图引用，便于追溯）
+      const label = actionLabel || '快捷编辑';
+      const refSrc = sourceItem.originalSrc || sourceItem.src || '';
+      const refTag = sourceItem.refId ? ` @img${sourceItem.refId}` : '';
+      pushMsg('User', `[${label}]${refTag} ${prompt}`);
+      // 尺寸自适应：基于源图原始尺寸（支持外部覆盖，如 HD 放大需要升档）
+      const refDim =
+        sourceItem.naturalW && sourceItem.naturalH
+          ? { w: sourceItem.naturalW, h: sourceItem.naturalH }
+          : null;
+      const resolvedSize = sizeOverride ?? computeRequestedSizeByRefRatio(refDim) ?? imageGenSize;
+      const parsedSize = tryParseWxH(resolvedSize);
+      const genW = parsedSize?.w ?? 1024;
+      const genH = parsedSize?.h ?? 1024;
+
+      // 确保源图有 sha256（若未持久化，先上传）
+      let assetSha256 = sourceItem.originalSha256 || sourceItem.sha256 || '';
+      if (!assetSha256 || assetSha256.length !== 64) {
+        const srcUrl = sourceItem.src || '';
+        let data: string | undefined;
+        if (srcUrl.startsWith('data:')) {
+          data = srcUrl;
+        } else if (srcUrl) {
+          try {
+            const r = await fetch(srcUrl);
+            if (r.ok) {
+              const b = await r.blob();
+              const d = await blobToDataUrl(b);
+              if (d?.startsWith('data:')) data = d;
+            }
+          } catch { /* ignore */ }
+        }
+        if (data) {
+          const up = await uploadVisualAgentWorkspaceAsset({
+            id: workspaceId,
+            data,
+            prompt: sourceItem.prompt || 'reference',
+            width: sourceItem.naturalW,
+            height: sourceItem.naturalH,
+          });
+          if (up.success) {
+            assetSha256 = up.data.asset.sha256;
+            // 更新源图的 syncStatus
+            setCanvas((prev) =>
+              prev.map((x) =>
+                x.key === sourceItem.key
+                  ? { ...x, assetId: up.data.asset.id, sha256: up.data.asset.sha256, syncStatus: 'synced' as const, syncError: null }
+                  : x
+              )
+            );
+          } else {
+            toast.error('参考图上传失败：' + (up.error?.message || '未知错误'));
+            return;
+          }
+        } else {
+          toast.error('无法获取参考图数据');
+          return;
+        }
+      }
+
+      // 画布占位：固定放在源图右侧（间距 24px），与源图顶部对齐
+      const key = `qa_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const sourceX = sourceItem.x ?? 0;
+      const sourceY = sourceItem.y ?? 0;
+      const sourceW = sourceItem.w ?? 320;
+      const newX = sourceX + sourceW + 24;
+      const newY = sourceY;
+
+      setCanvas((prev) => {
+        const placeholder: CanvasImageItem = {
+          key,
+          kind: 'image',
+          createdAt: Date.now(),
+          prompt: prompt,
+          src: '',
+          status: 'running',
+          w: genW,
+          h: genH,
+          x: newX,
+          y: newY,
+        };
+        return [...prev, placeholder].slice(-60);
+      });
+      setSelectionWithoutChip([key]);
+
+      // 强制保存 canvas（确保占位元素已持久化）
+      {
+        const built = canvasToPersistedV1(canvasRef.current ?? []);
+        const json = JSON.stringify(built.state);
+        if (json !== lastSavedJsonRef.current) {
+          lastSavedJsonRef.current = json;
+          lastSaveAtRef.current = Date.now();
+          await saveVisualAgentWorkspaceCanvas({
+            id: workspaceId,
+            schemaVersion: PERSIST_SCHEMA_VERSION,
+            payloadJson: json,
+            idempotencyKey: `qaPreSave_${key}`,
+          });
+        }
+      }
+
+      // 调用后端生成
+      try {
+        const runRes = await createWorkspaceImageGenRun({
+          id: workspaceId,
+          input: {
+            prompt,
+            targetKey: key,
+            ...(pickedModel.id.startsWith('pool_')
+              ? { platformId: pickedModel.platformId, modelId: pickedModel.modelName }
+              : { configModelId: pickedModel.id }),
+            size: resolvedSize,
+            responseFormat: 'url',
+            imageRefs: [
+              {
+                refId: 1,
+                assetSha256,
+                url: sourceItem.originalSrc || sourceItem.src || '',
+                label: '原图',
+              },
+            ],
+            maskBase64: maskBase64 || undefined,
+          },
+          idempotencyKey: `qaRun_${workspaceId}_${key}`,
+        });
+        if (!runRes.success) {
+          const msg = runRes.error?.message || '快捷操作失败';
+          setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
+          pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt }));
+          return;
+        }
+        const runId = String(runRes.data?.runId ?? '').trim();
+        if (!runId) {
+          setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: '未返回 runId' } : x)));
+          pushMsg('Assistant', buildGenErrorContent({ msg: '未返回 runId', refSrc: refSrc || undefined, prompt }));
+          return;
+        }
+        const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
+        setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, runId } : x)));
+
+        // 订阅 SSE 流
+        const ac = new AbortController();
+        void streamImageGenRunWithRetry({
+          runId,
+          signal: ac.signal,
+          onEvent: (evt) => {
+            const data = String(evt.data ?? '').trim();
+            if (!data) return;
+            let obj: unknown = null;
+            try { obj = JSON.parse(data); } catch { return; }
+            const o = obj as ImageGenRunStreamPayload;
+            const t = String(o.type ?? '');
+            if (t === 'imageDone') {
+              const assetRaw = o.asset ?? null;
+              const asset = assetRaw
+                ? { id: String(assetRaw.id ?? ''), sha256: String(assetRaw.sha256 ?? ''), url: String(assetRaw.url ?? ''), originalUrl: String(assetRaw.originalUrl ?? ''), originalSha256: String(assetRaw.originalSha256 ?? '') }
+                : null;
+              const u = String(asset?.url ?? o.url ?? '');
+              const originalU = String(asset?.originalUrl || o.originalUrl || u || '');
+              const originalSha = String(asset?.originalSha256 || o.originalSha256 || asset?.sha256 || '');
+              if (!u) return;
+              setCanvas((prev) =>
+                prev.map((x) =>
+                  x.key === key
+                    ? { ...x, kind: 'image', status: 'done', src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, syncStatus: 'synced', syncError: null }
+                    : x
+                )
+              );
+              pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt, runId, modelPool: modelPoolName }));
+            } else if (t === 'imageError' || t === 'error') {
+              const msg = String(o.errorMessage ?? '快捷操作失败');
+              setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
+              pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt, runId, modelPool: modelPoolName }));
+            }
+          },
+        }).then(() => {
+          setCanvas((prev) => {
+            const item = prev.find((x) => x.key === key);
+            if (item && item.status === 'running') {
+              pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc: refSrc || undefined, prompt, modelPool: modelPoolName }));
+            }
+            return prev.map((x) =>
+              x.key === key && x.status === 'running'
+                ? { ...x, status: 'error', errorMessage: '生成超时或连接中断，请重试' }
+                : x
+            );
+          });
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : '快捷操作失败';
+        setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt }));
+      }
+    },
+    [effectiveModel, imageGenSize, workspaceId, setSelectionWithoutChip, pushMsg],
+  );
+
+  /** 快捷操作栏：点击内置/DIY 操作 */
+  const handleQuickAction = useCallback(
+    (action: QuickAction) => {
+      if (!selected || selected.status !== 'done' || !selected.src) {
+        toast.error('请先选中一张已完成的图片');
+        return;
+      }
+      // HD 放大：自动升级尺寸档位（1K→2K, 2K→4K）
+      let sizeOverride: string | undefined;
+      if (action.id === 'hd-upscale') {
+        const refDim =
+          selected.naturalW && selected.naturalH
+            ? { w: selected.naturalW, h: selected.naturalH }
+            : null;
+        const currentSize = computeRequestedSizeByRefRatio(refDim) ?? imageGenSize;
+        const currentTier = detectTierFromSize(currentSize);
+        if (currentTier) {
+          // 找到当前比例
+          const matchedAspect = ASPECT_OPTIONS.find((opt) => {
+            const s = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
+            return s.toLowerCase() === currentSize.toLowerCase();
+          });
+          if (matchedAspect) {
+            const nextTier = currentTier === '1k' ? '2k' : currentTier === '2k' ? '4k' : '4k';
+            sizeOverride = getSizeForTier(matchedAspect.id, nextTier);
+          }
+        }
+      }
+      void executeQuickAction(action.prompt, selected, sizeOverride, undefined, action.name);
+    },
+    [selected, executeQuickAction, imageGenSize],
+  );
+
+  /** 快捷编辑：用户在输入框描述编辑内容 */
+  const handleQuickEditSubmit = useCallback(
+    (text: string) => {
+      if (!selected || selected.status !== 'done' || !selected.src) {
+        toast.error('请先选中一张已完成的图片');
+        return;
+      }
+      setQuickEditRunning(true);
+      void executeQuickAction(text, selected, undefined, undefined, '快捷编辑').finally(() => setQuickEditRunning(false));
+    },
+    [selected, executeQuickAction],
+  );
 
   // 处理初始 prompt（从首页快捷输入跳转过来，或从 sessionStorage 读取）
   const initialPromptHandledRef = useRef(false);
@@ -5649,6 +5930,96 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         );
                       })
                   : null}
+
+                {/* ── 快捷操作栏 + 快捷编辑输入框（世界坐标，跟随画布 transform） ── */}
+                {selectedKeys.length === 1 &&
+                  !imgContextMenu.open &&
+                  effectiveTool !== 'hand' &&
+                  !panning
+                  ? canvas
+                      .filter(
+                        (it) =>
+                          (it.kind ?? 'image') === 'image' &&
+                          isSelectedKey(it.key) &&
+                          it.status === 'done' &&
+                          Boolean(it.src),
+                      )
+                      .map((it) => {
+                        const ix = it.x ?? 0;
+                        const iy = it.y ?? 0;
+                        const iw = it.w ?? 320;
+                        const ih = it.h ?? 220;
+                        const bW = Math.max(40, Math.round(iw));
+                        const bH = Math.max(40, Math.round(ih));
+                        const nw = typeof it.naturalW === 'number' ? it.naturalW : 0;
+                        const nh = typeof it.naturalH === 'number' ? it.naturalH : 0;
+                        const hasN = nw > 0 && nh > 0;
+                        const fitImg = it.status === 'done' && Boolean(it.src) && hasN;
+                        const inn = fitImg ? computeObjectFitContainRect(bW, bH, nw, nh) : { x: 0, y: 0, w: bW, h: bH };
+                        const sX = inn.x;
+                        const sY = inn.y;
+                        const sW = Math.max(1, inn.w);
+                        const sH = Math.max(1, inn.h);
+                        return (
+                          <div
+                            key={`quickbar_${it.key}`}
+                            className="absolute"
+                            style={{
+                              left: Math.round(ix) + sX,
+                              top: Math.round(iy) + sY,
+                              width: sW,
+                              height: sH,
+                              pointerEvents: 'none',
+                            }}
+                          >
+                            {/* 快捷操作栏：选区上方居中 */}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: '50%',
+                                top: 0,
+                                transform: 'translate(-50%, calc(-100% - 104px)) scale(var(--invZoom))',
+                                transformOrigin: 'center bottom',
+                                pointerEvents: 'auto',
+                              }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                            >
+                              <ImageQuickActionBar
+                                actions={mergedQuickActions}
+                                onAction={handleQuickAction}
+                                onDownload={() => void downloadImage(it.src, it.prompt || 'image')}
+                                onOpenConfig={() => setQuickActionDialogOpen(true)}
+                                onInpaint={() => {
+                                  if (it.status !== 'done' || !it.src) {
+                                    toast.error('请先选中一张已完成的图片');
+                                    return;
+                                  }
+                                  setInpaintTarget(it);
+                                }}
+                              />
+                            </div>
+
+                            {/* 快捷编辑输入框：选区下方居中 */}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: '50%',
+                                bottom: 0,
+                                transform: 'translate(-50%, calc(100% + 26px)) scale(var(--invZoom))',
+                                transformOrigin: 'center top',
+                                pointerEvents: 'auto',
+                              }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                            >
+                              <ImageQuickEditInput
+                                onSubmit={handleQuickEditSubmit}
+                                running={quickEditRunning}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })
+                  : null}
               </div>
             </div>
 
@@ -6629,18 +7000,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <ImagePlus size={18} />
               </button>
 
-              {/* 视频生成器 */}
+              {/* 手绘板 */}
               <button
                 type="button"
                 className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
                 style={{ color: 'rgba(255,255,255,0.86)' }}
-                title="视频生成器"
-                aria-label="视频生成器"
-                onClick={() => {
-                  pushMsg('Assistant', '视频生成器：占位（后续接入后端）。');
-                }}
+                title="手绘板"
+                aria-label="手绘板"
+                onClick={() => setDrawingBoardOpen(true)}
               >
-                <Video size={18} />
+                <PenTool size={18} />
               </button>
 
               {/* 删除选中（放到底部） */}
@@ -7470,7 +7839,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     <DropdownMenu.Trigger asChild>
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 rounded-full px-2 h-7 text-[11px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
+                        className="inline-flex items-center gap-1 rounded-full px-2 h-7 text-[11px] font-medium truncate max-w-[140px] cursor-pointer hover:opacity-80 transition-opacity"
                         style={{
                           background: 'rgba(99, 102, 241, 0.12)',
                           border: '1px solid rgba(99, 102, 241, 0.35)',
@@ -7541,33 +7910,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               ariaLabel="直连模式（固定开启）"
                             />
                           </div>
-                        </div>
-
-                        <div className="mt-3 flex items-center gap-1 rounded-[14px] p-1" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.03)' }}>
-                          {([
-                            { key: 'all', label: '默认' },
-                            { key: 'text2img', label: '文生图' },
-                            { key: 'img2img', label: '图生图' },
-                            { key: 'vision', label: '多图生图' },
-                          ] as const).map((tab) => (
-                            <button
-                              key={tab.key}
-                              type="button"
-                              className="h-8 px-2.5 rounded-[12px] text-[12px] font-semibold transition-all"
-                              style={generationType === tab.key ? {
-                                background: 'rgba(255,255,255,0.06)',
-                                border: '1px solid rgba(255,255,255,0.10)',
-                                color: 'var(--text-primary)',
-                              } : {
-                                background: 'transparent',
-                                border: '1px solid transparent',
-                                color: 'rgba(255,255,255,0.55)',
-                              }}
-                              onClick={() => setGenerationType(tab.key)}
-                            >
-                              {tab.label}
-                            </button>
-                          ))}
                         </div>
 
                         <div className="mt-3 max-h-[360px] overflow-auto pr-1">
@@ -7686,6 +8028,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           </div>
         </div>
       </div>
+
+      {/* 快捷操作栏 + 快捷编辑输入框 已移至 worldUiRef 层 */}
 
       {/* 图片右键菜单 */}
       {imgContextMenu.open ? (
@@ -8074,7 +8418,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         ref={configDialogRef}
         mineTitle="配置管理"
         mineDescription="水印设置"
-        maxWidth={1500}
+        maxWidth={1200}
         showColumnDividers={false}
         columns={[
           {
@@ -8117,6 +8461,225 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             ),
           } as ConfigColumn<MarketplaceWatermarkConfig>,
         ]}
+      />
+
+      {/* 快捷指令管理弹窗 */}
+      <QuickActionConfigPanel
+        open={quickActionDialogOpen}
+        onOpenChange={setQuickActionDialogOpen}
+        actions={diyQuickActions}
+        onChange={setDiyQuickActions}
+      />
+
+      {/* 局部重绘蒙版编辑器 */}
+      {inpaintTarget && inpaintTarget.src && (
+        <MaskPaintCanvas
+          imageSrc={inpaintTarget.originalSrc || inpaintTarget.src}
+          imageWidth={inpaintTarget.naturalW || inpaintTarget.w || 1024}
+          imageHeight={inpaintTarget.naturalH || inpaintTarget.h || 1024}
+          onCancel={() => setInpaintTarget(null)}
+          onConfirm={(maskDataUri) => {
+            const target = inpaintTarget;
+            setInpaintTarget(null);
+            // 弹出提示词输入
+            const desc = window.prompt('请输入重绘区域的描述（如：将这里替换为蓝色的天空）');
+            if (!desc?.trim()) {
+              toast.error('请输入重绘描述');
+              return;
+            }
+            void executeQuickAction(desc.trim(), target, undefined, maskDataUri, '局部重绘');
+          }}
+        />
+      )}
+
+      {/* 手绘板 */}
+      <DrawingBoardDialog
+        open={drawingBoardOpen}
+        onOpenChange={setDrawingBoardOpen}
+        onConfirm={async (dataUri, chatHistory, sizeHint) => {
+          setDrawingBoardOpen(false);
+
+          // 同步手绘板 AI 对话记录到消息面板（可追溯）
+          if (chatHistory.length > 0) {
+            const chatSummary = chatHistory.map(m => `${m.role === 'user' ? '我' : 'AI'}: ${m.content.length > 200 ? m.content.slice(0, 200) + '…' : m.content}`).join('\n');
+            pushMsg('User', `[手绘板对话]\n${chatSummary}`);
+          }
+
+          // 弹出提示词输入
+          const desc = window.prompt('请描述你想基于这张草图生成的图片（如：一只猫坐在窗台上，水彩风格）');
+          if (!desc?.trim()) {
+            toast.error('请输入生成描述');
+            return;
+          }
+
+          const pickedModel = effectiveModel;
+          if (!pickedModel) {
+            toast.error('暂无可用生图模型');
+            return;
+          }
+          const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
+          pushMsg('User', `[手绘板生图] ${desc.trim()}`);
+
+          // 添加草图到画布（用于展示参考）
+          const sketchKey = `sketch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+          const near = stageCenterWorld();
+          const sketchParsed = tryParseWxH(sizeHint);
+          const sketchW = sketchParsed?.w ?? 640;
+          const sketchH = sketchParsed?.h ?? 480;
+          setCanvas(prev => [
+            ...prev,
+            {
+              key: sketchKey,
+              kind: 'image' as const,
+              createdAt: Date.now(),
+              prompt: `手绘草图: ${desc.trim()}`,
+              src: dataUri,
+              status: 'done' as const,
+              syncStatus: 'pending' as const,
+              syncError: null,
+              w: sketchW,
+              h: sketchH,
+              naturalW: sketchW,
+              naturalH: sketchH,
+              x: near.x - sketchW / 2 - sketchW / 2 - 16,
+              y: near.y - sketchH / 2,
+            },
+          ].slice(-60));
+
+          // 上传草图作为资产
+          const up = await uploadVisualAgentWorkspaceAsset({
+            id: workspaceId,
+            data: dataUri,
+            prompt: `手绘草图: ${desc.trim()}`,
+            width: sketchW,
+            height: sketchH,
+          });
+
+          if (!up.success) {
+            const msg = '草图上传失败：' + (up.error?.message || '未知错误');
+            pushMsg('Assistant', buildGenErrorContent({ msg, prompt: desc.trim() }));
+            return;
+          }
+
+          const assetSha256 = up.data.asset.sha256;
+          const refSrc = up.data.asset.url || '';
+          setCanvas(prev =>
+            prev.map(x =>
+              x.key === sketchKey
+                ? { ...x, assetId: up.data.asset.id, sha256: up.data.asset.sha256, src: refSrc || x.src, syncStatus: 'synced' as const, syncError: null }
+                : x
+            )
+          );
+
+          // 生成占位
+          const genKey = `sketch_gen_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+          const resolvedSize = sizeHint || imageGenSize;
+          const parsedSize = tryParseWxH(resolvedSize);
+          const genW = parsedSize?.w ?? 1024;
+          const genH = parsedSize?.h ?? 1024;
+
+          setCanvas(prev => [
+            ...prev,
+            {
+              key: genKey,
+              kind: 'image' as const,
+              createdAt: Date.now(),
+              prompt: desc.trim(),
+              src: '',
+              status: 'running' as const,
+              w: genW,
+              h: genH,
+              x: near.x - genW / 2 + genW / 2 + 16,
+              y: near.y - genH / 2,
+            },
+          ].slice(-60));
+          setSelectionWithoutChip([genKey]);
+
+          // 创建生图任务
+          try {
+            const runRes = await createWorkspaceImageGenRun({
+              id: workspaceId,
+              input: {
+                prompt: desc.trim(),
+                targetKey: genKey,
+                ...(pickedModel.id.startsWith('pool_')
+                  ? { platformId: pickedModel.platformId, modelId: pickedModel.modelName }
+                  : { configModelId: pickedModel.id }),
+                size: resolvedSize,
+                responseFormat: 'url',
+                imageRefs: [
+                  {
+                    refId: 1,
+                    assetSha256,
+                    url: refSrc,
+                    label: '手绘草图',
+                  },
+                ],
+              },
+              idempotencyKey: `sketchRun_${workspaceId}_${genKey}`,
+            });
+
+            if (!runRes.success) {
+              const msg = runRes.error?.message || '草图生图失败';
+              setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, status: 'error' as const } : x));
+              pushMsg('Assistant', buildGenErrorContent({ msg, refSrc, prompt: desc.trim() }));
+              return;
+            }
+
+            // 订阅 Run 事件流
+            const runId = runRes.data.runId;
+            setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, runId } : x));
+            const sketchAc = new AbortController();
+            void streamImageGenRunWithRetry({
+              runId,
+              signal: sketchAc.signal,
+              onEvent: (evt) => {
+                const evData = String(evt.data ?? '').trim();
+                if (!evData) return;
+                let obj: unknown = null;
+                try { obj = JSON.parse(evData); } catch { return; }
+                const o = obj as ImageGenRunStreamPayload;
+                const t = String(o.type ?? '');
+                if (t === 'imageDone') {
+                  const assetRaw = o.asset ?? null;
+                  const asset = assetRaw
+                    ? { id: String(assetRaw.id ?? ''), sha256: String(assetRaw.sha256 ?? ''), url: String(assetRaw.url ?? ''), originalUrl: String(assetRaw.originalUrl ?? ''), originalSha256: String(assetRaw.originalSha256 ?? '') }
+                    : null;
+                  const u = String(asset?.url ?? o.url ?? '');
+                  const originalU = String(asset?.originalUrl || o.originalUrl || u || '');
+                  const originalSha = String(asset?.originalSha256 || o.originalSha256 || asset?.sha256 || '');
+                  if (!u) return;
+                  setCanvas(prev => prev.map(x =>
+                    x.key === genKey
+                      ? { ...x, kind: 'image' as const, status: 'done' as const, src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, syncStatus: 'synced' as const, syncError: null }
+                      : x
+                  ));
+                  pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc, prompt: desc.trim(), runId, modelPool: modelPoolName }));
+                } else if (t === 'imageError' || t === 'error') {
+                  const msg = String(o.errorMessage ?? '草图生图失败');
+                  setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, status: 'error' as const, errorMessage: msg } : x));
+                  pushMsg('Assistant', buildGenErrorContent({ msg, refSrc, prompt: desc.trim(), runId, modelPool: modelPoolName }));
+                }
+              },
+            }).then(() => {
+              setCanvas(prev => {
+                const item = prev.find(x => x.key === genKey);
+                if (item && item.status === 'running') {
+                  pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc, prompt: desc.trim(), modelPool: modelPoolName }));
+                }
+                return prev.map(x =>
+                  x.key === genKey && x.status === 'running'
+                    ? { ...x, status: 'error' as const, errorMessage: '生成超时或连接中断，请重试' }
+                    : x
+                );
+              });
+            });
+          } catch (e) {
+            const msg = (e as Error).message || '草图生图异常';
+            setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, status: 'error' as const } : x));
+            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc, prompt: desc.trim() }));
+          }
+        }}
       />
     </div>
   );

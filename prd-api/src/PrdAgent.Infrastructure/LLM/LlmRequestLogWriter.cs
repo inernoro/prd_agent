@@ -73,7 +73,12 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 DocumentHash = start.DocumentHash,
                 UserPromptChars = start.UserPromptChars,
                 StartedAt = start.StartedAt,
-                Status = "running"
+                Status = "running",
+                // Exchange 中继信息
+                IsExchange = start.IsExchange,
+                ExchangeId = start.ExchangeId,
+                ExchangeName = start.ExchangeName,
+                ExchangeTransformerType = start.ExchangeTransformerType
             };
 
             await _db.LlmRequestLogs.InsertOneAsync(log, cancellationToken: ct);

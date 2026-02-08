@@ -29,6 +29,13 @@ public class ModelGroup
     /// <summary>分组中的模型列表（按优先级排序）</summary>
     public List<ModelGroupItem> Models { get; set; } = new();
 
+    /// <summary>
+    /// 调度策略类型
+    /// 0=FailFast(默认), 1=Race(演示型), 2=Sequential(顺序型),
+    /// 3=RoundRobin(轮询型), 4=WeightedRandom(加权随机), 5=LeastLatency(最低延迟)
+    /// </summary>
+    public int StrategyType { get; set; } = 0;
+
     /// <summary>分组描述</summary>
     public string? Description { get; set; }
 

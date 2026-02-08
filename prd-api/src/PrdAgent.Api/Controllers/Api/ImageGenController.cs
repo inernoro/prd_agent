@@ -260,6 +260,9 @@ public class ImageGenController : ControllerBase
 
         var size = string.IsNullOrWhiteSpace(request?.Size) ? "1024x1024" : request!.Size!.Trim();
         var responseFormat = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "b64_json" : request!.ResponseFormat!.Trim();
+        // 统一参考图列表：优先使用 Images 字段，兼容旧的 InitImageBase64/Url/Sha256
+        var images = request?.Images?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? new List<string>();
+
         var initImageBase64 = (request?.InitImageBase64 ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(initImageBase64)) initImageBase64 = null;
         var initImageUrl = (request?.InitImageUrl ?? string.Empty).Trim();
@@ -267,8 +270,9 @@ public class ImageGenController : ControllerBase
         var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
 
-        // 说明：即使后续因“Volces 降级”或其它原因把 initImageBase64 清空，也希望日志能追溯“用户是否提供过参考图”
-        var initImageProvided = !string.IsNullOrWhiteSpace(initImageBase64)
+        // 说明：即使后续因"Volces 降级"或其它原因把 initImageBase64 清空，也希望日志能追溯"用户是否提供过参考图"
+        var initImageProvided = images.Count > 0
+                                || !string.IsNullOrWhiteSpace(initImageBase64)
                                 || !string.IsNullOrWhiteSpace(initImageUrl)
                                 || !string.IsNullOrWhiteSpace(initImageAssetSha256);
 
@@ -364,7 +368,14 @@ public class ImageGenController : ControllerBase
             RequestType: "imageGen",
             RequestPurpose: appCallerCode));
 
-        var res = await _imageClient.GenerateAsync(prompt, n, size, responseFormat, ct, appCallerCode, modelId, platformId, modelName, initImageBase64, initImageProvided);
+        // 合并所有参考图来源到统一列表
+        if (images.Count == 0 && !string.IsNullOrWhiteSpace(initImageBase64))
+        {
+            images.Add(initImageBase64);
+        }
+        var maskB64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim();
+        var res = await _imageClient.GenerateUnifiedAsync(prompt, n, size, responseFormat, ct, appCallerCode,
+            images: images.Count > 0 ? images : null, modelId, platformId, modelName, maskBase64: maskB64);
         if (!res.Success)
         {
             // 将 LLM_ERROR 映射为 502，其他保持 400
@@ -1130,6 +1141,7 @@ public class ImageGenController : ControllerBase
             AppKey = appKey,
             ArticleMarkerIndex = articleMarkerIndex,
             InitImageAssetSha256 = initImageAssetSha256,
+            MaskBase64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim(),
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1466,17 +1478,28 @@ public class ImageGenGenerateRequest
     public string? Size { get; set; }
     public string? ResponseFormat { get; set; } // b64_json | url
     /// <summary>
-    /// 图生图首帧（DataURL 或纯 base64）。当传入时，将优先走 images/edits（若上游支持）
+    /// 统一参考图列表（data URI 格式）。前端统一用此字段，后端根据数量自动路由：
+    /// 0 张 → 文生图, 1 张 → 图生图, 2+ 张 → 多图生图
+    /// </summary>
+    public List<string>? Images { get; set; }
+
+    /// <summary>
+    /// [兼容] 图生图首帧（DataURL 或纯 base64）。推荐改用 Images 字段
     /// </summary>
     public string? InitImageBase64 { get; set; }
     /// <summary>
-    /// 图生图首帧 URL（服务端下载并转 base64；用于规避浏览器 CORS）
+    /// [兼容] 图生图首帧 URL（服务端下载并转 base64；用于规避浏览器 CORS）
     /// </summary>
     public string? InitImageUrl { get; set; }
     /// <summary>
-    /// 图生图首帧：已上传到系统资产的 sha256（服务端读取文件；用于规避浏览器 CORS）
+    /// [兼容] 图生图首帧：已上传到系统资产的 sha256（服务端读取文件；用于规避浏览器 CORS）
     /// </summary>
     public string? InitImageAssetSha256 { get; set; }
+
+    /// <summary>
+    /// 可选：局部重绘蒙版（base64 data URI）。白色 = 重绘区域，黑色 = 保持。
+    /// </summary>
+    public string? MaskBase64 { get; set; }
 }
 
 public class ImageGenBatchRequest
@@ -1545,6 +1568,11 @@ public class CreateImageGenRunRequest
     /// 若提供，Worker 会从 COS 读取此图片作为参考图进行图生图。
     /// </summary>
     public string? InitImageAssetSha256 { get; set; }
+
+    /// <summary>
+    /// 可选：局部重绘蒙版（base64 data URI）。白色 = 重绘区域，黑色 = 保持。
+    /// </summary>
+    public string? MaskBase64 { get; set; }
 }
 
 public class ImageGenRunPlanItemInput

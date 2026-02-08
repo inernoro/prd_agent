@@ -122,6 +122,13 @@ public class ImageGenRun
     public List<ImageRefInput>? ImageRefs { get; set; }
 
     /// <summary>
+    /// 可选：局部重绘蒙版（base64 data URI）。
+    /// 白色区域 = 要重绘的区域，黑色区域 = 保持不变。
+    /// 与 InitImageAssetSha256 / ImageRefs[0] 配合使用。
+    /// </summary>
+    public string? MaskBase64 { get; set; }
+
+    /// <summary>
     /// 可选：ImageMaster 场景下，为了在“任务创建后即使前端关闭也能恢复占位”，服务端可写入占位位置信息。
     /// </summary>
     public double? TargetX { get; set; }

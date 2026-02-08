@@ -176,6 +176,17 @@ public static class VisualAgent
         public const string Title = "visual-agent.workspace-title::intent";
     }
 
+    public static class DrawingBoard
+    {
+        [AppCallerMetadata(
+            "手绘板对话",
+            "手绘板中的创意对话交互，AI 生成字符画参考",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "DrawingBoard"
+        )]
+        public const string Chat = "visual-agent.drawing-board::chat";
+    }
+
     public static class Compose
     {
         [AppCallerMetadata(

@@ -1,10 +1,11 @@
 import { TabBar } from '@/components/design/TabBar';
-import { Database, LayoutGrid, Users } from 'lucide-react';
+import { ArrowLeftRight, Database, LayoutGrid, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ModelManagePage from './ModelManagePage';
 import { ModelAppGroupPage } from './ModelAppGroupPage';
 import { ModelPoolManagePage } from './ModelPoolManagePage';
+import { ExchangeManagePage } from './ExchangeManagePage';
 
 export function ModelManageTabsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -32,6 +33,7 @@ export function ModelManageTabsPage() {
           { key: 'apps', label: '应用模型池管理', icon: <Users size={14} /> },
           { key: 'pools', label: '模型池管理', icon: <Database size={14} /> },
           { key: 'platforms', label: '平台管理', icon: <LayoutGrid size={14} /> },
+          { key: 'exchange', label: '模型中继', icon: <ArrowLeftRight size={14} /> },
         ]}
         activeKey={activeTab}
         onChange={handleTabChange}
@@ -42,6 +44,7 @@ export function ModelManageTabsPage() {
         {activeTab === 'apps' && <ModelAppGroupPage onActionsReady={setAppsActions} />}
         {activeTab === 'pools' && <ModelPoolManagePage />}
         {activeTab === 'platforms' && <ModelManagePage />}
+        {activeTab === 'exchange' && <ExchangeManagePage />}
       </div>
     </div>
   );

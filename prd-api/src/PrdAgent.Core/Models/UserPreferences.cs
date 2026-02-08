@@ -71,4 +71,25 @@ public class VisualAgentPreferences
 
     /// <summary>是否启用直连模式（跳过 prompt 解析，默认 true）</summary>
     public bool DirectPrompt { get; set; } = true;
+
+    /// <summary>用户自定义快捷指令（最多 10 个）</summary>
+    public List<QuickActionConfig>? QuickActions { get; set; }
+}
+
+/// <summary>
+/// 快捷指令配置（用于视觉创作图片快捷操作栏的 DIY 指令）
+/// </summary>
+public class QuickActionConfig
+{
+    /// <summary>唯一标识</summary>
+    public string Id { get; set; } = string.Empty;
+
+    /// <summary>显示名称</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>提示词模板</summary>
+    public string Prompt { get; set; } = string.Empty;
+
+    /// <summary>图标名称（lucide-react 图标 key，可选）</summary>
+    public string? Icon { get; set; }
 }

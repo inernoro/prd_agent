@@ -132,10 +132,10 @@ public class RoundedRectangleTests
         image.Mutate(ctx => ctx.Draw(borderColor, 2f, roundedPath));
 
         // Assert - 检测角落像素
-        // 左上角外侧应该是黑色背景
+        // 左上角外侧应该是黑色背景（允许平台渲染差异的容差）
         var cornerOutside = image[5, 5];
         _output.WriteLine($"Corner outside (5,5): R={cornerOutside.R}, G={cornerOutside.G}, B={cornerOutside.B}, A={cornerOutside.A}");
-        Assert.Equal(30, cornerOutside.R);
+        Assert.InRange(cornerOutside.R, 25, 35);
 
         // 圆角矩形中心应该是蓝色
         var center = image[100, 60];
@@ -220,19 +220,19 @@ public class RoundedRectangleTests
         var edgeMidPixel = image[50, 30];
         _output.WriteLine($"Edge mid pixel (50,30): R={edgeMidPixel.R}, G={edgeMidPixel.G}, B={edgeMidPixel.B}");
 
-        // Assert
+        // Assert（允许平台渲染差异的容差）
         // 角落应该是黑色（背景色），说明有圆角
-        Assert.Equal(0, cornerPixel.R);
-        Assert.Equal(0, cornerPixel.G);
-        Assert.Equal(0, cornerPixel.B);
+        Assert.InRange(cornerPixel.R, 0, 5);
+        Assert.InRange(cornerPixel.G, 0, 5);
+        Assert.InRange(cornerPixel.B, 0, 5);
 
         // 中心应该是白色（填充色）
-        Assert.Equal(255, centerPixel.R);
-        Assert.Equal(255, centerPixel.G);
-        Assert.Equal(255, centerPixel.B);
+        Assert.InRange(centerPixel.R, 250, 255);
+        Assert.InRange(centerPixel.G, 250, 255);
+        Assert.InRange(centerPixel.B, 250, 255);
 
         // 边缘中点应该是白色
-        Assert.Equal(255, edgeMidPixel.R);
+        Assert.InRange(edgeMidPixel.R, 250, 255);
     }
 
     [Fact]

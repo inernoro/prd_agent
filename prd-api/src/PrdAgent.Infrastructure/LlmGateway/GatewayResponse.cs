@@ -197,6 +197,20 @@ public class GatewayModelResolution
     /// 原始配置的模型列表（包含健康状态）
     /// </summary>
     public List<OriginalModelDto>? OriginalModels { get; init; }
+
+    // ========== Exchange 中继信息 ==========
+
+    /// <summary>是否为 Exchange 中继模型</summary>
+    public bool IsExchange { get; init; }
+
+    /// <summary>Exchange 配置 ID</summary>
+    public string? ExchangeId { get; init; }
+
+    /// <summary>Exchange 显示名称</summary>
+    public string? ExchangeName { get; init; }
+
+    /// <summary>Exchange 转换器类型</summary>
+    public string? ExchangeTransformerType { get; init; }
 }
 
 /// <summary>

@@ -249,6 +249,49 @@ function tryPrettyJsonText(text: string): string {
   }
 }
 
+/** 从请求体 JSON 中提取所有内嵌图片（inline_data / image_url / mask 等） */
+function extractInlineImagesFromBody(bodyJson: string | null | undefined): { label: string; src: string }[] {
+  if (!bodyJson) return [];
+  try {
+    const obj = JSON.parse(bodyJson) as any;
+    const results: { label: string; src: string }[] = [];
+
+    // 顶层 image 字段（URL 或 data URI）
+    if (typeof obj?.image === 'string' && (obj.image.startsWith('http') || obj.image.startsWith('data:'))) {
+      results.push({ label: '参考图', src: obj.image });
+    }
+
+    // 顶层 mask 字段（URL 或 data URI）
+    if (typeof obj?.mask === 'string' && (obj.mask.startsWith('http') || obj.mask.startsWith('data:'))) {
+      results.push({ label: '蒙版', src: obj.mask });
+    }
+
+    // 遍历 messages / contents 中的图片部分
+    const msgs = Array.isArray(obj?.messages) ? obj.messages : Array.isArray(obj?.contents) ? obj.contents : [];
+    for (const msg of msgs) {
+      const parts = Array.isArray(msg?.content) ? msg.content : Array.isArray(msg?.parts) ? msg.parts : [];
+      for (const part of parts) {
+        // OpenAI 格式: { type: "image_url", image_url: { url: "data:..." } }
+        if (part?.type === 'image_url' && typeof part?.image_url?.url === 'string') {
+          const url = part.image_url.url;
+          if (url.startsWith('data:') || url.startsWith('http')) {
+            results.push({ label: '参考图', src: url });
+          }
+        }
+        // Gemini 格式: { inline_data: { mime_type: "image/png", data: "base64..." } }
+        if (part?.inline_data && typeof part.inline_data.data === 'string' && part.inline_data.data.length > 100) {
+          const mime = part.inline_data.mime_type || 'image/png';
+          results.push({ label: '参考图', src: `data:${mime};base64,${part.inline_data.data}` });
+        }
+      }
+    }
+
+    return results;
+  } catch {
+    return [];
+  }
+}
+
 function normalizeStrictJsonCandidate(raw: string): { ok: true; json: string } | { ok: false; reason: string } {
   const t0 = (raw ?? '').trim();
   if (!t0) return { ok: false, reason: '空内容' };
@@ -1053,6 +1096,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
     } catch { /* ignore */ }
     return null;
   }, [detail?.requestBodyRedacted]);
+  /** 从请求体中提取的内嵌图片（蒙版、参考图等） */
+  const bodyInlineImages = useMemo(
+    () => extractInlineImagesFromBody(detail?.requestBodyRedacted),
+    [detail?.requestBodyRedacted]
+  );
   const isImageLikeLog = isImageGenRequest || hasImageArtifacts || typeof detail?.imageSuccessCount === 'number';
   const prettyRequestBody = useMemo(() => {
     if (!detail) return '';
@@ -1304,7 +1352,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                         <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                           {it.requestPurposeDisplayName || it.requestPurpose || '未知'}
                         </div>
-                        {/* appCallerCode - 缩写为 acc，悬浮显示全文 */}
+                        {/* appCallerCode 标签，悬浮显示全文 */}
                         {it.requestPurpose && (
                           <span
                             className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0 cursor-help"
@@ -1312,7 +1360,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                             title={it.requestPurpose}
                           >
                             <AppCallerKeyIcon size={10} className="opacity-60" />
-                            acc
+                            {it.requestPurpose}
                           </span>
                         )}
                       </div>
@@ -1978,7 +2026,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                   </div>
 
                   <div className="mt-3">
-                    {(hasImageArtifacts || bodyHasInitImage) ? (
+                    {(hasImageArtifacts || bodyHasInitImage || bodyInlineImages.length > 0) ? (
                     <div className="mb-3">
                       <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
                         <span>图片预览</span>
@@ -2274,6 +2322,31 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                               </div>
                             </div>
                           )}
+                        </div>
+                      )}
+
+                      {/* 请求体内嵌图片（蒙版、多参考图等） */}
+                      {bodyInlineImages.length > 0 && (
+                        <div className="mt-3">
+                          <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
+                            请求体内嵌图片（{bodyInlineImages.length}张）
+                          </div>
+                          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(bodyInlineImages.length, 3)}, minmax(0, 1fr))` }}>
+                            {bodyInlineImages.map((img, idx) => (
+                              <div key={idx} className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                  <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                    {img.label}{bodyInlineImages.length > 1 ? ` #${idx + 1}` : ''}
+                                  </div>
+                                </div>
+                                <img
+                                  src={img.src}
+                                  alt={img.label}
+                                  style={{ width: '100%', height: 200, objectFit: 'contain', display: 'block', background: 'rgba(0,0,0,0.08)' }}
+                                />
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
