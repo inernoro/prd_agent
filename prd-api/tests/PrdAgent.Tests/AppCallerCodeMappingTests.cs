@@ -112,7 +112,7 @@ public class AppCallerCodeMappingTests
     /// 验证 AppCallerRegistry 中定义的常量值正确
     /// </summary>
     [Theory]
-    [InlineData("visual-agent.image::generation")]
+    [InlineData("visual-agent.image.text2img::generation")]
     [InlineData("literary-agent.illustration.text2img::generation")]
     [InlineData("prd-agent-web.lab::generation")]
     public void AppCallerRegistry_ShouldContainExpectedCodes(string expectedCode)
