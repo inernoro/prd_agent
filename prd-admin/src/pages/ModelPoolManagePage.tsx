@@ -411,7 +411,7 @@ export function ModelPoolManagePage() {
                 <span className="w-5 shrink-0" />
                 <span className="min-w-[120px] flex-[2]">名称</span>
                 <span className="min-w-[100px] flex-1">代码</span>
-                <span className="w-[70px] shrink-0 text-center">策略</span>
+                <span className="w-[80px] shrink-0 text-center">策略</span>
                 <span className="w-[50px] shrink-0 text-center">优先级</span>
                 <span className="min-w-[100px] flex-1">健康状态</span>
                 <span className="w-[120px] shrink-0" />
@@ -447,16 +447,16 @@ export function ModelPoolManagePage() {
                         : <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
                       }
                       <GroupIcon size={16} style={{ color: 'var(--text-secondary)' }} />
-                      <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      <span className="text-[13px] font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>
                         {group.label}
                       </span>
-                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      <span className="text-[11px] shrink-0 whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
                         {totalPools} 个池 · {totalModels} 个模型
                       </span>
                       <div className="flex-1" />
                       {/* 分组健康摘要 */}
                       {totalModels > 0 && (
-                        <div className="flex items-center gap-2 text-[11px]">
+                        <div className="flex items-center gap-2 text-[11px] shrink-0 whitespace-nowrap">
                           {totalHealthy === totalModels ? (
                             <span className="flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
                               <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(34,197,94,0.95)' }} />
@@ -519,8 +519,8 @@ export function ModelPoolManagePage() {
                             </span>
 
                             {/* 名称 */}
-                            <div className="min-w-[120px] flex-[2] flex items-center gap-2 min-w-0">
-                              <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            <div className="min-w-[120px] flex-[2] flex items-center gap-2">
+                              <span className="text-[13px] font-semibold truncate min-w-0" style={{ color: 'var(--text-primary)' }}>
                                 {pool.name}
                               </span>
                               {pool.isDefaultForType && (
@@ -543,9 +543,9 @@ export function ModelPoolManagePage() {
                             </span>
 
                             {/* 策略 */}
-                            <span className="w-[70px] shrink-0 text-center">
+                            <span className="w-[80px] shrink-0 text-center">
                               <span
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap"
                                 style={{ background: `${strategyOpt.color}12`, color: strategyOpt.color }}
                               >
                                 <StrategyIcon size={10} />
@@ -562,7 +562,7 @@ export function ModelPoolManagePage() {
                             </span>
 
                             {/* 健康状态 */}
-                            <div className="min-w-[100px] flex-1 flex items-center gap-1.5">
+                            <div className="min-w-[100px] flex-1 flex items-center gap-1.5 whitespace-nowrap">
                               {modelCount === 0 ? (
                                 <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无模型</span>
                               ) : healthyCnt === modelCount ? (
