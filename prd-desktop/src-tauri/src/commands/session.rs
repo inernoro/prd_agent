@@ -36,7 +36,7 @@ impl StreamCancelState {
         *guard = CancellationToken::new();
         guard.clone()
     }
-    fn cancel_all(&self) {
+    pub fn cancel_all(&self) {
         self.message.lock().unwrap().cancel();
         self.preview.lock().unwrap().cancel();
         self.group.lock().unwrap().cancel();
