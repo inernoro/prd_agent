@@ -2,6 +2,7 @@ pub mod assets;
 pub mod auth;
 pub mod branding;
 pub mod config;
+pub mod defect;
 pub mod devtools;
 pub mod document;
 pub mod group;

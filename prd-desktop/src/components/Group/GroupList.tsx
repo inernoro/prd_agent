@@ -20,7 +20,7 @@ type GroupMemberInfo = {
 export default function GroupList() {
   const { user } = useAuthStore();
   const { groups, loading, loadGroups } = useGroupListStore();
-  const { activeGroupId, setActiveGroupId, setSession, setActiveGroupContext, clearSession } = useSessionStore();
+  const { activeGroupId, setSession, setActiveGroupContext, clearSession } = useSessionStore();
   const syncFromServer = useMessageStore((s) => s.syncFromServer);
   const triggerScrollToBottom = useMessageStore((s) => s.triggerScrollToBottom);
   const bindGroupContext = useMessageStore((s) => s.bindGroupContext);
@@ -90,8 +90,7 @@ export default function GroupList() {
       };
 
       setSession(session, docResp.data);
-      // 同步选中态（防止 setSession 的 groupId 为空时覆盖）
-      setActiveGroupId(group.groupId);
+      // setActiveGroupId 已由 setSession 内部设置（session.groupId），不再重复调用
 
       // 关键体验：点击群组 = 拉一次最新消息 + 跳到最新
       // - 即使点击的是“当前群组”，也执行一次（用户期望刷新）
@@ -177,8 +176,8 @@ export default function GroupList() {
         return;
       }
 
-      // 解散群组后强制刷新列表
-      await loadGroups({ force: true });
+      // 解散群组后强制刷新列表（silent 避免 ChatContainer 卸载重挂导致 SSE 重连）
+      await loadGroups({ force: true, silent: true });
       setDissolveTarget(null);
     } catch (err) {
       console.error('Failed to dissolve group:', err);

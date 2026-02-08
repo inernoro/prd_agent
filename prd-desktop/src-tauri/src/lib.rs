@@ -206,18 +206,38 @@ pub fn run() {
             commands::updater::get_updater_platform_info,
             commands::updater::check_for_update,
             commands::updater::fetch_update_manifests,
+            commands::defect::list_defects,
+            commands::defect::create_defect,
+            commands::defect::submit_defect,
+            commands::defect::get_defect,
+            commands::defect::get_defect_messages,
+            commands::defect::send_defect_message,
+            commands::defect::process_defect,
+            commands::defect::resolve_defect,
+            commands::defect::reject_defect,
+            commands::defect::get_defect_stats,
             commands::devtools::open_devtools,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|_app_handle, _event| {
-        // warm-start deep link（macOS/iOS）：应用运行中收到 URL 打开事件
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        if let tauri::RunEvent::Opened { urls } = _event {
-            for url in urls {
-                let _ = _app_handle.emit("deep-link", url.to_string());
+        match &_event {
+            // 应用退出：取消所有 SSE 流 + 停止心跳，确保资源优雅释放
+            tauri::RunEvent::ExitRequested { .. } => {
+                if let Some(cancel_state) = _app_handle.try_state::<StreamCancelState>() {
+                    cancel_state.cancel_all();
+                }
+                services::api_client::stop_desktop_presence_heartbeat();
             }
+            // warm-start deep link（macOS/iOS）：应用运行中收到 URL 打开事件
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            tauri::RunEvent::Opened { urls } => {
+                for url in urls {
+                    let _ = _app_handle.emit("deep-link", url.to_string());
+                }
+            }
+            _ => {}
         }
     });
 }
