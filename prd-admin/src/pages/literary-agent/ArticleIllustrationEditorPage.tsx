@@ -44,7 +44,7 @@ import {
   unpublishReferenceImageConfig,
 } from '@/services';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2 } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Zap } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
@@ -197,6 +197,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   
+  // 锚点插入模式：LLM 只返回插入指令而非完整文章，速度更快、原文保真
+  const [useAnchorMode, setUseAnchorMode] = useState(true);
+
   // 提取的标记列表
   const [markers, setMarkers] = useState<ArticleMarker[]>([]);
 
@@ -723,302 +726,151 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     isStreamingRef.current = true; // 标记开始流式输出
     // 3 状态模式：生成标记时直接跳到 MarkersGenerated，流式更新内容
     setPhase(2); // MarkersGenerated
-    setArticleWithMarkers(''); // 初始为空，流式逐步填充
     setMarkers([]);
-    
+
+    // Anchor 模式：预先显示原文（LLM 不会流式返回文章内容）
+    // Legacy 模式：初始为空，流式逐步填充
+    setArticleWithMarkers(useAnchorMode ? articleContent : '');
+
     try {
       // 使用 SSE 流式接口
       const stream = generateArticleMarkers({
         id: workspaceId,
         articleContent,
-        userInstruction: systemPrompt, // 将选中的提示词作为系统提示词
+        userInstruction: systemPrompt,
         idempotencyKey: `gen-markers-${Date.now()}`,
+        insertionMode: useAnchorMode ? 'anchor' : 'legacy',
       });
 
       let fullText = '';
-      let currentLineBuffer = ''; // 当前行缓冲区
+      let currentLineBuffer = ''; // 当前行缓冲区（legacy 模式用）
       const extractedMarkers: ArticleMarker[] = []; // 已提取的标记
-      
+
+      // 触发单个 marker 的意图解析（共用逻辑）
+      const triggerPlanImageGen = (markerIndex: number, markerText: string) => {
+        setMarkerRunItems((prev) => {
+          if (prev.some((x) => x.markerIndex === markerIndex)) return prev;
+          return [
+            ...prev,
+            { markerIndex, markerText, draftText: markerText, status: 'parsing' as MarkerRunStatus },
+          ];
+        });
+
+        void (async () => {
+          try {
+            const planRes = await planImageGen({ text: markerText, maxItems: 1 });
+            if (planRes.success && planRes.data?.items?.[0]) {
+              const planItem = planRes.data.items[0];
+              setMarkerRunItems((prev) =>
+                prev.map((x) =>
+                  x.markerIndex === markerIndex
+                    ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
+                    : x
+                )
+              );
+              await updateMarkerStatus(markerIndex, {
+                status: 'parsed',
+                draftText: planItem.prompt,
+                planItem: { prompt: planItem.prompt, count: planItem.count, size: planItem.size },
+              });
+            } else {
+              setMarkerRunItems((prev) =>
+                prev.map((x) =>
+                  x.markerIndex === markerIndex
+                    ? { ...x, status: 'error' as MarkerRunStatus, errorMessage: planRes.error?.message || '意图解析失败' }
+                    : x
+                )
+              );
+            }
+          } catch (error) {
+            console.error('Plan image gen error:', error);
+            setMarkerRunItems((prev) =>
+              prev.map((x) =>
+                x.markerIndex === markerIndex
+                  ? { ...x, status: 'error' as MarkerRunStatus, errorMessage: error instanceof Error ? error.message : '意图解析失败' }
+                  : x
+              )
+            );
+          }
+        })();
+      };
+
       for await (const chunk of stream) {
-        if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
+        // ====== Anchor 模式：处理 marker 事件 ======
+        if (chunk.type === 'marker' && chunk.text && chunk.index != null) {
+          const markerIndex = chunk.index;
+          const markerText = chunk.text;
+          extractedMarkers.push({
+            index: markerIndex,
+            text: markerText,
+            startPos: -1,
+            endPos: -1,
+          });
+          setMarkers([...extractedMarkers]);
+          triggerPlanImageGen(markerIndex, markerText);
+        }
+        // ====== Legacy 模式：处理 delta 事件 ======
+        else if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
           fullText += chunk.text;
           currentLineBuffer += chunk.text;
-          
+
           // 检查是否有完整的行（以 \n 结尾）
           if (currentLineBuffer.includes('\n')) {
             const lines = currentLineBuffer.split('\n');
-            // 最后一个元素是不完整的行（或空字符串），保留在缓冲区
             currentLineBuffer = lines.pop() || '';
-            
-            // 处理所有完整的行
+
             for (const line of lines) {
-              // 对这一行进行标记匹配
               const markerRegex = /\[插图\]\s*:\s*(.+)/;
               const match = markerRegex.exec(line);
-              
+
               if (match) {
                 const markerText = match[1].trim();
-                
-                // 只有当 markerText 不为空时才添加
                 if (markerText.length > 0) {
                   const markerIndex = extractedMarkers.length;
                   extractedMarkers.push({
                     index: markerIndex,
                     text: markerText,
-                    startPos: -1, // 流式输出时不需要精确位置
+                    startPos: -1,
                     endPos: -1,
                   });
-                  
-                  // 更新 UI
                   setMarkers([...extractedMarkers]);
-                  
-                  // 添加到运行列表（状态为 parsing，立即触发意图解析）
-                  setMarkerRunItems((prev) => {
-                    if (prev.some((x) => x.markerIndex === markerIndex)) {
-                      return prev;
-                    }
-                    return [
-                      ...prev,
-                      {
-                        markerIndex,
-                        markerText,
-                        draftText: markerText,
-                        status: 'parsing' as MarkerRunStatus,
-                      },
-                    ];
-                  });
-                  
-                  // 立即触发意图解析（不等待流式输出完成）
-                  void (async () => {
-                    try {
-                      const planRes = await planImageGen({
-                        text: markerText,
-                        maxItems: 1,
-                      });
-                      
-                      if (planRes.success && planRes.data?.items?.[0]) {
-                        const planItem = planRes.data.items[0];
-                        
-                        setMarkerRunItems((prev) =>
-                          prev.map((x) =>
-                            x.markerIndex === markerIndex
-                              ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
-                              : x
-                          )
-                        );
-                        
-                        // 保存意图解析结果到后端
-                        await updateMarkerStatus(markerIndex, {
-                          status: 'parsed',
-                          draftText: planItem.prompt,
-                          planItem: {
-                            prompt: planItem.prompt,
-                            count: planItem.count,
-                            size: planItem.size,
-                          },
-                        });
-                      } else {
-                        setMarkerRunItems((prev) =>
-                          prev.map((x) =>
-                            x.markerIndex === markerIndex
-                              ? {
-                                  ...x,
-                                  status: 'error' as MarkerRunStatus,
-                                  errorMessage: planRes.error?.message || '意图解析失败',
-                                }
-                              : x
-                          )
-                        );
-                      }
-                    } catch (error) {
-                      console.error('Plan image gen error:', error);
-                      setMarkerRunItems((prev) =>
-                        prev.map((x) =>
-                          x.markerIndex === markerIndex
-                            ? {
-                                ...x,
-                                status: 'error' as MarkerRunStatus,
-                                errorMessage: error instanceof Error ? error.message : '意图解析失败',
-                              }
-                            : x
-                        )
-                      );
-                    }
-                  })();
+                  triggerPlanImageGen(markerIndex, markerText);
                 }
               }
             }
           }
-          
-          // 使用 flushSync 强制立即刷新，绕过 React 18 的自动批处理
+
           flushSync(() => {
             setArticleWithMarkers(fullText);
           });
-          
-          // 人工延迟 10ms，让用户能看到流式渲染效果（配合后端 10ms 延迟）
+
           await new Promise(resolve => setTimeout(resolve, 10));
-        } else if (chunk.type === 'done' && chunk.fullText) {
+        }
+        // ====== 完成事件 ======
+        else if (chunk.type === 'done' && chunk.fullText) {
           fullText = chunk.fullText;
           setArticleWithMarkers(fullText);
-          
+
           // 提取标记（确保最终状态一致）
           const extracted = extractMarkers(fullText);
           setMarkers(extracted);
-          
-          // 对于那些还没有被处理的标记（状态为 pending），触发意图解析
-          // 注意：流式输出过程中已经处理过的标记（parsing/parsed/error）不需要重复处理
+
+          // 对于 done 事件中的标记但尚未处理的，补充触发意图解析
           extracted.forEach((marker) => {
-            const markerIndex = marker.index;
-            const markerText = marker.text;
-            
             setMarkerRunItems((prev) => {
-              const existingItem = prev.find((x) => x.markerIndex === markerIndex);
-              
-              // 如果已经存在且不是 idle 状态，说明已经在流式输出时处理过了，跳过
-              if (existingItem && existingItem.status !== 'idle') {
-                return prev;
-              }
-              
-              // 如果不存在或状态为 pending，则触发意图解析
+              const existingItem = prev.find((x) => x.markerIndex === marker.index);
+              if (existingItem && existingItem.status !== 'idle') return prev;
               if (!existingItem) {
-                // 添加新项并触发解析
-                const newPrev = [
+                triggerPlanImageGen(marker.index, marker.text);
+                return [
                   ...prev,
-                  {
-                    markerIndex,
-                    markerText,
-                    draftText: markerText,
-                    status: 'parsing' as MarkerRunStatus,
-                  },
+                  { markerIndex: marker.index, markerText: marker.text, draftText: marker.text, status: 'parsing' as MarkerRunStatus },
                 ];
-                
-                // 异步调用意图解析
-                void (async () => {
-                  try {
-                    const planRes = await planImageGen({
-                      text: markerText,
-                      maxItems: 1,
-                    });
-                    
-                    if (planRes.success && planRes.data?.items?.[0]) {
-                      const planItem = planRes.data.items[0];
-                      
-                      setMarkerRunItems((p) =>
-                        p.map((x) =>
-                          x.markerIndex === markerIndex
-                            ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
-                            : x
-                        )
-                      );
-                      await updateMarkerStatus(markerIndex, {
-                        status: 'parsed',
-                        draftText: planItem.prompt,
-                        planItem: {
-                          prompt: planItem.prompt,
-                          count: planItem.count,
-                          size: planItem.size,
-                        },
-                      });
-                    } else {
-                      setMarkerRunItems((p) =>
-                        p.map((x) =>
-                          x.markerIndex === markerIndex
-                            ? {
-                                ...x,
-                                status: 'error' as MarkerRunStatus,
-                                errorMessage: planRes.error?.message || '意图解析失败',
-                              }
-                            : x
-                        )
-                      );
-                    }
-                  } catch (error) {
-                    console.error('Plan image gen error:', error);
-                    setMarkerRunItems((p) =>
-                      p.map((x) =>
-                        x.markerIndex === markerIndex
-                          ? {
-                              ...x,
-                              status: 'error' as MarkerRunStatus,
-                              errorMessage: error instanceof Error ? error.message : '意图解析失败',
-                            }
-                          : x
-                      )
-                    );
-                  }
-                })();
-                
-                return newPrev;
-              } else {
-                // 状态为 pending，更新为 parsing 并触发解析
-                const updatedPrev = prev.map((x) =>
-                  x.markerIndex === markerIndex
-                    ? { ...x, markerText, draftText: markerText, status: 'parsing' as MarkerRunStatus }
-                    : x
-                );
-                
-                // 异步调用意图解析
-                void (async () => {
-                  try {
-                    const planRes = await planImageGen({
-                      text: markerText,
-                      maxItems: 1,
-                    });
-                    
-                    if (planRes.success && planRes.data?.items?.[0]) {
-                      const planItem = planRes.data.items[0];
-                      
-                      setMarkerRunItems((p) =>
-                        p.map((x) =>
-                          x.markerIndex === markerIndex
-                            ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
-                            : x
-                        )
-                      );
-                      await updateMarkerStatus(markerIndex, {
-                        status: 'parsed',
-                        draftText: planItem.prompt,
-                        planItem: {
-                          prompt: planItem.prompt,
-                          count: planItem.count,
-                          size: planItem.size,
-                        },
-                      });
-                    } else {
-                      setMarkerRunItems((p) =>
-                        p.map((x) =>
-                          x.markerIndex === markerIndex
-                            ? {
-                                ...x,
-                                status: 'error' as MarkerRunStatus,
-                                errorMessage: planRes.error?.message || '意图解析失败',
-                              }
-                            : x
-                        )
-                      );
-                    }
-                  } catch (error) {
-                    console.error('Plan image gen error:', error);
-                    setMarkerRunItems((p) =>
-                      p.map((x) =>
-                        x.markerIndex === markerIndex
-                          ? {
-                              ...x,
-                              status: 'error' as MarkerRunStatus,
-                              errorMessage: error instanceof Error ? error.message : '意图解析失败',
-                            }
-                          : x
-                      )
-                    );
-                  }
-                })();
-                
-                return updatedPrev;
               }
+              return prev;
             });
           });
-          
-          // 提交型操作成功：更新阶段
+
           setPhase(2); // MarkersGenerated
         } else if (chunk.type === 'error') {
           throw new Error(chunk.message || '生成失败');
@@ -2161,6 +2013,34 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <activeButton.icon size={16} />
               {isBusy ? '生成中...' : activeButton.label}
             </Button>
+          )}
+
+          {/* 锚点插入模式开关 */}
+          {phase <= 1 && (
+            <label
+              className="flex items-center gap-1.5 mt-1 cursor-pointer select-none group"
+              title="锚点模式：LLM 只输出插入指令（不复读原文），速度更快且原文 100% 保真"
+            >
+              <div
+                className="relative w-7 h-4 rounded-full transition-colors"
+                style={{
+                  background: useAnchorMode ? 'rgba(34, 197, 94, 0.5)' : 'rgba(255,255,255,0.12)',
+                }}
+                onClick={() => setUseAnchorMode(!useAnchorMode)}
+              >
+                <div
+                  className="absolute top-0.5 w-3 h-3 rounded-full transition-all"
+                  style={{
+                    left: useAnchorMode ? 13 : 2,
+                    background: useAnchorMode ? '#4ADE80' : 'rgba(255,255,255,0.4)',
+                  }}
+                />
+              </div>
+              <Zap size={11} style={{ color: useAnchorMode ? '#4ADE80' : 'var(--text-muted)' }} />
+              <span className="text-[11px]" style={{ color: useAnchorMode ? '#4ADE80' : 'var(--text-muted)' }}>
+                锚点模式
+              </span>
+            </label>
           )}
 
           {/* 配置区 - 单行布局：齿轮 | 三个配置项 | 配置按钮 */}
