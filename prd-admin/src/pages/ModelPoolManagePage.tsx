@@ -36,8 +36,8 @@ import {
   Check,
   ChevronRight,
   ChevronDown,
-  Unfold,
-  Fold,
+  UnfoldVertical,
+  FoldVertical,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { systemDialog } from '@/lib/systemDialog';
@@ -398,7 +398,7 @@ export function ModelPoolManagePage() {
                   setExpandedPoolIds(new Set(pools.filter(p => (p.models?.length || 0) > 0).map(p => p.id)));
                 }}
               >
-                <Unfold size={14} />
+                <UnfoldVertical size={14} />
               </Button>
             </Tooltip>
             <Tooltip content="全部折叠">
@@ -410,7 +410,7 @@ export function ModelPoolManagePage() {
                   setExpandedPoolIds(new Set());
                 }}
               >
-                <Fold size={14} />
+                <FoldVertical size={14} />
               </Button>
             </Tooltip>
             <Button variant="primary" size="sm" onClick={handleAddPool}>
