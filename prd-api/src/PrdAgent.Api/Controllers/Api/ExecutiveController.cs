@@ -268,6 +268,139 @@ public class ExecutiveController : ControllerBase
         return Ok(ApiResponse<object>.Ok(modelGroups));
     }
 
+    /// <summary>
+    /// 排行榜矩阵 — 每个用户在每个维度的使用量
+    /// </summary>
+    [HttpGet("leaderboard")]
+    public async Task<IActionResult> GetLeaderboard([FromQuery] int days = 7)
+    {
+        days = Math.Clamp(days, 1, 30);
+        var periodStart = DateTime.UtcNow.Date.AddDays(-days + 1);
+
+        // 所有非 Bot 用户
+        var allUsers = await _db.Users.Find(_ => true).ToListAsync();
+        var humanUsers = allUsers.Where(u => u.UserType != UserType.Bot).ToList();
+        var userIds = humanUsers.Select(u => u.UserId).ToHashSet();
+
+        // --- Agent 使用量 (llm_request_logs 按 appKey + userId 聚合) ---
+        var logs = await _db.LlmRequestLogs
+            .Find(l => l.StartedAt >= periodStart && l.RequestPurpose != null && l.UserId != null)
+            .Project(l => new { l.UserId, l.RequestPurpose })
+            .ToListAsync();
+
+        var agentUserCounts = logs
+            .Where(l => l.UserId != null && userIds.Contains(l.UserId))
+            .GroupBy(l =>
+            {
+                var rp = l.RequestPurpose ?? "";
+                var dotIndex = rp.IndexOf('.');
+                return dotIndex > 0 ? rp[..dotIndex] : rp;
+            })
+            .Where(g => !string.IsNullOrEmpty(g.Key))
+            .ToDictionary(
+                g => g.Key,
+                g => g.GroupBy(x => x.UserId!).ToDictionary(ug => ug.Key, ug => ug.Count())
+            );
+
+        // --- 消息数 ---
+        var msgItems = await _db.Messages
+            .Find(m => m.Timestamp >= periodStart)
+            .Project(m => new { m.SenderId })
+            .ToListAsync();
+        var msgByUser = msgItems
+            .Where(m => m.SenderId != null && userIds.Contains(m.SenderId))
+            .GroupBy(m => m.SenderId!)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // --- 会话数 ---
+        var sessionItems = await _db.Sessions
+            .Find(s => s.CreatedAt >= periodStart)
+            .Project(s => new { s.OwnerUserId })
+            .ToListAsync();
+        var sessionByUser = sessionItems
+            .Where(s => s.OwnerUserId != null && userIds.Contains(s.OwnerUserId))
+            .GroupBy(s => s.OwnerUserId!)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // --- 缺陷提交 ---
+        var dcItems = await _db.DefectReports
+            .Find(d => d.CreatedAt >= periodStart)
+            .Project(d => new { d.ReporterId })
+            .ToListAsync();
+        var defectsCreatedByUser = dcItems
+            .Where(d => d.ReporterId != null && userIds.Contains(d.ReporterId))
+            .GroupBy(d => d.ReporterId!)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // --- 缺陷解决 ---
+        var drItems = await _db.DefectReports
+            .Find(d => d.ResolvedAt >= periodStart)
+            .Project(d => new { d.ResolvedById })
+            .ToListAsync();
+        var defectsResolvedByUser = drItems
+            .Where(d => d.ResolvedById != null && userIds.Contains(d.ResolvedById))
+            .GroupBy(d => d.ResolvedById!)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // --- 图片生成 ---
+        var imgItems = await _db.ImageGenRuns
+            .Find(r => r.CreatedAt >= periodStart)
+            .Project(r => new { r.OwnerAdminId })
+            .ToListAsync();
+        var imageByUser = imgItems
+            .Where(r => r.OwnerAdminId != null && userIds.Contains(r.OwnerAdminId))
+            .GroupBy(r => r.OwnerAdminId!)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // --- 加入群组数 (总量, 不受时间范围限制) ---
+        var gmItems = await _db.GroupMembers
+            .Find(_ => true)
+            .Project(gm => new { gm.UserId })
+            .ToListAsync();
+        var groupsByUser = gmItems
+            .Where(gm => userIds.Contains(gm.UserId))
+            .GroupBy(gm => gm.UserId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // 用户列表 (按活跃度排序)
+        var userList = humanUsers
+            .OrderByDescending(u => u.LastActiveAt)
+            .Select(u => new
+            {
+                userId = u.UserId,
+                username = u.Username,
+                displayName = u.DisplayName ?? u.Username,
+                role = u.Role.ToString(),
+                avatarFileName = u.AvatarFileName,
+                lastActiveAt = u.LastActiveAt,
+                isActive = u.LastActiveAt >= periodStart,
+            })
+            .ToList();
+
+        // 构建维度
+        var knownAgents = new[] { "prd-agent", "visual-agent", "literary-agent", "defect-agent", "ai-toolbox", "chat", "open-platform" };
+        var dimensions = new List<object>();
+
+        foreach (var appKey in knownAgents)
+        {
+            if (!agentUserCounts.TryGetValue(appKey, out var vals)) continue;
+            dimensions.Add(new { key = appKey, name = ResolveAgentName(appKey), category = "agent", values = vals });
+        }
+        foreach (var kv in agentUserCounts.Where(kv => !knownAgents.Contains(kv.Key)))
+        {
+            dimensions.Add(new { key = kv.Key, name = ResolveAgentName(kv.Key), category = "agent", values = kv.Value });
+        }
+
+        dimensions.Add(new { key = "messages", name = "对话消息", category = "activity", values = msgByUser });
+        dimensions.Add(new { key = "sessions", name = "会话数", category = "activity", values = sessionByUser });
+        dimensions.Add(new { key = "defects-created", name = "缺陷提交", category = "activity", values = defectsCreatedByUser });
+        dimensions.Add(new { key = "defects-resolved", name = "缺陷解决", category = "activity", values = defectsResolvedByUser });
+        dimensions.Add(new { key = "images", name = "图片生成", category = "activity", values = imageByUser });
+        dimensions.Add(new { key = "groups", name = "加入群组", category = "activity", values = groupsByUser });
+
+        return Ok(ApiResponse<object>.Ok(new { users = userList, dimensions }));
+    }
+
     private static string ResolveAgentName(string appKey) => appKey switch
     {
         "prd-agent" => "PRD Agent",

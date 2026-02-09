@@ -253,6 +253,7 @@ export const api = {
     team: () => '/api/executive/team',
     agents: () => '/api/executive/agents',
     models: () => '/api/executive/models',
+    leaderboard: () => '/api/executive/leaderboard',
   },
 
   // ============ Dashboard 仪表盘 ============

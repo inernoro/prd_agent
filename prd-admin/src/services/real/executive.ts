@@ -7,11 +7,13 @@ import type {
   ExecutiveTeamMember,
   ExecutiveAgentStat,
   ExecutiveModelStat,
+  ExecutiveLeaderboard,
   GetExecutiveOverviewContract,
   GetExecutiveTrendsContract,
   GetExecutiveTeamContract,
   GetExecutiveAgentsContract,
   GetExecutiveModelsContract,
+  GetExecutiveLeaderboardContract,
 } from '@/services/contracts/executive';
 
 export const getExecutiveOverviewReal: GetExecutiveOverviewContract = async (days = 7): Promise<ApiResponse<ExecutiveOverview>> => {
@@ -37,4 +39,9 @@ export const getExecutiveAgentsReal: GetExecutiveAgentsContract = async (days = 
 export const getExecutiveModelsReal: GetExecutiveModelsContract = async (days = 7): Promise<ApiResponse<ExecutiveModelStat[]>> => {
   const d = Math.max(1, Math.min(30, Math.floor(days || 7)));
   return await apiRequest<ExecutiveModelStat[]>(`${api.executive.models()}?days=${d}`);
+};
+
+export const getExecutiveLeaderboardReal: GetExecutiveLeaderboardContract = async (days = 7): Promise<ApiResponse<ExecutiveLeaderboard>> => {
+  const d = Math.max(1, Math.min(30, Math.floor(days || 7)));
+  return await apiRequest<ExecutiveLeaderboard>(`${api.executive.leaderboard()}?days=${d}`);
 };

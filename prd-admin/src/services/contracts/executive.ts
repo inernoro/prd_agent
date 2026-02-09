@@ -55,8 +55,31 @@ export type ExecutiveModelStat = {
   avgDurationMs: number;
 };
 
+export type LeaderboardUser = {
+  userId: string;
+  username: string;
+  displayName: string;
+  role: string;
+  avatarFileName: string | null;
+  lastActiveAt: string | null;
+  isActive: boolean;
+};
+
+export type LeaderboardDimension = {
+  key: string;
+  name: string;
+  category: 'agent' | 'activity';
+  values: Record<string, number>;
+};
+
+export type ExecutiveLeaderboard = {
+  users: LeaderboardUser[];
+  dimensions: LeaderboardDimension[];
+};
+
 export type GetExecutiveOverviewContract = (days?: number) => Promise<ApiResponse<ExecutiveOverview>>;
 export type GetExecutiveTrendsContract = (days?: number) => Promise<ApiResponse<ExecutiveTrendItem[]>>;
 export type GetExecutiveTeamContract = (days?: number) => Promise<ApiResponse<ExecutiveTeamMember[]>>;
 export type GetExecutiveAgentsContract = (days?: number) => Promise<ApiResponse<ExecutiveAgentStat[]>>;
 export type GetExecutiveModelsContract = (days?: number) => Promise<ApiResponse<ExecutiveModelStat[]>>;
+export type GetExecutiveLeaderboardContract = (days?: number) => Promise<ApiResponse<ExecutiveLeaderboard>>;

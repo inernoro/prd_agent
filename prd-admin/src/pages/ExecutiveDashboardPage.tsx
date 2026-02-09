@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Crown, Users, Bot, DollarSign, Link2, TrendingUp,
   MessageSquare, Image, Bug, Zap, Activity,
@@ -14,6 +14,7 @@ import {
   getExecutiveTeam,
   getExecutiveAgents,
   getExecutiveModels,
+  getExecutiveLeaderboard,
 } from '@/services';
 import type {
   ExecutiveOverview,
@@ -21,6 +22,8 @@ import type {
   ExecutiveTeamMember,
   ExecutiveAgentStat,
   ExecutiveModelStat,
+  ExecutiveLeaderboard,
+  LeaderboardDimension,
 } from '@/services/contracts/executive';
 import type { EChartsOption } from 'echarts';
 import { resolveAvatarUrl } from '@/lib/avatar';
@@ -185,92 +188,6 @@ const ROLE_COLORS: Record<string, string> = {
   PM: 'rgba(59,130,246,0.95)', DEV: 'rgba(34,197,94,0.95)', QA: 'rgba(239,68,68,0.85)', ADMIN: 'rgba(214,178,106,0.95)',
 };
 
-function TeamMemberCard({ member, onClick }: { member: ExecutiveTeamMember; onClick: () => void }) {
-  const roleColor = ROLE_COLORS[member.role] ?? 'rgba(148,163,184,0.8)';
-  const output = member.defectsCreated + member.imageRuns;
-  return (
-    <GlassCard interactive className="cursor-pointer" onClick={onClick}>
-      <div className="flex items-center gap-3 mb-3">
-        {member.avatarFileName ? (
-          <img src={resolveAvatarUrl(member.avatarFileName)} className="w-9 h-9 rounded-full object-cover" alt="" />
-        ) : (
-          <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold" style={{ background: `${roleColor}22`, color: roleColor }}>
-            {member.displayName[0]}
-          </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{member.displayName}</div>
-          <div className="text-[11px]" style={{ color: roleColor }}>{member.role}</div>
-        </div>
-        <div className="w-2 h-2 rounded-full" style={{ background: member.isActive ? 'rgba(34,197,94,0.8)' : 'rgba(255,255,255,0.15)' }} />
-      </div>
-      <div className="grid grid-cols-3 gap-2 text-center">
-        <div>
-          <div className="text-[17px] font-bold" style={{ color: 'var(--text-primary)' }}>{member.messages}</div>
-          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>消息</div>
-        </div>
-        <div>
-          <div className="text-[17px] font-bold" style={{ color: 'var(--text-primary)' }}>{member.sessions}</div>
-          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>会话</div>
-        </div>
-        <div>
-          <div className="text-[17px] font-bold" style={{ color: 'var(--text-primary)' }}>{output}</div>
-          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>产出</div>
-        </div>
-      </div>
-    </GlassCard>
-  );
-}
-
-function TeamMemberDetailPanel({ member, onClose }: { member: ExecutiveTeamMember; onClose: () => void }) {
-  const roleColor = ROLE_COLORS[member.role] ?? 'rgba(148,163,184,0.8)';
-  return (
-    <GlassCard glow variant="gold">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          {member.avatarFileName ? (
-            <img src={resolveAvatarUrl(member.avatarFileName)} className="w-12 h-12 rounded-full object-cover" alt="" />
-          ) : (
-            <div className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold" style={{ background: `${roleColor}22`, color: roleColor }}>
-              {member.displayName[0]}
-            </div>
-          )}
-          <div>
-            <div className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{member.displayName}</div>
-            <div className="text-xs" style={{ color: roleColor }}>
-              {member.role} · {member.isActive ? '活跃' : '不活跃'}
-              {member.lastActiveAt && ` · 最近活跃 ${new Date(member.lastActiveAt).toLocaleDateString('zh-CN')}`}
-            </div>
-          </div>
-        </div>
-        <button onClick={onClose} className="text-sm px-3 py-1 rounded-md" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>关闭</button>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
-        <div>
-          <div className="text-[22px] font-bold" style={{ color: 'var(--text-primary)' }}>{member.messages}</div>
-          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>发送消息</div>
-        </div>
-        <div>
-          <div className="text-[22px] font-bold" style={{ color: 'var(--text-primary)' }}>{member.sessions}</div>
-          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>创建会话</div>
-        </div>
-        <div>
-          <div className="text-[22px] font-bold" style={{ color: 'var(--text-primary)' }}>{member.defectsCreated}</div>
-          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>缺陷提交</div>
-        </div>
-        <div>
-          <div className="text-[22px] font-bold" style={{ color: 'var(--text-primary)' }}>{member.defectsResolved}</div>
-          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>缺陷解决</div>
-        </div>
-        <div>
-          <div className="text-[22px] font-bold" style={{ color: 'var(--text-primary)' }}>{member.imageRuns}</div>
-          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>图片生成</div>
-        </div>
-      </div>
-    </GlassCard>
-  );
-}
-
 // ─── Tab: Overview ──────────────────────────────────────────────────
 
 function OverviewTab({ overview, trends, agents, loading }: {
@@ -338,57 +255,203 @@ function OverviewTab({ overview, trends, agents, loading }: {
   );
 }
 
-// ─── Tab: Team Insights ─────────────────────────────────────────────
+// ─── Tab: Team Leaderboard ───────────────────────────────────────────
 
-function TeamInsightsTab({ team, loading }: { team: ExecutiveTeamMember[]; loading: boolean }) {
-  const [selectedUser, setSelectedUser] = useState<ExecutiveTeamMember | null>(null);
+const MEDAL = ['🥇', '🥈', '🥉'];
+const RANK_BG = [
+  'rgba(214,178,106,0.12)', // gold
+  'rgba(192,192,192,0.10)', // silver
+  'rgba(176,141,87,0.08)',  // bronze
+];
 
-  if (loading && team.length === 0) return <LoadingSkeleton rows={6} />;
-  if (team.length === 0) return <EmptyHint text="暂无团队成员数据" />;
+const DIMENSION_ICONS: Record<string, { icon: typeof Bot; color: string }> = {
+  'prd-agent': { icon: MessageSquare, color: 'rgba(59,130,246,0.95)' },
+  'visual-agent': { icon: Image, color: 'rgba(168,85,247,0.95)' },
+  'literary-agent': { icon: MessageSquare, color: 'rgba(34,197,94,0.95)' },
+  'defect-agent': { icon: Bug, color: 'rgba(239,68,68,0.85)' },
+  'ai-toolbox': { icon: Zap, color: 'rgba(214,178,106,0.95)' },
+  'chat': { icon: MessageSquare, color: 'rgba(100,116,139,0.8)' },
+  'open-platform': { icon: Link2, color: 'rgba(251,146,60,0.9)' },
+  'messages': { icon: MessageSquare, color: 'rgba(59,130,246,0.85)' },
+  'sessions': { icon: Activity, color: 'rgba(34,197,94,0.85)' },
+  'defects-created': { icon: Bug, color: 'rgba(239,68,68,0.7)' },
+  'defects-resolved': { icon: Bug, color: 'rgba(34,197,94,0.8)' },
+  'images': { icon: Image, color: 'rgba(168,85,247,0.85)' },
+  'groups': { icon: Users, color: 'rgba(100,116,139,0.8)' },
+};
+
+function computeRanks(dim: LeaderboardDimension, userIds: string[]): Map<string, number> {
+  const sorted = userIds
+    .map(uid => ({ uid, val: dim.values[uid] ?? 0 }))
+    .filter(x => x.val > 0)
+    .sort((a, b) => b.val - a.val);
+  const rankMap = new Map<string, number>();
+  sorted.forEach((item, idx) => {
+    if (idx === 0) rankMap.set(item.uid, 0);
+    else if (item.val === sorted[idx - 1].val) rankMap.set(item.uid, rankMap.get(sorted[idx - 1].uid)!);
+    else rankMap.set(item.uid, idx);
+  });
+  return rankMap;
+}
+
+function LeaderboardCell({ value, rank }: { value: number; rank: number | undefined }) {
+  const isTop3 = rank !== undefined && rank < 3;
+  return (
+    <td
+      className="py-2.5 px-3 text-center tabular-nums whitespace-nowrap"
+      style={{
+        background: isTop3 ? RANK_BG[rank!] : undefined,
+        borderBottom: '1px solid rgba(255,255,255,0.04)',
+      }}
+    >
+      {value > 0 ? (
+        <span className="text-[13px] font-semibold" style={{ color: isTop3 ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+          {isTop3 && <span className="mr-1">{MEDAL[rank!]}</span>}
+          {value.toLocaleString()}
+        </span>
+      ) : (
+        <span className="text-[12px]" style={{ color: 'rgba(255,255,255,0.15)' }}>-</span>
+      )}
+    </td>
+  );
+}
+
+function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeaderboard | null; loading: boolean }) {
+  if (loading && !leaderboard) return <LoadingSkeleton rows={8} />;
+  if (!leaderboard || leaderboard.users.length === 0) return <EmptyHint text="暂无团队成员数据" />;
+
+  const { users, dimensions } = leaderboard;
+  const userIds = users.map(u => u.userId);
+  const agentDims = dimensions.filter(d => d.category === 'agent');
+  const activityDims = dimensions.filter(d => d.category === 'activity');
+
+  // pre-compute ranks per dimension
+  const ranksMap = useMemo(() => {
+    const m = new Map<string, Map<string, number>>();
+    dimensions.forEach(dim => m.set(dim.key, computeRanks(dim, userIds)));
+    return m;
+  }, [dimensions, userIds]);
+
+  // user total across all dimensions (for header sorting indicator)
+  const userTotals = useMemo(() => {
+    const totals = new Map<string, number>();
+    userIds.forEach(uid => {
+      totals.set(uid, dimensions.reduce((sum, dim) => sum + (dim.values[uid] ?? 0), 0));
+    });
+    return totals;
+  }, [dimensions, userIds]);
+
+  const renderDimensionRows = (dims: LeaderboardDimension[]) =>
+    dims.map(dim => {
+      const meta = DIMENSION_ICONS[dim.key];
+      const DimIcon = meta?.icon ?? Bot;
+      const dimColor = meta?.color ?? 'rgba(148,163,184,0.7)';
+      return (
+        <tr key={dim.key}>
+          <td
+            className="py-2.5 px-4 whitespace-nowrap sticky left-0 z-10"
+            style={{
+              background: 'var(--glass-bg, rgba(18,18,22,0.95))',
+              borderBottom: '1px solid rgba(255,255,255,0.04)',
+              borderRight: '1px solid rgba(255,255,255,0.06)',
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <DimIcon size={14} style={{ color: dimColor }} />
+              <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>{dim.name}</span>
+            </div>
+          </td>
+          {userIds.map(uid => (
+            <LeaderboardCell key={uid} value={dim.values[uid] ?? 0} rank={ranksMap.get(dim.key)?.get(uid)} />
+          ))}
+        </tr>
+      );
+    });
+
+  const categoryRow = (label: string) => (
+    <tr key={`cat-${label}`}>
+      <td
+        colSpan={userIds.length + 1}
+        className="py-2 px-4 text-[11px] font-semibold uppercase tracking-wider sticky left-0"
+        style={{
+          background: 'rgba(255,255,255,0.03)',
+          color: 'var(--text-muted)',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+        }}
+      >
+        {label}
+      </td>
+    </tr>
+  );
 
   return (
-    <div className="space-y-6">
-      {selectedUser && (
-        <TeamMemberDetailPanel member={selectedUser} onClose={() => setSelectedUser(null)} />
-      )}
-
-      <GlassCard glow>
-        <SectionTitle>团队成员 — 按消息活跃度排序</SectionTitle>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {team.map(m => (
-            <TeamMemberCard key={m.userId} member={m} onClick={() => setSelectedUser(m)} />
-          ))}
+    <div className="space-y-4">
+      <GlassCard glow className="!p-0 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse" style={{ minWidth: `${200 + users.length * 120}px` }}>
+            <thead>
+              <tr>
+                {/* sticky corner cell */}
+                <th
+                  className="py-3 px-4 text-left sticky left-0 top-0 z-20"
+                  style={{
+                    background: 'var(--glass-bg, rgba(18,18,22,0.95))',
+                    borderBottom: '2px solid rgba(255,255,255,0.08)',
+                    borderRight: '1px solid rgba(255,255,255,0.06)',
+                    minWidth: 180,
+                  }}
+                >
+                  <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                    维度 / 用户
+                  </span>
+                </th>
+                {users.map(user => {
+                  const roleColor = ROLE_COLORS[user.role] ?? 'rgba(148,163,184,0.8)';
+                  const total = userTotals.get(user.userId) ?? 0;
+                  return (
+                    <th
+                      key={user.userId}
+                      className="py-3 px-3 text-center sticky top-0 z-10"
+                      style={{
+                        background: 'var(--glass-bg, rgba(18,18,22,0.95))',
+                        borderBottom: '2px solid rgba(255,255,255,0.08)',
+                        minWidth: 110,
+                      }}
+                    >
+                      <div className="flex flex-col items-center gap-1">
+                        {user.avatarFileName ? (
+                          <img src={resolveAvatarUrl(user.avatarFileName)} className="w-8 h-8 rounded-full object-cover" alt="" />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold"
+                            style={{ background: `${roleColor}22`, color: roleColor }}>
+                            {user.displayName[0]}
+                          </div>
+                        )}
+                        <div className="text-[12px] font-semibold truncate max-w-[100px]" style={{ color: 'var(--text-primary)' }}>
+                          {user.displayName}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px]" style={{ color: roleColor }}>{user.role}</span>
+                          <div className="w-1.5 h-1.5 rounded-full" style={{ background: user.isActive ? 'rgba(34,197,94,0.8)' : 'rgba(255,255,255,0.15)' }} />
+                        </div>
+                        <div className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                          {total > 0 ? `${total.toLocaleString()} 总计` : '无活动'}
+                        </div>
+                      </div>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {agentDims.length > 0 && categoryRow('Agent 使用')}
+              {renderDimensionRows(agentDims)}
+              {activityDims.length > 0 && categoryRow('工作活动')}
+              {renderDimensionRows(activityDims)}
+            </tbody>
+          </table>
         </div>
       </GlassCard>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <GlassCard glow>
-          <SectionTitle>角色分布</SectionTitle>
-          <div className="flex gap-6 mt-2">
-            {Object.entries(
-              team.reduce<Record<string, number>>((acc, m) => { acc[m.role] = (acc[m.role] || 0) + 1; return acc; }, {})
-            ).map(([role, count]) => (
-              <div key={role} className="text-center flex-1">
-                <div className="w-12 h-12 rounded-full mx-auto flex items-center justify-center text-lg font-bold"
-                  style={{ background: `${ROLE_COLORS[role] ?? 'rgba(148,163,184,0.8)'}15`, color: ROLE_COLORS[role] ?? 'rgba(148,163,184,0.8)' }}>
-                  {count}
-                </div>
-                <div className="text-[11px] mt-1.5" style={{ color: 'var(--text-muted)' }}>{role}</div>
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-        <GlassCard glow>
-          <SectionTitle>消息 Top 5</SectionTitle>
-          {team.slice(0, 5).map((m, i) => (
-            <div key={m.userId} className="flex items-center gap-3 py-1.5">
-              <span className="text-[11px] font-bold w-4 text-right" style={{ color: i < 3 ? 'var(--accent-gold)' : 'var(--text-muted)' }}>{i + 1}</span>
-              <span className="text-sm flex-1 truncate" style={{ color: 'var(--text-primary)' }}>{m.displayName}</span>
-              <span className="text-sm font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>{m.messages}</span>
-            </div>
-          ))}
-        </GlassCard>
-      </div>
     </div>
   );
 }
@@ -591,23 +654,26 @@ export default function ExecutiveDashboardPage() {
   const [team, setTeam] = useState<ExecutiveTeamMember[]>([]);
   const [agents, setAgents] = useState<ExecutiveAgentStat[]>([]);
   const [models, setModels] = useState<ExecutiveModelStat[]>([]);
+  const [leaderboard, setLeaderboard] = useState<ExecutiveLeaderboard | null>(null);
 
   const fetchAll = useCallback(async (d: number, isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     try {
-      const [ovRes, trRes, tmRes, agRes, mdRes] = await Promise.all([
+      const [ovRes, trRes, tmRes, agRes, mdRes, lbRes] = await Promise.all([
         getExecutiveOverview(d),
         getExecutiveTrends(Math.max(d, 14)),
         getExecutiveTeam(d),
         getExecutiveAgents(d),
         getExecutiveModels(d),
+        getExecutiveLeaderboard(d),
       ]);
       if (ovRes.success) setOverview(ovRes.data);
       if (trRes.success) setTrends(trRes.data);
       if (tmRes.success) setTeam(tmRes.data);
       if (agRes.success) setAgents(agRes.data);
       if (mdRes.success) setModels(mdRes.data);
+      if (lbRes.success) setLeaderboard(lbRes.data);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -648,7 +714,7 @@ export default function ExecutiveDashboardPage() {
       />
 
       {activeTab === 'overview' && <OverviewTab overview={overview} trends={trends} agents={agents} loading={loading} />}
-      {activeTab === 'team' && <TeamInsightsTab team={team} loading={loading} />}
+      {activeTab === 'team' && <TeamInsightsTab leaderboard={leaderboard} loading={loading} />}
       {activeTab === 'agents' && <AgentUsageTab agents={agents} team={team} loading={loading} />}
       {activeTab === 'cost' && <CostCenterTab models={models} loading={loading} />}
       {activeTab === 'integrations' && <IntegrationsTab />}
