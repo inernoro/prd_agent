@@ -129,6 +129,9 @@ public class OpenPlatformServiceImpl : OpenPlatformService
                 case "LastQuotaWarningAt":
                     updateList.Add(updateDef.Set(a => a.LastQuotaWarningAt, (DateTime?)kvp.Value));
                     break;
+                case "NotifyTarget":
+                    updateList.Add(updateDef.Set(a => a.NotifyTarget, (string)kvp.Value));
+                    break;
             }
         }
 

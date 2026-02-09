@@ -46,6 +46,7 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
   const [webhookEnabled, setWebhookEnabled] = useState(false);
   const [tokenQuotaLimit, setTokenQuotaLimit] = useState(0);
   const [quotaWarningThreshold, setQuotaWarningThreshold] = useState(100000);
+  const [notifyTarget, setNotifyTarget] = useState('none');
 
   // 配置数据
   const [config, setConfig] = useState<WebhookConfigResponse | null>(null);
@@ -73,6 +74,7 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
       setWebhookEnabled(data.webhookEnabled);
       setTokenQuotaLimit(data.tokenQuotaLimit);
       setQuotaWarningThreshold(data.quotaWarningThreshold);
+      setNotifyTarget(data.notifyTarget || 'none');
     } catch (err) {
       toast.error('加载配置失败', String(err));
     } finally {
@@ -120,6 +122,7 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
         webhookEnabled,
         tokenQuotaLimit,
         quotaWarningThreshold,
+        notifyTarget,
       };
       await openPlatformService.updateWebhookConfig(app.id, request);
       toast.success('Webhook 配置已保存');
@@ -148,6 +151,7 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
         webhookEnabled,
         tokenQuotaLimit,
         quotaWarningThreshold,
+        notifyTarget,
       });
 
       const result = await openPlatformService.testWebhook(app.id);
@@ -338,6 +342,39 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
                   )}
                 </div>
               )}
+            </section>
+
+            <div className="border-t border-white/10" />
+
+            {/* 站内信通知 */}
+            <section className="space-y-3">
+              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">站内信通知</h3>
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  触发额度预警时，除了发送 Webhook 外，还可以同步发送站内通知
+                </p>
+                <div className="flex gap-2">
+                  {([
+                    { value: 'none', label: '不发送' },
+                    { value: 'owner', label: '仅绑定用户' },
+                    { value: 'all', label: '全部用户' },
+                  ] as const).map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setNotifyTarget(opt.value)}
+                      className="px-3 py-1.5 rounded-lg text-xs border transition-colors"
+                      style={{
+                        background: notifyTarget === opt.value ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.03)',
+                        borderColor: notifyTarget === opt.value ? 'rgba(59,130,246,0.4)' : 'rgba(255,255,255,0.08)',
+                        color: notifyTarget === opt.value ? 'rgb(147,197,253)' : undefined,
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </section>
 
             {/* 测试结果 */}

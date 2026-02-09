@@ -164,7 +164,8 @@ public abstract class OpenPlatformService : IOpenPlatformService
         string? webhookSecret,
         bool webhookEnabled,
         long tokenQuotaLimit,
-        long quotaWarningThreshold)
+        long quotaWarningThreshold,
+        string notifyTarget = "none")
     {
         var updates = new Dictionary<string, object>
         {
@@ -172,7 +173,8 @@ public abstract class OpenPlatformService : IOpenPlatformService
             ["WebhookSecret"] = webhookSecret ?? "",
             ["WebhookEnabled"] = webhookEnabled,
             ["TokenQuotaLimit"] = tokenQuotaLimit,
-            ["QuotaWarningThreshold"] = quotaWarningThreshold
+            ["QuotaWarningThreshold"] = quotaWarningThreshold,
+            ["NotifyTarget"] = notifyTarget
         };
         return await UpdateAppFieldsAsync(appId, updates);
     }

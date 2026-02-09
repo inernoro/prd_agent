@@ -45,40 +45,41 @@ public class WebhookNotificationService : IWebhookNotificationService
         string content,
         List<string>? values = null)
     {
-        if (string.IsNullOrWhiteSpace(app.WebhookUrl))
-        {
-            _logger.LogWarning("App {AppId} has no webhook URL configured, skipping notification", app.Id);
-            return;
-        }
-
         // 替换 {{value}} 占位符
         var resolvedContent = ResolveContentPlaceholders(content, values);
 
-        var payload = new
+        // 1) 外部 Webhook 投递
+        if (!string.IsNullOrWhiteSpace(app.WebhookUrl))
         {
-            type,
-            title,
-            content = resolvedContent,
-            values = values ?? new List<string>(),
-            timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-        };
+            var payload = new
+            {
+                type,
+                title,
+                content = resolvedContent,
+                values = values ?? new List<string>(),
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            };
 
-        var payloadJson = JsonSerializer.Serialize(payload, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+            var payloadJson = JsonSerializer.Serialize(payload, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
 
-        var deliveryLog = await DeliverWebhookAsync(app.Id, app.WebhookUrl, app.WebhookSecret, type, title, payloadJson);
+            var deliveryLog = await DeliverWebhookAsync(app.Id, app.WebhookUrl, app.WebhookSecret, type, title, payloadJson);
 
-        // 保存投递日志
-        try
-        {
-            await _db.WebhookDeliveryLogs.InsertOneAsync(deliveryLog);
+            // 保存投递日志
+            try
+            {
+                await _db.WebhookDeliveryLogs.InsertOneAsync(deliveryLog);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save webhook delivery log for app {AppId}", app.Id);
+            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to save webhook delivery log for app {AppId}", app.Id);
-        }
+
+        // 2) 站内信通知
+        await CreateAdminNotificationAsync(app, type, title, resolvedContent);
     }
 
     public async Task CheckQuotaAndNotifyAsync(string appId, int tokensUsedInRequest)
@@ -280,5 +281,57 @@ public class WebhookNotificationService : IWebhookNotificationService
             result = result[..idx] + value + result[(idx + "{{value}}".Length)..];
         }
         return result;
+    }
+
+    /// <summary>
+    /// 根据 NotifyTarget 配置创建站内信通知
+    /// </summary>
+    private async Task CreateAdminNotificationAsync(
+        OpenPlatformApp app,
+        string type,
+        string title,
+        string resolvedContent)
+    {
+        try
+        {
+            var notifyTarget = app.NotifyTarget ?? "none";
+            if (notifyTarget == "none") return;
+
+            // 通知级别映射
+            var level = type switch
+            {
+                "quota_exceed" => "warning",
+                "test" => "info",
+                _ => "info"
+            };
+
+            var notification = new AdminNotification
+            {
+                Key = $"open-platform:{app.Id}:{type}:{DateTime.UtcNow:yyyyMMddHH}",
+                TargetUserId = notifyTarget == "owner" ? app.BoundUserId : null,
+                Title = $"[{app.AppName}] {title}",
+                Message = resolvedContent,
+                Level = level,
+                Source = "open-platform",
+                ExpiresAt = DateTime.UtcNow.AddDays(7)
+            };
+
+            // 幂等插入：如果 Key 已存在则跳过
+            var existing = await _db.AdminNotifications
+                .Find(n => n.Key == notification.Key)
+                .FirstOrDefaultAsync();
+
+            if (existing == null)
+            {
+                await _db.AdminNotifications.InsertOneAsync(notification);
+                _logger.LogInformation(
+                    "Created admin notification for app {AppId}, type={Type}, target={Target}",
+                    app.Id, type, notifyTarget);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create admin notification for app {AppId}", app.Id);
+        }
     }
 }

@@ -81,7 +81,8 @@ public class OpenPlatformController : ControllerBase
                 WebhookUrl = app.WebhookUrl,
                 TokenQuotaLimit = app.TokenQuotaLimit,
                 TokensUsed = app.TokensUsed,
-                QuotaWarningThreshold = app.QuotaWarningThreshold
+                QuotaWarningThreshold = app.QuotaWarningThreshold,
+                NotifyTarget = app.NotifyTarget
             });
         }
 
@@ -343,7 +344,8 @@ public class OpenPlatformController : ControllerBase
             TokenQuotaLimit = app.TokenQuotaLimit,
             TokensUsed = app.TokensUsed,
             QuotaWarningThreshold = app.QuotaWarningThreshold,
-            LastQuotaWarningAt = app.LastQuotaWarningAt
+            LastQuotaWarningAt = app.LastQuotaWarningAt,
+            NotifyTarget = app.NotifyTarget
         };
 
         return Ok(ApiResponse<WebhookConfigResponse>.Ok(response));
@@ -378,13 +380,18 @@ public class OpenPlatformController : ControllerBase
             webhookSecret = app.WebhookSecret;
         }
 
+        // 验证 NotifyTarget 值
+        var validTargets = new[] { "owner", "all", "none" };
+        var notifyTarget = validTargets.Contains(request.NotifyTarget) ? request.NotifyTarget : "none";
+
         var success = await _openPlatformService.UpdateWebhookConfigAsync(
             id,
             request.WebhookUrl,
             webhookSecret,
             request.WebhookEnabled,
             request.TokenQuotaLimit,
-            request.QuotaWarningThreshold);
+            request.QuotaWarningThreshold,
+            notifyTarget);
 
         if (!success)
         {
@@ -537,6 +544,7 @@ public class AppListItem
     public long TokenQuotaLimit { get; set; }
     public long TokensUsed { get; set; }
     public long QuotaWarningThreshold { get; set; }
+    public string NotifyTarget { get; set; } = "none";
 }
 
 public class PagedAppsResponse
@@ -583,6 +591,8 @@ public class UpdateWebhookConfigRequest
     public bool WebhookEnabled { get; set; }
     public long TokenQuotaLimit { get; set; }
     public long QuotaWarningThreshold { get; set; } = 100000;
+    /// <summary>站内信通知目标：owner / all / none</summary>
+    public string NotifyTarget { get; set; } = "none";
 }
 
 public class WebhookConfigResponse
@@ -595,6 +605,8 @@ public class WebhookConfigResponse
     public long TokensUsed { get; set; }
     public long QuotaWarningThreshold { get; set; }
     public DateTime? LastQuotaWarningAt { get; set; }
+    /// <summary>站内信通知目标：owner / all / none</summary>
+    public string NotifyTarget { get; set; } = "none";
 }
 
 public class WebhookTestResponse

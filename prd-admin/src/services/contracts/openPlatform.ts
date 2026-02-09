@@ -24,6 +24,7 @@ export interface OpenPlatformApp {
   tokenQuotaLimit: number;
   tokensUsed: number;
   quotaWarningThreshold: number;
+  notifyTarget: string;
 }
 
 export interface OpenPlatformRequestLog {
@@ -106,6 +107,7 @@ export interface WebhookConfigResponse {
   tokensUsed: number;
   quotaWarningThreshold: number;
   lastQuotaWarningAt?: string;
+  notifyTarget: string;
 }
 
 export interface UpdateWebhookConfigRequest {
@@ -114,6 +116,7 @@ export interface UpdateWebhookConfigRequest {
   webhookEnabled: boolean;
   tokenQuotaLimit: number;
   quotaWarningThreshold: number;
+  notifyTarget: string;
 }
 
 export interface WebhookTestResponse {

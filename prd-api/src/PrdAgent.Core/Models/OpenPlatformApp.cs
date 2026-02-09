@@ -86,4 +86,12 @@ public class OpenPlatformApp
 
     /// <summary>上次发送额度预警的时间（用于防重复发送）</summary>
     public DateTime? LastQuotaWarningAt { get; set; }
+
+    /// <summary>
+    /// 站内信通知目标。
+    /// - "owner"：仅通知应用绑定用户
+    /// - "all"：全局通知（所有用户可见）
+    /// - "none"：不发送站内信（默认）
+    /// </summary>
+    public string NotifyTarget { get; set; } = "none";
 }

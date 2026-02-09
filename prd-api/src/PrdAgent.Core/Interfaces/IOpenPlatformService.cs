@@ -106,5 +106,6 @@ public interface IOpenPlatformService
         string? webhookSecret,
         bool webhookEnabled,
         long tokenQuotaLimit,
-        long quotaWarningThreshold);
+        long quotaWarningThreshold,
+        string notifyTarget = "none");
 }
