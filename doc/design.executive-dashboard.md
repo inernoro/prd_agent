@@ -1,6 +1,6 @@
 # 总裁面板 & 周报 Agent 设计文档
 
-> **版本**：v2.0 | **日期**：2026-02-09 | **状态**：Draft (Data Audit Complete)
+> **版本**：v3.0 | **日期**：2026-02-09 | **状态**：Phase 1 Implemented (Real Data)
 
 ---
 
@@ -1034,56 +1034,159 @@ GitHub Webhook (push event)
 
 ## 八、实现路径
 
-### Phase 0: 数据基础设施（必须先做）
+### Phase 0: 数据基础设施（后续优化）
 
-> 没有这一步，后面所有面板只能看 7 天数据，30 天趋势图会是空的。
+> 当前直接查原始集合实现实时查询。未来数据量增长后需要聚合层优化。
 
 - [ ] 新增 `DailyStatsSnapshot` 模型 + `daily_stats_snapshots` 集合
 - [ ] 实现 `DailyStatsAggregationWorker` 定时任务（每日 01:00 UTC）
 - [ ] 回填历史数据：基于 messages（永久保留）重建过去 N 天的快照
 - [ ] 在 `LlmModel` 上新增 `InputPricePerMillion` / `OutputPricePerMillion` 字段（成本计算用）
 
-### Phase 1: 全局概览 Tab
+### Phase 1: 全局概览 + 团队洞察 + Agent 分析 + 成本中心 ✅ DONE
 
-- [ ] `ExecutiveStatsService` — 聚合查询（实时 + 快照双源）
-- [ ] `ExecutiveDashboardController` — 6 个 KPI + 趋势 + 热力图 API
-- [ ] 前端 `OverviewTab` — KPI 卡片 + 30 天趋势 ECharts + 热力图
+- [x] `ExecutiveController` — 5 个 API 端点（overview/trends/team/agents/models）
+- [x] 前端 5 Tab 完整 UI（Overview / Team Insights / Agent Usage / Cost Center / Integrations）
+- [x] `executive.read` 权限注册 + 菜单首位 + ROOT 全权限
+- [x] 时间范围选择器（7/14/30 天）+ 手动刷新按钮
+- [x] 趋势对比（current vs previous period）
+- [x] 加载态 + 空态处理
 
-### Phase 2: 团队洞察 Tab
+### Phase 2: 周报 Agent
 
-- [ ] 用户活动聚合查询（跨 messages / defect_reports / image_gen_runs / prd_comments / content_gaps）
-- [ ] `UserProfileCard` — 个人画像卡片
-- [ ] `TeamInsightsTab` — 团队排名 + 个人下钻
-
-### Phase 3: 周报 Agent
-
-- [ ] `WeeklyReportService` — 从 daily_stats_snapshots 汇总 + LLM 生成叙述
+- [ ] `WeeklyReportService` — 从查询结果汇总 + LLM 生成叙述
 - [ ] `WeeklyReportWorker` — 每周日 22:00 定时任务
 - [ ] `WeeklyReportViewer` — 前端查看器
 - [ ] 通知推送（复用 AdminNotification）
 
-### Phase 4: 成本中心 Tab
-
-- [ ] Token 成本计算（llm_request_logs × model 单价）
-- [ ] 预算配置 + 预警（executive_configs）
-- [ ] `CostCenterTab` — 成本分解图 + 预算进度
-
-### Phase 5: 外部协作 Tab
+### Phase 3: 外部协作 Tab
 
 - [ ] `ExternalActivity` 模型 + Webhook 入口
 - [ ] Claude Code Hook 集成
 - [ ] Jira/GitLab 轮询适配器
 - [ ] `IntegrationsTab` — 配置管理 + 活动流
 
-### Phase 6: Agent 分析 Tab
+### Phase 4: 高级功能
 
-- [ ] 采纳率/使用深度计算（基于 RequestPurpose 前缀聚合）
-- [ ] `SkillMatrixGrid` — 用户 × Agent 技能矩阵
-- [ ] `AgentUsageTab` — 完整 Agent 分析页
+- [ ] 预算配置 + 预警（executive_configs）
+- [ ] 模型成本计算（需 model pricing 配置）
+- [ ] 活跃时段热力图
+- [ ] 技能矩阵视图
+- [ ] DailyStatsSnapshot 聚合层（性能优化）
 
 ---
 
-## 九、与现有系统的关系
+## 九、已实现文件清单 (Phase 1)
+
+> 以下为截至 v3.0 已落地的代码文件及其职责。
+
+### 9.1 后端
+
+| 文件 | 职责 |
+|------|------|
+| `PrdAgent.Api/Controllers/Api/ExecutiveController.cs` | 总裁面板 API（5 个端点：overview/trends/team/agents/models） |
+| `PrdAgent.Core/Security/AdminPermissionCatalog.cs` | 新增 `executive.read` 权限常量 |
+| `PrdAgent.Core/Security/AdminMenuCatalog.cs` | 新增总裁面板菜单项（sortOrder=5，菜单首位）+ `GetMenusForUser` 权限判断 |
+
+#### API 端点清单
+
+| 端点 | 说明 | 数据源 |
+|------|------|--------|
+| `GET /api/executive/overview?days=7` | 全局概览 KPI（用户数、消息数、Token、LLM调用、缺陷、图片） | users, messages, llm_request_logs, defect_reports, image_gen_runs |
+| `GET /api/executive/trends?days=30` | 每日消息数 + Token 趋势 | messages |
+| `GET /api/executive/team?days=7` | 团队成员详情（排序后返回每人的消息/会话/缺陷/图片） | users, messages, sessions, defect_reports, image_gen_runs |
+| `GET /api/executive/agents?days=7` | Agent 使用统计（按 RequestPurpose 前缀聚合） | llm_request_logs |
+| `GET /api/executive/models?days=7` | 模型使用统计（调用次数、Token 分布、平均响应时间） | llm_request_logs |
+
+#### 数据聚合规则
+
+```
+Agent 归属规则:
+  RequestPurpose = "prd-agent.chat::chat"
+    → appKey = "prd-agent" (取第一个 . 之前的前缀)
+    → name = "PRD Agent" (ResolveAgentName 硬编码映射)
+
+Overview 对比期计算:
+  days=7 → periodStart = today-6, prevPeriodStart = today-13
+  对比 current period vs previous period 计算趋势百分比
+```
+
+### 9.2 前端
+
+| 文件 | 职责 |
+|------|------|
+| `prd-admin/src/pages/ExecutiveDashboardPage.tsx` | 主页面（5 Tab + 时间范围选择器 + 刷新按钮） |
+| `prd-admin/src/services/contracts/executive.ts` | TypeScript 类型定义（5 个 API 响应类型 + 5 个 Contract） |
+| `prd-admin/src/services/real/executive.ts` | API 调用实现（5 个 service 函数） |
+| `prd-admin/src/services/api.ts` | 新增 `executive.*` 路径定义 |
+| `prd-admin/src/services/index.ts` | 新增 5 个 `withAuth` 导出 |
+| `prd-admin/src/layouts/AppShell.tsx` | `iconMap` 新增 Crown、Sparkles、Bug 图标 |
+| `prd-admin/src/lib/authzMenuMapping.ts` | 菜单 + 权限定义（前端侧） |
+| `prd-admin/src/app/App.tsx` | 路由 `/executive` + RequirePermission |
+
+#### 前端数据流
+
+```
+ExecutiveDashboardPage
+  ├─ useEffect([days]) → fetchAll(days) → Promise.all(5 API calls)
+  │   ├─ getExecutiveOverview(days)   → overview state
+  │   ├─ getExecutiveTrends(days)     → trends state
+  │   ├─ getExecutiveTeam(days)       → team state
+  │   ├─ getExecutiveAgents(days)     → agents state
+  │   └─ getExecutiveModels(days)     → models state
+  │
+  ├─ OverviewTab(overview, trends, agents)
+  │   ├─ 6x KpiCard (with trendPct comparison)
+  │   ├─ EChart line: messages trend
+  │   ├─ EChart pie: agent distribution
+  │   ├─ EChart line: token trend
+  │   └─ StatRow list: business summary
+  │
+  ├─ TeamInsightsTab(team)
+  │   ├─ TeamMemberCard grid (click → detail)
+  │   ├─ TeamMemberDetailPanel (5 metrics)
+  │   ├─ Role distribution circles
+  │   └─ Top 5 ranking
+  │
+  ├─ AgentUsageTab(agents, team)
+  │   ├─ Agent cards (ProgressBar + StatRow)
+  │   └─ Agent ranking table
+  │
+  ├─ CostCenterTab(models)
+  │   ├─ 4x KpiCard (calls, tokens, models, avg response)
+  │   ├─ EChart bar: model call distribution
+  │   └─ Model detail table
+  │
+  └─ IntegrationsTab (placeholder)
+      └─ 4x integration cards (Claude Code/Jira/GitLab/Feishu)
+```
+
+### 9.3 扩展指南
+
+#### 新增 KPI 指标
+
+1. **后端**：在 `ExecutiveController.GetOverview()` 中增加一个查询，返回值加一个字段
+2. **前端**：在 `ExecutiveOverview` 类型中加字段，在 `OverviewTab` 的 KpiCard grid 中加一张卡片
+3. **无需迁移**：新字段对旧前端无感知（JSON 忽略未知字段）
+
+#### 新增 Tab
+
+1. **后端**：在 `ExecutiveController` 中加一个 `[HttpGet]` 端点
+2. **前端**：
+   - `contracts/executive.ts` 加响应类型
+   - `real/executive.ts` 加 service 函数
+   - `services/index.ts` 加 `withAuth` 导出
+   - `ExecutiveDashboardPage.tsx` 的 `TABS` 数组加一项 + 对应渲染组件
+
+#### 新增第三方集成
+
+1. 在 `IntegrationsTab` 的 `integrations` 数组加一项
+2. 后端实现 Webhook 接收端点 + `ExternalActivity` 写入
+3. 在 Overview/Team 页面中展示外部活动数据
+
+---
+
+## 十、与现有系统的关系
 
 | 现有功能 | 总裁面板如何复用 |
 |----------|-----------------|

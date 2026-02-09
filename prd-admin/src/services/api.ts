@@ -246,6 +246,15 @@ export const api = {
     },
   },
 
+  // ============ Executive 总裁面板 ============
+  executive: {
+    overview: () => '/api/executive/overview',
+    trends: () => '/api/executive/trends',
+    team: () => '/api/executive/team',
+    agents: () => '/api/executive/agents',
+    models: () => '/api/executive/models',
+  },
+
   // ============ Dashboard 仪表盘 ============
   dashboard: {
     notifications: {
