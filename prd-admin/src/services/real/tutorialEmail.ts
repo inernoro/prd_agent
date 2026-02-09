@@ -202,10 +202,11 @@ export async function testSendTutorialEmail(data: {
 // ========== AI Generate ==========
 
 export async function generateTutorialEmailTemplate(data: {
-  topic: string;
+  topic?: string;
   style?: string;
   language?: string;
   extraRequirements?: string;
+  messages?: Array<{ role: string; content: string }>;
 }): Promise<ApiResponse<{ htmlContent: string; model?: string; tokens?: number }>> {
   return apiRequest(api.tutorialEmail.generate(), { method: 'POST', body: data });
 }

@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import {
-  Sparkles, Send, Save, Eye, Loader2, RefreshCw,
+  Sparkles, Send, Save, Eye, Loader2, RefreshCw, Code2,
   Trash2, FileText, Users, Clock, CheckCircle, XCircle,
-  ChevronDown, ChevronUp, Mail,
+  ChevronDown, ChevronUp, Mail, Copy, Download,
 } from 'lucide-react';
 import {
   generateTutorialEmailTemplate,
@@ -59,7 +59,7 @@ export default function TutorialEmailPanel({ onActionsReady }: TutorialEmailPane
   }, [viewMode, onActionsReady]);
 
   return (
-    <div className="h-full overflow-y-auto space-y-4 pb-6">
+    <div className="h-full min-h-0 flex flex-col">
       {viewMode === 'compose' && <ComposeView />}
       {viewMode === 'templates' && <TemplatesView />}
       {viewMode === 'records' && <RecordsView />}
@@ -67,55 +67,140 @@ export default function TutorialEmailPanel({ onActionsReady }: TutorialEmailPane
   );
 }
 
-// ========== AI Compose View (Main) ==========
+// ========== Chat Message Types ==========
 
-const stylePresets = [
-  { value: '', label: '默认风格' },
-  { value: '极简科技风，深色背景，霓虹渐变', label: '科技暗黑' },
-  { value: '温暖友好，圆角卡片，柔和配色', label: '温暖亲和' },
-  { value: '商务专业，蓝灰色调，简洁排版', label: '商务正式' },
-  { value: '活力创意，大胆配色，动感布局', label: '活力创意' },
-];
+type ChatMsg = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  htmlContent?: string; // extracted HTML for assistant messages
+  timestamp: Date;
+};
+
+// ========== AI Compose View (Split Layout) ==========
 
 function ComposeView() {
-  const [topic, setTopic] = useState('');
-  const [style, setStyle] = useState('');
-  const [extra, setExtra] = useState('');
-  const [language, setLanguage] = useState('中文');
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [input, setInput] = useState('');
   const [generating, setGenerating] = useState(false);
-
   const [htmlContent, setHtmlContent] = useState('');
   const [showCode, setShowCode] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Send section
   const [sendEmail, setSendEmail] = useState('');
   const [sendSubject, setSendSubject] = useState('');
   const [sending, setSending] = useState(false);
   const [saveAsTemplate, setSaveAsTemplate] = useState(true);
   const [templateName, setTemplateName] = useState('');
 
-  const handleGenerate = async () => {
-    if (!topic.trim()) {
-      toast.error('请输入邮件主题');
-      return;
-    }
-    setGenerating(true);
-    const res = await generateTutorialEmailTemplate({
-      topic: topic.trim(),
-      style: style || undefined,
-      language,
-      extraRequirements: extra || undefined,
-    });
-    setGenerating(false);
+  // Auto-scroll on new messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
-    if (res.success && res.data.htmlContent) {
-      setHtmlContent(res.data.htmlContent);
-      toast.success(`AI 已生成邮件模板${res.data.model ? ` (${res.data.model})` : ''}`);
-    } else {
-      toast.error('生成失败，请重试');
-    }
+  // Auto-resize textarea
+  const adjustTextarea = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
   };
 
   const handleSend = async () => {
+    const text = input.trim();
+    if (!text || generating) return;
+
+    const userMsg: ChatMsg = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: text,
+      timestamp: new Date(),
+    };
+
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
+    setInput('');
+    setGenerating(true);
+
+    // Build conversation history for the API
+    // Include existing HTML content as context for modifications
+    const apiMessages: Array<{ role: string; content: string }> = [];
+
+    for (const msg of updatedMessages) {
+      if (msg.role === 'user') {
+        apiMessages.push({ role: 'user', content: msg.content });
+      } else if (msg.htmlContent) {
+        // For assistant messages, send back the HTML they generated
+        apiMessages.push({ role: 'assistant', content: msg.htmlContent });
+      }
+    }
+
+    const isFirstMessage = updatedMessages.filter(m => m.role === 'user').length === 1;
+
+    const res = await generateTutorialEmailTemplate(
+      isFirstMessage
+        ? { topic: text }
+        : { messages: apiMessages },
+    );
+
+    setGenerating(false);
+
+    if (res.success && res.data.htmlContent) {
+      const assistantMsg: ChatMsg = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: res.data.model
+          ? `已生成邮件 (${res.data.model}, ${res.data.tokens ?? '?'} tokens)`
+          : '已生成邮件',
+        htmlContent: res.data.htmlContent,
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, assistantMsg]);
+      setHtmlContent(res.data.htmlContent);
+    } else {
+      const errorMsg: ChatMsg = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: '生成失败，请重试。',
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, errorMsg]);
+      toast.error('生成失败');
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      void handleSend();
+    }
+  };
+
+  const handleNewChat = () => {
+    setMessages([]);
+    setHtmlContent('');
+    setShowCode(false);
+    setInput('');
+  };
+
+  const handleCopyHtml = () => {
+    navigator.clipboard.writeText(htmlContent);
+    toast.success('HTML 已复制到剪贴板');
+  };
+
+  const handleDownloadHtml = () => {
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'email-template.html';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleQuickSend = async () => {
     if (!sendEmail.trim()) {
       toast.error('请输入收件邮箱');
       return;
@@ -127,7 +212,7 @@ function ComposeView() {
     setSending(true);
     const res = await quickSendTutorialEmail({
       email: sendEmail.trim(),
-      subject: sendSubject.trim() || topic.trim() || '产品教程',
+      subject: sendSubject.trim() || '产品教程',
       htmlContent,
       saveAsTemplate,
       templateName: templateName.trim() || undefined,
@@ -141,7 +226,7 @@ function ComposeView() {
           : '邮件已发送',
       );
     } else if (res.success && !res.data.sent) {
-      toast.error('邮件发送失败，请检查 SMTP 配置');
+      toast.error('发送失败，请检查 SMTP 配置');
     } else {
       toast.error('操作失败');
     }
@@ -154,176 +239,249 @@ function ComposeView() {
   };
 
   return (
-    <div className="space-y-5">
-      {/* Step 1: 输入区 - 占满宽度 */}
-      <GlassCard className="p-6 space-y-4">
-        <div className="flex items-center gap-2 mb-1">
-          <Sparkles size={18} style={{ color: 'var(--color-warning)' }} />
-          <span className="text-base font-medium" style={{ color: 'var(--text-primary)' }}>
-            描述你想发的邮件
-          </span>
-          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            AI 自动生成完整 HTML 邮件模板
-          </span>
-        </div>
-
-        <textarea
-          placeholder="例如：Day 1 新手引导教程 - 介绍如何创建第一个 PRD 文档，包含快速入门步骤和截图说明&#10;&#10;你也可以描述具体内容：欢迎邮件、功能更新通知、教程系列第3封..."
-          value={topic}
-          onChange={(e) => setTopic(e.target.value)}
-          rows={4}
-          className="w-full px-4 py-3 text-sm rounded-lg resize-none leading-relaxed"
-          style={inputStyle}
-        />
-
-        <div className="flex items-center gap-3 flex-wrap">
-          <select
-            value={style}
-            onChange={(e) => setStyle(e.target.value)}
-            className="px-3 py-2 text-sm rounded-lg"
-            style={inputStyle}
-          >
-            {stylePresets.map((p) => (
-              <option key={p.value} value={p.value}>{p.label}</option>
-            ))}
-          </select>
-
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            className="px-3 py-2 text-sm rounded-lg"
-            style={inputStyle}
-          >
-            <option value="中文">中文</option>
-            <option value="English">English</option>
-            <option value="中英混合">中英混合</option>
-          </select>
-
-          <input
-            placeholder="额外要求（可选，如：配色用蓝色系，添加 logo 占位）"
-            value={extra}
-            onChange={(e) => setExtra(e.target.value)}
-            className="flex-1 min-w-[250px] px-3 py-2 text-sm rounded-lg"
-            style={inputStyle}
-          />
-
-          <Button onClick={handleGenerate} disabled={generating}>
-            {generating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-            {generating ? 'AI 生成中...' : 'AI 生成邮件'}
-          </Button>
-        </div>
-      </GlassCard>
-
-      {/* Step 2: 预览区 - 大面积展示 */}
-      {htmlContent && (
-        <GlassCard className="p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Eye size={18} style={{ color: 'var(--text-secondary)' }} />
-              <span className="text-base font-medium" style={{ color: 'var(--text-primary)' }}>
-                邮件预览
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
+    <div className="flex-1 min-h-0 flex gap-4">
+      {/* Left: Email Preview */}
+      <div className="flex-1 min-w-0 flex flex-col gap-3">
+        {/* Preview header */}
+        <div className="flex items-center justify-between flex-shrink-0 px-1">
+          <div className="flex items-center gap-2">
+            <Eye size={16} style={{ color: 'var(--text-secondary)' }} />
+            <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+              邮件预览
+            </span>
+          </div>
+          {htmlContent && (
+            <div className="flex items-center gap-1">
               <button
                 onClick={() => setShowCode(!showCode)}
-                className="px-3 py-1.5 text-xs rounded-lg transition-colors"
-                style={{
-                  background: showCode ? 'var(--bg-elevated)' : 'transparent',
-                  color: 'var(--text-muted)',
-                  border: '1px solid var(--border-default)',
-                }}
+                className="p-1.5 rounded-md transition-colors hover:opacity-80"
+                style={{ color: showCode ? 'var(--accent-primary)' : 'var(--text-muted)' }}
+                title={showCode ? '切换预览' : '查看源码'}
               >
-                {showCode ? '切换预览' : '查看源码'}
+                <Code2 size={14} />
               </button>
               <button
-                onClick={handleGenerate}
-                className="px-3 py-1.5 text-xs rounded-lg flex items-center gap-1.5 transition-colors"
-                style={{ color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
-                disabled={generating}
+                onClick={handleCopyHtml}
+                className="p-1.5 rounded-md transition-colors hover:opacity-80"
+                style={{ color: 'var(--text-muted)' }}
+                title="复制 HTML"
               >
-                <RefreshCw size={12} /> 重新生成
+                <Copy size={14} />
+              </button>
+              <button
+                onClick={handleDownloadHtml}
+                className="p-1.5 rounded-md transition-colors hover:opacity-80"
+                style={{ color: 'var(--text-muted)' }}
+                title="下载 HTML"
+              >
+                <Download size={14} />
               </button>
             </div>
-          </div>
+          )}
+        </div>
 
-          {showCode ? (
-            <textarea
-              value={htmlContent}
-              onChange={(e) => setHtmlContent(e.target.value)}
-              className="w-full px-4 py-3 text-xs font-mono rounded-lg leading-relaxed"
-              style={{ ...inputStyle, minHeight: '60vh' }}
-            />
-          ) : (
-            <div className="rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border-default)' }}>
+        {/* Preview content */}
+        <GlassCard className="flex-1 min-h-0 flex flex-col" padding="none" overflow="hidden">
+          {htmlContent ? (
+            showCode ? (
+              <textarea
+                value={htmlContent}
+                onChange={(e) => setHtmlContent(e.target.value)}
+                className="flex-1 w-full px-4 py-3 text-xs font-mono leading-relaxed resize-none"
+                style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: 'none', outline: 'none' }}
+              />
+            ) : (
               <iframe
                 srcDoc={htmlContent}
                 sandbox=""
-                className="w-full border-0"
-                style={{ minHeight: '60vh' }}
+                className="flex-1 w-full border-0"
                 title="邮件预览"
+                style={{ background: 'white' }}
               />
+            )
+          ) : (
+            <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-center space-y-3">
+                <Mail size={48} className="mx-auto opacity-15" />
+                <div className="text-sm">在右侧对话中描述你想要的邮件</div>
+                <div className="text-xs opacity-60">AI 会自动生成精美的 HTML 邮件模板</div>
+              </div>
             </div>
           )}
         </GlassCard>
-      )}
 
-      {/* Step 3: 发送区 */}
-      {htmlContent && (
-        <GlassCard className="p-6 space-y-4">
-          <div className="flex items-center gap-2 mb-1">
-            <Send size={18} style={{ color: 'var(--text-secondary)' }} />
-            <span className="text-base font-medium" style={{ color: 'var(--text-primary)' }}>
-              发送邮件
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <input
-              placeholder="收件人邮箱"
-              value={sendEmail}
-              onChange={(e) => setSendEmail(e.target.value)}
-              className="px-4 py-2.5 text-sm rounded-lg"
-              style={inputStyle}
-            />
-            <input
-              placeholder="邮件标题（默认使用主题描述）"
-              value={sendSubject}
-              onChange={(e) => setSendSubject(e.target.value)}
-              className="px-4 py-2.5 text-sm rounded-lg"
-              style={inputStyle}
-            />
-          </div>
-
-          <div className="flex items-center justify-between pt-1">
-            <div className="flex items-center gap-5">
-              <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
+        {/* Send bar (only when content exists) */}
+        {htmlContent && (
+          <GlassCard className="flex-shrink-0 p-3">
+            <div className="flex items-center gap-3">
+              <input
+                placeholder="收件邮箱"
+                value={sendEmail}
+                onChange={(e) => setSendEmail(e.target.value)}
+                className="flex-1 px-3 py-2 text-sm rounded-lg"
+                style={inputStyle}
+              />
+              <input
+                placeholder="邮件标题（可选）"
+                value={sendSubject}
+                onChange={(e) => setSendSubject(e.target.value)}
+                className="flex-1 px-3 py-2 text-sm rounded-lg"
+                style={inputStyle}
+              />
+              <label className="flex items-center gap-1.5 text-xs whitespace-nowrap cursor-pointer flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>
                 <input
                   type="checkbox"
                   checked={saveAsTemplate}
                   onChange={(e) => setSaveAsTemplate(e.target.checked)}
                   className="rounded"
                 />
-                <Save size={14} /> 同时保存为模板
+                <Save size={12} /> 存模板
               </label>
-              {saveAsTemplate && (
-                <input
-                  placeholder="模板名称（可选，自动命名）"
-                  value={templateName}
-                  onChange={(e) => setTemplateName(e.target.value)}
-                  className="px-3 py-1.5 text-sm rounded-lg w-56"
-                  style={inputStyle}
-                />
-              )}
+              <Button onClick={handleQuickSend} disabled={sending} size="sm">
+                {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                发送
+              </Button>
             </div>
+          </GlassCard>
+        )}
+      </div>
 
-            <Button onClick={handleSend} disabled={sending}>
-              {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-              {sending ? '发送中...' : '发送邮件'}
+      {/* Right: Chat Interface */}
+      <GlassCard className="w-96 flex-shrink-0 flex flex-col" padding="none" overflow="hidden">
+        {/* Chat header */}
+        <div className="flex items-center justify-between px-4 py-3 flex-shrink-0"
+          style={{ borderBottom: '1px solid var(--border-default)' }}>
+          <div className="flex items-center gap-2">
+            <Sparkles size={16} style={{ color: 'var(--color-warning)' }} />
+            <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+              AI 邮件助手
+            </span>
+          </div>
+          {messages.length > 0 && (
+            <button
+              onClick={handleNewChat}
+              className="p-1.5 rounded-md transition-colors hover:opacity-80"
+              style={{ color: 'var(--text-muted)' }}
+              title="新建对话"
+            >
+              <RefreshCw size={14} />
+            </button>
+          )}
+        </div>
+
+        {/* Messages area */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
+          {messages.length === 0 ? (
+            <div className="h-full flex items-center justify-center">
+              <div className="text-center space-y-4 px-4">
+                <div className="w-12 h-12 rounded-xl mx-auto flex items-center justify-center"
+                  style={{ background: 'var(--bg-elevated)' }}>
+                  <Sparkles size={24} style={{ color: 'var(--color-warning)', opacity: 0.7 }} />
+                </div>
+                <div>
+                  <div className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+                    描述你想要的邮件
+                  </div>
+                  <div className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                    告诉我邮件主题，我会生成精美的 HTML 邮件。
+                    之后你可以继续对话来修改细节。
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  {[
+                    '写一个新手引导 Day 1 教程邮件',
+                    '生成一封功能更新通知邮件',
+                    '做一个带截图的操作指南邮件',
+                  ].map((hint) => (
+                    <button
+                      key={hint}
+                      onClick={() => { setInput(hint); textareaRef.current?.focus(); }}
+                      className="block w-full text-left px-3 py-2 text-xs rounded-lg transition-colors"
+                      style={{
+                        background: 'var(--bg-elevated)',
+                        color: 'var(--text-secondary)',
+                        border: '1px solid var(--border-default)',
+                      }}
+                    >
+                      {hint}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div
+                    className="max-w-[85%] px-3 py-2 rounded-xl text-sm leading-relaxed"
+                    style={
+                      msg.role === 'user'
+                        ? {
+                            background: 'var(--accent-primary)',
+                            color: 'white',
+                            borderBottomRightRadius: 4,
+                          }
+                        : {
+                            background: 'var(--bg-elevated)',
+                            color: 'var(--text-primary)',
+                            borderBottomLeftRadius: 4,
+                          }
+                    }
+                  >
+                    {msg.content}
+                    {msg.htmlContent && (
+                      <button
+                        onClick={() => setHtmlContent(msg.htmlContent!)}
+                        className="block mt-1.5 text-xs underline opacity-70 hover:opacity-100"
+                      >
+                        查看此版本
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {generating && (
+                <div className="flex justify-start">
+                  <div className="px-3 py-2 rounded-xl text-sm flex items-center gap-2"
+                    style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)', borderBottomLeftRadius: 4 }}>
+                    <Loader2 size={14} className="animate-spin" />
+                    AI 正在生成邮件...
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </>
+          )}
+        </div>
+
+        {/* Input area */}
+        <div className="flex-shrink-0 px-4 py-3" style={{ borderTop: '1px solid var(--border-default)' }}>
+          <div className="flex items-end gap-2">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => { setInput(e.target.value); adjustTextarea(); }}
+              onKeyDown={handleKeyDown}
+              placeholder={messages.length === 0 ? '描述邮件主题...' : '输入修改指令，如：把头部换成蓝色渐变...'}
+              rows={1}
+              className="flex-1 px-3 py-2 text-sm rounded-lg resize-none leading-relaxed"
+              style={{ ...inputStyle, maxHeight: 120 }}
+            />
+            <Button
+              onClick={handleSend}
+              disabled={generating || !input.trim()}
+              size="sm"
+              style={{ flexShrink: 0 }}
+            >
+              {generating ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
             </Button>
           </div>
-        </GlassCard>
-      )}
+        </div>
+      </GlassCard>
     </div>
   );
 }
@@ -365,7 +523,7 @@ function TemplatesView() {
   };
 
   return (
-    <div className="space-y-3">
+    <div className="flex-1 min-h-0 overflow-y-auto space-y-3">
       {previewHtml && (
         <div className="fixed inset-0 z-50 flex items-center justify-center"
           style={{ background: 'rgba(0,0,0,0.5)' }}
@@ -511,7 +669,7 @@ function RecordsView() {
   };
 
   return (
-    <div className="space-y-3">
+    <div className="flex-1 min-h-0 overflow-y-auto space-y-3">
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-2">
           <select

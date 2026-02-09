@@ -46,32 +46,47 @@ public sealed class TutorialEmailController : ControllerBase
     [HttpPost("generate")]
     public async Task<IActionResult> GenerateTemplate([FromBody] GenerateRequest req, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(req.Topic))
+        // 支持两种模式：首次生成（topic必填）和多轮修改（messages必填）
+        var hasMessages = req.Messages is { Count: > 0 };
+        if (!hasMessages && string.IsNullOrWhiteSpace(req.Topic))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "topic 不能为空"));
 
-        var systemPrompt = @"你是一名专业的邮件模板设计师。用户会给你一个邮件主题或描述，你需要生成一封精美的 HTML 邮件。
+        var systemPrompt = @"你是一名专业的邮件模板设计师。你的工作是生成和修改 HTML 邮件。
 
-要求：
+规则：
 1. 生成完整的 HTML 邮件代码（可直接发送的邮件），使用内联样式（email 不支持外部 CSS）
 2. 设计风格：现代、简洁、专业，渐变色头部，白色内容区
 3. 移动端自适应（max-width: 600px，table 布局）
-4. 包含以下变量占位符（用 {{变量名}} 格式）：
-   - {{userName}} 用户名
-   - {{productName}} 产品名
-   - {{stepNumber}} 当前步骤
-   - {{totalSteps}} 总步骤数
-5. 包含 CTA 按钮（行动号召）
-6. 包含截图占位区域（用灰色背景矩形 + 文字说明）
-7. 底部包含退订提示
-8. 只返回 HTML 代码，不要返回任何解释文字、markdown 标记或代码块标记
+4. 包含变量占位符（用 {{变量名}} 格式）：{{userName}} {{productName}} {{stepNumber}} {{totalSteps}}
+5. 包含 CTA 按钮（行动号召）、截图占位区域、底部退订提示
+6. 只返回 HTML 代码，不要返回任何解释文字、markdown 标记或代码块标记
+7. 当用户要求修改时，基于之前的 HTML 代码进行修改并返回完整修改后的 HTML
 
 邮件语言：" + (req.Language ?? "中文");
 
-        var userPrompt = req.Topic.Trim();
-        if (!string.IsNullOrWhiteSpace(req.Style))
-            userPrompt += $"\n\n设计风格偏好：{req.Style}";
-        if (!string.IsNullOrWhiteSpace(req.ExtraRequirements))
-            userPrompt += $"\n\n额外要求：{req.ExtraRequirements}";
+        var messages = new JsonArray
+        {
+            new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+        };
+
+        if (hasMessages)
+        {
+            // 多轮模式：直接使用前端传来的对话历史
+            foreach (var msg in req.Messages!)
+            {
+                messages.Add(new JsonObject { ["role"] = msg.Role, ["content"] = msg.Content });
+            }
+        }
+        else
+        {
+            // 首次生成模式
+            var userPrompt = req.Topic!.Trim();
+            if (!string.IsNullOrWhiteSpace(req.Style))
+                userPrompt += $"\n\n设计风格偏好：{req.Style}";
+            if (!string.IsNullOrWhiteSpace(req.ExtraRequirements))
+                userPrompt += $"\n\n额外要求：{req.ExtraRequirements}";
+            messages.Add(new JsonObject { ["role"] = "user", ["content"] = userPrompt });
+        }
 
         var gatewayRequest = new GatewayRequest
         {
@@ -79,11 +94,7 @@ public sealed class TutorialEmailController : ControllerBase
             ModelType = "chat",
             RequestBody = new JsonObject
             {
-                ["messages"] = new JsonArray
-                {
-                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                    new JsonObject { ["role"] = "user", ["content"] = userPrompt },
-                },
+                ["messages"] = messages,
                 ["temperature"] = 0.7,
                 ["max_tokens"] = 4096,
             },
@@ -564,6 +575,16 @@ public sealed class TutorialEmailController : ControllerBase
         public string? Style { get; set; }
         public string? Language { get; set; }
         public string? ExtraRequirements { get; set; }
+        /// <summary>
+        /// 多轮对话历史（用于追加修改指令），格式 [{ role, content }]
+        /// </summary>
+        public List<ChatMessage>? Messages { get; set; }
+    }
+
+    public class ChatMessage
+    {
+        public string Role { get; set; } = "user";
+        public string Content { get; set; } = "";
     }
 
     public class QuickSendRequest
