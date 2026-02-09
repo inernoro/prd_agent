@@ -46,6 +46,7 @@ public class MongoDbContext
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
+    public IMongoCollection<AutomationRule> AutomationRules => _database.GetCollection<AutomationRule>("automation_rules");
     /// <summary>
     /// Prompts 配置（集合名保持 promptstages 以兼容历史数据；语义已迁移为“提示词”）
     /// </summary>
@@ -782,6 +783,11 @@ public class MongoDbContext
         WebhookDeliveryLogs.Indexes.CreateOne(new CreateIndexModel<WebhookDeliveryLog>(
             Builders<WebhookDeliveryLog>.IndexKeys.Ascending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "ttl_webhook_delivery_logs", ExpireAfter = TimeSpan.FromDays(30) }));
+
+        // AutomationRules: 按事件类型 + 启用状态索引
+        AutomationRules.Indexes.CreateOne(new CreateIndexModel<AutomationRule>(
+            Builders<AutomationRule>.IndexKeys.Ascending(x => x.EventType).Ascending(x => x.Enabled),
+            new CreateIndexOptions { Name = "idx_automation_rules_event_enabled" }));
 
         // ModelExchanges：按 ModelAlias 唯一索引
         try

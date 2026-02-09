@@ -18,6 +18,7 @@ public class WebhookNotificationService : IWebhookNotificationService
     private readonly MongoDbContext _db;
     private readonly IOpenPlatformService _openPlatformService;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IAutomationHub _automationHub;
     private readonly ILogger<WebhookNotificationService> _logger;
 
     /// <summary>预警通知最小间隔（避免频繁通知）</summary>
@@ -30,11 +31,13 @@ public class WebhookNotificationService : IWebhookNotificationService
         MongoDbContext db,
         IOpenPlatformService openPlatformService,
         IHttpClientFactory httpClientFactory,
+        IAutomationHub automationHub,
         ILogger<WebhookNotificationService> logger)
     {
         _db = db;
         _openPlatformService = openPlatformService;
         _httpClientFactory = httpClientFactory;
+        _automationHub = automationHub;
         _logger = logger;
     }
 
@@ -127,13 +130,21 @@ public class WebhookNotificationService : IWebhookNotificationService
                 ? $"${remainingDollars:F2}"
                 : "$0.00";
 
-            // 发送预警通知
+            // 发送预警通知（直接渠道：app 自身配置的 webhook + 站内信）
             await SendNotificationAsync(
                 app,
                 type: "quota_exceed",
                 title: "额度预警通知",
                 content: "您的额度即将用尽，当前剩余额度 {{value}}",
                 values: new List<string> { remainingDisplay });
+
+            // 发布到自动化中枢（匹配所有相关规则）
+            _ = _automationHub.PublishEventAsync(
+                eventType: "open-platform.quota.warning",
+                title: "额度预警通知",
+                content: "应用「{{value}}」额度即将用尽，当前剩余额度 {{value}}",
+                values: new List<string> { app.AppName, remainingDisplay },
+                sourceId: app.Id);
         }
         catch (Exception ex)
         {

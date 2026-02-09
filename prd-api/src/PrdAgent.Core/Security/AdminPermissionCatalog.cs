@@ -28,6 +28,9 @@ public static class AdminPermissionCatalog
 
     public const string OpenPlatformManage = "open-platform.manage";
 
+    /// <summary>自动化规则管理权限</summary>
+    public const string AutomationsManage = "automations.manage";
+
     public const string DataRead = "data.read";
     public const string DataWrite = "data.write";
 
@@ -119,6 +122,8 @@ public static class AdminPermissionCatalog
         new(LogsRead, "日志-读", "查看系统/LLM/API 请求日志"),
 
         new(OpenPlatformManage, "开放平台", "管理开放平台 App / 调用方 / 日志"),
+
+        new(AutomationsManage, "自动化", "管理自动化规则与事件通知"),
 
         new(DataRead, "数据管理-读", "查看导入导出/摘要"),
         new(DataWrite, "数据管理-写", "执行导入/清理等危险操作"),

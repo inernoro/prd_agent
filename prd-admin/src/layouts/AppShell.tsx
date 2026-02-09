@@ -23,6 +23,7 @@ import {
   CheckCircle2,
   X,
   Bug,
+  Zap,
   type LucideIcon,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -61,6 +62,7 @@ const iconMap: Record<string, LucideIcon> = {
   Plug,
   UserCog,
   FlaskConical,
+  Zap,
 };
 
 const notificationTone = {
