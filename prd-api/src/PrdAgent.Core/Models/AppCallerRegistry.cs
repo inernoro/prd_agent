@@ -341,6 +341,25 @@ public static class DefectAgent
 }
 
 /// <summary>
+/// Tutorial Email 教程邮件
+/// </summary>
+public static class TutorialEmail
+{
+    public const string AppName = "Tutorial Email";
+
+    public static class Generate
+    {
+        [AppCallerMetadata(
+            "教程邮件生成",
+            "AI 自动生成教程邮件 HTML 内容",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Email"
+        )]
+        public const string Chat = "tutorial-email.generate::chat";
+    }
+}
+
+/// <summary>
 /// Open Platform 开放平台
 /// </summary>
 public static class OpenPlatform
