@@ -39,10 +39,8 @@ public class VisionMessage
 
 /// <summary>
 /// Vision API 内容项（text 或 image_url）
+/// 注意：仅用于序列化（构建请求体），不做多态反序列化。
 /// </summary>
-[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
-[JsonDerivedType(typeof(VisionTextContent), "text")]
-[JsonDerivedType(typeof(VisionImageContent), "image_url")]
 public abstract class VisionContentItem
 {
     [JsonPropertyName("type")]
