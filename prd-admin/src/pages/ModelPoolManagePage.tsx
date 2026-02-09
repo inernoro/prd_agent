@@ -36,6 +36,8 @@ import {
   Check,
   ChevronRight,
   ChevronDown,
+  Unfold,
+  Fold,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { systemDialog } from '@/lib/systemDialog';
@@ -87,8 +89,8 @@ export function ModelPoolManagePage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // 列表展开状态
-  const [expandedPoolId, setExpandedPoolId] = useState<string | null>(null);
+  // 列表展开状态（支持多个池同时展开）
+  const [expandedPoolIds, setExpandedPoolIds] = useState<Set<string>>(new Set());
   // 类型分组折叠状态（默认全展开）
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
 
@@ -327,7 +329,7 @@ export function ModelPoolManagePage() {
       )
     : pools;
 
-  // 按 modelType 分组，组内按优先级排序
+  // 按 modelType 分组，组内备用池置顶，其余按名称排序
   const groupedByType = useMemo(() => {
     const typeOrder = MODEL_TYPES.map(t => t.value);
     const groups = new Map<string, ModelGroup[]>();
@@ -336,22 +338,29 @@ export function ModelPoolManagePage() {
       if (!groups.has(type)) groups.set(type, []);
       groups.get(type)!.push(pool);
     }
+    // 排序函数：备用池置顶，其余按名称
+    const sortPools = (arr: ModelGroup[]) =>
+      arr.sort((a, b) => {
+        if (a.isDefaultForType && !b.isDefaultForType) return -1;
+        if (!a.isDefaultForType && b.isDefaultForType) return 1;
+        return a.name.localeCompare(b.name);
+      });
     const ordered = typeOrder
       .filter(type => groups.has(type))
       .map(type => ({
         type,
         label: getModelTypeDisplayName(type),
         Icon: getModelTypeIcon(type),
-        pools: groups.get(type)!.sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50)),
+        pools: sortPools(groups.get(type)!),
       }));
     // 追加不在 MODEL_TYPES 里的类型
-    for (const [type, pools] of groups) {
+    for (const [type, typePools] of groups) {
       if (!typeOrder.includes(type)) {
         ordered.push({
           type,
           label: getModelTypeDisplayName(type),
           Icon: getModelTypeIcon(type),
-          pools: pools.sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50)),
+          pools: sortPools(typePools),
         });
       }
     }
@@ -380,6 +389,30 @@ export function ModelPoolManagePage() {
                 }}
               />
             </div>
+            <Tooltip content="全部展开">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setCollapsedTypes(new Set());
+                  setExpandedPoolIds(new Set(pools.filter(p => (p.models?.length || 0) > 0).map(p => p.id)));
+                }}
+              >
+                <Unfold size={14} />
+              </Button>
+            </Tooltip>
+            <Tooltip content="全部折叠">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setCollapsedTypes(new Set(groupedByType.map(g => g.type)));
+                  setExpandedPoolIds(new Set());
+                }}
+              >
+                <Fold size={14} />
+              </Button>
+            </Tooltip>
             <Button variant="primary" size="sm" onClick={handleAddPool}>
               <Plus size={14} />
               新建模型池
@@ -412,8 +445,7 @@ export function ModelPoolManagePage() {
                 <span className="min-w-[120px] flex-[2]">名称</span>
                 <span className="min-w-[100px] flex-1">代码</span>
                 <span className="w-[80px] shrink-0 text-center">策略</span>
-                <span className="w-[50px] shrink-0 text-center">优先级</span>
-                <span className="min-w-[100px] flex-1">健康状态</span>
+                <span className="min-w-[120px] flex-1">健康状态</span>
                 <span className="w-[120px] shrink-0" />
               </div>
 
@@ -426,6 +458,11 @@ export function ModelPoolManagePage() {
                 const totalHealthy = group.pools.reduce((s, p) => s + (p.models?.filter(m => m.healthStatus === 'Healthy').length ?? 0), 0);
                 const totalDegraded = group.pools.reduce((s, p) => s + (p.models?.filter(m => m.healthStatus === 'Degraded').length ?? 0), 0);
                 const totalUnavailable = group.pools.reduce((s, p) => s + (p.models?.filter(m => m.healthStatus === 'Unavailable').length ?? 0), 0);
+                const backupPool = group.pools.find(p => p.isDefaultForType);
+                const emptyPools = group.pools.filter(p => !p.models || p.models.length === 0).length;
+                // 策略分布
+                const strategySet = new Set(group.pools.map(p => p.strategyType ?? 0));
+                const strategyLabels = [...strategySet].map(s => STRATEGY_LABEL_MAP[s] || '快速');
 
                 return (
                   <div key={group.type}>
@@ -453,6 +490,34 @@ export function ModelPoolManagePage() {
                       <span className="text-[11px] shrink-0 whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
                         {totalPools} 个池 · {totalModels} 个模型
                       </span>
+                      {/* 备用池标记 */}
+                      {backupPool ? (
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
+                          style={{ background: 'rgba(34,197,94,0.10)', color: 'rgba(34,197,94,0.85)' }}
+                        >
+                          备用: {backupPool.name}
+                        </span>
+                      ) : totalPools > 0 ? (
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
+                          style={{ background: 'rgba(251,191,36,0.10)', color: 'rgba(251,191,36,0.85)' }}
+                        >
+                          未设备用
+                        </span>
+                      ) : null}
+                      {/* 策略分布 */}
+                      {strategyLabels.length > 0 && (
+                        <span className="text-[10px] shrink-0 whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                          {strategyLabels.join(' / ')}
+                        </span>
+                      )}
+                      {/* 空池警告 */}
+                      {emptyPools > 0 && (
+                        <span className="text-[10px] shrink-0 whitespace-nowrap" style={{ color: 'rgba(251,191,36,0.85)' }}>
+                          {emptyPools} 空池
+                        </span>
+                      )}
                       <div className="flex-1" />
                       {/* 分组健康摘要 */}
                       {totalModels > 0 && (
@@ -490,7 +555,7 @@ export function ModelPoolManagePage() {
 
                     {/* ── 第二级：池行 ── */}
                     {!isTypeCollapsed && group.pools.map((pool) => {
-                      const isExpanded = expandedPoolId === pool.id;
+                      const isExpanded = expandedPoolIds.has(pool.id);
                       const modelCount = pool.models?.length || 0;
                       const healthyCnt = pool.models?.filter(m => m.healthStatus === 'Healthy').length ?? 0;
                       const degradedCnt = pool.models?.filter(m => m.healthStatus === 'Degraded').length ?? 0;
@@ -505,7 +570,12 @@ export function ModelPoolManagePage() {
                             style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
                             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                            onClick={() => setExpandedPoolId(isExpanded ? null : pool.id)}
+                            onClick={() => setExpandedPoolIds(prev => {
+                              const next = new Set(prev);
+                              if (next.has(pool.id)) next.delete(pool.id);
+                              else next.add(pool.id);
+                              return next;
+                            })}
                           >
                             {/* 展开箭头 */}
                             <span className="w-5 shrink-0 flex items-center justify-center">
@@ -553,16 +623,8 @@ export function ModelPoolManagePage() {
                               </span>
                             </span>
 
-                            {/* 优先级 */}
-                            <span
-                              className="w-[50px] shrink-0 text-center text-[12px] tabular-nums"
-                              style={{ color: 'var(--text-muted)' }}
-                            >
-                              {pool.priority ?? 50}
-                            </span>
-
                             {/* 健康状态 */}
-                            <div className="min-w-[100px] flex-1 flex items-center gap-1.5 whitespace-nowrap">
+                            <div className="min-w-[120px] flex-1 flex items-center gap-1.5 whitespace-nowrap">
                               {modelCount === 0 ? (
                                 <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无模型</span>
                               ) : healthyCnt === modelCount ? (
