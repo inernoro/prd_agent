@@ -33,8 +33,9 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
             var requestBodyChars = requestBodyRaw.Length;
             var requestBodyMaxChars = LlmLogLimits.GetRequestBodyMaxChars(settings);
 
-            // 先对 JSON 中每个值进行截断（超过 100 字符的值），再整体截断
-            var requestBodyTrimmed = TruncateJsonStringValues(requestBodyRaw, maxValueLength: 100);
+            // 对 JSON 中 base64 data URL 提取 SHA256 摘要（图片由 COS 反查恢复），
+            // 文本内容保留完整（不再按 100 字符截断），整体大小由 requestBodyMaxChars 兜底
+            var requestBodyTrimmed = TruncateJsonStringValues(requestBodyRaw, maxValueLength: requestBodyMaxChars);
             var requestBodyStored = Truncate(requestBodyTrimmed, requestBodyMaxChars);
             var requestBodyTruncated = requestBodyChars > requestBodyStored.Length;
 
