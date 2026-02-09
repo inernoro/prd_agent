@@ -51,6 +51,9 @@ public static class AdminMenuCatalog
         // 开放平台
         new("open-platform", "/open-platform", "开放平台", "API 应用与调用日志", "Plug", 120),
 
+        // 总裁面板
+        new("executive", "/executive", "总裁面板", "团队工作与 AI 使用全景", "Crown", 125),
+
         // 权限管理
         new("authz", "/authz", "权限管理", "系统角色与用户权限", "UserCog", 130),
 
