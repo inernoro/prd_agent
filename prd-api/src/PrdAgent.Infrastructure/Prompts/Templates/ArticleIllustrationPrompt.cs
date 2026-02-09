@@ -32,9 +32,15 @@ public static class ArticleIllustrationPrompt
     /// <summary>
     /// 将用户提示词包裹为 anchor 模式的完整 system prompt。
     /// 格式约束在前（优先级高），用户创作指导在后。
+    /// 若 userInstruction 为空，则仅返回格式约束（无需用户风格也能工作）。
     /// </summary>
     public static string WrapForAnchorMode(string userInstruction)
     {
+        if (string.IsNullOrWhiteSpace(userInstruction))
+        {
+            return AnchorFormatConstraint;
+        }
+
         return $"""
 {AnchorFormatConstraint}
 ---

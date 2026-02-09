@@ -1955,14 +1955,15 @@ public class ImageMasterController : ControllerBase
         }
 
         var userInstruction = (request?.UserInstruction ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(userInstruction))
+        var insertionMode = (request?.InsertionMode ?? "anchor").Trim().ToLowerInvariant();
+        var isAnchorMode = insertionMode == "anchor";
+
+        // 锚点模式下 userInstruction 可为空（系统自动提供格式约束）；legacy 模式仍需用户提供
+        if (!isAnchorMode && string.IsNullOrWhiteSpace(userInstruction))
         {
             await WriteJsonResponseAsync(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "userInstruction 不能为空"), StatusCodes.Status400BadRequest, ct);
             return;
         }
-
-        var insertionMode = (request?.InsertionMode ?? "anchor").Trim().ToLowerInvariant();
-        var isAnchorMode = insertionMode == "anchor";
 
         // 设置 SSE 响应头
         Response.ContentType = "text/event-stream";

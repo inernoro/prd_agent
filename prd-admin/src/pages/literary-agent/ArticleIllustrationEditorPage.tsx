@@ -715,13 +715,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
 
-    if (!selectedPrompt) {
-      toast.warning('请先选择一个提示词模板');
-      return;
-    }
-
-    // 使用选中的提示词作为风格提示词
-    const systemPrompt = selectedPrompt.content;
+    // 使用选中的风格提示词（可选，不选则仅使用系统格式约束）
+    const systemPrompt = selectedPrompt?.content ?? '';
 
     setMarkerStreaming(true);
     isStreamingRef.current = true; // 标记开始流式输出
@@ -1701,7 +1696,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       label: '生成配图标记',
       action: handleGenerateMarkers,
       icon: Wand2,
-      disabled: !articleContent.trim() || !selectedPrompt,
+      disabled: !articleContent.trim(),
       show: phase === 1, // Editing
     },
     {
