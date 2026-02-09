@@ -1988,7 +1988,10 @@ public class ImageMasterController : ControllerBase
 
             // 调用主模型 LLM
             var client = llmClient;
-            var systemPrompt = userInstruction;
+            // Anchor 模式：自动包裹用户提示词，注入输出格式约束（用户旧提示词无需修改）
+            var systemPrompt = isAnchorMode
+                ? PrdAgent.Infrastructure.Prompts.Templates.ArticleIllustrationPrompt.WrapForAnchorMode(userInstruction)
+                : userInstruction;
             var userPrompt = articleContent;
 
             var messages = new List<LLMMessage>
