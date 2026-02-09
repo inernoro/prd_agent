@@ -7,7 +7,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
-import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
+import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts, getReplayCurl } from '@/services';
 import type { LlmLogsMetaUser, LlmLogsMetaRequestPurpose } from '@/services/contracts/llmLogs';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
@@ -486,6 +486,23 @@ function isTruncatedText(v: unknown): v is string {
 /** 检测文本是否需要被还原（token 占位符或截断文本） */
 function needsRestore(v: unknown): v is string {
   return isPromptTokenText(v) || isTruncatedText(v);
+}
+
+/**
+ * 检测请求体是否包含需要后端恢复的 base64 图片引用。
+ * 匹配两种格式：
+ *   1. [BASE64_IMAGE:<sha256>:<mime>] — 新格式（LogWriter 提取的 SHA256）
+ *   2. data:image/...;base64,...[N chars trimmed] — 旧截断格式
+ */
+function hasBase64ImageRefs(requestBody?: string): boolean {
+  if (!requestBody) return false;
+  // 新格式: [BASE64_IMAGE:sha256:mime]
+  if (/\[BASE64_IMAGE:[0-9a-f]{64}:[^\]]+\]/.test(requestBody)) return true;
+  // 旧截断格式: 被截断的 base64 data URL
+  if (/data:image\/[^;]+;base64,[A-Za-z0-9+/].*\.\.\[\d+ chars trimmed\]/.test(requestBody)) return true;
+  // 旧 sha256 属性格式
+  if (/"sha256"\s*:\s*"[0-9a-f]{64}"/.test(requestBody)) return true;
+  return false;
 }
 
 /**
@@ -1740,6 +1757,22 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                       size="sm"
                       onClick={async () => {
                         try {
+                          // 检测是否需要后端恢复 base64 图片
+                          if (detail && hasBase64ImageRefs(detail.requestBodyRedacted)) {
+                            setCopiedHint('正在从 COS 恢复图片...');
+                            try {
+                              const resp = await getReplayCurl(detail.id);
+                              if (resp.success && resp.data?.curl) {
+                                await navigator.clipboard.writeText(resp.data.curl);
+                                const warn = resp.data.warning ? ` (${resp.data.warning})` : '';
+                                setCopiedHint(`curl 已复制（含 ${resp.data.imageCount ?? 0} 张图片）${warn}`);
+                                setTimeout(() => setCopiedHint(''), 2500);
+                                return;
+                              }
+                            } catch {
+                              // 后端恢复失败，降级到本地 curl
+                            }
+                          }
                           await navigator.clipboard.writeText(curlText || '');
                           setCopiedHint('curl 已复制');
                           setTimeout(() => setCopiedHint(''), 1200);

@@ -144,6 +144,13 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
             // 如果内容长度超过限制，截断并添加标记
             if (content.Length > maxValueLength)
             {
+                // 特殊处理：base64 data URL → 提取 SHA256 摘要保留引用
+                // 格式: [BASE64_IMAGE:<sha256_hex>:<mime>]（约 90 字符，不会再被截断）
+                if (TryExtractBase64DataUrlSha256(content, out var sha256Hex, out var mime))
+                {
+                    return $"\"[BASE64_IMAGE:{sha256Hex}:{mime}]\"";
+                }
+
                 // 截取前 maxValueLength 个字符，注意要处理可能截断转义序列的情况
                 var truncated = SafeTruncateJsonString(content, maxValueLength);
                 return $"\"{truncated}...[{content.Length - maxValueLength} chars trimmed]\"";
@@ -169,6 +176,43 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// 检测并提取 base64 data URL 的 SHA256 摘要（用于 COS 图片反查）。
+    /// 匹配格式: data:image/xxx;base64,<base64_data>
+    /// 返回原始字节的 SHA256 + MIME 类型，供 replay-curl 从 COS 恢复完整图片。
+    /// </summary>
+    private static bool TryExtractBase64DataUrlSha256(string content, out string sha256Hex, out string mime)
+    {
+        sha256Hex = string.Empty;
+        mime = "image/png";
+
+        const string dataPrefix = "data:";
+        const string base64Marker = ";base64,";
+
+        if (!content.StartsWith(dataPrefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var markerIdx = content.IndexOf(base64Marker, StringComparison.OrdinalIgnoreCase);
+        if (markerIdx < 0) return false;
+
+        mime = content[dataPrefix.Length..markerIdx];
+        var base64Data = content[(markerIdx + base64Marker.Length)..];
+
+        if (string.IsNullOrWhiteSpace(base64Data)) return false;
+
+        try
+        {
+            var bytes = Convert.FromBase64String(base64Data);
+            var hash = SHA256.HashData(bytes);
+            sha256Hex = Convert.ToHexString(hash).ToLowerInvariant();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string Sha256Hex(string input)
