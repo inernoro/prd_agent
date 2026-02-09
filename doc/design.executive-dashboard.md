@@ -1,6 +1,6 @@
 # 总裁面板 & 周报 Agent 设计文档
 
-> **版本**：v1.0 | **日期**：2026-02-08 | **状态**：Draft
+> **版本**：v2.0 | **日期**：2026-02-09 | **状态**：Draft (Data Audit Complete)
 
 ---
 
@@ -17,38 +17,450 @@
 
 ---
 
-## 二、我们已经有什么（数据基础盘点）
+## 二、数据审计（字段级盘点）
 
-系统已有的 55 个 MongoDB 集合中，以下直接可用于总裁面板：
+> 以下基于代码审计结果，逐集合列出可用字段、用户标识覆盖、可提取指标。
 
-| 数据源 | 集合 | 可提取维度 |
-|--------|------|-----------|
-| **LLM 调用日志** | `llmrequestlogs` | 用户、Agent 类型、模型、Token 消耗、耗时、成功率 |
-| **API 请求日志** | `apirequestlogs` | 用户、端点、客户端类型(desktop/web)、状态码、耗时 |
-| **开放平台日志** | `openplatformrequestlogs` | AppId、用户、Token、请求路径 |
-| **对话数据** | `sessions` + `messages` | 对话数、消息条数、对话时长、角色分布 |
-| **缺陷管理** | `defect_reports` + `defect_messages` | 缺陷数、状态流转时间、严重级别分布 |
-| **群组活动** | `groups` + `groupmembers` | 团队结构、人员分布、PRD 关联 |
-| **用户状态** | `users` | 最后登录、最后活跃时间、角色 |
-| **AppCaller 注册表** | `llm_app_callers` | 每个功能点的调用统计（TotalCalls / SuccessCalls / FailedCalls） |
-| **渠道日志** | `channel_request_logs` | 邮件等多渠道使用情况 |
-| **水印/市场** | `marketplace_fork_logs` | 配置市场活跃度 |
+### 2.1 用户标识覆盖矩阵
 
-**结论**：数据已经足够丰富，核心缺的是 **聚合层** 和 **展示层**。
+| 集合 | 用户标识字段 | 状态 | 备注 |
+|------|-------------|------|------|
+| `users` | `UserId`, `LastActiveAt`, `LastLoginAt`, `Role` | **完整** | 有 UserType 区分人/Bot |
+| `messages` | `SenderId` | **完整** | User 消息有 SenderId，Assistant 消息也有 |
+| `sessions` | `OwnerUserId` | **部分** | 个人会话有，群组会话为 null（通过 GroupId 间接关联） |
+| `llm_request_logs` | `UserId` | **完整** | nullable，但绝大多数请求有值 |
+| `api_request_logs` | `UserId` | **完整** | 默认值 "anonymous"，需过滤 |
+| `defect_reports` | `ReporterId`, `AssigneeId`, `ResolvedById`, `RejectedById` | **完整** | 4 种用户角色均有标识 |
+| `defect_messages` | `UserId` | **完整** | user 消息有，assistant 消息为 null |
+| `image_gen_runs` | `OwnerAdminId` | **完整** | 字段名是 AdminId 但实际是 UserId |
+| `image_master_sessions` | `OwnerUserId` | **完整** | |
+| `image_master_messages` | `OwnerUserId` | **完整** | |
+| `prd_comments` | `AuthorUserId` | **完整** | |
+| `content_gaps` | `AskedByUserId` | **完整** | |
+| `open_platform_request_logs` | `UserId` | **完整** | 通过 BoundUserId 关联 |
+| `marketplace_fork_logs` | `UserId` | **完整** | 含 SourceOwnerUserId |
+| `toolbox_runs` | `UserId` | **完整** | |
+| `channel_request_logs` | `MappedUserId` | **部分** | 需通过 ChannelIdentityMapping 映射 |
+| `groups` → `group_members` | `UserId` | **完整** | 含 JoinedAt |
+
+**结论：用户标识覆盖率约 95%，无需大规模补数据。**
+
+### 2.2 关键集合字段明细
+
+#### `llm_request_logs` — 最核心的分析数据源
+
+```
+字段                          类型        用于
+──────────────────────────────────────────────────────────
+UserId                        string?     → 按用户聚合
+GroupId / SessionId           string?     → 关联对话上下文
+RequestPurpose                string?     → AppCallerCode，区分 Agent 和功能点
+RequestPurposeDisplayName     string?     → 中文名（自包含，日志写入时已保存）
+Provider / Model              string      → 按模型/平台聚合成本
+PlatformId / PlatformName     string?     → 平台维度
+ModelGroupId / ModelGroupName string?     → 模型池维度
+InputTokens / OutputTokens    int?        → Token 消耗（成本计算核心）
+CacheReadInputTokens          int?        → 缓存命中率
+StartedAt / EndedAt           DateTime    → 耗时分析
+FirstByteAt                   DateTime?   → TTFB（首字节延迟）
+DurationMs                    long?       → 响应时间
+Status                        string      → running/succeeded/failed/cancelled
+RequestType                   string?     → chat/intent/vision/generation
+ImageSuccessCount             int?        → 生图成功数
+IsExchange / ExchangeName     bool/string → Exchange 中继追踪
+```
+
+**可提取指标**：
+- 每用户 Token 消耗（按天/周/月）
+- 每用户 Agent 使用频率（RequestPurpose 前缀 = appKey）
+- 模型成本分析（Model × Token × 单价）
+- 成功率 / 失败率 / 平均耗时 / TTFB P50/P95
+- Agent 采纳度（去重 UserId count by RequestPurpose 前缀）
+
+**TTL 问题**：7 天自动过期 → 历史趋势会丢失（见 2.3）
+
+#### `messages` — 对话活跃度
+
+```
+字段                类型          用于
+──────────────────────────────────────────────────
+SenderId            string?       → 按用户聚合消息数
+GroupId             string        → 关联群组/项目
+SessionId           string        → 关联会话
+Role                MessageRole   → User/Assistant 区分
+TokenUsage.Input    int           → 对话级 Token（长期保留，不受 TTL 影响）
+TokenUsage.Output   int           → 同上
+Timestamp           DateTime      → 活跃时间分析
+ViewRole            UserRole?     → PM/DEV/QA 角色视角
+LlmRequestId        string?       → 关联 LLM 日志明细
+```
+
+**可提取指标**：
+- 每用户每天消息数
+- 对话轮次（同一 SessionId 的消息数 / 2）
+- 使用角色分布（ViewRole）
+- 活跃时段热力图（Timestamp 的 hour × weekday）
+- **长期 Token 趋势**（TokenUsage 不受 TTL 影响）
+
+#### `defect_reports` — 缺陷管理效率
+
+```
+字段                类型        用于
+──────────────────────────────────────────────────
+ReporterId          string      → 谁提交
+AssigneeId          string?     → 谁处理
+Severity            string?     → blocker/critical/major/minor/suggestion
+Priority            string?     → high/medium/low
+Status              string      → 9 种状态
+CreatedAt           DateTime    → 提交时间
+SubmittedAt         DateTime?   → 正式提交时间
+AssignedAt          DateTime?   → 分配时间
+ResolvedAt          DateTime?   → 解决时间
+ClosedAt            DateTime?   → 关闭时间
+```
+
+**可提取指标**：
+- 每用户缺陷提交/解决数
+- 平均解决时间（ResolvedAt - CreatedAt）
+- 按严重级别分布
+- 缺陷状态漏斗（draft → submitted → assigned → resolved → closed）
+
+#### `image_gen_runs` — 图片生成
+
+```
+字段                类型        用于
+──────────────────────────────────────────────────
+OwnerAdminId        string      → 谁发起
+AppCallerCode       string?     → text2img / img2img / vision / compose
+AppKey              string?     → visual-agent / literary-agent
+Total / Done / Failed int       → 成功率
+CreatedAt / EndedAt DateTime    → 耗时
+ModelGroupName      string?     → 使用的模型池
+```
+
+**可提取指标**：
+- 每用户生图数量
+- 按生图类型分布（文生图/图生图/多图合成/局部重绘）
+- 生图成功率 & 平均耗时
+
+#### 已有的 StatsController（可直接复用）
+
+```
+GET /api/dashboard/stats/overview     → totalUsers, activeUsers, newUsersThisWeek,
+                                        totalGroups, totalMessages, todayMessages, usersByRole
+GET /api/dashboard/stats/message-trend → 30 天消息趋势（按天）
+GET /api/dashboard/stats/token-usage   → Token 用量（chat + 非 chat 合并）
+GET /api/dashboard/stats/active-groups → Top N 活跃群组
+GET /api/dashboard/stats/gap-stats     → 内容缺失按状态/类型
+```
+
+### 2.3 必须先解决的问题：TTL 导致历史数据丢失
+
+**现状**：
+
+| 集合 | TTL | 影响 |
+|------|-----|------|
+| `llm_request_logs` | **7 天** | 无法做周环比/月趋势；周报 Agent 如果周日跑，只能看到最近 7 天 |
+| `api_request_logs` | **7 天** | 同上 |
+| `open_platform_request_logs` | **30 天** | 月报还行，季报不行 |
+| `channel_request_logs` | **30 天** | 同上 |
+| `messages` | **无 TTL** | 长期可用 |
+| `defect_reports` | **无 TTL** | 长期可用 |
+| `image_gen_runs` | **无 TTL** | 长期可用 |
+
+**解决方案：新增 `daily_stats_snapshots` 集合 — 每日聚合归档**
+
+```csharp
+/// <summary>
+/// 每日统计快照 — 在 TTL 删除原始日志前，将聚合结果持久化保存。
+/// 每天凌晨 1:00 由定时任务生成前一天的快照。
+/// </summary>
+public class DailyStatsSnapshot
+{
+    public string Id { get; set; }
+    public DateTime Date { get; set; }               // 哪一天（UTC Date）
+
+    // ── 全局指标 ──
+    public int ActiveUserCount { get; set; }          // 当天活跃用户数
+    public int NewUserCount { get; set; }             // 当天新注册
+    public int TotalMessageCount { get; set; }        // 当天总消息数
+    public int TotalSessionCount { get; set; }        // 当天活跃会话数
+    public long TotalInputTokens { get; set; }        // 当天总输入 Token
+    public long TotalOutputTokens { get; set; }       // 当天总输出 Token
+    public int TotalLlmCalls { get; set; }            // 当天 LLM 调用次数
+    public int FailedLlmCalls { get; set; }           // 失败次数
+    public double AvgDurationMs { get; set; }         // 平均响应时间
+    public double P95DurationMs { get; set; }         // P95 响应时间
+    public int ImageGenCount { get; set; }            // 当天生图数量
+    public int DefectsCreated { get; set; }           // 当天新缺陷
+    public int DefectsResolved { get; set; }          // 当天解决缺陷
+
+    // ── 按用户明细 ──
+    public List<UserDailyStat> UserStats { get; set; } = new();
+
+    // ── 按 Agent 明细 ──
+    public List<AgentDailyStat> AgentStats { get; set; } = new();
+
+    // ── 按模型明细 ──
+    public List<ModelDailyStat> ModelStats { get; set; } = new();
+
+    // ── 活跃时段 ──
+    public int[] HourlyActiveUsers { get; set; } = new int[24];  // 每小时活跃用户数
+}
+
+public class UserDailyStat
+{
+    public string UserId { get; set; }
+    public int MessageCount { get; set; }
+    public int LlmCallCount { get; set; }
+    public long InputTokens { get; set; }
+    public long OutputTokens { get; set; }
+    public int ImageGenCount { get; set; }
+    public int DefectsCreated { get; set; }
+    public int DefectsResolved { get; set; }
+    public List<string> AgentsUsed { get; set; } = new();      // 当天用过哪些 Agent
+    public List<int> ActiveHours { get; set; } = new();        // 活跃在哪些小时
+}
+
+public class AgentDailyStat
+{
+    public string AppKey { get; set; }                // "prd-agent" | "visual-agent" | ...
+    public int CallCount { get; set; }
+    public int UniqueUsers { get; set; }
+    public long TotalTokens { get; set; }
+    public double AvgDurationMs { get; set; }
+    public Dictionary<string, int> FeatureBreakdown { get; set; } = new();
+    // key = AppCallerCode 的 feature 部分, value = 调用次数
+}
+
+public class ModelDailyStat
+{
+    public string Model { get; set; }
+    public string? PlatformName { get; set; }
+    public int CallCount { get; set; }
+    public long InputTokens { get; set; }
+    public long OutputTokens { get; set; }
+    public double AvgDurationMs { get; set; }
+    public int FailedCount { get; set; }
+}
+```
+
+**执行策略**：
+```
+每日 01:00 UTC 定时任务:
+  1. 查询昨天的 llm_request_logs（在 TTL 删除前）
+  2. 查询昨天的 api_request_logs
+  3. 查询昨天的 messages、defect_reports、image_gen_runs
+  4. 聚合为 DailyStatsSnapshot
+  5. 写入 daily_stats_snapshots（无 TTL，永久保留）
+
+总裁面板查询策略:
+  - 最近 7 天：直接查原始集合（实时精确）
+  - 7 天以前：查 daily_stats_snapshots（聚合近似）
+```
+
+### 2.4 需要修复的数据问题
+
+| 问题 | 集合 | 现状 | 修复方案 |
+|------|------|------|----------|
+| **api_request_logs UserId = "anonymous"** | `api_request_logs` | 未登录或中间件未注入时为 "anonymous" | 查询时过滤 `!= "anonymous"` 即可，不需要改代码 |
+| **sessions.OwnerUserId 群组会话为 null** | `sessions` | 群组会话不记录创建人 | 通过 `messages.SenderId` WHERE `SessionId = x` GROUP BY SenderId 间接得到参与者 |
+| **messages.SenderId Assistant 消息** | `messages` | Assistant 消息的 SenderId 可能是 bot userId | 通过 `users.UserType == Human` 过滤 |
+| **image_gen_runs 字段名不一致** | `image_gen_runs` | 用 `OwnerAdminId` 而非 `UserId` | 查询时用 OwnerAdminId 做 JOIN 即可，不需要改字段名 |
+
+**结论：无需做数据迁移，只需在查询层做适配。**
 
 ---
 
-## 三、总裁面板设计
+## 三、你会看到什么（数据 → 展示映射）
+
+> 这一节回答核心问题：**根据已有数据，每个面板到底能展示什么**。
+
+### 3.0 数据 → 面板指标映射总表
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                           数据源 → 展示指标 映射                                     │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                      │
+│  users (永久)                                                                        │
+│  ├─ LastActiveAt          → 今日/本周 DAU                                            │
+│  ├─ LastLoginAt           → 最后登录时间（个人画像）                                    │
+│  ├─ Role (PM/DEV/QA)     → 角色分布饼图                                              │
+│  └─ CreatedAt             → 新用户增长趋势                                            │
+│                                                                                      │
+│  messages (永久)                                                                     │
+│  ├─ SenderId + Timestamp  → 每用户每天消息数、活跃时段热力图                             │
+│  ├─ TokenUsage            → Token 消耗长期趋势（不受 7 天 TTL 限制）                    │
+│  ├─ SessionId             → 对话轮次深度（消息数 / 2）                                  │
+│  ├─ GroupId               → 最活跃群组排名                                             │
+│  └─ ViewRole              → 角色使用偏好（PM 视角占比 vs DEV 视角占比）                  │
+│                                                                                      │
+│  llm_request_logs (7天TTL → 需 daily_stats_snapshots 归档)                            │
+│  ├─ UserId + RequestPurpose  → 每用户 Agent 使用频率、功能热度 Top N                    │
+│  ├─ InputTokens/OutputTokens → 实时 Token 消耗（按用户/模型/Agent 三维度）              │
+│  ├─ Model + DurationMs       → 模型性能对比（平均耗时、TTFB P50/P95）                   │
+│  ├─ Status                   → 成功率/失败率                                           │
+│  └─ RequestPurpose 前缀      → Agent 采纳率（prd-agent.* / visual-agent.* / ...）       │
+│                                                                                      │
+│  defect_reports (永久)                                                               │
+│  ├─ ReporterId/AssigneeId    → 每人缺陷提交/处理数                                     │
+│  ├─ Severity/Priority        → 缺陷严重级别分布                                        │
+│  ├─ CreatedAt → ResolvedAt   → 平均解决时间                                            │
+│  └─ Status 流转              → 缺陷生命周期漏斗                                        │
+│                                                                                      │
+│  image_gen_runs (永久)                                                               │
+│  ├─ OwnerAdminId             → 每人生图数量                                            │
+│  ├─ AppCallerCode            → 文生图/图生图/多图/局部重绘 分类统计                      │
+│  ├─ Total/Done/Failed        → 生图成功率                                              │
+│  └─ CreatedAt/EndedAt        → 生图耗时趋势                                            │
+│                                                                                      │
+│  prd_comments (永久)                                                                 │
+│  └─ AuthorUserId + CreatedAt → 每人 PRD 评论数                                         │
+│                                                                                      │
+│  content_gaps (永久)                                                                 │
+│  └─ AskedByUserId + Status   → 每人发现的内容缺失数 + 解决率                            │
+│                                                                                      │
+│  marketplace_fork_logs (永久)                                                        │
+│  └─ UserId + ConfigType      → 市场活跃度（Fork 次数、热门配置）                         │
+│                                                                                      │
+│  daily_stats_snapshots (新增，永久保留)                                                │
+│  └─ 以上所有维度的每日聚合    → 30天/90天/1年 长期趋势图                                 │
+│                                                                                      │
+│  external_activities (新增，永久保留)                                                  │
+│  └─ Claude Code / Jira / GitLab → 第三方协作数据                                       │
+│                                                                                      │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 3.0.1 具体展示效果预览
+
+**全局概览 — 6 个 KPI 卡片**
+
+```
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│  今日活跃用户  │  │  本周对话数   │  │ 本周Token消耗 │  │  AI 渗透率    │  │  平均响应时间  │  │  缺陷解决率   │
+│     12       │  │    347       │  │   283 万     │  │    87%       │  │   1.2s       │  │    76%       │
+│   ↑ 20%     │  │   ↑ 15%     │  │   ↓ 8%      │  │   ↑ 5%      │  │   ↓ 18%     │  │   ↑ 12%     │
+│  vs 昨日     │  │  vs 上周     │  │  vs 上周     │  │  vs 上周     │  │  vs 上周     │  │  vs 上周     │
+└──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘
+
+数据来源:
+  活跃用户  ← users WHERE LastActiveAt >= today
+  对话数    ← sessions WHERE CreatedAt in this week
+  Token    ← messages.TokenUsage (实时) + daily_stats_snapshots (历史)
+  渗透率   ← (本周发过消息的去重 SenderId) / (本周 LastActiveAt 的用户)
+  响应时间  ← llm_request_logs AVG(DurationMs) WHERE Status=succeeded
+  缺陷解决率 ← defect_reports WHERE ResolvedAt in this week / CreatedAt in this week
+```
+
+**个人画像 — 点击用户下钻看到**
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│  [头像] 张三 · PM                                   本周活跃 5/7 天   渗透率 92% │
+│                                                                                  │
+│  Agent 使用                                          Token 消耗趋势              │
+│  ┌─────────────────────────────────┐                 ┌────────────────────┐      │
+│  │ PRD Agent     ██████████ 68%   │ ← messages WHERE │    ╱\  /\         │      │
+│  │ Defect Agent  █████     25%   │   SenderId=张三   │  ╱  \/  \  /\    │      │
+│  │ Visual Agent  ██        7%    │   GROUP BY        │ ╱        \/  \   │      │
+│  └─────────────────────────────────┘   RequestPurpose │╱             \   │      │
+│                                        前缀           └────────────────────┘      │
+│  本周产出统计                                          ← messages.TokenUsage     │
+│  ├─ 发送 127 条消息（↑32% vs 上周）  ← messages COUNT WHERE SenderId=张三         │
+│  ├─ PRD 评论 23 条                   ← prd_comments WHERE AuthorUserId=张三       │
+│  ├─ 发现内容缺失 12 个               ← content_gaps WHERE AskedByUserId=张三       │
+│  ├─ 提交缺陷 8 个，解决 5 个         ← defect_reports WHERE ReporterId/ResolvedById │
+│  ├─ 生成图片 15 张                   ← image_gen_runs WHERE OwnerAdminId=张三       │
+│  └─ Token 消耗 12.3 万              ← messages.TokenUsage SUM                      │
+│                                                                                  │
+│  活跃时段                             常用功能 Top 5                              │
+│  ┌─ 24h × 7d 热力图 ──────────┐     ┌──────────────────────────────┐              │
+│  │     M  T  W  T  F  S  S   │     │ 1. PRD 解读问答     89 次   │              │
+│  │ 09  ■  ■  ■  ■  ■  ·  ·   │     │ 2. 缺陷 AI 润色    34 次   │              │
+│  │ 10  ■  ■  ■  ■  ■  ·  ·   │     │ 3. 内容缺失检测     12 次   │              │
+│  │ 14  ■  ■  ·  ■  ■  ·  ·   │     │ 4. 文生图           8 次   │              │
+│  │ 15  ■  ·  ■  ■  ·  ·  ·   │     │ 5. PRD 评论         6 次   │              │
+│  └─────────────────────────────┘     └──────────────────────────────┘              │
+│  ← messages.Timestamp               ← llm_request_logs.RequestPurpose             │
+│    HOUR(ts) × DAYOFWEEK(ts)           GROUP BY feature, COUNT(*)                  │
+│                                                                                  │
+│  外部协作（需新增 external_activities 集合）                                        │
+│  ├─ Claude Code: 本周 5 个 session, 提交 12 commits   ← external_activities       │
+│  ├─ Jira: 完成 8 个任务, 进行中 3 个                  ← external_activities       │
+│  └─ GitLab: 合并 2 个 MR                             ← external_activities       │
+└──────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Agent 采纳度 — 从 llm_request_logs.RequestPurpose 提取**
+
+```
+RequestPurpose (AppCallerCode) 解析规则:
+  "prd-agent.chat::chat"                    → appKey = prd-agent,    feature = chat
+  "visual-agent.image.text2img::generation" → appKey = visual-agent, feature = text2img
+  "defect-agent.analyze::intent"            → appKey = defect-agent, feature = analyze
+  "literary-agent.illustration::generation" → appKey = literary-agent, feature = illustration
+
+聚合 SQL (伪代码):
+  SELECT
+    SPLIT(RequestPurpose, '.')[0] AS appKey,
+    COUNT(DISTINCT UserId) AS uniqueUsers,
+    COUNT(*) AS totalCalls,
+    SUM(InputTokens + OutputTokens) AS totalTokens
+  FROM llm_request_logs
+  WHERE StartedAt >= @weekStart
+  GROUP BY appKey
+
+展示:
+  ┌──────────────────────────────────────────────────────────────┐
+  │  Agent 名称       采纳率    调用次数   Token消耗    使用深度    │
+  │  PRD Agent         87%     1,234     180万       ████████░  │
+  │  Defect Agent      65%       456      52万       █████░░░░  │
+  │  Visual Agent      43%       289     320万       ██████░░░  │
+  │  Literary Agent    21%        78      45万       ███░░░░░░  │
+  └──────────────────────────────────────────────────────────────┘
+  采纳率 = 本周使用该Agent的用户数 / 本周总活跃用户数
+  使用深度 = 平均对话轮次 (1-3轮=浅 / 4-10轮=中 / 10+轮=深)
+```
+
+**成本中心 — 从 llm_request_logs 计算**
+
+```
+成本计算公式:
+  cost = (InputTokens × inputPricePerMillion / 1_000_000)
+       + (OutputTokens × outputPricePerMillion / 1_000_000)
+
+需要新增: model_pricing 配置（可存在 llm_models 集合中）
+
+展示:
+  按模型维度:
+  ┌───────────────────────────────────────────────────┐
+  │  模型           调用次数   Token消耗   预估成本($)  │
+  │  gpt-4o          523     380万      $11.40      │
+  │  claude-sonnet   312     220万       $6.60      │
+  │  deepseek-v3     198      95万       $0.47      │
+  │  dall-e-3         89       -        $8.90      │
+  └───────────────────────────────────────────────────┘
+
+  按用户维度:
+  ┌───────────────────────────────────────────────────┐
+  │  用户     消息数   Token消耗  预估成本   主用Agent   │
+  │  张三      127    12.3万    $0.37    PRD Agent  │
+  │  李四       89     8.7万    $0.26    Visual     │
+  │  王五       56     4.2万    $0.13    Defect     │
+  └───────────────────────────────────────────────────┘
+```
 
 ### 3.1 信息架构（5 个 Tab）
 
 ```
 总裁面板 (ExecutiveDashboard)
-├── 📊 全局概览 (Overview)         — 关键数字一屏看完
-├── 👥 团队洞察 (Team Insights)    — 部门/团队/个人下钻
-├── 🤖 Agent 使用 (Agent Usage)    — 各 Agent 采纳度与效率
-├── 💰 成本中心 (Cost Center)      — Token 消耗 & 预算管理
-└── 🔗 外部协作 (Integrations)     — 第三方任务 & OpenClaude
+├── 全局概览 (Overview)         — 关键数字一屏看完
+├── 团队洞察 (Team Insights)    — 部门/团队/个人下钻
+├── Agent 使用 (Agent Usage)    — 各 Agent 采纳度与效率
+├── 成本中心 (Cost Center)      — Token 消耗 & 预算管理
+└── 外部协作 (Integrations)     — 第三方任务 & OpenClaude
 ```
 
 ### 3.2 Tab 1: 全局概览
@@ -622,42 +1034,51 @@ GitHub Webhook (push event)
 
 ## 八、实现路径
 
-### Phase 1: 数据聚合层 (1 周)
+### Phase 0: 数据基础设施（必须先做）
 
-- [ ] `ExecutiveStatsService` — 基于现有集合的聚合查询
-- [ ] `ExecutiveDashboardController` — 概览、趋势、热力图 API
-- [ ] 前端 `OverviewTab` — KPI 卡片 + 趋势图 + 热力图
+> 没有这一步，后面所有面板只能看 7 天数据，30 天趋势图会是空的。
 
-### Phase 2: 团队洞察 (1 周)
+- [ ] 新增 `DailyStatsSnapshot` 模型 + `daily_stats_snapshots` 集合
+- [ ] 实现 `DailyStatsAggregationWorker` 定时任务（每日 01:00 UTC）
+- [ ] 回填历史数据：基于 messages（永久保留）重建过去 N 天的快照
+- [ ] 在 `LlmModel` 上新增 `InputPricePerMillion` / `OutputPricePerMillion` 字段（成本计算用）
 
-- [ ] 用户活动聚合查询（按时间范围）
+### Phase 1: 全局概览 Tab
+
+- [ ] `ExecutiveStatsService` — 聚合查询（实时 + 快照双源）
+- [ ] `ExecutiveDashboardController` — 6 个 KPI + 趋势 + 热力图 API
+- [ ] 前端 `OverviewTab` — KPI 卡片 + 30 天趋势 ECharts + 热力图
+
+### Phase 2: 团队洞察 Tab
+
+- [ ] 用户活动聚合查询（跨 messages / defect_reports / image_gen_runs / prd_comments / content_gaps）
 - [ ] `UserProfileCard` — 个人画像卡片
 - [ ] `TeamInsightsTab` — 团队排名 + 个人下钻
 
-### Phase 3: 周报 Agent (1 周)
+### Phase 3: 周报 Agent
 
-- [ ] `WeeklyReportService` — 数据采集 + LLM 生成
-- [ ] `WeeklyReportWorker` — 定时任务
+- [ ] `WeeklyReportService` — 从 daily_stats_snapshots 汇总 + LLM 生成叙述
+- [ ] `WeeklyReportWorker` — 每周日 22:00 定时任务
 - [ ] `WeeklyReportViewer` — 前端查看器
-- [ ] 通知推送
+- [ ] 通知推送（复用 AdminNotification）
 
-### Phase 4: 成本中心 (3 天)
+### Phase 4: 成本中心 Tab
 
-- [ ] Token 成本计算（模型单价 × 实际用量）
-- [ ] 预算配置 + 预警
+- [ ] Token 成本计算（llm_request_logs × model 单价）
+- [ ] 预算配置 + 预警（executive_configs）
 - [ ] `CostCenterTab` — 成本分解图 + 预算进度
 
-### Phase 5: 外部协作集成 (1 周)
+### Phase 5: 外部协作 Tab
 
 - [ ] `ExternalActivity` 模型 + Webhook 入口
 - [ ] Claude Code Hook 集成
 - [ ] Jira/GitLab 轮询适配器
 - [ ] `IntegrationsTab` — 配置管理 + 活动流
 
-### Phase 6: Agent 分析 & 技能矩阵 (3 天)
+### Phase 6: Agent 分析 Tab
 
-- [ ] 采纳率/使用深度计算
-- [ ] `SkillMatrixGrid` — 技能矩阵可视化
+- [ ] 采纳率/使用深度计算（基于 RequestPurpose 前缀聚合）
+- [ ] `SkillMatrixGrid` — 用户 × Agent 技能矩阵
 - [ ] `AgentUsageTab` — 完整 Agent 分析页
 
 ---
