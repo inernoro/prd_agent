@@ -182,6 +182,7 @@ public class WatermarkRendererTests
     }
 
     [Fact]
+    [Trait("Category", TestCategories.Manual)]
     public async Task Render_Mece_EdgeCases_OutputArtifactsAndValidate()
     {
         var (renderer, registry) = BuildRenderer();

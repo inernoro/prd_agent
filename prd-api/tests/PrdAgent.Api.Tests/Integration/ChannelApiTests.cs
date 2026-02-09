@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using PrdAgent.Api.Tests;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Integration;
@@ -10,6 +11,7 @@ namespace PrdAgent.Api.Tests.Integration;
 /// 注意：这些测试需要在有数据库连接的环境中运行
 /// </summary>
 [Collection("Integration")]
+[Trait("Category", TestCategories.Integration)]
 public class ChannelApiTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly WebApplicationFactory<Program> _factory;

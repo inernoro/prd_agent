@@ -1,5 +1,5 @@
 export type UserRole = 'PM' | 'DEV' | 'QA' | 'ADMIN';
-export type InteractionMode = 'QA' | 'Knowledge' | 'PrdPreview' | 'AssetsDiag';
+export type InteractionMode = 'QA' | 'Knowledge' | 'PrdPreview' | 'AssetsDiag' | 'Defect';
 export type MessageRole = 'User' | 'Assistant';
 
 export interface DocCitation {
@@ -8,6 +8,9 @@ export interface DocCitation {
   excerpt: string;
   score?: number | null;
   rank?: number | null;
+  documentId?: string | null;
+  documentLabel?: string | null;
+  verified?: boolean;
 }
 
 export interface User {
@@ -133,6 +136,45 @@ export interface ApiResponse<T> {
     code: string;
     message: string;
   };
+}
+
+// ━━━ 缺陷管理类型 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+export type DefectStatus = 'draft' | 'submitted' | 'assigned' | 'processing' | 'resolved' | 'rejected' | 'closed';
+export type DefectSeverity = 'critical' | 'major' | 'minor' | 'trivial';
+
+export interface DefectReport {
+  id: string;
+  defectNo: string;
+  title?: string;
+  rawContent: string;
+  status: DefectStatus;
+  severity?: DefectSeverity;
+  reporterId: string;
+  reporterName?: string;
+  assigneeId?: string;
+  assigneeName?: string;
+  resolution?: string;
+  rejectReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  submittedAt?: string;
+}
+
+export interface DefectMessage {
+  id: string;
+  defectId: string;
+  seq: number;
+  role: 'user' | 'assistant';
+  userId?: string;
+  userName?: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface DefectStats {
+  total: number;
+  byStatus: Record<string, number>;
+  bySeverity: Record<string, number>;
 }
 
 export interface StreamEvent {

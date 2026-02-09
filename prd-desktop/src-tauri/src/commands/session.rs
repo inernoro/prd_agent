@@ -36,7 +36,7 @@ impl StreamCancelState {
         *guard = CancellationToken::new();
         guard.clone()
     }
-    fn cancel_all(&self) {
+    pub fn cancel_all(&self) {
         self.message.lock().unwrap().cancel();
         self.preview.lock().unwrap().cancel();
         self.group.lock().unwrap().cancel();
@@ -361,23 +361,28 @@ pub async fn subscribe_group_messages(
         let mut sse_buf = String::new();
         let mut saw_any_data = false;
 
-        while let Some(chunk) = stream.next().await {
-            if token.is_cancelled() {
-                break;
-            }
-            match chunk {
-                Ok(bytes) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    handle_sse_text(
-                        &app,
-                        "group-message",
-                        &mut sse_buf,
-                        &text,
-                        &mut saw_any_data,
-                    );
+        loop {
+            tokio::select! {
+                chunk = stream.next() => {
+                    match chunk {
+                        Some(Ok(bytes)) => {
+                            let text = String::from_utf8_lossy(&bytes);
+                            handle_sse_text(
+                                &app,
+                                "group-message",
+                                &mut sse_buf,
+                                &text,
+                                &mut saw_any_data,
+                            );
+                        }
+                        Some(Err(e)) => {
+                            emit_stream_error(&app, "group-message", format!("Stream error: {}", e));
+                            break;
+                        }
+                        None => break,
+                    }
                 }
-                Err(e) => {
-                    emit_stream_error(&app, "group-message", format!("Stream error: {}", e));
+                _ = token.cancelled() => {
                     break;
                 }
             }
@@ -473,24 +478,29 @@ pub async fn send_message(
     let mut sse_buf = String::new();
     let mut saw_any_data = false;
 
-    while let Some(chunk) = stream.next().await {
-        if token.is_cancelled() {
-            let _ = app.emit("message-chunk", serde_json::json!({ "type": "done" }));
-            break;
-        }
-        match chunk {
-            Ok(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                handle_sse_text(
-                    &app,
-                    "message-chunk",
-                    &mut sse_buf,
-                    &text,
-                    &mut saw_any_data,
-                );
+    loop {
+        tokio::select! {
+            chunk = stream.next() => {
+                match chunk {
+                    Some(Ok(bytes)) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        handle_sse_text(
+                            &app,
+                            "message-chunk",
+                            &mut sse_buf,
+                            &text,
+                            &mut saw_any_data,
+                        );
+                    }
+                    Some(Err(e)) => {
+                        emit_stream_error(&app, "message-chunk", format!("Stream error: {}", e));
+                        break;
+                    }
+                    None => break,
+                }
             }
-            Err(e) => {
-                emit_stream_error(&app, "message-chunk", format!("Stream error: {}", e));
+            _ = token.cancelled() => {
+                let _ = app.emit("message-chunk", serde_json::json!({ "type": "done" }));
                 break;
             }
         }
@@ -589,23 +599,28 @@ pub async fn subscribe_chat_run(
         let mut sse_buf = String::new();
         let mut saw_any_data = false;
 
-        while let Some(chunk) = stream.next().await {
-            if token.is_cancelled() {
-                break;
-            }
-            match chunk {
-                Ok(bytes) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    handle_sse_text(
-                        &app,
-                        "message-chunk",
-                        &mut sse_buf,
-                        &text,
-                        &mut saw_any_data,
-                    );
+        loop {
+            tokio::select! {
+                chunk = stream.next() => {
+                    match chunk {
+                        Some(Ok(bytes)) => {
+                            let text = String::from_utf8_lossy(&bytes);
+                            handle_sse_text(
+                                &app,
+                                "message-chunk",
+                                &mut sse_buf,
+                                &text,
+                                &mut saw_any_data,
+                            );
+                        }
+                        Some(Err(e)) => {
+                            emit_stream_error(&app, "message-chunk", format!("Stream error: {}", e));
+                            break;
+                        }
+                        None => break,
+                    }
                 }
-                Err(e) => {
-                    emit_stream_error(&app, "message-chunk", format!("Stream error: {}", e));
+                _ = token.cancelled() => {
                     break;
                 }
             }
@@ -716,24 +731,29 @@ pub async fn resend_message(
     let mut sse_buf = String::new();
     let mut saw_any_data = false;
 
-    while let Some(chunk) = stream.next().await {
-        if token.is_cancelled() {
-            let _ = app.emit("message-chunk", serde_json::json!({ "type": "done" }));
-            break;
-        }
-        match chunk {
-            Ok(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                handle_sse_text(
-                    &app,
-                    "message-chunk",
-                    &mut sse_buf,
-                    &text,
-                    &mut saw_any_data,
-                );
+    loop {
+        tokio::select! {
+            chunk = stream.next() => {
+                match chunk {
+                    Some(Ok(bytes)) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        handle_sse_text(
+                            &app,
+                            "message-chunk",
+                            &mut sse_buf,
+                            &text,
+                            &mut saw_any_data,
+                        );
+                    }
+                    Some(Err(e)) => {
+                        emit_stream_error(&app, "message-chunk", format!("Stream error: {}", e));
+                        break;
+                    }
+                    None => break,
+                }
             }
-            Err(e) => {
-                emit_stream_error(&app, "message-chunk", format!("Stream error: {}", e));
+            _ = token.cancelled() => {
+                let _ = app.emit("message-chunk", serde_json::json!({ "type": "done" }));
                 break;
             }
         }
@@ -819,24 +839,29 @@ pub async fn preview_ask_in_section(
     let mut sse_buf = String::new();
     let mut saw_any_data = false;
 
-    while let Some(chunk) = stream.next().await {
-        if token.is_cancelled() {
-            let _ = app.emit("preview-ask-chunk", serde_json::json!({ "type": "done" }));
-            break;
-        }
-        match chunk {
-            Ok(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                handle_sse_text(
-                    &app,
-                    "preview-ask-chunk",
-                    &mut sse_buf,
-                    &text,
-                    &mut saw_any_data,
-                );
+    loop {
+        tokio::select! {
+            chunk = stream.next() => {
+                match chunk {
+                    Some(Ok(bytes)) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        handle_sse_text(
+                            &app,
+                            "preview-ask-chunk",
+                            &mut sse_buf,
+                            &text,
+                            &mut saw_any_data,
+                        );
+                    }
+                    Some(Err(e)) => {
+                        emit_stream_error(&app, "preview-ask-chunk", format!("Stream error: {}", e));
+                        break;
+                    }
+                    None => break,
+                }
             }
-            Err(e) => {
-                emit_stream_error(&app, "preview-ask-chunk", format!("Stream error: {}", e));
+            _ = token.cancelled() => {
+                let _ = app.emit("preview-ask-chunk", serde_json::json!({ "type": "done" }));
                 break;
             }
         }

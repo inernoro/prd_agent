@@ -85,6 +85,10 @@ export default function Sidebar() {
     void sessionId;
   }, [mode, sessionId, setMode]);
 
+  const openDefect = useCallback(() => {
+    setMode('Defect');
+  }, [setMode]);
+
   const openPrdPreview = useCallback(() => {
     if (!documentLoaded || !prdDocument) return;
     openPrdPreviewPage();
@@ -229,8 +233,8 @@ export default function Sidebar() {
         return;
       }
 
-      // 加入群组后强制刷新列表
-      await loadGroups({ force: true });
+      // 加入群组后强制刷新列表（silent 避免 loading→true 导致 ChatContainer 卸载重挂）
+      await loadGroups({ force: true, silent: true });
       await openGroupSession(resp.data.groupId);
       setJoinOpen(false);
     } catch (err) {
@@ -308,15 +312,15 @@ export default function Sidebar() {
           return;
         }
 
-        // 创建群组后强制刷新列表
-        await loadGroups({ force: true });
+        // 创建群组后强制刷新列表（silent 避免 loading→true 导致 ChatContainer 卸载重挂）
+        await loadGroups({ force: true, silent: true });
         await openGroupSession(resp.data.groupId);
         setCreateOpen(false);
 
         // 启动短期轮询以获取后台生成的群名（轮询 3 次，每次间隔 2 秒）
         for (let i = 0; i < 3; i++) {
           await new Promise((resolve) => setTimeout(resolve, 2000));
-          await loadGroups({ force: true });
+          await loadGroups({ force: true, silent: true });
         }
         return;
       }
@@ -342,14 +346,14 @@ export default function Sidebar() {
       const inviteLink = `prdagent://join/${resp.data.inviteCode}`;
       alert(`群组创建成功\\n邀请码：${resp.data.inviteCode}\\n邀请链接：${inviteLink}`);
 
-      // 创建群组后强制刷新列表
-      await loadGroups({ force: true });
+      // 创建群组后强制刷新列表（silent 避免 loading→true 导致 ChatContainer 卸载重挂）
+      await loadGroups({ force: true, silent: true });
       setCreateOpen(false);
 
       // 启动短期轮询以获取后台生成的群名（轮询 3 次，每次间隔 2 秒）
       for (let i = 0; i < 3; i++) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
-        await loadGroups({ force: true });
+        await loadGroups({ force: true, silent: true });
       }
     } catch (err) {
       console.error('Failed to create group:', err);
@@ -414,8 +418,8 @@ export default function Sidebar() {
         return;
       }
 
-      // 绑定 PRD 后强制刷新列表（群组名称可能变化）
-      await loadGroups({ force: true });
+      // 绑定 PRD 后强制刷新列表（silent 避免 loading→true 导致 ChatContainer 卸载重挂）
+      await loadGroups({ force: true, silent: true });
       await openGroupSession(activeGroupId);
     } catch (err) {
       console.error('Failed to upload/bind PRD:', err);
@@ -715,6 +719,35 @@ export default function Sidebar() {
                   ) : null}
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* 缺陷管理入口 */}
+        {!isCollapsed && (
+          <div className="shrink-0 border-t border-black/10 dark:border-white/10">
+            <div className="px-3 py-2 flex items-center justify-between">
+              <div className="text-xs font-medium text-text-secondary">缺陷管理</div>
+              <button
+                type="button"
+                onClick={openDefect}
+                className={`h-7 w-7 inline-flex items-center justify-center rounded-md transition-colors ${
+                  mode === 'Defect'
+                    ? 'text-primary-600 dark:text-primary-300 bg-primary-50 dark:bg-white/5'
+                    : 'text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5'
+                }`}
+                title="缺陷管理"
+                aria-label="缺陷管理"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01M5.07 19H19a2.13 2.13 0 001.85-3.19L13.85 4.17a2.13 2.13 0 00-3.7 0L3.22 15.81A2.13 2.13 0 005.07 19z"
+                  />
+                </svg>
+              </button>
             </div>
           </div>
         )}

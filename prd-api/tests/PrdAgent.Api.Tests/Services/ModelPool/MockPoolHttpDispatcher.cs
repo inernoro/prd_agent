@@ -29,7 +29,7 @@ public class MockPoolHttpDispatcher : IPoolHttpDispatcher
     }
 
     /// <summary>配置所有端点成功（默认行为）</summary>
-    public MockPoolHttpDispatcher WithDefaultSuccess(int latencyMs = 100, string content = "{\"ok\":true}")
+    public MockPoolHttpDispatcher WithDefaultSuccess(int latencyMs = 0, string content = "{\"ok\":true}")
     {
         _behaviors["*"] = new EndpointBehavior { LatencyMs = latencyMs, ResponseBody = content };
         return this;
