@@ -417,6 +417,41 @@ public class ImageGenRunWorker : BackgroundService
                             _logger.LogDebug("[text2img] 无参考图，使用纯文生图模式");
                         }
 
+                        // ========== 守卫：检查 prompt 中是否有未解析的 @imgN 引用 ==========
+                        // 如果 finalPrompt 仍包含 @imgN 但没有加载到对应图片，说明图片引用未能解析
+                        // 此时不应静默退化为 text2img（会把 "@img5@img1结合这两个" 原样发给文生图 API）
+                        var unresolvedImgRefs = Regex.Matches(finalPrompt, @"@img\d+");
+                        if (unresolvedImgRefs.Count > 0 && loadedImageRefs.Count == 0 && initImageBase64 == null)
+                        {
+                            var unresolvedTags = string.Join(", ", unresolvedImgRefs.Select(m => m.Value).Distinct());
+                            _logger.LogWarning(
+                                "[ImageGenRunWorker] prompt 包含未解析的图片引用 {Tags}，但无可用图片数据。RunId={RunId}, ImageRefsCount={RefsCount}",
+                                unresolvedTags, run.Id, run.ImageRefs?.Count ?? 0);
+
+                            var guardMsg = $"图片引用 {unresolvedTags} 无法解析：参考图数据缺失或已过期，请重新选择图片后再试";
+                            await UpsertRunItemAsync(run, curItemIndex, imageIndex, curPrompt, reqSize, ImageGenRunItemStatus.Error, null, null, null, "IMAGE_REF_UNRESOLVED", guardMsg, ct);
+                            await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Failed, 1), cancellationToken: ct);
+
+                            var errMsgContent = $"[GEN_ERROR]{JsonSerializer.Serialize(new {{ msg = guardMsg, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = "unresolved" }}, JsonOptions)}";
+                            var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
+
+                            await AppendEventAsync(run, "image", new
+                            {
+                                type = "imageError",
+                                runId = run.Id,
+                                itemIndex = curItemIndex,
+                                imageIndex,
+                                prompt = curPrompt,
+                                requestedSize = reqSize,
+                                modelId = run.ModelId,
+                                platformId = run.PlatformId,
+                                errorCode = "IMAGE_REF_UNRESOLVED",
+                                errorMessage = guardMsg,
+                                savedMessageId = errMsgId
+                            }, ct);
+                            return;
+                        }
+
                         _logger.LogInformation("[ImageGenRunWorker Debug] Run {RunId}: AppKey={AppKey}, UserId={UserId}, AppCallerCode={AppCallerCode}",
                             run.Id, run.AppKey ?? "(null)", run.OwnerAdminId, run.AppCallerCode ?? "(null)");
 

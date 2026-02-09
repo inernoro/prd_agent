@@ -2063,22 +2063,66 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                         <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
                           {artifactInputs.length >= 2 && artifactOutputs.length >= 1 ? (
                             <>
-                              <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                <img
-                                  src={artifactOutputs[0].cosUrl}
-                                  alt="output"
-                                  style={{ width: '100%', height: 360, objectFit: 'contain', display: 'block' }}
-                                />
-                              </div>
-                              <div className="mt-3 flex gap-2 overflow-auto">
-                                {artifactInputs.map((it) => (
-                                  <div key={it.id} className="shrink-0 rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.16)' }}>
-                                    <img src={it.cosUrl} alt="input" style={{ width: 140, height: 140, objectFit: 'cover', display: 'block' }} />
-                                  </div>
-                                ))}
-                              </div>
-                              <div className="mt-3 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                              <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                                 {(detail?.questionText ?? '').trim() || '（无提示词）'}
+                              </div>
+                              <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+                                {/* 左侧：参考图堆叠 */}
+                                <div className="space-y-2">
+                                  {artifactInputs.map((it, idx) => (
+                                    <div key={it.id} className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                      <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                        <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                          参考图{artifactInputs.length > 1 ? ` #${idx + 1}` : ''}
+                                        </div>
+                                        <Button
+                                          variant="secondary"
+                                          size="sm"
+                                          onClick={async () => {
+                                            try {
+                                              await navigator.clipboard.writeText(it.cosUrl || '');
+                                              setCopiedHint('已复制');
+                                              setTimeout(() => setCopiedHint(''), 1200);
+                                            } catch {
+                                              setCopiedHint('复制失败（浏览器权限）');
+                                              setTimeout(() => setCopiedHint(''), 2000);
+                                            }
+                                          }}
+                                        >
+                                          <Copy size={14} />
+                                          复制URL
+                                        </Button>
+                                      </div>
+                                      <img src={it.cosUrl} alt="input" style={{ width: '100%', height: 200, objectFit: 'contain', display: 'block' }} />
+                                    </div>
+                                  ))}
+                                </div>
+                                {/* 右侧：结果图 */}
+                                <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                      结果图
+                                    </div>
+                                    <Button
+                                      variant="secondary"
+                                      size="sm"
+                                      onClick={async () => {
+                                        try {
+                                          await navigator.clipboard.writeText(artifactOutputs[0].cosUrl || '');
+                                          setCopiedHint('已复制');
+                                          setTimeout(() => setCopiedHint(''), 1200);
+                                        } catch {
+                                          setCopiedHint('复制失败（浏览器权限）');
+                                          setTimeout(() => setCopiedHint(''), 2000);
+                                        }
+                                      }}
+                                    >
+                                      <Copy size={14} />
+                                      复制URL
+                                    </Button>
+                                  </div>
+                                  <img src={artifactOutputs[0].cosUrl} alt="output" style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
+                                </div>
                               </div>
                             </>
                           ) : artifactInputs.length === 1 && artifactOutputs.length >= 1 ? (
@@ -2339,34 +2383,97 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                         </div>
                       )}
 
-                      {/* 请求体内嵌图片（蒙版、多参考图等） */}
-                      {bodyInlineImages.length > 0 && (
+                      {/* 请求体内嵌图片（蒙版、多参考图等）- 仅在没有 artifact 输入时显示，避免重复 */}
+                      {bodyInlineImages.length > 0 && artifactInputs.length === 0 && (
                         <div className="mt-3">
                           <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-                            请求体内嵌图片（{bodyInlineImages.length}张）
+                            参考图（{bodyInlineImages.length}张）
                           </div>
-                          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(bodyInlineImages.length, 3)}, minmax(0, 1fr))` }}>
-                            {bodyInlineImages.map((img, idx) => (
-                              <div key={idx} className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                  <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                    {img.label}{bodyInlineImages.length > 1 ? ` #${idx + 1}` : ''}
+                          <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+                            {/* 左侧：参考图堆叠 */}
+                            <div className="space-y-2">
+                              {bodyInlineImages.map((img, idx) => (
+                                <div key={idx} className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                      {img.label}{bodyInlineImages.length > 1 ? ` #${idx + 1}` : ''}
+                                    </div>
+                                    {img.src.startsWith('http') && (
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        onClick={async () => {
+                                          try {
+                                            await navigator.clipboard.writeText(img.src);
+                                            setCopiedHint('已复制');
+                                            setTimeout(() => setCopiedHint(''), 1200);
+                                          } catch {
+                                            setCopiedHint('复制失败（浏览器权限）');
+                                            setTimeout(() => setCopiedHint(''), 2000);
+                                          }
+                                        }}
+                                      >
+                                        <Copy size={14} />
+                                        复制URL
+                                      </Button>
+                                    )}
                                   </div>
+                                  <img
+                                    src={img.src}
+                                    alt={img.label}
+                                    style={{ width: '100%', height: 200, objectFit: 'contain', display: 'block', background: 'rgba(0,0,0,0.08)' }}
+                                  />
                                 </div>
-                                <img
-                                  src={img.src}
-                                  alt={img.label}
-                                  style={{ width: '100%', height: 200, objectFit: 'contain', display: 'block', background: 'rgba(0,0,0,0.08)' }}
-                                />
-                                {'cosUrl' in img && img.cosUrl ? (
-                                  <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                                    <div className="truncate" title={img.cosUrl}>{img.cosUrl}</div>
-                                    {img.sha256 ? <div className="mt-0.5 truncate" title={img.sha256}>sha256: {img.sha256}</div> : null}
-                                    {img.mimeType ? <div className="mt-0.5">{img.mimeType}{img.sizeBytes ? ` · ${fmtBytes(img.sizeBytes)}` : ''}</div> : null}
-                                  </div>
-                                ) : null}
+                              ))}
+                            </div>
+                            {/* 右侧：结果图 */}
+                            <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                              <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                  结果图
+                                </div>
+                                {artifactOutputs.length > 0 && (
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={async () => {
+                                      try {
+                                        await navigator.clipboard.writeText(artifactOutputs[0].cosUrl || '');
+                                        setCopiedHint('已复制');
+                                        setTimeout(() => setCopiedHint(''), 1200);
+                                      } catch {
+                                        setCopiedHint('复制失败（浏览器权限）');
+                                        setTimeout(() => setCopiedHint(''), 2000);
+                                      }
+                                    }}
+                                  >
+                                    <Copy size={14} />
+                                    复制URL
+                                  </Button>
+                                )}
                               </div>
-                            ))}
+                              {artifactOutputs.length > 0 ? (
+                                <img src={artifactOutputs[0].cosUrl} alt="output" style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
+                              ) : (
+                                <div className="flex items-center justify-center" style={{ height: 320 }}>
+                                  {detail?.status === 'running' ? (
+                                    <div className="flex flex-col items-center gap-3">
+                                      <PrdPetalBreathingLoader size={72} />
+                                      <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>生成中…</div>
+                                    </div>
+                                  ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (
+                                    <div className="flex flex-col items-center gap-3">
+                                      <PrdPetalBreathingLoader size={72} paused grayscale />
+                                      <div className="text-[12px]" style={{ color: 'rgba(239,68,68,0.85)' }}>
+                                        {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>等待结果</div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
                       )}
