@@ -157,6 +157,7 @@ public class ChatRunsController : ControllerBase
                 sessionId = sid,
                 content = request.Content,
                 promptKey = request.PromptKey,
+                skillId = request.SkillId,
                 // 兼容字段：role（历史）；新字段：answerAsRole（本次回答机器人角色）
                 role = request.Role?.ToString(),
                 answerAsRole = effectiveAnswerRole.ToString(),

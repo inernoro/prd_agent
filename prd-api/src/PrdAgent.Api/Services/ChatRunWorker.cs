@@ -28,6 +28,7 @@ public sealed class ChatRunWorker : BackgroundService
         string SessionId,
         string Content,
         string? PromptKey,
+        string? SkillId,
         string? UserId,
         List<string>? AttachmentIds,
         UserRole? AnswerAsRole);
@@ -108,6 +109,7 @@ public sealed class ChatRunWorker : BackgroundService
             var sessionId = root.TryGetProperty("sessionId", out var sid) ? (sid.GetString() ?? "") : "";
             var content = root.TryGetProperty("content", out var c) ? (c.GetString() ?? "") : "";
             var promptKey = root.TryGetProperty("promptKey", out var pk) ? pk.GetString() : null;
+            var skillId = root.TryGetProperty("skillId", out var skid) ? skid.GetString() : null;
             var userId = root.TryGetProperty("userId", out var uid) ? uid.GetString() : null;
             // 新字段：answerAsRole；兼容旧字段：role
             var roleRaw = root.TryGetProperty("answerAsRole", out var ar) ? ar.GetString()
@@ -131,6 +133,7 @@ public sealed class ChatRunWorker : BackgroundService
                 sessionId,
                 content,
                 string.IsNullOrWhiteSpace(promptKey) ? null : promptKey.Trim(),
+                string.IsNullOrWhiteSpace(skillId) ? null : skillId.Trim(),
                 string.IsNullOrWhiteSpace(userId) ? null : userId.Trim(),
                 atts,
                 answerRole);
@@ -222,6 +225,7 @@ public sealed class ChatRunWorker : BackgroundService
                                fixedUserMessageId: meta.UserMessageId,
                                fixedAssistantMessageId: meta.AssistantMessageId,
                                answerAsRole: input.AnswerAsRole,
+                               skillId: input.SkillId,
                                cancellationToken: cts.Token))
             {
                 lastType = ev.Type;

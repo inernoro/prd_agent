@@ -178,6 +178,12 @@ export const api = {
     },
   },
 
+  // ============ Skills 技能 ============
+  skills: {
+    list: () => '/api/v1/skills',
+    detail: (id: string) => `/api/v1/skills/${id}`,
+  },
+
   // ============ Prompts 提示词 ============
   prompts: {
     list: () => '/api/prompts',

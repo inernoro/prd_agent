@@ -17,8 +17,8 @@ public interface IChatService
     /// 用于开放平台对话场景，使用对话风格的系统提示词。默认 null（使用默认提示词）。
     /// </param>
     IAsyncEnumerable<ChatStreamEvent> SendMessageAsync(
-        string sessionId, 
-        string content, 
+        string sessionId,
+        string content,
         string? resendOfMessageId = null,
         string? promptKey = null,
         string? userId = null,
@@ -29,6 +29,7 @@ public interface IChatService
         bool disableGroupContext = false,
         string? systemPromptOverride = null,
         UserRole? answerAsRole = null,
+        string? skillId = null,
         CancellationToken cancellationToken = default);
     
     /// <summary>获取对话历史</summary>

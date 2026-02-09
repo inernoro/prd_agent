@@ -19,6 +19,7 @@ public class ChatService : IChatService
     private readonly IPromptManager _promptManager;
     private readonly IPromptService _promptService;
     private readonly ISystemPromptService _systemPromptService;
+    private readonly ISkillService _skillService;
     private readonly IUserService _userService;
     private readonly IMessageRepository _messageRepository;
     private readonly IGroupMessageSeqService _groupMessageSeqService;
@@ -40,6 +41,7 @@ public class ChatService : IChatService
         IPromptManager promptManager,
         IPromptService promptService,
         ISystemPromptService systemPromptService,
+        ISkillService skillService,
         IUserService userService,
         IMessageRepository messageRepository,
         IGroupMessageSeqService groupMessageSeqService,
@@ -54,6 +56,7 @@ public class ChatService : IChatService
         _promptManager = promptManager;
         _promptService = promptService;
         _systemPromptService = systemPromptService;
+        _skillService = skillService;
         _userService = userService;
         _messageRepository = messageRepository;
         _groupMessageSeqService = groupMessageSeqService;
@@ -75,6 +78,7 @@ public class ChatService : IChatService
         bool disableGroupContext = false,
         string? systemPromptOverride = null,
         UserRole? answerAsRole = null,
+        string? skillId = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // 真实“用户输入时间”：以服务端收到请求并进入业务处理的时间为准（UTC）
@@ -158,23 +162,58 @@ public class ChatService : IChatService
         var systemPromptRedacted = baseSystemPrompt;
         var docHash = Sha256Hex(document.RawContent);
 
-        // 提示词（可选）：将提示词模板作为"聚焦指令"注入 system prompt（仅当未使用覆盖提示词时）
+        // 技能/提示词注入（可选）：将模板作为"聚焦指令"注入 system prompt
+        // 优先级：skillId > promptKey（向后兼容）
         string systemPrompt = baseSystemPrompt;
         string llmUserContent = content ?? string.Empty;
+        var effectiveSkillId = (skillId ?? string.Empty).Trim();
         var effectivePromptKey = (promptKey ?? string.Empty).Trim();
-        if (!string.IsNullOrWhiteSpace(effectivePromptKey))
+
+        if (!string.IsNullOrWhiteSpace(effectiveSkillId))
         {
+            // 技能模式：通过 skillId 加载技能定义并注入模板
+            var skill = await _skillService.GetByIdAsync(effectiveSkillId, cancellationToken);
+            if (skill != null)
+            {
+                // 注入用户消息模板（追加到用户输入后面）
+                if (!string.IsNullOrWhiteSpace(skill.UserPromptTemplate))
+                {
+                    var upt = skill.UserPromptTemplate.Trim();
+                    var c = (content ?? string.Empty).Trim();
+                    llmUserContent = string.IsNullOrWhiteSpace(c) ? upt : (c + "\n\n" + upt);
+                }
+
+                // 注入系统提示词模板（技能自带的 SystemPromptTemplate 追加到角色系统提示词后面）
+                var skillSystemContext = !string.IsNullOrWhiteSpace(skill.SystemPromptTemplate)
+                    ? skill.SystemPromptTemplate.Trim()
+                    : string.Empty;
+
+                systemPrompt += @"
+
+---
+
+# 当前技能上下文
+你当前正在使用技能「" + (skill.Title ?? string.Empty) + @"」进行解读/分析。
+
+## 技能指令（作为聚焦指令）
+说明：以下内容用于帮助你聚焦输出；请严格遵守其结构与约束；若 PRD 未覆盖则明确标注"PRD 未覆盖/需补充"，不得编造。
+" + (string.IsNullOrWhiteSpace(skillSystemContext) ? "" : "\n" + skillSystemContext + "\n") + @"
+" + (skill.UserPromptTemplate ?? string.Empty);
+
+                systemPromptRedacted = systemPrompt;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(effectivePromptKey))
+        {
+            // 兼容旧提示词模式：通过 promptKey 加载
             var prompt = await _promptService.GetPromptByKeyAsync(effectiveAnswerRole, effectivePromptKey, cancellationToken);
             if (prompt != null &&
                 (!string.IsNullOrWhiteSpace(prompt.Title) || !string.IsNullOrWhiteSpace(prompt.PromptTemplate)))
             {
-                // 关键：对 LLM 请求，优先使用 promptTemplate 作为本次“讲解指令”，避免仅发送“【讲解】标题”导致模型无法按模板输出。
-                // 注意：入库的 userMessage.Content 仍保留原始 content（用于 UI 显示与回放），这里只影响发送给大模型的 messages。
                 if (!string.IsNullOrWhiteSpace(prompt.PromptTemplate))
                 {
                     var pt = prompt.PromptTemplate.Trim();
                     var c = (content ?? string.Empty).Trim();
-                    // 保留用户的“标题/问题”，并追加模板，便于日志排查与模型对齐输出结构。
                     llmUserContent = string.IsNullOrWhiteSpace(c) ? pt : (c + "\n\n" + pt);
                 }
 
@@ -186,11 +225,10 @@ public class ChatService : IChatService
 你当前正在按提示词（promptKey=" + effectivePromptKey + @"）「" + (prompt.Title ?? string.Empty) + @"」进行讲解/解读。
 
 ## 提示词模板（作为聚焦指令）
-说明：以下内容用于帮助你聚焦输出；请严格遵守其结构与约束；若 PRD 未覆盖则明确标注“PRD 未覆盖/需补充”，不得编造。
+说明：以下内容用于帮助你聚焦输出；请严格遵守其结构与约束；若 PRD 未覆盖则明确标注"PRD 未覆盖/需补充"，不得编造。
 
 " + (prompt.PromptTemplate ?? string.Empty);
 
-                // 日志侧的 system prompt（脱敏后）也应包含 promptKey/promptTemplate，便于排查与对照管理后台的提示词配置。
                 systemPromptRedacted = systemPrompt;
             }
         }

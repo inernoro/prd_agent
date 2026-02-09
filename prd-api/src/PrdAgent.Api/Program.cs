@@ -806,6 +806,13 @@ builder.Services.AddScoped<IGapDetectionService>(sp =>
     return new GapDetectionService(gapRepo, idGenerator);
 });
 
+builder.Services.AddScoped<ISkillService>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    var idGenerator = sp.GetRequiredService<IIdGenerator>();
+    return new SkillService(db, idGenerator);
+});
+
 builder.Services.AddScoped<IChatService>(sp =>
 {
     var gateway = sp.GetRequiredService<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>();
@@ -815,13 +822,14 @@ builder.Services.AddScoped<IChatService>(sp =>
     var promptManager = sp.GetRequiredService<IPromptManager>();
     var promptService = sp.GetRequiredService<IPromptService>();
     var systemPromptService = sp.GetRequiredService<PrdAgent.Core.Interfaces.ISystemPromptService>();
+    var skillService = sp.GetRequiredService<ISkillService>();
     var userService = sp.GetRequiredService<IUserService>();
     var messageRepo = sp.GetRequiredService<IMessageRepository>();
     var groupSeq = sp.GetRequiredService<IGroupMessageSeqService>();
     var groupHub = sp.GetRequiredService<IGroupMessageStreamHub>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var idGenerator = sp.GetRequiredService<IIdGenerator>();
-    return new ChatService(gateway, sessionService, documentService, cache, promptManager, promptService, systemPromptService, userService, messageRepo, groupSeq, groupHub, llmCtx, idGenerator);
+    return new ChatService(gateway, sessionService, documentService, cache, promptManager, promptService, systemPromptService, skillService, userService, messageRepo, groupSeq, groupHub, llmCtx, idGenerator);
 });
 
 builder.Services.AddScoped<IPreviewAskService>(sp =>
@@ -884,6 +892,13 @@ using (var scope = app.Services.CreateScope())
 {
     var roleCache = app.Services.GetRequiredService<ISystemRoleCacheService>();
     await roleCache.InitializeAsync();
+}
+
+// 初始化内置技能（首次启动时 seed）
+using (var scope = app.Services.CreateScope())
+{
+    var skillService = scope.ServiceProvider.GetRequiredService<ISkillService>();
+    await skillService.SeedBuiltInSkillsAsync();
 }
 
 // 配置中间件

@@ -124,6 +124,9 @@ public class MongoDbContext
     // AI Toolbox 百宝箱
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
 
+    // 技能 (Skills)
+    public IMongoCollection<Skill> Skills => _database.GetCollection<Skill>("skills");
+
     // 模型中继 (Exchange)
     public IMongoCollection<ModelExchange> ModelExchanges => _database.GetCollection<ModelExchange>("model_exchanges");
 
@@ -784,5 +787,13 @@ public class MongoDbContext
         {
             // ignore
         }
+
+        // Skills：按 ownerUserId + isBuiltIn 查询（用户自定义 + 内置混合列表）
+        Skills.Indexes.CreateOne(new CreateIndexModel<Skill>(
+            Builders<Skill>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.IsBuiltIn).Ascending(x => x.Order),
+            new CreateIndexOptions { Name = "idx_skills_owner_builtin_order" }));
+        Skills.Indexes.CreateOne(new CreateIndexModel<Skill>(
+            Builders<Skill>.IndexKeys.Ascending(x => x.IsBuiltIn).Ascending(x => x.Order),
+            new CreateIndexOptions { Name = "idx_skills_builtin_order" }));
     }
 }

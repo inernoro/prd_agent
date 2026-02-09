@@ -139,6 +139,13 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(DocCitation))]
 // 列表类型（引用）
 [JsonSerializable(typeof(List<DocCitation>))]
+// 技能 Skills
+[JsonSerializable(typeof(ApiResponse<SkillsListResponse>))]
+[JsonSerializable(typeof(ApiResponse<SkillClientItem>))]
+[JsonSerializable(typeof(SkillsListResponse))]
+[JsonSerializable(typeof(SkillClientItem))]
+[JsonSerializable(typeof(CreateSkillRequest))]
+[JsonSerializable(typeof(UpdateSkillRequest))]
 // 列表类型
 [JsonSerializable(typeof(List<MessageResponse>))]
 [JsonSerializable(typeof(List<int>))]

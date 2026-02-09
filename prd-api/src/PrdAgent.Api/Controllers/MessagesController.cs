@@ -209,6 +209,7 @@ public class MessagesController : ControllerBase
                 userId: userId,
                 attachmentIds: request.AttachmentIds,
                 answerAsRole: answerAsRole,
+                skillId: request.SkillId,
                 cancellationToken: cancellationToken))
             {
                 var eventData = JsonSerializer.Serialize(streamEvent, AppJsonContext.Default.ChatStreamEvent);
@@ -416,6 +417,7 @@ public class MessagesController : ControllerBase
                 userId: userId,
                 attachmentIds: request.AttachmentIds,
                 answerAsRole: answerAsRole,
+                skillId: request.SkillId,
                 cancellationToken: cancellationToken))
             {
                 var eventData = JsonSerializer.Serialize(streamEvent, AppJsonContext.Default.ChatStreamEvent);

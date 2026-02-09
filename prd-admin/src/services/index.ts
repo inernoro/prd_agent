@@ -75,6 +75,7 @@ import type {
 } from '@/services/contracts/data';
 import type { GetApiLogDetailContract, GetApiLogsContract, GetApiLogsMetaContract } from '@/services/contracts/apiLogs';
 import type { GetAdminPromptsContract, PutAdminPromptsContract, ResetAdminPromptsContract } from '@/services/contracts/prompts';
+import type { GetSkillsContract, GetSkillContract, CreateSkillContract, UpdateSkillContract, DeleteSkillContract } from '@/services/contracts/skills';
 import type {
   GetAdminSystemPromptsContract,
   PutAdminSystemPromptsContract,
@@ -348,6 +349,7 @@ import {
 } from '@/services/real/data';
 import { getApiLogDetailReal, getApiLogsMetaReal, getApiLogsReal } from '@/services/real/apiLogs';
 import { getAdminPromptsReal, putAdminPromptsReal, resetAdminPromptsReal } from '@/services/real/prompts';
+import { getSkillsReal, getSkillReal, createSkillReal, updateSkillReal, deleteSkillReal } from '@/services/real/skills';
 import { getAdminSystemPromptsReal, putAdminSystemPromptsReal, resetAdminSystemPromptsReal } from '@/services/real/systemPrompts';
 import {
   deleteAdminImageGenPlanPromptOverrideReal,
@@ -568,6 +570,13 @@ export const getApiLogDetail: GetApiLogDetailContract = withAuth(getApiLogDetail
 export const getAdminPrompts: GetAdminPromptsContract = withAuth(getAdminPromptsReal);
 export const putAdminPrompts: PutAdminPromptsContract = withAuth(putAdminPromptsReal);
 export const resetAdminPrompts: ResetAdminPromptsContract = withAuth(resetAdminPromptsReal);
+
+// Skills 技能
+export const getSkills: GetSkillsContract = withAuth(getSkillsReal);
+export const getSkill: GetSkillContract = withAuth(getSkillReal);
+export const createSkill: CreateSkillContract = withAuth(createSkillReal);
+export const updateSkill: UpdateSkillContract = withAuth(updateSkillReal);
+export const deleteSkill: DeleteSkillContract = withAuth(deleteSkillReal);
 export const getAdminSystemPrompts: GetAdminSystemPromptsContract = withAuth(getAdminSystemPromptsReal);
 export const putAdminSystemPrompts: PutAdminSystemPromptsContract = withAuth(putAdminSystemPromptsReal);
 export const resetAdminSystemPrompts: ResetAdminSystemPromptsContract = withAuth(resetAdminSystemPromptsReal);

@@ -17,7 +17,8 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
 import { toast } from '@/lib/toast';
-import { getAdminPrompts, getAdminSystemPrompts } from '@/services';
+import { getAdminPrompts, getAdminSystemPrompts, getSkills } from '@/services';
+import type { SkillClientItem } from '@/services/contracts/skills';
 import { useLocation } from 'react-router-dom';
 
 type LocalSession = {
@@ -57,6 +58,17 @@ type PromptItem = {
   order?: number;
   promptTemplate?: string;
   role?: 'PM' | 'DEV' | 'QA';
+};
+
+type SkillItem = {
+  id: string;
+  title: string;
+  description: string;
+  icon?: string | null;
+  category: string;
+  order: number;
+  isBuiltIn: boolean;
+  userPromptTemplate?: string | null;
 };
 
 function StreamingDot() {
@@ -335,10 +347,13 @@ export default function AiChatPage() {
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const [resendTargetMessageId, setResendTargetMessageId] = useState<string>('');
 
-  // 提示词快捷标签
+  // 提示词快捷标签（兼容旧逻辑）
   const [prompts, setPrompts] = useState<PromptItem[]>([]);
   const [currentRole, setCurrentRole] = useState<'PM' | 'DEV' | 'QA'>('PM');
   const [selectedPromptKey, setSelectedPromptKey] = useState<string>(''); // 本轮使用的 promptKey（可选）
+  // 技能（新逻辑：优先于 prompts）
+  const [skills, setSkills] = useState<SkillItem[]>([]);
+  const [selectedSkillId, setSelectedSkillId] = useState<string>(''); // 本轮使用的 skillId（可选）
   const [debugMode, setDebugMode] = useState(false);
 
   // 新建会话（上传 PRD）
@@ -549,7 +564,37 @@ export default function AiChatPage() {
      
   }, [token, currentRole, selectedPromptKey]);
 
-  // 加载角色系统提示词（用于查看“系统提示词内容”）
+  // 加载技能列表（用于底部快捷标签，优先于旧提示词）
+  useEffect(() => {
+    if (!token) return;
+    getSkills(currentRole)
+      .then((res) => {
+        if (!res.success) return;
+        const items = Array.isArray(res.data?.skills) ? res.data.skills : [];
+        const mapped: SkillItem[] = items
+          .map((x) => ({
+            id: x.id,
+            title: x.title,
+            description: x.description ?? '',
+            icon: x.icon,
+            category: x.category ?? 'general',
+            order: x.order ?? 999,
+            isBuiltIn: x.isBuiltIn ?? false,
+            userPromptTemplate: x.userPromptTemplate,
+          }))
+          .sort((a, b) => a.order - b.order);
+        setSkills(mapped);
+        // 如果当前已选择的 skillId 不在列表里，则清空
+        if (selectedSkillId && !mapped.some((s) => s.id === selectedSkillId)) {
+          setSelectedSkillId('');
+        }
+      })
+      .catch(() => {
+        // 静默失败：技能 API 不可用时回退到旧提示词
+      });
+  }, [token, currentRole, selectedSkillId]);
+
+  // 加载角色系统提示词（用于查看"系统提示词内容"）
   useEffect(() => {
     if (!token) return;
     getAdminSystemPrompts()
@@ -790,8 +835,12 @@ export default function AiChatPage() {
     }
     const finalText = limited.finalText;
     const resendId = resendTargetMessageId ? String(resendTargetMessageId) : '';
+    const effectiveSkillId = (selectedSkillId || '').trim();
     const effectivePromptKey = (selectedPromptKey || '').trim();
+    const skillMeta = skills.find((s) => s.id === effectiveSkillId) ?? null;
     const promptMeta = prompts.find((p) => p.promptKey === effectivePromptKey) ?? null;
+    // 显示名：优先技能，否则旧提示词
+    const displayTitle = skillMeta?.title ?? promptMeta?.title;
 
     setPendingAttachmentText('');
     setPendingAttachmentName('');
@@ -802,9 +851,9 @@ export default function AiChatPage() {
         role: 'User',
         content: finalText,
         viewRole: currentRole,
-        promptKey: effectivePromptKey || undefined,
-        promptTitle: promptMeta?.title,
-        promptTemplate: promptMeta?.promptTemplate,
+        promptKey: effectiveSkillId || effectivePromptKey || undefined,
+        promptTitle: displayTitle,
+        promptTemplate: skillMeta?.userPromptTemplate ?? promptMeta?.promptTemplate,
         timestamp: Date.now(),
       })
     );
@@ -828,10 +877,11 @@ export default function AiChatPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           content: finalText,
           role: currentRole,
           promptKey: effectivePromptKey || null,
+          skillId: effectiveSkillId || null,
         }),
         signal: ac.signal,
       });
@@ -1411,8 +1461,43 @@ export default function AiChatPage() {
         </div>
 
         <div className="shrink-0 px-4 pb-4 pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-          {/* 提示词快捷标签 */}
-          {prompts.length > 0 && (
+          {/* 技能/提示词快捷标签（技能优先，无技能时回退旧提示词） */}
+          {skills.length > 0 ? (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {skills.map((s) => {
+                const isSelected = !!s.id && s.id === selectedSkillId;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className="px-3 py-1.5 rounded-[10px] text-[12px] hover:bg-white/5 transition-all duration-200"
+                    style={{
+                      border: isSelected
+                        ? '1px solid rgba(214, 178, 106, 0.60)'
+                        : '1px solid var(--border-subtle)',
+                      background: isSelected
+                        ? 'rgba(214, 178, 106, 0.16)'
+                        : 'transparent',
+                      color: isSelected ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                    }}
+                    onClick={() => {
+                      setComposer(s.title);
+                      setSelectedSkillId(s.id);
+                      setSelectedPromptKey(''); // 清空旧提示词选择
+                      requestAnimationFrame(() => {
+                        adjustComposerHeight();
+                        composerRef.current?.focus();
+                      });
+                    }}
+                    disabled={!activeSessionId || activeSessionExpired || isStreaming}
+                    title={s.description || `点击使用技能：${s.title}`}
+                  >
+                    {s.title}
+                  </button>
+                );
+              })}
+            </div>
+          ) : prompts.length > 0 ? (
             <div className="mb-3 flex flex-wrap gap-2">
               {prompts.map((p) => {
                 const isHighlighted = highlightPromptKey && p.promptKey === highlightPromptKey;
@@ -1451,7 +1536,7 @@ export default function AiChatPage() {
                 );
               })}
             </div>
-          )}
+          ) : null}
 
           <div className="flex items-start gap-2">
             <button

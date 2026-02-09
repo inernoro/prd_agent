@@ -33,6 +33,11 @@ public class SendMessageRequest
     public string? PromptKey { get; set; }
 
     /// <summary>
+    /// 技能 ID（可选）：指定要使用的技能，优先级高于 PromptKey
+    /// </summary>
+    public string? SkillId { get; set; }
+
+    /// <summary>
     /// 跳过 AI 回复（可选）：启用时仅保存用户消息，不触发 AI 回复（普通群聊模式）
     /// </summary>
     public bool? SkipAiReply { get; set; }
