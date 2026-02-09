@@ -946,6 +946,8 @@ public class ImageGenRunWorker : BackgroundService
 
             if (target == null)
             {
+                // 从 run.ImageRefs 中找到当前图片的 refId（用于消息中 @imgN 引用的稳定性）
+                var firstRef = run.ImageRefs?.FirstOrDefault();
                 var o = new JsonObject
                 {
                     ["id"] = key, // 使用 id 字段，与前端保持一致
@@ -958,6 +960,7 @@ public class ImageGenRunWorker : BackgroundService
                     ["sha256"] = asset.Sha256,
                     ["createdAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 };
+                if (firstRef != null && firstRef.RefId > 0) o["refId"] = firstRef.RefId;
                 if (run.TargetX.HasValue) o["x"] = run.TargetX.Value;
                 if (run.TargetY.HasValue) o["y"] = run.TargetY.Value;
                 if (run.TargetW.HasValue) o["w"] = run.TargetW.Value;
