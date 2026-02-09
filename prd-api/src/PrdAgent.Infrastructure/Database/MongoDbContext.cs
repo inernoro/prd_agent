@@ -855,7 +855,7 @@ public class MongoDbContext
         {
             TutorialEmailEnrollments.Indexes.CreateOne(new CreateIndexModel<TutorialEmailEnrollment>(
                 Builders<TutorialEmailEnrollment>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.SequenceKey),
-                new CreateIndexOptions { Name = "uniq_tutorial_email_enrollments_user_seq", Unique = true }))
+                new CreateIndexOptions { Name = "uniq_tutorial_email_enrollments_user_seq", Unique = true }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
         {
