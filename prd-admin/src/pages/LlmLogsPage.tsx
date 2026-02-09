@@ -1794,9 +1794,21 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                   </div>
                   <div>
                     {(() => {
-                      const headersObj = detail.requestHeadersRedacted ?? {};
+                      const headersObj = { ...(detail.requestHeadersRedacted ?? {}) };
+                      // 补回被脱敏移除的 auth 头，使用 Postman 环境变量占位符
+                      const detailUrl = joinBaseAndPath(detail.apiBase ?? '', detail.path ?? '');
+                      const detailDomain = extractDomainFromUrl(detailUrl);
+                      const keyPlaceholder = detailDomain ? `{{${detailDomain}}}` : 'YOUR_API_KEY';
+                      const pLower = (detail.provider ?? '').toLowerCase();
+                      const isAnthropic = Object.keys(headersObj).some((k) => k.toLowerCase() === 'x-api-key')
+                        || pLower.includes('claude') || pLower.includes('anthropic');
+                      if (isAnthropic) {
+                        headersObj['x-api-key'] = keyPlaceholder;
+                      } else {
+                        headersObj['Authorization'] = `Bearer ${keyPlaceholder}`;
+                      }
                       const headerKeys = Object.keys(headersObj).length;
-                      const headerChars = JSON.stringify(headersObj ?? {}).length;
+                      const headerChars = JSON.stringify(headersObj).length;
                       return (
                         <>
                           <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
