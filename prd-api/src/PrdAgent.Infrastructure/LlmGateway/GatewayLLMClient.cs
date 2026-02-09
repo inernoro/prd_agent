@@ -90,9 +90,7 @@ public class GatewayLLMClient : ILLMClient
             {
                 QuestionText = messages.LastOrDefault(m => m.Role == "user")?.Content,
                 SystemPromptChars = systemPrompt?.Length,
-                SystemPromptText = systemPrompt?.Length > 500
-                    ? systemPrompt.Substring(0, 500) + "..."
-                    : systemPrompt
+                SystemPromptText = systemPrompt
             }
         };
 
