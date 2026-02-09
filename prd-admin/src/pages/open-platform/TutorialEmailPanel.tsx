@@ -2,32 +2,25 @@ import { useCallback, useEffect, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import {
-  Plus, Trash2, Play, Eye, Users, FileText, Image, Send,
-  ChevronDown, ChevronUp, Clock, CheckCircle, XCircle, Pause, Mail,
+  Sparkles, Send, Save, Eye, Loader2, RefreshCw,
+  Trash2, FileText, Users, Clock, CheckCircle, XCircle,
+  ChevronDown, ChevronUp, Mail,
 } from 'lucide-react';
 import {
-  listTutorialEmailSequences,
-  createTutorialEmailSequence,
-  updateTutorialEmailSequence,
-  deleteTutorialEmailSequence,
+  generateTutorialEmailTemplate,
+  quickSendTutorialEmail,
   listTutorialEmailTemplates,
-  createTutorialEmailTemplate,
-  updateTutorialEmailTemplate,
   deleteTutorialEmailTemplate,
-  listTutorialEmailAssets,
-  createTutorialEmailAsset,
-  deleteTutorialEmailAsset,
-  listTutorialEmailEnrollments,
-  batchEnrollTutorialEmail,
-  unsubscribeTutorialEmailEnrollment,
   testSendTutorialEmail,
+  listTutorialEmailEnrollments,
+  unsubscribeTutorialEmailEnrollment,
+  batchEnrollTutorialEmail,
+  listTutorialEmailSequences,
 } from '@/services';
 import type {
-  TutorialEmailSequence,
   TutorialEmailTemplate,
-  TutorialEmailAsset,
   TutorialEmailEnrollment,
-  TutorialEmailStep,
+  TutorialEmailSequence,
 } from '@/services';
 import { toast } from '@/lib/toast';
 
@@ -35,30 +28,27 @@ interface TutorialEmailPanelProps {
   onActionsReady?: (actions: React.ReactNode) => void;
 }
 
-const subTabs = [
-  { key: 'sequences', label: '邮件序列', icon: <Mail size={12} /> },
-  { key: 'templates', label: '邮件模板', icon: <FileText size={12} /> },
-  { key: 'assets', label: '截图素材', icon: <Image size={12} /> },
-  { key: 'enrollments', label: '发送记录', icon: <Users size={12} /> },
-] as const;
-
-type SubTab = (typeof subTabs)[number]['key'];
+type ViewMode = 'compose' | 'templates' | 'records';
 
 export default function TutorialEmailPanel({ onActionsReady }: TutorialEmailPanelProps) {
-  const [activeSubTab, setActiveSubTab] = useState<SubTab>('sequences');
+  const [viewMode, setViewMode] = useState<ViewMode>('compose');
 
   useEffect(() => {
     onActionsReady?.(
       <div className="flex items-center gap-1">
-        {subTabs.map((t) => (
+        {([
+          { key: 'compose' as const, label: 'AI 编写', icon: <Sparkles size={12} /> },
+          { key: 'templates' as const, label: '模板库', icon: <FileText size={12} /> },
+          { key: 'records' as const, label: '发送记录', icon: <Users size={12} /> },
+        ]).map((t) => (
           <button
             key={t.key}
-            onClick={() => setActiveSubTab(t.key)}
+            onClick={() => setViewMode(t.key)}
             className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition-colors"
             style={{
-              background: activeSubTab === t.key ? 'var(--bg-elevated)' : 'transparent',
-              color: activeSubTab === t.key ? 'var(--text-primary)' : 'var(--text-muted)',
-              border: activeSubTab === t.key ? '1px solid var(--border-default)' : '1px solid transparent',
+              background: viewMode === t.key ? 'var(--bg-elevated)' : 'transparent',
+              color: viewMode === t.key ? 'var(--text-primary)' : 'var(--text-muted)',
+              border: viewMode === t.key ? '1px solid var(--border-default)' : '1px solid transparent',
             }}
           >
             {t.icon} {t.label}
@@ -66,238 +56,281 @@ export default function TutorialEmailPanel({ onActionsReady }: TutorialEmailPane
         ))}
       </div>
     );
-  }, [activeSubTab, onActionsReady]);
+  }, [viewMode, onActionsReady]);
 
   return (
     <div className="space-y-3">
-      {activeSubTab === 'sequences' && <SequencesSection />}
-      {activeSubTab === 'templates' && <TemplatesSection />}
-      {activeSubTab === 'assets' && <AssetsSection />}
-      {activeSubTab === 'enrollments' && <EnrollmentsSection />}
+      {viewMode === 'compose' && <ComposeView />}
+      {viewMode === 'templates' && <TemplatesView />}
+      {viewMode === 'records' && <RecordsView />}
     </div>
   );
 }
 
-// ========== Sequences Section ==========
+// ========== AI Compose View (Main) ==========
 
-function SequencesSection() {
-  const [sequences, setSequences] = useState<TutorialEmailSequence[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+const stylePresets = [
+  { value: '', label: '默认风格' },
+  { value: '极简科技风，深色背景，霓虹渐变', label: '科技暗黑' },
+  { value: '温暖友好，圆角卡片，柔和配色', label: '温暖亲和' },
+  { value: '商务专业，蓝灰色调，简洁排版', label: '商务正式' },
+  { value: '活力创意，大胆配色，动感布局', label: '活力创意' },
+];
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const res = await listTutorialEmailSequences();
-    if (res.success) setSequences(res.data.items);
-    setLoading(false);
-  }, []);
+function ComposeView() {
+  const [topic, setTopic] = useState('');
+  const [style, setStyle] = useState('');
+  const [extra, setExtra] = useState('');
+  const [language, setLanguage] = useState('中文');
+  const [generating, setGenerating] = useState(false);
 
-  useEffect(() => { void load(); }, [load]);
+  const [htmlContent, setHtmlContent] = useState('');
+  const [showCode, setShowCode] = useState(false);
 
-  const handleCreate = async (data: {
-    sequenceKey: string;
-    name: string;
-    description?: string;
-    triggerType?: string;
-    steps?: TutorialEmailStep[];
-  }) => {
-    const res = await createTutorialEmailSequence(data);
-    if (res.success) {
-      toast.success('序列创建成功');
-      setShowCreate(false);
-      void load();
+  const [sendEmail, setSendEmail] = useState('');
+  const [sendSubject, setSendSubject] = useState('');
+  const [sending, setSending] = useState(false);
+  const [saveAsTemplate, setSaveAsTemplate] = useState(true);
+  const [templateName, setTemplateName] = useState('');
+
+  const handleGenerate = async () => {
+    if (!topic.trim()) {
+      toast.error('请输入邮件主题');
+      return;
+    }
+    setGenerating(true);
+    const res = await generateTutorialEmailTemplate({
+      topic: topic.trim(),
+      style: style || undefined,
+      language,
+      extraRequirements: extra || undefined,
+    });
+    setGenerating(false);
+
+    if (res.success && res.data.htmlContent) {
+      setHtmlContent(res.data.htmlContent);
+      toast.success(`AI 已生成邮件模板${res.data.model ? ` (${res.data.model})` : ''}`);
     } else {
-      toast.error(res.error?.message || '创建失败');
+      toast.error('生成失败，请重试');
     }
   };
 
-  const handleToggle = async (seq: TutorialEmailSequence) => {
-    const res = await updateTutorialEmailSequence(seq.id, { isActive: !seq.isActive });
-    if (res.success) {
-      toast.success(seq.isActive ? '已暂停' : '已启用');
-      void load();
+  const handleSend = async () => {
+    if (!sendEmail.trim()) {
+      toast.error('请输入收件邮箱');
+      return;
+    }
+    if (!htmlContent) {
+      toast.error('请先生成邮件内容');
+      return;
+    }
+    setSending(true);
+    const res = await quickSendTutorialEmail({
+      email: sendEmail.trim(),
+      subject: sendSubject.trim() || topic.trim() || '产品教程',
+      htmlContent,
+      saveAsTemplate,
+      templateName: templateName.trim() || undefined,
+    });
+    setSending(false);
+
+    if (res.success && res.data.sent) {
+      toast.success(
+        res.data.templateId
+          ? `邮件已发送，模板已保存为「${res.data.templateName}」`
+          : '邮件已发送',
+      );
+    } else if (res.success && !res.data.sent) {
+      toast.error('邮件发送失败，请检查 SMTP 配置');
+    } else {
+      toast.error('操作失败');
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('确定删除此序列？')) return;
-    const res = await deleteTutorialEmailSequence(id);
-    if (res.success) {
-      toast.success('已删除');
-      void load();
-    }
-  };
-
-  const triggerTypeLabel: Record<string, string> = {
-    registration: '注册后自动',
-    manual: '手动触发',
-    'feature-release': '版本发布',
+  const inputStyle = {
+    background: 'var(--bg-base)',
+    border: '1px solid var(--border-default)',
+    color: 'var(--text-primary)',
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex justify-between items-center">
-        <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
-          共 {sequences.length} 个序列
-        </span>
-        <Button onClick={() => setShowCreate(true)} size="sm">
-          <Plus size={14} /> 新建序列
-        </Button>
-      </div>
+    <div className="space-y-4">
+      {/* Step 1: 输入主题 */}
+      <GlassCard className="p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Sparkles size={16} style={{ color: 'var(--color-warning)' }} />
+          <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+            描述你想发的邮件
+          </span>
+        </div>
 
-      {showCreate && (
-        <GlassCard className="p-4">
-          <SequenceForm
-            onSubmit={handleCreate}
-            onCancel={() => setShowCreate(false)}
+        <textarea
+          placeholder="例如：Day 1 新手引导教程 - 介绍如何创建第一个 PRD 文档，包含快速入门步骤和截图说明"
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+          rows={3}
+          className="w-full px-3 py-2 text-sm rounded-md resize-none"
+          style={inputStyle}
+        />
+
+        <div className="flex items-center gap-3 flex-wrap">
+          <select
+            value={style}
+            onChange={(e) => setStyle(e.target.value)}
+            className="px-2.5 py-1.5 text-xs rounded-md"
+            style={inputStyle}
+          >
+            {stylePresets.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
+
+          <select
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            className="px-2.5 py-1.5 text-xs rounded-md"
+            style={inputStyle}
+          >
+            <option value="中文">中文</option>
+            <option value="English">English</option>
+            <option value="中英混合">中英混合</option>
+          </select>
+
+          <input
+            placeholder="额外要求（可选）"
+            value={extra}
+            onChange={(e) => setExtra(e.target.value)}
+            className="flex-1 min-w-[200px] px-2.5 py-1.5 text-xs rounded-md"
+            style={inputStyle}
           />
+
+          <Button onClick={handleGenerate} disabled={generating} size="sm">
+            {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+            {generating ? 'AI 生成中...' : 'AI 生成'}
+          </Button>
+        </div>
+      </GlassCard>
+
+      {/* Step 2: 实时预览 */}
+      {htmlContent && (
+        <GlassCard className="p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Eye size={16} style={{ color: 'var(--text-secondary)' }} />
+              <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                邮件预览
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowCode(!showCode)}
+                className="text-xs px-2 py-1 rounded-md"
+                style={{
+                  background: showCode ? 'var(--bg-elevated)' : 'transparent',
+                  color: 'var(--text-muted)',
+                  border: '1px solid var(--border-default)',
+                }}
+              >
+                {showCode ? '预览' : '源码'}
+              </button>
+              <button
+                onClick={handleGenerate}
+                className="text-xs px-2 py-1 rounded-md flex items-center gap-1"
+                style={{ color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
+                disabled={generating}
+              >
+                <RefreshCw size={10} /> 重新生成
+              </button>
+            </div>
+          </div>
+
+          {showCode ? (
+            <textarea
+              value={htmlContent}
+              onChange={(e) => setHtmlContent(e.target.value)}
+              rows={20}
+              className="w-full px-3 py-2 text-xs font-mono rounded-md"
+              style={inputStyle}
+            />
+          ) : (
+            <div className="rounded-lg overflow-hidden" style={{ background: '#f5f5f5' }}>
+              <iframe
+                srcDoc={htmlContent}
+                sandbox=""
+                className="w-full border-0"
+                style={{ height: '500px' }}
+                title="邮件预览"
+              />
+            </div>
+          )}
         </GlassCard>
       )}
 
-      {loading ? (
-        <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-      ) : sequences.length === 0 ? (
-        <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
-          暂无序列，点击"新建序列"开始
-        </div>
-      ) : (
-        sequences.map((seq) => (
-          <GlassCard key={seq.id} className="p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div
-                  className="w-2 h-2 rounded-full"
-                  style={{ background: seq.isActive ? 'var(--color-success)' : 'var(--text-muted)' }}
+      {/* Step 3: 发送 */}
+      {htmlContent && (
+        <GlassCard className="p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Send size={16} style={{ color: 'var(--text-secondary)' }} />
+            <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+              发送邮件
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <input
+              placeholder="收件邮箱"
+              value={sendEmail}
+              onChange={(e) => setSendEmail(e.target.value)}
+              className="px-3 py-2 text-sm rounded-md"
+              style={inputStyle}
+            />
+            <input
+              placeholder="邮件标题（默认使用主题描述）"
+              value={sendSubject}
+              onChange={(e) => setSendSubject(e.target.value)}
+              className="px-3 py-2 text-sm rounded-md"
+              style={inputStyle}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
+                <input
+                  type="checkbox"
+                  checked={saveAsTemplate}
+                  onChange={(e) => setSaveAsTemplate(e.target.checked)}
+                  className="rounded"
                 />
-                <div>
-                  <div className="font-medium" style={{ color: 'var(--text-primary)' }}>
-                    {seq.name}
-                    <span className="ml-2 text-xs font-mono px-1.5 py-0.5 rounded"
-                      style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
-                      {seq.sequenceKey}
-                    </span>
-                  </div>
-                  <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                    {triggerTypeLabel[seq.triggerType] || seq.triggerType} · {seq.steps.length} 个步骤
-                    {seq.description && ` · ${seq.description}`}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleToggle(seq)}
-                  className="p-1.5 rounded-md transition-colors hover:opacity-80"
-                  style={{ color: seq.isActive ? 'var(--color-success)' : 'var(--text-muted)' }}
-                  title={seq.isActive ? '暂停' : '启用'}
-                >
-                  {seq.isActive ? <Play size={14} /> : <Pause size={14} />}
-                </button>
-                <button
-                  onClick={() => setExpandedId(expandedId === seq.id ? null : seq.id)}
-                  className="p-1.5 rounded-md transition-colors hover:opacity-80"
-                  style={{ color: 'var(--text-secondary)' }}
-                >
-                  {expandedId === seq.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                </button>
-                <button
-                  onClick={() => handleDelete(seq.id)}
-                  className="p-1.5 rounded-md transition-colors hover:opacity-80"
-                  style={{ color: 'var(--color-danger)' }}
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
+                <Save size={12} /> 同时保存为模板
+              </label>
+              {saveAsTemplate && (
+                <input
+                  placeholder="模板名称（可选，自动生成）"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  className="px-2 py-1 text-xs rounded-md w-48"
+                  style={inputStyle}
+                />
+              )}
             </div>
 
-            {expandedId === seq.id && (
-              <div className="mt-3 pt-3 space-y-2" style={{ borderTop: '1px solid var(--border-default)' }}>
-                {seq.steps.length === 0 ? (
-                  <div className="text-xs" style={{ color: 'var(--text-muted)' }}>暂无步骤</div>
-                ) : (
-                  seq.steps.map((step, i) => (
-                    <div key={i} className="flex items-center gap-3 text-xs p-2 rounded"
-                      style={{ background: 'var(--bg-base)' }}>
-                      <Clock size={12} style={{ color: 'var(--text-muted)' }} />
-                      <span style={{ color: 'var(--text-secondary)' }}>
-                        Day {step.dayOffset}
-                      </span>
-                      <span style={{ color: 'var(--text-primary)' }}>
-                        {step.subject}
-                      </span>
-                      <span className="font-mono" style={{ color: 'var(--text-muted)' }}>
-                        {step.templateId}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </GlassCard>
-        ))
+            <Button onClick={handleSend} disabled={sending} size="sm">
+              {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              {sending ? '发送中...' : '发送邮件'}
+            </Button>
+          </div>
+        </GlassCard>
       )}
     </div>
   );
 }
 
-function SequenceForm({ onSubmit, onCancel }: {
-  onSubmit: (data: { sequenceKey: string; name: string; description?: string; triggerType?: string; steps?: TutorialEmailStep[] }) => void;
-  onCancel: () => void;
-}) {
-  const [key, setKey] = useState('');
-  const [name, setName] = useState('');
-  const [desc, setDesc] = useState('');
-  const [trigger, setTrigger] = useState('manual');
+// ========== Templates Library View ==========
 
-  return (
-    <div className="space-y-3">
-      <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>新建邮件序列</div>
-      <div className="grid grid-cols-2 gap-3">
-        <input
-          placeholder="序列 Key（如 onboarding）"
-          value={key} onChange={(e) => setKey(e.target.value)}
-          className="px-3 py-2 text-sm rounded-md"
-          style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-        />
-        <input
-          placeholder="序列名称"
-          value={name} onChange={(e) => setName(e.target.value)}
-          className="px-3 py-2 text-sm rounded-md"
-          style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-        />
-      </div>
-      <input
-        placeholder="描述（可选）"
-        value={desc} onChange={(e) => setDesc(e.target.value)}
-        className="w-full px-3 py-2 text-sm rounded-md"
-        style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-      />
-      <select
-        value={trigger} onChange={(e) => setTrigger(e.target.value)}
-        className="px-3 py-2 text-sm rounded-md"
-        style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-      >
-        <option value="manual">手动触发</option>
-        <option value="registration">注册后自动</option>
-        <option value="feature-release">版本发布</option>
-      </select>
-      <div className="flex gap-2 justify-end">
-        <Button variant="ghost" size="sm" onClick={onCancel}>取消</Button>
-        <Button size="sm" onClick={() => onSubmit({ sequenceKey: key, name, description: desc || undefined, triggerType: trigger })}>
-          创建
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// ========== Templates Section ==========
-
-function TemplatesSection() {
+function TemplatesView() {
   const [templates, setTemplates] = useState<TutorialEmailTemplate[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -308,26 +341,6 @@ function TemplatesSection() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
-
-  const handleCreate = async (data: { name: string; htmlContent: string }) => {
-    const res = await createTutorialEmailTemplate(data);
-    if (res.success) {
-      toast.success('模板创建成功');
-      setShowCreate(false);
-      void load();
-    } else {
-      toast.error(res.error?.message || '创建失败');
-    }
-  };
-
-  const handleUpdate = async (id: string, data: { name?: string; htmlContent?: string }) => {
-    const res = await updateTutorialEmailTemplate(id, data);
-    if (res.success) {
-      toast.success('已保存');
-      setEditingId(null);
-      void load();
-    }
-  };
 
   const handleDelete = async (id: string) => {
     if (!confirm('确定删除此模板？')) return;
@@ -351,24 +364,6 @@ function TemplatesSection() {
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-between items-center">
-        <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
-          共 {templates.length} 个模板
-        </span>
-        <Button onClick={() => setShowCreate(true)} size="sm">
-          <Plus size={14} /> 新建模板
-        </Button>
-      </div>
-
-      {showCreate && (
-        <GlassCard className="p-4">
-          <TemplateForm
-            onSubmit={handleCreate}
-            onCancel={() => setShowCreate(false)}
-          />
-        </GlassCard>
-      )}
-
       {previewHtml && (
         <div className="fixed inset-0 z-50 flex items-center justify-center"
           style={{ background: 'rgba(0,0,0,0.5)' }}
@@ -381,74 +376,65 @@ function TemplatesSection() {
               sandbox=""
               className="w-full border-0"
               style={{ height: '70vh' }}
-              title="邮件模板预览"
+              title="邮件预览"
             />
           </div>
         </div>
       )}
 
+      <div className="flex justify-between items-center">
+        <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+          共 {templates.length} 个已保存模板
+        </span>
+      </div>
+
       {loading ? (
         <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>加载中...</div>
       ) : templates.length === 0 ? (
-        <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
-          暂无模板，点击"新建模板"开始
+        <div className="text-center py-12" style={{ color: 'var(--text-muted)' }}>
+          <Mail size={32} className="mx-auto mb-2 opacity-30" />
+          <div className="text-sm">暂无模板</div>
+          <div className="text-xs mt-1">在「AI 编写」中生成邮件时勾选"保存为模板"即可自动保存</div>
         </div>
       ) : (
         templates.map((tpl) => (
           <GlassCard key={tpl.id} className="p-4">
-            {editingId === tpl.id ? (
-              <TemplateForm
-                initial={tpl}
-                onSubmit={(data) => handleUpdate(tpl.id, data)}
-                onCancel={() => setEditingId(null)}
-              />
-            ) : (
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium" style={{ color: 'var(--text-primary)' }}>
-                    {tpl.name}
-                  </div>
-                  <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                    ID: {tpl.id} · 变量: {tpl.variables.length > 0 ? tpl.variables.join(', ') : '无'}
-                    · {new Date(tpl.createdAt).toLocaleDateString()}
-                  </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-medium" style={{ color: 'var(--text-primary)' }}>
+                  {tpl.name}
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setPreviewHtml(tpl.htmlContent)}
-                    className="p-1.5 rounded-md transition-colors hover:opacity-80"
-                    style={{ color: 'var(--text-secondary)' }}
-                    title="预览"
-                  >
-                    <Eye size={14} />
-                  </button>
-                  <button
-                    onClick={() => handleTestSend(tpl.id)}
-                    className="p-1.5 rounded-md transition-colors hover:opacity-80"
-                    style={{ color: 'var(--color-info)' }}
-                    title="测试发送"
-                  >
-                    <Send size={14} />
-                  </button>
-                  <button
-                    onClick={() => setEditingId(tpl.id)}
-                    className="p-1.5 rounded-md transition-colors hover:opacity-80"
-                    style={{ color: 'var(--text-secondary)' }}
-                    title="编辑"
-                  >
-                    <FileText size={14} />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(tpl.id)}
-                    className="p-1.5 rounded-md transition-colors hover:opacity-80"
-                    style={{ color: 'var(--color-danger)' }}
-                    title="删除"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                  {new Date(tpl.createdAt).toLocaleString()}
                 </div>
               </div>
-            )}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPreviewHtml(tpl.htmlContent)}
+                  className="p-1.5 rounded-md transition-colors hover:opacity-80"
+                  style={{ color: 'var(--text-secondary)' }}
+                  title="预览"
+                >
+                  <Eye size={14} />
+                </button>
+                <button
+                  onClick={() => handleTestSend(tpl.id)}
+                  className="p-1.5 rounded-md transition-colors hover:opacity-80"
+                  style={{ color: 'var(--color-info)' }}
+                  title="发送测试"
+                >
+                  <Send size={14} />
+                </button>
+                <button
+                  onClick={() => handleDelete(tpl.id)}
+                  className="p-1.5 rounded-md transition-colors hover:opacity-80"
+                  style={{ color: 'var(--color-danger)' }}
+                  title="删除"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </div>
           </GlassCard>
         ))
       )}
@@ -456,197 +442,14 @@ function TemplatesSection() {
   );
 }
 
-function TemplateForm({ initial, onSubmit, onCancel }: {
-  initial?: TutorialEmailTemplate;
-  onSubmit: (data: { name: string; htmlContent: string }) => void;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState(initial?.name || '');
-  const [html, setHtml] = useState(initial?.htmlContent || getDefaultTemplate());
+// ========== Records View (Enrollments) ==========
 
-  return (
-    <div className="space-y-3">
-      <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-        {initial ? '编辑模板' : '新建邮件模板'}
-      </div>
-      <input
-        placeholder="模板名称"
-        value={name} onChange={(e) => setName(e.target.value)}
-        className="w-full px-3 py-2 text-sm rounded-md"
-        style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-      />
-      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-        支持变量：{'{{userName}}'}, {'{{productName}}'}, {'{{stepNumber}}'}, {'{{totalSteps}}'}
-      </div>
-      <textarea
-        value={html} onChange={(e) => setHtml(e.target.value)}
-        rows={16}
-        className="w-full px-3 py-2 text-xs font-mono rounded-md"
-        style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-      />
-      <div className="flex gap-2 justify-end">
-        <Button variant="ghost" size="sm" onClick={onCancel}>取消</Button>
-        <Button size="sm" onClick={() => onSubmit({ name, htmlContent: html })}>
-          {initial ? '保存' : '创建'}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// ========== Assets Section ==========
-
-function AssetsSection() {
-  const [assets, setAssets] = useState<TutorialEmailAsset[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const res = await listTutorialEmailAssets();
-    if (res.success) setAssets(res.data.items);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const handleCreate = async (data: { fileName: string; fileUrl: string; tags?: string[] }) => {
-    const res = await createTutorialEmailAsset(data);
-    if (res.success) {
-      toast.success('素材添加成功');
-      setShowCreate(false);
-      void load();
-    } else {
-      toast.error(res.error?.message || '添加失败');
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('确定删除此素材？')) return;
-    const res = await deleteTutorialEmailAsset(id);
-    if (res.success) {
-      toast.success('已删除');
-      void load();
-    }
-  };
-
-  return (
-    <div className="space-y-3">
-      <div className="flex justify-between items-center">
-        <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
-          共 {assets.length} 个素材
-        </span>
-        <Button onClick={() => setShowCreate(true)} size="sm">
-          <Plus size={14} /> 添加素材
-        </Button>
-      </div>
-
-      {showCreate && (
-        <GlassCard className="p-4">
-          <AssetForm onSubmit={handleCreate} onCancel={() => setShowCreate(false)} />
-        </GlassCard>
-      )}
-
-      {loading ? (
-        <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-      ) : assets.length === 0 ? (
-        <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
-          暂无素材，点击"添加素材"上传截图 URL
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-          {assets.map((asset) => (
-            <GlassCard key={asset.id} className="p-3">
-              <div className="aspect-video rounded-md overflow-hidden mb-2"
-                style={{ background: 'var(--bg-base)' }}>
-                <img
-                  src={asset.fileUrl}
-                  alt={asset.fileName}
-                  className="w-full h-full object-cover"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                />
-              </div>
-              <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                {asset.fileName}
-              </div>
-              <div className="flex items-center justify-between mt-1">
-                <div className="flex gap-1">
-                  {asset.tags.map((tag) => (
-                    <span key={tag} className="text-[10px] px-1 py-0.5 rounded"
-                      style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-                <button
-                  onClick={() => handleDelete(asset.id)}
-                  className="p-1 rounded-md transition-colors hover:opacity-80"
-                  style={{ color: 'var(--color-danger)' }}
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            </GlassCard>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AssetForm({ onSubmit, onCancel }: {
-  onSubmit: (data: { fileName: string; fileUrl: string; tags?: string[] }) => void;
-  onCancel: () => void;
-}) {
-  const [fileName, setFileName] = useState('');
-  const [fileUrl, setFileUrl] = useState('');
-  const [tags, setTags] = useState('');
-
-  return (
-    <div className="space-y-3">
-      <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>添加截图素材</div>
-      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-        将截图上传到 CDN/OSS 后，在此处记录 URL
-      </div>
-      <input
-        placeholder="文件名（如 day1-quickstart.png）"
-        value={fileName} onChange={(e) => setFileName(e.target.value)}
-        className="w-full px-3 py-2 text-sm rounded-md"
-        style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-      />
-      <input
-        placeholder="CDN/OSS 公网 URL"
-        value={fileUrl} onChange={(e) => setFileUrl(e.target.value)}
-        className="w-full px-3 py-2 text-sm rounded-md"
-        style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-      />
-      <input
-        placeholder="标签（逗号分隔，如 v2.0, quickstart）"
-        value={tags} onChange={(e) => setTags(e.target.value)}
-        className="w-full px-3 py-2 text-sm rounded-md"
-        style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-      />
-      <div className="flex gap-2 justify-end">
-        <Button variant="ghost" size="sm" onClick={onCancel}>取消</Button>
-        <Button size="sm" onClick={() => onSubmit({
-          fileName,
-          fileUrl,
-          tags: tags ? tags.split(',').map((t) => t.trim()).filter(Boolean) : undefined,
-        })}>
-          添加
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// ========== Enrollments Section ==========
-
-function EnrollmentsSection() {
+function RecordsView() {
   const [enrollments, setEnrollments] = useState<TutorialEmailEnrollment[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
   const [sequences, setSequences] = useState<TutorialEmailSequence[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -732,8 +535,9 @@ function EnrollmentsSection() {
       {loading ? (
         <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>加载中...</div>
       ) : enrollments.length === 0 ? (
-        <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
-          暂无发送记录
+        <div className="text-center py-12" style={{ color: 'var(--text-muted)' }}>
+          <Users size={32} className="mx-auto mb-2 opacity-30" />
+          <div className="text-sm">暂无发送记录</div>
         </div>
       ) : (
         <div className="space-y-2">
@@ -757,79 +561,45 @@ function EnrollmentsSection() {
                     </div>
                   </div>
                 </div>
-                {enr.status === 'active' && (
-                  <button
-                    onClick={() => handleUnsubscribe(enr.id)}
-                    className="text-xs px-2 py-1 rounded-md"
-                    style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
-                  >
-                    退订
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {enr.sentHistory.length > 0 && (
+                    <button
+                      onClick={() => setExpandedId(expandedId === enr.id ? null : enr.id)}
+                      className="p-1 rounded-md"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      {expandedId === enr.id ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                    </button>
+                  )}
+                  {enr.status === 'active' && (
+                    <button
+                      onClick={() => handleUnsubscribe(enr.id)}
+                      className="text-xs px-2 py-1 rounded-md"
+                      style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
+                    >
+                      退订
+                    </button>
+                  )}
+                </div>
               </div>
+              {expandedId === enr.id && enr.sentHistory.length > 0 && (
+                <div className="mt-2 pt-2 space-y-1" style={{ borderTop: '1px solid var(--border-default)' }}>
+                  {enr.sentHistory.map((rec, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                      {rec.success
+                        ? <CheckCircle size={10} style={{ color: 'var(--color-success)' }} />
+                        : <XCircle size={10} style={{ color: 'var(--color-danger)' }} />}
+                      <span>步骤 {rec.stepIndex + 1}</span>
+                      <span>{new Date(rec.sentAt).toLocaleString()}</span>
+                      {rec.errorMessage && <span style={{ color: 'var(--color-danger)' }}>{rec.errorMessage}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </GlassCard>
           ))}
         </div>
       )}
     </div>
   );
-}
-
-// ========== Default Template ==========
-
-function getDefaultTemplate(): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{productName}} 教程</title>
-</head>
-<body style="margin:0; padding:0; background-color:#f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px; margin:0 auto; background-color:#ffffff;">
-    <!-- Header -->
-    <tr>
-      <td style="padding:32px 24px; text-align:center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
-        <h1 style="color:#ffffff; margin:0; font-size:24px;">{{productName}}</h1>
-        <p style="color:rgba(255,255,255,0.8); margin:8px 0 0; font-size:14px;">Step {{stepNumber}} of {{totalSteps}}</p>
-      </td>
-    </tr>
-
-    <!-- Body -->
-    <tr>
-      <td style="padding:32px 24px;">
-        <p style="font-size:16px; color:#333; margin:0 0 16px;">Hi {{userName}},</p>
-        <p style="font-size:14px; color:#666; line-height:1.6; margin:0 0 24px;">
-          Welcome to your tutorial! Here's what you'll learn today...
-        </p>
-
-        <!-- Screenshot placeholder -->
-        <div style="background:#f0f0f0; border-radius:8px; padding:40px; text-align:center; margin:0 0 24px;">
-          <p style="color:#999; font-size:14px; margin:0;">[ Insert screenshot here ]</p>
-        </div>
-
-        <!-- CTA Button -->
-        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
-          <tr>
-            <td style="background:#667eea; border-radius:6px;">
-              <a href="#" style="display:inline-block; padding:12px 32px; color:#ffffff; text-decoration:none; font-size:14px; font-weight:600;">
-                Start Learning
-              </a>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-
-    <!-- Footer -->
-    <tr>
-      <td style="padding:24px; text-align:center; border-top:1px solid #eee;">
-        <p style="font-size:12px; color:#999; margin:0;">
-          You're receiving this because you signed up for {{productName}}.
-        </p>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
 }

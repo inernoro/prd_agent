@@ -198,3 +198,27 @@ export async function testSendTutorialEmail(data: {
 }): Promise<ApiResponse<{ success: boolean }>> {
   return apiRequest(api.tutorialEmail.testSend(), { method: 'POST', body: data });
 }
+
+// ========== AI Generate ==========
+
+export async function generateTutorialEmailTemplate(data: {
+  topic: string;
+  style?: string;
+  language?: string;
+  extraRequirements?: string;
+}): Promise<ApiResponse<{ htmlContent: string; model?: string; tokens?: number }>> {
+  return apiRequest(api.tutorialEmail.generate(), { method: 'POST', body: data });
+}
+
+// ========== Quick Send ==========
+
+export async function quickSendTutorialEmail(data: {
+  email: string;
+  recipientName?: string;
+  subject?: string;
+  htmlContent: string;
+  saveAsTemplate?: boolean;
+  templateName?: string;
+}): Promise<ApiResponse<{ sent: boolean; templateId?: string; templateName?: string }>> {
+  return apiRequest(api.tutorialEmail.quickSend(), { method: 'POST', body: data });
+}

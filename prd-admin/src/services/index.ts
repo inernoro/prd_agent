@@ -942,6 +942,8 @@ export {
   unsubscribeTutorialEmailEnrollment,
   batchEnrollTutorialEmail,
   testSendTutorialEmail,
+  generateTutorialEmailTemplate,
+  quickSendTutorialEmail,
 } from '@/services/real/tutorialEmail';
 export type {
   TutorialEmailSequence,

@@ -1,15 +1,17 @@
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
-/// 教程邮件管理：序列配置、模板管理、素材上传、用户订阅
+/// 教程邮件管理：AI 生成模板、快速发送、序列配置、模板管理、用户订阅
 /// </summary>
 [ApiController]
 [Route("api/tutorial-email")]
@@ -19,19 +21,140 @@ public sealed class TutorialEmailController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly ITutorialEmailService _emailService;
+    private readonly ILlmGateway _gateway;
     private readonly ILogger<TutorialEmailController> _logger;
 
     public TutorialEmailController(
         MongoDbContext db,
         ITutorialEmailService emailService,
+        ILlmGateway gateway,
         ILogger<TutorialEmailController> logger)
     {
         _db = db;
         _emailService = emailService;
+        _gateway = gateway;
         _logger = logger;
     }
 
     private string? GetUserId() => User.FindFirst("userId")?.Value ?? User.FindFirst("sub")?.Value;
+
+    // ========== AI 生成 + 快速发送 ==========
+
+    /// <summary>
+    /// AI 生成邮件模板：输入主题描述，自动生成完整 HTML 邮件
+    /// </summary>
+    [HttpPost("generate")]
+    public async Task<IActionResult> GenerateTemplate([FromBody] GenerateRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.Topic))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "topic 不能为空"));
+
+        var systemPrompt = @"你是一名专业的邮件模板设计师。用户会给你一个邮件主题或描述，你需要生成一封精美的 HTML 邮件。
+
+要求：
+1. 生成完整的 HTML 邮件代码（可直接发送的邮件），使用内联样式（email 不支持外部 CSS）
+2. 设计风格：现代、简洁、专业，渐变色头部，白色内容区
+3. 移动端自适应（max-width: 600px，table 布局）
+4. 包含以下变量占位符（用 {{变量名}} 格式）：
+   - {{userName}} 用户名
+   - {{productName}} 产品名
+   - {{stepNumber}} 当前步骤
+   - {{totalSteps}} 总步骤数
+5. 包含 CTA 按钮（行动号召）
+6. 包含截图占位区域（用灰色背景矩形 + 文字说明）
+7. 底部包含退订提示
+8. 只返回 HTML 代码，不要返回任何解释文字、markdown 标记或代码块标记
+
+邮件语言：" + (req.Language ?? "中文");
+
+        var userPrompt = req.Topic.Trim();
+        if (!string.IsNullOrWhiteSpace(req.Style))
+            userPrompt += $"\n\n设计风格偏好：{req.Style}";
+        if (!string.IsNullOrWhiteSpace(req.ExtraRequirements))
+            userPrompt += $"\n\n额外要求：{req.ExtraRequirements}";
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = "tutorial-email.generate::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userPrompt },
+                },
+                ["temperature"] = 0.7,
+                ["max_tokens"] = 4096,
+            },
+        };
+
+        var response = await _gateway.SendAsync(gatewayRequest, ct);
+        if (!response.Success)
+        {
+            _logger.LogError("AI generate email failed: {Error}", response.ErrorMessage);
+            return StatusCode(502, ApiResponse<object>.Fail("LLM_ERROR", response.ErrorMessage ?? "AI 生成失败"));
+        }
+
+        var htmlContent = (response.Content ?? "").Trim();
+
+        // 清理可能的 markdown 代码块包裹
+        if (htmlContent.StartsWith("```"))
+        {
+            var firstNewline = htmlContent.IndexOf('\n');
+            if (firstNewline > 0) htmlContent = htmlContent[(firstNewline + 1)..];
+            if (htmlContent.EndsWith("```")) htmlContent = htmlContent[..^3].TrimEnd();
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            htmlContent,
+            model = response.Resolution?.ActualModel,
+            tokens = response.TokenUsage?.TotalTokens,
+        }));
+    }
+
+    /// <summary>
+    /// 快速发送：AI 生成 → 自动保存模板 → 直接发送测试邮件，一步完成
+    /// </summary>
+    [HttpPost("quick-send")]
+    public async Task<IActionResult> QuickSend([FromBody] QuickSendRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.Email))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "email 不能为空"));
+        if (string.IsNullOrWhiteSpace(req.HtmlContent))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "htmlContent 不能为空"));
+
+        // 1. 自动保存为模板
+        TutorialEmailTemplate? savedTemplate = null;
+        if (req.SaveAsTemplate == true)
+        {
+            savedTemplate = new TutorialEmailTemplate
+            {
+                Name = req.TemplateName?.Trim() ?? $"快速生成 - {DateTime.UtcNow:yyyy-MM-dd HH:mm}",
+                HtmlContent = req.HtmlContent,
+                Variables = new List<string> { "userName", "productName", "stepNumber", "totalSteps" },
+                CreatedBy = GetUserId(),
+            };
+            await _db.TutorialEmailTemplates.InsertOneAsync(savedTemplate, cancellationToken: ct);
+        }
+
+        // 2. 发送邮件
+        var subject = req.Subject?.Trim() ?? "产品教程";
+        var success = await _emailService.SendEmailAsync(
+            req.Email.Trim(),
+            req.RecipientName?.Trim() ?? "用户",
+            subject,
+            req.HtmlContent,
+            CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            sent = success,
+            templateId = savedTemplate?.Id,
+            templateName = savedTemplate?.Name,
+        }));
+    }
 
     // ========== 序列管理 ==========
 
@@ -416,5 +539,23 @@ public sealed class TutorialEmailController : ControllerBase
         public string? Name { get; set; }
         public string? Subject { get; set; }
         public string? TemplateId { get; set; }
+    }
+
+    public class GenerateRequest
+    {
+        public string? Topic { get; set; }
+        public string? Style { get; set; }
+        public string? Language { get; set; }
+        public string? ExtraRequirements { get; set; }
+    }
+
+    public class QuickSendRequest
+    {
+        public string? Email { get; set; }
+        public string? RecipientName { get; set; }
+        public string? Subject { get; set; }
+        public string? HtmlContent { get; set; }
+        public bool? SaveAsTemplate { get; set; }
+        public string? TemplateName { get; set; }
     }
 }

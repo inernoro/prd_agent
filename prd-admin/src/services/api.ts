@@ -532,6 +532,8 @@ export const api = {
       batch: () => '/api/tutorial-email/enrollments/batch',
     },
     testSend: () => '/api/tutorial-email/test-send',
+    generate: () => '/api/tutorial-email/generate',
+    quickSend: () => '/api/tutorial-email/quick-send',
   },
 
   // ============ Settings 系统设置 ============
