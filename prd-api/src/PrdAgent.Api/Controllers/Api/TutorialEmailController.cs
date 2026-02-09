@@ -96,7 +96,24 @@ public sealed class TutorialEmailController : ControllerBase
             return StatusCode(502, ApiResponse<object>.Fail("LLM_ERROR", response.ErrorMessage ?? "AI 生成失败"));
         }
 
-        var htmlContent = (response.Content ?? "").Trim();
+        // response.Content 是原始 HTTP 响应体（OpenAI 格式 JSON），需要提取 choices[0].message.content
+        var htmlContent = "";
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(response.Content ?? "{}");
+            htmlContent = doc.RootElement
+                .GetProperty("choices")[0]
+                .GetProperty("message")
+                .GetProperty("content")
+                .GetString() ?? "";
+        }
+        catch
+        {
+            // 如果解析失败，尝试直接使用（可能某些适配器已提取 content）
+            htmlContent = (response.Content ?? "").Trim();
+        }
+
+        htmlContent = htmlContent.Trim();
 
         // 清理可能的 markdown 代码块包裹
         if (htmlContent.StartsWith("```"))
