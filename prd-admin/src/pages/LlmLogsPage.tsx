@@ -619,10 +619,27 @@ function injectRefImageIntoRequestBody(bodyText: string, inputArtifacts: UploadA
   }
 }
 
+/**
+ * 从 URL 中提取域名，用作 Postman 环境变量名。
+ * 例: "https://api.apiyi.com/v1/chat/completions" → "api.apiyi.com"
+ */
+function extractDomainFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    const m = url.match(/https?:\/\/([^/:?\s]+)/);
+    return m ? m[1] : '';
+  }
+}
+
 function buildCurlFromLog(detail: LlmRequestLog, inputArtifacts?: UploadArtifact[]): string {
   const apiBase = (detail.apiBase ?? '').trim();
   const path = (detail.path ?? '').trim();
   const url = joinBaseAndPath(apiBase, path) || 'https://api.example.com/v1/chat/completions';
+
+  // 提取域名作为 Postman 环境变量占位符，例如 {{api.apiyi.com}}
+  const domain = extractDomainFromUrl(url);
+  const apiKeyPlaceholder = domain ? `{{${domain}}}` : 'YOUR_API_KEY';
 
   const headers: Record<string, string> = { ...(detail.requestHeadersRedacted ?? {}) };
   // 清理不适合重放的 header
@@ -631,15 +648,15 @@ function buildCurlFromLog(detail: LlmRequestLog, inputArtifacts?: UploadArtifact
     if (key === 'content-length' || key === 'host') delete headers[k];
   });
 
-  // 强制 API Key 占位符（避免任何真实值泄露）
+  // 使用 Postman 环境变量占位符替换 API Key（避免真实值泄露，且 Postman 可自动匹配）
   const hasAuthorization = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization');
   const hasXApiKey = Object.keys(headers).some((k) => k.toLowerCase() === 'x-api-key');
 
   if (hasAuthorization || detail.provider.toLowerCase().includes('openai')) {
-    headers.Authorization = 'Bearer YOUR_API_KEY';
+    headers.Authorization = `Bearer ${apiKeyPlaceholder}`;
   }
   if (hasXApiKey || detail.provider.toLowerCase().includes('claude') || detail.provider.toLowerCase().includes('anthropic')) {
-    headers['x-api-key'] = 'YOUR_API_KEY';
+    headers['x-api-key'] = apiKeyPlaceholder;
   }
 
   // 默认 JSON

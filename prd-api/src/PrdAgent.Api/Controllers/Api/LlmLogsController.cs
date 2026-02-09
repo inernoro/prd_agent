@@ -496,11 +496,19 @@ public class LlmLogsController : ControllerBase
                 WriteIndented = false
             });
 
-            // 构建 curl 命令
+            // 构建 curl 命令（API Key 使用 Postman 环境变量占位符 {{域名}}）
             var endpoint = $"{log.ApiBase?.TrimEnd('/')}/{log.Path?.TrimStart('/')}";
+            var apiKeyPlaceholder = "YOUR_API_KEY";
+            try
+            {
+                var host = new Uri(endpoint).Host;
+                if (!string.IsNullOrEmpty(host)) apiKeyPlaceholder = $"{{{{{host}}}}}";
+            }
+            catch { /* 解析失败时保持默认占位符 */ }
+
             var curlCommand = $"curl -X POST \"{endpoint}\" \\\n" +
                               $"  -H \"Content-Type: application/json\" \\\n" +
-                              $"  -H \"Authorization: Bearer YOUR_API_KEY\" \\\n" +
+                              $"  -H \"Authorization: Bearer {apiKeyPlaceholder}\" \\\n" +
                               $"  -d '{requestJson}'";
 
             return Ok(ApiResponse<object>.Ok(new
