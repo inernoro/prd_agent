@@ -6,6 +6,14 @@ import { Button } from '@/components/design/Button';
 import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
 import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 
+const passwordRules: Array<{ key: string; label: string; test: (pwd: string) => boolean }> = [
+  { key: 'len', label: '长度 8-128 位', test: (pwd) => pwd.length >= 8 && pwd.length <= 128 },
+  { key: 'lower', label: '包含小写字母', test: (pwd) => /[a-z]/.test(pwd) },
+  { key: 'upper', label: '包含大写字母', test: (pwd) => /[A-Z]/.test(pwd) },
+  { key: 'digit', label: '包含数字', test: (pwd) => /\d/.test(pwd) },
+  { key: 'special', label: '包含特殊字符（如 !@#$ 等）', test: (pwd) => /[!@#$%^&*(),.?":{}|<>]/.test(pwd) },
+];
+
 export default function LoginPage() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((s) => s.login);
@@ -106,6 +114,14 @@ export default function LoginPage() {
     if (!canResetSubmit || resetLoading) return;
     setResetLoading(true);
     setResetError(null);
+
+    // 前端校验密码强度
+    const failedRule = passwordRules.find((r) => !r.test(newPassword));
+    if (failedRule) {
+      setResetError(`密码不符合要求：${failedRule.label}`);
+      setResetLoading(false);
+      return;
+    }
 
     // 前端校验两次密码是否一致
     if (newPassword !== confirmPassword) {
@@ -323,9 +339,23 @@ export default function LoginPage() {
                   返回登录
                 </button>
 
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  密码要求：至少6位，包含字母和数字
-                </div>
+                {newPassword && (
+                  <div className="grid gap-1 text-xs">
+                    {passwordRules.map((rule) => {
+                      const pass = rule.test(newPassword);
+                      return (
+                        <div key={rule.key} style={{ color: pass ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.8)' }}>
+                          {pass ? '✓' : '✗'} {rule.label}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {!newPassword && (
+                  <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    密码要求：8-128 位，需包含大小写字母、数字和特殊字符
+                  </div>
+                )}
               </div>
             </>
           )}
