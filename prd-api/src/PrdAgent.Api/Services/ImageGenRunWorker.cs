@@ -433,7 +433,8 @@ public class ImageGenRunWorker : BackgroundService
                             await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Failed, 1), cancellationToken: ct);
 
                             var guardGenType = "unresolved";
-                            var errMsgContent = $"[GEN_ERROR]{JsonSerializer.Serialize(new {{ msg = guardMsg, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = guardGenType }}, JsonOptions)}";
+                            var guardPayload = JsonSerializer.Serialize(new { msg = guardMsg, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = guardGenType }, JsonOptions);
+                            var errMsgContent = $"[GEN_ERROR]{guardPayload}";
                             var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
 
                             await AppendEventAsync(run, "image", new
