@@ -16,17 +16,20 @@ namespace PrdAgent.Api.Controllers.Api;
 public class OpenPlatformController : ControllerBase
 {
     private readonly IOpenPlatformService _openPlatformService;
+    private readonly IWebhookNotificationService _webhookService;
     private readonly IUserService _userService;
     private readonly IGroupService _groupService;
     private readonly ILogger<OpenPlatformController> _logger;
 
     public OpenPlatformController(
         IOpenPlatformService openPlatformService,
+        IWebhookNotificationService webhookService,
         IUserService userService,
         IGroupService groupService,
         ILogger<OpenPlatformController> logger)
     {
         _openPlatformService = openPlatformService;
+        _webhookService = webhookService;
         _userService = userService;
         _groupService = groupService;
         _logger = logger;
@@ -73,7 +76,12 @@ public class OpenPlatformController : ControllerBase
                 CreatedAt = app.CreatedAt,
                 LastUsedAt = app.LastUsedAt,
                 TotalRequests = app.TotalRequests,
-                ApiKeyMasked = $"sk-***{app.ApiKeyHash[^8..]}"
+                ApiKeyMasked = $"sk-***{app.ApiKeyHash[^8..]}",
+                WebhookEnabled = app.WebhookEnabled,
+                WebhookUrl = app.WebhookUrl,
+                TokenQuotaLimit = app.TokenQuotaLimit,
+                TokensUsed = app.TokensUsed,
+                QuotaWarningThreshold = app.QuotaWarningThreshold
             });
         }
 
@@ -309,6 +317,151 @@ public class OpenPlatformController : ControllerBase
 
         return Ok(ApiResponse<PagedLogsResponse>.Ok(response));
     }
+
+    // ========== Webhook 配置管理 ==========
+
+    /// <summary>
+    /// 获取应用 Webhook 配置
+    /// </summary>
+    [HttpGet("apps/{id}/webhook")]
+    [ProducesResponseType(typeof(ApiResponse<WebhookConfigResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetWebhookConfig(string id)
+    {
+        var app = await _openPlatformService.GetAppByIdAsync(id);
+        if (app == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "应用不存在"));
+        }
+
+        var response = new WebhookConfigResponse
+        {
+            WebhookUrl = app.WebhookUrl,
+            WebhookSecretMasked = string.IsNullOrWhiteSpace(app.WebhookSecret)
+                ? null
+                : $"****{app.WebhookSecret[Math.Max(0, app.WebhookSecret.Length - 4)..]}",
+            WebhookEnabled = app.WebhookEnabled,
+            TokenQuotaLimit = app.TokenQuotaLimit,
+            TokensUsed = app.TokensUsed,
+            QuotaWarningThreshold = app.QuotaWarningThreshold,
+            LastQuotaWarningAt = app.LastQuotaWarningAt
+        };
+
+        return Ok(ApiResponse<WebhookConfigResponse>.Ok(response));
+    }
+
+    /// <summary>
+    /// 更新应用 Webhook 配置
+    /// </summary>
+    [HttpPut("apps/{id}/webhook")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateWebhookConfig(string id, [FromBody] UpdateWebhookConfigRequest request)
+    {
+        var app = await _openPlatformService.GetAppByIdAsync(id);
+        if (app == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "应用不存在"));
+        }
+
+        // 验证 Webhook URL 格式
+        if (!string.IsNullOrWhiteSpace(request.WebhookUrl))
+        {
+            if (!Uri.TryCreate(request.WebhookUrl, UriKind.Absolute, out var uri) || uri.Scheme != "https")
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "Webhook 地址必须为 HTTPS 协议"));
+            }
+        }
+
+        // 如果前端传了 webhookSecret 的掩码值（****开头），保留原值
+        var webhookSecret = request.WebhookSecret;
+        if (!string.IsNullOrEmpty(webhookSecret) && webhookSecret.StartsWith("****"))
+        {
+            webhookSecret = app.WebhookSecret;
+        }
+
+        var success = await _openPlatformService.UpdateWebhookConfigAsync(
+            id,
+            request.WebhookUrl,
+            webhookSecret,
+            request.WebhookEnabled,
+            request.TokenQuotaLimit,
+            request.QuotaWarningThreshold);
+
+        if (!success)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "更新失败"));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { message = "Webhook 配置已更新" }));
+    }
+
+    /// <summary>
+    /// 测试 Webhook 连通性
+    /// </summary>
+    [HttpPost("apps/{id}/webhook/test")]
+    [ProducesResponseType(typeof(ApiResponse<WebhookTestResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> TestWebhook(string id)
+    {
+        var app = await _openPlatformService.GetAppByIdAsync(id);
+        if (app == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "应用不存在"));
+        }
+
+        if (string.IsNullOrWhiteSpace(app.WebhookUrl))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先配置 Webhook 地址"));
+        }
+
+        var deliveryLog = await _webhookService.SendTestNotificationAsync(app.WebhookUrl, app.WebhookSecret);
+
+        var response = new WebhookTestResponse
+        {
+            Success = deliveryLog.Success,
+            StatusCode = deliveryLog.StatusCode,
+            DurationMs = deliveryLog.DurationMs,
+            ErrorMessage = deliveryLog.ErrorMessage,
+            ResponseBody = deliveryLog.ResponseBody
+        };
+
+        return Ok(ApiResponse<WebhookTestResponse>.Ok(response));
+    }
+
+    /// <summary>
+    /// 获取 Webhook 投递日志
+    /// </summary>
+    [HttpGet("apps/{id}/webhook/logs")]
+    [ProducesResponseType(typeof(ApiResponse<PagedWebhookLogsResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetWebhookLogs(
+        string id,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20)
+    {
+        if (page <= 0) page = 1;
+        if (pageSize <= 0 || pageSize > 100) pageSize = 20;
+
+        var (logs, total) = await _webhookService.GetDeliveryLogsAsync(id, page, pageSize);
+
+        var response = new PagedWebhookLogsResponse
+        {
+            Items = logs.Select(l => new WebhookLogItem
+            {
+                Id = l.Id,
+                Type = l.Type,
+                Title = l.Title,
+                StatusCode = l.StatusCode,
+                Success = l.Success,
+                ErrorMessage = l.ErrorMessage,
+                DurationMs = l.DurationMs,
+                RetryCount = l.RetryCount,
+                CreatedAt = l.CreatedAt
+            }).ToList(),
+            Total = total,
+            Page = page,
+            PageSize = pageSize
+        };
+
+        return Ok(ApiResponse<PagedWebhookLogsResponse>.Ok(response));
+    }
 }
 
 #region Request/Response Models
@@ -378,6 +531,12 @@ public class AppListItem
     public DateTime? LastUsedAt { get; set; }
     public long TotalRequests { get; set; }
     public string ApiKeyMasked { get; set; } = string.Empty;
+    // Webhook 配置摘要
+    public bool WebhookEnabled { get; set; }
+    public string? WebhookUrl { get; set; }
+    public long TokenQuotaLimit { get; set; }
+    public long TokensUsed { get; set; }
+    public long QuotaWarningThreshold { get; set; }
 }
 
 public class PagedAppsResponse
@@ -410,6 +569,59 @@ public class LogListItem
 public class PagedLogsResponse
 {
     public List<LogListItem> Items { get; set; } = new();
+    public long Total { get; set; }
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+}
+
+// ========== Webhook 相关模型 ==========
+
+public class UpdateWebhookConfigRequest
+{
+    public string? WebhookUrl { get; set; }
+    public string? WebhookSecret { get; set; }
+    public bool WebhookEnabled { get; set; }
+    public long TokenQuotaLimit { get; set; }
+    public long QuotaWarningThreshold { get; set; } = 100000;
+}
+
+public class WebhookConfigResponse
+{
+    public string? WebhookUrl { get; set; }
+    /// <summary>掩码后的密钥（如 ****abcd）</summary>
+    public string? WebhookSecretMasked { get; set; }
+    public bool WebhookEnabled { get; set; }
+    public long TokenQuotaLimit { get; set; }
+    public long TokensUsed { get; set; }
+    public long QuotaWarningThreshold { get; set; }
+    public DateTime? LastQuotaWarningAt { get; set; }
+}
+
+public class WebhookTestResponse
+{
+    public bool Success { get; set; }
+    public int? StatusCode { get; set; }
+    public long? DurationMs { get; set; }
+    public string? ErrorMessage { get; set; }
+    public string? ResponseBody { get; set; }
+}
+
+public class WebhookLogItem
+{
+    public string Id { get; set; } = string.Empty;
+    public string Type { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public int? StatusCode { get; set; }
+    public bool Success { get; set; }
+    public string? ErrorMessage { get; set; }
+    public long? DurationMs { get; set; }
+    public int RetryCount { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+public class PagedWebhookLogsResponse
+{
+    public List<WebhookLogItem> Items { get; set; } = new();
     public long Total { get; set; }
     public int Page { get; set; }
     public int PageSize { get; set; }

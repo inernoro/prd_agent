@@ -861,6 +861,17 @@ builder.Services.AddScoped<IOpenPlatformService>(sp =>
     return new PrdAgent.Infrastructure.Services.OpenPlatformServiceImpl(db, idGenerator);
 });
 
+// 注册 Webhook 通知服务
+builder.Services.AddHttpClient("WebhookClient");
+builder.Services.AddScoped<IWebhookNotificationService>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    var openPlatformService = sp.GetRequiredService<IOpenPlatformService>();
+    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    var logger = sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.Services.WebhookNotificationService>>();
+    return new PrdAgent.Infrastructure.Services.WebhookNotificationService(db, openPlatformService, httpClientFactory, logger);
+});
+
 // 注册缺口通知服务
 builder.Services.AddScoped<IGapNotificationService>(sp =>
 {

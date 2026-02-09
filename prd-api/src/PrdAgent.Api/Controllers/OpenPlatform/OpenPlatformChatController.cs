@@ -28,6 +28,7 @@ public class OpenPlatformChatController : ControllerBase
     private readonly ISessionService _sessionService;
     private readonly IGroupService _groupService;
     private readonly IOpenPlatformService _openPlatformService;
+    private readonly IWebhookNotificationService _webhookService;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IIdGenerator _idGenerator;
@@ -38,6 +39,7 @@ public class OpenPlatformChatController : ControllerBase
         ISessionService sessionService,
         IGroupService groupService,
         IOpenPlatformService openPlatformService,
+        IWebhookNotificationService webhookService,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         IIdGenerator idGenerator,
@@ -47,6 +49,7 @@ public class OpenPlatformChatController : ControllerBase
         _sessionService = sessionService;
         _groupService = groupService;
         _openPlatformService = openPlatformService;
+        _webhookService = webhookService;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _idGenerator = idGenerator;
@@ -1113,6 +1116,13 @@ public class OpenPlatformChatController : ControllerBase
             };
 
             await _openPlatformService.LogRequestAsync(log);
+
+            // 额度预警：有 token 消耗时异步检查并通知（fire-and-forget，不影响主流程）
+            var totalTokens = (inputTokens ?? 0) + (outputTokens ?? 0);
+            if (totalTokens > 0)
+            {
+                _ = _webhookService.CheckQuotaAndNotifyAsync(appId, totalTokens);
+            }
         }
         catch (Exception ex)
         {

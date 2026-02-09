@@ -124,6 +124,9 @@ public class MongoDbContext
     // AI Toolbox 百宝箱
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
 
+    // Webhook 通知
+    public IMongoCollection<WebhookDeliveryLog> WebhookDeliveryLogs => _database.GetCollection<WebhookDeliveryLog>("webhook_delivery_logs");
+
     // 模型中继 (Exchange)
     public IMongoCollection<ModelExchange> ModelExchanges => _database.GetCollection<ModelExchange>("model_exchanges");
 
@@ -768,6 +771,17 @@ public class MongoDbContext
         ToolboxRuns.Indexes.CreateOne(new CreateIndexModel<ToolboxRun>(
             Builders<ToolboxRun>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_toolbox_runs_status_created" }));
+
+        // ========== Webhook 通知投递日志索引 ==========
+
+        // WebhookDeliveryLogs：按 appId + createdAt 查询
+        WebhookDeliveryLogs.Indexes.CreateOne(new CreateIndexModel<WebhookDeliveryLog>(
+            Builders<WebhookDeliveryLog>.IndexKeys.Ascending(x => x.AppId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_webhook_delivery_logs_app_created" }));
+        // TTL（默认保留 30 天）
+        WebhookDeliveryLogs.Indexes.CreateOne(new CreateIndexModel<WebhookDeliveryLog>(
+            Builders<WebhookDeliveryLog>.IndexKeys.Ascending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "ttl_webhook_delivery_logs", ExpireAfter = TimeSpan.FromDays(30) }));
 
         // ModelExchanges：按 ModelAlias 唯一索引
         try

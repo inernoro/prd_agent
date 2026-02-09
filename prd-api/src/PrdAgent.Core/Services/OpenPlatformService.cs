@@ -158,6 +158,25 @@ public abstract class OpenPlatformService : IOpenPlatformService
         await UpdateAppFieldsAsync(appId, updates);
     }
 
+    public async Task<bool> UpdateWebhookConfigAsync(
+        string appId,
+        string? webhookUrl,
+        string? webhookSecret,
+        bool webhookEnabled,
+        long tokenQuotaLimit,
+        long quotaWarningThreshold)
+    {
+        var updates = new Dictionary<string, object>
+        {
+            ["WebhookUrl"] = webhookUrl ?? "",
+            ["WebhookSecret"] = webhookSecret ?? "",
+            ["WebhookEnabled"] = webhookEnabled,
+            ["TokenQuotaLimit"] = tokenQuotaLimit,
+            ["QuotaWarningThreshold"] = quotaWarningThreshold
+        };
+        return await UpdateAppFieldsAsync(appId, updates);
+    }
+
     protected static string GenerateApiKey()
     {
         var guid1 = Guid.NewGuid().ToString("N");
