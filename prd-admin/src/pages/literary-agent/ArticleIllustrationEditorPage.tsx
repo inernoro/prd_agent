@@ -2048,14 +2048,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               {/* 提示词 */}
               <div
                 className={configPillBaseClass}
-                style={{ background: 'rgba(147, 197, 253, 0.08)', border: '1px solid rgba(147, 197, 253, 0.15)' }}
+                style={{
+                  background: selectedPrompt ? 'rgba(147, 197, 253, 0.08)' : 'rgba(255,255,255,0.03)',
+                  border: selectedPrompt ? '1px solid rgba(147, 197, 253, 0.15)' : '1px solid rgba(255,255,255,0.08)'
+                }}
                 onClick={() => {
                   if (selectedPrompt) handleEditPrompt(selectedPrompt);
                   else setPromptPreviewOpen(true);
                 }}
                 title={selectedPrompt?.title || '未选择风格'}
               >
-                <FileText size={12} style={{ color: '#93C5FD', flexShrink: 0 }} />
+                <FileText size={12} style={{ color: selectedPrompt ? '#93C5FD' : '#9CA3AF', flexShrink: 0 }} />
                 <span className={configPillTextClass} style={{ color: selectedPrompt ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                   {selectedPrompt?.title || '风格'}
                 </span>
