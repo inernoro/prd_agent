@@ -477,53 +477,101 @@ function isPromptTokenText(v: unknown): v is string {
   return /^\[[A-Z0-9_]+\]$/.test(s);
 }
 
-function restoreSystemPromptInRequestBody(requestBodyRedacted: string, systemPromptText: string | null | undefined): string {
+/** 检测是否为后端截断的文本（包含 ...[N chars trimmed] 后缀） */
+function isTruncatedText(v: unknown): v is string {
+  if (typeof v !== 'string') return false;
+  return /\.\.\.\[\d+ chars trimmed\]$/.test(v.trim());
+}
+
+/** 检测文本是否需要被还原（token 占位符或截断文本） */
+function needsRestore(v: unknown): v is string {
+  return isPromptTokenText(v) || isTruncatedText(v);
+}
+
+/**
+ * 还原请求体中被截断/脱敏的内容（用于 curl 复制和 body 展示）。
+ *
+ * 后端日志存储会对请求体做两层处理：
+ * 1. OpenAIClient 路径：系统提示词替换为 token（如 [SYSTEM_PROMPT_REDACTED]）
+ * 2. LlmRequestLogWriter：所有 >100 字符的字符串值截断为 "xxx...[N chars trimmed]"
+ *
+ * 本函数从单独存储的 systemPromptText / questionText 还原这些被截断的内容。
+ */
+function restoreTruncatedRequestBody(
+  requestBodyRedacted: string,
+  systemPromptText: string | null | undefined,
+  questionText: string | null | undefined
+): string {
   const raw = requestBodyRedacted || '';
+  if (!raw.trim()) return raw;
+
   const sp = (systemPromptText ?? '').trim();
-  if (!raw.trim() || !sp) return raw;
+  const qt = (questionText ?? '').trim();
+  if (!sp && !qt) return raw;
 
   const parsed = tryParseJsonObject(raw);
   if (!parsed) return raw;
 
-  // parsed 已经是 JSON.parse 的产物，这里用 JSON round-trip 作为深拷贝（避免直接 mutate 原引用）
   const obj = JSON.parse(JSON.stringify(parsed)) as any;
   let changed = false;
 
-  // 常见：Anthropic { system: "..." } / OpenAI { messages:[{role:"system",content:"..."}] }
-  const systemKeys = ['system', 'system_prompt', 'systemPrompt', 'system_prompt_text', 'systemPromptText'];
-  for (const k of systemKeys) {
-    if (isPromptTokenText(obj?.[k])) {
-      obj[k] = sp;
-      changed = true;
+  // Anthropic 顶层 system 字段
+  if (sp) {
+    const systemKeys = ['system', 'system_prompt', 'systemPrompt', 'system_prompt_text', 'systemPromptText'];
+    for (const k of systemKeys) {
+      if (needsRestore(obj?.[k])) {
+        obj[k] = sp;
+        changed = true;
+      }
     }
   }
 
   const messages = obj?.messages;
   if (Array.isArray(messages)) {
-    for (const m of messages) {
+    // 找到最后一条 user 消息的索引（用于 questionText 还原）
+    let lastUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i] && String(messages[i].role ?? '').toLowerCase() === 'user') {
+        lastUserIdx = i;
+        break;
+      }
+    }
+
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
       if (!m || typeof m !== 'object') continue;
       const role = String((m as any).role ?? '').toLowerCase();
-      if (role !== 'system') continue;
 
-      const c = (m as any).content;
-      if (isPromptTokenText(c)) {
-        (m as any).content = sp;
-        changed = true;
-        continue;
-      }
-
-      // 兼容：多模态 content 为数组/对象，且 token 在 text 字段里
-      if (Array.isArray(c)) {
-        for (const it of c) {
-          if (!it || typeof it !== 'object') continue;
-          if (isPromptTokenText((it as any).text)) {
-            (it as any).text = sp;
+      // 还原 system 消息
+      if (role === 'system' && sp) {
+        const c = (m as any).content;
+        if (needsRestore(c)) {
+          (m as any).content = sp;
+          changed = true;
+          continue;
+        }
+        // 兼容：多模态 content 为数组/对象
+        if (Array.isArray(c)) {
+          for (const it of c) {
+            if (!it || typeof it !== 'object') continue;
+            if (needsRestore((it as any).text)) {
+              (it as any).text = sp;
+              changed = true;
+            }
+          }
+        } else if (c && typeof c === 'object') {
+          if (needsRestore((c as any).text)) {
+            (c as any).text = sp;
             changed = true;
           }
         }
-      } else if (c && typeof c === 'object') {
-        if (isPromptTokenText((c as any).text)) {
-          (c as any).text = sp;
+      }
+
+      // 还原最后一条 user 消息（从 questionText）
+      if (role === 'user' && qt && i === lastUserIdx) {
+        const c = (m as any).content;
+        if (isTruncatedText(c)) {
+          (m as any).content = qt;
           changed = true;
         }
       }
@@ -670,7 +718,7 @@ function buildCurlFromLog(detail: LlmRequestLog, inputArtifacts?: UploadArtifact
     headers['Content-Type'] = 'application/json';
   }
 
-  let restoredBody = restoreSystemPromptInRequestBody(detail.requestBodyRedacted || '', detail.systemPromptText);
+  let restoredBody = restoreTruncatedRequestBody(detail.requestBodyRedacted || '', detail.systemPromptText, detail.questionText);
   restoredBody = injectRefImageIntoRequestBody(restoredBody, inputArtifacts ?? []);
   const bodyPretty = tryPrettyJsonText(restoredBody);
   const headerArgs = Object.entries(headers)
@@ -1127,7 +1175,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
   const isImageLikeLog = isImageGenRequest || hasImageArtifacts || typeof detail?.imageSuccessCount === 'number';
   const prettyRequestBody = useMemo(() => {
     if (!detail) return '';
-    const restored = injectRefImageIntoRequestBody(detail.requestBodyRedacted || '', artifactInputs);
+    let restored = restoreTruncatedRequestBody(detail.requestBodyRedacted || '', detail.systemPromptText, detail.questionText);
+    restored = injectRefImageIntoRequestBody(restored, artifactInputs);
     return tryPrettyJsonText(restored);
   }, [detail, artifactInputs]);
   const curlText = useMemo(() => (detail ? buildCurlFromLog(detail, artifactInputs) : ''), [detail, artifactInputs]);
