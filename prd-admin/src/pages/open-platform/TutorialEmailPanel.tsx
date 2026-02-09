@@ -59,7 +59,7 @@ export default function TutorialEmailPanel({ onActionsReady }: TutorialEmailPane
   }, [viewMode, onActionsReady]);
 
   return (
-    <div className="space-y-3">
+    <div className="h-full overflow-y-auto space-y-4 pb-6">
       {viewMode === 'compose' && <ComposeView />}
       {viewMode === 'templates' && <TemplatesView />}
       {viewMode === 'records' && <RecordsView />}
@@ -154,22 +154,25 @@ function ComposeView() {
   };
 
   return (
-    <div className="space-y-4">
-      {/* Step 1: 输入主题 */}
-      <GlassCard className="p-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <Sparkles size={16} style={{ color: 'var(--color-warning)' }} />
-          <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+    <div className="space-y-5">
+      {/* Step 1: 输入区 - 占满宽度 */}
+      <GlassCard className="p-6 space-y-4">
+        <div className="flex items-center gap-2 mb-1">
+          <Sparkles size={18} style={{ color: 'var(--color-warning)' }} />
+          <span className="text-base font-medium" style={{ color: 'var(--text-primary)' }}>
             描述你想发的邮件
+          </span>
+          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            AI 自动生成完整 HTML 邮件模板
           </span>
         </div>
 
         <textarea
-          placeholder="例如：Day 1 新手引导教程 - 介绍如何创建第一个 PRD 文档，包含快速入门步骤和截图说明"
+          placeholder="例如：Day 1 新手引导教程 - 介绍如何创建第一个 PRD 文档，包含快速入门步骤和截图说明&#10;&#10;你也可以描述具体内容：欢迎邮件、功能更新通知、教程系列第3封..."
           value={topic}
           onChange={(e) => setTopic(e.target.value)}
-          rows={3}
-          className="w-full px-3 py-2 text-sm rounded-md resize-none"
+          rows={4}
+          className="w-full px-4 py-3 text-sm rounded-lg resize-none leading-relaxed"
           style={inputStyle}
         />
 
@@ -177,7 +180,7 @@ function ComposeView() {
           <select
             value={style}
             onChange={(e) => setStyle(e.target.value)}
-            className="px-2.5 py-1.5 text-xs rounded-md"
+            className="px-3 py-2 text-sm rounded-lg"
             style={inputStyle}
           >
             {stylePresets.map((p) => (
@@ -188,7 +191,7 @@ function ComposeView() {
           <select
             value={language}
             onChange={(e) => setLanguage(e.target.value)}
-            className="px-2.5 py-1.5 text-xs rounded-md"
+            className="px-3 py-2 text-sm rounded-lg"
             style={inputStyle}
           >
             <option value="中文">中文</option>
@@ -197,49 +200,49 @@ function ComposeView() {
           </select>
 
           <input
-            placeholder="额外要求（可选）"
+            placeholder="额外要求（可选，如：配色用蓝色系，添加 logo 占位）"
             value={extra}
             onChange={(e) => setExtra(e.target.value)}
-            className="flex-1 min-w-[200px] px-2.5 py-1.5 text-xs rounded-md"
+            className="flex-1 min-w-[250px] px-3 py-2 text-sm rounded-lg"
             style={inputStyle}
           />
 
-          <Button onClick={handleGenerate} disabled={generating} size="sm">
-            {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-            {generating ? 'AI 生成中...' : 'AI 生成'}
+          <Button onClick={handleGenerate} disabled={generating}>
+            {generating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+            {generating ? 'AI 生成中...' : 'AI 生成邮件'}
           </Button>
         </div>
       </GlassCard>
 
-      {/* Step 2: 实时预览 */}
+      {/* Step 2: 预览区 - 大面积展示 */}
       {htmlContent && (
-        <GlassCard className="p-4 space-y-3">
+        <GlassCard className="p-6 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Eye size={16} style={{ color: 'var(--text-secondary)' }} />
-              <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+              <Eye size={18} style={{ color: 'var(--text-secondary)' }} />
+              <span className="text-base font-medium" style={{ color: 'var(--text-primary)' }}>
                 邮件预览
               </span>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowCode(!showCode)}
-                className="text-xs px-2 py-1 rounded-md"
+                className="px-3 py-1.5 text-xs rounded-lg transition-colors"
                 style={{
                   background: showCode ? 'var(--bg-elevated)' : 'transparent',
                   color: 'var(--text-muted)',
                   border: '1px solid var(--border-default)',
                 }}
               >
-                {showCode ? '预览' : '源码'}
+                {showCode ? '切换预览' : '查看源码'}
               </button>
               <button
                 onClick={handleGenerate}
-                className="text-xs px-2 py-1 rounded-md flex items-center gap-1"
+                className="px-3 py-1.5 text-xs rounded-lg flex items-center gap-1.5 transition-colors"
                 style={{ color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
                 disabled={generating}
               >
-                <RefreshCw size={10} /> 重新生成
+                <RefreshCw size={12} /> 重新生成
               </button>
             </div>
           </div>
@@ -248,17 +251,16 @@ function ComposeView() {
             <textarea
               value={htmlContent}
               onChange={(e) => setHtmlContent(e.target.value)}
-              rows={20}
-              className="w-full px-3 py-2 text-xs font-mono rounded-md"
-              style={inputStyle}
+              className="w-full px-4 py-3 text-xs font-mono rounded-lg leading-relaxed"
+              style={{ ...inputStyle, minHeight: '60vh' }}
             />
           ) : (
-            <div className="rounded-lg overflow-hidden" style={{ background: '#f5f5f5' }}>
+            <div className="rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border-default)' }}>
               <iframe
                 srcDoc={htmlContent}
                 sandbox=""
                 className="w-full border-0"
-                style={{ height: '500px' }}
+                style={{ minHeight: '60vh' }}
                 title="邮件预览"
               />
             </div>
@@ -266,57 +268,57 @@ function ComposeView() {
         </GlassCard>
       )}
 
-      {/* Step 3: 发送 */}
+      {/* Step 3: 发送区 */}
       {htmlContent && (
-        <GlassCard className="p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <Send size={16} style={{ color: 'var(--text-secondary)' }} />
-            <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+        <GlassCard className="p-6 space-y-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Send size={18} style={{ color: 'var(--text-secondary)' }} />
+            <span className="text-base font-medium" style={{ color: 'var(--text-primary)' }}>
               发送邮件
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-4">
             <input
-              placeholder="收件邮箱"
+              placeholder="收件人邮箱"
               value={sendEmail}
               onChange={(e) => setSendEmail(e.target.value)}
-              className="px-3 py-2 text-sm rounded-md"
+              className="px-4 py-2.5 text-sm rounded-lg"
               style={inputStyle}
             />
             <input
               placeholder="邮件标题（默认使用主题描述）"
               value={sendSubject}
               onChange={(e) => setSendSubject(e.target.value)}
-              className="px-3 py-2 text-sm rounded-md"
+              className="px-4 py-2.5 text-sm rounded-lg"
               style={inputStyle}
             />
           </div>
 
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
+          <div className="flex items-center justify-between pt-1">
+            <div className="flex items-center gap-5">
+              <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
                 <input
                   type="checkbox"
                   checked={saveAsTemplate}
                   onChange={(e) => setSaveAsTemplate(e.target.checked)}
                   className="rounded"
                 />
-                <Save size={12} /> 同时保存为模板
+                <Save size={14} /> 同时保存为模板
               </label>
               {saveAsTemplate && (
                 <input
-                  placeholder="模板名称（可选，自动生成）"
+                  placeholder="模板名称（可选，自动命名）"
                   value={templateName}
                   onChange={(e) => setTemplateName(e.target.value)}
-                  className="px-2 py-1 text-xs rounded-md w-48"
+                  className="px-3 py-1.5 text-sm rounded-lg w-56"
                   style={inputStyle}
                 />
               )}
             </div>
 
-            <Button onClick={handleSend} disabled={sending} size="sm">
-              {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+            <Button onClick={handleSend} disabled={sending}>
+              {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
               {sending ? '发送中...' : '发送邮件'}
             </Button>
           </div>
@@ -389,12 +391,12 @@ function TemplatesView() {
       </div>
 
       {loading ? (
-        <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+        <div className="text-center py-20" style={{ color: 'var(--text-muted)' }}>加载中...</div>
       ) : templates.length === 0 ? (
-        <div className="text-center py-12" style={{ color: 'var(--text-muted)' }}>
-          <Mail size={32} className="mx-auto mb-2 opacity-30" />
-          <div className="text-sm">暂无模板</div>
-          <div className="text-xs mt-1">在「AI 编写」中生成邮件时勾选"保存为模板"即可自动保存</div>
+        <div className="text-center py-32" style={{ color: 'var(--text-muted)' }}>
+          <Mail size={48} className="mx-auto mb-3 opacity-20" />
+          <div className="text-base">暂无模板</div>
+          <div className="text-sm mt-2 opacity-60">在「AI 编写」中生成邮件时勾选"保存为模板"即可自动保存到这里</div>
         </div>
       ) : (
         templates.map((tpl) => (
@@ -533,11 +535,12 @@ function RecordsView() {
       </div>
 
       {loading ? (
-        <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+        <div className="text-center py-20" style={{ color: 'var(--text-muted)' }}>加载中...</div>
       ) : enrollments.length === 0 ? (
-        <div className="text-center py-12" style={{ color: 'var(--text-muted)' }}>
-          <Users size={32} className="mx-auto mb-2 opacity-30" />
-          <div className="text-sm">暂无发送记录</div>
+        <div className="text-center py-32" style={{ color: 'var(--text-muted)' }}>
+          <Users size={48} className="mx-auto mb-3 opacity-20" />
+          <div className="text-base">暂无发送记录</div>
+          <div className="text-sm mt-2 opacity-60">发送邮件或批量注册用户后，记录会显示在这里</div>
         </div>
       ) : (
         <div className="space-y-2">
