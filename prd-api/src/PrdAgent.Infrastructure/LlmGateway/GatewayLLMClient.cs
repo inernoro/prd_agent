@@ -108,6 +108,12 @@ public class GatewayLLMClient : ILLMClient
                 yield break;
             }
 
+            // 跳过思考过程块（Gateway 已过滤，此处为防御性检查）
+            if (chunk.Type == GatewayChunkType.Thinking)
+            {
+                continue;
+            }
+
             if (chunk.Type == GatewayChunkType.Start)
             {
                 yield return new LLMStreamChunk { Type = "start" };
