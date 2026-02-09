@@ -147,8 +147,8 @@ public static class AnchorInsertionService
             .Replace('：', ':')
             .Replace('"', '"')
             .Replace('"', '"')
-            .Replace(''', '\'')
-            .Replace(''', '\'');
+            .Replace('\u2018', '\'')
+            .Replace('\u2019', '\'');
     }
 
     /// <summary>将归一化字符串中的位置映射回原始字符串中的大致位置</summary>
