@@ -165,6 +165,7 @@ export const api = {
     llm: {
       list: () => '/api/logs/llm',
       byId: (id: string) => `/api/logs/llm/${id}`,
+      replayCurl: (id: string) => `/api/logs/llm/${id}/replay-curl`,
       meta: () => '/api/logs/llm/meta',
       modelStats: () => '/api/logs/llm/model-stats',
       batchModelStats: () => '/api/logs/llm/model-stats/batch',
