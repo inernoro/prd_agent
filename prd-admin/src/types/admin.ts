@@ -128,6 +128,10 @@ export type LlmRequestLogListItem = {
   questionPreview?: string | null;
   /** 列表预览：模型回答（短文本，可用于 UI 滚动） */
   answerPreview?: string | null;
+  /** 是否发生了模型降级 */
+  isFallback?: boolean | null;
+  /** 期望使用的模型 */
+  expectedModel?: string | null;
 };
 
 export type LlmRequestLog = {
@@ -186,6 +190,12 @@ export type LlmRequestLog = {
   status: string;
   /** 图片引用列表（参考图 COS URL 等元数据，用于日志页展示） */
   imageReferences?: LlmImageReference[] | null;
+  /** 是否发生了模型降级 */
+  isFallback?: boolean | null;
+  /** 降级原因 */
+  fallbackReason?: string | null;
+  /** 期望使用的模型 */
+  expectedModel?: string | null;
 };
 
 export type LlmImageReference = {

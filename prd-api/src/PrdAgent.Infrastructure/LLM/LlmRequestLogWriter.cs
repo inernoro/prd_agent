@@ -80,7 +80,11 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 ExchangeName = start.ExchangeName,
                 ExchangeTransformerType = start.ExchangeTransformerType,
                 // 图片引用
-                ImageReferences = start.ImageReferences
+                ImageReferences = start.ImageReferences,
+                // 模型降级信息
+                IsFallback = start.IsFallback,
+                FallbackReason = start.FallbackReason,
+                ExpectedModel = start.ExpectedModel
             };
 
             await _db.LlmRequestLogs.InsertOneAsync(log, cancellationToken: ct);

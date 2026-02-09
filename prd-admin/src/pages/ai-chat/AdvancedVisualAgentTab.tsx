@@ -64,7 +64,7 @@ import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/image
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
-import type { ImageAsset, VisualAgentCanvas, VisualAgentMessage, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
+import type { ImageAsset, VisualAgentCanvas, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import type { Model } from '@/types/admin';
 import {
   ArrowUpToLine,
@@ -3637,6 +3637,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const refTag = sourceItem.refId ? ` @img${sourceItem.refId}` : '';
       const qaUserMsg = `[${label}]${refTag} ${prompt}`;
       pushMsg('User', qaUserMsg);
+      // 标记：后端消息会在上传后用 COS URL 重新构建（qaMsgForBackend）
+      let qaMsgForBackend = qaUserMsg;
       // 尺寸自适应：基于源图原始尺寸（支持外部覆盖，如 HD 放大需要升档）
       const refDim =
         sourceItem.naturalW && sourceItem.naturalH
@@ -3674,6 +3676,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           });
           if (up.success) {
             assetSha256 = up.data.asset.sha256;
+            // 用 COS URL 重建后端消息（刷新后不再依赖 canvas refId）
+            const cosUrl = up.data.asset.url || '';
+            if (cosUrl) {
+              const imgTag = maskBase64 ? `[IMG:${cosUrl}|参考图] [蒙版已应用]` : `[IMG:${cosUrl}|参考图]`;
+              qaMsgForBackend = `[${label}] ${imgTag} ${prompt}`;
+            }
             // 更新源图的 syncStatus
             setCanvas((prev) =>
               prev.map((x) =>
@@ -3754,7 +3762,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               },
             ],
             maskBase64: maskBase64 || undefined,
-            userMessageContent: qaUserMsg,
+            userMessageContent: qaMsgForBackend,
           },
           idempotencyKey: `qaRun_${workspaceId}_${key}`,
         });
@@ -8545,6 +8553,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
           const sketchUserMsg = `[手绘板生图] ${desc.trim()}`;
           pushMsg('User', sketchUserMsg);
+          // 后端消息会在上传后用 COS URL 重建
+          let sketchMsgForBackend = sketchUserMsg;
 
           // 添加草图到画布（用于展示参考）
           const sketchKey = `sketch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -8589,6 +8599,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
           const assetSha256 = up.data.asset.sha256;
           const refSrc = up.data.asset.url || '';
+          // 用 COS URL 重建后端消息（刷新后可直接展示草图缩略图）
+          if (refSrc) {
+            sketchMsgForBackend = `[手绘板生图] [IMG:${refSrc}|手绘草图] ${desc.trim()}`;
+          }
           setCanvas(prev =>
             prev.map(x =>
               x.key === sketchKey
@@ -8641,7 +8655,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     label: '手绘草图',
                   },
                 ],
-                userMessageContent: sketchUserMsg,
+                userMessageContent: sketchMsgForBackend,
               },
               idempotencyKey: `sketchRun_${workspaceId}_${genKey}`,
             });

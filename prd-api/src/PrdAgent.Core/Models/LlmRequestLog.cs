@@ -126,6 +126,14 @@ public class LlmRequestLog
     /// <summary>Exchange 转换器类型</summary>
     public string? ExchangeTransformerType { get; set; }
 
+    // 模型降级/回退信息
+    /// <summary>是否发生了模型降级（期望模型与实际模型不一致，或模型池回退）</summary>
+    public bool? IsFallback { get; set; }
+    /// <summary>降级原因（如：模型池中所有模型不可用，回退到直连模型）</summary>
+    public string? FallbackReason { get; set; }
+    /// <summary>期望使用的模型名称</summary>
+    public string? ExpectedModel { get; set; }
+
     // 图片引用（用于管理后台日志页展示参考图 COS URL，不存 base64）
     /// <summary>
     /// 本次请求涉及的图片引用列表（参考图、蒙版等），仅存元数据和 COS URL

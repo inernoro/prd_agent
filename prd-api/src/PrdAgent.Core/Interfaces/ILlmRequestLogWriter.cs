@@ -39,7 +39,11 @@ public record LlmLogStart(
     string? ExchangeName = null,
     string? ExchangeTransformerType = null,
     // 图片引用（参考图 COS URL，用于日志页展示）
-    List<LlmImageReference>? ImageReferences = null);
+    List<LlmImageReference>? ImageReferences = null,
+    // 模型降级信息
+    bool? IsFallback = null,
+    string? FallbackReason = null,
+    string? ExpectedModel = null);
 
 public record LlmLogDone(
     int? StatusCode,

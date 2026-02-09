@@ -1103,7 +1103,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
     if (Array.isArray(refs) && refs.length > 0) {
       return refs
         .filter((r) => r.cosUrl)
-        .map((r, idx) => ({
+        .map((r) => ({
           label: r.label || '参考图',
           src: r.cosUrl!,
           cosUrl: r.cosUrl ?? undefined,
@@ -1479,6 +1479,17 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                             );
                           }
                         })()}
+                        {/* 模型降级标签 */}
+                        {it.isFallback ? (
+                          <label
+                            className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
+                            title={it.expectedModel ? `期望模型 ${it.expectedModel}，实际使用 ${it.model}` : '模型池回退'}
+                            style={{ background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.30)', color: 'rgba(245, 158, 11, 0.95)' }}
+                          >
+                            <RefreshCw size={10} />
+                            已降级
+                          </label>
+                        ) : null}
                         {(() => {
                           const hint = extractImageSizeAdjustmentHint(it);
                           if (!hint) return null;
@@ -1759,6 +1770,15 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                     );
                   })}
                 </div>
+                {detail.isFallback ? (
+                  <div className="mt-2 rounded-[10px] px-3 py-2" style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
+                    <div className="text-[12px] font-semibold" style={{ color: 'rgba(245, 158, 11, 0.95)' }}>模型已降级</div>
+                    <div className="text-[11px] mt-0.5" style={{ color: 'rgba(245, 158, 11, 0.75)' }}>
+                      {detail.expectedModel ? `期望: ${detail.expectedModel} → 实际: ${detail.model}` : ''}
+                      {detail.fallbackReason ? ` · ${detail.fallbackReason}` : ''}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="mt-3 flex-1 min-h-0 overflow-auto space-y-3">
                   <div>
                     {(() => {
