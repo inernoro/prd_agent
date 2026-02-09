@@ -8,10 +8,8 @@ import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backd
 
 const passwordRules: Array<{ key: string; label: string; test: (pwd: string) => boolean }> = [
   { key: 'len', label: '长度 8-128 位', test: (pwd) => pwd.length >= 8 && pwd.length <= 128 },
-  { key: 'lower', label: '包含小写字母', test: (pwd) => /[a-z]/.test(pwd) },
-  { key: 'upper', label: '包含大写字母', test: (pwd) => /[A-Z]/.test(pwd) },
+  { key: 'letter', label: '包含字母', test: (pwd) => /[a-zA-Z]/.test(pwd) },
   { key: 'digit', label: '包含数字', test: (pwd) => /\d/.test(pwd) },
-  { key: 'special', label: '包含特殊字符（如 !@#$ 等）', test: (pwd) => /[!@#$%^&*(),.?":{}|<>]/.test(pwd) },
 ];
 
 export default function LoginPage() {
@@ -353,7 +351,7 @@ export default function LoginPage() {
                 )}
                 {!newPassword && (
                   <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    密码要求：8-128 位，需包含大小写字母、数字和特殊字符
+                    密码要求：8-128 位，需包含字母和数字
                   </div>
                 )}
               </div>

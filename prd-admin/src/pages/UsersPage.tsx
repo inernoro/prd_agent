@@ -61,10 +61,8 @@ void fmtRelativeTime;
 
 const passwordRules: Array<{ key: string; label: string; test: (pwd: string) => boolean }> = [
   { key: 'len', label: '长度 8-128 位', test: (pwd) => pwd.length >= 8 && pwd.length <= 128 },
-  { key: 'lower', label: '包含小写字母', test: (pwd) => /[a-z]/.test(pwd) },
-  { key: 'upper', label: '包含大写字母', test: (pwd) => /[A-Z]/.test(pwd) },
+  { key: 'letter', label: '包含字母', test: (pwd) => /[a-zA-Z]/.test(pwd) },
   { key: 'digit', label: '包含数字', test: (pwd) => /\d/.test(pwd) },
-  { key: 'special', label: '包含特殊字符（如 !@#$ 等）', test: (pwd) => /[!@#$%^&*(),.?":{}|<>]/.test(pwd) },
 ];
 
 export default function UsersPage() {
