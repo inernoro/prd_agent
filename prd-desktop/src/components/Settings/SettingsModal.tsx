@@ -588,29 +588,27 @@ export default function SettingsModal() {
             </div>
           </div>
 
-          {/* 开发者选项：仅本地调试可见（发布版默认关闭且不提供入口） */}
-          {import.meta.env.DEV && (
-            <div className="space-y-3">
-              <label className="block text-sm font-medium text-text-secondary">
-                开发者选项
-              </label>
+          {/* 开发者选项：常开，不受构建模式限制 */}
+          <div className="space-y-3">
+            <label className="block text-sm font-medium text-text-secondary">
+              开发者选项
+            </label>
 
-              <label className="flex items-center gap-3 cursor-pointer">
-                <div className="relative">
-                  <input
-                    type="checkbox"
-                    checked={isDeveloper}
-                    onChange={(e) => handleDeveloperChange(e.target.checked)}
-                    className="sr-only"
-                  />
-                  <div className={`w-10 h-6 rounded-full transition-colors ${isDeveloper ? 'bg-cyan-500' : 'bg-black/10 dark:bg-white/20'}`}>
-                    <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${isDeveloper ? 'translate-x-4' : ''}`} />
-                  </div>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  checked={isDeveloper}
+                  onChange={(e) => handleDeveloperChange(e.target.checked)}
+                  className="sr-only"
+                />
+                <div className={`w-10 h-6 rounded-full transition-colors ${isDeveloper ? 'bg-cyan-500' : 'bg-black/10 dark:bg-white/20'}`}>
+                  <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${isDeveloper ? 'translate-x-4' : ''}`} />
                 </div>
-                <span className="text-sm text-text-secondary">我是开发者（默认地址切换到本地）</span>
-              </label>
-            </div>
-          )}
+              </div>
+              <span className="text-sm text-text-secondary">我是开发者（默认地址切换到本地）</span>
+            </label>
+          </div>
 
           {/* API 地址配置 */}
           <div className="space-y-3">
