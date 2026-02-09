@@ -919,7 +919,7 @@ export default function ModelManagePage() {
     // 右键时顺便选中，符合用户预期（菜单操作作用于当前行）
     setSelectedPlatformId(p.id);
     const menuW = 220;
-    const menuH = 96;
+    const menuH = 140;
     const x = Math.min(e.clientX, Math.max(8, window.innerWidth - menuW - 8));
     const y = Math.min(e.clientY, Math.max(8, window.innerHeight - menuH - 8));
     setPlatformCtxMenu({ open: true, x, y, platform: p });
@@ -1371,7 +1371,21 @@ export default function ModelManagePage() {
                 }}
               >
                 <Pencil size={16} />
-                重命名
+                编辑
+              </button>
+              <button
+                type="button"
+                className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
+                style={{ color: 'rgba(239,68,68,0.9)' }}
+                onClick={() => {
+                  const p = platformCtxMenu.platform;
+                  closePlatformCtxMenu();
+                  if (!p) return;
+                  onDeletePlatform(p);
+                }}
+              >
+                <Trash2 size={16} />
+                删除
               </button>
               <div className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
               <button
