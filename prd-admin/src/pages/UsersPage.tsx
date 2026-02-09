@@ -112,7 +112,6 @@ export default function UsersPage() {
   const [pwdOpen, setPwdOpen] = useState(false);
   const [pwdUser, setPwdUser] = useState<UserRow | null>(null);
   const [pwd, setPwd] = useState('');
-  const [pwd2, setPwd2] = useState('');
   const [pwdSubmitError, setPwdSubmitError] = useState<string | null>(null);
   const [pwdSubmitting, setPwdSubmitting] = useState(false);
 
@@ -163,22 +162,6 @@ export default function UsersPage() {
   const [rateLimitMaxConcurrent, setRateLimitMaxConcurrent] = useState(100);
   const [rateLimitGlobalMaxRpm, setRateLimitGlobalMaxRpm] = useState(600);
   const [rateLimitGlobalMaxConcurrent, setRateLimitGlobalMaxConcurrent] = useState(100);
-
-  const pwdChecks = useMemo(() => {
-    const v = pwd ?? '';
-    const touched = v.length > 0;
-    return passwordRules.map((r) => ({ ...r, ok: touched ? r.test(v) : false, touched }));
-  }, [pwd]);
-
-  const pwdAllOk = useMemo(() => {
-    if (!pwd) return false;
-    return passwordRules.every((r) => r.test(pwd));
-  }, [pwd]);
-
-  const pwdMatchOk = useMemo(() => {
-    if (!pwd || !pwd2) return false;
-    return pwd === pwd2;
-  }, [pwd, pwd2]);
 
   const createUsernameOk = useMemo(() => {
     const u = (createUsername ?? '').trim();
@@ -380,7 +363,6 @@ export default function UsersPage() {
   const openChangePassword = (u: UserRow) => {
     setPwdUser(u);
     setPwd('');
-    setPwd2('');
     setPwdSubmitError(null);
     setPwdOpen(true);
   };
@@ -695,8 +677,7 @@ export default function UsersPage() {
 
   const submitChangePassword = async () => {
     if (!pwdUser) return;
-    if (!pwdAllOk) return;
-    if (!pwdMatchOk) return;
+    if (!pwd.trim()) return;
 
     setPwdSubmitting(true);
     setPwdSubmitError(null);
@@ -1838,7 +1819,6 @@ export default function UsersPage() {
           if (!v) {
             setPwdUser(null);
             setPwd('');
-            setPwd2('');
             setPwdSubmitError(null);
             setPwdSubmitting(false);
           }
@@ -1858,108 +1838,13 @@ export default function UsersPage() {
                 type="password"
                 className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                placeholder="至少8位，含大小写、数字、特殊字符"
+                placeholder="设置登录密码"
                 autoComplete="new-password"
               />
             </div>
 
-            <div>
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>确认新密码</div>
-              <input
-                value={pwd2}
-                onChange={(e) => {
-                  setPwd2(e.target.value);
-                  setPwdSubmitError(null);
-                }}
-                type="password"
-                className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                placeholder="再次输入新密码"
-                autoComplete="new-password"
-              />
-            </div>
-
-            <div
-              className="rounded-[16px] px-4 py-3"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
-            >
-              <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>密码要求（实时校验）</div>
-              <div className="mt-2 rounded-[14px]" style={{ background: 'rgba(0,0,0,0.10)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <ul className="divide-y" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-                  {pwdChecks.map((r) => {
-                    const ok = r.touched ? r.ok : false;
-                    const state: 'todo' | 'ok' | 'bad' = !r.touched ? 'todo' : ok ? 'ok' : 'bad';
-                    const color = state === 'ok' ? 'rgba(34,197,94,0.95)' : state === 'bad' ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)';
-                    const Icon = state === 'ok' ? CheckCircle2 : state === 'bad' ? XCircle : Circle;
-                    const statusText = state === 'ok' ? '通过' : state === 'bad' ? '未通过' : '待输入';
-                    const statusBg =
-                      state === 'ok'
-                        ? 'rgba(34,197,94,0.10)'
-                        : state === 'bad'
-                          ? 'rgba(239,68,68,0.10)'
-                          : 'rgba(255,255,255,0.03)';
-                    const statusBorder =
-                      state === 'ok'
-                        ? 'rgba(34,197,94,0.28)'
-                        : state === 'bad'
-                          ? 'rgba(239,68,68,0.28)'
-                          : 'rgba(255,255,255,0.10)';
-
-                    return (
-                      <li key={r.key} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Icon size={16} style={{ color }} />
-                          <div className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>
-                            {r.label}
-                          </div>
-                        </div>
-                        <span
-                          className="shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold"
-                          style={{ color, background: statusBg, border: `1px solid ${statusBorder}` }}
-                        >
-                          {statusText}
-                        </span>
-                      </li>
-                    );
-                  })}
-
-                  {(() => {
-                    const state: 'todo' | 'ok' | 'bad' = pwd2.length === 0 ? 'todo' : pwdMatchOk ? 'ok' : 'bad';
-                    const color = state === 'ok' ? 'rgba(34,197,94,0.95)' : state === 'bad' ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)';
-                    const Icon = state === 'ok' ? CheckCircle2 : state === 'bad' ? XCircle : Circle;
-                    const statusText = state === 'ok' ? '通过' : state === 'bad' ? '未通过' : '待输入';
-                    const statusBg =
-                      state === 'ok'
-                        ? 'rgba(34,197,94,0.10)'
-                        : state === 'bad'
-                          ? 'rgba(239,68,68,0.10)'
-                          : 'rgba(255,255,255,0.03)';
-                    const statusBorder =
-                      state === 'ok'
-                        ? 'rgba(34,197,94,0.28)'
-                        : state === 'bad'
-                          ? 'rgba(239,68,68,0.28)'
-                          : 'rgba(255,255,255,0.10)';
-
-                    return (
-                      <li className="flex items-center justify-between gap-3 px-3 py-2.5">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Icon size={16} style={{ color }} />
-                          <div className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>
-                            两次输入一致
-                          </div>
-                        </div>
-                        <span
-                          className="shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold"
-                          style={{ color, background: statusBg, border: `1px solid ${statusBorder}` }}
-                        >
-                          {statusText}
-                        </span>
-                      </li>
-                    );
-                  })()}
-                </ul>
-              </div>
+            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              该用户下次登录时将被要求重新设置密码
             </div>
 
             {pwdSubmitError && (
@@ -1979,7 +1864,7 @@ export default function UsersPage() {
                 variant="primary"
                 size="sm"
                 onClick={submitChangePassword}
-                disabled={pwdSubmitting || !pwdAllOk || !pwdMatchOk}
+                disabled={pwdSubmitting || !pwd.trim()}
               >
                 {pwdSubmitting ? '保存中...' : '保存'}
               </Button>
