@@ -5,12 +5,14 @@ namespace PrdAgent.Core.Services;
 /// <summary>
 /// 解析 LLM 输出的锚点插入指令格式：
 /// @AFTER 原文中的一句话
-/// [插图]: 配图提示词描述
+/// [插图](宽x高): 配图提示词描述
+/// 也兼容无尺寸的旧格式：[插图]: 配图提示词描述
 /// </summary>
 public static class AnchorInsertionParser
 {
     private static readonly Regex AfterLineRegex = new(@"^@AFTER\s+(.+)$", RegexOptions.Compiled);
-    private static readonly Regex MarkerLineRegex = new(@"^\[插图\]\s*:\s*(.+)$", RegexOptions.Compiled);
+    // 支持两种格式：[插图](1024x768): 描述  或  [插图]: 描述
+    private static readonly Regex MarkerLineRegex = new(@"^\[插图\](?:\((\d{3,4})\s*[xX×]\s*(\d{3,4})\))?\s*[:：]\s*(.+)$", RegexOptions.Compiled);
 
     /// <summary>
     /// 从 LLM 完整输出中解析所有锚点-插入对
@@ -39,15 +41,22 @@ public static class AnchorInsertionParser
                 var markerMatch = MarkerLineRegex.Match(line);
                 if (markerMatch.Success)
                 {
-                    var promptText = markerMatch.Groups[1].Value.Trim();
+                    var promptText = markerMatch.Groups[3].Value.Trim();
                     if (promptText.Length > 0)
                     {
+                        string? size = null;
+                        if (markerMatch.Groups[1].Success && markerMatch.Groups[2].Success)
+                        {
+                            size = $"{markerMatch.Groups[1].Value}x{markerMatch.Groups[2].Value}";
+                        }
+
                         result.Add(new AnchorInsertion
                         {
                             Index = result.Count,
                             AnchorText = pendingAnchor,
                             MarkerText = promptText,
-                            MarkerLine = $"[插图]: {promptText}"
+                            MarkerLine = $"[插图]: {promptText}",
+                            Size = size
                         });
                     }
                     pendingAnchor = null;
@@ -85,15 +94,22 @@ public static class AnchorInsertionParser
             var markerMatch = MarkerLineRegex.Match(trimmed);
             if (markerMatch.Success)
             {
-                var promptText = markerMatch.Groups[1].Value.Trim();
+                var promptText = markerMatch.Groups[3].Value.Trim();
                 if (promptText.Length > 0)
                 {
+                    string? size = null;
+                    if (markerMatch.Groups[1].Success && markerMatch.Groups[2].Success)
+                    {
+                        size = $"{markerMatch.Groups[1].Value}x{markerMatch.Groups[2].Value}";
+                    }
+
                     var result = new AnchorInsertion
                     {
                         Index = nextIndex,
                         AnchorText = pendingAnchor,
                         MarkerText = promptText,
-                        MarkerLine = $"[插图]: {promptText}"
+                        MarkerLine = $"[插图]: {promptText}",
+                        Size = size
                     };
                     pendingAnchor = null;
                     return result;
@@ -126,4 +142,7 @@ public class AnchorInsertion
 
     /// <summary>完整的标记行 [插图]: ...</summary>
     public string MarkerLine { get; set; } = string.Empty;
+
+    /// <summary>LLM 建议的图片尺寸（如 "1024x768"），可为 null 表示未指定</summary>
+    public string? Size { get; set; }
 }

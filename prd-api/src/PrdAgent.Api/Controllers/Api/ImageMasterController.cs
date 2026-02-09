@@ -2041,7 +2041,9 @@ public class ImageMasterController : ControllerBase
                                             {
                                                 type = "marker",
                                                 index = parsed.Index,
-                                                text = parsed.MarkerText
+                                                text = parsed.MarkerText,
+                                                size = parsed.Size,
+                                                anchor = parsed.AnchorText
                                             }, JsonOptions);
                                             await Response.WriteAsync($"data: {markerData}\n\n");
                                             await Response.Body.FlushAsync();
@@ -2115,7 +2117,9 @@ public class ImageMasterController : ControllerBase
                             {
                                 type = "marker",
                                 index = parsed.Index,
-                                text = parsed.MarkerText
+                                text = parsed.MarkerText,
+                                size = parsed.Size,
+                                anchor = parsed.AnchorText
                             }, JsonOptions);
                             await Response.WriteAsync($"data: {markerData}\n\n");
                             await Response.Body.FlushAsync();

@@ -104,7 +104,70 @@ const PRD_MD_STYLE = `
     padding: 0 4px;
     border-radius: 6px;
   }
+  @keyframes marker-insert-glow {
+    0% { background: rgba(245, 158, 11, 0.55); box-shadow: 0 0 12px rgba(245, 158, 11, 0.4); transform: translateY(-2px); opacity: 0.7; }
+    50% { background: rgba(245, 158, 11, 0.35); box-shadow: 0 0 6px rgba(245, 158, 11, 0.2); transform: translateY(0); opacity: 1; }
+    100% { background: rgba(245, 158, 11, 0.22); box-shadow: none; transform: translateY(0); opacity: 1; }
+  }
+  .prd-md .prd-md-marker-new {
+    background: rgba(245, 158, 11, 0.55);
+    border: 1px solid rgba(245, 158, 11, 0.5);
+    color: rgba(255,255,255,0.95);
+    padding: 0 4px;
+    border-radius: 6px;
+    animation: marker-insert-glow 1.2s ease-out forwards;
+  }
 `;
+
+/**
+ * 前端锚点匹配：在文章中找到锚点文本的位置（模仿后端 4 级模糊匹配）
+ * 返回锚点所在行的末尾位置，失败返回 -1
+ */
+function findAnchorInsertPos(article: string, anchor: string): number {
+  const normalizeWs = (s: string) => s.replace(/\s+/g, ' ').trim();
+  const normalizeP = (s: string) =>
+    s.replace(/，/g, ',').replace(/。/g, '.').replace(/！/g, '!').replace(/？/g, '?')
+     .replace(/；/g, ';').replace(/：/g, ':').replace(/\u201c/g, '"').replace(/\u201d/g, '"')
+     .replace(/\u2018/g, "'").replace(/\u2019/g, "'");
+
+  // 1. 精确匹配
+  let idx = article.indexOf(anchor);
+  if (idx < 0) {
+    // 2. 忽略大小写
+    idx = article.toLowerCase().indexOf(anchor.toLowerCase());
+  }
+  if (idx < 0) {
+    // 3. 归一化空白
+    const na = normalizeWs(article);
+    const nc = normalizeWs(anchor);
+    const ni = na.indexOf(nc);
+    if (ni >= 0) idx = Math.min(Math.round((ni / na.length) * article.length), article.length - 1);
+  }
+  if (idx < 0) {
+    // 4. 归一化标点
+    const na = normalizeP(normalizeWs(article));
+    const nc = normalizeP(normalizeWs(anchor));
+    const ni = na.indexOf(nc);
+    if (ni >= 0) idx = Math.min(Math.round((ni / na.length) * article.length), article.length - 1);
+  }
+  if (idx < 0) return -1;
+  // 找到行尾
+  const lineEnd = article.indexOf('\n', idx);
+  return lineEnd >= 0 ? lineEnd : article.length;
+}
+
+/**
+ * 将一个新的 marker 增量插入到当前文章内容中。
+ * 按锚点定位，在对应行后插入 [插图]: text。
+ */
+function insertMarkerIntoArticle(currentArticle: string, anchor: string, markerText: string): string {
+  const pos = findAnchorInsertPos(currentArticle, anchor);
+  if (pos < 0) {
+    // 未匹配时追加到末尾
+    return currentArticle + `\n\n[插图]: ${markerText}\n`;
+  }
+  return currentArticle.slice(0, pos) + `\n\n[插图]: ${markerText}\n` + currentArticle.slice(pos);
+}
 
 // 用户自定义提示词模板类型（对应后端 LiteraryPrompt）
 type PromptTemplate = {
@@ -229,10 +292,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [markerRunItems.length]);
   
-  // 当文章内容更新时，只在流式输出过程中自动滚动到底部
+  // 当文章内容更新时，只在流式输出过程中自动滚动到最新的 marker
   useEffect(() => {
     if (isStreamingRef.current && articlePreviewRef.current && articleWithMarkers) {
-      articlePreviewRef.current.scrollTop = articlePreviewRef.current.scrollHeight;
+      // 找到最后一个带动画的 marker 并滚动到它
+      const markers = articlePreviewRef.current.querySelectorAll('.prd-md-marker-new');
+      if (markers.length > 0) {
+        markers[markers.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else {
+        articlePreviewRef.current.scrollTop = articlePreviewRef.current.scrollHeight;
+      }
     }
   }, [articleWithMarkers]);
   
@@ -740,8 +809,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       let fullText = '';
       let currentLineBuffer = ''; // 当前行缓冲区（legacy 模式用）
       const extractedMarkers: ArticleMarker[] = []; // 已提取的标记
+      let runningArticle = articleContent; // 锚点模式：跟踪增量插入后的文章
+      const newMarkerIndices = new Set<number>(); // 跟踪新插入的 marker 索引（用于动画）
 
-      // 触发单个 marker 的意图解析（共用逻辑）
+      // 触发单个 marker 的意图解析（仅 legacy 模式或无尺寸时使用）
       const triggerPlanImageGen = (markerIndex: number, markerText: string) => {
         setMarkerRunItems((prev) => {
           if (prev.some((x) => x.markerIndex === markerIndex)) return prev;
@@ -790,6 +861,24 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         })();
       };
 
+      // 直接设置 marker 为已解析（跳过意图模型，尺寸由 LLM 直接提供）
+      const setMarkerDirectParsed = (markerIndex: number, markerText: string, size: string) => {
+        const planItem = { prompt: markerText, count: 1, size };
+        setMarkerRunItems((prev) => {
+          if (prev.some((x) => x.markerIndex === markerIndex)) return prev;
+          return [
+            ...prev,
+            { markerIndex, markerText, draftText: markerText, status: 'parsed' as MarkerRunStatus, planItem },
+          ];
+        });
+
+        void updateMarkerStatus(markerIndex, {
+          status: 'parsed',
+          draftText: markerText,
+          planItem: { prompt: markerText, count: 1, size },
+        });
+      };
+
       for await (const chunk of stream) {
         // ====== Anchor 模式：处理 marker 事件 ======
         if (chunk.type === 'marker' && chunk.text && chunk.index != null) {
@@ -802,7 +891,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             endPos: -1,
           });
           setMarkers([...extractedMarkers]);
-          triggerPlanImageGen(markerIndex, markerText);
+
+          // 增量插入 marker 到文章中（实时反馈）
+          if (chunk.anchor) {
+            runningArticle = insertMarkerIntoArticle(runningArticle, chunk.anchor, markerText);
+            newMarkerIndices.add(markerIndex);
+            setArticleWithMarkers(runningArticle);
+          }
+
+          // 有尺寸时直接标记为已解析（跳过意图模型），无尺寸时走旧路径
+          if (chunk.size) {
+            setMarkerDirectParsed(markerIndex, markerText, chunk.size);
+          } else {
+            triggerPlanImageGen(markerIndex, markerText);
+          }
         }
         // ====== Legacy 模式：处理 delta 事件 ======
         else if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
@@ -1735,13 +1837,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     const out: Array<string | JSX.Element> = [];
     let last = 0;
     let m: RegExpExecArray | null;
+    let markerOrdinal = 0;
     markerRegex.lastIndex = 0;
     while ((m = markerRegex.exec(text)) !== null) {
       const start = m.index;
       const end = m.index + m[0].length;
       if (start > last) out.push(text.slice(last, start));
+      // 流式生成中的 marker 使用带动画的 class
+      const isNew = markerStreaming;
       out.push(
-        <mark key={`${start}-${end}`} className="prd-md-marker">
+        <mark key={`m-${markerOrdinal++}-${start}`} className={isNew ? 'prd-md-marker-new' : 'prd-md-marker'}>
           {m[0]}
         </mark>
       );

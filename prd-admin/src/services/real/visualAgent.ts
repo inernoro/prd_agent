@@ -270,7 +270,7 @@ export async function* generateArticleMarkersReal(input: {
   userInstruction?: string;
   idempotencyKey?: string;
   insertionMode?: 'legacy' | 'anchor';
-}): AsyncIterable<{ type: string; text?: string; fullText?: string; message?: string; index?: number; mode?: string; markerCount?: number }> {
+}): AsyncIterable<{ type: string; text?: string; fullText?: string; message?: string; index?: number; mode?: string; markerCount?: number; size?: string; anchor?: string }> {
   const headers: Record<string, string> = {
     Accept: 'text/event-stream',
     'Content-Type': 'application/json',
