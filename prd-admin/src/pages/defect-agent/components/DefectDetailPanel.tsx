@@ -253,10 +253,18 @@ export function DefectDetailPanel() {
   };
 
   const handleCloseDefect = async () => {
+    const confirmed = await systemDialog.confirm({
+      title: '完成缺陷',
+      message: '确定要将该缺陷标记为已完成吗？',
+      confirmText: '确定',
+      cancelText: '取消',
+    });
+    if (!confirmed) return;
+
     const res = await closeDefect({ id: defect.id });
     if (res.success && res.data) {
       updateDefectInList(res.data.defect);
-      toast.success('已关闭');
+      toast.success('缺陷已完成');
       loadStats();
     } else {
       toast.error(res.error?.message || '操作失败');
