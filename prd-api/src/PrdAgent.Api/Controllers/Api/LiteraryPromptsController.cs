@@ -5,6 +5,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.LlmGateway;
 using System.Security.Claims;
 using PrdAgent.Core.Security;
 
