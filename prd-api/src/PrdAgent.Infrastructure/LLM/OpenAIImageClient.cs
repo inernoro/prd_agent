@@ -319,7 +319,32 @@ public class OpenAIImageClient
         string? initImageCosUrl = null;
         if (!string.IsNullOrWhiteSpace(initImageBase64))
         {
-            if (TryDecodeDataUrlOrBase64(initImageBase64, out var initBytes, out var initMime) && initBytes.Length > 0)
+            // 支持 COS URL 输入：直接使用 URL 创建 artifact，无需重新上传
+            var isUrl = initImageBase64.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                        initImageBase64.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+            if (isUrl)
+            {
+                var dim = TryParseSize(NormalizeSizeString(size), out var iw, out var ih) ? new { w = iw, h = ih } : null;
+                var input = new UploadArtifact
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    RequestId = requestId,
+                    Kind = "input_image",
+                    CreatedByAdminId = createdByAdminId,
+                    Prompt = prompt,
+                    Sha256 = string.Empty,
+                    Mime = "image/png",
+                    Width = dim?.w ?? 0,
+                    Height = dim?.h ?? 0,
+                    SizeBytes = 0,
+                    CosUrl = initImageBase64,
+                    CreatedAt = DateTime.UtcNow
+                };
+                await _db.UploadArtifacts.InsertOneAsync(input, cancellationToken: ct);
+                inputArtifactIds.Add(input.Id);
+                initImageCosUrl = initImageBase64;
+            }
+            else if (TryDecodeDataUrlOrBase64(initImageBase64, out var initBytes, out var initMime) && initBytes.Length > 0)
             {
                 var stored = await _assetStorage.SaveAsync(initBytes, initMime, ct, domain: AppDomainPaths.DomainAssets, type: AppDomainPaths.TypeImg);
                 var dim = TryParseSize(NormalizeSizeString(size), out var iw, out var ih) ? new { w = iw, h = ih } : null;
@@ -363,13 +388,24 @@ public class OpenAIImageClient
                     if (!string.IsNullOrWhiteSpace(requestedSizeNorm))
                         exchangeBody["size"] = requestedSizeNorm;
 
-                    // 图生图：将参考图转为 data URI 放入 image_urls
+                    // 图生图：将参考图放入 image_urls（支持 URL / data URI / 裸 base64）
                     if (initImageBase64 != null)
                     {
-                        var dataUri = initImageBase64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
-                            ? initImageBase64
-                            : $"data:image/png;base64,{initImageBase64}";
-                        exchangeBody["image_urls"] = new JsonArray { dataUri };
+                        string imageValue;
+                        if (initImageBase64.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                            initImageBase64.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                        {
+                            imageValue = initImageBase64; // COS URL，直接使用
+                        }
+                        else if (initImageBase64.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            imageValue = initImageBase64; // data URI，直接使用
+                        }
+                        else
+                        {
+                            imageValue = $"data:image/png;base64,{initImageBase64}"; // 裸 base64，包装为 data URI
+                        }
+                        exchangeBody["image_urls"] = new JsonArray { imageValue };
                     }
 
                     _logger.LogInformation(
@@ -481,7 +517,23 @@ public class OpenAIImageClient
                 else
                 {
                     // 图生图请求（multipart/form-data）
-                    if (!TryDecodeDataUrlOrBase64(initImageBase64, out var imgBytes, out var imgMime))
+                    byte[] imgBytes;
+                    string imgMime;
+                    var isInitUrl = initImageBase64.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                                    initImageBase64.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+                    if (isInitUrl)
+                    {
+                        // COS URL：下载图片字节用于 multipart 上传
+                        using var dlHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+                        using var dlResp = await dlHttp.GetAsync(initImageBase64, token);
+                        if (!dlResp.IsSuccessStatusCode)
+                        {
+                            return GatewayRawResponse.Fail("INVALID_FORMAT", $"无法下载参考图: HTTP {(int)dlResp.StatusCode}", (int)dlResp.StatusCode);
+                        }
+                        imgMime = dlResp.Content.Headers.ContentType?.MediaType ?? "image/png";
+                        imgBytes = await dlResp.Content.ReadAsByteArrayAsync(token);
+                    }
+                    else if (!TryDecodeDataUrlOrBase64(initImageBase64, out imgBytes, out imgMime))
                     {
                         return GatewayRawResponse.Fail("INVALID_FORMAT", "initImageBase64 无效", 400);
                     }
@@ -985,14 +1037,25 @@ public class OpenAIImageClient
             if (!string.IsNullOrWhiteSpace(size))
                 exchangeBody["size"] = NormalizeSizeString(size) ?? size;
 
-            // 所有参考图 → image_urls 数组
+            // 所有参考图 → image_urls 数组（支持 COS URL / data URI / 裸 base64）
             var imageUrlsArray = new JsonArray();
             foreach (var imgRef in imageRefs)
             {
-                var dataUri = imgRef.Base64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
-                    ? imgRef.Base64
-                    : $"data:{imgRef.MimeType ?? "image/png"};base64,{imgRef.Base64}";
-                imageUrlsArray.Add(dataUri);
+                string imageValue;
+                if (imgRef.Base64.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                    imgRef.Base64.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    imageValue = imgRef.Base64; // COS URL，直接使用
+                }
+                else if (imgRef.Base64.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                {
+                    imageValue = imgRef.Base64; // data URI，直接使用
+                }
+                else
+                {
+                    imageValue = $"data:{imgRef.MimeType ?? "image/png"};base64,{imgRef.Base64}"; // 裸 base64
+                }
+                imageUrlsArray.Add(imageValue);
             }
             exchangeBody["image_urls"] = imageUrlsArray;
 
@@ -1620,7 +1683,7 @@ public class OpenAIImageClient
             {
                 ImageUrl = new Core.Models.MultiImage.VisionImageUrl
                 {
-                    Url = imgRef.Base64 // 完整格式：data:mime;base64,...
+                    Url = imgRef.Base64 // COS URL 或 data:mime;base64,... 格式
                 }
             });
         }

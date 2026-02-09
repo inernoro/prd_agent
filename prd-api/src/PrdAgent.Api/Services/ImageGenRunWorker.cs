@@ -317,24 +317,45 @@ public class ImageGenRunWorker : BackgroundService
                                     if (found != null && found.Value.bytes.Length > 0)
                                     {
                                         var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
-                                        var b64 = Convert.ToBase64String(found.Value.bytes);
-                                        var dataUrl = $"data:{mime};base64,{b64}";
-                                        // 构建 COS URL 用于日志显示参考图
+                                        // 优先使用 COS URL（公网可访问），避免 base64 造成请求体/日志膨胀
                                         var cosUrl = assetStorage.TryBuildUrlBySha(sha, mime, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
 
-                                        loadedImageRefs.Add(new Core.Models.MultiImage.ImageRefData
+                                        if (!string.IsNullOrWhiteSpace(cosUrl))
                                         {
-                                            RefId = resolvedRef.RefId,
-                                            Base64 = dataUrl,
-                                            MimeType = mime,
-                                            Label = resolvedRef.Label,
-                                            Role = resolvedRef.Role,
-                                            Sha256 = sha,
-                                            CosUrl = cosUrl
-                                        });
+                                            loadedImageRefs.Add(new Core.Models.MultiImage.ImageRefData
+                                            {
+                                                RefId = resolvedRef.RefId,
+                                                Base64 = cosUrl!,  // 使用 COS URL 代替 base64
+                                                MimeType = mime,
+                                                Label = resolvedRef.Label,
+                                                Role = resolvedRef.Role,
+                                                Sha256 = sha,
+                                                CosUrl = cosUrl
+                                            });
 
-                                        _logger.LogDebug("[多图处理] 已加载图片 @img{RefId}: {Label} ({Size} bytes)",
-                                            resolvedRef.RefId, resolvedRef.Label, found.Value.bytes.Length);
+                                            _logger.LogDebug("[多图处理] 已加载图片 @img{RefId}: {Label} (COS URL)",
+                                                resolvedRef.RefId, resolvedRef.Label);
+                                        }
+                                        else
+                                        {
+                                            // COS URL 不可用时回退到 base64
+                                            var b64 = Convert.ToBase64String(found.Value.bytes);
+                                            var dataUrl = $"data:{mime};base64,{b64}";
+
+                                            loadedImageRefs.Add(new Core.Models.MultiImage.ImageRefData
+                                            {
+                                                RefId = resolvedRef.RefId,
+                                                Base64 = dataUrl,
+                                                MimeType = mime,
+                                                Label = resolvedRef.Label,
+                                                Role = resolvedRef.Role,
+                                                Sha256 = sha,
+                                                CosUrl = null
+                                            });
+
+                                            _logger.LogDebug("[多图处理] 已加载图片 @img{RefId}: {Label} ({Size} bytes, 回退base64)",
+                                                resolvedRef.RefId, resolvedRef.Label, found.Value.bytes.Length);
+                                        }
                                     }
                                     else
                                     {
@@ -378,18 +399,27 @@ public class ImageGenRunWorker : BackgroundService
                                     var sha = imgRef.AssetSha256.Trim().ToLowerInvariant();
                                     if (sha.Length != 64 || !Regex.IsMatch(sha, "^[0-9a-f]{64}$")) continue;
 
-                                    var found = await assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                                    if (found != null && found.Value.bytes.Length > 0)
+                                    var found2 = await assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                                    if (found2 != null && found2.Value.bytes.Length > 0)
                                     {
-                                        var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
-                                        var b64 = Convert.ToBase64String(found.Value.bytes);
-                                        var dataUrl = $"data:{mime};base64,{b64}";
+                                        var mime = string.IsNullOrWhiteSpace(found2.Value.mime) ? "image/png" : found2.Value.mime.Trim();
+                                        // 优先使用 COS URL
                                         var cosUrl = assetStorage.TryBuildUrlBySha(sha, mime, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                                        string imageValue;
+                                        if (!string.IsNullOrWhiteSpace(cosUrl))
+                                        {
+                                            imageValue = cosUrl!;
+                                        }
+                                        else
+                                        {
+                                            var b64 = Convert.ToBase64String(found2.Value.bytes);
+                                            imageValue = $"data:{mime};base64,{b64}";
+                                        }
 
                                         loadedImageRefs.Add(new Core.Models.MultiImage.ImageRefData
                                         {
                                             RefId = imgRef.RefId,
-                                            Base64 = dataUrl,
+                                            Base64 = imageValue,
                                             MimeType = mime,
                                             Label = imgRef.Label ?? $"图片{imgRef.RefId}",
                                             Sha256 = sha,
