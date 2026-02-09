@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Infrastructure.LLM;
 using System.Security.Claims;
 using PrdAgent.Core.Security;
 
@@ -18,10 +20,12 @@ namespace PrdAgent.Api.Controllers.Api;
 public class LiteraryPromptsController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly ILlmGateway _gateway;
 
-    public LiteraryPromptsController(MongoDbContext db)
+    public LiteraryPromptsController(MongoDbContext db, ILlmGateway gateway)
     {
         _db = db;
+        _gateway = gateway;
     }
 
     private string GetAdminId()
@@ -399,6 +403,55 @@ public class LiteraryPromptsController : ControllerBase
     }
 
     #endregion
+
+    /// <summary>
+    /// AI 优化提示词：从旧格式提示词中提取风格描述，去除格式指令
+    /// </summary>
+    [HttpPost("optimize")]
+    public async Task<IActionResult> Optimize([FromBody] OptimizePromptRequest request, CancellationToken ct)
+    {
+        var content = (request?.Content ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "content 不能为空"));
+
+        var appCallerCode = AppCallerRegistry.LiteraryAgent.Content.Chat;
+        var client = _gateway.CreateClient(appCallerCode, "chat");
+
+        var systemPrompt = @"你是一个提示词优化助手。用户会给你一段旧的""文章配图提示词模板""，其中可能混合了：
+1. 输出格式指令（如要求返回 [插图] 标记、要求返回完整文章、@AFTER 格式说明等）
+2. 配图风格描述（如水彩风格、暖色调、注重细节等创作偏好）
+
+你的任务是：**只保留风格描述部分，去除所有格式指令**。
+
+规则：
+- 只输出提取后的风格描述文本，不要添加任何解释
+- 如果原文只有格式指令没有风格描述，输出空字符串
+- 保留关于配图数量、配图位置偏好的描述（这属于创作偏好）
+- 去除关于 [插图]、@AFTER、输出格式、JSON 格式等技术性指令
+- 保持原文的语言风格（中文/英文）";
+
+        var messages = new List<LLMMessage>
+        {
+            new() { Role = "user", Content = content }
+        };
+
+        var result = new System.Text.StringBuilder();
+        await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
+        {
+            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+            {
+                result.Append(chunk.Content);
+            }
+        }
+
+        var optimized = result.ToString().Trim();
+        return Ok(ApiResponse<object>.Ok(new { optimizedContent = optimized }));
+    }
+}
+
+public class OptimizePromptRequest
+{
+    public string Content { get; set; } = string.Empty;
 }
 
 public class CreateLiteraryPromptRequest

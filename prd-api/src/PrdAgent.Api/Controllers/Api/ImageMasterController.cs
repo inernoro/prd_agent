@@ -1961,7 +1961,7 @@ public class ImageMasterController : ControllerBase
             return;
         }
 
-        var insertionMode = (request?.InsertionMode ?? "legacy").Trim().ToLowerInvariant();
+        var insertionMode = (request?.InsertionMode ?? "anchor").Trim().ToLowerInvariant();
         var isAnchorMode = insertionMode == "anchor";
 
         // 设置 SSE 响应头

@@ -145,6 +145,7 @@ import type {
   PublishLiteraryPromptContract,
   UnpublishLiteraryPromptContract,
   ForkLiteraryPromptContract,
+  OptimizeLiteraryPromptContract,
 } from '@/services/contracts/literaryPrompts';
 import type {
   GetLiteraryAgentConfigContract,
@@ -392,6 +393,7 @@ import {
   publishLiteraryPromptReal,
   unpublishLiteraryPromptReal,
   forkLiteraryPromptReal,
+  optimizeLiteraryPromptReal,
 } from '@/services/real/literaryPrompts';
 import {
   getLiteraryAgentConfigReal,
@@ -669,6 +671,7 @@ export const listLiteraryPromptsMarketplace: ListLiteraryPromptsMarketplaceContr
 export const publishLiteraryPrompt: PublishLiteraryPromptContract = withAuth(publishLiteraryPromptReal);
 export const unpublishLiteraryPrompt: UnpublishLiteraryPromptContract = withAuth(unpublishLiteraryPromptReal);
 export const forkLiteraryPrompt: ForkLiteraryPromptContract = withAuth(forkLiteraryPromptReal);
+export const optimizeLiteraryPrompt: OptimizeLiteraryPromptContract = withAuth(optimizeLiteraryPromptReal);
 
 // Literary Agent Config
 export const getLiteraryAgentConfig: GetLiteraryAgentConfigContract = withAuth(getLiteraryAgentConfigReal);

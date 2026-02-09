@@ -37,6 +37,7 @@ import {
   activateReferenceImageConfig,
   deactivateReferenceImageConfig,
   getLiteraryAgentAllModels,
+  optimizeLiteraryPrompt,
   // 海鲜市场 API
   publishLiteraryPrompt,
   unpublishLiteraryPrompt,
@@ -44,7 +45,7 @@ import {
   unpublishReferenceImageConfig,
 } from '@/services';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Zap } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2 } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
@@ -197,8 +198,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   
-  // 锚点插入模式：LLM 只返回插入指令而非完整文章，速度更快、原文保真
-  const [useAnchorMode, setUseAnchorMode] = useState(true);
+  // AI 优化提示词状态
+  const [optimizingPromptId, setOptimizingPromptId] = useState<string | null>(null);
 
   // 提取的标记列表
   const [markers, setMarkers] = useState<ArticleMarker[]>([]);
@@ -719,7 +720,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
 
-    // 使用选中的提示词作为系统提示词
+    // 使用选中的提示词作为风格提示词
     const systemPrompt = selectedPrompt.content;
 
     setMarkerStreaming(true);
@@ -728,9 +729,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setPhase(2); // MarkersGenerated
     setMarkers([]);
 
-    // Anchor 模式：预先显示原文（LLM 不会流式返回文章内容）
-    // Legacy 模式：初始为空，流式逐步填充
-    setArticleWithMarkers(useAnchorMode ? articleContent : '');
+    // 锚点模式：预先显示原文（LLM 不会流式返回文章内容）
+    setArticleWithMarkers(articleContent);
 
     try {
       // 使用 SSE 流式接口
@@ -739,7 +739,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         articleContent,
         userInstruction: systemPrompt,
         idempotencyKey: `gen-markers-${Date.now()}`,
-        insertionMode: useAnchorMode ? 'anchor' : 'legacy',
+        insertionMode: 'anchor',
       });
 
       let fullText = '';
@@ -1534,6 +1534,35 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setEditingPrompt(null);
   };
 
+  // AI 优化：提取旧提示词中的风格描述，去除格式指令
+  const handleOptimizePrompt = async (mode: 'edit' | 'create') => {
+    const content = mode === 'edit' ? editingPrompt?.content : creatingPrompt?.content;
+    if (!content?.trim()) {
+      toast.warning('请先输入内容');
+      return;
+    }
+    const targetId = mode === 'edit' ? editingPrompt?.id ?? 'new' : 'new';
+    setOptimizingPromptId(targetId);
+    try {
+      const res = await optimizeLiteraryPrompt({ content });
+      if (res.success && res.data?.optimizedContent) {
+        if (mode === 'edit' && editingPrompt) {
+          setEditingPrompt({ ...editingPrompt, content: res.data.optimizedContent });
+        } else if (mode === 'create' && creatingPrompt) {
+          setCreatingPrompt({ ...creatingPrompt, content: res.data.optimizedContent });
+        }
+        toast.success('已提取风格描述');
+      } else {
+        toast.error('优化失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Optimize prompt error:', error);
+      toast.error('优化失败');
+    } finally {
+      setOptimizingPromptId(null);
+    }
+  };
+
   // 删除提示词模板
   const handleDeletePrompt = async (prompt: PromptTemplate) => {
     if (prompt.isSystem) {
@@ -2015,34 +2044,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             </Button>
           )}
 
-          {/* 锚点插入模式开关 */}
-          {phase <= 1 && (
-            <label
-              className="flex items-center gap-1.5 mt-1 cursor-pointer select-none group"
-              title="锚点模式：LLM 只输出插入指令（不复读原文），速度更快且原文 100% 保真"
-            >
-              <div
-                className="relative w-7 h-4 rounded-full transition-colors"
-                style={{
-                  background: useAnchorMode ? 'rgba(34, 197, 94, 0.5)' : 'rgba(255,255,255,0.12)',
-                }}
-                onClick={() => setUseAnchorMode(!useAnchorMode)}
-              >
-                <div
-                  className="absolute top-0.5 w-3 h-3 rounded-full transition-all"
-                  style={{
-                    left: useAnchorMode ? 13 : 2,
-                    background: useAnchorMode ? '#4ADE80' : 'rgba(255,255,255,0.4)',
-                  }}
-                />
-              </div>
-              <Zap size={11} style={{ color: useAnchorMode ? '#4ADE80' : 'var(--text-muted)' }} />
-              <span className="text-[11px]" style={{ color: useAnchorMode ? '#4ADE80' : 'var(--text-muted)' }}>
-                锚点模式
-              </span>
-            </label>
-          )}
-
           {/* 配置区 - 单行布局：齿轮 | 三个配置项 | 配置按钮 */}
           <div className="mt-3 pt-3 border-t flex items-center gap-2" style={{ borderColor: 'var(--border-subtle)' }}>
             <Settings size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
@@ -2057,11 +2058,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   if (selectedPrompt) handleEditPrompt(selectedPrompt);
                   else setPromptPreviewOpen(true);
                 }}
-                title={selectedPrompt?.title || '未选择提示词'}
+                title={selectedPrompt?.title || '未选择风格'}
               >
                 <FileText size={12} style={{ color: '#93C5FD', flexShrink: 0 }} />
                 <span className={configPillTextClass} style={{ color: selectedPrompt ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {selectedPrompt?.title || '提示词'}
+                  {selectedPrompt?.title || '风格'}
                 </span>
               </div>
               {/* 风格图 */}
@@ -2506,8 +2507,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       <Dialog
         open={!!creatingPrompt}
         onOpenChange={(open) => !open && handleCancelCreate()}
-        title="新建提示词模板"
-        description="输入模板名称和内容"
+        title="新建风格模板"
+        description="输入模板名称和风格描述（系统指令由系统自动提供，此处只需描述配图风格偏好）"
         maxWidth={1040}
         content={
           creatingPrompt ? (
@@ -2544,6 +2545,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         预览
                       </Button>
                     </div>
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      onClick={() => void handleOptimizePrompt('create')}
+                      disabled={!creatingPrompt.content?.trim() || optimizingPromptId === 'new'}
+                      title="AI 自动提取风格描述，去除旧格式指令"
+                    >
+                      <Sparkles size={12} />
+                      {optimizingPromptId === 'new' ? '优化中...' : 'AI 提取风格'}
+                    </Button>
                   </div>
 
                   {/* 编辑模式：显示 textarea */}
@@ -2551,7 +2562,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <textarea
                       value={creatingPrompt.content}
                       onChange={(e) => setCreatingPrompt({ ...creatingPrompt, content: e.target.value })}
-                      placeholder="请输入提示词模板内容（所有文学创作 Agent 全局共享）..."
+                      placeholder="描述配图风格偏好，例如：水彩风格、暖色调、注重细节表现、偏向写实..."
                       rows={14}
                       className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
                     />
@@ -2614,8 +2625,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       <Dialog
         open={!!editingPrompt}
         onOpenChange={(open) => !open && handleCancelEdit()}
-        title="编辑提示词模板"
-        description="同时编辑标题和内容"
+        title="编辑风格模板"
+        description="编辑标题和风格描述（系统指令由系统自动提供，此处只需描述配图风格偏好）"
         maxWidth={1040}
         content={
           editingPrompt ? (
@@ -2651,6 +2662,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         预览
                       </Button>
                     </div>
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      onClick={() => void handleOptimizePrompt('edit')}
+                      disabled={!editingPrompt.content?.trim() || optimizingPromptId === editingPrompt.id}
+                      title="AI 自动提取风格描述，去除旧格式指令"
+                    >
+                      <Sparkles size={12} />
+                      {optimizingPromptId === editingPrompt.id ? '优化中...' : 'AI 提取风格'}
+                    </Button>
                   </div>
 
                   {/* 编辑模式：显示 textarea */}
@@ -2658,7 +2679,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <textarea
                       value={editingPrompt.content}
                       onChange={(e) => setEditingPrompt({ ...editingPrompt, content: e.target.value })}
-                      placeholder="输入模板内容..."
+                      placeholder="描述配图风格偏好，例如：水彩风格、暖色调、注重细节表现、偏向写实..."
                       rows={14}
                       className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
                     />
@@ -2717,7 +2738,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
       />
 
-      {/* 系统提示词、底图与水印配置对话框 */}
+      {/* 风格提示词、底图与水印配置对话框 */}
       <Dialog
         open={promptPreviewOpen}
         onOpenChange={(open) => {
@@ -2757,11 +2778,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             {/* 我的配置视图 */}
             {configViewMode === 'mine' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
-            {/* 左侧：系统提示词 */}
+            {/* 左侧：风格提示词 */}
             <div className="min-h-0 flex flex-col h-full">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  系统提示词
+                  风格提示词
                 </div>
                 <Button
                   size="xs"
