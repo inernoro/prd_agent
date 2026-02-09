@@ -651,12 +651,18 @@ function buildCurlFromLog(detail: LlmRequestLog, inputArtifacts?: UploadArtifact
   // 使用 Postman 环境变量占位符替换 API Key（避免真实值泄露，且 Postman 可自动匹配）
   const hasAuthorization = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization');
   const hasXApiKey = Object.keys(headers).some((k) => k.toLowerCase() === 'x-api-key');
+  const providerLower = (detail.provider ?? '').toLowerCase();
 
-  if (hasAuthorization || detail.provider.toLowerCase().includes('openai')) {
-    headers.Authorization = `Bearer ${apiKeyPlaceholder}`;
-  }
-  if (hasXApiKey || detail.provider.toLowerCase().includes('claude') || detail.provider.toLowerCase().includes('anthropic')) {
+  const isAnthropicLike = hasXApiKey || providerLower.includes('claude') || providerLower.includes('anthropic');
+
+  if (isAnthropicLike) {
+    // Anthropic 风格：x-api-key
     headers['x-api-key'] = apiKeyPlaceholder;
+  }
+
+  // 所有非 Anthropic 平台统一补 Authorization Bearer（日志存储时 auth 头已脱敏移除）
+  if (!isAnthropicLike) {
+    headers.Authorization = `Bearer ${apiKeyPlaceholder}`;
   }
 
   // 默认 JSON
