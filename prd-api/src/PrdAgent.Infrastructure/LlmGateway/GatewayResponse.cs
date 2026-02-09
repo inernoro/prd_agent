@@ -315,6 +315,7 @@ public class GatewayStreamChunk
     public string? RawData { get; init; }
 
     public static GatewayStreamChunk Text(string content) => new() { Type = GatewayChunkType.Text, Content = content };
+    public static GatewayStreamChunk Thinking(string content) => new() { Type = GatewayChunkType.Thinking, Content = content };
     public static GatewayStreamChunk Start(GatewayModelResolution resolution) => new() { Type = GatewayChunkType.Start, Resolution = resolution };
     public static GatewayStreamChunk Done(string? finishReason, GatewayTokenUsage? usage) => new() { Type = GatewayChunkType.Done, FinishReason = finishReason, TokenUsage = usage };
     public static GatewayStreamChunk Fail(string error) => new() { Type = GatewayChunkType.Error, Error = error };
@@ -334,6 +335,12 @@ public enum GatewayChunkType
     /// 文本内容
     /// </summary>
     Text,
+
+    /// <summary>
+    /// 思考过程（reasoning_content / &lt;think&gt; 标签内容）
+    /// 由适配器产生，Gateway 默认过滤不传给调用方
+    /// </summary>
+    Thinking,
 
     /// <summary>
     /// 工具调用

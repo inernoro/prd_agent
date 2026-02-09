@@ -263,6 +263,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             using var reader = new StreamReader(stream);
 
             string? finishReason = null;
+            var thinkingBuilder = new StringBuilder(); // 记录思考过程（用于日志）
+            var thinkTagStripper = new ThinkTagStripper(); // 剥离 <think> 标签
 
             while (!reader.EndOfStream)
             {
@@ -297,7 +299,27 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     continue;
                 }
 
-                if (!string.IsNullOrEmpty(chunk.Content))
+                // Thinking 类型（来自 reasoning_content 字段）：记录但不输出
+                if (chunk.Type == GatewayChunkType.Thinking)
+                {
+                    if (!string.IsNullOrEmpty(chunk.Content))
+                    {
+                        thinkingBuilder.Append(chunk.Content);
+                    }
+                    continue;
+                }
+
+                if (!string.IsNullOrEmpty(chunk.Content) && chunk.Type == GatewayChunkType.Text)
+                {
+                    // 通过 ThinkTagStripper 过滤 <think>...</think> 标签
+                    var stripped = thinkTagStripper.Process(chunk.Content);
+                    if (!string.IsNullOrEmpty(stripped))
+                    {
+                        textBuilder.Append(stripped);
+                        yield return GatewayStreamChunk.Text(stripped);
+                    }
+                }
+                else if (!string.IsNullOrEmpty(chunk.Content))
                 {
                     textBuilder.Append(chunk.Content);
                     yield return chunk;
@@ -312,6 +334,24 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     tokenUsage = chunk.TokenUsage;
                 }
+            }
+
+            // 刷新 ThinkTagStripper 缓冲区
+            var flushed = thinkTagStripper.Flush();
+            if (!string.IsNullOrEmpty(flushed))
+            {
+                textBuilder.Append(flushed);
+                yield return GatewayStreamChunk.Text(flushed);
+            }
+
+            // 记录思考过程（如果有）
+            if (thinkingBuilder.Length > 0)
+            {
+                _logger.LogDebug(
+                    "[LlmGateway] 模型思考过程已过滤（{ThinkingChars} 字符）。AppCallerCode: {AppCallerCode}, Model: {Model}",
+                    thinkingBuilder.Length,
+                    request.AppCallerCode,
+                    resolution?.ActualModel);
             }
 
             // 7. 更新健康状态（成功）
