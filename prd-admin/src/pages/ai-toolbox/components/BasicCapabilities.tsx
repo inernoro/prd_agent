@@ -1,6 +1,8 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useToolboxStore, type ToolboxPageTab } from '@/stores/toolboxStore';
 import { Button } from '@/components/design/Button';
+import { streamCapabilityChat } from '@/services/real/aiToolbox';
+import type { DirectChatMessage } from '@/services/real/aiToolbox';
 import type { LucideIcon } from 'lucide-react';
 import {
   Package,
@@ -148,10 +150,18 @@ export function BasicCapabilities() {
   const [attachments, setAttachments] = useState<{ type: 'image' | 'file'; name: string; file: File }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<(() => void) | null>(null);
 
   const selectedCap = CAPABILITIES.find((c) => c.key === selectedCapability);
 
-  const handleSend = async () => {
+  // 组件卸载或切换能力时中止流
+  useEffect(() => {
+    return () => {
+      abortRef.current?.();
+    };
+  }, [selectedCapability]);
+
+  const handleSend = useCallback(async () => {
     if (!inputText.trim() && attachments.length === 0) return;
     if (!selectedCap) return;
 
@@ -164,41 +174,62 @@ export function BasicCapabilities() {
     };
 
     setMessages((prev) => [...prev, userMessage]);
+    const messageText = inputText;
     setInputText('');
     setAttachments([]);
     setIsGenerating(true);
 
-    // 模拟 AI 响应
-    const assistantMessage: ChatMessage = {
-      id: `msg-${Date.now() + 1}`,
+    // 构建历史消息
+    const history: DirectChatMessage[] = messages.map(m => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    // 创建流式助手消息
+    const assistantId = `msg-${Date.now() + 1}`;
+    setMessages((prev) => [...prev, {
+      id: assistantId,
       role: 'assistant',
       content: '',
       timestamp: new Date(),
       status: 'streaming',
-    };
+    }]);
 
-    setMessages((prev) => [...prev, assistantMessage]);
+    // 调用真实 SSE 流式 API
+    const abort = streamCapabilityChat(selectedCap.key, {
+      message: messageText,
+      history,
+      onText: (content) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, content: m.content + content } : m
+          )
+        );
+      },
+      onError: (error) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, content: m.content || `[错误] ${error}`, status: 'done' }
+              : m
+          )
+        );
+        setIsGenerating(false);
+        abortRef.current = null;
+      },
+      onDone: () => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, status: 'done' } : m
+          )
+        );
+        setIsGenerating(false);
+        abortRef.current = null;
+      },
+    });
 
-    // 模拟流式输出
-    const mockResponse = getMockResponse(selectedCap.key, inputText);
-    let currentText = '';
-    for (let i = 0; i < mockResponse.length; i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      currentText += mockResponse[i];
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMessage.id ? { ...m, content: currentText } : m
-        )
-      );
-    }
-
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === assistantMessage.id ? { ...m, status: 'done' } : m
-      )
-    );
-    setIsGenerating(false);
-  };
+    abortRef.current = abort;
+  }, [inputText, attachments, selectedCap, messages]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type: 'image' | 'file') => {
     const files = e.target.files;
@@ -764,16 +795,3 @@ export function BasicCapabilities() {
   );
 }
 
-// Mock response generator
-function getMockResponse(capKey: string, input: string): string {
-  const responses: Record<string, string> = {
-    'image-gen': `好的，我已理解您的图片生成需求。\n\n正在基于描述 "${input.slice(0, 30)}..." 生成图片...\n\n[图片生成完成]\n\n生成参数：\n- 模型: FLUX.1-schnell\n- 尺寸: 1024x1024\n- 风格: 写实\n\n您可以继续描述或调整参数来优化生成效果。`,
-    'text-gen': `根据您的需求，我来为您生成相关内容：\n\n${input}\n\n以上是基于您输入的文本生成的内容。如需调整风格、长度或其他参数，请告诉我。`,
-    'reasoning': `让我来分析这个问题...\n\n**问题理解:**\n${input}\n\n**推理过程:**\n1. 首先，我们需要识别问题中的关键信息\n2. 然后，建立逻辑关系\n3. 最后，得出结论\n\n**结论:**\n基于以上推理，答案是...（这是一个测试响应）`,
-    'web-search': `正在搜索 "${input}"...\n\n**搜索结果:**\n\n1. [示例结果 1] - 这是关于您搜索内容的相关信息...\n2. [示例结果 2] - 更多相关内容...\n3. [示例结果 3] - 补充信息...\n\n以上信息来自互联网搜索，仅供参考。`,
-    'code-interpreter': `\`\`\`python\n# 正在执行代码...\nprint("Hello, World!")\n\`\`\`\n\n**执行结果:**\n\`\`\`\nHello, World!\n\`\`\`\n\n代码执行成功！如需修改或运行其他代码，请继续输入。`,
-    'file-reader': `正在解析您上传的文档...\n\n**文档概要:**\n- 类型: PDF/Word/Excel\n- 页数: N/A\n- 主要内容: ${input || '等待您的具体问题'}\n\n请告诉我您想了解文档的哪些内容？`,
-    'mcp-tools': `MCP 工具连接成功！\n\n**可用工具列表:**\n1. 数据库查询\n2. API 调用\n3. 文件操作\n\n请选择要使用的工具或输入具体指令。`,
-  };
-  return responses[capKey] || '测试响应：' + input;
-}

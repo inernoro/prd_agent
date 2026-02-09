@@ -100,6 +100,7 @@ import type {
   GetVisualAgentWorkspaceCanvasContract,
   GetVisualAgentWorkspaceDetailContract,
   ListVisualAgentSessionsContract,
+  ListVisualAgentWorkspaceMessagesContract,
   ListVisualAgentWorkspacesContract,
   SaveVisualAgentCanvasContract,
   SaveVisualAgentWorkspaceCanvasContract,
@@ -321,6 +322,7 @@ import {
   getVisualAgentSessionReal,
   getVisualAgentWorkspaceCanvasReal,
   getVisualAgentWorkspaceDetailReal,
+  listVisualAgentWorkspaceMessagesReal,
   listVisualAgentSessionsReal,
   listVisualAgentWorkspacesReal,
   saveVisualAgentCanvasReal,
@@ -639,6 +641,7 @@ export const updateVisualAgentWorkspace: UpdateVisualAgentWorkspaceContract = wi
 export const deleteVisualAgentWorkspace: DeleteVisualAgentWorkspaceContract = withAuth(deleteVisualAgentWorkspaceReal);
 export const getVisualAgentWorkspaceDetail: GetVisualAgentWorkspaceDetailContract = withAuth(getVisualAgentWorkspaceDetailReal);
 export const addVisualAgentWorkspaceMessage: AddVisualAgentWorkspaceMessageContract = withAuth(addVisualAgentWorkspaceMessageReal);
+export const listVisualAgentWorkspaceMessages: ListVisualAgentWorkspaceMessagesContract = withAuth(listVisualAgentWorkspaceMessagesReal);
 export const getVisualAgentWorkspaceCanvas: GetVisualAgentWorkspaceCanvasContract = withAuth(getVisualAgentWorkspaceCanvasReal);
 export const saveVisualAgentWorkspaceCanvas: SaveVisualAgentWorkspaceCanvasContract = withAuth(saveVisualAgentWorkspaceCanvasReal);
 export const saveVisualAgentWorkspaceViewport: SaveVisualAgentWorkspaceViewportContract = withAuth(saveVisualAgentWorkspaceViewportReal);
@@ -852,6 +855,8 @@ export {
   runToolboxItem,
   listToolboxAgents,
   subscribeToolboxRunEvents,
+  streamDirectChat,
+  streamCapabilityChat,
   // Legacy API
   getToolboxRun,
   listToolboxRuns,
@@ -861,6 +866,7 @@ export type {
   ToolboxItemRun,
   AgentInfo,
   ToolboxRunEvent,
+  DirectChatMessage,
   // Legacy types
   IntentResult,
   ToolboxArtifact,

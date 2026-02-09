@@ -496,6 +496,9 @@ export const api = {
     item: (id: string) => `/api/ai-toolbox/items/${id}`,
     runItem: (itemId: string) => `/api/ai-toolbox/items/${itemId}/run`,
     agents: () => '/api/ai-toolbox/agents',
+    // 直接对话 (SSE)
+    directChat: () => '/api/ai-toolbox/direct-chat',
+    capabilityChat: (key: string) => `/api/ai-toolbox/capabilities/${key}/chat`,
     // Legacy - 运行记录
     chat: () => '/api/ai-toolbox/chat',
     analyze: () => '/api/ai-toolbox/analyze',

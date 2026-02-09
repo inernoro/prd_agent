@@ -123,6 +123,7 @@ public class MongoDbContext
     public IMongoCollection<RoutingRule> RoutingRules => _database.GetCollection<RoutingRule>("routing_rules");
     // AI Toolbox 百宝箱
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
+    public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
 
     // 模型中继 (Exchange)
     public IMongoCollection<ModelExchange> ModelExchanges => _database.GetCollection<ModelExchange>("model_exchanges");
@@ -768,6 +769,11 @@ public class MongoDbContext
         ToolboxRuns.Indexes.CreateOne(new CreateIndexModel<ToolboxRun>(
             Builders<ToolboxRun>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_toolbox_runs_status_created" }));
+
+        // ToolboxItems：按 createdByUserId 查询
+        ToolboxItems.Indexes.CreateOne(new CreateIndexModel<ToolboxItem>(
+            Builders<ToolboxItem>.IndexKeys.Ascending(x => x.CreatedByUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_toolbox_items_user_created" }));
 
         // ModelExchanges：按 ModelAlias 唯一索引
         try
