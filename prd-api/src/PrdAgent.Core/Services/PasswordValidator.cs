@@ -22,17 +22,11 @@ public static class PasswordValidator
         if (password.Length > 128)
             return "密码长度不能超过128位";
 
-        if (!Regex.IsMatch(password, @"[a-z]"))
-            return "密码必须包含小写字母";
-
-        if (!Regex.IsMatch(password, @"[A-Z]"))
-            return "密码必须包含大写字母";
+        if (!Regex.IsMatch(password, @"[a-zA-Z]"))
+            return "密码必须包含字母";
 
         if (!Regex.IsMatch(password, @"\d"))
             return "密码必须包含数字";
-
-        if (!Regex.IsMatch(password, @"[!@#$%^&*(),.?""':{}|<>]"))
-            return "密码必须包含特殊字符";
 
         return null; // 验证通过
     }
@@ -50,31 +44,21 @@ public static class PasswordValidator
         // 长度评分
         score += Math.Min(password.Length * 4, 40);
 
-        // 小写字母
-        if (Regex.IsMatch(password, @"[a-z]"))
-            score += 10;
-
-        // 大写字母
-        if (Regex.IsMatch(password, @"[A-Z]"))
-            score += 10;
+        // 字母
+        if (Regex.IsMatch(password, @"[a-zA-Z]"))
+            score += 20;
 
         // 数字
         if (Regex.IsMatch(password, @"\d"))
+            score += 20;
+
+        // 大小写混合（加分项）
+        if (Regex.IsMatch(password, @"[a-z]") && Regex.IsMatch(password, @"[A-Z]"))
             score += 10;
 
-        // 特殊字符
+        // 特殊字符（加分项）
         if (Regex.IsMatch(password, @"[!@#$%^&*(),.?""':{}|<>]"))
-            score += 15;
-
-        // 多种字符类型混合
-        int charTypes = 0;
-        if (Regex.IsMatch(password, @"[a-z]")) charTypes++;
-        if (Regex.IsMatch(password, @"[A-Z]")) charTypes++;
-        if (Regex.IsMatch(password, @"\d")) charTypes++;
-        if (Regex.IsMatch(password, @"[!@#$%^&*(),.?""':{}|<>]")) charTypes++;
-        
-        if (charTypes >= 3)
-            score += 15;
+            score += 10;
 
         return Math.Min(score, 100);
     }

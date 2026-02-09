@@ -744,11 +744,16 @@ public class ImageMasterController : ControllerBase
         messageLimit = Math.Clamp(messageLimit, 1, 500);
         assetLimit = Math.Clamp(assetLimit, 1, 200);
 
-        var messages = await _db.ImageMasterMessages
+        // 取最新的 messageLimit 条（降序取 limit+1 以判断 hasMore，再反转为升序）
+        var rawMessages = await _db.ImageMasterMessages
             .Find(x => x.WorkspaceId == wid)
-            .SortBy(x => x.CreatedAt)
-            .Limit(messageLimit)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(messageLimit + 1)
             .ToListAsync(ct);
+        var hasMoreMessages = rawMessages.Count > messageLimit;
+        if (hasMoreMessages) rawMessages.RemoveAt(rawMessages.Count - 1);
+        rawMessages.Reverse(); // 返回升序
+        var messages = rawMessages;
 
         var assets = await _db.ImageAssets
             .Find(x => x.WorkspaceId == wid)
@@ -790,7 +795,7 @@ public class ImageMasterController : ControllerBase
         // 后端是状态的唯一来源，前端只是观察者
         await TrySyncRunningMarkersAsync(ws, ct);
 
-        return Ok(ApiResponse<object>.Ok(new { workspace = ws, messages, assets, canvas, viewport }));
+        return Ok(ApiResponse<object>.Ok(new { workspace = ws, messages, assets, canvas, viewport, hasMoreMessages }));
     }
 
     [HttpPut("workspaces/{id}/viewport")]
@@ -877,6 +882,56 @@ public class ImageMasterController : ControllerBase
             cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { message = m }));
+    }
+
+    /// <summary>
+    /// 分页加载历史消息（向上滚动加载更早的消息）
+    /// before: 游标，取 CreatedAt 小于此值的消息；不传则取最新的
+    /// limit: 每页条数，默认 50，范围 1-200
+    /// 返回按 CreatedAt 升序排列 + hasMore 标记
+    /// </summary>
+    [HttpGet("workspaces/{id}/messages")]
+    public async Task<IActionResult> ListWorkspaceMessages(
+        string id,
+        [FromQuery] string? before = null,
+        [FromQuery] int limit = 50,
+        CancellationToken ct = default)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__")
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        limit = Math.Clamp(limit, 1, 200);
+
+        // 构建过滤条件
+        var fb = Builders<ImageMasterMessage>.Filter;
+        var filter = fb.Eq(x => x.WorkspaceId, wid);
+
+        if (!string.IsNullOrWhiteSpace(before) && DateTime.TryParse(before, null, System.Globalization.DateTimeStyles.RoundtripKind, out var beforeDt))
+        {
+            filter = fb.And(filter, fb.Lt(x => x.CreatedAt, beforeDt));
+        }
+
+        // 取 limit+1 条以判断 hasMore
+        var items = await _db.ImageMasterMessages
+            .Find(filter)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(limit + 1)
+            .ToListAsync(ct);
+
+        var hasMore = items.Count > limit;
+        if (hasMore) items.RemoveAt(items.Count - 1);
+
+        // 返回时按时间升序（前端期望从早到晚）
+        items.Reverse();
+
+        return Ok(ApiResponse<object>.Ok(new { messages = items, hasMore }));
     }
 
     [HttpGet("workspaces/{id}/canvas")]
