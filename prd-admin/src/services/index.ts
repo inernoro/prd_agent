@@ -854,6 +854,8 @@ export {
   runToolboxItem,
   listToolboxAgents,
   subscribeToolboxRunEvents,
+  streamDirectChat,
+  streamCapabilityChat,
   // Legacy API
   getToolboxRun,
   listToolboxRuns,
@@ -863,6 +865,7 @@ export type {
   ToolboxItemRun,
   AgentInfo,
   ToolboxRunEvent,
+  DirectChatMessage,
   // Legacy types
   IntentResult,
   ToolboxArtifact,
