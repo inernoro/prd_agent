@@ -206,6 +206,149 @@ public class ImageGenController : ControllerBase
 
     #endregion
 
+    #region 日志查询（应用域内转发，避免前端跨权限调用 /api/logs/llm）
+
+    /// <summary>
+    /// 获取 visual-agent 相关的 LLM 请求日志（只读）
+    /// 硬编码 requestPurpose 前缀为 visual-agent，避免数据泄露
+    /// </summary>
+    [HttpGet("logs")]
+    public async Task<IActionResult> GetLogs(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 30,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null,
+        [FromQuery] string? model = null,
+        [FromQuery] string? status = null,
+        [FromQuery] string? requestPurpose = null,
+        CancellationToken ct = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 10, 200);
+
+        // 强制过滤 requestPurpose 以 visual-agent 开头
+        var filter = Builders<LlmRequestLog>.Filter.Regex(
+            x => x.RequestPurpose,
+            new MongoDB.Bson.BsonRegularExpression("^visual-agent", "i"));
+
+        if (from.HasValue) filter &= Builders<LlmRequestLog>.Filter.Gte(x => x.StartedAt, from.Value);
+        if (to.HasValue) filter &= Builders<LlmRequestLog>.Filter.Lte(x => x.StartedAt, to.Value);
+        if (!string.IsNullOrWhiteSpace(model)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Model, model);
+        if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Status, status);
+        if (!string.IsNullOrWhiteSpace(requestPurpose))
+        {
+            // 在 visual-agent 范围内进一步过滤
+            var rp = requestPurpose.Trim();
+            if (!rp.StartsWith("visual-agent", StringComparison.OrdinalIgnoreCase))
+                rp = "visual-agent." + rp;
+            filter &= Builders<LlmRequestLog>.Filter.Regex(
+                x => x.RequestPurpose,
+                new MongoDB.Bson.BsonRegularExpression($"^{Regex.Escape(rp)}", "i"));
+        }
+
+        var total = await _db.LlmRequestLogs.CountDocumentsAsync(filter, cancellationToken: ct);
+        var rawItems = await _db.LlmRequestLogs.Find(filter)
+            .SortByDescending(x => x.StartedAt)
+            .Skip((page - 1) * pageSize)
+            .Limit(pageSize)
+            .Project(x => new
+            {
+                x.Id, x.RequestId, x.Provider, x.Model, x.PlatformId, x.PlatformName,
+                x.ModelResolutionType, x.ModelGroupId, x.ModelGroupName,
+                x.RequestPurpose, x.RequestPurposeDisplayName,
+                x.Status, x.StartedAt, x.FirstByteAt, x.EndedAt, x.DurationMs, x.StatusCode,
+                x.InputTokens, x.OutputTokens, x.Error,
+                x.QuestionText, x.AnswerText
+            })
+            .ToListAsync(ct);
+
+        var items = rawItems.Select(x => new
+        {
+            x.Id, x.RequestId, x.Provider, x.Model, x.PlatformId, x.PlatformName,
+            x.ModelResolutionType, x.ModelGroupId, x.ModelGroupName,
+            x.RequestPurpose, x.RequestPurposeDisplayName,
+            x.Status, x.StartedAt, x.FirstByteAt, x.EndedAt, x.DurationMs, x.StatusCode,
+            x.InputTokens, x.OutputTokens, x.Error,
+            questionPreview = TruncatePreview(x.QuestionText, 260),
+            answerPreview = TruncatePreview(x.AnswerText, 1800)
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
+    /// <summary>
+    /// 获取 visual-agent 日志的元数据（模型列表、状态列表等）
+    /// 只返回 visual-agent 范围内的数据
+    /// </summary>
+    [HttpGet("logs/meta")]
+    public async Task<IActionResult> GetLogsMeta(CancellationToken ct)
+    {
+        var vaFilter = Builders<LlmRequestLog>.Filter.Regex(
+            x => x.RequestPurpose,
+            new MongoDB.Bson.BsonRegularExpression("^visual-agent", "i"));
+
+        var models = (await _db.LlmRequestLogs
+                .Distinct(x => x.Model, vaFilter)
+                .ToListAsync(ct))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var requestPurposeAggregation = await _db.LlmRequestLogs
+            .Aggregate()
+            .Match(vaFilter)
+            .Group(x => x.RequestPurpose, g => new
+            {
+                Value = g.Key,
+                StoredDisplayName = g.First().RequestPurposeDisplayName
+            })
+            .ToListAsync(ct);
+
+        var requestPurposes = requestPurposeAggregation
+            .Where(x => !string.IsNullOrWhiteSpace(x.Value))
+            .Select(x => new
+            {
+                value = x.Value,
+                displayName = !string.IsNullOrWhiteSpace(x.StoredDisplayName)
+                    ? x.StoredDisplayName
+                    : AppCallerRegistrationService.FindByAppCode(x.Value!)?.DisplayName ?? x.Value
+            })
+            .OrderBy(x => x.displayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var statuses = new[] { "running", "succeeded", "failed", "cancelled" };
+
+        return Ok(ApiResponse<object>.Ok(new { models, requestPurposes, statuses }));
+    }
+
+    /// <summary>
+    /// 获取 visual-agent 日志详情
+    /// </summary>
+    [HttpGet("logs/{id}")]
+    public async Task<IActionResult> GetLogDetail(string id, CancellationToken ct)
+    {
+        var log = await _db.LlmRequestLogs.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
+        // 安全检查：只允许查看 visual-agent 的日志
+        if (string.IsNullOrWhiteSpace(log.RequestPurpose) ||
+            !log.RequestPurpose.StartsWith("visual-agent", StringComparison.OrdinalIgnoreCase))
+        {
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
+        }
+        return Ok(ApiResponse<object>.Ok(log));
+    }
+
+    private static string TruncatePreview(string? s, int maxChars)
+    {
+        var raw = (s ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(raw)) return string.Empty;
+        if (raw.Length <= maxChars) return raw;
+        return raw[..maxChars] + "…";
+    }
+
+    #endregion
+
     /// <summary>
     /// 批量生图：先用意图模型解析"将生成多少张 + 每张的 prompt"
     /// </summary>

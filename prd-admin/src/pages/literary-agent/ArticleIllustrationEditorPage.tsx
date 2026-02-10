@@ -16,13 +16,10 @@ import {
 import {
   createLiteraryAgentImageGenRun,
   generateArticleMarkers,
-  getVisualAgentWorkspaceDetail,
   getLiteraryAgentMainModel,
   planImageGen,
   streamLiteraryAgentImageGenRunWithRetry,
-  updateVisualAgentWorkspace,
   updateArticleMarker,
-  uploadVisualAgentWorkspaceAsset,
   listLiteraryPrompts,
   createLiteraryPrompt,
   updateLiteraryPrompt,
@@ -43,6 +40,11 @@ import {
   publishReferenceImageConfig,
   unpublishReferenceImageConfig,
 } from '@/services';
+import {
+  getLiteraryAgentWorkspaceDetailReal as getLiteraryAgentWorkspaceDetail,
+  updateLiteraryAgentWorkspaceReal as updateLiteraryAgentWorkspace,
+  uploadLiteraryAgentWorkspaceAssetReal as uploadLiteraryAgentWorkspaceAsset,
+} from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
 import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2 } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
@@ -422,7 +424,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   async function loadWorkspace() {
     try {
-      const res = await getVisualAgentWorkspaceDetail({ id: workspaceId });
+      const res = await getLiteraryAgentWorkspaceDetail({ id: workspaceId });
       if (res.success && res.data?.workspace) {
         const ws = res.data.workspace;
         const content = ws.articleContent || '';
@@ -603,7 +605,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   async function saveArticleContent() {
     try {
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: workspaceId,
         articleContent: debouncedArticleContent,
         idempotencyKey: `save-article-${workspaceId}-${Date.now()}`,
@@ -626,7 +628,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setUploadedFileName(fileName);
       
       // 保存到后端（提交型操作：会触发 version++，清空后续阶段）
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: workspaceId,
         articleContent: text,
         idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
@@ -683,7 +685,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setUploadedFileName(file.name);
       
       // 保存到后端
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: workspaceId,
         articleContent: text,
         idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
@@ -1325,7 +1327,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     const dataUrl = finalB64.startsWith('data:') ? finalB64 : `data:image/png;base64,${finalB64}`;
-    const up = await uploadVisualAgentWorkspaceAsset({ 
+    const up = await uploadLiteraryAgentWorkspaceAsset({ 
       id: workspaceId, 
       data: dataUrl, 
       prompt: plannedPrompt,

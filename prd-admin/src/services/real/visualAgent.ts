@@ -427,3 +427,27 @@ export async function getVisualAgentImageGenModelsReal() {
   }
   return res;
 }
+
+// ========== Visual Agent 域内日志查询（避免跨权限调用 /api/logs/llm）==========
+
+function toLogsQuery(params?: Record<string, any>): string {
+  if (!params) return '';
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v != null && v !== '') sp.set(k, String(v));
+  }
+  const qs = sp.toString();
+  return qs ? `?${qs}` : '';
+}
+
+export async function getVisualAgentLogsReal(params?: any) {
+  return await apiRequest<any>(`${api.visualAgent.imageGen.logs()}${toLogsQuery(params)}`, { method: 'GET' });
+}
+
+export async function getVisualAgentLogsMetaReal() {
+  return await apiRequest<any>(api.visualAgent.imageGen.logsMeta(), { method: 'GET' });
+}
+
+export async function getVisualAgentLogDetailReal(id: string) {
+  return await apiRequest<any>(api.visualAgent.imageGen.logDetail(id), { method: 'GET' });
+}

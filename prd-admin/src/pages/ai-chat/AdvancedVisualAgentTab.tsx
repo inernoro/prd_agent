@@ -106,6 +106,7 @@ import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { MessageContentRenderer } from './components/MessageContentRenderer';
 import { ChatMessageItem } from './components/ChatMessageItem';
 import { LlmLogsPanel } from '@/pages/LlmLogsPage';
+import { getVisualAgentLogsReal, getVisualAgentLogsMetaReal, getVisualAgentLogDetailReal } from '@/services/real/visualAgent';
 
 type CanvasImageItem = {
   key: string;
@@ -8069,6 +8070,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           <LlmLogsPanel
             embedded
             defaultAppKey="visual-agent"
+            customApis={{
+              getLogs: getVisualAgentLogsReal,
+              getMeta: getVisualAgentLogsMetaReal,
+              getDetail: getVisualAgentLogDetailReal,
+            }}
           />
         }
       />

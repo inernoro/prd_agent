@@ -313,6 +313,10 @@ export const api = {
       models: () => '/api/visual-agent/image-gen/models',
       /** 根据平台侧模型ID获取适配信息（尺寸选项等） */
       adapterInfo: (modelId: string) => `/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
+      /** Visual Agent 域内日志查询（避免跨权限调用 /api/logs/llm） */
+      logs: () => '/api/visual-agent/image-gen/logs',
+      logsMeta: () => '/api/visual-agent/image-gen/logs/meta',
+      logDetail: (id: string) => `/api/visual-agent/image-gen/logs/${id}`,
       runs: {
         create: () => '/api/visual-agent/image-gen/runs',
         byId: (runId: string) => `/api/visual-agent/image-gen/runs/${runId}`,
@@ -325,6 +329,14 @@ export const api = {
     uploadArtifacts: () => '/api/visual-agent/upload-artifacts',
   },
 
+  // ============ PRD Agent ============
+  prdAgent: {
+    /** 提示词（只读，供 PRD Agent 页面快捷标签使用） */
+    prompts: () => '/api/prd-agent/prompts',
+    /** 系统提示词（只读，供 PRD Agent 页面展示系统提示词内容） */
+    systemPrompts: () => '/api/prd-agent/prompts/system',
+  },
+
   // ============ Literary Agent 文学创作 ============
   literaryAgent: {
     prompts: {
@@ -335,6 +347,13 @@ export const api = {
       publish: (id: string) => `/api/literary-agent/prompts/${id}/publish`,
       unpublish: (id: string) => `/api/literary-agent/prompts/${id}/unpublish`,
       fork: (id: string) => `/api/literary-agent/prompts/${id}/fork`,
+    },
+    /** 文学创作工作区（应用身份隔离，避免跨权限调用 visual-agent） */
+    workspaces: {
+      list: () => '/api/literary-agent/workspaces',
+      byId: (id: string) => `/api/literary-agent/workspaces/${id}`,
+      detail: (id: string) => `/api/literary-agent/workspaces/${id}/detail`,
+      assets: (id: string) => `/api/literary-agent/workspaces/${id}/assets`,
     },
     config: {
       get: () => '/api/literary-agent/config',

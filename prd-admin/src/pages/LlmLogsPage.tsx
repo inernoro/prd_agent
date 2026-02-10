@@ -849,7 +849,16 @@ function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
   );
 }
 
-export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; defaultAppKey?: string } = {}) {
+export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
+  embedded?: boolean;
+  defaultAppKey?: string;
+  /** 可选自定义 API 函数，用于应用身份隔离（如 visual-agent 使用域内日志端点） */
+  customApis?: {
+    getLogs?: typeof getLlmLogs;
+    getMeta?: typeof getLlmLogsMeta;
+    getDetail?: typeof getLlmLogDetail;
+  };
+} = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get('tab') ?? 'llm') as 'llm' | 'system';
 
@@ -1023,7 +1032,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
         setSearchParams(sp, { replace: true });
       }
 
-      const res = await getLlmLogs({
+      const fetchLogs = customApis?.getLogs ?? getLlmLogs;
+      const res = await fetchLogs({
         page: opts?.resetPage ? 1 : page,
         pageSize,
         model: qModel || undefined,
@@ -1053,7 +1063,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
       resetJsonCheck();
     }
     try {
-      const res = await getLlmLogDetail(id);
+      const fetchDetail = customApis?.getDetail ?? getLlmLogDetail;
+      const res = await fetchDetail(id);
       if (res.success) setDetail(res.data);
     } finally {
       if (!silent) setDetailLoading(false);
@@ -1071,7 +1082,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
     if (allowedSizesLoadingId === logId) return [];
     setAllowedSizesLoadingId(logId);
     try {
-      const res = await getLlmLogDetail(logId);
+      const fetchDetail2 = customApis?.getDetail ?? getLlmLogDetail;
+      const res = await fetchDetail2(logId);
       if (!res.success) return [];
       const sizes = extractAllowedSizesFromAnswerText((res.data?.answerText ?? '') as any);
       setAllowedSizesByLogId((p) => ({ ...p, [logId]: sizes }));
@@ -1144,7 +1156,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
 
   useEffect(() => {
     (async () => {
-      const res = await getLlmLogsMeta();
+      const fetchMeta = customApis?.getMeta ?? getLlmLogsMeta;
+      const res = await fetchMeta();
       if (res.success) {
         setMetaModels(res.data.models ?? []);
         setMetaRequestPurposes(res.data.requestPurposes ?? []);
