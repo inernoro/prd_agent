@@ -19,6 +19,7 @@ public class GatewayLLMClient : ILLMClient
     private readonly bool _enablePromptCache;
     private readonly int _maxTokens;
     private readonly double _temperature;
+    private readonly bool _includeThinking;
 
     /// <summary>
     /// 创建基于 Gateway 的 LLM 客户端
@@ -31,7 +32,8 @@ public class GatewayLLMClient : ILLMClient
         string? platformName = null,
         bool enablePromptCache = true,
         int maxTokens = 4096,
-        double temperature = 0.2)
+        double temperature = 0.2,
+        bool includeThinking = false)
     {
         _gateway = gateway;
         _appCallerCode = appCallerCode;
@@ -41,6 +43,7 @@ public class GatewayLLMClient : ILLMClient
         _enablePromptCache = enablePromptCache;
         _maxTokens = maxTokens;
         _temperature = temperature;
+        _includeThinking = includeThinking;
     }
 
     /// <summary>AppCallerCode（用于测试断言）</summary>
@@ -85,6 +88,7 @@ public class GatewayLLMClient : ILLMClient
             ModelType = _modelType,
             RequestBody = requestBody,
             EnablePromptCache = enablePromptCache,
+            IncludeThinking = _includeThinking,
             TimeoutSeconds = 120,
             Context = new GatewayRequestContext
             {
@@ -106,9 +110,17 @@ public class GatewayLLMClient : ILLMClient
                 yield break;
             }
 
-            // 跳过思考过程块（Gateway 已过滤，此处为防御性检查）
+            // 思考过程块：当 includeThinking 启用时传递给调用方
             if (chunk.Type == GatewayChunkType.Thinking)
             {
+                if (_includeThinking && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    yield return new LLMStreamChunk
+                    {
+                        Type = "thinking",
+                        Content = chunk.Content
+                    };
+                }
                 continue;
             }
 
