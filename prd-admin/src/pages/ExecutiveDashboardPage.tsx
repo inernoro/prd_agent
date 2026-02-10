@@ -274,12 +274,6 @@ const DIMENSION_META: Record<string, { icon: typeof Bot; color: string; barColor
   'groups':           { icon: Users,         color: 'rgba(100,116,139,0.8)', barColor: 'rgba(100,116,139,0.5)', short: '群组' },
 };
 
-const USER_COLORS = [
-  'rgba(59,130,246,0.85)', 'rgba(239,68,68,0.8)', 'rgba(34,197,94,0.85)',
-  'rgba(168,85,247,0.85)', 'rgba(214,178,106,0.9)', 'rgba(251,146,60,0.85)',
-  'rgba(236,72,153,0.8)', 'rgba(20,184,166,0.85)', 'rgba(99,102,241,0.85)',
-  'rgba(245,158,11,0.85)',
-];
 
 type ScoredUser = {
   userId: string; displayName: string; role: string; avatarFileName: string | null;
@@ -317,53 +311,6 @@ function computeScores(data: ExecutiveLeaderboard): ScoredUser[] {
   }).sort((a, b) => b.totalScore - a.totalScore);
 }
 
-/** Make radar chart option — filter by category or explicit key list */
-function makeRadarOption(
-  scoredUsers: ScoredUser[],
-  dims: LeaderboardDimension[],
-  filter?: 'agent' | 'activity' | string[],
-): EChartsOption {
-  const activeDims = dims
-    .filter(d => Object.values(d.values).some(v => v > 0))
-    .filter(d => !filter ? true : Array.isArray(filter) ? filter.includes(d.key) : d.category === filter);
-
-  return {
-    backgroundColor: 'transparent',
-    tooltip: {
-      backgroundColor: chartTooltipBg, borderColor: 'rgba(255,255,255,0.08)',
-      textStyle: { color: '#f7f7fb', fontSize: 11 },
-    },
-    legend: { show: false },
-    radar: {
-      indicator: activeDims.map(d => ({
-        name: DIMENSION_META[d.key]?.short ?? d.name,
-        max: 100,
-      })),
-      shape: 'polygon' as any,
-      radius: '78%',
-      center: ['50%', '55%'],
-      axisName: { color: chartTextColor, fontSize: 9 },
-      splitArea: { areaStyle: { color: ['rgba(255,255,255,0.02)', 'rgba(255,255,255,0.04)'] } },
-      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
-      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } },
-    },
-    series: [{
-      type: 'radar',
-      data: scoredUsers.slice(0, 8).map((u, i) => {
-        const isHighlighted = i < 3;
-        return {
-          name: u.displayName,
-          value: activeDims.map(d => Math.round(u.normalizedScores[d.key] ?? 0)),
-          symbol: isHighlighted ? 'circle' : 'none',
-          symbolSize: 4,
-          lineStyle: { width: isHighlighted ? 2.5 : 1, opacity: isHighlighted ? 0.9 : 0.3 },
-          areaStyle: { opacity: isHighlighted ? 0.15 : 0.02 },
-          itemStyle: { color: USER_COLORS[i % USER_COLORS.length] },
-        };
-      }),
-    }],
-  };
-}
 
 const MEDAL_COLORS = [
   { color: 'rgba(214,178,106,0.95)', bg: 'rgba(214,178,106,0.08)', medal: '🥇' },
@@ -490,65 +437,6 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
           })}
         </div>
       </GlassCard>
-
-      {/* ── Left: 2 Radars stacked | Right: Dimension Overview ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <div className="grid grid-cols-2 gap-2">
-          <GlassCard glow className="!p-2">
-            <div className="text-[11px] font-bold uppercase tracking-wider px-1" style={{ color: 'var(--text-secondary)' }}>Agent 使用</div>
-            <EChart option={makeRadarOption(scored, dimensions, 'agent')} height={240} />
-          </GlassCard>
-          <GlassCard glow className="!p-2">
-            <div className="text-[11px] font-bold uppercase tracking-wider px-1" style={{ color: 'var(--text-secondary)' }}>活动产出</div>
-            <EChart option={makeRadarOption(scored, dimensions, 'activity')} height={240} />
-          </GlassCard>
-        </div>
-
-        <GlassCard glow className="!p-3">
-          <SectionTitle>维度分布</SectionTitle>
-          <div className="space-y-1.5">
-            {activeDims.map(dim => {
-              const meta = DIMENSION_META[dim.key] ?? { icon: Bot, color: 'rgba(148,163,184,0.7)', barColor: 'rgba(148,163,184,0.4)', short: dim.name };
-              const DimIcon = meta.icon;
-              const total = Object.values(dim.values).reduce((s, v) => s + v, 0);
-              const maxVal = Math.max(1, ...Object.values(dim.values));
-              const topUser = scored.find(u => (u.dimScores[dim.key] ?? 0) === maxVal);
-
-              return (
-                <div key={dim.key} className="flex items-center gap-2 py-0.5">
-                  <DimIcon size={11} style={{ color: meta.color }} className="flex-shrink-0" />
-                  <div className="w-12 flex-shrink-0">
-                    <div className="text-[10px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{meta.short}</div>
-                  </div>
-                  <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                    <div className="h-full flex">
-                      {scored.map((u, idx) => {
-                        const val = u.dimScores[dim.key] ?? 0;
-                        const pct = total > 0 ? (val / total) * 100 : 0;
-                        return pct > 0 ? (
-                          <div key={u.userId} className="h-full" style={{ width: `${pct}%`, background: USER_COLORS[idx % USER_COLORS.length], opacity: 0.8 }} title={`${u.displayName}: ${val}`} />
-                        ) : null;
-                      })}
-                    </div>
-                  </div>
-                  <div className="flex-shrink-0 text-right">
-                    <span className="text-[10px] font-bold tabular-nums" style={{ color: meta.color }}>{total.toLocaleString()}</span>
-                    {topUser && <span className="text-[9px] ml-0.5" style={{ color: 'var(--text-muted)' }}>({topUser.displayName})</span>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="flex flex-wrap gap-2 mt-2 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-            {scored.slice(0, 8).map((u, idx) => (
-              <div key={u.userId} className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full" style={{ background: USER_COLORS[idx % USER_COLORS.length] }} />
-                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>{u.displayName}</span>
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-      </div>
 
       {/* ── Per-dimension Leaderboard Cards ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
