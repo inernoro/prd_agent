@@ -317,15 +317,15 @@ function computeScores(data: ExecutiveLeaderboard): ScoredUser[] {
   }).sort((a, b) => b.totalScore - a.totalScore);
 }
 
-/** Make radar chart option for comparison, filtered by category */
+/** Make radar chart option — filter by category or explicit key list */
 function makeRadarOption(
   scoredUsers: ScoredUser[],
   dims: LeaderboardDimension[],
-  category?: 'agent' | 'activity',
+  filter?: 'agent' | 'activity' | string[],
 ): EChartsOption {
   const activeDims = dims
     .filter(d => Object.values(d.values).some(v => v > 0))
-    .filter(d => !category || d.category === category);
+    .filter(d => !filter ? true : Array.isArray(filter) ? filter.includes(d.key) : d.category === filter);
 
   return {
     backgroundColor: 'transparent',
@@ -335,8 +335,8 @@ function makeRadarOption(
     },
     legend: {
       bottom: 0, left: 'center',
-      textStyle: { color: chartTextColor, fontSize: 10 },
-      icon: 'circle', itemWidth: 8, itemHeight: 8, itemGap: 12,
+      textStyle: { color: chartTextColor, fontSize: 9 },
+      icon: 'circle', itemWidth: 6, itemHeight: 6, itemGap: 8,
     },
     radar: {
       indicator: activeDims.map(d => ({
@@ -344,9 +344,9 @@ function makeRadarOption(
         max: 100,
       })),
       shape: 'polygon' as any,
-      radius: '65%',
-      center: ['50%', '46%'],
-      axisName: { color: chartTextColor, fontSize: 10 },
+      radius: '58%',
+      center: ['50%', '45%'],
+      axisName: { color: chartTextColor, fontSize: 9 },
       splitArea: { areaStyle: { color: ['rgba(255,255,255,0.02)', 'rgba(255,255,255,0.04)'] } },
       splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
       axisLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } },
@@ -495,15 +495,23 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
         </div>
       </GlassCard>
 
-      {/* ── Dual Radar: Agent vs Activity ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <GlassCard glow>
-          <SectionTitle>Agent 使用雷达</SectionTitle>
-          <EChart option={makeRadarOption(scored, dimensions, 'agent')} height={300} />
+      {/* ── 2x2 Radar Grid ── */}
+      <div className="grid grid-cols-2 gap-4">
+        <GlassCard glow className="!p-4">
+          <SectionTitle>Agent 使用</SectionTitle>
+          <EChart option={makeRadarOption(scored, dimensions, 'agent')} height={240} />
         </GlassCard>
-        <GlassCard glow>
-          <SectionTitle>工作活动雷达</SectionTitle>
-          <EChart option={makeRadarOption(scored, dimensions, 'activity')} height={300} />
+        <GlassCard glow className="!p-4">
+          <SectionTitle>协作活跃</SectionTitle>
+          <EChart option={makeRadarOption(scored, dimensions, ['messages', 'sessions', 'groups'])} height={240} />
+        </GlassCard>
+        <GlassCard glow className="!p-4">
+          <SectionTitle>缺陷贡献</SectionTitle>
+          <EChart option={makeRadarOption(scored, dimensions, ['defects-created', 'defects-resolved', 'defect-agent'])} height={240} />
+        </GlassCard>
+        <GlassCard glow className="!p-4">
+          <SectionTitle>创意产出</SectionTitle>
+          <EChart option={makeRadarOption(scored, dimensions, ['images', 'visual-agent', 'literary-agent'])} height={240} />
         </GlassCard>
       </div>
 
