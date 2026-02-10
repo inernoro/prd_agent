@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -63,7 +64,11 @@ public class ImageRefAndMessagePersistenceTests
             MimeType = "image/jpeg"
         };
 
-        var json = JsonSerializer.Serialize(imgRef, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        var json = JsonSerializer.Serialize(imgRef, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        });
 
         Assert.Contains("\"sha256\":\"abc123\"", json);
         Assert.Contains("\"cosUrl\":\"https://cos.example.com/img.png\"", json);
