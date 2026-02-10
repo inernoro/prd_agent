@@ -96,9 +96,10 @@ public class LiteraryAgentConfigController : ControllerBase
     [HttpGet("models/image-gen")]
     public async Task<IActionResult> GetImageGenModels(CancellationToken ct)
     {
-        // 检查是否有激活的参考图配置
+        // 检查是否有当前用户激活的参考图配置
+        var adminId = GetAdminId();
         var hasActiveRefImage = await _db.ReferenceImageConfigs
-            .Find(x => x.AppKey == AppKey && x.IsActive)
+            .Find(x => x.AppKey == AppKey && x.IsActive && x.CreatedByAdminId == adminId)
             .AnyAsync(ct);
 
         // 有参考图用 img2img，没有用 text2img
@@ -593,9 +594,10 @@ public class LiteraryAgentConfigController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetConfig(CancellationToken ct)
     {
-        // 尝试从新的 ReferenceImageConfigs 获取激活的配置
+        // 尝试从新的 ReferenceImageConfigs 获取当前用户激活的配置
+        var adminId = GetAdminId();
         var activeConfig = await _db.ReferenceImageConfigs
-            .Find(x => x.AppKey == AppKey && x.IsActive)
+            .Find(x => x.AppKey == AppKey && x.IsActive && x.CreatedByAdminId == adminId)
             .FirstOrDefaultAsync(ct);
 
         if (activeConfig != null)

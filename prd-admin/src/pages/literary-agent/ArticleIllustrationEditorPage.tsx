@@ -45,7 +45,7 @@ import {
   unpublishReferenceImageConfig,
 } from '@/services';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2 } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2 } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
@@ -295,12 +295,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 当文章内容更新时，只在流式输出过程中自动滚动到最新的 marker
   useEffect(() => {
     if (isStreamingRef.current && articlePreviewRef.current && articleWithMarkers) {
-      // 找到最后一个带动画的 marker 并滚动到它
+      // 只在有新插入的 marker 时才滚动到它，不做兜底滚底部
       const markers = articlePreviewRef.current.querySelectorAll('.prd-md-marker-new');
       if (markers.length > 0) {
         markers[markers.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
-      } else {
-        articlePreviewRef.current.scrollTop = articlePreviewRef.current.scrollHeight;
       }
     }
   }, [articleWithMarkers]);
@@ -1071,10 +1069,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const locateMarkerInPreview = (markerIndex: number) => {
     const container = articlePreviewRef.current;
     if (!container) return;
-    const markers = container.querySelectorAll('.prd-md-marker');
+    // 查找所有 marker（包含普通和流式动画两种 class）
+    const markers = container.querySelectorAll('.prd-md-marker, .prd-md-marker-new');
     const target = markers[markerIndex] as HTMLElement | undefined;
     if (target) {
       target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // 添加短暂高亮闪烁效果帮助用户定位
+      target.style.outline = '2px solid rgba(245, 158, 11, 0.8)';
+      target.style.outlineOffset = '2px';
+      setTimeout(() => { target.style.outline = ''; target.style.outlineOffset = ''; }, 1500);
       return;
     }
     const imgAlt = `配图 ${markerIndex + 1}`;
@@ -2352,6 +2355,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             </div>
 
             <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-2">
+              {/* 标记生成中的进度提示 */}
+              {markerStreaming && (
+                <div
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+                  style={{
+                    background: 'rgba(245, 158, 11, 0.08)',
+                    border: '1px solid rgba(245, 158, 11, 0.2)',
+                    color: 'rgba(245, 158, 11, 0.95)',
+                    animation: 'pulse 2s ease-in-out infinite',
+                  }}
+                >
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>AI 正在分析文章并生成配图标记…已识别 {markerRunItems.length} 个位置</span>
+                </div>
+              )}
               {markerRunItems.map((it, idx) => {
                 const statusLabel =
                   it.status === 'parsing'
@@ -2369,7 +2387,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 const src =
                   String(it.assetUrl || it.url || '').trim() ||
                   (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
-                const showPlaceholder = it.status === 'running'; // 只在生图时显示呼吸动画，解析时不显示
+                const showPlaceholder = it.status === 'running' || it.status === 'parsing'; // 生图和解析时都显示动画
                 const canShow = Boolean(src) && it.status === 'done';
                 const hasImage = Boolean(String(it.assetUrl || it.url || '').trim() || it.base64);
                 const genLabel = hasImage ? '重新生成' : '生成图片';
@@ -2470,11 +2488,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     }}
                   >
                     {showPlaceholder ? (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        {/* 使用 fill 模式适应容器，内层正方形保持花瓣比例 */}
-                        <div style={{ width: '100%', height: '100%', maxWidth: 160, maxHeight: 160, aspectRatio: '1' }}>
-                          <PrdPetalBreathingLoader fill />
-                        </div>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                        {it.status === 'parsing' ? (
+                          <>
+                            <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(250, 204, 21, 0.7)' }} />
+                            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>解析尺寸…</span>
+                          </>
+                        ) : (
+                          <div style={{ width: '100%', height: '100%', maxWidth: 160, maxHeight: 160, aspectRatio: '1' }}>
+                            <PrdPetalBreathingLoader fill />
+                          </div>
+                        )}
                       </div>
                     ) : null}
                     {canShow ? (
