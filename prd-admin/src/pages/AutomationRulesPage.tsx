@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/design/Button';
-import { Badge } from '@/components/design/Badge';
 import { Switch } from '@/components/design/Switch';
 import { GlassCard } from '@/components/design/GlassCard';
 import { SearchableSelect } from '@/components/design/SearchableSelect';
@@ -28,6 +27,7 @@ import {
   Search,
   Users,
   Save,
+  Terminal,
 } from 'lucide-react';
 import type {
   RuleListItem,
@@ -74,18 +74,39 @@ function getFlowSteps(triggerType: string, actions: AutomationAction[]) {
   ];
 }
 
-function HookUrlDisplay({ hookId }: { hookId: string }) {
+function HookUrlDisplay({ hookId, onRegenerate }: { hookId: string; onRegenerate: () => void }) {
   const url = `${window.location.origin}/api/automations/hooks/${hookId}`;
+  const curlCmd = `curl -X POST '${url}' \\\n  -H 'Content-Type: application/json' \\\n  -d '{"key": "value"}'`;
   return (
-    <div className="flex items-center gap-2 p-2 rounded-[12px]" style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
-      <Link size={14} style={{ color: 'rgba(34,197,94,0.8)', flexShrink: 0 }} />
-      <code className="flex-1 text-xs truncate" style={{ color: 'rgba(34,197,94,0.9)' }}>{url}</code>
-      <button
-        onClick={() => { navigator.clipboard.writeText(url); toast.success('已复制'); }}
-        className="p-1 rounded hover:bg-white/10" title="复制"
-      >
-        <Copy size={12} style={{ color: 'rgba(34,197,94,0.8)' }} />
-      </button>
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 p-2.5 rounded-[12px] min-w-0" style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
+        <Link size={14} style={{ color: 'rgba(34,197,94,0.8)', flexShrink: 0 }} />
+        <code className="flex-1 text-xs break-all" style={{ color: 'rgba(34,197,94,0.9)' }}>{url}</code>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => { navigator.clipboard.writeText(url); toast.success('已复制地址'); }}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover:bg-white/8"
+          style={{ color: 'rgba(34,197,94,0.8)', border: '1px solid rgba(34,197,94,0.15)' }}
+        >
+          <Copy size={12} /> 复制地址
+        </button>
+        <button
+          onClick={() => { navigator.clipboard.writeText(curlCmd); toast.success('已复制 curl'); }}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover:bg-white/8"
+          style={{ color: 'rgba(168,85,247,0.8)', border: '1px solid rgba(168,85,247,0.15)' }}
+        >
+          <Terminal size={12} /> 复制 curl
+        </button>
+        <div className="flex-1" />
+        <button
+          onClick={onRegenerate}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover:bg-white/8"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <RefreshCw size={12} /> 重新生成
+        </button>
+      </div>
     </div>
   );
 }
@@ -463,22 +484,23 @@ export default function AutomationRulesPage() {
                   const selected = edit?.id === rule.id;
                   const isWebhook = rule.triggerType === 'incoming_webhook';
                   return (
-                    <button
+                    <div
                       key={rule.id}
                       onClick={() => handleSelectRule(rule)}
-                      className="w-full text-left px-3 py-2.5 rounded-[10px] transition-all"
+                      className="w-full text-left px-3 py-2.5 rounded-[10px] transition-all cursor-pointer"
                       style={{
                         background: selected ? 'rgba(59,130,246,0.1)' : 'transparent',
                         border: selected ? '1px solid rgba(59,130,246,0.25)' : '1px solid transparent',
-                        opacity: rule.enabled ? 1 : 0.5,
                       }}
                     >
                       <div className="flex items-center gap-2">
                         <span className="flex-shrink-0" style={{ color: isWebhook ? 'rgba(34,197,94,0.7)' : 'rgba(59,130,246,0.7)' }}>
                           {isWebhook ? <Link size={13} /> : <Zap size={13} />}
                         </span>
-                        <span className="text-sm font-medium truncate flex-1">{rule.name}</span>
-                        {!rule.enabled && <Badge variant="danger" size="sm">停</Badge>}
+                        <span className="text-sm font-medium truncate flex-1" style={{ opacity: rule.enabled ? 1 : 0.45 }}>{rule.name}</span>
+                        <div onClick={(e) => e.stopPropagation()} className="flex-shrink-0">
+                          <Switch checked={rule.enabled} onCheckedChange={() => handleToggle(rule.id)} ariaLabel="启用" />
+                        </div>
                       </div>
                       <div className="flex items-center gap-1.5 mt-1 ml-[21px]">
                         {rule.actions.map((a, i) => (
@@ -492,7 +514,7 @@ export default function AutomationRulesPage() {
                           {rule.triggerCount}次
                         </span>
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -520,16 +542,13 @@ export default function AutomationRulesPage() {
                     className="flex-1 text-sm font-semibold bg-transparent outline-none"
                     style={{ color: 'var(--text-primary)' }}
                   />
-                  <span className="text-[10px] px-2 py-0.5 rounded-full" style={{
+                  <span className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0" style={{
                     background: edit.triggerType === 'incoming_webhook' ? 'rgba(34,197,94,0.08)' : 'rgba(59,130,246,0.08)',
                     color: edit.triggerType === 'incoming_webhook' ? 'rgba(34,197,94,0.8)' : 'rgba(59,130,246,0.8)',
                     border: `1px solid ${edit.triggerType === 'incoming_webhook' ? 'rgba(34,197,94,0.15)' : 'rgba(59,130,246,0.15)'}`,
                   }}>
                     {triggerTypeLabel[edit.triggerType]}
                   </span>
-                  {edit.id && (
-                    <Switch checked={edit.enabled} onCheckedChange={() => handleToggle(edit.id!)} ariaLabel="启用" />
-                  )}
                 </div>
 
                 {/* 编辑器内容 */}
@@ -563,12 +582,7 @@ export default function AutomationRulesPage() {
                   {edit.triggerType === 'incoming_webhook' && edit.hookId && (
                     <div>
                       <SectionTitle>Webhook URL</SectionTitle>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1"><HookUrlDisplay hookId={edit.hookId} /></div>
-                        <Button variant="secondary" size="sm" onClick={handleRegenerateHook}>
-                          <RefreshCw size={12} /> 重新生成
-                        </Button>
-                      </div>
+                      <HookUrlDisplay hookId={edit.hookId} onRegenerate={handleRegenerateHook} />
                     </div>
                   )}
 
@@ -628,18 +642,14 @@ export default function AutomationRulesPage() {
                           )}
                           {action.type === 'admin_notification' && (
                             <div className="space-y-2">
-                              <div className="flex gap-2">
-                                <select value={action.notifyLevel || 'info'} onChange={(e) => updateAction(idx, { notifyLevel: e.target.value })}
-                                  className={inputCls + ' w-32 flex-shrink-0'} style={inputStyle}>
-                                  <option value="info">信息</option>
-                                  <option value="warning">警告</option>
-                                  <option value="error">错误</option>
-                                </select>
-                                <div className="flex-1">
-                                  <UserMultiSelect allUsers={notifyTargets} selectedIds={action.notifyUserIds || []}
-                                    onChange={(ids) => updateAction(idx, { notifyUserIds: ids })} />
-                                </div>
-                              </div>
+                              <select value={action.notifyLevel || 'info'} onChange={(e) => updateAction(idx, { notifyLevel: e.target.value })}
+                                className={inputCls} style={inputStyle}>
+                                <option value="info">信息</option>
+                                <option value="warning">警告</option>
+                                <option value="error">错误</option>
+                              </select>
+                              <UserMultiSelect allUsers={notifyTargets} selectedIds={action.notifyUserIds || []}
+                                onChange={(ids) => updateAction(idx, { notifyUserIds: ids })} />
                             </div>
                           )}
                         </div>
