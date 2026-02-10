@@ -4,9 +4,8 @@ import { Badge } from '@/components/design/Badge';
 import { Switch } from '@/components/design/Switch';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
-import { Dialog } from '@/components/ui/Dialog';
-import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import { SearchableSelect } from '@/components/design/SearchableSelect';
+import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import {
   selectContentStyle,
   selectItemClass,
@@ -29,6 +28,7 @@ import {
   ChevronDown,
   Search,
   Users,
+  Save,
 } from 'lucide-react';
 import type {
   RuleListItem,
@@ -38,59 +38,54 @@ import type {
   NotifyTarget,
 } from '@/services/contracts/automations';
 
-function fmtDate(v?: string | null) {
-  if (!v) return '-';
-  return new Date(v).toLocaleString('zh-CN');
-}
+// ── 常量 & 小组件 ──
 
 const actionTypeLabels: Record<string, string> = {
   webhook: '传出 Webhook',
   admin_notification: '站内信',
 };
-
 const actionTypeIcons: Record<string, React.ReactNode> = {
   webhook: <ExternalLink size={12} />,
   admin_notification: <Bell size={12} />,
 };
+const inputCls =
+  'w-full px-3 py-2 rounded-[12px] text-sm outline-none transition-colors'
+  + ' hover:border-white/20 focus:ring-2 focus:ring-white/10';
+const inputStyle: React.CSSProperties = {
+  background: 'var(--bg-input)',
+  border: '1px solid rgba(255,255,255,0.12)',
+  color: 'var(--text-primary)',
+};
 
 function getFlowSteps(triggerType: string, actions: AutomationAction[]) {
-  const triggerLabel = triggerType === 'incoming_webhook' ? '外部 POST' : '事件匹配';
-  const actionLabel = actions.length > 0
-    ? actions.map((a) => actionTypeLabels[a.type] || a.type).join(' + ')
-    : '执行动作';
+  const t = triggerType === 'incoming_webhook' ? '外部 POST' : '事件匹配';
+  const a = actions.length > 0 ? actions.map((x) => actionTypeLabels[x.type] || x.type).join(' + ') : '执行动作';
   return [
-    { key: 1, label: triggerLabel },
+    { key: 1, label: t },
     { key: 2, label: '模板渲染' },
-    { key: 3, label: actionLabel },
+    { key: 3, label: a },
   ];
 }
 
 function HookUrlDisplay({ hookId }: { hookId: string }) {
   const url = `${window.location.origin}/api/automations/hooks/${hookId}`;
-  const handleCopy = () => {
-    navigator.clipboard.writeText(url);
-    toast.success('已复制 Webhook URL');
-  };
   return (
-    <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
+    <div className="flex items-center gap-2 p-2 rounded-[12px]" style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
       <Link size={14} style={{ color: 'rgba(34,197,94,0.8)', flexShrink: 0 }} />
       <code className="flex-1 text-xs truncate" style={{ color: 'rgba(34,197,94,0.9)' }}>{url}</code>
-      <button onClick={handleCopy} className="p-1 rounded hover:bg-white/10" title="复制">
+      <button
+        onClick={() => { navigator.clipboard.writeText(url); toast.success('已复制'); }}
+        className="p-1 rounded hover:bg-white/10" title="复制"
+      >
         <Copy size={12} style={{ color: 'rgba(34,197,94,0.8)' }} />
       </button>
     </div>
   );
 }
 
-/** 用户多选下拉（复用 selectStyles 设计 token） */
-function UserMultiSelect({
-  allUsers,
-  selectedIds,
-  onChange,
-}: {
-  allUsers: NotifyTarget[];
-  selectedIds: string[];
-  onChange: (ids: string[]) => void;
+/** 用户多选下拉 */
+function UserMultiSelect({ allUsers, selectedIds, onChange }: {
+  allUsers: NotifyTarget[]; selectedIds: string[]; onChange: (ids: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -98,116 +93,61 @@ function UserMultiSelect({
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
   }, []);
+  useEffect(() => { if (open) setTimeout(() => searchRef.current?.focus(), 100); else setSearch(''); }, [open]);
 
-  useEffect(() => {
-    if (open) setTimeout(() => searchRef.current?.focus(), 100);
-    else setSearch('');
-  }, [open]);
-
-  const toggle = (userId: string) => {
-    onChange(
-      selectedIds.includes(userId) ? selectedIds.filter((id) => id !== userId) : [...selectedIds, userId],
-    );
-  };
-
+  const toggle = (id: string) => onChange(selectedIds.includes(id) ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]);
   const filtered = allUsers.filter((u) => {
     if (!search.trim()) return true;
     const q = search.toLowerCase();
     return u.displayName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q);
   });
-
-  const selectedNames = selectedIds
-    .map((id) => allUsers.find((u) => u.userId === id))
-    .filter(Boolean)
-    .map((u) => u!.displayName);
+  const names = selectedIds.map((id) => allUsers.find((u) => u.userId === id)).filter(Boolean).map((u) => u!.displayName);
 
   return (
     <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
+      <button type="button" onClick={() => setOpen(!open)}
         className="relative w-full pr-9 h-9 rounded-[12px] text-sm outline-none transition-colors flex items-center px-3 hover:border-white/20"
-        style={{
-          background: 'var(--bg-input)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          color: 'var(--text-primary)',
-        }}
+        style={inputStyle}
       >
         <span className="truncate">
-          {selectedIds.length === 0 ? (
-            <span style={{ color: 'var(--text-muted)' }}>全局通知（所有管理员）</span>
-          ) : (
-            selectedNames.join('、')
-          )}
+          {selectedIds.length === 0
+            ? <span style={{ color: 'var(--text-muted)' }}>全局通知（所有管理员）</span>
+            : names.join('、')}
         </span>
-        <ChevronDown
-          size={16}
-          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"
-          style={{ color: 'var(--text-muted)' }}
-        />
+        <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
       </button>
-
       {open && (
-        <div
-          className="absolute z-[120] mt-2 w-full rounded-[14px] overflow-hidden"
-          style={selectContentStyle}
-        >
-          {/* 搜索框 */}
+        <div className="absolute z-[120] mt-2 w-full rounded-[14px] overflow-hidden" style={selectContentStyle}>
           <div className="p-2 border-b" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
             <div className="relative">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-              <input
-                ref={searchRef}
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="搜索用户..."
-                className="w-full pl-8 pr-3 h-8 rounded-[8px] text-sm outline-none"
-                style={{
-                  background: 'var(--bg-input)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  color: 'var(--text-primary)',
-                }}
+              <input ref={searchRef} type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+                placeholder="搜索用户..." className="w-full pl-8 pr-3 h-8 rounded-[8px] text-sm outline-none"
+                style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
               />
             </div>
           </div>
-
-          {/* 选项列表 */}
           <div className="p-1" style={{ maxHeight: 240, overflow: 'auto' }}>
-            {/* 全局通知选项 */}
-            <button
-              type="button"
-              onClick={() => { onChange([]); setOpen(false); }}
-              className={selectItemClass + ' w-full text-left flex items-center gap-2'}
-            >
+            <button type="button" onClick={() => { onChange([]); setOpen(false); }}
+              className={selectItemClass + ' w-full text-left flex items-center gap-2'}>
               <Users size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
               <span className="flex-1">全局通知（所有管理员）</span>
               {selectedIds.length === 0 && <Check size={12} className="text-green-400 flex-shrink-0" />}
             </button>
             <div className="mx-2 my-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
             {filtered.map((user) => (
-              <button
-                key={user.userId}
-                type="button"
-                onClick={() => toggle(user.userId)}
-                className={selectItemClass + ' w-full text-left flex items-center gap-2'}
-              >
+              <button key={user.userId} type="button" onClick={() => toggle(user.userId)}
+                className={selectItemClass + ' w-full text-left flex items-center gap-2'}>
                 <span className="flex-1 truncate">{user.displayName}</span>
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>@{user.username}</span>
                 {selectedIds.includes(user.userId) && <Check size={12} className="text-green-400 flex-shrink-0" />}
               </button>
             ))}
-            {filtered.length === 0 && (
-              <div className="px-3 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-                未找到匹配用户
-              </div>
-            )}
+            {filtered.length === 0 && <div className="px-3 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>未找到匹配用户</div>}
           </div>
         </div>
       )}
@@ -215,28 +155,67 @@ function UserMultiSelect({
   );
 }
 
+// ── 编辑器面板右侧的 section 标题 ──
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
+      {children}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// 主页面
+// ══════════════════════════════════════════════════════════════
+
+interface EditState {
+  id?: string;           // undefined = 新建
+  triggerType: 'event' | 'incoming_webhook';
+  name: string;
+  eventType: string;
+  hookId?: string;
+  titleTemplate: string;
+  contentTemplate: string;
+  actions: AutomationAction[];
+  enabled: boolean;
+}
+
+function emptyEdit(trigger: 'event' | 'incoming_webhook'): EditState {
+  return { triggerType: trigger, name: '', eventType: '', titleTemplate: '', contentTemplate: '', actions: [], enabled: true };
+}
+
+function ruleToEdit(rule: RuleListItem): EditState {
+  return {
+    id: rule.id,
+    triggerType: (rule.triggerType as 'event' | 'incoming_webhook') || 'event',
+    name: rule.name,
+    eventType: rule.eventType,
+    hookId: rule.hookId ?? undefined,
+    titleTemplate: rule.titleTemplate || '',
+    contentTemplate: rule.contentTemplate || '',
+    actions: rule.actions.map((a) => ({
+      type: a.type,
+      webhookUrl: a.webhookUrl,
+      notifyLevel: a.notifyLevel,
+      notifyUserIds: [],
+    })),
+    enabled: rule.enabled,
+  };
+}
+
 export default function AutomationRulesPage() {
   const [activeTab, setActiveTab] = useState('event');
   const [rules, setRules] = useState<RuleListItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [eventTypes, setEventTypes] = useState<EventTypeDef[]>([]);
   const [notifyTargets, setNotifyTargets] = useState<NotifyTarget[]>([]);
 
-  // 创建对话框
-  const [createOpen, setCreateOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [formTriggerType, setFormTriggerType] = useState<'event' | 'incoming_webhook'>('event');
-  const [formName, setFormName] = useState('');
-  const [formEventType, setFormEventType] = useState('');
-  const [formActions, setFormActions] = useState<AutomationAction[]>([]);
-  const [formTitleTemplate, setFormTitleTemplate] = useState('');
-  const [formContentTemplate, setFormContentTemplate] = useState('');
+  // 编辑状态
+  const [edit, setEdit] = useState<EditState | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  // 测试对话框
-  const [triggerOpen, setTriggerOpen] = useState(false);
-  const [triggerRuleId, setTriggerRuleId] = useState('');
+  // 手动触发
+  const [triggerRuleId, setTriggerRuleId] = useState<string | null>(null);
   const [triggerTitle, setTriggerTitle] = useState('');
   const [triggerContent, setTriggerContent] = useState('');
   const [triggering, setTriggering] = useState(false);
@@ -244,15 +223,14 @@ export default function AutomationRulesPage() {
   const loadRules = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await automationsService.listRules(page, 20, undefined, undefined, activeTab);
+      const data = await automationsService.listRules(1, 100, undefined, undefined, activeTab);
       setRules(data.items);
-      setTotal(data.total);
     } catch (err) {
       toast.error('加载失败', String(err));
     } finally {
       setLoading(false);
     }
-  }, [page, activeTab]);
+  }, [activeTab]);
 
   const loadMeta = useCallback(async () => {
     try {
@@ -262,93 +240,128 @@ export default function AutomationRulesPage() {
       ]);
       setEventTypes(types);
       setNotifyTargets(targets);
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => {
-    loadRules();
-    loadMeta();
-  }, [loadRules, loadMeta]);
+  useEffect(() => { loadRules(); loadMeta(); }, [loadRules, loadMeta]);
+
+  // ── 事件处理 ──
 
   const handleTabChange = (key: string) => {
     setActiveTab(key);
-    setPage(1);
+    setEdit(null);
   };
 
-  const handleToggle = async (id: string) => {
+  const handleSelectRule = (rule: RuleListItem) => {
+    setEdit(ruleToEdit(rule));
+  };
+
+  const handleNew = () => {
+    setEdit(emptyEdit(activeTab === 'incoming_webhook' ? 'incoming_webhook' : 'event'));
+  };
+
+  const handleSave = async () => {
+    if (!edit) return;
+    if (!edit.name) { toast.error('请填写规则名称'); return; }
+    if (edit.triggerType === 'event' && !edit.eventType) { toast.error('请选择触发事件'); return; }
+    if (edit.actions.length === 0) { toast.error('至少添加一个执行动作'); return; }
+
+    setSaving(true);
     try {
-      const res = await automationsService.toggleRule(id);
-      toast.success(res.enabled ? '已启用' : '已禁用');
+      if (edit.id) {
+        // 更新
+        await automationsService.updateRule(edit.id, {
+          name: edit.name,
+          eventType: edit.eventType || undefined,
+          actions: edit.actions,
+          titleTemplate: edit.titleTemplate || undefined,
+          contentTemplate: edit.contentTemplate || undefined,
+        });
+        toast.success('已保存');
+      } else {
+        // 新建
+        const req: CreateRuleRequest = {
+          name: edit.name,
+          enabled: true,
+          triggerType: edit.triggerType,
+          eventType: edit.triggerType === 'event' ? edit.eventType : undefined,
+          actions: edit.actions,
+          titleTemplate: edit.titleTemplate || undefined,
+          contentTemplate: edit.contentTemplate || undefined,
+        };
+        const created = await automationsService.createRule(req);
+        toast.success('已创建');
+        setEdit(ruleToEdit({
+          ...created,
+          actions: created.actions.map((a) => ({
+            type: a.type,
+            webhookUrl: a.webhookUrl,
+            notifyUserCount: a.notifyUserIds?.length ?? 0,
+            notifyLevel: a.notifyLevel,
+          })),
+          createdByName: '我',
+          createdBy: '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          triggerCount: 0,
+        }));
+      }
       loadRules();
     } catch (err) {
-      toast.error('操作失败', String(err));
+      toast.error('保存失败', String(err));
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`确定删除规则「${name}」？`)) return;
+  const handleDelete = async () => {
+    if (!edit?.id) { setEdit(null); return; }
+    if (!confirm(`确定删除规则「${edit.name}」？`)) return;
     try {
-      await automationsService.deleteRule(id);
+      await automationsService.deleteRule(edit.id);
       toast.success('已删除');
+      setEdit(null);
       loadRules();
     } catch (err) {
       toast.error('删除失败', String(err));
     }
   };
 
-  const handleCreate = async () => {
-    if (!formName) {
-      toast.error('请填写规则名称');
-      return;
-    }
-    if (formTriggerType === 'event' && !formEventType) {
-      toast.error('请选择或输入事件类型');
-      return;
-    }
-    if (formActions.length === 0) {
-      toast.error('至少需要一个动作');
-      return;
-    }
-
-    setCreating(true);
+  const handleToggle = async (id: string) => {
     try {
-      const req: CreateRuleRequest = {
-        name: formName,
-        enabled: true,
-        triggerType: formTriggerType,
-        eventType: formTriggerType === 'event' ? formEventType : undefined,
-        actions: formActions,
-        titleTemplate: formTitleTemplate || undefined,
-        contentTemplate: formContentTemplate || undefined,
-      };
-      await automationsService.createRule(req);
-      toast.success('规则已创建');
-      setCreateOpen(false);
-      resetForm();
+      const res = await automationsService.toggleRule(id);
+      toast.success(res.enabled ? '已启用' : '已禁用');
+      if (edit?.id === id) setEdit((e) => e ? { ...e, enabled: res.enabled } : e);
       loadRules();
     } catch (err) {
-      toast.error('创建失败', String(err));
-    } finally {
-      setCreating(false);
+      toast.error('操作失败', String(err));
+    }
+  };
+
+  const handleRegenerateHook = async () => {
+    if (!edit?.id) return;
+    if (!confirm('重新生成后旧 URL 立即失效，确定？')) return;
+    try {
+      const res = await automationsService.regenerateHook(edit.id);
+      setEdit((e) => e ? { ...e, hookId: res.hookId } : e);
+      toast.success('已重新生成');
+      loadRules();
+    } catch (err) {
+      toast.error('操作失败', String(err));
     }
   };
 
   const handleTrigger = async () => {
+    if (!triggerRuleId) return;
     setTriggering(true);
     try {
       const result = await automationsService.triggerRule(triggerRuleId, {
         title: triggerTitle || '手动触发测试',
         content: triggerContent || '这是一条手动触发的测试通知',
       });
-      if (result.allSucceeded) {
-        toast.success('触发成功，所有动作执行完毕');
-      } else {
-        const failed = result.actionResults.filter((r) => !r.success);
-        toast.error('部分动作失败', failed.map((r) => r.errorMessage).join('; '));
-      }
-      setTriggerOpen(false);
+      if (result.allSucceeded) toast.success('触发成功');
+      else toast.error('部分动作失败');
+      setTriggerRuleId(null);
       loadRules();
     } catch (err) {
       toast.error('触发失败', String(err));
@@ -357,55 +370,24 @@ export default function AutomationRulesPage() {
     }
   };
 
-  const handleRegenerateHook = async (id: string) => {
-    if (!confirm('重新生成后旧 URL 将立即失效，确定继续？')) return;
-    try {
-      await automationsService.regenerateHook(id);
-      toast.success('Hook URL 已重新生成');
-      loadRules();
-    } catch (err) {
-      toast.error('操作失败', String(err));
-    }
-  };
+  // ── 编辑器辅助 ──
 
-  const resetForm = () => {
-    setFormName('');
-    setFormTriggerType(activeTab === 'incoming_webhook' ? 'incoming_webhook' : 'event');
-    setFormEventType('');
-    setFormActions([]);
-    setFormTitleTemplate('');
-    setFormContentTemplate('');
-  };
-
+  const patchEdit = (patch: Partial<EditState>) => setEdit((e) => e ? { ...e, ...patch } : e);
   const addAction = (type: string) => {
-    setFormActions((prev) => [
-      ...prev,
-      {
+    if (!edit) return;
+    patchEdit({
+      actions: [...edit.actions, {
         type,
         ...(type === 'webhook' ? { webhookUrl: '' } : {}),
         ...(type === 'admin_notification' ? { notifyUserIds: [], notifyLevel: 'info' } : {}),
-      },
-    ]);
+      }],
+    });
   };
+  const removeAction = (idx: number) => patchEdit({ actions: edit!.actions.filter((_, i) => i !== idx) });
+  const updateAction = (idx: number, patch: Partial<AutomationAction>) =>
+    patchEdit({ actions: edit!.actions.map((a, i) => i === idx ? { ...a, ...patch } : a) });
 
-  const removeAction = (idx: number) => {
-    setFormActions((prev) => prev.filter((_, i) => i !== idx));
-  };
-
-  const updateAction = (idx: number, patch: Partial<AutomationAction>) => {
-    setFormActions((prev) => prev.map((a, i) => (i === idx ? { ...a, ...patch } : a)));
-  };
-
-  const inputCls =
-    'w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-sm';
-
-  const totalPages = Math.ceil(total / 20);
-
-  const emptyIcon = activeTab === 'incoming_webhook' ? <Link size={36} className="mx-auto mb-3 opacity-40" /> : <Zap size={36} className="mx-auto mb-3 opacity-40" />;
-  const emptyText = activeTab === 'incoming_webhook' ? '暂无传入 Webhook' : '暂无事件触发规则';
-  const emptyHint = activeTab === 'incoming_webhook'
-    ? '创建传入 Webhook 后，外部系统可以通过 POST 请求触发动作'
-    : '创建事件规则后，当系统事件发生时自动执行动作';
+  // ══════════════════ 渲染 ══════════════════
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden">
@@ -417,383 +399,284 @@ export default function AutomationRulesPage() {
         activeKey={activeTab}
         onChange={handleTabChange}
         actions={
-          <Button
-            size="sm"
-            onClick={() => {
-              resetForm();
-              setCreateOpen(true);
-            }}
-          >
-            <Plus size={14} /> 新建规则
+          <Button size="sm" onClick={handleNew}>
+            <Plus size={14} /> 新建
           </Button>
         }
       />
 
-      <GlassCard glow className="flex-1 min-h-0 flex flex-col p-5">
-        {/* 规则列表 */}
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 size={20} className="animate-spin text-muted-foreground" />
+      {/* 主从面板 */}
+      <div className="grid gap-5 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '280px minmax(0, 1fr)' }}>
+
+        {/* ── 左侧：规则列表 ── */}
+        <GlassCard glow className="p-4 h-full min-h-0 flex flex-col overflow-hidden">
+          <div className="text-[11px] font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+            规则列表 ({rules.length})
           </div>
-        ) : rules.length === 0 ? (
-          <div className="text-center py-16 text-muted-foreground">
-            {emptyIcon}
-            <p>{emptyText}</p>
-            <p className="text-xs mt-1">{emptyHint}</p>
-          </div>
-        ) : (
-          <div className="space-y-2 flex-1 overflow-y-auto">
-            {rules.map((rule) => (
-              <div
-                key={rule.id}
-                className="p-4 rounded-xl border transition-colors"
-                style={{
-                  background: 'rgba(255,255,255,0.02)',
-                  borderColor: rule.enabled ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)',
-                  opacity: rule.enabled ? 1 : 0.6,
-                }}
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
+
+          {loading ? (
+            <div className="flex-1 flex items-center justify-center">
+              <Loader2 size={18} className="animate-spin text-muted-foreground" />
+            </div>
+          ) : rules.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
+              {activeTab === 'incoming_webhook' ? <Link size={28} className="mb-2 opacity-40" /> : <Zap size={28} className="mb-2 opacity-40" />}
+              <p className="text-xs">暂无规则</p>
+            </div>
+          ) : (
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
+              {rules.map((rule) => {
+                const selected = edit?.id === rule.id;
+                return (
+                  <button
+                    key={rule.id}
+                    onClick={() => handleSelectRule(rule)}
+                    className="w-full text-left p-3 rounded-[12px] transition-all group"
+                    style={{
+                      background: selected ? 'rgba(59,130,246,0.12)' : 'rgba(255,255,255,0.02)',
+                      border: selected ? '1px solid rgba(59,130,246,0.3)' : '1px solid rgba(255,255,255,0.06)',
+                      opacity: rule.enabled ? 1 : 0.5,
+                    }}
+                  >
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{rule.name}</span>
-                      {rule.triggerType === 'event' && (
-                        <Badge variant="subtle" size="sm">{rule.eventType}</Badge>
-                      )}
-                      {rule.triggerType === 'incoming_webhook' && (
-                        <Badge variant="success" size="sm">
-                          传入 Webhook
-                        </Badge>
-                      )}
-                      {!rule.enabled && (
-                        <Badge variant="danger" size="sm">已禁用</Badge>
-                      )}
+                      <span className="text-sm font-medium truncate flex-1">{rule.name}</span>
+                      {!rule.enabled && <Badge variant="danger" size="sm">停</Badge>}
                     </div>
-
-                    {/* 传入 Webhook 显示 URL */}
-                    {rule.triggerType === 'incoming_webhook' && rule.hookId && (
-                      <div className="mt-2 flex items-center gap-1.5">
-                        <HookUrlDisplay hookId={rule.hookId} />
-                        <button
-                          onClick={() => handleRegenerateHook(rule.id)}
-                          className="p-1 rounded hover:bg-white/10 text-muted-foreground"
-                          title="重新生成 URL"
-                        >
-                          <RefreshCw size={12} />
-                        </button>
-                      </div>
-                    )}
-
-                    {/* 模板预览 */}
-                    {(rule.titleTemplate || rule.contentTemplate) && (
-                      <div className="mt-2 text-xs px-2 py-1.5 rounded" style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.12)' }}>
-                        {rule.titleTemplate && <div style={{ color: 'rgba(168,85,247,0.9)' }}>标题: {rule.titleTemplate}</div>}
-                        {rule.contentTemplate && <div style={{ color: 'rgba(168,85,247,0.7)' }}>内容: {rule.contentTemplate}</div>}
-                      </div>
-                    )}
-
-                    <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                      <div className="flex items-center gap-1.5">
-                        {rule.actions.map((a, i) => (
-                          <span
-                            key={i}
-                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded"
-                            style={{ background: 'rgba(255,255,255,0.05)' }}
-                          >
-                            {actionTypeIcons[a.type]}
-                            {actionTypeLabels[a.type] || a.type}
-                          </span>
-                        ))}
-                      </div>
-                      <span>|</span>
-                      <span>触发 {rule.triggerCount} 次</span>
-                      {rule.lastTriggeredAt && <span>最近: {fmtDate(rule.lastTriggeredAt)}</span>}
-                      <span>创建: {rule.createdByName}</span>
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                      {rule.actions.map((a, i) => (
+                        <span key={i} className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full"
+                          style={{ background: 'rgba(255,255,255,0.06)' }}>
+                          {actionTypeIcons[a.type]}
+                          {actionTypeLabels[a.type]}
+                        </span>
+                      ))}
+                      <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>
+                        {rule.triggerCount}次
+                      </span>
                     </div>
-                  </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </GlassCard>
+
+        {/* ── 右侧：编辑面板 ── */}
+        <GlassCard glow className="p-5 h-full min-h-0 flex flex-col overflow-hidden">
+          {!edit ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
+              <Zap size={32} className="mb-3 opacity-30" />
+              <p className="text-sm">选择一个规则或新建</p>
+            </div>
+          ) : (
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-5">
+              {/* 头部：名称 + 开关 */}
+              <div className="flex items-center gap-3">
+                <input
+                  value={edit.name}
+                  onChange={(e) => patchEdit({ name: e.target.value })}
+                  placeholder="规则名称"
+                  className="flex-1 text-lg font-semibold bg-transparent outline-none border-b border-transparent focus:border-white/20 transition-colors pb-1"
+                  style={{ color: 'var(--text-primary)' }}
+                />
+                {edit.id && (
+                  <Switch checked={edit.enabled} onCheckedChange={() => handleToggle(edit.id!)} ariaLabel="启用" />
+                )}
+              </div>
+
+              {/* 流程预览 */}
+              <WorkflowProgressBar
+                steps={getFlowSteps(edit.triggerType, edit.actions)}
+                currentStep={3}
+                allCompleted
+              />
+
+              {/* ── 触发方式 ── */}
+              <div>
+                <SectionTitle>触发方式</SectionTitle>
+                <div className="flex gap-2">
+                  {(['event', 'incoming_webhook'] as const).map((tt) => {
+                    const active = edit.triggerType === tt;
+                    const isEvent = tt === 'event';
+                    return (
+                      <button key={tt}
+                        onClick={() => !edit.id && patchEdit({ triggerType: tt })}
+                        disabled={!!edit.id}
+                        className="flex-1 p-3 rounded-[12px] border text-left text-sm transition-all"
+                        style={{
+                          background: active ? (isEvent ? 'rgba(59,130,246,0.08)' : 'rgba(34,197,94,0.08)') : 'transparent',
+                          borderColor: active ? (isEvent ? 'rgba(59,130,246,0.3)' : 'rgba(34,197,94,0.3)') : 'rgba(255,255,255,0.06)',
+                          opacity: edit.id && !active ? 0.4 : 1,
+                          cursor: edit.id ? 'default' : 'pointer',
+                        }}
+                      >
+                        <div className="flex items-center gap-2 font-medium">
+                          {isEvent ? <Zap size={14} /> : <Link size={14} />}
+                          {isEvent ? '事件触发' : '传入 Webhook'}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* ── 事件选择 ── */}
+              {edit.triggerType === 'event' && (
+                <div>
+                  <SectionTitle>触发事件</SectionTitle>
+                  <SearchableSelect
+                    value={edit.eventType}
+                    onValueChange={(v) => patchEdit({ eventType: v })}
+                    placeholder="选择事件..."
+                    leftIcon={<Zap size={14} />}
+                    options={eventTypes.map((et) => ({
+                      value: et.eventType,
+                      label: `[${et.category}] ${et.label}`,
+                      displayLabel: et.label,
+                    }))}
+                  />
+                </div>
+              )}
+
+              {/* ── Hook URL（传入 Webhook） ── */}
+              {edit.triggerType === 'incoming_webhook' && edit.hookId && (
+                <div>
+                  <SectionTitle>Webhook URL</SectionTitle>
                   <div className="flex items-center gap-2">
-                    <button
-                      title="手动触发"
-                      onClick={() => {
-                        setTriggerRuleId(rule.id);
-                        setTriggerTitle('');
-                        setTriggerContent('');
-                        setTriggerOpen(true);
-                      }}
-                      className="p-1.5 rounded-lg hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      <Play size={14} />
-                    </button>
-                    <button
-                      title="删除"
-                      onClick={() => handleDelete(rule.id, rule.name)}
-                      className="p-1.5 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                    <Switch
-                      checked={rule.enabled}
-                      onCheckedChange={() => handleToggle(rule.id)}
-                      ariaLabel="启用/禁用"
+                    <div className="flex-1"><HookUrlDisplay hookId={edit.hookId} /></div>
+                    <Button variant="secondary" size="sm" onClick={handleRegenerateHook}>
+                      <RefreshCw size={12} /> 重新生成
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── 消息模板（仅传入 Webhook） ── */}
+              {edit.triggerType === 'incoming_webhook' && (
+                <div>
+                  <SectionTitle>消息模板</SectionTitle>
+                  <div className="space-y-2">
+                    <input
+                      value={edit.titleTemplate}
+                      onChange={(e) => patchEdit({ titleTemplate: e.target.value })}
+                      placeholder="标题模板，如：{{username}} 触发了 {{action}}"
+                      className={inputCls} style={inputStyle}
+                    />
+                    <textarea
+                      value={edit.contentTemplate}
+                      onChange={(e) => patchEdit({ contentTemplate: e.target.value })}
+                      placeholder="内容模板，如：用户 {{username}} 在仓库 {{repo}} 推送了代码"
+                      className={inputCls + ' h-20 resize-none'} style={inputStyle}
                     />
                   </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* 分页 */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-center gap-2 pt-3">
-            <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              上一页
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              {page} / {totalPages}
-            </span>
-            <Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
-              下一页
-            </Button>
-          </div>
-        )}
-      </GlassCard>
-
-      {/* 创建规则对话框 */}
-      <Dialog
-        open={createOpen}
-        onOpenChange={(isOpen) => !isOpen && setCreateOpen(false)}
-        title="新建自动化规则"
-        maxWidth={600}
-        contentClassName="max-h-[85vh] overflow-y-auto"
-        content={
-          <div className="space-y-4">
-            {/* 流程预览 */}
-            <WorkflowProgressBar
-              steps={getFlowSteps(formTriggerType, formActions)}
-              currentStep={3}
-              allCompleted
-            />
-
-            {/* 触发方式切换 */}
-            <div>
-              <label className="text-xs text-muted-foreground mb-1.5 block">触发方式</label>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setFormTriggerType('event')}
-                  className="flex-1 p-3 rounded-lg border text-left text-sm transition-all"
-                  style={{
-                    background: formTriggerType === 'event' ? 'rgba(59,130,246,0.1)' : 'rgba(255,255,255,0.02)',
-                    borderColor: formTriggerType === 'event' ? 'rgba(59,130,246,0.4)' : 'rgba(255,255,255,0.08)',
-                  }}
-                >
-                  <div className="flex items-center gap-2 font-medium">
-                    <Zap size={14} /> 事件触发
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">系统内部事件发生时自动触发</div>
-                </button>
-                <button
-                  onClick={() => setFormTriggerType('incoming_webhook')}
-                  className="flex-1 p-3 rounded-lg border text-left text-sm transition-all"
-                  style={{
-                    background: formTriggerType === 'incoming_webhook' ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.02)',
-                    borderColor: formTriggerType === 'incoming_webhook' ? 'rgba(34,197,94,0.4)' : 'rgba(255,255,255,0.08)',
-                  }}
-                >
-                  <div className="flex items-center gap-2 font-medium">
-                    <Link size={14} /> 传入 Webhook
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">外部系统 POST 到我们的 URL</div>
-                </button>
-              </div>
-            </div>
-
-            {/* 规则名称 */}
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">规则名称</label>
-              <input
-                value={formName}
-                onChange={(e) => setFormName(e.target.value)}
-                placeholder={formTriggerType === 'incoming_webhook' ? '如：GitHub Push 通知' : '如：额度预警推送'}
-                className={inputCls}
-              />
-            </div>
-
-            {/* 事件触发：用 SearchableSelect 选事件 */}
-            {formTriggerType === 'event' && (
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">触发事件</label>
-                <SearchableSelect
-                  value={formEventType}
-                  onValueChange={setFormEventType}
-                  placeholder="选择事件..."
-                  leftIcon={<Zap size={14} />}
-                  options={eventTypes.map((et) => ({
-                    value: et.eventType,
-                    label: `[${et.category}] ${et.label}`,
-                    displayLabel: et.label,
-                  }))}
-                />
-              </div>
-            )}
-
-            {/* 消息模板：仅传入 Webhook 显示 */}
-            {formTriggerType === 'incoming_webhook' && (
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">消息模板</label>
-                <div className="space-y-2">
-                  <input
-                    value={formTitleTemplate}
-                    onChange={(e) => setFormTitleTemplate(e.target.value)}
-                    placeholder="标题模板，如：{{username}} 触发了 {{action}}"
-                    className={inputCls}
-                  />
-                  <textarea
-                    value={formContentTemplate}
-                    onChange={(e) => setFormContentTemplate(e.target.value)}
-                    placeholder="内容模板，如：用户 {{username}} 在仓库 {{repo}} 的 {{branch}} 分支推送了代码"
-                    className={inputCls + ' h-16 resize-none'}
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  使用 {'{{字段名}}'} 引用外部 POST 的 JSON 字段
-                </p>
-                <div className="mt-2 p-2 rounded-lg text-xs" style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.12)' }}>
-                  <div className="font-medium mb-1" style={{ color: 'rgba(168,85,247,0.9)' }}>示例</div>
-                  <div className="text-muted-foreground">
-                    外部 POST：<code className="px-1 py-0.5 rounded bg-white/5">{`{"username":"张三","repo":"my-project"}`}</code>
-                  </div>
-                  <div className="text-muted-foreground mt-0.5">
-                    内容模板：<code className="px-1 py-0.5 rounded bg-white/5">{`用户 {{username}} 推送到 {{repo}}`}</code>
-                  </div>
-                  <div className="mt-0.5" style={{ color: 'rgba(34,197,94,0.8)' }}>
-                    渲染结果：用户 张三 推送到 my-project
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* 动作列表 */}
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">执行动作</label>
-              <div className="space-y-2">
-                {formActions.map((action, idx) => (
-                  <div
-                    key={idx}
-                    className="p-3 rounded-lg border space-y-2"
-                    style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(255,255,255,0.08)' }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium flex items-center gap-1">
-                        {actionTypeIcons[action.type]}
-                        {actionTypeLabels[action.type] || action.type}
-                      </span>
-                      <button onClick={() => removeAction(idx)} className="text-muted-foreground hover:text-red-400">
-                        <X size={14} />
-                      </button>
+                  <div className="mt-2 p-2.5 rounded-[10px] text-xs" style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.1)' }}>
+                    <div className="font-medium mb-1" style={{ color: 'rgba(168,85,247,0.9)' }}>示例</div>
+                    <div style={{ color: 'var(--text-muted)' }}>
+                      POST <code className="px-1 py-0.5 rounded bg-white/5">{`{"username":"张三","repo":"my-project"}`}</code>
                     </div>
-                    {action.type === 'webhook' && (
-                      <>
-                        <input
-                          value={action.webhookUrl || ''}
-                          onChange={(e) => updateAction(idx, { webhookUrl: e.target.value })}
-                          placeholder="https://example.com/webhook（我们 POST 到这个地址）"
-                          className={inputCls}
-                        />
-                        <input
-                          value={action.webhookSecret || ''}
-                          onChange={(e) => updateAction(idx, { webhookSecret: e.target.value })}
-                          placeholder="Bearer 凭证（可选）"
-                          className={inputCls}
-                        />
-                      </>
-                    )}
-                    {action.type === 'admin_notification' && (
-                      <>
-                        <select
-                          value={action.notifyLevel || 'info'}
-                          onChange={(e) => updateAction(idx, { notifyLevel: e.target.value })}
-                          className={inputCls}
-                        >
-                          <option value="info">信息</option>
-                          <option value="warning">警告</option>
-                          <option value="error">错误</option>
-                        </select>
-                        <div>
-                          <p className="text-xs text-muted-foreground mb-1">通知目标</p>
-                          <UserMultiSelect
-                            allUsers={notifyTargets}
-                            selectedIds={action.notifyUserIds || []}
-                            onChange={(ids) => updateAction(idx, { notifyUserIds: ids })}
-                          />
-                        </div>
-                      </>
-                    )}
+                    <div className="mt-0.5" style={{ color: 'rgba(34,197,94,0.8)' }}>
+                      渲染 → 用户 张三 推送到 my-project
+                    </div>
                   </div>
-                ))}
-              </div>
-              <div className="flex gap-2 mt-2">
-                <Button variant="secondary" size="sm" onClick={() => addAction('webhook')}>
-                  <ExternalLink size={12} /> 添加传出 Webhook
-                </Button>
-                <Button variant="secondary" size="sm" onClick={() => addAction('admin_notification')}>
-                  <Bell size={12} /> 添加站内信
-                </Button>
-              </div>
-            </div>
+                </div>
+              )}
 
-            {/* 操作按钮 */}
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="secondary" size="sm" onClick={() => setCreateOpen(false)}>
-                取消
-              </Button>
-              <Button size="sm" onClick={handleCreate} disabled={creating}>
-                {creating ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                创建
-              </Button>
-            </div>
-          </div>
-        }
-      />
+              {/* ── 执行动作 ── */}
+              <div>
+                <SectionTitle>执行动作</SectionTitle>
+                <div className="space-y-2">
+                  {edit.actions.map((action, idx) => (
+                    <div key={idx} className="p-3 rounded-[12px] space-y-2"
+                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium flex items-center gap-1.5">
+                          {actionTypeIcons[action.type]}
+                          {actionTypeLabels[action.type]}
+                        </span>
+                        <button onClick={() => removeAction(idx)} className="text-muted-foreground hover:text-red-400 transition-colors">
+                          <X size={14} />
+                        </button>
+                      </div>
+                      {action.type === 'webhook' && (
+                        <div className="space-y-2">
+                          <input value={action.webhookUrl || ''} onChange={(e) => updateAction(idx, { webhookUrl: e.target.value })}
+                            placeholder="https://example.com/webhook" className={inputCls} style={inputStyle} />
+                          <input value={action.webhookSecret || ''} onChange={(e) => updateAction(idx, { webhookSecret: e.target.value })}
+                            placeholder="Bearer 凭证（可选）" className={inputCls} style={inputStyle} />
+                        </div>
+                      )}
+                      {action.type === 'admin_notification' && (
+                        <div className="space-y-2">
+                          <div className="flex gap-2">
+                            <select value={action.notifyLevel || 'info'} onChange={(e) => updateAction(idx, { notifyLevel: e.target.value })}
+                              className={inputCls + ' w-32 flex-shrink-0'} style={inputStyle}>
+                              <option value="info">信息</option>
+                              <option value="warning">警告</option>
+                              <option value="error">错误</option>
+                            </select>
+                            <div className="flex-1">
+                              <UserMultiSelect allUsers={notifyTargets} selectedIds={action.notifyUserIds || []}
+                                onChange={(ids) => updateAction(idx, { notifyUserIds: ids })} />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <Button variant="secondary" size="sm" onClick={() => addAction('webhook')}>
+                    <ExternalLink size={12} /> 传出 Webhook
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => addAction('admin_notification')}>
+                    <Bell size={12} /> 站内信
+                  </Button>
+                </div>
+              </div>
 
-      {/* 手动触发对话框 */}
-      <Dialog
-        open={triggerOpen}
-        onOpenChange={(isOpen) => !isOpen && setTriggerOpen(false)}
-        title="手动触发规则"
-        maxWidth={440}
-        content={
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">标题</label>
-              <input
-                value={triggerTitle}
-                onChange={(e) => setTriggerTitle(e.target.value)}
-                placeholder="手动触发测试"
-                className={inputCls}
-              />
+              {/* ── 底部操作栏 ── */}
+              <div className="flex items-center gap-2 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <Button size="sm" onClick={handleSave} disabled={saving}>
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  {edit.id ? '保存' : '创建'}
+                </Button>
+                {edit.id && (
+                  <Button variant="secondary" size="sm" onClick={() => { setTriggerRuleId(edit.id!); setTriggerTitle(''); setTriggerContent(''); }}>
+                    <Play size={14} /> 测试
+                  </Button>
+                )}
+                <div className="flex-1" />
+                <Button variant="secondary" size="sm" onClick={handleDelete} className="text-red-400 hover:text-red-300">
+                  <Trash2 size={14} /> {edit.id ? '删除' : '取消'}
+                </Button>
+              </div>
             </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">内容</label>
-              <textarea
-                value={triggerContent}
-                onChange={(e) => setTriggerContent(e.target.value)}
-                placeholder="这是一条手动触发的测试通知"
-                className={inputCls + ' h-20 resize-none'}
-              />
-            </div>
+          )}
+        </GlassCard>
+      </div>
+
+      {/* 手动触发浮层（小面板，不用 Dialog） */}
+      {triggerRuleId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) setTriggerRuleId(null); }}>
+          <div className="w-[400px] rounded-[16px] p-5 space-y-3" style={{
+            background: 'rgba(25,25,30,0.95)', border: '1px solid rgba(255,255,255,0.1)',
+            backdropFilter: 'blur(20px)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+          }}>
+            <div className="text-sm font-semibold">手动触发</div>
+            <input value={triggerTitle} onChange={(e) => setTriggerTitle(e.target.value)}
+              placeholder="标题（可选）" className={inputCls} style={inputStyle} />
+            <textarea value={triggerContent} onChange={(e) => setTriggerContent(e.target.value)}
+              placeholder="内容（可选）" className={inputCls + ' h-20 resize-none'} style={inputStyle} />
             <div className="flex justify-end gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setTriggerOpen(false)}>
-                取消
-              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setTriggerRuleId(null)}>取消</Button>
               <Button size="sm" onClick={handleTrigger} disabled={triggering}>
-                {triggering ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-                触发
+                {triggering ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} 触发
               </Button>
             </div>
           </div>
-        }
-      />
+        </div>
+      )}
     </div>
   );
 }
