@@ -100,12 +100,11 @@ public class GroupsController : ControllerBase
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         }
 
-        // 检查用户角色（仅PM可创建）
+        // 验证用户存在
         var user = await _userService.GetByIdAsync(userId);
-        if (user == null || (user.Role != UserRole.PM && user.Role != UserRole.ADMIN))
+        if (user == null)
         {
-            return StatusCode(StatusCodes.Status403Forbidden,
-                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅产品经理可创建群组"));
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "用户不存在"));
         }
 
         var prdDocumentId = string.IsNullOrWhiteSpace(request.PrdDocumentId) ? null : request.PrdDocumentId!.Trim();
