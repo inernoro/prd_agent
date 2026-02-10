@@ -120,6 +120,69 @@ const PRD_MD_STYLE = `
     border-radius: 6px;
     animation: marker-insert-glow 1.2s ease-out forwards;
   }
+
+  /* 配图卡片入场发光边框 */
+  @property --marker-glow-angle {
+    syntax: "<angle>";
+    initial-value: 0deg;
+    inherits: false;
+  }
+  .marker-card-glow-entrance {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 1;
+    animation: marker-glow-sweep 2s ease-out forwards;
+  }
+  .marker-card-glow-entrance::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    padding: 2px;
+    background: conic-gradient(
+      from var(--marker-glow-angle),
+      transparent 0%,
+      transparent 55%,
+      rgba(168, 85, 247, 0.7) 70%,
+      rgba(99, 102, 241, 0.9) 80%,
+      rgba(147, 197, 253, 0.7) 90%,
+      transparent 100%
+    );
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    animation: marker-glow-spin 2s ease-out forwards;
+  }
+  .marker-card-glow-entrance::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+    border-radius: inherit;
+    background: conic-gradient(
+      from var(--marker-glow-angle),
+      transparent 0%,
+      transparent 55%,
+      rgba(168, 85, 247, 0.15) 70%,
+      rgba(99, 102, 241, 0.25) 80%,
+      rgba(147, 197, 253, 0.15) 90%,
+      transparent 100%
+    );
+    filter: blur(8px);
+    animation: marker-glow-spin 2s ease-out forwards;
+    z-index: -1;
+  }
+  @keyframes marker-glow-spin {
+    0%   { --marker-glow-angle: 0deg;   opacity: 1; }
+    75%  { opacity: 1; }
+    100% { --marker-glow-angle: 360deg; opacity: 0; }
+  }
+  @keyframes marker-glow-sweep {
+    0%   { opacity: 1; }
+    75%  { opacity: 1; }
+    100% { opacity: 0; }
+  }
 `;
 
 /**
@@ -292,7 +355,27 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const articlePreviewRef = useRef<HTMLDivElement>(null); // 文章预览区域的 ref
   const thinkingPanelRef = useRef<HTMLDivElement>(null); // 思考面板的 ref（自动滚动到底部）
   const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
-  
+  const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
+  const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
+
+  // 当新 marker 卡片出现时，触发入场发光动画
+  useEffect(() => {
+    const newIndices: number[] = [];
+    for (const item of markerRunItems) {
+      if (!knownMarkerIndicesRef.current.has(item.markerIndex)) {
+        knownMarkerIndicesRef.current.add(item.markerIndex);
+        newIndices.push(item.markerIndex);
+      }
+    }
+    if (newIndices.length > 0) {
+      setGlowingMarkers((prev) => {
+        const next = new Set(prev);
+        for (const idx of newIndices) next.add(idx);
+        return next;
+      });
+    }
+  }, [markerRunItems]);
+
   // 当配图列表增加时，只在流式输出过程中自动滚动到底部
   useEffect(() => {
     if (isStreamingRef.current && markerListRef.current && markerRunItems.length > 0) {
@@ -834,6 +917,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     setMarkerStreaming(true);
     setThinkingContent('');
+    setGlowingMarkers(new Set()); // 重置入场动画追踪
+    knownMarkerIndicesRef.current.clear();
     isStreamingRef.current = true; // 标记开始流式输出
 
     // 保存当前滚动位置，phase 切换导致 DOM 重建会丢失 scrollTop
@@ -2533,6 +2618,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 const genLabel = hasImage ? '重新生成' : '生成图片';
                 const genTitle = hasImage ? '重新生成该配图（会替换左侧预览中的对应插图）' : '生成该配图（会插入左侧预览中对应 [插图] 位置）';
 
+                const isGlowing = glowingMarkers.has(it.markerIndex);
+
                 return (
                   <div
                   key={it.markerIndex}
@@ -2540,8 +2627,22 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   style={{
                     background: 'var(--bg-elevated)',
                     border: '1px solid var(--border-subtle)',
+                    position: 'relative',
                   }}
                 >
+                  {/* 入场发光边框动画 */}
+                  {isGlowing && (
+                    <div
+                      className="marker-card-glow-entrance"
+                      onAnimationEnd={() => {
+                        setGlowingMarkers((prev) => {
+                          const next = new Set(prev);
+                          next.delete(it.markerIndex);
+                          return next;
+                        });
+                      }}
+                    />
+                  )}
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
                       配图 {idx + 1}
