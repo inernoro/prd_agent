@@ -2006,7 +2006,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                         {/* Input ← → Output 始终双栏 */}
                         <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
                           {/* ===== Input 参考图（左） ===== */}
-                          <div>
+                          <div style={{ minWidth: 0 }}>
                             <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Input</div>
                             {effInputs.length > 0 ? (
                               <div className="space-y-2" style={{ maxHeight: 420, overflowY: 'auto' }}>
@@ -2035,7 +2035,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                             )}
                           </div>
                           {/* ===== Output 生成图（右） ===== */}
-                          <div>
+                          <div style={{ minWidth: 0 }}>
                             <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Output</div>
                             {effOutputs.length > 0 ? (
                               <div className="space-y-2" style={{ maxHeight: 420, overflowY: 'auto' }}>
