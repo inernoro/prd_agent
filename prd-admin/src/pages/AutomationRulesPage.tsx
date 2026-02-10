@@ -6,6 +6,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
+import { SearchableSelect } from '@/components/design/SearchableSelect';
 import {
   selectContentStyle,
   selectItemClass,
@@ -406,11 +407,6 @@ export default function AutomationRulesPage() {
     ? '创建传入 Webhook 后，外部系统可以通过 POST 请求触发动作'
     : '创建事件规则后，当系统事件发生时自动执行动作';
 
-  // 模板占位符提示
-  const templateHint = formTriggerType === 'incoming_webhook'
-    ? '使用 {{字段名}} 引用外部 POST 的 JSON 字段，如 {{username}}、{{repo}}'
-    : '使用 {{title}}、{{eventType}}、{{sourceId}} 引用事件信息';
-
   return (
     <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden">
       <TabBar
@@ -623,53 +619,45 @@ export default function AutomationRulesPage() {
               />
             </div>
 
-            {/* 事件触发：事件类型选择 */}
+            {/* 事件触发：用 SearchableSelect 选事件 */}
             {formTriggerType === 'event' && (
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">触发事件</label>
-                <select
+                <SearchableSelect
                   value={formEventType}
-                  onChange={(e) => setFormEventType(e.target.value)}
-                  className={inputCls}
-                >
-                  <option value="">选择事件类型...</option>
-                  {eventTypes.map((et) => (
-                    <option key={et.eventType} value={et.eventType}>
-                      [{et.category}] {et.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-muted-foreground mt-1">或直接输入自定义事件类型（支持通配符 *）</p>
-                <input
-                  value={formEventType}
-                  onChange={(e) => setFormEventType(e.target.value)}
-                  placeholder="如：visual-agent.image-gen.*"
-                  className={inputCls + ' mt-1'}
+                  onValueChange={setFormEventType}
+                  placeholder="选择事件..."
+                  leftIcon={<Zap size={14} />}
+                  options={eventTypes.map((et) => ({
+                    value: et.eventType,
+                    label: `[${et.category}] ${et.label}`,
+                    displayLabel: et.label,
+                  }))}
                 />
               </div>
             )}
 
-            {/* 消息模板 */}
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">消息模板（可选）</label>
-              <div className="space-y-2">
-                <input
-                  value={formTitleTemplate}
-                  onChange={(e) => setFormTitleTemplate(e.target.value)}
-                  placeholder={formTriggerType === 'incoming_webhook' ? '标题模板，如：{{username}} 触发了 {{action}}' : '标题模板，如：[{{eventType}}] 告警'}
-                  className={inputCls}
-                />
-                <textarea
-                  value={formContentTemplate}
-                  onChange={(e) => setFormContentTemplate(e.target.value)}
-                  placeholder={formTriggerType === 'incoming_webhook'
-                    ? '内容模板，如：用户 {{username}} 在仓库 {{repo}} 的 {{branch}} 分支推送了代码'
-                    : '内容模板，如：{{title}} - 详情请查看'}
-                  className={inputCls + ' h-16 resize-none'}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">{templateHint}</p>
-              {formTriggerType === 'incoming_webhook' && (
+            {/* 消息模板：仅传入 Webhook 显示 */}
+            {formTriggerType === 'incoming_webhook' && (
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">消息模板</label>
+                <div className="space-y-2">
+                  <input
+                    value={formTitleTemplate}
+                    onChange={(e) => setFormTitleTemplate(e.target.value)}
+                    placeholder="标题模板，如：{{username}} 触发了 {{action}}"
+                    className={inputCls}
+                  />
+                  <textarea
+                    value={formContentTemplate}
+                    onChange={(e) => setFormContentTemplate(e.target.value)}
+                    placeholder="内容模板，如：用户 {{username}} 在仓库 {{repo}} 的 {{branch}} 分支推送了代码"
+                    className={inputCls + ' h-16 resize-none'}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  使用 {'{{字段名}}'} 引用外部 POST 的 JSON 字段
+                </p>
                 <div className="mt-2 p-2 rounded-lg text-xs" style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.12)' }}>
                   <div className="font-medium mb-1" style={{ color: 'rgba(168,85,247,0.9)' }}>示例</div>
                   <div className="text-muted-foreground">
@@ -682,8 +670,8 @@ export default function AutomationRulesPage() {
                     渲染结果：用户 张三 推送到 my-project
                   </div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
             {/* 动作列表 */}
             <div>
