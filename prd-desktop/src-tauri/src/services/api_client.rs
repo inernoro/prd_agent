@@ -575,6 +575,87 @@ impl ApiClient {
             )
         })
     }
+
+    /// Upload a file as multipart form data (for attachment endpoints).
+    /// Supports one 401-refresh retry by rebuilding the form from raw bytes.
+    pub async fn post_file<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        file_bytes: Vec<u8>,
+        file_name: String,
+        mime_type: String,
+    ) -> Result<ApiResponse<T>, String> {
+        let url = Self::build_url(path);
+
+        #[cfg(debug_assertions)]
+        eprintln!("[api] POST (multipart) {}", url);
+
+        for attempt in 0..2 {
+            let part = reqwest::multipart::Part::bytes(file_bytes.clone())
+                .file_name(file_name.clone())
+                .mime_str(&mime_type)
+                .map_err(|e| format!("Invalid mime type: {}", e))?;
+            let form = reqwest::multipart::Form::new().part("file", part);
+
+            let request = self.apply_common_headers(self.client.post(&url).multipart(form));
+            let response = request
+                .send()
+                .await
+                .map_err(|e| format!("Request failed: {}", e))?;
+
+            let status = response.status();
+
+            if status == StatusCode::UNAUTHORIZED
+                && attempt == 0
+                && self.try_refresh().await.unwrap_or(false)
+            {
+                continue;
+            }
+
+            #[cfg(debug_assertions)]
+            eprintln!("[api] <- {} {}", status.as_u16(), url);
+
+            let text = response
+                .text()
+                .await
+                .map_err(|e| format!("Failed to read response: {}", e))?;
+
+            if text.is_empty() {
+                if status == StatusCode::UNAUTHORIZED {
+                    return Ok(ApiResponse::<T> {
+                        success: false,
+                        data: None,
+                        error: Some(ApiError {
+                            code: "UNAUTHORIZED".to_string(),
+                            message: "未授权".to_string(),
+                        }),
+                    });
+                }
+                return Err(format!(
+                    "Empty response from server. Status: {}, URL: {}",
+                    status, url
+                ));
+            }
+
+            return serde_json::from_str::<ApiResponse<T>>(&text).map_err(|e| {
+                format!(
+                    "Failed to parse response: {}. Status: {}. Response body: {}",
+                    e,
+                    status,
+                    &text[..text.len().min(500)]
+                )
+            });
+        }
+
+        Ok(ApiResponse::<T> {
+            success: false,
+            data: None,
+            error: Some(ApiError {
+                code: "UNAUTHORIZED".to_string(),
+                message: "未授权".to_string(),
+            }),
+        })
+    }
 }
 
 impl Default for ApiClient {

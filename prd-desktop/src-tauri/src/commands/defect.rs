@@ -15,6 +15,7 @@ struct CreateDefectRequest {
     severity: String,
     title: Option<String>,
     assignee_user_id: String,
+    template_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -33,6 +34,13 @@ struct ResolveDefectRequest {
 #[serde(rename_all = "camelCase")]
 struct RejectDefectRequest {
     reason: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PolishDefectRequest {
+    content: String,
+    template_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -57,6 +65,13 @@ pub async fn list_defect_users() -> Result<ApiResponse<serde_json::Value>, Strin
     client.get("/api/defect-agent/users").await
 }
 
+/// 获取缺陷模板列表
+#[command]
+pub async fn list_defect_templates() -> Result<ApiResponse<serde_json::Value>, String> {
+    let client = ApiClient::new();
+    client.get("/api/defect-agent/templates").await
+}
+
 /// 创建缺陷报告
 #[command]
 pub async fn create_defect(
@@ -64,6 +79,7 @@ pub async fn create_defect(
     severity: String,
     title: Option<String>,
     assignee_user_id: String,
+    template_id: Option<String>,
 ) -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
     let request = CreateDefectRequest {
@@ -71,6 +87,7 @@ pub async fn create_defect(
         severity,
         title,
         assignee_user_id,
+        template_id,
     };
     client.post("/api/defect-agent/defects", &request).await
 }
@@ -160,4 +177,51 @@ pub async fn reject_defect(
 pub async fn get_defect_stats() -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
     client.get("/api/defect-agent/stats").await
+}
+
+/// AI 润色缺陷描述
+#[command]
+pub async fn polish_defect(
+    content: String,
+    template_id: Option<String>,
+) -> Result<ApiResponse<serde_json::Value>, String> {
+    let client = ApiClient::new();
+    let request = PolishDefectRequest {
+        content,
+        template_id,
+    };
+    client
+        .post("/api/defect-agent/defects/polish", &request)
+        .await
+}
+
+/// 预览 API 日志（提交缺陷时自动采集的日志）
+#[command]
+pub async fn preview_defect_logs() -> Result<ApiResponse<serde_json::Value>, String> {
+    let client = ApiClient::new();
+    client.get("/api/defect-agent/logs/preview").await
+}
+
+/// 上传缺陷附件（base64 编码的文件）
+#[command]
+pub async fn add_defect_attachment(
+    id: String,
+    file_base64: String,
+    file_name: String,
+    mime_type: String,
+) -> Result<ApiResponse<serde_json::Value>, String> {
+    use base64::Engine;
+    let file_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&file_base64)
+        .map_err(|e| format!("Failed to decode file: {}", e))?;
+
+    let client = ApiClient::new();
+    client
+        .post_file(
+            &format!("/api/defect-agent/defects/{}/attachments", id),
+            file_bytes,
+            file_name,
+            mime_type,
+        )
+        .await
 }
