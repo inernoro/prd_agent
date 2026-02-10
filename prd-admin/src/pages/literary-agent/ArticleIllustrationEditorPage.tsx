@@ -307,20 +307,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [thinkingContent]);
 
-  // 当文章内容更新时，只在流式输出过程中自动滚动到最新的 marker
+  // 当新 marker 插入文章时，自动滚动到最新 marker（仅在流式生成期间）
   useEffect(() => {
-    if (isStreamingRef.current && articlePreviewRef.current && articleWithMarkers) {
-      // 延迟一帧确保 DOM 已更新（React render → DOM paint → scrollIntoView）
-      requestAnimationFrame(() => {
-        const container = articlePreviewRef.current;
-        if (!container) return;
-        const markers = container.querySelectorAll('.prd-md-marker-new');
-        if (markers.length > 0) {
-          markers[markers.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      });
-    }
-  }, [articleWithMarkers]);
+    if (!isStreamingRef.current || !articlePreviewRef.current || markers.length === 0) return;
+    // 延迟一帧确保 DOM 已更新（React render → DOM paint → scrollIntoView）
+    requestAnimationFrame(() => {
+      const container = articlePreviewRef.current;
+      if (!container) return;
+      const markerEls = container.querySelectorAll('.prd-md-marker-new');
+      if (markerEls.length > 0) {
+        markerEls[markerEls.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+  }, [markers.length]);
   
   // 提示词模板管理（只有用户模板）
   const [userPrompts, setUserPrompts] = useState<PromptTemplate[]>([]);
@@ -836,12 +835,23 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setMarkerStreaming(true);
     setThinkingContent('');
     isStreamingRef.current = true; // 标记开始流式输出
+
+    // 保存当前滚动位置，phase 切换导致 DOM 重建会丢失 scrollTop
+    const savedScrollTop = articlePreviewRef.current?.scrollTop ?? 0;
+
     // 3 状态模式：生成标记时直接跳到 MarkersGenerated，流式更新内容
     setPhase(2); // MarkersGenerated
     setMarkers([]);
 
     // 锚点模式：预先显示原文（LLM 不会流式返回文章内容）
     setArticleWithMarkers(articleContent);
+
+    // 恢复滚动位置（等 React 完成渲染后）
+    requestAnimationFrame(() => {
+      if (articlePreviewRef.current) {
+        articlePreviewRef.current.scrollTop = savedScrollTop;
+      }
+    });
 
     try {
       // 使用 SSE 流式接口
