@@ -539,39 +539,38 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
         <KpiCard title="平均响应" value={models.length > 0 ? `${(models.reduce((s, m) => s + m.avgDurationMs, 0) / models.length / 1000).toFixed(1)}s` : '-'} accent="green" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <GlassCard glow>
-          <SectionTitle>按模型调用量</SectionTitle>
-          <EChart option={makeModelBarOption(models.slice(0, 10))} height={280} />
-        </GlassCard>
-        <GlassCard glow>
-          <SectionTitle>模型使用明细</SectionTitle>
-          <div className="overflow-x-auto">
-            <table className="w-full text-[12px]">
-              <thead>
-                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                  <th className="text-left py-2 font-medium" style={{ color: 'var(--text-muted)' }}>模型</th>
-                  <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>调用</th>
-                  <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>输入 Token</th>
-                  <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>输出 Token</th>
-                  <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>平均响应</th>
+      <GlassCard glow>
+        <SectionTitle>按模型调用量</SectionTitle>
+        <EChart option={makeModelBarOption(models.slice(0, 15))} height={300} />
+      </GlassCard>
+
+      <GlassCard glow>
+        <SectionTitle>模型使用明细</SectionTitle>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                <th className="text-left py-2 font-medium" style={{ color: 'var(--text-muted)' }}>模型</th>
+                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>调用</th>
+                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>输入 Token</th>
+                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>输出 Token</th>
+                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>平均响应</th>
+              </tr>
+            </thead>
+            <tbody>
+              {models.map(m => (
+                <tr key={m.model} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                  <td className="py-2 font-medium" style={{ color: 'var(--text-primary)' }}>{m.model}</td>
+                  <td className="py-2 text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>{m.calls.toLocaleString()}</td>
+                  <td className="py-2 text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>{formatTokens(m.inputTokens)}</td>
+                  <td className="py-2 text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>{formatTokens(m.outputTokens)}</td>
+                  <td className="py-2 text-right tabular-nums" style={{ color: 'var(--accent-gold)' }}>{(m.avgDurationMs / 1000).toFixed(1)}s</td>
                 </tr>
-              </thead>
-              <tbody>
-                {models.map(m => (
-                  <tr key={m.model} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                    <td className="py-2 font-medium" style={{ color: 'var(--text-primary)' }}>{m.model}</td>
-                    <td className="py-2 text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>{m.calls.toLocaleString()}</td>
-                    <td className="py-2 text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>{formatTokens(m.inputTokens)}</td>
-                    <td className="py-2 text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>{formatTokens(m.outputTokens)}</td>
-                    <td className="py-2 text-right tabular-nums" style={{ color: 'var(--accent-gold)' }}>{(m.avgDurationMs / 1000).toFixed(1)}s</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </GlassCard>
-      </div>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </GlassCard>
     </div>
   );
 }
@@ -580,10 +579,16 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
 
 function IntegrationsTab() {
   const integrations = [
-    { source: 'Claude Code', icon: Zap, color: 'rgba(214,178,106,0.95)', active: false },
-    { source: 'Jira', icon: BarChart3, color: 'rgba(59,130,246,0.95)', active: false },
-    { source: 'GitLab', icon: Activity, color: 'rgba(168,85,247,0.95)', active: false },
-    { source: '飞书', icon: MessageSquare, color: 'rgba(34,197,94,0.95)', active: false },
+    { source: 'Claude Code', icon: Zap, color: 'rgba(214,178,106,0.95)', desc: '代码变更、Commit 统计自动汇入周报' },
+    { source: 'Jira', icon: BarChart3, color: 'rgba(59,130,246,0.95)', desc: '任务进度、Sprint 数据自动同步' },
+    { source: 'GitLab', icon: Activity, color: 'rgba(168,85,247,0.95)', desc: 'MR 数量、代码审查、CI/CD 状态' },
+    { source: '飞书', icon: MessageSquare, color: 'rgba(34,197,94,0.95)', desc: '周报自动推送、审批流程对接' },
+  ];
+
+  const roadmap = [
+    { phase: 'Phase 1', label: '数据采集层', status: 'planned' as const, items: ['Webhook 回调接口', '活动数据标准化', '来源身份验证'] },
+    { phase: 'Phase 2', label: '集成适配器', status: 'planned' as const, items: ['Claude Code 适配器', 'GitLab 适配器', 'Jira 适配器'] },
+    { phase: 'Phase 3', label: '数据融合展示', status: 'planned' as const, items: ['个人画像跨源合并', '周报自动汇总', '团队协作热力图'] },
   ];
 
   return (
@@ -591,28 +596,51 @@ function IntegrationsTab() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {integrations.map(int => (
           <GlassCard key={int.source} glow>
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2.5 mb-2.5">
               <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${int.color}15` }}>
                 <int.icon size={16} style={{ color: int.color }} />
               </div>
               <div className="flex-1">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{int.source}</div>
-                <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>即将支持</div>
+                <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>规划中</div>
               </div>
               <div className="w-2 h-2 rounded-full" style={{ background: 'rgba(255,255,255,0.15)' }} />
             </div>
+            <div className="text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{int.desc}</div>
           </GlassCard>
         ))}
       </div>
 
-      <GlassCard>
-        <SectionTitle>集成协议</SectionTitle>
-        <p className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)' }}>
-          通过标准化 Webhook 协议接入第三方系统。所有外部活动数据统一写入 external_activities 集合，在个人画像和周报中自动展示。
-        </p>
-        <div className="text-[11px] font-mono p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-muted)' }}>
-          POST /api/executive/external-activities<br />
-          {'{'} "source": "your-tool", "userId": "...", "activityType": "...", "summary": "..." {'}'}
+      <GlassCard glow>
+        <SectionTitle>集成路线图</SectionTitle>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
+          {roadmap.map((phase, idx) => (
+            <div key={phase.phase} className="relative">
+              {idx < roadmap.length - 1 && (
+                <div className="hidden md:block absolute top-5 -right-2 w-4 h-0.5" style={{ background: 'rgba(255,255,255,0.1)' }} />
+              )}
+              <div className="p-4 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold"
+                    style={{ background: 'rgba(214,178,106,0.15)', color: 'rgba(214,178,106,0.9)' }}>
+                    {idx + 1}
+                  </div>
+                  <div>
+                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>{phase.label}</div>
+                    <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{phase.phase}</div>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  {phase.items.map(item => (
+                    <div key={item} className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                      <div className="w-1 h-1 rounded-full flex-shrink-0" style={{ background: 'rgba(214,178,106,0.5)' }} />
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </GlassCard>
     </div>
