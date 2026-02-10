@@ -489,15 +489,19 @@ function needsRestore(v: unknown): v is string {
 }
 
 /**
- * 检测请求体是否包含需要后端恢复的 base64 图片引用。
- * 匹配两种格式：
- *   1. [BASE64_IMAGE:<sha256>:<mime>] — 新格式（LogWriter 提取的 SHA256）
- *   2. data:image/...;base64,...[N chars trimmed] — 旧截断格式
+ * 检测请求体是否包含需要后端 replay-curl 恢复的 COS 引用。
+ * 匹配格式：
+ *   1. [BASE64_IMAGE:<sha256>:<mime>] — 图片 SHA256 引用
+ *   2. [TEXT_COS:<sha256>:<charcount>] — 长文本 COS 引用
+ *   3. data:image/...;base64,...[N chars trimmed] — 旧截断格式
+ *   4. "sha256": "<hex>" — 旧 sha256 属性格式
  */
-function hasBase64ImageRefs(requestBody?: string): boolean {
+function needsBackendReplayCurl(requestBody?: string): boolean {
   if (!requestBody) return false;
   // 新格式: [BASE64_IMAGE:sha256:mime]
   if (/\[BASE64_IMAGE:[0-9a-f]{64}:[^\]]+\]/.test(requestBody)) return true;
+  // COS 长文本引用: [TEXT_COS:sha256:charcount]
+  if (/\[TEXT_COS:[0-9a-f]{64}:\d+\]/.test(requestBody)) return true;
   // 旧截断格式: 被截断的 base64 data URL
   if (/data:image\/[^;]+;base64,[A-Za-z0-9+/].*\.\.\[\d+ chars trimmed\]/.test(requestBody)) return true;
   // 旧 sha256 属性格式
@@ -510,9 +514,9 @@ function hasBase64ImageRefs(requestBody?: string): boolean {
  *
  * 后端日志存储会对请求体做两层处理：
  * 1. OpenAIClient 路径：系统提示词替换为 token（如 [SYSTEM_PROMPT_REDACTED]）
- * 2. LlmRequestLogWriter：所有 >100 字符的字符串值截断为 "xxx...[N chars trimmed]"
+ * 2. LlmRequestLogWriter：>1024 字符存入 COS [TEXT_COS:sha256:charcount]，COS 不可用时截断
  *
- * 本函数从单独存储的 systemPromptText / questionText 还原这些被截断的内容。
+ * 本函数从单独存储的 systemPromptText / questionText 还原这些被截断的内容（兼容旧日志）。
  */
 function restoreTruncatedRequestBody(
   requestBodyRedacted: string,
@@ -714,7 +718,6 @@ function buildCurlFromLog(detail: LlmRequestLog, inputArtifacts?: UploadArtifact
   });
 
   // 使用 Postman 环境变量占位符替换 API Key（避免真实值泄露，且 Postman 可自动匹配）
-  const hasAuthorization = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization');
   const hasXApiKey = Object.keys(headers).some((k) => k.toLowerCase() === 'x-api-key');
   const providerLower = (detail.provider ?? '').toLowerCase();
 
@@ -1758,14 +1761,18 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                       onClick={async () => {
                         try {
                           // 检测是否需要后端恢复 base64 图片
-                          if (detail && hasBase64ImageRefs(detail.requestBodyRedacted)) {
-                            setCopiedHint('正在从 COS 恢复图片...');
+                          if (detail && needsBackendReplayCurl(detail.requestBodyRedacted)) {
+                            setCopiedHint('正在从 COS 恢复完整内容...');
                             try {
                               const resp = await getReplayCurl(detail.id);
                               if (resp.success && resp.data?.curl) {
                                 await navigator.clipboard.writeText(resp.data.curl);
+                                const parts: string[] = [];
+                                if (resp.data.imageCount) parts.push(`${resp.data.imageCount} 张图片`);
+                                if (resp.data.textCount) parts.push(`${resp.data.textCount} 段文本`);
+                                const detail_str = parts.length > 0 ? `（已恢复 ${parts.join('、')}）` : '';
                                 const warn = resp.data.warning ? ` (${resp.data.warning})` : '';
-                                setCopiedHint(`curl 已复制（含 ${resp.data.imageCount ?? 0} 张图片）${warn}`);
+                                setCopiedHint(`curl 已复制${detail_str}${warn}`);
                                 setTimeout(() => setCopiedHint(''), 2500);
                                 return;
                               }

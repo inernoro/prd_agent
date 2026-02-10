@@ -104,7 +104,8 @@ export type ReplayCurlData = {
   endpoint?: string;
   model?: string;
   imageCount?: number;
-  imageErrors?: string[] | null;
+  textCount?: number;
+  restoreErrors?: string[] | null;
   requestBodyLength?: number;
   warning?: string | null;
 };

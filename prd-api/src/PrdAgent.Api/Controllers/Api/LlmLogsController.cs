@@ -342,18 +342,48 @@ public class LlmLogsController : ControllerBase
             if (string.IsNullOrWhiteSpace(log.RequestBodyRedacted))
                 return BadRequest(ApiResponse<object>.Fail("NO_REQUEST_BODY", "请求体为空"));
 
-            // 先在原始 JSON 字符串上恢复 [BASE64_IMAGE:sha256:mime] 引用
-            var imageErrors = new List<string>();
+            // 先在原始 JSON 字符串上恢复 COS 引用（图片 + 长文本）
+            var restoreErrors = new List<string>();
             var imageCount = 0;
+            var textCount = 0;
             var bodyJson = log.RequestBodyRedacted!;
 
+            // 恢复 [TEXT_COS:sha256:charcount] → 原始文本（从 COS 取回）
+            var textCosPattern = new Regex(@"\[TEXT_COS:([0-9a-f]{64}):(\d+)\]");
+            var textMatches = textCosPattern.Matches(bodyJson);
+            if (textMatches.Count > 0)
+            {
+                var sb = new StringBuilder(bodyJson);
+                for (var i = textMatches.Count - 1; i >= 0; i--)
+                {
+                    var m = textMatches[i];
+                    var sha256 = m.Groups[1].Value;
+
+                    var found = await _assetStorage.TryReadByShaAsync(
+                        sha256, HttpContext.RequestAborted,
+                        domain: AppDomainPaths.DomainLogs,
+                        type: AppDomainPaths.TypeLog);
+
+                    if (found == null)
+                    {
+                        restoreErrors.Add($"COS 未找到文本: {sha256[..12]}...");
+                        continue;
+                    }
+
+                    textCount++;
+                    var text = Encoding.UTF8.GetString(found.Value.bytes);
+                    sb.Remove(m.Index, m.Length);
+                    sb.Insert(m.Index, text);
+                }
+                bodyJson = sb.ToString();
+            }
+
             // 恢复 [BASE64_IMAGE:sha256:mime] → data:mime;base64,...（从 COS 取回原图）
-            var base64RefPattern = new System.Text.RegularExpressions.Regex(
-                @"\[BASE64_IMAGE:([0-9a-f]{64}):([^\]]+)\]");
+            var base64RefPattern = new Regex(@"\[BASE64_IMAGE:([0-9a-f]{64}):([^\]]+)\]");
             var refMatches = base64RefPattern.Matches(bodyJson);
             if (refMatches.Count > 0)
             {
-                var sb = new System.Text.StringBuilder(bodyJson);
+                var sb = new StringBuilder(bodyJson);
                 // 倒序替换避免偏移
                 for (var i = refMatches.Count - 1; i >= 0; i--)
                 {
@@ -368,7 +398,7 @@ public class LlmLogsController : ControllerBase
 
                     if (found == null)
                     {
-                        imageErrors.Add($"COS 未找到图片: {sha256[..12]}...");
+                        restoreErrors.Add($"COS 未找到图片: {sha256[..12]}...");
                         continue;
                     }
 
@@ -412,7 +442,7 @@ public class LlmLogsController : ControllerBase
             if (hasOldSha256Refs || hasOldImageRefs)
             {
                 // 走旧逻辑：完全重建请求体
-                return await ReplayCurlLegacy(log, root, imageErrors);
+                return await ReplayCurlLegacy(log, root, restoreErrors);
             }
 
             // 通用路径：使用（已恢复图片引用的）bodyJson 构建 curl
@@ -453,9 +483,10 @@ public class LlmLogsController : ControllerBase
                 curl,
                 endpoint,
                 imageCount,
-                imageErrors = imageErrors.Count > 0 ? imageErrors : null,
+                textCount,
+                restoreErrors = restoreErrors.Count > 0 ? restoreErrors : null,
                 requestBodyLength = prettyBody.Length,
-                warning = imageErrors.Count > 0 ? "部分图片加载失败，curl 可能不完整" : null
+                warning = restoreErrors.Count > 0 ? "部分内容恢复失败，curl 可能不完整" : null
             }));
         }
         catch (JsonException ex)
@@ -466,7 +497,7 @@ public class LlmLogsController : ControllerBase
 
     /// <summary>旧 visionImageGen 格式：sha256 属性 / image_refs[]</summary>
     private async Task<IActionResult> ReplayCurlLegacy(
-        LlmRequestLog log, JsonElement root, List<string> imageErrors)
+        LlmRequestLog log, JsonElement root, List<string> restoreErrors)
     {
         var model = root.TryGetProperty("model", out var mEl) ? mEl.GetString() ?? "" : "";
         var contentItems = new List<object>();
@@ -492,12 +523,12 @@ public class LlmLogsController : ControllerBase
                         var sha256 = imgUrlEl.TryGetProperty("sha256", out var s) ? s.GetString()?.Trim().ToLowerInvariant() : null;
                         if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64)
                         {
-                            imageErrors.Add($"无效的 sha256: {sha256}");
+                            restoreErrors.Add($"无效的 sha256: {sha256}");
                             continue;
                         }
                         var found = await _assetStorage.TryReadByShaAsync(sha256, HttpContext.RequestAborted,
                             domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                        if (found == null) { imageErrors.Add($"COS 未找到图片: {sha256[..12]}..."); continue; }
+                        if (found == null) { restoreErrors.Add($"COS 未找到图片: {sha256[..12]}..."); continue; }
                         var b64 = Convert.ToBase64String(found.Value.bytes);
                         var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime;
                         contentItems.Add(new { type = "image_url", image_url = new { url = $"data:{mime};base64,{b64}" } });
@@ -512,11 +543,11 @@ public class LlmLogsController : ControllerBase
             foreach (var imgRef in imageRefsEl.EnumerateArray())
             {
                 var sha256 = imgRef.TryGetProperty("sha256", out var s) ? s.GetString()?.Trim().ToLowerInvariant() : null;
-                if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64) { imageErrors.Add($"无效的 sha256: {sha256}"); continue; }
+                if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64) { restoreErrors.Add($"无效的 sha256: {sha256}"); continue; }
                 var mime = imgRef.TryGetProperty("mime", out var mimeEl) ? mimeEl.GetString() ?? "image/png" : "image/png";
                 var found = await _assetStorage.TryReadByShaAsync(sha256, HttpContext.RequestAborted,
                     domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                if (found == null) { imageErrors.Add($"COS 未找到图片: {sha256[..12]}..."); continue; }
+                if (found == null) { restoreErrors.Add($"COS 未找到图片: {sha256[..12]}..."); continue; }
                 var b64 = Convert.ToBase64String(found.Value.bytes);
                 contentItems.Add(new { type = "image_url", image_url = new { url = $"data:{mime};base64,{b64}" } });
             }
@@ -538,9 +569,9 @@ public class LlmLogsController : ControllerBase
         {
             curl, endpoint, model,
             imageCount = contentItems.Count - (string.IsNullOrWhiteSpace(prompt) ? 0 : 1),
-            imageErrors = imageErrors.Count > 0 ? imageErrors : null,
+            restoreErrors = restoreErrors.Count > 0 ? restoreErrors : null,
             requestBodyLength = reqJson.Length,
-            warning = imageErrors.Count > 0 ? "部分图片加载失败，curl 可能不完整" : null
+            warning = restoreErrors.Count > 0 ? "部分内容恢复失败，curl 可能不完整" : null
         }));
     }
 
