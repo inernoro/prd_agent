@@ -5,7 +5,6 @@ import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { SearchableSelect, Select } from '@/components/design';
 import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
-import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
 import type { LlmLogsMetaUser, LlmLogsMetaRequestPurpose } from '@/services/contracts/llmLogs';
@@ -137,17 +136,6 @@ function fmtMsSmart(v: number | null | undefined): string {
 function fmtNum(v: number | null | undefined): string {
   // 重要：null/undefined 表示“未知/未上报”，不应显示为 0
   return typeof v === 'number' && Number.isFinite(v) ? String(v) : '—';
-}
-
-function fmtBytes(v: number | null | undefined): string {
-  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return '—';
-  if (v < 1024) return `${v} B`;
-  const kb = v / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  if (mb < 1024) return `${mb.toFixed(2)} MB`;
-  const gb = mb / 1024;
-  return `${gb.toFixed(2)} GB`;
 }
 
 type RequestTypeTone = 'gold' | 'green' | 'blue' | 'purple' | 'muted';
@@ -809,8 +797,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
   const [tokenPreviewTitle, setTokenPreviewTitle] = useState('');
   const [prdCache, setPrdCache] = useState<Record<string, { title: string; content: string }>>({});
 
-  const [artifactsLoading, setArtifactsLoading] = useState(false);
-  const [artifactsError, setArtifactsError] = useState<string>('');
+  const [, setArtifactsLoading] = useState(false);
+  const [, setArtifactsError] = useState<string>('');
   const [artifacts, setArtifacts] = useState<UploadArtifact[]>([]);
   const artifactsRidRef = useRef<string>('');
 
@@ -1083,20 +1071,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
     return v === 'generation' || v === 'imagegen' || v === 'image_gen' || v === 'image-generate';
   }, [detail?.requestType]);
   const hasImageArtifacts = artifactInputs.length > 0 || artifactOutputs.length > 0;
-  const bodyHasInitImage = useMemo(() => {
-    try {
-      const obj = JSON.parse(detail?.requestBodyRedacted || '');
-      return obj?.initImageProvided === true;
-    } catch { return false; }
-  }, [detail?.requestBodyRedacted]);
-  const bodyImageUrl = useMemo(() => {
-    try {
-      const obj = JSON.parse(detail?.requestBodyRedacted || '');
-      if (typeof obj?.image === 'string' && obj.image.startsWith('http')) return obj.image;
-    } catch { /* ignore */ }
-    return null;
-  }, [detail?.requestBodyRedacted]);
-  /** 从请求体中提取的内嵌图片（蒙版、参考图等）；优先使用 imageReferences COS URL */
+/** 从请求体中提取的内嵌图片（蒙版、参考图等）；优先使用 imageReferences COS URL */
   const bodyInlineImages = useMemo(() => {
     // 优先使用后端 imageReferences（COS URL，不含 base64）
     const refs = detail?.imageReferences;
@@ -2060,446 +2035,124 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                   </div>
 
                   <div className="mt-3">
-                    {(hasImageArtifacts || bodyHasInitImage || bodyInlineImages.length > 0) ? (
+                    {(() => {
+                      // 新版：优先用 inputImages/outputImages（Worker 直写），回退到旧版 artifacts
+                      const effInputs: { url: string; label: string; sha256?: string }[] = [];
+                      const effOutputs: { url: string; label: string; sha256?: string; originalUrl?: string }[] = [];
+
+                      // inputImages（新版）
+                      if (Array.isArray(detail?.inputImages) && detail!.inputImages!.length > 0) {
+                        for (const img of detail!.inputImages!) {
+                          if (img.url) effInputs.push({ url: img.url, label: img.label || '参考图', sha256: img.sha256 ?? undefined });
+                        }
+                      } else if (artifactInputs.length > 0) {
+                        // 旧版回退：UploadArtifact
+                        for (const a of artifactInputs) {
+                          if (a.cosUrl) effInputs.push({ url: a.cosUrl, label: '参考图', sha256: a.sha256 ?? undefined });
+                        }
+                      } else if (bodyInlineImages.length > 0) {
+                        // 旧版回退：imageReferences
+                        for (const img of bodyInlineImages) {
+                          effInputs.push({ url: img.src, label: img.label || '参考图', sha256: undefined });
+                        }
+                      }
+
+                      // outputImages（新版）
+                      if (Array.isArray(detail?.outputImages) && detail!.outputImages!.length > 0) {
+                        for (const img of detail!.outputImages!) {
+                          if (img.url) effOutputs.push({ url: img.url, label: img.label || '生成结果', sha256: img.sha256 ?? undefined, originalUrl: img.originalUrl ?? undefined });
+                        }
+                      } else if (artifactOutputs.length > 0) {
+                        // 旧版回退
+                        for (const a of artifactOutputs) {
+                          if (a.cosUrl) effOutputs.push({ url: a.cosUrl, label: '生成结果', sha256: a.sha256 ?? undefined });
+                        }
+                      }
+
+                      if (effInputs.length === 0 && effOutputs.length === 0) return null;
+
+                      return (
                     <div className="mb-3">
-                      <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
-                        <span>图片预览</span>
-                        {detail?.requestId ? (
-                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                            requestId: {detail.requestId}
-                          </span>
-                        ) : null}
+                      <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
+                        图片预览
                       </div>
-
-                      {artifactsLoading ? (
-                        <div className="text-[12px] py-6 text-center" style={{ color: 'var(--text-muted)' }}>
-                          加载中…
+                      <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+                        {/* Prompt */}
+                        <div className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)' }}>
+                          {(detail?.questionText ?? '').trim() || '（无提示词）'}
                         </div>
-                      ) : artifactsError ? (
-                        <div className="text-[12px] py-6 text-center" style={{ color: 'rgba(239,68,68,0.92)' }}>
-                          加载失败：{artifactsError}
-                        </div>
-                      ) : (
-                        <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
-                          {artifactInputs.length >= 2 && artifactOutputs.length >= 1 ? (
-                            <>
-                              <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                                {(detail?.questionText ?? '').trim() || '（无提示词）'}
-                              </div>
-                              <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                                {/* 左侧：参考图堆叠 */}
-                                <div className="space-y-2">
-                                  {artifactInputs.map((it, idx) => (
-                                    <div key={it.id} className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                      <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                        <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                          参考图{artifactInputs.length > 1 ? ` #${idx + 1}` : ''}
-                                        </div>
-                                        <Button
-                                          variant="secondary"
-                                          size="sm"
-                                          onClick={async () => {
-                                            try {
-                                              await navigator.clipboard.writeText(it.cosUrl || '');
-                                              setCopiedHint('已复制');
-                                              setTimeout(() => setCopiedHint(''), 1200);
-                                            } catch {
-                                              setCopiedHint('复制失败（浏览器权限）');
-                                              setTimeout(() => setCopiedHint(''), 2000);
-                                            }
-                                          }}
-                                        >
-                                          <Copy size={14} />
-                                          复制URL
-                                        </Button>
-                                      </div>
-                                      <img src={it.cosUrl} alt="input" style={{ width: '100%', height: 200, objectFit: 'contain', display: 'block' }} />
-                                    </div>
-                                  ))}
-                                </div>
-                                {/* 右侧：结果图 */}
-                                <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                      结果图
-                                    </div>
-                                    <Button
-                                      variant="secondary"
-                                      size="sm"
-                                      onClick={async () => {
-                                        try {
-                                          await navigator.clipboard.writeText(artifactOutputs[0].cosUrl || '');
-                                          setCopiedHint('已复制');
-                                          setTimeout(() => setCopiedHint(''), 1200);
-                                        } catch {
-                                          setCopiedHint('复制失败（浏览器权限）');
-                                          setTimeout(() => setCopiedHint(''), 2000);
-                                        }
-                                      }}
-                                    >
-                                      <Copy size={14} />
-                                      复制URL
-                                    </Button>
-                                  </div>
-                                  <img src={artifactOutputs[0].cosUrl} alt="output" style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
-                                </div>
-                              </div>
-                            </>
-                          ) : artifactInputs.length === 1 && artifactOutputs.length >= 1 ? (
-                            <>
-                              <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                                {(detail?.questionText ?? '').trim() || '（无提示词）'}
-                              </div>
-                              <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                                {[artifactInputs[0], artifactOutputs[0]].map((it, idx) => (
-                                  <div key={it.id} className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                    <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                      <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                        {idx === 0 ? '参考图' : '结果图'}
-                                      </div>
-                                      <Button
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={async () => {
-                                          try {
-                                            await navigator.clipboard.writeText(it.cosUrl || '');
-                                            setCopiedHint('已复制');
-                                            setTimeout(() => setCopiedHint(''), 1200);
-                                          } catch {
-                                            setCopiedHint('复制失败（浏览器权限）');
-                                            setTimeout(() => setCopiedHint(''), 2000);
-                                          }
-                                        }}
-                                      >
-                                        <Copy size={14} />
-                                        复制URL
-                                      </Button>
-                                    </div>
-                                    <img src={it.cosUrl} alt={idx === 0 ? 'input' : 'output'} style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
-                                    <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                      <div className="truncate" title={it.cosUrl}>
-                                        {it.cosUrl}
-                                      </div>
-                                      <div className="mt-1 flex items-center justify-between gap-2">
-                                        <span>
-                                          {it.width}×{it.height}
-                                        </span>
-                                        <span>
-                                          {fmtBytes(it.sizeBytes)} · {String(it.mime || '').toLowerCase()}
-                                        </span>
-                                      </div>
-                                      <div className="mt-1 truncate" title={it.sha256}>
-                                        sha256: {it.sha256}
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </>
-                          ) : artifactInputs.length >= 1 && artifactOutputs.length === 0 ? (
-                            <>
-                              <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                                {(detail?.questionText ?? '').trim() || '（无提示词）'}
-                              </div>
-                              <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                                {/* 参考图 */}
-                                <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                      参考图
-                                    </div>
-                                    <Button
-                                      variant="secondary"
-                                      size="sm"
-                                      onClick={async () => {
-                                        try {
-                                          await navigator.clipboard.writeText(artifactInputs[0].cosUrl || '');
-                                          setCopiedHint('已复制');
-                                          setTimeout(() => setCopiedHint(''), 1200);
-                                        } catch {
-                                          setCopiedHint('复制失败（浏览器权限）');
-                                          setTimeout(() => setCopiedHint(''), 2000);
-                                        }
-                                      }}
-                                    >
-                                      <Copy size={14} />
-                                      复制URL
-                                    </Button>
-                                  </div>
-                                  <img src={artifactInputs[0].cosUrl} alt="input" style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
-                                  <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                    <div className="truncate" title={artifactInputs[0].cosUrl}>
-                                      {artifactInputs[0].cosUrl}
-                                    </div>
-                                    <div className="mt-1 flex items-center justify-between gap-2">
-                                      <span>
-                                        {artifactInputs[0].width}×{artifactInputs[0].height}
-                                      </span>
-                                      <span>
-                                        {fmtBytes(artifactInputs[0].sizeBytes)} · {String(artifactInputs[0].mime || '').toLowerCase()}
-                                      </span>
-                                    </div>
-                                    <div className="mt-1 truncate" title={artifactInputs[0].sha256}>
-                                      sha256: {artifactInputs[0].sha256}
-                                    </div>
-                                  </div>
-                                </div>
-                                {/* 结果图 - 加载中/失败 */}
-                                <div className="rounded-[14px] overflow-hidden relative" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                      结果图
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center justify-center" style={{ height: 320 }}>
-                                    {detail?.status === 'running' ? (
-                                      <div className="flex flex-col items-center gap-3">
-                                        <PrdPetalBreathingLoader size={72} />
-                                        <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>生成中…</div>
-                                      </div>
-                                    ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (
-                                      <div className="flex flex-col items-center gap-3">
-                                        <PrdPetalBreathingLoader size={72} paused grayscale />
-                                        <div className="text-[12px]" style={{ color: 'rgba(239,68,68,0.85)' }}>
-                                          {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>等待结果</div>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </>
-                          ) : bodyHasInitImage && artifactInputs.length === 0 ? (
-                            <>
-                              <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                                {(detail?.questionText ?? '').trim() || '（无提示词）'}
-                              </div>
-                              <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                                {/* 参考图 - 从 body 中提取 URL 或降级 */}
-                                <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                      参考图
-                                    </div>
-                                    {bodyImageUrl && (
-                                      <Button
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={async () => {
-                                          try {
-                                            await navigator.clipboard.writeText(bodyImageUrl);
-                                            setCopiedHint('已复制');
-                                            setTimeout(() => setCopiedHint(''), 1200);
-                                          } catch {
-                                            setCopiedHint('复制失败（浏览器权限）');
-                                            setTimeout(() => setCopiedHint(''), 2000);
-                                          }
-                                        }}
-                                      >
-                                        <Copy size={14} />
-                                        复制URL
-                                      </Button>
-                                    )}
-                                  </div>
-                                  {bodyImageUrl ? (
-                                    <img src={bodyImageUrl} alt="input" style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
-                                  ) : (
-                                    <div className="flex items-center justify-center" style={{ height: 320 }}>
-                                      <div className="flex flex-col items-center gap-2">
-                                        <PrdPetalBreathingLoader size={48} paused grayscale />
-                                        <div className="text-[11px] text-center px-4" style={{ color: 'var(--text-muted)' }}>
-                                          参考图未记录（历史数据）
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                                {/* 结果图 - 加载中/失败 */}
-                                <div className="rounded-[14px] overflow-hidden relative" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                      结果图
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center justify-center" style={{ height: 320 }}>
-                                    {detail?.status === 'running' ? (
-                                      <div className="flex flex-col items-center gap-3">
-                                        <PrdPetalBreathingLoader size={72} />
-                                        <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>生成中…</div>
-                                      </div>
-                                    ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (
-                                      <div className="flex flex-col items-center gap-3">
-                                        <PrdPetalBreathingLoader size={72} paused grayscale />
-                                        <div className="text-[12px]" style={{ color: 'rgba(239,68,68,0.85)' }}>
-                                          {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>等待结果</div>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </>
-                          ) : (
-                            <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                              <div className="rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-                                  提示词
-                                </div>
-                                <div className="text-[12px]" style={{ color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>
-                                  {(detail?.questionText ?? '').trim() || '（无提示词）'}
-                                </div>
-                              </div>
-                              <div className="grid gap-2">
-                                {artifactOutputs.slice(0, 4).map((it) => (
-                                  <div key={it.id} className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                    <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                      <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                        结果图
-                                      </div>
-                                      <Button
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={async () => {
-                                          try {
-                                            await navigator.clipboard.writeText(it.cosUrl || '');
-                                            setCopiedHint('已复制');
-                                            setTimeout(() => setCopiedHint(''), 1200);
-                                          } catch {
-                                            setCopiedHint('复制失败（浏览器权限）');
-                                            setTimeout(() => setCopiedHint(''), 2000);
-                                          }
-                                        }}
-                                      >
-                                        <Copy size={14} />
-                                        复制URL
-                                      </Button>
-                                    </div>
-                                    <img src={it.cosUrl} alt="output" style={{ width: '100%', height: 220, objectFit: 'contain', display: 'block' }} />
-                                    <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                      <div className="truncate" title={it.cosUrl}>
-                                        {it.cosUrl}
-                                      </div>
-                                      <div className="mt-1 flex items-center justify-between gap-2">
-                                        <span>
-                                          {it.width}×{it.height}
-                                        </span>
-                                        <span>
-                                          {fmtBytes(it.sizeBytes)} · {String(it.mime || '').toLowerCase()}
-                                        </span>
-                                      </div>
-                                      <div className="mt-1 truncate" title={it.sha256}>
-                                        sha256: {it.sha256}
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* 请求体内嵌图片（蒙版、多参考图等）- 仅在没有 artifact 输入时显示，避免重复 */}
-                      {bodyInlineImages.length > 0 && artifactInputs.length === 0 && (
-                        <div className="mt-3">
-                          <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-                            参考图（{bodyInlineImages.length}张）
-                          </div>
-                          <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                            {/* 左侧：参考图堆叠 */}
+                        {/* Input ← → Output */}
+                        <div className="grid gap-3" style={{ gridTemplateColumns: effInputs.length > 0 && effOutputs.length > 0 ? '1fr 1fr' : '1fr' }}>
+                          {/* ===== Input 参考图 ===== */}
+                          {effInputs.length > 0 && (
                             <div className="space-y-2">
-                              {bodyInlineImages.map((img, idx) => (
-                                <div key={idx} className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                      {img.label}{bodyInlineImages.length > 1 ? ` #${idx + 1}` : ''}
+                              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>Input</div>
+                              {effInputs.map((img, idx) => (
+                                <div key={`in-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                      {img.label}{effInputs.length > 1 ? ` #${idx + 1}` : ''}
                                     </div>
-                                    {img.src.startsWith('http') && (
-                                      <Button
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={async () => {
-                                          try {
-                                            await navigator.clipboard.writeText(img.src);
-                                            setCopiedHint('已复制');
-                                            setTimeout(() => setCopiedHint(''), 1200);
-                                          } catch {
-                                            setCopiedHint('复制失败（浏览器权限）');
-                                            setTimeout(() => setCopiedHint(''), 2000);
-                                          }
-                                        }}
-                                      >
-                                        <Copy size={14} />
-                                        复制URL
-                                      </Button>
-                                    )}
+                                    <Button variant="secondary" size="sm" onClick={async () => {
+                                      try { await navigator.clipboard.writeText(img.url); setCopiedHint('已复制'); setTimeout(() => setCopiedHint(''), 1200); }
+                                      catch { setCopiedHint('复制失败'); setTimeout(() => setCopiedHint(''), 2000); }
+                                    }}>
+                                      <Copy size={12} /> URL
+                                    </Button>
                                   </div>
-                                  <img
-                                    src={img.src}
-                                    alt={img.label}
-                                    style={{ width: '100%', height: 200, objectFit: 'contain', display: 'block', background: 'rgba(0,0,0,0.08)' }}
-                                  />
+                                  <img src={img.url} alt={img.label} style={{ width: '100%', height: 200, objectFit: 'contain', display: 'block', background: 'rgba(0,0,0,0.08)' }} />
+                                  {img.sha256 && <div className="px-3 py-1 text-[10px] truncate" style={{ color: 'var(--text-muted)' }} title={img.sha256}>sha256: {img.sha256}</div>}
                                 </div>
                               ))}
                             </div>
-                            {/* 右侧：结果图 */}
-                            <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                              <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                  结果图
+                          )}
+                          {/* ===== Output 生成图 ===== */}
+                          {effOutputs.length > 0 ? (
+                            <div className="space-y-2">
+                              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>Output</div>
+                              {effOutputs.map((img, idx) => (
+                                <div key={`out-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                      {img.label}{effOutputs.length > 1 ? ` #${idx + 1}` : ''}
+                                    </div>
+                                    <Button variant="secondary" size="sm" onClick={async () => {
+                                      try { await navigator.clipboard.writeText(img.url); setCopiedHint('已复制'); setTimeout(() => setCopiedHint(''), 1200); }
+                                      catch { setCopiedHint('复制失败'); setTimeout(() => setCopiedHint(''), 2000); }
+                                    }}>
+                                      <Copy size={12} /> URL
+                                    </Button>
+                                  </div>
+                                  <img src={img.url} alt={img.label} style={{ width: '100%', height: 280, objectFit: 'contain', display: 'block', background: 'rgba(0,0,0,0.08)' }} />
+                                  {img.sha256 && <div className="px-3 py-1 text-[10px] truncate" style={{ color: 'var(--text-muted)' }} title={img.sha256}>sha256: {img.sha256}</div>}
                                 </div>
-                                {artifactOutputs.length > 0 && (
-                                  <Button
-                                    variant="secondary"
-                                    size="sm"
-                                    onClick={async () => {
-                                      try {
-                                        await navigator.clipboard.writeText(artifactOutputs[0].cosUrl || '');
-                                        setCopiedHint('已复制');
-                                        setTimeout(() => setCopiedHint(''), 1200);
-                                      } catch {
-                                        setCopiedHint('复制失败（浏览器权限）');
-                                        setTimeout(() => setCopiedHint(''), 2000);
-                                      }
-                                    }}
-                                  >
-                                    <Copy size={14} />
-                                    复制URL
-                                  </Button>
+                              ))}
+                            </div>
+                          ) : effInputs.length > 0 ? (
+                            /* 有输入但无输出：显示状态 */
+                            <div className="space-y-2">
+                              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>Output</div>
+                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)', height: 200 }}>
+                                {detail?.status === 'running' ? (
+                                  <div className="flex flex-col items-center gap-2">
+                                    <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+                                    <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>生成中…</div>
+                                  </div>
+                                ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (
+                                  <div className="text-[11px]" style={{ color: 'rgba(239,68,68,0.85)' }}>
+                                    {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
+                                  </div>
+                                ) : (
+                                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>等待结果</div>
                                 )}
                               </div>
-                              {artifactOutputs.length > 0 ? (
-                                <img src={artifactOutputs[0].cosUrl} alt="output" style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
-                              ) : (
-                                <div className="flex items-center justify-center" style={{ height: 320 }}>
-                                  {detail?.status === 'running' ? (
-                                    <div className="flex flex-col items-center gap-3">
-                                      <PrdPetalBreathingLoader size={72} />
-                                      <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>生成中…</div>
-                                    </div>
-                                  ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (
-                                    <div className="flex flex-col items-center gap-3">
-                                      <PrdPetalBreathingLoader size={72} paused grayscale />
-                                      <div className="text-[12px]" style={{ color: 'rgba(239,68,68,0.85)' }}>
-                                        {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>等待结果</div>
-                                  )}
-                                </div>
-                              )}
                             </div>
-                          </div>
+                          ) : null}
                         </div>
-                      )}
+                      </div>
                     </div>
-                    ) : null}
-
+                      );
+                    })()}
                     {imageGenUpstream ? (
                       <div className="mb-3">
                         <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>

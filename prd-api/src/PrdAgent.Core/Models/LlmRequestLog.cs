@@ -140,6 +140,12 @@ public class LlmRequestLog
     /// </summary>
     public List<LlmImageReference>? ImageReferences { get; set; }
 
+    // ===== 新版图片日志（简化架构：前端传 URL → 直写日志，无需 UploadArtifact 中转） =====
+    /// <summary>输入参考图列表（COS URL 来自前端上传）</summary>
+    public List<LlmLogImage>? InputImages { get; set; }
+    /// <summary>生成结果图列表（COS URL 来自生图结果）</summary>
+    public List<LlmLogImage>? OutputImages { get; set; }
+
     // 时序
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
     public DateTime? FirstByteAt { get; set; }
@@ -160,5 +166,19 @@ public class LlmImageReference
     public string? Label { get; set; }
     public string? MimeType { get; set; }
     public long? SizeBytes { get; set; }
+}
+
+/// <summary>
+/// 日志中的图片记录（输入参考图 / 输出生成图），仅存 COS URL
+/// </summary>
+public class LlmLogImage
+{
+    /// <summary>COS 地址（展示用，有水印时为水印版）</summary>
+    public string Url { get; set; } = string.Empty;
+    /// <summary>原图 COS 地址（无水印）</summary>
+    public string? OriginalUrl { get; set; }
+    /// <summary>标签（如"手绘草图"、"参考图"、"生成结果"）</summary>
+    public string? Label { get; set; }
+    public string? Sha256 { get; set; }
 }
 

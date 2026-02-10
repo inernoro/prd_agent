@@ -190,6 +190,10 @@ export type LlmRequestLog = {
   status: string;
   /** 图片引用列表（参考图 COS URL 等元数据，用于日志页展示） */
   imageReferences?: LlmImageReference[] | null;
+  /** 输入参考图（COS URL，来自前端上传） */
+  inputImages?: LlmLogImage[] | null;
+  /** 输出生成图（COS URL，来自生图结果） */
+  outputImages?: LlmLogImage[] | null;
   /** 是否发生了模型降级 */
   isFallback?: boolean | null;
   /** 降级原因 */
@@ -204,6 +208,13 @@ export type LlmImageReference = {
   label?: string | null;
   mimeType?: string | null;
   sizeBytes?: number | null;
+};
+
+export type LlmLogImage = {
+  url: string;
+  originalUrl?: string | null;
+  label?: string | null;
+  sha256?: string | null;
 };
 
 export type UploadArtifact = {

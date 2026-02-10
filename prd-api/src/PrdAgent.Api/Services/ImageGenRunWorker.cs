@@ -547,6 +547,9 @@ public class ImageGenRunWorker : BackgroundService
                             var errImageRefShas = loadedImageRefs.Count > 0 ? loadedImageRefs.Select(r => r.Sha256).Where(s => !string.IsNullOrEmpty(s)).ToList() : null;
                             var errGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
                             var errMsgContent = $"[GEN_ERROR]{JsonSerializer.Serialize(new { msg, refSrc = errRefSrc, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = errGenType, imageRefShas = errImageRefShas }, JsonOptions)}";
+
+                            // 失败时也记录 input images（方便日志排查参考图问题）
+                            await PatchLogImagesAsync(run, curItemIndex, imageIndex, loadedImageRefs, null, ct);
                             var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
 
                             await AppendEventAsync(run, "image", new
@@ -604,6 +607,9 @@ public class ImageGenRunWorker : BackgroundService
                         var doneGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
                         var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
                         var doneMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", doneMsgContent, ct);
+
+                        // ===== 日志图片填充：input 来自前端 COS URL，output 来自生成结果 =====
+                        await PatchLogImagesAsync(run, curItemIndex, imageIndex, loadedImageRefs, res.Data.Images, ct);
 
                         await AppendEventAsync(run, "image", new
                         {
@@ -700,6 +706,77 @@ public class ImageGenRunWorker : BackgroundService
     {
         // 高频事件：写入 RunStore（Redis），避免每个 delta 都更新 Mongo 的 LastSeq / events
         _ = await _runStore.AppendEventAsync(RunKinds.ImageGen, run.Id, eventName, payload, ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
+    }
+
+    /// <summary>
+    /// 将输入参考图 / 输出生成图的 COS URL 写入 LLM 日志（按 requestId 匹配）。
+    /// 输入图来自前端传递的 COS URL（零重复存储），输出图来自生成结果。
+    /// </summary>
+    private async Task PatchLogImagesAsync(
+        ImageGenRun run,
+        int curItemIndex,
+        int imageIndex,
+        List<ImageRefData> loadedImageRefs,
+        List<ImageGenImage>? outputImages,
+        CancellationToken ct)
+    {
+        try
+        {
+            var logRequestId = $"{run.Id}-{curItemIndex}-{imageIndex}";
+
+            // input：优先用前端传入的 COS URL（run.ImageRefs），回退到 loadedImageRefs
+            var inputs = new List<LlmLogImage>();
+            if (run.ImageRefs is { Count: > 0 })
+            {
+                foreach (var r in run.ImageRefs)
+                {
+                    var cosUrl = !string.IsNullOrWhiteSpace(r.Url) ? r.Url
+                        : loadedImageRefs.FirstOrDefault(lr => lr.RefId == r.RefId)?.CosUrl;
+                    if (string.IsNullOrWhiteSpace(cosUrl)) continue;
+                    inputs.Add(new LlmLogImage
+                    {
+                        Url = cosUrl,
+                        Label = r.Label,
+                        Sha256 = !string.IsNullOrWhiteSpace(r.AssetSha256) ? r.AssetSha256
+                            : loadedImageRefs.FirstOrDefault(lr => lr.RefId == r.RefId)?.Sha256
+                    });
+                }
+            }
+
+            // output：生成结果图
+            var outputs = new List<LlmLogImage>();
+            if (outputImages is { Count: > 0 })
+            {
+                foreach (var img in outputImages)
+                {
+                    var displayUrl = img.Url;
+                    if (string.IsNullOrWhiteSpace(displayUrl)) continue;
+                    outputs.Add(new LlmLogImage
+                    {
+                        Url = displayUrl,
+                        OriginalUrl = img.OriginalUrl,
+                        Label = "生成结果",
+                        Sha256 = img.OriginalSha256
+                    });
+                }
+            }
+
+            if (inputs.Count == 0 && outputs.Count == 0) return;
+
+            var update = Builders<LlmRequestLog>.Update;
+            var updates = new List<UpdateDefinition<LlmRequestLog>>();
+            if (inputs.Count > 0) updates.Add(update.Set(x => x.InputImages, inputs));
+            if (outputs.Count > 0) updates.Add(update.Set(x => x.OutputImages, outputs));
+
+            await _db.LlmRequestLogs.UpdateOneAsync(
+                x => x.RequestId == logRequestId,
+                update.Combine(updates),
+                cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[ImageGenRunWorker] PatchLogImages 失败: RunId={RunId}", run.Id);
+        }
     }
 
     /// <summary>
