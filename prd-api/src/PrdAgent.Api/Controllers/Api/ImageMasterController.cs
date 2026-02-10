@@ -2096,6 +2096,20 @@ public class ImageMasterController : ControllerBase
                     if (isAnchorMode)
                     {
                         // Anchor 模式：增量解析 @AFTER + [插图] 对，发现 marker 立即推送
+                        // 同时透传 delta 给前端，消除 thinking→marker 之间的视觉停顿
+                        if (!clientDisconnected)
+                        {
+                            try
+                            {
+                                var deltaData = JsonSerializer.Serialize(new { type = "delta", text = chunk.Content }, JsonOptions);
+                                await Response.WriteAsync($"data: {deltaData}\n\n");
+                                await Response.Body.FlushAsync();
+                            }
+                            catch (OperationCanceledException) { clientDisconnected = true; }
+                            catch (ObjectDisposedException) { clientDisconnected = true; }
+                            catch (Exception ex) when (ex.InnerException is OperationCanceledException) { clientDisconnected = true; }
+                        }
+
                         lineBuffer += chunk.Content;
                         if (lineBuffer.Contains('\n'))
                         {

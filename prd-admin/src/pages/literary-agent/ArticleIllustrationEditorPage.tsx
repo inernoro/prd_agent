@@ -367,6 +367,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
   const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
   const [imageDisplaySize, setImageDisplaySize] = useState(100); // 文章内图片显示尺寸百分比
+  const [rawMarkerOutput, setRawMarkerOutput] = useState(''); // Anchor 模式下 LLM 原始输出（用于视觉反馈）
 
   // 当新 marker 卡片出现时，触发入场发光动画
   useEffect(() => {
@@ -393,12 +394,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [markerRunItems.length]);
   
-  // 思考面板自动滚动到底部
+  // 思考/生成面板自动滚动到底部
   useEffect(() => {
-    if (thinkingPanelRef.current && thinkingContent) {
+    if (thinkingPanelRef.current && (thinkingContent || rawMarkerOutput)) {
       thinkingPanelRef.current.scrollTop = thinkingPanelRef.current.scrollHeight;
     }
-  }, [thinkingContent]);
+  }, [thinkingContent, rawMarkerOutput]);
 
   // 当新 marker 插入文章时，自动滚动到最新 marker（仅在流式生成期间）
   useEffect(() => {
@@ -927,6 +928,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     setMarkerStreaming(true);
     setThinkingContent('');
+    setRawMarkerOutput(''); // 重置原始输出
     setGlowingMarkers(new Set()); // 重置入场动画追踪
     knownMarkerIndicesRef.current.clear();
     isStreamingRef.current = true; // 标记开始流式输出
@@ -1067,42 +1069,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             triggerPlanImageGen(markerIndex, markerText);
           }
         }
-        // ====== Legacy 模式：处理 delta 事件 ======
+        // ====== Delta 事件：Anchor 模式为原始输出视觉反馈 ======
         else if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
-          fullText += chunk.text;
-          currentLineBuffer += chunk.text;
-
-          // 检查是否有完整的行（以 \n 结尾）
-          if (currentLineBuffer.includes('\n')) {
-            const lines = currentLineBuffer.split('\n');
-            currentLineBuffer = lines.pop() || '';
-
-            for (const line of lines) {
-              const markerRegex = /\[插图\]\s*:\s*(.+)/;
-              const match = markerRegex.exec(line);
-
-              if (match) {
-                const markerText = match[1].trim();
-                if (markerText.length > 0) {
-                  const markerIndex = extractedMarkers.length;
-                  extractedMarkers.push({
-                    index: markerIndex,
-                    text: markerText,
-                    startPos: -1,
-                    endPos: -1,
-                  });
-                  setMarkers([...extractedMarkers]);
-                  triggerPlanImageGen(markerIndex, markerText);
-                }
-              }
-            }
-          }
-
-          flushSync(() => {
-            setArticleWithMarkers(fullText);
-          });
-
-          await new Promise(resolve => setTimeout(resolve, 10));
+          // Anchor 模式：LLM 原始输出仅用于视觉反馈，文章由 marker 事件增量更新
+          setRawMarkerOutput((prev) => prev + chunk.text);
         }
         // ====== 完成事件 ======
         else if (chunk.type === 'done' && chunk.fullText) {
@@ -2312,41 +2282,44 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     ))}
                   </div>
                 )}
-                {/* 思考过程面板：流式生成时显示 LLM reasoning */}
-                {thinkingContent && (
+                {/* 思考 + 生成面板：先显示 thinking，再无缝过渡到 raw marker output */}
+                {(thinkingContent || rawMarkerOutput) && (
                   <div
                     className="mb-4 rounded-xl overflow-hidden"
                     style={{
-                      background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(99, 102, 241, 0.06) 100%)',
-                      border: '1px solid rgba(168, 85, 247, 0.2)',
+                      background: rawMarkerOutput
+                        ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(34, 197, 94, 0.06) 100%)'
+                        : 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(99, 102, 241, 0.06) 100%)',
+                      border: `1px solid ${rawMarkerOutput ? 'rgba(99, 102, 241, 0.2)' : 'rgba(168, 85, 247, 0.2)'}`,
+                      transition: 'background 0.5s ease, border-color 0.5s ease',
                     }}
                   >
                     <div
                       className="flex items-center gap-2 px-3 py-2"
                       style={{
-                        borderBottom: '1px solid rgba(168, 85, 247, 0.12)',
-                        background: 'rgba(168, 85, 247, 0.04)',
+                        borderBottom: `1px solid ${rawMarkerOutput ? 'rgba(99, 102, 241, 0.12)' : 'rgba(168, 85, 247, 0.12)'}`,
+                        background: rawMarkerOutput ? 'rgba(99, 102, 241, 0.04)' : 'rgba(168, 85, 247, 0.04)',
                       }}
                     >
                       {markerStreaming && (
                         <span
                           className="inline-block w-2 h-2 rounded-full"
                           style={{
-                            background: 'rgba(168, 85, 247, 0.8)',
+                            background: rawMarkerOutput ? 'rgba(99, 102, 241, 0.8)' : 'rgba(168, 85, 247, 0.8)',
                             animation: 'pulse 1.5s ease-in-out infinite',
                           }}
                         />
                       )}
                       <span
                         className="text-[11px] font-semibold tracking-wide uppercase"
-                        style={{ color: 'rgba(168, 85, 247, 0.85)' }}
+                        style={{ color: rawMarkerOutput ? 'rgba(99, 102, 241, 0.85)' : 'rgba(168, 85, 247, 0.85)' }}
                       >
-                        Thinking
+                        {rawMarkerOutput ? 'Generating Markers' : 'Thinking'}
                       </span>
                     </div>
                     <div
                       ref={thinkingPanelRef}
-                      className="px-3 py-2 text-[12px] leading-relaxed prd-md"
+                      className="px-3 py-2 text-[12px] leading-relaxed"
                       style={{
                         color: 'rgba(255, 255, 255, 0.7)',
                         maxHeight: markerStreaming ? 320 : 160,
@@ -2354,9 +2327,26 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         transition: 'max-height 0.3s ease',
                       }}
                     >
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {thinkingContent}
-                      </ReactMarkdown>
+                      {thinkingContent && (
+                        <div className="prd-md">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {thinkingContent}
+                          </ReactMarkdown>
+                        </div>
+                      )}
+                      {rawMarkerOutput && (
+                        <>
+                          {thinkingContent && (
+                            <div className="my-2 border-t" style={{ borderColor: 'rgba(99, 102, 241, 0.15)' }} />
+                          )}
+                          <pre
+                            className="text-[11px] leading-relaxed whitespace-pre-wrap break-all font-mono"
+                            style={{ color: 'rgba(147, 197, 253, 0.75)', margin: 0 }}
+                          >
+                            {rawMarkerOutput}
+                          </pre>
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
