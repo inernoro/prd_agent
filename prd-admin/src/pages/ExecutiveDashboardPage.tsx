@@ -393,14 +393,13 @@ function makeMiniRadarOption(user: ScoredUser, dims: LeaderboardDimension[], col
 }
 
 const PODIUM_STYLES = [
-  { bg: 'linear-gradient(135deg, rgba(214,178,106,0.18) 0%, rgba(214,178,106,0.04) 100%)', border: 'rgba(214,178,106,0.3)', color: 'rgba(214,178,106,0.95)', medal: '🥇', label: 'MVP' },
-  { bg: 'linear-gradient(135deg, rgba(192,192,192,0.14) 0%, rgba(192,192,192,0.03) 100%)', border: 'rgba(192,192,192,0.25)', color: 'rgba(192,192,192,0.9)', medal: '🥈', label: '第二名' },
-  { bg: 'linear-gradient(135deg, rgba(176,141,87,0.12) 0%, rgba(176,141,87,0.03) 100%)', border: 'rgba(176,141,87,0.2)', color: 'rgba(176,141,87,0.85)', medal: '🥉', label: '第三名' },
+  { bg: 'rgba(214,178,106,0.08)', border: 'rgba(214,178,106,0.25)', color: 'rgba(214,178,106,0.95)', medal: '🥇' },
+  { bg: 'rgba(192,192,192,0.06)', border: 'rgba(192,192,192,0.2)', color: 'rgba(192,192,192,0.9)', medal: '🥈' },
+  { bg: 'rgba(176,141,87,0.05)', border: 'rgba(176,141,87,0.15)', color: 'rgba(176,141,87,0.85)', medal: '🥉' },
 ];
 
 function PodiumCard({ user, dims, style, rank }: { user: ScoredUser; dims: LeaderboardDimension[]; style: typeof PODIUM_STYLES[0]; rank: number }) {
   const roleColor = ROLE_COLORS[user.role] ?? 'rgba(148,163,184,0.8)';
-  // Find top 2 dimensions for this user
   const topDims = Object.entries(user.normalizedScores)
     .sort(([, a], [, b]) => b - a)
     .slice(0, 2)
@@ -409,52 +408,48 @@ function PodiumCard({ user, dims, style, rank }: { user: ScoredUser; dims: Leade
 
   return (
     <div
-      className={`relative rounded-2xl p-5 transition-all ${rank === 0 ? 'lg:-mt-4 lg:mb-4' : ''}`}
-      style={{
-        background: style.bg,
-        border: `1px solid ${style.border}`,
-        minWidth: 0,
-      }}
+      className="relative rounded-xl px-4 py-3 flex items-center gap-3"
+      style={{ background: style.bg, border: `1px solid ${style.border}` }}
     >
-      {/* Medal badge */}
-      <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-        <div className="text-[28px] drop-shadow-lg">{style.medal}</div>
-      </div>
+      {/* Medal */}
+      <span className="text-[20px] flex-shrink-0">{style.medal}</span>
 
-      <div className="flex flex-col items-center text-center pt-4">
-        {/* Avatar */}
-        {user.avatarFileName ? (
-          <img src={resolveAvatarUrl(user.avatarFileName)} className="w-14 h-14 rounded-full object-cover mb-2 ring-2" style={{ ringColor: style.color }} alt="" />
-        ) : (
-          <div className="w-14 h-14 rounded-full flex items-center justify-center text-[20px] font-bold mb-2"
-            style={{ background: `${roleColor}22`, color: roleColor, boxShadow: `0 0 0 2px ${style.color}` }}>
-            {user.displayName[0]}
-          </div>
-        )}
-
-        {/* Name + Role */}
-        <div className="text-[15px] font-bold mb-0.5" style={{ color: 'var(--text-primary)' }}>{user.displayName}</div>
-        <div className="text-[11px] font-medium mb-2" style={{ color: roleColor }}>{user.role}</div>
-
-        {/* Score */}
-        <div className="text-[26px] font-black tabular-nums mb-1" style={{ color: style.color }}>
-          {Math.round(user.totalScore)}
+      {/* Avatar */}
+      {user.avatarFileName ? (
+        <img src={resolveAvatarUrl(user.avatarFileName)} className="w-9 h-9 rounded-full object-cover flex-shrink-0" alt="" />
+      ) : (
+        <div className="w-9 h-9 rounded-full flex items-center justify-center text-[14px] font-bold flex-shrink-0"
+          style={{ background: `${roleColor}22`, color: roleColor }}>
+          {user.displayName[0]}
         </div>
-        <div className="text-[10px] mb-3" style={{ color: 'var(--text-muted)' }}>综合战力分</div>
+      )}
 
-        {/* Mini radar */}
-        <div className="w-full" style={{ height: 120 }}>
-          <EChart option={makeMiniRadarOption(user, dims, style.color)} height={120} />
+      {/* Info */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>{user.displayName}</span>
+          <span className="text-[10px]" style={{ color: roleColor }}>{user.role}</span>
         </div>
-
-        {/* Top strengths */}
-        <div className="flex gap-2 mt-2 flex-wrap justify-center">
+        <div className="flex items-center gap-2 mt-0.5">
           {topDims.map(d => d && (
-            <span key={d.key} className="text-[10px] px-2 py-0.5 rounded-full"
-              style={{ background: `${DIMENSION_META[d.key]?.color ?? style.color}15`, color: DIMENSION_META[d.key]?.color ?? style.color }}>
+            <span key={d.key} className="text-[9px] px-1.5 py-0 rounded"
+              style={{ background: `${DIMENSION_META[d.key]?.color ?? style.color}12`, color: DIMENSION_META[d.key]?.color ?? style.color }}>
               {DIMENSION_META[d.key]?.short ?? d.name}
             </span>
           ))}
+        </div>
+      </div>
+
+      {/* Score + mini radar */}
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="w-12 h-12">
+          <EChart option={makeMiniRadarOption(user, dims, style.color)} height={48} />
+        </div>
+        <div className="text-right">
+          <div className="text-[18px] font-black tabular-nums" style={{ color: style.color }}>
+            {Math.round(user.totalScore)}
+          </div>
+          <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>战力分</div>
         </div>
       </div>
     </div>
@@ -555,21 +550,12 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
         </button>
       </div>
 
-      {/* ── Zone 1: MVP Podium ── */}
-      {scored.length >= 3 && (
-        <div>
-          <div className="flex items-center gap-2 mb-4 px-1">
-            <Trophy size={14} style={{ color: 'rgba(214,178,106,0.9)' }} />
-            <span className="text-[12px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-              MVP 领奖台
-            </span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-            {/* Podium order: 2nd - 1st - 3rd */}
-            <PodiumCard user={scored[1]} dims={dimensions} style={PODIUM_STYLES[1]} rank={1} />
-            <PodiumCard user={scored[0]} dims={dimensions} style={PODIUM_STYLES[0]} rank={0} />
-            <PodiumCard user={scored[2]} dims={dimensions} style={PODIUM_STYLES[2]} rank={2} />
-          </div>
+      {/* ── Zone 1: MVP Podium (compact horizontal cards) ── */}
+      {scored.length >= 2 && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {scored.slice(0, Math.min(3, scored.length)).map((u, i) => (
+            <PodiumCard key={u.userId} user={u} dims={dimensions} style={PODIUM_STYLES[i]} rank={i} />
+          ))}
         </div>
       )}
 
