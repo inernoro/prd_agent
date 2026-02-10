@@ -3,7 +3,7 @@ import {
   Crown, Users, Bot, DollarSign, Link2, TrendingUp,
   MessageSquare, Image, Bug, Zap, Activity,
   BarChart3, RefreshCw, Loader2, ToggleLeft, ToggleRight,
-  Trophy, ArrowUpDown, ChevronUp, ChevronDown,
+  ArrowUpDown, ChevronUp, ChevronDown,
 } from 'lucide-react';
 import { TabBar } from '@/components/design/TabBar';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -342,7 +342,8 @@ function makeRadarOption(
         max: 100,
       })),
       shape: 'polygon' as any,
-      radius: '60%',
+      radius: '68%',
+      center: ['50%', '48%'],
       axisName: { color: chartTextColor, fontSize: 10 },
       splitArea: { areaStyle: { color: ['rgba(255,255,255,0.02)', 'rgba(255,255,255,0.04)'] } },
       splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
@@ -372,12 +373,12 @@ function makeMiniRadarOption(user: ScoredUser, dims: LeaderboardDimension[], col
   return {
     backgroundColor: 'transparent',
     radar: {
-      indicator: activeDims.map(d => ({ name: '', max: 100 })),
+      indicator: activeDims.map(() => ({ name: '', max: 100 })),
       shape: 'polygon' as any,
-      radius: '75%',
-      splitArea: { areaStyle: { color: ['transparent', 'rgba(255,255,255,0.02)'] } },
-      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
-      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } },
+      radius: '80%',
+      splitArea: { show: false },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } },
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } },
       axisName: { show: false },
     },
     series: [{
@@ -385,76 +386,18 @@ function makeMiniRadarOption(user: ScoredUser, dims: LeaderboardDimension[], col
       data: [{
         value: activeDims.map(d => Math.round(user.normalizedScores[d.key] ?? 0)),
         symbol: 'none',
-        lineStyle: { width: 2, color },
-        areaStyle: { color, opacity: 0.2 },
+        lineStyle: { width: 1.5, color },
+        areaStyle: { color, opacity: 0.25 },
       }],
     }],
   };
 }
 
-const PODIUM_STYLES = [
-  { bg: 'rgba(214,178,106,0.08)', border: 'rgba(214,178,106,0.25)', color: 'rgba(214,178,106,0.95)', medal: '🥇' },
-  { bg: 'rgba(192,192,192,0.06)', border: 'rgba(192,192,192,0.2)', color: 'rgba(192,192,192,0.9)', medal: '🥈' },
-  { bg: 'rgba(176,141,87,0.05)', border: 'rgba(176,141,87,0.15)', color: 'rgba(176,141,87,0.85)', medal: '🥉' },
+const MEDAL_COLORS = [
+  { color: 'rgba(214,178,106,0.95)', bg: 'rgba(214,178,106,0.08)', medal: '🥇' },
+  { color: 'rgba(192,192,192,0.9)', bg: 'rgba(192,192,192,0.06)', medal: '🥈' },
+  { color: 'rgba(176,141,87,0.85)', bg: 'rgba(176,141,87,0.05)', medal: '🥉' },
 ];
-
-function PodiumCard({ user, dims, style, rank }: { user: ScoredUser; dims: LeaderboardDimension[]; style: typeof PODIUM_STYLES[0]; rank: number }) {
-  const roleColor = ROLE_COLORS[user.role] ?? 'rgba(148,163,184,0.8)';
-  const topDims = Object.entries(user.normalizedScores)
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, 2)
-    .map(([key]) => dims.find(d => d.key === key))
-    .filter(Boolean);
-
-  return (
-    <div
-      className="relative rounded-xl px-4 py-3 flex items-center gap-3"
-      style={{ background: style.bg, border: `1px solid ${style.border}` }}
-    >
-      {/* Medal */}
-      <span className="text-[20px] flex-shrink-0">{style.medal}</span>
-
-      {/* Avatar */}
-      {user.avatarFileName ? (
-        <img src={resolveAvatarUrl(user.avatarFileName)} className="w-9 h-9 rounded-full object-cover flex-shrink-0" alt="" />
-      ) : (
-        <div className="w-9 h-9 rounded-full flex items-center justify-center text-[14px] font-bold flex-shrink-0"
-          style={{ background: `${roleColor}22`, color: roleColor }}>
-          {user.displayName[0]}
-        </div>
-      )}
-
-      {/* Info */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-[13px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>{user.displayName}</span>
-          <span className="text-[10px]" style={{ color: roleColor }}>{user.role}</span>
-        </div>
-        <div className="flex items-center gap-2 mt-0.5">
-          {topDims.map(d => d && (
-            <span key={d.key} className="text-[9px] px-1.5 py-0 rounded"
-              style={{ background: `${DIMENSION_META[d.key]?.color ?? style.color}12`, color: DIMENSION_META[d.key]?.color ?? style.color }}>
-              {DIMENSION_META[d.key]?.short ?? d.name}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* Score + mini radar */}
-      <div className="flex items-center gap-2 flex-shrink-0">
-        <div className="w-12 h-12">
-          <EChart option={makeMiniRadarOption(user, dims, style.color)} height={48} />
-        </div>
-        <div className="text-right">
-          <div className="text-[18px] font-black tabular-nums" style={{ color: style.color }}>
-            {Math.round(user.totalScore)}
-          </div>
-          <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>战力分</div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function generateMockLeaderboard(): ExecutiveLeaderboard {
   const mockUsers: ExecutiveLeaderboard['users'] = [
@@ -533,7 +476,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
   const maxScore = scored[0]?.totalScore ?? 1;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Mock toggle */}
       <div className="flex items-center justify-end">
         <button
@@ -550,25 +493,43 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
         </button>
       </div>
 
-      {/* ── Zone 1: MVP Podium (compact horizontal cards) ── */}
-      {scored.length >= 2 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {scored.slice(0, Math.min(3, scored.length)).map((u, i) => (
-            <PodiumCard key={u.userId} user={u} dims={dimensions} style={PODIUM_STYLES[i]} rank={i} />
-          ))}
-        </div>
-      )}
-
-      {/* ── Zone 2: Radar Comparison ── */}
+      {/* ── Zone 1+2: Radar (with embedded Top 3) + Dimension Overview ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <GlassCard glow>
-          <SectionTitle>全员战力雷达</SectionTitle>
-          <EChart option={makeRadarOption(scored, dimensions)} height={360} />
+          {/* Top 3 inline badges */}
+          <div className="flex items-center gap-4 mb-3 pb-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            {scored.slice(0, 3).map((u, i) => {
+              const mc = MEDAL_COLORS[i];
+              const roleColor = ROLE_COLORS[u.role] ?? 'rgba(148,163,184,0.8)';
+              return (
+                <div key={u.userId} className="flex items-center gap-2 flex-1 min-w-0 px-2 py-1.5 rounded-lg" style={{ background: mc.bg }}>
+                  <span className="text-[14px] flex-shrink-0">{mc.medal}</span>
+                  {u.avatarFileName ? (
+                    <img src={resolveAvatarUrl(u.avatarFileName)} className="w-6 h-6 rounded-full object-cover flex-shrink-0" alt="" />
+                  ) : (
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0"
+                      style={{ background: `${roleColor}22`, color: roleColor }}>{u.displayName[0]}</div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>{u.displayName}</div>
+                    <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>{u.role}</div>
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <div className="w-7 h-7">
+                      <EChart option={makeMiniRadarOption(u, dimensions, mc.color)} height={28} />
+                    </div>
+                    <span className="text-[13px] font-black tabular-nums" style={{ color: mc.color }}>{Math.round(u.totalScore)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <EChart option={makeRadarOption(scored, dimensions)} height={320} />
         </GlassCard>
 
         <GlassCard glow>
           <SectionTitle>维度分布概览</SectionTitle>
-          <div className="space-y-3 mt-2">
+          <div className="space-y-2.5">
             {activeDims.map(dim => {
               const meta = DIMENSION_META[dim.key] ?? { icon: Bot, color: 'rgba(148,163,184,0.7)', barColor: 'rgba(148,163,184,0.4)', short: dim.name };
               const DimIcon = meta.icon;
@@ -577,15 +538,14 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
               const topUser = scored.find(u => (u.dimScores[dim.key] ?? 0) === maxVal);
 
               return (
-                <div key={dim.key} className="flex items-center gap-3 py-1.5 px-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.02)' }}>
-                  <DimIcon size={14} style={{ color: meta.color }} className="flex-shrink-0" />
-                  <div className="w-16 flex-shrink-0">
-                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{meta.short}</div>
+                <div key={dim.key} className="flex items-center gap-2.5 py-1 px-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                  <DimIcon size={13} style={{ color: meta.color }} className="flex-shrink-0" />
+                  <div className="w-14 flex-shrink-0">
+                    <div className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{meta.short}</div>
                   </div>
-                  <div className="flex-1 h-4 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                    {/* Stacked bars for each user */}
+                  <div className="flex-1 h-3.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
                     <div className="h-full flex">
-                      {scored.slice(0, 5).map((u, idx) => {
+                      {scored.map((u, idx) => {
                         const val = u.dimScores[dim.key] ?? 0;
                         const pct = total > 0 ? (val / total) * 100 : 0;
                         return pct > 0 ? (
@@ -596,17 +556,17 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                   </div>
                   <div className="flex-shrink-0 text-right w-20">
                     <span className="text-[11px] font-bold tabular-nums" style={{ color: meta.color }}>{total.toLocaleString()}</span>
-                    {topUser && <span className="text-[10px] ml-1" style={{ color: 'var(--text-muted)' }}>({topUser.displayName})</span>}
+                    {topUser && <span className="text-[9px] ml-1" style={{ color: 'var(--text-muted)' }}>({topUser.displayName})</span>}
                   </div>
                 </div>
               );
             })}
           </div>
-          {/* Legend for stacked bar colors */}
-          <div className="flex flex-wrap gap-3 mt-4 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-            {scored.slice(0, 5).map((u, idx) => (
+          {/* Legend */}
+          <div className="flex flex-wrap gap-3 mt-3 pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            {scored.slice(0, 8).map((u, idx) => (
               <div key={u.userId} className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full" style={{ background: USER_COLORS[idx % USER_COLORS.length] }} />
+                <div className="w-2 h-2 rounded-full" style={{ background: USER_COLORS[idx % USER_COLORS.length] }} />
                 <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{u.displayName}</span>
               </div>
             ))}
