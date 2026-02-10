@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Crown, Users, Bot, DollarSign, Link2, TrendingUp,
   MessageSquare, Image, Bug, Zap, Activity,
-  BarChart3, RefreshCw, Loader2, ToggleLeft, ToggleRight,
+  BarChart3, RefreshCw, Loader2,
   ArrowUpDown, ChevronUp, ChevronDown,
 } from 'lucide-react';
 import { TabBar } from '@/components/design/TabBar';
@@ -318,54 +318,13 @@ const MEDAL_COLORS = [
   { color: 'rgba(176,141,87,0.85)', bg: 'rgba(176,141,87,0.05)', medal: '🥉' },
 ];
 
-function generateMockLeaderboard(): ExecutiveLeaderboard {
-  const mockUsers: ExecutiveLeaderboard['users'] = [
-    { userId: 'mock-1', username: 'zhang.wei', displayName: '张伟', role: 'PM', avatarFileName: null, lastActiveAt: '2026-02-10T09:30:00Z', isActive: true },
-    { userId: 'mock-2', username: 'li.na', displayName: '李娜', role: 'DEV', avatarFileName: null, lastActiveAt: '2026-02-10T10:15:00Z', isActive: true },
-    { userId: 'mock-3', username: 'wang.fang', displayName: '王芳', role: 'DEV', avatarFileName: null, lastActiveAt: '2026-02-09T18:00:00Z', isActive: true },
-    { userId: 'mock-4', username: 'liu.yang', displayName: '刘洋', role: 'QA', avatarFileName: null, lastActiveAt: '2026-02-10T08:45:00Z', isActive: true },
-    { userId: 'mock-5', username: 'chen.jie', displayName: '陈杰', role: 'DEV', avatarFileName: null, lastActiveAt: '2026-02-08T16:30:00Z', isActive: true },
-    { userId: 'mock-6', username: 'zhao.min', displayName: '赵敏', role: 'PM', avatarFileName: null, lastActiveAt: '2026-02-10T11:00:00Z', isActive: true },
-    { userId: 'mock-7', username: 'huang.lei', displayName: '黄磊', role: 'DEV', avatarFileName: null, lastActiveAt: '2026-02-07T14:20:00Z', isActive: false },
-    { userId: 'mock-8', username: 'sun.li', displayName: '孙丽', role: 'QA', avatarFileName: null, lastActiveAt: '2026-02-10T09:00:00Z', isActive: true },
-  ];
-
-  const uids = mockUsers.map(u => u.userId);
-
-  const mkValues = (ranges: number[][]) => {
-    const values: Record<string, number> = {};
-    uids.forEach((uid, i) => {
-      const [min, max] = ranges[i] ?? [0, 0];
-      values[uid] = min + Math.floor(Math.random() * (max - min + 1));
-    });
-    return values;
-  };
-
-  const mockDimensions: LeaderboardDimension[] = [
-    { key: 'prd-agent',      name: 'PRD Agent',        category: 'agent', values: mkValues([[120,180],[85,130],[200,280],[40,70],[150,220],[95,140],[10,30],[60,90]]) },
-    { key: 'visual-agent',   name: '视觉创作 Agent',   category: 'agent', values: mkValues([[30,60],[180,260],[5,15],[10,25],[90,150],[45,80],[120,200],[20,40]]) },
-    { key: 'literary-agent', name: '文学创作 Agent',    category: 'agent', values: mkValues([[80,140],[20,45],[60,110],[5,15],[30,60],[160,240],[15,35],[40,75]]) },
-    { key: 'defect-agent',   name: '缺陷管理 Agent',   category: 'agent', values: mkValues([[50,90],[30,55],[25,45],[180,260],[40,70],[20,40],[15,30],[120,180]]) },
-    { key: 'messages',         name: '消息数',         category: 'activity', values: mkValues([[300,500],[250,400],[420,600],[150,250],[350,520],[280,420],[60,120],[200,340]]) },
-    { key: 'sessions',         name: '会话数',         category: 'activity', values: mkValues([[25,45],[18,35],[40,60],[12,22],[30,50],[22,38],[5,12],[15,28]]) },
-    { key: 'defects-created',  name: '提交缺陷',       category: 'activity', values: mkValues([[8,15],[3,8],[5,12],[20,35],[6,10],[4,9],[2,5],[15,25]]) },
-    { key: 'defects-resolved', name: '解决缺陷',       category: 'activity', values: mkValues([[6,12],[5,10],[8,16],[18,30],[4,8],[3,7],[1,4],[12,22]]) },
-    { key: 'images',           name: '图片生成',       category: 'activity', values: mkValues([[15,30],[60,100],[3,8],[5,12],[40,70],[20,40],[50,85],[10,20]]) },
-    { key: 'groups',            name: '群组参与',       category: 'activity', values: mkValues([[2,5],[3,6],[4,8],[1,3],[3,7],[2,5],[1,2],[2,4]]) },
-  ];
-
-  return { users: mockUsers, dimensions: mockDimensions };
-}
-
 function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeaderboard | null; loading: boolean }) {
-  const [useMock, setUseMock] = useState(false);
-  const [mockData] = useState<ExecutiveLeaderboard>(() => generateMockLeaderboard());
   const [sortKey, setSortKey] = useState<string>('total');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   if (loading && !leaderboard) return <LoadingSkeleton rows={8} />;
 
-  const data = useMock ? mockData : leaderboard;
+  const data = leaderboard;
   if (!data || data.users.length === 0) return <EmptyHint text="暂无团队成员数据" />;
 
   const { dimensions } = data;
@@ -397,22 +356,6 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
 
   return (
     <div className="space-y-4">
-      {/* Mock toggle */}
-      <div className="flex items-center justify-end">
-        <button
-          onClick={() => setUseMock(!useMock)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all"
-          style={{
-            background: useMock ? 'rgba(214,178,106,0.15)' : 'rgba(255,255,255,0.04)',
-            color: useMock ? 'rgba(214,178,106,0.95)' : 'var(--text-muted)',
-            border: `1px solid ${useMock ? 'rgba(214,178,106,0.3)' : 'rgba(255,255,255,0.08)'}`,
-          }}
-        >
-          {useMock ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-          {useMock ? '演示数据' : '真实数据'}
-        </button>
-      </div>
-
       {/* ── Top 3 inline badges ── */}
       <GlassCard glow className="!py-3 !px-4">
         <div className="flex items-center gap-4">
