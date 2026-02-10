@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -105,7 +106,7 @@ public class AttachmentsController : ControllerBase
     [HttpGet("{attachmentId}")]
     public async Task<IActionResult> Get(string attachmentId, CancellationToken ct)
     {
-        var filter = MongoDB.Driver.Builders<Attachment>.Filter.Eq(a => a.AttachmentId, attachmentId);
+        var filter = Builders<Attachment>.Filter.Eq(a => a.AttachmentId, attachmentId);
         var attachment = await _db.Attachments.Find(filter).FirstOrDefaultAsync(ct);
 
         if (attachment == null)
