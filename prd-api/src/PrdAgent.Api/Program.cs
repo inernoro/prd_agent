@@ -137,6 +137,9 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISystemPromptService, Prd
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 
+// 模型池查询服务（三级互斥解析：专属池 > 默认池 > 传统配置）
+builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
+
 // 模型调度执行器（支持单元测试 Mock）
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 

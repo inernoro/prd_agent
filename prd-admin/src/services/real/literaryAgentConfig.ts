@@ -191,6 +191,7 @@ export const getActiveReferenceImageConfigReal: GetActiveReferenceImageConfigCon
 import type {
   GetLiteraryAgentImageGenModelsContract,
   GetLiteraryAgentAllModelsContract,
+  GetLiteraryAgentMainModelContract,
   LiteraryAgentModelPool,
   LiteraryAgentAllModelsResponse,
 } from '../contracts/literaryAgentConfig';
@@ -213,6 +214,13 @@ export const getLiteraryAgentImageGenModelsReal: GetLiteraryAgentImageGenModelsC
 export const getLiteraryAgentAllModelsReal: GetLiteraryAgentAllModelsContract = async () => {
   return await apiRequest<LiteraryAgentAllModelsResponse>(
     api.literaryAgent.config.modelsAll(),
+    { method: 'GET' }
+  );
+};
+
+export const getLiteraryAgentMainModelReal: GetLiteraryAgentMainModelContract = async () => {
+  return await apiRequest<{ model: import('../contracts/literaryAgentConfig').LiteraryAgentMainModel | null }>(
+    api.literaryAgent.config.modelsMain(),
     { method: 'GET' }
   );
 };
@@ -390,9 +398,113 @@ export const forkReferenceImageConfigReal: ForkReferenceImageConfigContract = as
   const body = input.name ? { Name: input.name } : {};
   return await apiRequest<{ config: ReferenceImageConfig }>(
     `${api.literaryAgent.config.referenceImages.byId(encodeURIComponent(input.id))}/fork`,
-    { 
+    {
       method: 'POST',
       body,
     }
   );
 };
+
+// ========== 文学创作工作区（应用身份隔离，使用 /api/literary-agent/workspaces）==========
+
+export async function listLiteraryAgentWorkspacesReal(input?: { limit?: number }) {
+  const qs = input?.limit ? `?limit=${input.limit}` : '';
+  return await apiRequest<{ items: any[] }>(`${api.literaryAgent.workspaces.list()}${qs}`, { method: 'GET' });
+}
+
+export async function createLiteraryAgentWorkspaceReal(input: { title?: string; scenarioType?: string; idempotencyKey?: string }) {
+  const headers: Record<string, string> = {};
+  const idem = String(input.idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+  return await apiRequest<{ workspace: any }>(api.literaryAgent.workspaces.list(), {
+    method: 'POST',
+    headers,
+    body: { title: input.title, scenarioType: input.scenarioType },
+  });
+}
+
+export async function updateLiteraryAgentWorkspaceReal(input: {
+  id: string;
+  title?: string;
+  articleContent?: string;
+  scenarioType?: string;
+  folderName?: string | null;
+  memberUserIds?: string[];
+  coverAssetId?: string;
+  idempotencyKey?: string;
+}) {
+  const headers: Record<string, string> = {};
+  const idem = String(input.idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+  return await apiRequest<{ workspace: any }>(
+    api.literaryAgent.workspaces.byId(encodeURIComponent(input.id)),
+    {
+      method: 'PUT',
+      headers,
+      body: {
+        title: input.title,
+        articleContent: input.articleContent,
+        scenarioType: input.scenarioType,
+        folderName: input.folderName,
+        memberUserIds: input.memberUserIds,
+        coverAssetId: input.coverAssetId,
+      },
+    }
+  );
+}
+
+export async function deleteLiteraryAgentWorkspaceReal(input: { id: string; idempotencyKey?: string }) {
+  const headers: Record<string, string> = {};
+  const idem = String(input.idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+  return await apiRequest<{ deleted: boolean }>(
+    api.literaryAgent.workspaces.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE', headers }
+  );
+}
+
+export async function getLiteraryAgentWorkspaceDetailReal(input: { id: string; messageLimit?: number; assetLimit?: number }) {
+  const qs = new URLSearchParams();
+  if (input.messageLimit != null) qs.set('messageLimit', String(input.messageLimit));
+  if (input.assetLimit != null) qs.set('assetLimit', String(input.assetLimit));
+  const q = qs.toString();
+  return await apiRequest<{
+    workspace: any;
+    messages: any[];
+    assets: any[];
+    canvas: any;
+    viewport?: any;
+  }>(
+    `${api.literaryAgent.workspaces.detail(encodeURIComponent(input.id))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+}
+
+export async function uploadLiteraryAgentWorkspaceAssetReal(input: {
+  id: string;
+  data?: string;
+  sourceUrl?: string;
+  prompt?: string;
+  width?: number;
+  height?: number;
+  articleInsertionIndex?: number;
+  originalMarkerText?: string;
+  idempotencyKey?: string;
+}) {
+  const headers: Record<string, string> = {};
+  const idem = String(input.idempotencyKey ?? '').trim();
+  if (idem) headers['Idempotency-Key'] = idem;
+  return await apiRequest<{ asset: any }>(api.literaryAgent.workspaces.assets(encodeURIComponent(input.id)), {
+    method: 'POST',
+    headers,
+    body: {
+      data: input.data,
+      sourceUrl: input.sourceUrl,
+      prompt: input.prompt,
+      width: input.width,
+      height: input.height,
+      articleInsertionIndex: input.articleInsertionIndex,
+      originalMarkerText: input.originalMarkerText,
+    },
+  });
+}

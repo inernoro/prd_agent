@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -20,6 +21,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public class LiteraryAgentConfigController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly IModelPoolQueryService _modelPoolQuery;
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<LiteraryAgentConfigController> _logger;
 
@@ -33,10 +35,12 @@ public class LiteraryAgentConfigController : ControllerBase
 
     public LiteraryAgentConfigController(
         MongoDbContext db,
+        IModelPoolQueryService modelPoolQuery,
         IAssetStorage assetStorage,
         ILogger<LiteraryAgentConfigController> logger)
     {
         _db = db;
+        _modelPoolQuery = modelPoolQuery;
         _assetStorage = assetStorage;
         _logger = logger;
     }
@@ -77,7 +81,8 @@ public class LiteraryAgentConfigController : ControllerBase
     [HttpGet("models/text2img")]
     public async Task<IActionResult> GetText2ImgModels(CancellationToken ct)
     {
-        return await GetModelsForAppCallerCode(AppCallerCodes.Text2Img, ct);
+        var result = await _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.Text2Img, "generation", ct);
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
     }
 
     /// <summary>
@@ -87,7 +92,8 @@ public class LiteraryAgentConfigController : ControllerBase
     [HttpGet("models/img2img")]
     public async Task<IActionResult> GetImg2ImgModels(CancellationToken ct)
     {
-        return await GetModelsForAppCallerCode(AppCallerCodes.Img2Img, ct);
+        var result = await _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.Img2Img, "generation", ct);
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
     }
 
     /// <summary>
@@ -104,7 +110,8 @@ public class LiteraryAgentConfigController : ControllerBase
 
         // 有参考图用 img2img，没有用 text2img
         var appCallerCode = hasActiveRefImage ? AppCallerCodes.Img2Img : AppCallerCodes.Text2Img;
-        return await GetModelsForAppCallerCode(appCallerCode, ct);
+        var result = await _modelPoolQuery.GetModelPoolsAsync(appCallerCode, "generation", ct);
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
     }
 
     /// <summary>
@@ -114,8 +121,8 @@ public class LiteraryAgentConfigController : ControllerBase
     [HttpGet("models/all")]
     public async Task<IActionResult> GetAllImageGenModels(CancellationToken ct)
     {
-        var text2imgTask = GetModelPoolsForAppCallerCode(AppCallerCodes.Text2Img, ct);
-        var img2imgTask = GetModelPoolsForAppCallerCode(AppCallerCodes.Img2Img, ct);
+        var text2imgTask = _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.Text2Img, "generation", ct);
+        var img2imgTask = _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.Img2Img, "generation", ct);
 
         await Task.WhenAll(text2imgTask, img2imgTask);
 
@@ -135,125 +142,32 @@ public class LiteraryAgentConfigController : ControllerBase
     }
 
     /// <summary>
-    /// 通用方法：根据 appCallerCode 获取模型池列表
+    /// 获取主模型信息（用于显示标记生成使用的模型名称）
     /// </summary>
-    private async Task<IActionResult> GetModelsForAppCallerCode(string appCallerCode, CancellationToken ct)
+    [HttpGet("models/main")]
+    public async Task<IActionResult> GetMainModel(CancellationToken ct)
     {
-        var result = await GetModelPoolsForAppCallerCode(appCallerCode, ct);
-        return Ok(ApiResponse<List<ModelPoolForAppResponse>>.Ok(result));
-    }
-
-    /// <summary>
-    /// 通用方法：根据 appCallerCode 获取模型池列表（内部使用）
-    /// </summary>
-    private async Task<List<ModelPoolForAppResponse>> GetModelPoolsForAppCallerCode(string appCallerCode, CancellationToken ct)
-    {
-        const string modelType = "generation";
-        var result = new List<ModelPoolForAppResponse>();
-
-        // Step 1: 查找专属模型池（最高优先级）
-        var app = await _db.LLMAppCallers.Find(a => a.AppCode == appCallerCode).FirstOrDefaultAsync(ct);
-        if (app != null)
-        {
-            var requirement = app.ModelRequirements.FirstOrDefault(r => r.ModelType == modelType);
-            if (requirement != null && requirement.ModelGroupIds.Count > 0)
-            {
-                var dedicatedGroups = await _db.ModelGroups
-                    .Find(g => requirement.ModelGroupIds.Contains(g.Id))
-                    .SortBy(g => g.Priority)
-                    .ThenBy(g => g.CreatedAt)
-                    .ToListAsync(ct);
-
-                if (dedicatedGroups.Count > 0)
-                {
-                    foreach (var group in dedicatedGroups)
-                    {
-                        result.Add(MapToResponse(group, "DedicatedPool", isDedicated: true));
-                    }
-                    return result;
-                }
-            }
-        }
-
-        // Step 2: 查找默认模型池
-        var defaultGroups = await _db.ModelGroups
-            .Find(g => g.ModelType == modelType && g.IsDefaultForType)
-            .SortBy(g => g.Priority)
-            .ThenBy(g => g.CreatedAt)
-            .ToListAsync(ct);
-
-        if (defaultGroups.Count > 0)
-        {
-            foreach (var group in defaultGroups)
-            {
-                result.Add(MapToResponse(group, "DefaultPool", isDefault: true));
-            }
-            return result;
-        }
-
-        // Step 3: 传统配置（isImageGen）
-        var legacyModel = await _db.LLMModels
-            .Find(m => m.IsImageGen && m.Enabled)
+        var mainModel = await _db.LLMModels
+            .Find(m => m.IsMain && m.Enabled)
             .FirstOrDefaultAsync(ct);
 
-        if (legacyModel != null)
+        if (mainModel == null)
         {
-            result.Add(new ModelPoolForAppResponse
-            {
-                Id = $"legacy-{legacyModel.Id}",
-                Name = $"默认生图 - {legacyModel.Name}",
-                Code = legacyModel.ModelName,
-                Priority = 1,
-                ModelType = modelType,
-                IsDefaultForType = false,
-                Models = new List<ModelPoolItemResponse>
-                {
-                    new()
-                    {
-                        ModelId = legacyModel.ModelName,
-                        PlatformId = legacyModel.PlatformId ?? string.Empty,
-                        Priority = 1,
-                        HealthStatus = "Healthy"
-                    }
-                },
-                ResolutionType = "DirectModel",
-                IsDedicated = false,
-                IsDefault = false,
-                IsLegacy = true
-            });
+            return Ok(ApiResponse<object>.Ok(new { model = (object?)null }));
         }
 
-        return result;
-    }
-
-    private static ModelPoolForAppResponse MapToResponse(
-        ModelGroup group,
-        string resolutionType,
-        bool isDedicated = false,
-        bool isDefault = false,
-        bool isLegacy = false)
-    {
-        return new ModelPoolForAppResponse
+        return Ok(ApiResponse<object>.Ok(new
         {
-            Id = group.Id,
-            Name = group.Name,
-            Code = group.Code,
-            Priority = group.Priority,
-            ModelType = group.ModelType,
-            IsDefaultForType = group.IsDefaultForType,
-            Description = group.Description,
-            Models = group.Models?.Select(m => new ModelPoolItemResponse
+            model = new
             {
-                ModelId = m.ModelId,
-                PlatformId = m.PlatformId,
-                Priority = m.Priority,
-                HealthStatus = m.HealthStatus.ToString()
-            }).ToList() ?? new List<ModelPoolItemResponse>(),
-            ResolutionType = resolutionType,
-            IsDedicated = isDedicated,
-            IsDefault = isDefault,
-            IsLegacy = isLegacy
-        };
+                id = mainModel.Id,
+                name = mainModel.Name,
+                modelName = mainModel.ModelName,
+                platformId = mainModel.PlatformId,
+                enabled = mainModel.Enabled,
+                isMain = mainModel.IsMain,
+            }
+        }));
     }
 
     #endregion
@@ -989,37 +903,3 @@ public class UpdateLiteraryAgentConfigRequest
     public string? ReferenceImageUrl { get; set; }
 }
 
-/// <summary>
-/// 应用模型池响应（简化版，用于应用内部查询）
-/// </summary>
-public class ModelPoolForAppResponse
-{
-    public string Id { get; set; } = string.Empty;
-    public string Name { get; set; } = string.Empty;
-    public string Code { get; set; } = string.Empty;
-    public int Priority { get; set; }
-    public string ModelType { get; set; } = string.Empty;
-    public bool IsDefaultForType { get; set; }
-    public string? Description { get; set; }
-    public List<ModelPoolItemResponse> Models { get; set; } = new();
-
-    /// <summary>解析类型：DedicatedPool(专属池)、DefaultPool(默认池)、DirectModel(传统配置)</summary>
-    public string ResolutionType { get; set; } = string.Empty;
-    /// <summary>是否为该应用的专属模型池</summary>
-    public bool IsDedicated { get; set; }
-    /// <summary>是否为该类型的默认模型池</summary>
-    public bool IsDefault { get; set; }
-    /// <summary>是否为传统配置模型</summary>
-    public bool IsLegacy { get; set; }
-}
-
-/// <summary>
-/// 模型池中的模型项响应
-/// </summary>
-public class ModelPoolItemResponse
-{
-    public string ModelId { get; set; } = string.Empty;
-    public string PlatformId { get; set; } = string.Empty;
-    public int Priority { get; set; }
-    public string HealthStatus { get; set; } = "Healthy";
-}

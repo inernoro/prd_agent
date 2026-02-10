@@ -16,13 +16,10 @@ import {
 import {
   createLiteraryAgentImageGenRun,
   generateArticleMarkers,
-  getVisualAgentWorkspaceDetail,
-  getModels,
+  getLiteraryAgentMainModel,
   planImageGen,
   streamLiteraryAgentImageGenRunWithRetry,
-  updateVisualAgentWorkspace,
   updateArticleMarker,
-  uploadVisualAgentWorkspaceAsset,
   listLiteraryPrompts,
   createLiteraryPrompt,
   updateLiteraryPrompt,
@@ -37,18 +34,19 @@ import {
   activateReferenceImageConfig,
   deactivateReferenceImageConfig,
   getLiteraryAgentAllModels,
-  optimizeLiteraryPrompt,
-  getAdapterInfoByModelName,
   // 海鲜市场 API
   publishLiteraryPrompt,
   unpublishLiteraryPrompt,
   publishReferenceImageConfig,
   unpublishReferenceImageConfig,
 } from '@/services';
+import {
+  getLiteraryAgentWorkspaceDetailReal as getLiteraryAgentWorkspaceDetail,
+  updateLiteraryAgentWorkspaceReal as updateLiteraryAgentWorkspace,
+  uploadLiteraryAgentWorkspaceAssetReal as uploadLiteraryAgentWorkspaceAsset,
+} from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
-import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
-import type { SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2 } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2 } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
@@ -107,142 +105,7 @@ const PRD_MD_STYLE = `
     padding: 0 4px;
     border-radius: 6px;
   }
-  @keyframes marker-insert-glow {
-    0% { background: rgba(245, 158, 11, 0.55); box-shadow: 0 0 12px rgba(245, 158, 11, 0.4); transform: translateY(-2px); opacity: 0.7; }
-    50% { background: rgba(245, 158, 11, 0.35); box-shadow: 0 0 6px rgba(245, 158, 11, 0.2); transform: translateY(0); opacity: 1; }
-    100% { background: rgba(245, 158, 11, 0.22); box-shadow: none; transform: translateY(0); opacity: 1; }
-  }
-  .prd-md .prd-md-marker-new {
-    background: rgba(245, 158, 11, 0.55);
-    border: 1px solid rgba(245, 158, 11, 0.5);
-    color: rgba(255,255,255,0.95);
-    padding: 0 4px;
-    border-radius: 6px;
-    animation: marker-insert-glow 1.2s ease-out forwards;
-  }
-
-  /* 配图卡片入场发光边框 */
-  @property --marker-glow-angle {
-    syntax: "<angle>";
-    initial-value: 0deg;
-    inherits: false;
-  }
-  .marker-card-glow-entrance {
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    z-index: 1;
-    animation: marker-glow-sweep 2s ease-out forwards;
-  }
-  .marker-card-glow-entrance::before {
-    content: "";
-    position: absolute;
-    inset: -2px;
-    border-radius: inherit;
-    padding: 2px;
-    background: conic-gradient(
-      from var(--marker-glow-angle),
-      transparent 0%,
-      transparent 55%,
-      rgba(168, 85, 247, 0.7) 70%,
-      rgba(99, 102, 241, 0.9) 80%,
-      rgba(147, 197, 253, 0.7) 90%,
-      transparent 100%
-    );
-    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    animation: marker-glow-spin 2s ease-out forwards;
-  }
-  .marker-card-glow-entrance::after {
-    content: "";
-    position: absolute;
-    inset: -6px;
-    border-radius: inherit;
-    background: conic-gradient(
-      from var(--marker-glow-angle),
-      transparent 0%,
-      transparent 55%,
-      rgba(168, 85, 247, 0.15) 70%,
-      rgba(99, 102, 241, 0.25) 80%,
-      rgba(147, 197, 253, 0.15) 90%,
-      transparent 100%
-    );
-    filter: blur(8px);
-    animation: marker-glow-spin 2s ease-out forwards;
-    z-index: -1;
-  }
-  @keyframes marker-glow-spin {
-    0%   { --marker-glow-angle: 0deg;   opacity: 1; }
-    75%  { opacity: 1; }
-    100% { --marker-glow-angle: 360deg; opacity: 0; }
-  }
-  @keyframes marker-glow-sweep {
-    0%   { opacity: 1; }
-    75%  { opacity: 1; }
-    100% { opacity: 0; }
-  }
-
-  /* 文章内图片显示尺寸控制 */
-  .prd-md img[data-marker-idx] {
-    max-width: var(--img-display-size, 100%) !important;
-    transition: max-width 0.3s ease;
-    display: block;
-    margin-left: auto;
-    margin-right: auto;
-  }
 `;
-
-/**
- * 前端锚点匹配：在文章中找到锚点文本的位置（模仿后端 4 级模糊匹配）
- * 返回锚点所在行的末尾位置，失败返回 -1
- */
-function findAnchorInsertPos(article: string, anchor: string): number {
-  const normalizeWs = (s: string) => s.replace(/\s+/g, ' ').trim();
-  const normalizeP = (s: string) =>
-    s.replace(/，/g, ',').replace(/。/g, '.').replace(/！/g, '!').replace(/？/g, '?')
-     .replace(/；/g, ';').replace(/：/g, ':').replace(/\u201c/g, '"').replace(/\u201d/g, '"')
-     .replace(/\u2018/g, "'").replace(/\u2019/g, "'");
-
-  // 1. 精确匹配
-  let idx = article.indexOf(anchor);
-  if (idx < 0) {
-    // 2. 忽略大小写
-    idx = article.toLowerCase().indexOf(anchor.toLowerCase());
-  }
-  if (idx < 0) {
-    // 3. 归一化空白
-    const na = normalizeWs(article);
-    const nc = normalizeWs(anchor);
-    const ni = na.indexOf(nc);
-    if (ni >= 0) idx = Math.min(Math.round((ni / na.length) * article.length), article.length - 1);
-  }
-  if (idx < 0) {
-    // 4. 归一化标点
-    const na = normalizeP(normalizeWs(article));
-    const nc = normalizeP(normalizeWs(anchor));
-    const ni = na.indexOf(nc);
-    if (ni >= 0) idx = Math.min(Math.round((ni / na.length) * article.length), article.length - 1);
-  }
-  if (idx < 0) return -1;
-  // 找到行尾
-  const lineEnd = article.indexOf('\n', idx);
-  return lineEnd >= 0 ? lineEnd : article.length;
-}
-
-/**
- * 将一个新的 marker 增量插入到当前文章内容中。
- * 按锚点定位，在对应行后插入 [插图]: text。
- */
-function insertMarkerIntoArticle(currentArticle: string, anchor: string, markerText: string): string {
-  const pos = findAnchorInsertPos(currentArticle, anchor);
-  if (pos < 0) {
-    // 未匹配时追加到末尾
-    return currentArticle + `\n\n[插图]: ${markerText}\n`;
-  }
-  return currentArticle.slice(0, pos) + `\n\n[插图]: ${markerText}\n` + currentArticle.slice(pos);
-}
 
 // 用户自定义提示词模板类型（对应后端 LiteraryPrompt）
 type PromptTemplate = {
@@ -287,7 +150,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
   const [generating, setGenerating] = useState(false);
   const [markerStreaming, setMarkerStreaming] = useState(false);
-  const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewIndex, setImagePreviewIndex] = useState(0);
@@ -337,9 +199,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   
-  // AI 优化提示词状态
-  const [optimizingPromptId, setOptimizingPromptId] = useState<string | null>(null);
-
   // 提取的标记列表
   const [markers, setMarkers] = useState<ArticleMarker[]>([]);
 
@@ -352,9 +211,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 图生图模型池（有风格参考图）
   const [img2ImgPool, setImg2ImgPool] = useState<LiteraryAgentModelPool | null>(null);
 
-  // 生图模型尺寸选项（按分辨率分组，从后端 adapter-info 获取）
-  const [sizesByResolutionForPicker, setSizesByResolutionForPicker] = useState<SizesByResolution>({ '1k': [], '2k': [], '4k': [] });
-
   // 右侧每条配图的运行状态（逐条 parse + gen）
   const [markerRunItems, setMarkerRunItems] = useState<MarkerRunItem[]>([]);
   const [markerRunItemsRestored, setMarkerRunItemsRestored] = useState(false); // 标记是否已从后端恢复
@@ -362,31 +218,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const genAbortRef = useRef<AbortController | null>(null);
   const markerListRef = useRef<HTMLDivElement>(null); // 配图列表容器的 ref
   const articlePreviewRef = useRef<HTMLDivElement>(null); // 文章预览区域的 ref
-  const thinkingPanelRef = useRef<HTMLDivElement>(null); // 思考面板的 ref（自动滚动到底部）
   const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
-  const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
-  const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
-  const [imageDisplaySize, setImageDisplaySize] = useState(100); // 文章内图片显示尺寸百分比
-  const [rawMarkerOutput, setRawMarkerOutput] = useState(''); // Anchor 模式下 LLM 原始输出（用于视觉反馈）
-
-  // 当新 marker 卡片出现时，触发入场发光动画
-  useEffect(() => {
-    const newIndices: number[] = [];
-    for (const item of markerRunItems) {
-      if (!knownMarkerIndicesRef.current.has(item.markerIndex)) {
-        knownMarkerIndicesRef.current.add(item.markerIndex);
-        newIndices.push(item.markerIndex);
-      }
-    }
-    if (newIndices.length > 0) {
-      setGlowingMarkers((prev) => {
-        const next = new Set(prev);
-        for (const idx of newIndices) next.add(idx);
-        return next;
-      });
-    }
-  }, [markerRunItems]);
-
+  
   // 当配图列表增加时，只在流式输出过程中自动滚动到底部
   useEffect(() => {
     if (isStreamingRef.current && markerListRef.current && markerRunItems.length > 0) {
@@ -394,15 +227,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [markerRunItems.length]);
   
-  // 思考/生成面板自动滚动到底部
+  // 当文章内容更新时，只在流式输出过程中自动滚动到底部
   useEffect(() => {
-    if (thinkingPanelRef.current && (thinkingContent || rawMarkerOutput)) {
-      thinkingPanelRef.current.scrollTop = thinkingPanelRef.current.scrollHeight;
+    if (isStreamingRef.current && articlePreviewRef.current && articleWithMarkers) {
+      articlePreviewRef.current.scrollTop = articlePreviewRef.current.scrollHeight;
     }
-  }, [thinkingContent, rawMarkerOutput]);
-
-  // 流式生成期间不滚动文章（AI 视图独占左面板，文章未渲染）
-  // 文章在流式结束后才显示，无需自动滚动到 marker
+  }, [articleWithMarkers]);
   
   // 提示词模板管理（只有用户模板）
   const [userPrompts, setUserPrompts] = useState<PromptTemplate[]>([]);
@@ -429,10 +259,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setText2ImgPool(null);
       setImg2ImgPool(null);
 
-      // 并行加载：所有模型池 + 全局模型列表
-      const [allPoolsRes, modelsRes] = await Promise.all([
+      // 并行加载：所有模型池 + 主模型信息
+      const [allPoolsRes, mainModelRes] = await Promise.all([
         getLiteraryAgentAllModels().catch(() => ({ success: false, data: null as LiteraryAgentAllModelsResponse | null })),
-        getModels(),
+        getLiteraryAgentMainModel().catch(() => ({ success: false, data: null as { model: null } | null })),
       ]);
       if (cancelled) return;
 
@@ -440,24 +270,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       if (allPoolsRes.success && allPoolsRes.data) {
         const t2iPools = allPoolsRes.data.text2img?.pools ?? [];
         const i2iPools = allPoolsRes.data.img2img?.pools ?? [];
-        
+
         // 查找专属模型池（isDedicated=true），否则用第一个
         const t2iPool = t2iPools.find((p) => p.isDedicated) ?? t2iPools[0] ?? null;
         const i2iPool = i2iPools.find((p) => p.isDedicated) ?? i2iPools[0] ?? null;
-        
+
         setText2ImgPool(t2iPool);
         setImg2ImgPool(i2iPool);
       }
 
-      if (!modelsRes.success) {
-        setImageGenModel(null);
-        setImageGenModelError(modelsRes.error?.message || '加载生图模型失败');
-        return;
+      // 获取主模型（用于显示标记生成模型名称）
+      if (mainModelRes.success && mainModelRes.data?.model) {
+        const m = mainModelRes.data.model;
+        setMainModel({ id: m.id, name: m.name, modelName: m.modelName, platformId: m.platformId ?? '', enabled: m.enabled, isMain: m.isMain } as Model);
       }
-
-      // 获取主模型（用于生成标记）
-      const mainList = (modelsRes.data ?? []).filter((m) => Boolean(m.enabled) && Boolean(m.isMain));
-      setMainModel(mainList[0] ?? null);
     })();
     return () => {
       cancelled = true;
@@ -475,8 +301,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       const topPoolModel = sortedPoolModels[0];
       setImageGenModel({
         id: `pool-${pool.id}-${topPoolModel.modelId}`,
-        name: pool.name || pool.code,
-        modelName: pool.code,
+        name: pool.name || topPoolModel.modelId,
+        modelName: topPoolModel.modelId,
         platformId: topPoolModel.platformId,
         enabled: true,
         isImageGen: true,
@@ -488,35 +314,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       }
     }
   }, [referenceImageConfigs, text2ImgPool, img2ImgPool]);
-
-  // 从后端获取生图模型的尺寸选项（按分辨率分组，与视觉创作一致）
-  useEffect(() => {
-    const modelName = imageGenModel?.modelName;
-    if (!modelName) {
-      setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await getAdapterInfoByModelName(modelName);
-        if (cancelled) return;
-        if (res.success && res.data?.matched && res.data.sizesByResolution) {
-          const data = res.data.sizesByResolution;
-          setSizesByResolutionForPicker({
-            '1k': Array.isArray(data['1k']) ? data['1k'] : [],
-            '2k': Array.isArray(data['2k']) ? data['2k'] : [],
-            '4k': Array.isArray(data['4k']) ? data['4k'] : [],
-          });
-        } else {
-          setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
-        }
-      } catch {
-        if (!cancelled) setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [imageGenModel?.modelName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -627,7 +424,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   async function loadWorkspace() {
     try {
-      const res = await getVisualAgentWorkspaceDetail({ id: workspaceId });
+      const res = await getLiteraryAgentWorkspaceDetail({ id: workspaceId });
       if (res.success && res.data?.workspace) {
         const ws = res.data.workspace;
         const content = ws.articleContent || '';
@@ -808,7 +605,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   async function saveArticleContent() {
     try {
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: workspaceId,
         articleContent: debouncedArticleContent,
         idempotencyKey: `save-article-${workspaceId}-${Date.now()}`,
@@ -831,7 +628,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setUploadedFileName(fileName);
       
       // 保存到后端（提交型操作：会触发 version++，清空后续阶段）
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: workspaceId,
         articleContent: text,
         idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
@@ -888,7 +685,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setUploadedFileName(file.name);
       
       // 保存到后端
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: workspaceId,
         articleContent: text,
         idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
@@ -912,186 +709,314 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
 
-    // 使用选中的风格提示词（可选，不选则仅使用系统格式约束）
-    const systemPrompt = selectedPrompt?.content ?? '';
+    if (!selectedPrompt) {
+      toast.warning('请先选择一个提示词模板');
+      return;
+    }
+
+    // 使用选中的提示词作为系统提示词
+    const systemPrompt = selectedPrompt.content;
 
     setMarkerStreaming(true);
-    setThinkingContent('');
-    setRawMarkerOutput(''); // 重置原始输出
-    setGlowingMarkers(new Set()); // 重置入场动画追踪
-    knownMarkerIndicesRef.current.clear();
     isStreamingRef.current = true; // 标记开始流式输出
-
-    // 保存当前滚动位置，phase 切换导致 DOM 重建会丢失 scrollTop
-    const savedScrollTop = articlePreviewRef.current?.scrollTop ?? 0;
-
     // 3 状态模式：生成标记时直接跳到 MarkersGenerated，流式更新内容
     setPhase(2); // MarkersGenerated
+    setArticleWithMarkers(''); // 初始为空，流式逐步填充
     setMarkers([]);
-
-    // 锚点模式：预先显示原文（LLM 不会流式返回文章内容）
-    setArticleWithMarkers(articleContent);
-
-    // 恢复滚动位置（等 React 完成渲染后）
-    requestAnimationFrame(() => {
-      if (articlePreviewRef.current) {
-        articlePreviewRef.current.scrollTop = savedScrollTop;
-      }
-    });
-
+    
     try {
       // 使用 SSE 流式接口
       const stream = generateArticleMarkers({
         id: workspaceId,
         articleContent,
-        userInstruction: systemPrompt,
+        userInstruction: systemPrompt, // 将选中的提示词作为系统提示词
         idempotencyKey: `gen-markers-${Date.now()}`,
-        insertionMode: 'anchor',
       });
 
       let fullText = '';
-      let currentLineBuffer = ''; // 当前行缓冲区（legacy 模式用）
+      let currentLineBuffer = ''; // 当前行缓冲区
       const extractedMarkers: ArticleMarker[] = []; // 已提取的标记
-      let runningArticle = articleContent; // 锚点模式：跟踪增量插入后的文章
-      const newMarkerIndices = new Set<number>(); // 跟踪新插入的 marker 索引（用于动画）
-
-      // 触发单个 marker 的意图解析（仅 legacy 模式或无尺寸时使用）
-      const triggerPlanImageGen = (markerIndex: number, markerText: string) => {
-        setMarkerRunItems((prev) => {
-          if (prev.some((x) => x.markerIndex === markerIndex)) return prev;
-          return [
-            ...prev,
-            { markerIndex, markerText, draftText: markerText, status: 'parsing' as MarkerRunStatus },
-          ];
-        });
-
-        void (async () => {
-          try {
-            const planRes = await planImageGen({ text: markerText, maxItems: 1 });
-            if (planRes.success && planRes.data?.items?.[0]) {
-              const rawPlanItem = planRes.data.items[0];
-              // 统一默认 1:1 尺寸，忽略意图模型推断的尺寸（用户可通过尺寸选择器调整）
-              const planItem = { ...rawPlanItem, size: '1024x1024' };
-              setMarkerRunItems((prev) =>
-                prev.map((x) =>
-                  x.markerIndex === markerIndex
-                    ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
-                    : x
-                )
-              );
-              await updateMarkerStatus(markerIndex, {
-                status: 'parsed',
-                draftText: planItem.prompt,
-                planItem: { prompt: planItem.prompt, count: planItem.count, size: '1024x1024' },
-              });
-            } else {
-              setMarkerRunItems((prev) =>
-                prev.map((x) =>
-                  x.markerIndex === markerIndex
-                    ? { ...x, status: 'error' as MarkerRunStatus, errorMessage: planRes.error?.message || '意图解析失败' }
-                    : x
-                )
-              );
-            }
-          } catch (error) {
-            console.error('Plan image gen error:', error);
-            setMarkerRunItems((prev) =>
-              prev.map((x) =>
-                x.markerIndex === markerIndex
-                  ? { ...x, status: 'error' as MarkerRunStatus, errorMessage: error instanceof Error ? error.message : '意图解析失败' }
-                  : x
-              )
-            );
-          }
-        })();
-      };
-
-      // 直接设置 marker 为已解析（跳过意图模型，尺寸由 LLM 直接提供）
-      const setMarkerDirectParsed = (markerIndex: number, markerText: string, size: string) => {
-        const planItem = { prompt: markerText, count: 1, size };
-        setMarkerRunItems((prev) => {
-          if (prev.some((x) => x.markerIndex === markerIndex)) return prev;
-          return [
-            ...prev,
-            { markerIndex, markerText, draftText: markerText, status: 'parsed' as MarkerRunStatus, planItem },
-          ];
-        });
-
-        void updateMarkerStatus(markerIndex, {
-          status: 'parsed',
-          draftText: markerText,
-          planItem: { prompt: markerText, count: 1, size },
-        });
-      };
-
+      
       for await (const chunk of stream) {
-        // ====== 思考过程：实时追加显示 ======
-        if (chunk.type === 'thinking' && chunk.text) {
-          setThinkingContent((prev) => prev + chunk.text);
-          continue;
-        }
-
-        // ====== Anchor 模式：处理 marker 事件 ======
-        if (chunk.type === 'marker' && chunk.text && chunk.index != null) {
-          const markerIndex = chunk.index;
-          const markerText = chunk.text;
-          extractedMarkers.push({
-            index: markerIndex,
-            text: markerText,
-            startPos: -1,
-            endPos: -1,
-          });
-          setMarkers([...extractedMarkers]);
-
-          // 增量插入 marker 到文章中（实时反馈）
-          if (chunk.anchor) {
-            runningArticle = insertMarkerIntoArticle(runningArticle, chunk.anchor, markerText);
-            newMarkerIndices.add(markerIndex);
-            setArticleWithMarkers(runningArticle);
+        if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
+          fullText += chunk.text;
+          currentLineBuffer += chunk.text;
+          
+          // 检查是否有完整的行（以 \n 结尾）
+          if (currentLineBuffer.includes('\n')) {
+            const lines = currentLineBuffer.split('\n');
+            // 最后一个元素是不完整的行（或空字符串），保留在缓冲区
+            currentLineBuffer = lines.pop() || '';
+            
+            // 处理所有完整的行
+            for (const line of lines) {
+              // 对这一行进行标记匹配
+              const markerRegex = /\[插图\]\s*:\s*(.+)/;
+              const match = markerRegex.exec(line);
+              
+              if (match) {
+                const markerText = match[1].trim();
+                
+                // 只有当 markerText 不为空时才添加
+                if (markerText.length > 0) {
+                  const markerIndex = extractedMarkers.length;
+                  extractedMarkers.push({
+                    index: markerIndex,
+                    text: markerText,
+                    startPos: -1, // 流式输出时不需要精确位置
+                    endPos: -1,
+                  });
+                  
+                  // 更新 UI
+                  setMarkers([...extractedMarkers]);
+                  
+                  // 添加到运行列表（状态为 parsing，立即触发意图解析）
+                  setMarkerRunItems((prev) => {
+                    if (prev.some((x) => x.markerIndex === markerIndex)) {
+                      return prev;
+                    }
+                    return [
+                      ...prev,
+                      {
+                        markerIndex,
+                        markerText,
+                        draftText: markerText,
+                        status: 'parsing' as MarkerRunStatus,
+                      },
+                    ];
+                  });
+                  
+                  // 立即触发意图解析（不等待流式输出完成）
+                  void (async () => {
+                    try {
+                      const planRes = await planImageGen({
+                        text: markerText,
+                        maxItems: 1,
+                      });
+                      
+                      if (planRes.success && planRes.data?.items?.[0]) {
+                        const planItem = planRes.data.items[0];
+                        
+                        setMarkerRunItems((prev) =>
+                          prev.map((x) =>
+                            x.markerIndex === markerIndex
+                              ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
+                              : x
+                          )
+                        );
+                        
+                        // 保存意图解析结果到后端
+                        await updateMarkerStatus(markerIndex, {
+                          status: 'parsed',
+                          draftText: planItem.prompt,
+                          planItem: {
+                            prompt: planItem.prompt,
+                            count: planItem.count,
+                            size: planItem.size,
+                          },
+                        });
+                      } else {
+                        setMarkerRunItems((prev) =>
+                          prev.map((x) =>
+                            x.markerIndex === markerIndex
+                              ? {
+                                  ...x,
+                                  status: 'error' as MarkerRunStatus,
+                                  errorMessage: planRes.error?.message || '意图解析失败',
+                                }
+                              : x
+                          )
+                        );
+                      }
+                    } catch (error) {
+                      console.error('Plan image gen error:', error);
+                      setMarkerRunItems((prev) =>
+                        prev.map((x) =>
+                          x.markerIndex === markerIndex
+                            ? {
+                                ...x,
+                                status: 'error' as MarkerRunStatus,
+                                errorMessage: error instanceof Error ? error.message : '意图解析失败',
+                              }
+                            : x
+                        )
+                      );
+                    }
+                  })();
+                }
+              }
+            }
           }
-
-          // Anchor 模式：marker text 即 prompt，无需意图模型解析，统一默认 1:1
-          setMarkerDirectParsed(markerIndex, markerText, '1024x1024');
-        }
-        // ====== Delta 事件：Anchor 模式为原始输出视觉反馈 ======
-        else if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
-          // Anchor 模式：LLM 原始输出仅用于视觉反馈，文章由 marker 事件增量更新
-          setRawMarkerOutput((prev) => prev + chunk.text);
-        }
-        // ====== 后处理中事件 ======
-        else if (chunk.type === 'finalizing') {
-          setRawMarkerOutput((prev) => prev + '\n\n✓ 标记生成完成，正在保存…');
-        }
-        // ====== 完成事件 ======
-        else if (chunk.type === 'done' && chunk.fullText) {
+          
+          // 使用 flushSync 强制立即刷新，绕过 React 18 的自动批处理
+          flushSync(() => {
+            setArticleWithMarkers(fullText);
+          });
+          
+          // 人工延迟 10ms，让用户能看到流式渲染效果（配合后端 10ms 延迟）
+          await new Promise(resolve => setTimeout(resolve, 10));
+        } else if (chunk.type === 'done' && chunk.fullText) {
           fullText = chunk.fullText;
           setArticleWithMarkers(fullText);
-
+          
           // 提取标记（确保最终状态一致）
           const extracted = extractMarkers(fullText);
           setMarkers(extracted);
-
-          // 对于 done 事件中的标记但尚未处理的，补充直接设为 parsed（无需意图模型）
+          
+          // 对于那些还没有被处理的标记（状态为 pending），触发意图解析
+          // 注意：流式输出过程中已经处理过的标记（parsing/parsed/error）不需要重复处理
           extracted.forEach((marker) => {
+            const markerIndex = marker.index;
+            const markerText = marker.text;
+            
             setMarkerRunItems((prev) => {
-              const existingItem = prev.find((x) => x.markerIndex === marker.index);
-              if (existingItem && existingItem.status !== 'idle') return prev;
+              const existingItem = prev.find((x) => x.markerIndex === markerIndex);
+              
+              // 如果已经存在且不是 idle 状态，说明已经在流式输出时处理过了，跳过
+              if (existingItem && existingItem.status !== 'idle') {
+                return prev;
+              }
+              
+              // 如果不存在或状态为 pending，则触发意图解析
               if (!existingItem) {
-                return [
+                // 添加新项并触发解析
+                const newPrev = [
                   ...prev,
                   {
-                    markerIndex: marker.index,
-                    markerText: marker.text,
-                    draftText: marker.text,
-                    status: 'parsed' as MarkerRunStatus,
-                    planItem: { prompt: marker.text, count: 1, size: '1024x1024' },
+                    markerIndex,
+                    markerText,
+                    draftText: markerText,
+                    status: 'parsing' as MarkerRunStatus,
                   },
                 ];
+                
+                // 异步调用意图解析
+                void (async () => {
+                  try {
+                    const planRes = await planImageGen({
+                      text: markerText,
+                      maxItems: 1,
+                    });
+                    
+                    if (planRes.success && planRes.data?.items?.[0]) {
+                      const planItem = planRes.data.items[0];
+                      
+                      setMarkerRunItems((p) =>
+                        p.map((x) =>
+                          x.markerIndex === markerIndex
+                            ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
+                            : x
+                        )
+                      );
+                      await updateMarkerStatus(markerIndex, {
+                        status: 'parsed',
+                        draftText: planItem.prompt,
+                        planItem: {
+                          prompt: planItem.prompt,
+                          count: planItem.count,
+                          size: planItem.size,
+                        },
+                      });
+                    } else {
+                      setMarkerRunItems((p) =>
+                        p.map((x) =>
+                          x.markerIndex === markerIndex
+                            ? {
+                                ...x,
+                                status: 'error' as MarkerRunStatus,
+                                errorMessage: planRes.error?.message || '意图解析失败',
+                              }
+                            : x
+                        )
+                      );
+                    }
+                  } catch (error) {
+                    console.error('Plan image gen error:', error);
+                    setMarkerRunItems((p) =>
+                      p.map((x) =>
+                        x.markerIndex === markerIndex
+                          ? {
+                              ...x,
+                              status: 'error' as MarkerRunStatus,
+                              errorMessage: error instanceof Error ? error.message : '意图解析失败',
+                            }
+                          : x
+                      )
+                    );
+                  }
+                })();
+                
+                return newPrev;
+              } else {
+                // 状态为 pending，更新为 parsing 并触发解析
+                const updatedPrev = prev.map((x) =>
+                  x.markerIndex === markerIndex
+                    ? { ...x, markerText, draftText: markerText, status: 'parsing' as MarkerRunStatus }
+                    : x
+                );
+                
+                // 异步调用意图解析
+                void (async () => {
+                  try {
+                    const planRes = await planImageGen({
+                      text: markerText,
+                      maxItems: 1,
+                    });
+                    
+                    if (planRes.success && planRes.data?.items?.[0]) {
+                      const planItem = planRes.data.items[0];
+                      
+                      setMarkerRunItems((p) =>
+                        p.map((x) =>
+                          x.markerIndex === markerIndex
+                            ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
+                            : x
+                        )
+                      );
+                      await updateMarkerStatus(markerIndex, {
+                        status: 'parsed',
+                        draftText: planItem.prompt,
+                        planItem: {
+                          prompt: planItem.prompt,
+                          count: planItem.count,
+                          size: planItem.size,
+                        },
+                      });
+                    } else {
+                      setMarkerRunItems((p) =>
+                        p.map((x) =>
+                          x.markerIndex === markerIndex
+                            ? {
+                                ...x,
+                                status: 'error' as MarkerRunStatus,
+                                errorMessage: planRes.error?.message || '意图解析失败',
+                              }
+                            : x
+                        )
+                      );
+                    }
+                  } catch (error) {
+                    console.error('Plan image gen error:', error);
+                    setMarkerRunItems((p) =>
+                      p.map((x) =>
+                        x.markerIndex === markerIndex
+                          ? {
+                              ...x,
+                              status: 'error' as MarkerRunStatus,
+                              errorMessage: error instanceof Error ? error.message : '意图解析失败',
+                            }
+                          : x
+                      )
+                    );
+                  }
+                })();
+                
+                return updatedPrev;
               }
-              return prev;
             });
           });
-
+          
+          // 提交型操作成功：更新阶段
           setPhase(2); // MarkersGenerated
         } else if (chunk.type === 'error') {
           throw new Error(chunk.message || '生成失败');
@@ -1132,53 +1057,47 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const buildPreviewMarkdownWithImages = useCallback(
     (items: MarkerRunItem[]) => {
       const base = String(articleWithMarkers || articleContent || '');
-      if (!base || markers.length === 0) return '';
+      if (!base) return '';
 
       const byIndex = new Map<number, MarkerRunItem>(items.map((x) => [x.markerIndex, x]));
       const patches: Array<{ start: number; end: number; replacement: string }> = [];
+      let changed = false;
 
-      // 关键：按 markerIndex 精准替换，每个 marker 都添加 data-marker-idx 用于定位
+      // 关键：按 markerIndex 精准替换（允许只生成第 N 张，不依赖“前缀完成”）
       for (let i = 0; i < markers.length; i++) {
         const m = markers[i];
         const it = byIndex.get(m.index);
+        if (!it) continue;
 
-        const url = it ? (
+        const url =
           String(it.assetUrl || it.url || '').trim() ||
-          (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '')
-        ) : '';
+          (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
 
-        // 如果有图片 URL，使用 raw <img> 确保 URL 特殊字符不破坏 markdown 语法
+        // 如果有图片 URL，优先显示图片（无论是 done 还是 running 重新生成中）
         if (url) {
-          const safeUrl = url.replace(/"/g, '&quot;');
+          changed = true;
           patches.push({
             start: m.startPos,
             end: m.endPos,
-            replacement: `<img data-marker-idx="${i}" alt="配图 ${i + 1}" src="${safeUrl}" style="max-width:100%;border-radius:8px;margin:8px 0" />`,
+            replacement: `![配图 ${i + 1}](${url})`,
           });
           continue;
         }
 
         // "立刻插入"：无图时点击生成后，生成中也会在对应 marker 行下方插入占位提示
-        const isGenerating = it?.status === 'running';
+        // 注意：只有在 running 状态且没有旧图时才插入提示
+        const isGenerating = it.status === 'running';
         if (isGenerating) {
+          changed = true;
           patches.push({
             start: m.startPos,
             end: m.endPos,
-            replacement: `<span data-marker-idx="${i}">[插图] : ${m.text}</span>\n\n> 配图 ${i + 1} 生成中...`,
+            replacement: `[插图] : ${m.text}\n\n> 配图 ${i + 1} 生成中...`,
           });
-          continue;
         }
-
-        // 空闲/无运行项 — 包裹 data-marker-idx 用于定位（保留原文供 highlightText 高亮）
-        const originalText = base.slice(m.startPos, m.endPos);
-        patches.push({
-          start: m.startPos,
-          end: m.endPos,
-          replacement: `<span data-marker-idx="${i}">${originalText}</span>`,
-        });
       }
 
-      if (patches.length === 0) return '';
+      if (!changed) return '';
 
       // 从后往前替换，避免偏移
       patches.sort((a, b) => b.start - a.start);
@@ -1201,38 +1120,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const locateMarkerInPreview = (markerIndex: number) => {
     const container = articlePreviewRef.current;
     if (!container) return;
-
-    const scrollAndHighlight = (el: HTMLElement) => {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      el.style.outline = '2px solid rgba(245, 158, 11, 0.8)';
-      el.style.outlineOffset = '2px';
-      setTimeout(() => { el.style.outline = ''; el.style.outlineOffset = ''; }, 1500);
-    };
-
-    // 方式 1: data-marker-idx 属性（最可靠，兼容图片/标记/生成中所有状态）
-    const byAttr = container.querySelector(`[data-marker-idx="${markerIndex}"]`) as HTMLElement | null;
-    if (byAttr) {
-      scrollAndHighlight(byAttr);
-      return;
-    }
-
-    // 方式 2: marker class 按序号（articleWithImages 为空时的回退）
-    const markerEls = container.querySelectorAll('.prd-md-marker, .prd-md-marker-new');
-    const target = markerEls[markerIndex] as HTMLElement | undefined;
+    const markers = container.querySelectorAll('.prd-md-marker');
+    const target = markers[markerIndex] as HTMLElement | undefined;
     if (target) {
-      scrollAndHighlight(target);
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
-
-    // 方式 3: img alt 匹配（宽泛回退）
     const imgAlt = `配图 ${markerIndex + 1}`;
     const img = container.querySelector(`img[alt="${imgAlt}"]`) as HTMLElement | null;
-    if (img) {
-      scrollAndHighlight(img);
-      return;
-    }
-
-    console.warn('[定位] 未找到匹配元素', { markerIndex, markerEls: markerEls.length });
+    if (!img) return;
+    img.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
   // markerRunItems 状态变化时：立即刷新左侧预览（支持"单条先生成"不乱序）
@@ -1430,7 +1327,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     const dataUrl = finalB64.startsWith('data:') ? finalB64 : `data:image/png;base64,${finalB64}`;
-    const up = await uploadVisualAgentWorkspaceAsset({ 
+    const up = await uploadLiteraryAgentWorkspaceAsset({ 
       id: workspaceId, 
       data: dataUrl, 
       prompt: plannedPrompt,
@@ -1783,35 +1680,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setEditingPrompt(null);
   };
 
-  // AI 优化：提取旧提示词中的风格描述，去除格式指令
-  const handleOptimizePrompt = async (mode: 'edit' | 'create') => {
-    const content = mode === 'edit' ? editingPrompt?.content : creatingPrompt?.content;
-    if (!content?.trim()) {
-      toast.warning('请先输入内容');
-      return;
-    }
-    const targetId = mode === 'edit' ? editingPrompt?.id ?? 'new' : 'new';
-    setOptimizingPromptId(targetId);
-    try {
-      const res = await optimizeLiteraryPrompt({ content });
-      if (res.success && res.data?.optimizedContent) {
-        if (mode === 'edit' && editingPrompt) {
-          setEditingPrompt({ ...editingPrompt, content: res.data.optimizedContent });
-        } else if (mode === 'create' && creatingPrompt) {
-          setCreatingPrompt({ ...creatingPrompt, content: res.data.optimizedContent });
-        }
-        toast.success('已提取风格描述');
-      } else {
-        toast.error('优化失败', res.error?.message || '未知错误');
-      }
-    } catch (error) {
-      console.error('Optimize prompt error:', error);
-      toast.error('优化失败');
-    } finally {
-      setOptimizingPromptId(null);
-    }
-  };
-
   // 删除提示词模板
   const handleDeletePrompt = async (prompt: PromptTemplate) => {
     if (prompt.isSystem) {
@@ -1950,7 +1818,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       label: '生成配图标记',
       action: handleGenerateMarkers,
       icon: Wand2,
-      disabled: !articleContent.trim(),
+      disabled: !articleContent.trim() || !selectedPrompt,
       show: phase === 1, // Editing
     },
     {
@@ -1989,16 +1857,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     const out: Array<string | JSX.Element> = [];
     let last = 0;
     let m: RegExpExecArray | null;
-    let markerOrdinal = 0;
     markerRegex.lastIndex = 0;
     while ((m = markerRegex.exec(text)) !== null) {
       const start = m.index;
       const end = m.index + m[0].length;
       if (start > last) out.push(text.slice(last, start));
-      // 流式生成中的 marker 使用带动画的 class
-      const isNew = markerStreaming;
       out.push(
-        <mark key={`m-${markerOrdinal++}-${start}`} className={isNew ? 'prd-md-marker-new' : 'prd-md-marker'}>
+        <mark key={`${start}-${end}`} className="prd-md-marker">
           {m[0]}
         </mark>
       );
@@ -2083,7 +1948,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       </span>
                     )}
                     <span className="text-[8px] opacity-60 mr-0.5">T2I</span>
-                    {text2ImgPool.name || text2ImgPool.code}
+                    {text2ImgPool.models?.[0]?.modelId || text2ImgPool.code || '?'}
                   </div>
                 ) : (
                   <div className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-500/10" title="文生图模型未配置">
@@ -2106,7 +1971,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       </span>
                     )}
                     <span className="text-[8px] opacity-60 mr-0.5">I2I</span>
-                    {img2ImgPool.name || img2ImgPool.code}
+                    {img2ImgPool.models?.[0]?.modelId || img2ImgPool.code || '?'}
                   </div>
                 ) : (
                   <div className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-500/10" title="图生图模型未配置">
@@ -2243,153 +2108,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             )}
 
-            {/* 标记生成中：全屏 AI 输出视图（Thinking + Raw Output） */}
-            {phase === 2 && markerStreaming && (
-              <div
-                ref={thinkingPanelRef}
-                className="h-full overflow-auto p-4"
-              >
-                {/* Thinking 区域 */}
-                {thinkingContent && (
-                  <div className="mb-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span
-                        className="inline-block w-2 h-2 rounded-full"
-                        style={{
-                          background: 'rgba(168, 85, 247, 0.8)',
-                          animation: 'pulse 1.5s ease-in-out infinite',
-                        }}
-                      />
-                      <span
-                        className="text-[11px] font-semibold tracking-wide uppercase"
-                        style={{ color: 'rgba(168, 85, 247, 0.85)' }}
-                      >
-                        Thinking
-                      </span>
-                    </div>
-                    <div
-                      className="rounded-xl px-3 py-2 text-[12px] leading-relaxed prd-md"
-                      style={{
-                        background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(99, 102, 241, 0.06) 100%)',
-                        border: '1px solid rgba(168, 85, 247, 0.15)',
-                        color: 'rgba(255, 255, 255, 0.7)',
-                      }}
-                    >
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {thinkingContent}
-                      </ReactMarkdown>
-                    </div>
-                  </div>
-                )}
-
-                {/* Raw LLM 输出区域 */}
-                {rawMarkerOutput && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span
-                        className="inline-block w-2 h-2 rounded-full"
-                        style={{
-                          background: 'rgba(99, 102, 241, 0.8)',
-                          animation: 'pulse 1.5s ease-in-out infinite',
-                        }}
-                      />
-                      <span
-                        className="text-[11px] font-semibold tracking-wide uppercase"
-                        style={{ color: 'rgba(99, 102, 241, 0.85)' }}
-                      >
-                        Output
-                      </span>
-                    </div>
-                    <pre
-                      className="rounded-xl px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-all font-mono"
-                      style={{
-                        background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(34, 197, 94, 0.06) 100%)',
-                        border: '1px solid rgba(99, 102, 241, 0.15)',
-                        color: 'rgba(147, 197, 253, 0.75)',
-                        margin: 0,
-                      }}
-                    >
-                      {rawMarkerOutput}
-                    </pre>
-                  </div>
-                )}
-
-                {/* 空状态：等待 LLM 响应 */}
-                {!thinkingContent && !rawMarkerOutput && (
-                  <div className="h-full flex items-center justify-center">
-                    <div className="flex flex-col items-center gap-3">
-                      <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(168, 85, 247, 0.6)' }} />
-                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>等待 AI 响应…</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* 标记生成完成：文章预览视图 */}
-            {phase === 2 && !markerStreaming && (
-              <div className="p-4 relative" style={{ '--img-display-size': `${imageDisplaySize}%` } as React.CSSProperties}>
-                {/* 图片显示尺寸控制 - 右上角浮动 */}
-                {markerRunItems.some(x => x.assetUrl || x.url || x.base64) && (
-                  <div
-                    className="sticky top-2 float-right z-10 flex items-center gap-0.5 rounded-lg px-1.5 py-1"
-                    style={{
-                      background: 'rgba(0,0,0,0.55)',
-                      backdropFilter: 'blur(10px)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                    }}
-                  >
-                    <ImageIcon size={11} style={{ color: 'var(--text-muted)', marginRight: 2 }} />
-                    {[30, 50, 75, 100].map(size => (
-                      <button
-                        key={size}
-                        type="button"
-                        onClick={() => setImageDisplaySize(size)}
-                        className="px-1.5 py-0.5 text-[10px] rounded transition-colors"
-                        style={{
-                          background: imageDisplaySize === size ? 'rgba(147, 197, 253, 0.2)' : 'transparent',
-                          color: imageDisplaySize === size ? '#93C5FD' : 'rgba(255,255,255,0.45)',
-                          border: imageDisplaySize === size ? '1px solid rgba(147, 197, 253, 0.3)' : '1px solid transparent',
-                          fontVariantNumeric: 'tabular-nums',
-                        }}
-                      >
-                        {size}%
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* 折叠的思考面板 */}
-                {thinkingContent && (
-                  <details
-                    className="mb-4 rounded-xl overflow-hidden"
-                    style={{
-                      background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.06) 0%, rgba(99, 102, 241, 0.04) 100%)',
-                      border: '1px solid rgba(168, 85, 247, 0.15)',
-                    }}
-                  >
-                    <summary
-                      className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none text-[11px] font-semibold tracking-wide uppercase"
-                      style={{ color: 'rgba(168, 85, 247, 0.7)' }}
-                    >
-                      Thinking
-                    </summary>
-                    <div
-                      className="px-3 py-2 text-[12px] leading-relaxed prd-md"
-                      style={{
-                        color: 'rgba(255, 255, 255, 0.6)',
-                        maxHeight: 200,
-                        overflowY: 'auto',
-                        borderTop: '1px solid rgba(168, 85, 247, 0.1)',
-                      }}
-                    >
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {thinkingContent}
-                      </ReactMarkdown>
-                    </div>
-                  </details>
-                )}
-
+            {/* 标记生成中/完成/生图等阶段：显示 markdown 预览（流式更新） */}
+            {phase === 2 && ( // MarkersGenerated
+              <div className="p-4 relative">
                 <div className="prd-md">
                   <ReactMarkdown
                     key="article-preview-main"
@@ -2449,19 +2170,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               {/* 提示词 */}
               <div
                 className={configPillBaseClass}
-                style={{
-                  background: selectedPrompt ? 'rgba(147, 197, 253, 0.08)' : 'rgba(255,255,255,0.03)',
-                  border: selectedPrompt ? '1px solid rgba(147, 197, 253, 0.15)' : '1px solid rgba(255,255,255,0.08)'
-                }}
+                style={{ background: 'rgba(147, 197, 253, 0.08)', border: '1px solid rgba(147, 197, 253, 0.15)' }}
                 onClick={() => {
                   if (selectedPrompt) handleEditPrompt(selectedPrompt);
                   else setPromptPreviewOpen(true);
                 }}
-                title={selectedPrompt?.title || '未选择风格'}
+                title={selectedPrompt?.title || '未选择提示词'}
               >
-                <FileText size={12} style={{ color: selectedPrompt ? '#93C5FD' : '#9CA3AF', flexShrink: 0 }} />
+                <FileText size={12} style={{ color: '#93C5FD', flexShrink: 0 }} />
                 <span className={configPillTextClass} style={{ color: selectedPrompt ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {selectedPrompt?.title || '风格'}
+                  {selectedPrompt?.title || '提示词'}
                 </span>
               </div>
               {/* 风格图 */}
@@ -2647,22 +2365,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
 
-            <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-1.5">
-              {/* 标记生成中的进度提示 */}
-              {markerStreaming && (
-                <div
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
-                  style={{
-                    background: 'rgba(245, 158, 11, 0.08)',
-                    border: '1px solid rgba(245, 158, 11, 0.2)',
-                    color: 'rgba(245, 158, 11, 0.95)',
-                    animation: 'pulse 2s ease-in-out infinite',
-                  }}
-                >
-                  <Loader2 size={14} className="animate-spin" />
-                  <span>AI 正在分析文章并生成配图标记…已识别 {markerRunItems.length} 个位置</span>
-                </div>
-              )}
+            <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-2">
               {markerRunItems.map((it, idx) => {
                 const statusLabel =
                   it.status === 'parsing'
@@ -2680,57 +2383,40 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 const src =
                   String(it.assetUrl || it.url || '').trim() ||
                   (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
-                const showPlaceholder = it.status === 'running' || it.status === 'parsing'; // 生图和解析时都显示动画
+                const showPlaceholder = it.status === 'running'; // 只在生图时显示呼吸动画，解析时不显示
                 const canShow = Boolean(src) && it.status === 'done';
                 const hasImage = Boolean(String(it.assetUrl || it.url || '').trim() || it.base64);
                 const genLabel = hasImage ? '重新生成' : '生成图片';
                 const genTitle = hasImage ? '重新生成该配图（会替换左侧预览中的对应插图）' : '生成该配图（会插入左侧预览中对应 [插图] 位置）';
 
-                const isGlowing = glowingMarkers.has(it.markerIndex);
-
                 return (
                   <div
                   key={it.markerIndex}
-                  className="p-2.5 rounded"
+                  className="p-3 rounded"
                   style={{
                     background: 'var(--bg-elevated)',
                     border: '1px solid var(--border-subtle)',
-                    position: 'relative',
                   }}
                 >
-                  {/* 入场发光边框动画 */}
-                  {isGlowing && (
-                    <div
-                      className="marker-card-glow-entrance"
-                      onAnimationEnd={() => {
-                        setGlowingMarkers((prev) => {
-                          const next = new Set(prev);
-                          next.delete(it.markerIndex);
-                          return next;
-                        });
-                      }}
-                    />
-                  )}
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
                       配图 {idx + 1}
                     </div>
                     <div className="flex items-center gap-2">
-                      {/* 尺寸选择器 */}
-                      <ImageSizePicker
-                        sizesByResolution={sizesByResolutionForPicker}
-                        value={it.planItem?.size || '1024x1024'}
-                        onChange={(s) => {
-                          setMarkerRunItems((prev) =>
-                            prev.map((x) =>
-                              x.markerIndex === it.markerIndex
-                                ? { ...x, planItem: { ...(x.planItem || { prompt: x.draftText || x.markerText, count: 1 }), size: s } }
-                                : x
-                            )
-                          );
-                        }}
-                        disabled={it.status === 'running' || it.status === 'parsing'}
-                      />
+                      {/* 显示图片尺寸（如果已解析） */}
+                      {it.planItem?.size && (
+                        <div
+                          className="text-[11px] px-2 py-0.5 rounded-full font-medium"
+                          style={{
+                            background: 'rgba(99, 102, 241, 0.12)',
+                            border: '1px solid rgba(99, 102, 241, 0.24)',
+                            color: 'rgba(99, 102, 241, 0.95)',
+                          }}
+                          title={`图片尺寸：${it.planItem.size}`}
+                        >
+                          {it.planItem.size}
+                        </div>
+                      )}
                       {/* 状态标签 */}
                       <div
                         className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
@@ -2774,9 +2460,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   ) : null}
 
                   <div
-                    className="mt-1.5 rounded-[10px] overflow-hidden relative group"
+                    className="mt-2 rounded-[12px] overflow-hidden relative group"
                     style={{
-                      height: 120,
+                      height: 160,
                       background: 'rgba(0,0,0,0.18)',
                       border: '1px solid rgba(255,255,255,0.10)',
                       cursor: canShow ? 'pointer' : 'default',
@@ -2798,17 +2484,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     }}
                   >
                     {showPlaceholder ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                        {it.status === 'parsing' ? (
-                          <>
-                            <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(250, 204, 21, 0.7)' }} />
-                            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>解析尺寸…</span>
-                          </>
-                        ) : (
-                          <div style={{ width: '100%', height: '100%', maxWidth: 120, maxHeight: 120, aspectRatio: '1' }}>
-                            <PrdPetalBreathingLoader fill />
-                          </div>
-                        )}
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        {/* 使用 fill 模式适应容器，内层正方形保持花瓣比例 */}
+                        <div style={{ width: '100%', height: '100%', maxWidth: 160, maxHeight: 160, aspectRatio: '1' }}>
+                          <PrdPetalBreathingLoader fill />
+                        </div>
                       </div>
                     ) : null}
                     {canShow ? (
@@ -2874,39 +2554,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         </div>
                       </>
                     ) : !showPlaceholder ? (
-                      (() => {
-                        // 显示按当前选中尺寸的比例预览框
-                        const cs = it.planItem?.size || '1024x1024';
-                        const [cw, ch] = cs.split(/[xX×]/).map(Number);
-                        const cRatio = (cw && ch) ? cw / ch : 1;
-                        const containerH = 100; // 预留上下 padding
-                        const containerW = 280; // 约等于卡片宽度
-                        // 在容器内按比例显示，不超出边界
-                        let previewW: number, previewH: number;
-                        if (cRatio >= containerW / containerH) {
-                          previewW = Math.min(containerW, 240);
-                          previewH = Math.round(previewW / cRatio);
-                        } else {
-                          previewH = Math.min(containerH, 90);
-                          previewW = Math.round(previewH * cRatio);
-                        }
-                        return (
-                          <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                            <div
-                              className="rounded-lg flex items-center justify-center"
-                              style={{
-                                width: previewW,
-                                height: previewH,
-                                background: 'rgba(255,255,255,0.03)',
-                                border: '1.5px dashed rgba(99, 102, 241, 0.3)',
-                                transition: 'width 0.2s, height 0.2s',
-                              }}
-                            >
-                              <ImageIcon size={18} style={{ opacity: 0.4 }} />
-                            </div>
-                          </div>
-                        );
-                      })()
+                      <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                        <div
+                          className="w-10 h-10 rounded-lg flex items-center justify-center"
+                          style={{ background: 'rgba(255,255,255,0.05)', border: '1px dashed rgba(255,255,255,0.15)' }}
+                        >
+                          <ImageIcon size={18} style={{ opacity: 0.5 }} />
+                        </div>
+                        <div>待生成配图</div>
+                      </div>
                     ) : null}
                   </div>
 
@@ -2916,13 +2572,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       const v = e.target.value;
                       setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === it.markerIndex ? { ...x, draftText: v } : x)));
                     }}
-                    className="mt-1.5 w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none resize-none prd-field"
-                    style={{ minHeight: 56 }}
+                    className="mt-2 w-full rounded-[12px] px-3 py-2 text-[12px] outline-none resize-none prd-field"
+                    style={{ minHeight: 84 }}
                     placeholder="可编辑后右下角生成图片 / 重新生成"
                     disabled={it.status === 'running' || it.status === 'parsing'}
                   />
 
-                  <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <div className="mt-2 flex items-center justify-between gap-2">
                     <Button
                       size="sm"
                       variant="secondary"
@@ -2968,8 +2624,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       <Dialog
         open={!!creatingPrompt}
         onOpenChange={(open) => !open && handleCancelCreate()}
-        title="新建风格模板"
-        description="输入模板名称和风格描述（系统指令由系统自动提供，此处只需描述配图风格偏好）"
+        title="新建提示词模板"
+        description="输入模板名称和内容"
         maxWidth={1040}
         content={
           creatingPrompt ? (
@@ -3006,16 +2662,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         预览
                       </Button>
                     </div>
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      onClick={() => void handleOptimizePrompt('create')}
-                      disabled={!creatingPrompt.content?.trim() || optimizingPromptId === 'new'}
-                      title="AI 自动提取风格描述，去除旧格式指令"
-                    >
-                      <Sparkles size={12} />
-                      {optimizingPromptId === 'new' ? '优化中...' : 'AI 提取风格'}
-                    </Button>
                   </div>
 
                   {/* 编辑模式：显示 textarea */}
@@ -3023,7 +2669,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <textarea
                       value={creatingPrompt.content}
                       onChange={(e) => setCreatingPrompt({ ...creatingPrompt, content: e.target.value })}
-                      placeholder="描述配图风格偏好，例如：水彩风格、暖色调、注重细节表现、偏向写实..."
+                      placeholder="请输入提示词模板内容（所有文学创作 Agent 全局共享）..."
                       rows={14}
                       className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
                     />
@@ -3086,8 +2732,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       <Dialog
         open={!!editingPrompt}
         onOpenChange={(open) => !open && handleCancelEdit()}
-        title="编辑风格模板"
-        description="编辑标题和风格描述（系统指令由系统自动提供，此处只需描述配图风格偏好）"
+        title="编辑提示词模板"
+        description="同时编辑标题和内容"
         maxWidth={1040}
         content={
           editingPrompt ? (
@@ -3123,16 +2769,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         预览
                       </Button>
                     </div>
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      onClick={() => void handleOptimizePrompt('edit')}
-                      disabled={!editingPrompt.content?.trim() || optimizingPromptId === editingPrompt.id}
-                      title="AI 自动提取风格描述，去除旧格式指令"
-                    >
-                      <Sparkles size={12} />
-                      {optimizingPromptId === editingPrompt.id ? '优化中...' : 'AI 提取风格'}
-                    </Button>
                   </div>
 
                   {/* 编辑模式：显示 textarea */}
@@ -3140,7 +2776,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <textarea
                       value={editingPrompt.content}
                       onChange={(e) => setEditingPrompt({ ...editingPrompt, content: e.target.value })}
-                      placeholder="描述配图风格偏好，例如：水彩风格、暖色调、注重细节表现、偏向写实..."
+                      placeholder="输入模板内容..."
                       rows={14}
                       className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
                     />
@@ -3199,7 +2835,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
       />
 
-      {/* 风格提示词、底图与水印配置对话框 */}
+      {/* 系统提示词、底图与水印配置对话框 */}
       <Dialog
         open={promptPreviewOpen}
         onOpenChange={(open) => {
@@ -3239,11 +2875,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             {/* 我的配置视图 */}
             {configViewMode === 'mine' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
-            {/* 左侧：风格提示词 */}
+            {/* 左侧：系统提示词 */}
             <div className="min-h-0 flex flex-col h-full">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  风格提示词
+                  系统提示词
                 </div>
                 <Button
                   size="xs"
