@@ -29,12 +29,14 @@ import {
   MessageSquare,
   Database,
   List,
+  Webhook,
 } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import type { OpenPlatformApp, CreateAppRequest, UpdateAppRequest } from '@/services/contracts/openPlatform';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { WebhookConfigDialog } from './WebhookConfigDialog';
 
 interface AppsPanelProps {
   onActionsReady?: (actions: React.ReactNode) => void;
@@ -97,6 +99,8 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
   const [newApiKey, setNewApiKey] = useState('');
   const [curlDialogOpen, setCurlDialogOpen] = useState(false);
   const [currentCurlCommand, setCurrentCurlCommand] = useState('');
+  const [webhookDialogOpen, setWebhookDialogOpen] = useState(false);
+  const [webhookApp, setWebhookApp] = useState<OpenPlatformApp | null>(null);
 
   // 统计数据
   const stats = useMemo(() => {
@@ -483,6 +487,12 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                               >
                                 <RefreshCw size={12} /> 重新生成密钥
                               </DropdownMenu.Item>
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10"
+                                onSelect={() => { setWebhookApp(app); setWebhookDialogOpen(true); }}
+                              >
+                                <Webhook size={12} /> Webhook 配置
+                              </DropdownMenu.Item>
                               <DropdownMenu.Separator className="my-1 h-px bg-white/10" />
                               <DropdownMenu.Item
                                 className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10 text-red-400"
@@ -588,6 +598,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
       <EditAppDialog open={editDialogOpen} onClose={() => { setEditDialogOpen(false); setEditingApp(null); }} onUpdate={handleUpdate} app={editingApp} />
       <ApiKeyDialog open={apiKeyDialogOpen} onClose={() => setApiKeyDialogOpen(false)} apiKey={newApiKey} />
       <CurlCommandDialog open={curlDialogOpen} onClose={() => setCurlDialogOpen(false)} curlCommand={currentCurlCommand} />
+      <WebhookConfigDialog open={webhookDialogOpen} onClose={() => { setWebhookDialogOpen(false); setWebhookApp(null); }} app={webhookApp} />
     </div>
   );
 }

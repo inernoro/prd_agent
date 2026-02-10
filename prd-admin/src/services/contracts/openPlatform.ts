@@ -18,6 +18,13 @@ export interface OpenPlatformApp {
   lastUsedAt?: string;
   totalRequests: number;
   apiKeyMasked: string;
+  // Webhook 配置摘要
+  webhookEnabled: boolean;
+  webhookUrl?: string;
+  tokenQuotaLimit: number;
+  tokensUsed: number;
+  quotaWarningThreshold: number;
+  notifyTarget: string;
 }
 
 export interface OpenPlatformRequestLog {
@@ -90,6 +97,55 @@ export interface RegenerateKeyResponse {
   apiKey: string;
 }
 
+// ============ Webhook 配置 ============
+
+export interface WebhookConfigResponse {
+  webhookUrl?: string;
+  webhookSecretMasked?: string;
+  webhookEnabled: boolean;
+  tokenQuotaLimit: number;
+  tokensUsed: number;
+  quotaWarningThreshold: number;
+  lastQuotaWarningAt?: string;
+  notifyTarget: string;
+}
+
+export interface UpdateWebhookConfigRequest {
+  webhookUrl?: string;
+  webhookSecret?: string;
+  webhookEnabled: boolean;
+  tokenQuotaLimit: number;
+  quotaWarningThreshold: number;
+  notifyTarget: string;
+}
+
+export interface WebhookTestResponse {
+  success: boolean;
+  statusCode?: number;
+  durationMs?: number;
+  errorMessage?: string;
+  responseBody?: string;
+}
+
+export interface WebhookLogItem {
+  id: string;
+  type: string;
+  title: string;
+  statusCode?: number;
+  success: boolean;
+  errorMessage?: string;
+  durationMs?: number;
+  retryCount: number;
+  createdAt: string;
+}
+
+export interface PagedWebhookLogsResponse {
+  items: WebhookLogItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface IOpenPlatformService {
   // 应用管理
   getApps(page: number, pageSize: number, search?: string): Promise<PagedAppsResponse>;
@@ -108,4 +164,10 @@ export interface IOpenPlatformService {
     endTime?: string,
     statusCode?: number
   ): Promise<PagedLogsResponse>;
+
+  // Webhook 配置
+  getWebhookConfig(appId: string): Promise<WebhookConfigResponse>;
+  updateWebhookConfig(appId: string, request: UpdateWebhookConfigRequest): Promise<void>;
+  testWebhook(appId: string): Promise<WebhookTestResponse>;
+  getWebhookLogs(appId: string, page: number, pageSize: number): Promise<PagedWebhookLogsResponse>;
 }

@@ -54,6 +54,9 @@ public static class AdminMenuCatalog
         // 开放平台
         new("open-platform", "/open-platform", "开放平台", "API 应用与调用日志", "Plug", 120),
 
+        // 自动化
+        new("automations", "/automations", "自动化", "事件驱动的自动化规则引擎", "Zap", 125),
+
         // 权限管理
         new("authz", "/authz", "权限管理", "系统角色与用户权限", "UserCog", 130),
 

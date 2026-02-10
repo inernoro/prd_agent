@@ -207,6 +207,7 @@ import type {
   PreviewApiLogsContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
+import type { IAutomationsService } from '@/services/contracts/automations';
 import type { IModelGroupsService } from '@/services/contracts/modelGroups';
 import type { IAppCallersService } from '@/services/contracts/appCallers';
 import type { ISchedulerConfigService } from '@/services/contracts/schedulerConfig';
@@ -456,6 +457,7 @@ import {
   previewApiLogsReal,
 } from '@/services/real/defectAgent';
 import { OpenPlatformService } from '@/services/real/openPlatform';
+import { AutomationsService } from '@/services/real/automations';
 import { ModelGroupsService } from '@/services/real/modelGroups';
 import { AppCallersService } from '@/services/real/appCallers';
 import { SchedulerConfigService } from '@/services/real/schedulerConfig';
@@ -746,6 +748,7 @@ export const batchMoveDefects: BatchMoveDefectsContract = withAuth(batchMoveDefe
 export const previewApiLogs: PreviewApiLogsContract = withAuth(previewApiLogsReal);
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
+export const automationsService: IAutomationsService = new AutomationsService();
 export const modelGroupsService: IModelGroupsService = new ModelGroupsService();
 export const appCallersService: IAppCallersService = new AppCallersService();
 export const schedulerConfigService: ISchedulerConfigService = new SchedulerConfigService();
