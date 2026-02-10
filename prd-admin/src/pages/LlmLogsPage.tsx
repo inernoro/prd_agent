@@ -237,49 +237,6 @@ function tryPrettyJsonText(text: string): string {
   }
 }
 
-/** 从请求体 JSON 中提取所有内嵌图片（inline_data / image_url / mask 等） */
-function extractInlineImagesFromBody(bodyJson: string | null | undefined): { label: string; src: string }[] {
-  if (!bodyJson) return [];
-  try {
-    const obj = JSON.parse(bodyJson) as any;
-    const results: { label: string; src: string }[] = [];
-
-    // 顶层 image 字段（URL 或 data URI）
-    if (typeof obj?.image === 'string' && (obj.image.startsWith('http') || obj.image.startsWith('data:'))) {
-      results.push({ label: '参考图', src: obj.image });
-    }
-
-    // 顶层 mask 字段（URL 或 data URI）
-    if (typeof obj?.mask === 'string' && (obj.mask.startsWith('http') || obj.mask.startsWith('data:'))) {
-      results.push({ label: '蒙版', src: obj.mask });
-    }
-
-    // 遍历 messages / contents 中的图片部分
-    const msgs = Array.isArray(obj?.messages) ? obj.messages : Array.isArray(obj?.contents) ? obj.contents : [];
-    for (const msg of msgs) {
-      const parts = Array.isArray(msg?.content) ? msg.content : Array.isArray(msg?.parts) ? msg.parts : [];
-      for (const part of parts) {
-        // OpenAI 格式: { type: "image_url", image_url: { url: "data:..." } }
-        if (part?.type === 'image_url' && typeof part?.image_url?.url === 'string') {
-          const url = part.image_url.url;
-          if (url.startsWith('data:') || url.startsWith('http')) {
-            results.push({ label: '参考图', src: url });
-          }
-        }
-        // Gemini 格式: { inline_data: { mime_type: "image/png", data: "base64..." } }
-        if (part?.inline_data && typeof part.inline_data.data === 'string' && part.inline_data.data.length > 100) {
-          const mime = part.inline_data.mime_type || 'image/png';
-          results.push({ label: '参考图', src: `data:${mime};base64,${part.inline_data.data}` });
-        }
-      }
-    }
-
-    return results;
-  } catch {
-    return [];
-  }
-}
-
 function normalizeStrictJsonCandidate(raw: string): { ok: true; json: string } | { ok: false; reason: string } {
   const t0 = (raw ?? '').trim();
   if (!t0) return { ok: false, reason: '空内容' };
@@ -1065,32 +1022,12 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
     return arr;
   }, [artifacts]);
   const artifactInputs = useMemo(() => artifactsSorted.filter((x) => String(x.kind).toLowerCase() === 'input_image'), [artifactsSorted]);
-  const artifactOutputs = useMemo(() => artifactsSorted.filter((x) => String(x.kind).toLowerCase() === 'output_image'), [artifactsSorted]);
   const isImageGenRequest = useMemo(() => {
     const v = normalizeRequestType(detail?.requestType);
     return v === 'generation' || v === 'imagegen' || v === 'image_gen' || v === 'image-generate';
   }, [detail?.requestType]);
-  const hasImageArtifacts = artifactInputs.length > 0 || artifactOutputs.length > 0;
-/** 从请求体中提取的内嵌图片（蒙版、参考图等）；优先使用 imageReferences COS URL */
-  const bodyInlineImages = useMemo(() => {
-    // 优先使用后端 imageReferences（COS URL，不含 base64）
-    const refs = detail?.imageReferences;
-    if (Array.isArray(refs) && refs.length > 0) {
-      return refs
-        .filter((r) => r.cosUrl)
-        .map((r) => ({
-          label: r.label || '参考图',
-          src: r.cosUrl!,
-          cosUrl: r.cosUrl ?? undefined,
-          sha256: r.sha256 ?? undefined,
-          mimeType: r.mimeType ?? undefined,
-          sizeBytes: r.sizeBytes ?? undefined,
-        }));
-    }
-    // 回退：从请求体 JSON 提取（旧日志无 imageReferences 字段）
-    return extractInlineImagesFromBody(detail?.requestBodyRedacted);
-  }, [detail?.imageReferences, detail?.requestBodyRedacted]);
-  const isImageLikeLog = isImageGenRequest || hasImageArtifacts || typeof detail?.imageSuccessCount === 'number';
+  const hasLogImages = (detail?.inputImages?.length ?? 0) > 0 || (detail?.outputImages?.length ?? 0) > 0;
+  const isImageLikeLog = isImageGenRequest || hasLogImages || typeof detail?.imageSuccessCount === 'number';
   const prettyRequestBody = useMemo(() => {
     if (!detail) return '';
     const restored = injectRefImageIntoRequestBody(detail.requestBodyRedacted || '', artifactInputs);
@@ -2036,36 +1973,21 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
 
                   <div className="mt-3">
                     {(() => {
-                      // 新版：优先用 inputImages/outputImages（Worker 直写），回退到旧版 artifacts
+                      // inputImages/outputImages：Worker 直写 COS URL，无回退
                       const effInputs: { url: string; label: string; sha256?: string }[] = [];
                       const effOutputs: { url: string; label: string; sha256?: string; originalUrl?: string }[] = [];
 
-                      // inputImages（新版）
-                      if (Array.isArray(detail?.inputImages) && detail!.inputImages!.length > 0) {
+                      // inputImages（Worker 直写 COS URL）
+                      if (Array.isArray(detail?.inputImages)) {
                         for (const img of detail!.inputImages!) {
                           if (img.url) effInputs.push({ url: img.url, label: img.label || '参考图', sha256: img.sha256 ?? undefined });
                         }
-                      } else if (artifactInputs.length > 0) {
-                        // 旧版回退：UploadArtifact
-                        for (const a of artifactInputs) {
-                          if (a.cosUrl) effInputs.push({ url: a.cosUrl, label: '参考图', sha256: a.sha256 ?? undefined });
-                        }
-                      } else if (bodyInlineImages.length > 0) {
-                        // 旧版回退：imageReferences
-                        for (const img of bodyInlineImages) {
-                          effInputs.push({ url: img.src, label: img.label || '参考图', sha256: undefined });
-                        }
                       }
 
-                      // outputImages（新版）
-                      if (Array.isArray(detail?.outputImages) && detail!.outputImages!.length > 0) {
+                      // outputImages（Worker 直写 COS URL）
+                      if (Array.isArray(detail?.outputImages)) {
                         for (const img of detail!.outputImages!) {
                           if (img.url) effOutputs.push({ url: img.url, label: img.label || '生成结果', sha256: img.sha256 ?? undefined, originalUrl: img.originalUrl ?? undefined });
-                        }
-                      } else if (artifactOutputs.length > 0) {
-                        // 旧版回退
-                        for (const a of artifactOutputs) {
-                          if (a.cosUrl) effOutputs.push({ url: a.cosUrl, label: '生成结果', sha256: a.sha256 ?? undefined });
                         }
                       }
 

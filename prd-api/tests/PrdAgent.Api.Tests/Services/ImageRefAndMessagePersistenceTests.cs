@@ -698,6 +698,398 @@ public class ImageRefAndMessagePersistenceTests
 
     #endregion
 
+    #region LlmLogImage 模型测试
+
+    [Fact]
+    public void LlmLogImage_ShouldHaveAllProperties()
+    {
+        var img = new LlmLogImage
+        {
+            Url = "https://cos.example.com/display.png",
+            OriginalUrl = "https://cos.example.com/original.png",
+            Label = "生成结果",
+            Sha256 = "abc123"
+        };
+
+        Assert.Equal("https://cos.example.com/display.png", img.Url);
+        Assert.Equal("https://cos.example.com/original.png", img.OriginalUrl);
+        Assert.Equal("生成结果", img.Label);
+        Assert.Equal("abc123", img.Sha256);
+    }
+
+    [Fact]
+    public void LlmLogImage_ShouldDefaultUrlToEmpty()
+    {
+        var img = new LlmLogImage();
+
+        Assert.Equal(string.Empty, img.Url);
+        Assert.Null(img.OriginalUrl);
+        Assert.Null(img.Label);
+        Assert.Null(img.Sha256);
+    }
+
+    [Fact]
+    public void LlmLogImage_ShouldSerializeRoundTrip()
+    {
+        var original = new LlmLogImage
+        {
+            Url = "https://cos.example.com/img.png",
+            OriginalUrl = "https://cos.example.com/orig.png",
+            Label = "参考图",
+            Sha256 = "deadbeef"
+        };
+
+        var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        var json = JsonSerializer.Serialize(original, opts);
+        var deserialized = JsonSerializer.Deserialize<LlmLogImage>(json, opts);
+
+        Assert.NotNull(deserialized);
+        Assert.Equal("https://cos.example.com/img.png", deserialized!.Url);
+        Assert.Equal("https://cos.example.com/orig.png", deserialized.OriginalUrl);
+        Assert.Equal("参考图", deserialized.Label);
+        Assert.Equal("deadbeef", deserialized.Sha256);
+    }
+
+    #endregion
+
+    #region LlmRequestLog.InputImages / OutputImages 测试
+
+    [Fact]
+    public void LlmRequestLog_InputOutputImages_ShouldDefaultToNull()
+    {
+        var log = new LlmRequestLog();
+
+        Assert.Null(log.InputImages);
+        Assert.Null(log.OutputImages);
+    }
+
+    [Fact]
+    public void LlmRequestLog_ShouldStoreInputImages()
+    {
+        var log = new LlmRequestLog
+        {
+            Id = "log-input",
+            RequestId = "run-001-0-0",
+            Provider = "OpenAI",
+            Model = "dall-e-3",
+            InputImages = new List<LlmLogImage>
+            {
+                new() { Url = "https://cos.example.com/ref1.png", Label = "参考图", Sha256 = "sha-ref1" },
+                new() { Url = "https://cos.example.com/ref2.png", Label = "蒙版", Sha256 = "sha-ref2" }
+            }
+        };
+
+        Assert.NotNull(log.InputImages);
+        Assert.Equal(2, log.InputImages!.Count);
+        Assert.Equal("https://cos.example.com/ref1.png", log.InputImages[0].Url);
+        Assert.Equal("参考图", log.InputImages[0].Label);
+        Assert.Equal("https://cos.example.com/ref2.png", log.InputImages[1].Url);
+    }
+
+    [Fact]
+    public void LlmRequestLog_ShouldStoreOutputImages()
+    {
+        var log = new LlmRequestLog
+        {
+            Id = "log-output",
+            RequestId = "run-002-0-0",
+            Provider = "OpenAI",
+            Model = "dall-e-3",
+            OutputImages = new List<LlmLogImage>
+            {
+                new() { Url = "https://cos.example.com/gen-wm.png", OriginalUrl = "https://cos.example.com/gen-orig.png", Label = "生成结果", Sha256 = "sha-gen" }
+            }
+        };
+
+        Assert.NotNull(log.OutputImages);
+        Assert.Single(log.OutputImages!);
+        Assert.Equal("https://cos.example.com/gen-wm.png", log.OutputImages[0].Url);
+        Assert.Equal("https://cos.example.com/gen-orig.png", log.OutputImages[0].OriginalUrl);
+    }
+
+    [Fact]
+    public void LlmRequestLog_InputOutputImages_ShouldSerializeRoundTrip()
+    {
+        var original = new LlmRequestLog
+        {
+            Id = "log-rt2",
+            RequestId = "run-rt-0-0",
+            Provider = "test",
+            Model = "test-model",
+            InputImages = new List<LlmLogImage>
+            {
+                new() { Url = "https://cos.example.com/in.png", Label = "风格参考", Sha256 = "sha-in" }
+            },
+            OutputImages = new List<LlmLogImage>
+            {
+                new() { Url = "https://cos.example.com/out-wm.png", OriginalUrl = "https://cos.example.com/out.png", Label = "生成结果", Sha256 = "sha-out" }
+            }
+        };
+
+        var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        var json = JsonSerializer.Serialize(original, opts);
+        var deserialized = JsonSerializer.Deserialize<LlmRequestLog>(json, opts);
+
+        Assert.NotNull(deserialized?.InputImages);
+        Assert.Single(deserialized!.InputImages!);
+        Assert.Equal("https://cos.example.com/in.png", deserialized.InputImages![0].Url);
+        Assert.Equal("风格参考", deserialized.InputImages[0].Label);
+
+        Assert.NotNull(deserialized.OutputImages);
+        Assert.Single(deserialized.OutputImages!);
+        Assert.Equal("https://cos.example.com/out-wm.png", deserialized.OutputImages![0].Url);
+        Assert.Equal("https://cos.example.com/out.png", deserialized.OutputImages[0].OriginalUrl);
+    }
+
+    #endregion
+
+    #region PatchLogImages 映射逻辑测试
+
+    [Fact]
+    public void PatchLogImages_InputMapping_ShouldPreferRunImageRefUrl()
+    {
+        // 模拟 PatchLogImagesAsync：run.ImageRefs.Url 优先于 loadedImageRefs.CosUrl
+        var runImageRefs = new List<FakeImageRefInput>
+        {
+            new() { RefId = 1, Url = "https://cos.example.com/frontend-uploaded.png", AssetSha256 = "sha-frontend", Label = "参考图" }
+        };
+        var loadedImageRefs = new List<FakeImageRefData>
+        {
+            new() { RefId = 1, CosUrl = "https://cos.example.com/loaded-fallback.png", Sha256 = "sha-loaded" }
+        };
+
+        var inputs = new List<LlmLogImage>();
+        foreach (var r in runImageRefs)
+        {
+            var cosUrl = !string.IsNullOrWhiteSpace(r.Url) ? r.Url
+                : loadedImageRefs.FirstOrDefault(lr => lr.RefId == r.RefId)?.CosUrl;
+            if (string.IsNullOrWhiteSpace(cosUrl)) continue;
+            inputs.Add(new LlmLogImage
+            {
+                Url = cosUrl!,
+                Label = r.Label,
+                Sha256 = !string.IsNullOrWhiteSpace(r.AssetSha256) ? r.AssetSha256
+                    : loadedImageRefs.FirstOrDefault(lr => lr.RefId == r.RefId)?.Sha256
+            });
+        }
+
+        Assert.Single(inputs);
+        Assert.Equal("https://cos.example.com/frontend-uploaded.png", inputs[0].Url);
+        Assert.Equal("sha-frontend", inputs[0].Sha256);
+        Assert.Equal("参考图", inputs[0].Label);
+    }
+
+    [Fact]
+    public void PatchLogImages_InputMapping_ShouldFallbackToLoadedCosUrl()
+    {
+        // 当 run.ImageRefs.Url 为空时，回退到 loadedImageRefs.CosUrl
+        var runImageRefs = new List<FakeImageRefInput>
+        {
+            new() { RefId = 1, Url = null, AssetSha256 = null, Label = "手绘草图" }
+        };
+        var loadedImageRefs = new List<FakeImageRefData>
+        {
+            new() { RefId = 1, CosUrl = "https://cos.example.com/loaded.png", Sha256 = "sha-loaded" }
+        };
+
+        var inputs = new List<LlmLogImage>();
+        foreach (var r in runImageRefs)
+        {
+            var cosUrl = !string.IsNullOrWhiteSpace(r.Url) ? r.Url
+                : loadedImageRefs.FirstOrDefault(lr => lr.RefId == r.RefId)?.CosUrl;
+            if (string.IsNullOrWhiteSpace(cosUrl)) continue;
+            inputs.Add(new LlmLogImage
+            {
+                Url = cosUrl!,
+                Label = r.Label,
+                Sha256 = !string.IsNullOrWhiteSpace(r.AssetSha256) ? r.AssetSha256
+                    : loadedImageRefs.FirstOrDefault(lr => lr.RefId == r.RefId)?.Sha256
+            });
+        }
+
+        Assert.Single(inputs);
+        Assert.Equal("https://cos.example.com/loaded.png", inputs[0].Url);
+        Assert.Equal("sha-loaded", inputs[0].Sha256);
+        Assert.Equal("手绘草图", inputs[0].Label);
+    }
+
+    [Fact]
+    public void PatchLogImages_InputMapping_ShouldSkipWhenNoCosUrl()
+    {
+        // 当 run.ImageRefs.Url 和 loadedImageRefs.CosUrl 都为空时跳过
+        var runImageRefs = new List<FakeImageRefInput>
+        {
+            new() { RefId = 1, Url = null, AssetSha256 = null, Label = "无URL参考图" }
+        };
+        var loadedImageRefs = new List<FakeImageRefData>
+        {
+            new() { RefId = 2, CosUrl = "https://cos.example.com/different-ref.png", Sha256 = "sha-other" }
+        };
+
+        var inputs = new List<LlmLogImage>();
+        foreach (var r in runImageRefs)
+        {
+            var cosUrl = !string.IsNullOrWhiteSpace(r.Url) ? r.Url
+                : loadedImageRefs.FirstOrDefault(lr => lr.RefId == r.RefId)?.CosUrl;
+            if (string.IsNullOrWhiteSpace(cosUrl)) continue;
+            inputs.Add(new LlmLogImage { Url = cosUrl!, Label = r.Label });
+        }
+
+        Assert.Empty(inputs);
+    }
+
+    [Fact]
+    public void PatchLogImages_InputMapping_MultipleRefs()
+    {
+        // 多图参考：vision 模式
+        var runImageRefs = new List<FakeImageRefInput>
+        {
+            new() { RefId = 1, Url = "https://cos.example.com/ref1.png", AssetSha256 = "sha1", Label = "风格参考" },
+            new() { RefId = 2, Url = "https://cos.example.com/ref2.png", AssetSha256 = "sha2", Label = "构图参考" },
+            new() { RefId = 3, Url = null, AssetSha256 = null, Label = "蒙版" }
+        };
+        var loadedImageRefs = new List<FakeImageRefData>
+        {
+            new() { RefId = 1, CosUrl = "url1", Sha256 = "s1" },
+            new() { RefId = 2, CosUrl = "url2", Sha256 = "s2" },
+            new() { RefId = 3, CosUrl = "https://cos.example.com/mask.png", Sha256 = "sha3" }
+        };
+
+        var inputs = new List<LlmLogImage>();
+        foreach (var r in runImageRefs)
+        {
+            var cosUrl = !string.IsNullOrWhiteSpace(r.Url) ? r.Url
+                : loadedImageRefs.FirstOrDefault(lr => lr.RefId == r.RefId)?.CosUrl;
+            if (string.IsNullOrWhiteSpace(cosUrl)) continue;
+            inputs.Add(new LlmLogImage
+            {
+                Url = cosUrl!,
+                Label = r.Label,
+                Sha256 = !string.IsNullOrWhiteSpace(r.AssetSha256) ? r.AssetSha256
+                    : loadedImageRefs.FirstOrDefault(lr => lr.RefId == r.RefId)?.Sha256
+            });
+        }
+
+        Assert.Equal(3, inputs.Count);
+        Assert.Equal("https://cos.example.com/ref1.png", inputs[0].Url);
+        Assert.Equal("sha1", inputs[0].Sha256);
+        Assert.Equal("https://cos.example.com/ref2.png", inputs[1].Url);
+        Assert.Equal("sha2", inputs[1].Sha256);
+        Assert.Equal("https://cos.example.com/mask.png", inputs[2].Url);
+        Assert.Equal("sha3", inputs[2].Sha256); // fallback to loaded sha
+    }
+
+    [Fact]
+    public void PatchLogImages_OutputMapping_ShouldMapImageGenImages()
+    {
+        // 模拟 PatchLogImagesAsync 中 output 映射
+        var outputImages = new List<FakeImageGenImage>
+        {
+            new() { Url = "https://cos.example.com/gen-wm.png", OriginalUrl = "https://cos.example.com/gen-orig.png", OriginalSha256 = "sha-orig" }
+        };
+
+        var outputs = new List<LlmLogImage>();
+        foreach (var img in outputImages)
+        {
+            if (string.IsNullOrWhiteSpace(img.Url)) continue;
+            outputs.Add(new LlmLogImage
+            {
+                Url = img.Url!,
+                OriginalUrl = img.OriginalUrl,
+                Label = "生成结果",
+                Sha256 = img.OriginalSha256
+            });
+        }
+
+        Assert.Single(outputs);
+        Assert.Equal("https://cos.example.com/gen-wm.png", outputs[0].Url);
+        Assert.Equal("https://cos.example.com/gen-orig.png", outputs[0].OriginalUrl);
+        Assert.Equal("生成结果", outputs[0].Label);
+        Assert.Equal("sha-orig", outputs[0].Sha256);
+    }
+
+    [Fact]
+    public void PatchLogImages_OutputMapping_ShouldSkipEmptyUrl()
+    {
+        var outputImages = new List<FakeImageGenImage>
+        {
+            new() { Url = null, OriginalUrl = null, OriginalSha256 = null },
+            new() { Url = "", OriginalUrl = null, OriginalSha256 = null }
+        };
+
+        var outputs = new List<LlmLogImage>();
+        foreach (var img in outputImages)
+        {
+            if (string.IsNullOrWhiteSpace(img.Url)) continue;
+            outputs.Add(new LlmLogImage { Url = img.Url!, Label = "生成结果" });
+        }
+
+        Assert.Empty(outputs);
+    }
+
+    [Fact]
+    public void PatchLogImages_NoInputsNoOutputs_ShouldSkipUpdate()
+    {
+        // 模拟：run 无 ImageRefs 且 outputImages 为 null → 不更新
+        var inputs = new List<LlmLogImage>();
+        var outputs = new List<LlmLogImage>();
+
+        var shouldUpdate = inputs.Count > 0 || outputs.Count > 0;
+
+        Assert.False(shouldUpdate);
+    }
+
+    [Fact]
+    public void PatchLogImages_LogRequestId_ShouldFollowPattern()
+    {
+        // logRequestId = "{run.Id}-{curItemIndex}-{imageIndex}"
+        var runId = "abc123def456";
+        var curItemIndex = 2;
+        var imageIndex = 1;
+
+        var logRequestId = $"{runId}-{curItemIndex}-{imageIndex}";
+
+        Assert.Equal("abc123def456-2-1", logRequestId);
+    }
+
+    [Fact]
+    public void PatchLogImages_FailurePath_ShouldStillRecordInputImages()
+    {
+        // 失败时 outputImages 为 null，但 inputImages 仍应记录
+        var runImageRefs = new List<FakeImageRefInput>
+        {
+            new() { RefId = 1, Url = "https://cos.example.com/ref.png", AssetSha256 = "sha-ref", Label = "参考图" }
+        };
+
+        var inputs = new List<LlmLogImage>();
+        foreach (var r in runImageRefs)
+        {
+            if (!string.IsNullOrWhiteSpace(r.Url))
+                inputs.Add(new LlmLogImage { Url = r.Url!, Label = r.Label, Sha256 = r.AssetSha256 });
+        }
+
+        // outputImages is null on failure
+        List<FakeImageGenImage>? outputImages = null;
+        var outputs = new List<LlmLogImage>();
+        if (outputImages is { Count: > 0 })
+        {
+            foreach (var img in outputImages)
+            {
+                if (!string.IsNullOrWhiteSpace(img.Url))
+                    outputs.Add(new LlmLogImage { Url = img.Url!, Label = "生成结果" });
+            }
+        }
+
+        Assert.Single(inputs);
+        Assert.Empty(outputs);
+
+        // Should still trigger update (inputs.Count > 0)
+        var shouldUpdate = inputs.Count > 0 || outputs.Count > 0;
+        Assert.True(shouldUpdate);
+    }
+
+    #endregion
+
     #region Helper Types
 
     /// <summary>
@@ -705,10 +1097,32 @@ public class ImageRefAndMessagePersistenceTests
     /// </summary>
     private class FakeImageRefData
     {
+        public int RefId { get; init; }
         public string? Sha256 { get; init; }
         public string? CosUrl { get; init; }
         public string? Label { get; init; }
         public string? MimeType { get; init; }
+    }
+
+    /// <summary>
+    /// 模拟 ImageRefInput（前端传入的图片引用）
+    /// </summary>
+    private class FakeImageRefInput
+    {
+        public int RefId { get; init; }
+        public string? Url { get; init; }
+        public string? AssetSha256 { get; init; }
+        public string? Label { get; init; }
+    }
+
+    /// <summary>
+    /// 模拟 ImageGenImage（生图结果）
+    /// </summary>
+    private class FakeImageGenImage
+    {
+        public string? Url { get; init; }
+        public string? OriginalUrl { get; init; }
+        public string? OriginalSha256 { get; init; }
     }
 
     #endregion
