@@ -2003,12 +2003,12 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                         <div className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)' }}>
                           {(detail?.questionText ?? '').trim() || '（无提示词）'}
                         </div>
-                        {/* Input ← → Output */}
-                        <div className="grid gap-3" style={{ gridTemplateColumns: effInputs.length > 0 && effOutputs.length > 0 ? '1fr 1fr' : '1fr' }}>
-                          {/* ===== Input 参考图 ===== */}
-                          {effInputs.length > 0 && (
-                            <div>
-                              <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Input</div>
+                        {/* Input ← → Output 始终双栏 */}
+                        <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                          {/* ===== Input 参考图（左） ===== */}
+                          <div>
+                            <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Input</div>
+                            {effInputs.length > 0 ? (
                               <div className="space-y-2" style={{ maxHeight: 420, overflowY: 'auto' }}>
                               {effInputs.map((img, idx) => (
                                 <div key={`in-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
@@ -2028,12 +2028,16 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                                 </div>
                               ))}
                               </div>
-                            </div>
-                          )}
-                          {/* ===== Output 生成图 ===== */}
-                          {effOutputs.length > 0 ? (
-                            <div>
-                              <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Output</div>
+                            ) : (
+                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)', height: 120 }}>
+                                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>（无输入）</div>
+                              </div>
+                            )}
+                          </div>
+                          {/* ===== Output 生成图（右） ===== */}
+                          <div>
+                            <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Output</div>
+                            {effOutputs.length > 0 ? (
                               <div className="space-y-2" style={{ maxHeight: 420, overflowY: 'auto' }}>
                               {effOutputs.map((img, idx) => (
                                 <div key={`out-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
@@ -2053,12 +2057,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                                 </div>
                               ))}
                               </div>
-                            </div>
-                          ) : effInputs.length > 0 ? (
-                            /* 有输入但无输出：显示状态 */
-                            <div className="space-y-2">
-                              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>Output</div>
-                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)', height: 200 }}>
+                            ) : (
+                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)', height: 120 }}>
                                 {detail?.status === 'running' ? (
                                   <div className="flex flex-col items-center gap-2">
                                     <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
@@ -2069,11 +2069,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                                     {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
                                   </div>
                                 ) : (
-                                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>等待结果</div>
+                                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>（无输出）</div>
                                 )}
                               </div>
-                            </div>
-                          ) : null}
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
