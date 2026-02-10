@@ -340,8 +340,8 @@ function makeRadarOption(
         max: 100,
       })),
       shape: 'polygon' as any,
-      radius: '62%',
-      center: ['50%', '50%'],
+      radius: '78%',
+      center: ['50%', '55%'],
       axisName: { color: chartTextColor, fontSize: 9 },
       splitArea: { areaStyle: { color: ['rgba(255,255,255,0.02)', 'rgba(255,255,255,0.04)'] } },
       splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
@@ -492,15 +492,15 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
       </GlassCard>
 
       {/* ── Left: 2 Radars stacked | Right: Dimension Overview ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="grid grid-cols-2 gap-3">
-          <GlassCard glow className="!p-3">
-            <SectionTitle>Agent 使用</SectionTitle>
-            <EChart option={makeRadarOption(scored, dimensions, 'agent')} height={200} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-2">
+          <GlassCard glow className="!p-2">
+            <div className="text-[11px] font-bold uppercase tracking-wider px-1" style={{ color: 'var(--text-secondary)' }}>Agent 使用</div>
+            <EChart option={makeRadarOption(scored, dimensions, 'agent')} height={240} />
           </GlassCard>
-          <GlassCard glow className="!p-3">
-            <SectionTitle>活动产出</SectionTitle>
-            <EChart option={makeRadarOption(scored, dimensions, 'activity')} height={200} />
+          <GlassCard glow className="!p-2">
+            <div className="text-[11px] font-bold uppercase tracking-wider px-1" style={{ color: 'var(--text-secondary)' }}>活动产出</div>
+            <EChart option={makeRadarOption(scored, dimensions, 'activity')} height={240} />
           </GlassCard>
         </div>
 
