@@ -2222,7 +2222,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     </div>
                     <div
                       ref={thinkingPanelRef}
-                      className="px-3 py-2 text-[12px] leading-relaxed whitespace-pre-wrap"
+                      className="px-3 py-2 text-[12px] leading-relaxed prd-md"
                       style={{
                         color: 'rgba(255, 255, 255, 0.7)',
                         maxHeight: markerStreaming ? 320 : 160,
@@ -2230,7 +2230,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         transition: 'max-height 0.3s ease',
                       }}
                     >
-                      {thinkingContent}
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {thinkingContent}
+                      </ReactMarkdown>
                     </div>
                   </div>
                 )}
