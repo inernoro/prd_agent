@@ -46,7 +46,9 @@ import {
   unpublishReferenceImageConfig,
 } from '@/services';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2, ChevronDown } from 'lucide-react';
+import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
+import { sizesToSizesByResolution } from '@/lib/imageAspectOptions';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2 } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { flushSync } from 'react-dom';
@@ -435,6 +437,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 实际可选尺寸列表
   const selectableSizes = allowedSizes.length > 0 ? allowedSizes : defaultSizes;
+
+  // 按分辨率分组（供 ImageSizePicker 使用）
+  const sizesByResolutionForPicker = useMemo(() => sizesToSizesByResolution(selectableSizes), [selectableSizes]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1054,47 +1059,53 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const buildPreviewMarkdownWithImages = useCallback(
     (items: MarkerRunItem[]) => {
       const base = String(articleWithMarkers || articleContent || '');
-      if (!base) return '';
+      if (!base || markers.length === 0) return '';
 
       const byIndex = new Map<number, MarkerRunItem>(items.map((x) => [x.markerIndex, x]));
       const patches: Array<{ start: number; end: number; replacement: string }> = [];
-      let changed = false;
 
-      // 关键：按 markerIndex 精准替换（允许只生成第 N 张，不依赖“前缀完成”）
+      // 关键：按 markerIndex 精准替换，每个 marker 都添加 data-marker-idx 用于定位
       for (let i = 0; i < markers.length; i++) {
         const m = markers[i];
         const it = byIndex.get(m.index);
-        if (!it) continue;
 
-        const url =
+        const url = it ? (
           String(it.assetUrl || it.url || '').trim() ||
-          (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
+          (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '')
+        ) : '';
 
-        // 如果有图片 URL，优先显示图片（无论是 done 还是 running 重新生成中）
+        // 如果有图片 URL，使用 raw <img> 确保 URL 特殊字符不破坏 markdown 语法
         if (url) {
-          changed = true;
+          const safeUrl = url.replace(/"/g, '&quot;');
           patches.push({
             start: m.startPos,
             end: m.endPos,
-            replacement: `![配图 ${i + 1}](${url})`,
+            replacement: `<img data-marker-idx="${i}" alt="配图 ${i + 1}" src="${safeUrl}" style="max-width:100%;border-radius:8px;margin:8px 0" />`,
           });
           continue;
         }
 
         // "立刻插入"：无图时点击生成后，生成中也会在对应 marker 行下方插入占位提示
-        // 注意：只有在 running 状态且没有旧图时才插入提示
-        const isGenerating = it.status === 'running';
+        const isGenerating = it?.status === 'running';
         if (isGenerating) {
-          changed = true;
           patches.push({
             start: m.startPos,
             end: m.endPos,
-            replacement: `[插图] : ${m.text}\n\n> 配图 ${i + 1} 生成中...`,
+            replacement: `<span data-marker-idx="${i}">[插图] : ${m.text}</span>\n\n> 配图 ${i + 1} 生成中...`,
           });
+          continue;
         }
+
+        // 空闲/无运行项 — 包裹 data-marker-idx 用于定位（保留原文供 highlightText 高亮）
+        const originalText = base.slice(m.startPos, m.endPos);
+        patches.push({
+          start: m.startPos,
+          end: m.endPos,
+          replacement: `<span data-marker-idx="${i}">${originalText}</span>`,
+        });
       }
 
-      if (!changed) return '';
+      if (patches.length === 0) return '';
 
       // 从后往前替换，避免偏移
       patches.sort((a, b) => b.start - a.start);
@@ -1116,29 +1127,39 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const locateMarkerInPreview = (markerIndex: number) => {
     const container = articlePreviewRef.current;
-    console.log('[定位] markerIndex=', markerIndex, 'container=', !!container);
     if (!container) return;
-    // 查找所有 marker（包含普通和流式动画两种 class）
-    const markers = container.querySelectorAll('.prd-md-marker, .prd-md-marker-new');
-    console.log('[定位] 找到 marker DOM 元素数量=', markers.length, '目标 index=', markerIndex);
-    const target = markers[markerIndex] as HTMLElement | undefined;
-    if (target) {
-      console.log('[定位] 命中 marker DOM, tag=', target.tagName, 'text=', target.textContent?.slice(0, 40));
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      target.style.outline = '2px solid rgba(245, 158, 11, 0.8)';
-      target.style.outlineOffset = '2px';
-      setTimeout(() => { target.style.outline = ''; target.style.outlineOffset = ''; }, 1500);
+
+    const scrollAndHighlight = (el: HTMLElement) => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.style.outline = '2px solid rgba(245, 158, 11, 0.8)';
+      el.style.outlineOffset = '2px';
+      setTimeout(() => { el.style.outline = ''; el.style.outlineOffset = ''; }, 1500);
+    };
+
+    // 方式 1: data-marker-idx 属性（最可靠，兼容图片/标记/生成中所有状态）
+    const byAttr = container.querySelector(`[data-marker-idx="${markerIndex}"]`) as HTMLElement | null;
+    if (byAttr) {
+      scrollAndHighlight(byAttr);
       return;
     }
+
+    // 方式 2: marker class 按序号（articleWithImages 为空时的回退）
+    const markerEls = container.querySelectorAll('.prd-md-marker, .prd-md-marker-new');
+    const target = markerEls[markerIndex] as HTMLElement | undefined;
+    if (target) {
+      scrollAndHighlight(target);
+      return;
+    }
+
+    // 方式 3: img alt 匹配（宽泛回退）
     const imgAlt = `配图 ${markerIndex + 1}`;
     const img = container.querySelector(`img[alt="${imgAlt}"]`) as HTMLElement | null;
-    console.log('[定位] marker DOM 未命中, 尝试 img[alt="' + imgAlt + '"]', 'found=', !!img);
     if (img) {
-      console.log('[定位] 命中 img 元素, src=', (img as HTMLImageElement).src?.slice(0, 60));
-      img.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    } else {
-      console.warn('[定位] 未找到任何匹配元素! markerIndex=', markerIndex, 'markers.length=', markers.length);
+      scrollAndHighlight(img);
+      return;
     }
+
+    console.warn('[定位] 未找到匹配元素', { markerIndex, markerEls: markerEls.length });
   };
 
   // markerRunItems 状态变化时：立即刷新左侧预览（支持"单条先生成"不乱序）
@@ -2462,97 +2483,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       配图 {idx + 1}
                     </div>
                     <div className="flex items-center gap-2">
-                      {/* 尺寸选择器（可点击切换） */}
-                      {(() => {
-                        const currentSize = it.planItem?.size || '1024x1024';
-                        const isBusyItem = it.status === 'running' || it.status === 'parsing';
-                        const [sw, sh] = currentSize.split(/[xX×]/).map(Number);
-                        const ratio = (sw && sh) ? sw / sh : 1;
-                        // 比例框：总高度固定 16px，宽度按比例缩放
-                        const boxH = 14;
-                        const boxW = Math.round(boxH * Math.min(Math.max(ratio, 0.5), 2));
-                        return (
-                          <div className="relative group/size">
-                            <button
-                              className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium cursor-pointer"
-                              style={{
-                                background: 'rgba(99, 102, 241, 0.12)',
-                                border: '1px solid rgba(99, 102, 241, 0.24)',
-                                color: 'rgba(99, 102, 241, 0.95)',
-                              }}
-                              disabled={isBusyItem}
-                              title="点击切换图片尺寸"
-                            >
-                              <span
-                                style={{
-                                  display: 'inline-block',
-                                  width: boxW,
-                                  height: boxH,
-                                  border: '1.5px solid rgba(99, 102, 241, 0.7)',
-                                  borderRadius: 2,
-                                  flexShrink: 0,
-                                }}
-                              />
-                              {currentSize}
-                              <ChevronDown size={10} style={{ opacity: 0.6 }} />
-                            </button>
-                            {/* 下拉菜单 */}
-                            {!isBusyItem && (
-                              <div
-                                className="absolute right-0 top-full mt-1 z-50 rounded-lg py-1 hidden group-hover/size:block"
-                                style={{
-                                  background: 'var(--bg-elevated)',
-                                  border: '1px solid var(--border-subtle)',
-                                  boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-                                  minWidth: 140,
-                                }}
-                              >
-                                {selectableSizes.map((s) => {
-                                  const [w, h] = s.split(/[xX×]/).map(Number);
-                                  const r = (w && h) ? w / h : 1;
-                                  const bH = 12;
-                                  const bW = Math.round(bH * Math.min(Math.max(r, 0.5), 2));
-                                  const isActive = s === currentSize;
-                                  return (
-                                    <button
-                                      key={s}
-                                      className="flex items-center gap-2 w-full px-3 py-1.5 text-[11px] text-left"
-                                      style={{
-                                        background: isActive ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                                        color: isActive ? 'rgba(99, 102, 241, 0.95)' : 'var(--text-secondary)',
-                                        fontWeight: isActive ? 600 : 400,
-                                      }}
-                                      onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)'; }}
-                                      onMouseLeave={(e) => { (e.target as HTMLElement).style.background = isActive ? 'rgba(99, 102, 241, 0.15)' : 'transparent'; }}
-                                      onClick={() => {
-                                        setMarkerRunItems((prev) =>
-                                          prev.map((x) =>
-                                            x.markerIndex === it.markerIndex
-                                              ? { ...x, planItem: { ...(x.planItem || { prompt: x.draftText || x.markerText, count: 1 }), size: s } }
-                                              : x
-                                          )
-                                        );
-                                      }}
-                                    >
-                                      <span
-                                        style={{
-                                          display: 'inline-block',
-                                          width: bW,
-                                          height: bH,
-                                          border: `1.5px solid ${isActive ? 'rgba(99, 102, 241, 0.7)' : 'rgba(255,255,255,0.3)'}`,
-                                          borderRadius: 2,
-                                          flexShrink: 0,
-                                        }}
-                                      />
-                                      {s}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
+                      {/* 尺寸选择器 */}
+                      <ImageSizePicker
+                        sizesByResolution={sizesByResolutionForPicker}
+                        value={it.planItem?.size || '1024x1024'}
+                        onChange={(s) => {
+                          setMarkerRunItems((prev) =>
+                            prev.map((x) =>
+                              x.markerIndex === it.markerIndex
+                                ? { ...x, planItem: { ...(x.planItem || { prompt: x.draftText || x.markerText, count: 1 }), size: s } }
+                                : x
+                            )
+                          );
+                        }}
+                        disabled={it.status === 'running' || it.status === 'parsing'}
+                      />
                       {/* 状态标签 */}
                       <div
                         className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
