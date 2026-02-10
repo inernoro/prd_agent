@@ -333,19 +333,15 @@ function makeRadarOption(
       backgroundColor: chartTooltipBg, borderColor: 'rgba(255,255,255,0.08)',
       textStyle: { color: '#f7f7fb', fontSize: 11 },
     },
-    legend: {
-      bottom: 0, left: 'center',
-      textStyle: { color: chartTextColor, fontSize: 9 },
-      icon: 'circle', itemWidth: 6, itemHeight: 6, itemGap: 8,
-    },
+    legend: { show: false },
     radar: {
       indicator: activeDims.map(d => ({
         name: DIMENSION_META[d.key]?.short ?? d.name,
         max: 100,
       })),
       shape: 'polygon' as any,
-      radius: '58%',
-      center: ['50%', '45%'],
+      radius: '62%',
+      center: ['50%', '50%'],
       axisName: { color: chartTextColor, fontSize: 9 },
       splitArea: { areaStyle: { color: ['rgba(255,255,255,0.02)', 'rgba(255,255,255,0.04)'] } },
       splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
@@ -495,23 +491,23 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
         </div>
       </GlassCard>
 
-      {/* ── 2x2 Radar Grid ── */}
-      <div className="grid grid-cols-2 gap-4">
-        <GlassCard glow className="!p-4">
+      {/* ── 4 Radars in ONE row ── */}
+      <div className="grid grid-cols-4 gap-3">
+        <GlassCard glow className="!p-3">
           <SectionTitle>Agent 使用</SectionTitle>
-          <EChart option={makeRadarOption(scored, dimensions, 'agent')} height={240} />
+          <EChart option={makeRadarOption(scored, dimensions, 'agent')} height={200} />
         </GlassCard>
-        <GlassCard glow className="!p-4">
+        <GlassCard glow className="!p-3">
           <SectionTitle>协作活跃</SectionTitle>
-          <EChart option={makeRadarOption(scored, dimensions, ['messages', 'sessions', 'groups'])} height={240} />
+          <EChart option={makeRadarOption(scored, dimensions, ['messages', 'sessions', 'groups'])} height={200} />
         </GlassCard>
-        <GlassCard glow className="!p-4">
+        <GlassCard glow className="!p-3">
           <SectionTitle>缺陷贡献</SectionTitle>
-          <EChart option={makeRadarOption(scored, dimensions, ['defects-created', 'defects-resolved', 'defect-agent'])} height={240} />
+          <EChart option={makeRadarOption(scored, dimensions, ['defects-created', 'defects-resolved', 'defect-agent'])} height={200} />
         </GlassCard>
-        <GlassCard glow className="!p-4">
+        <GlassCard glow className="!p-3">
           <SectionTitle>创意产出</SectionTitle>
-          <EChart option={makeRadarOption(scored, dimensions, ['images', 'visual-agent', 'literary-agent'])} height={240} />
+          <EChart option={makeRadarOption(scored, dimensions, ['images', 'visual-agent', 'literary-agent'])} height={200} />
         </GlassCard>
       </div>
 
