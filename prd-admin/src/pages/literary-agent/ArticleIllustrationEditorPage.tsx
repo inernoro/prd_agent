@@ -38,7 +38,7 @@ import {
   deactivateReferenceImageConfig,
   getLiteraryAgentAllModels,
   optimizeLiteraryPrompt,
-  getImageGenSizeCaps,
+  getAdapterInfoByModelName,
   // 海鲜市场 API
   publishLiteraryPrompt,
   unpublishLiteraryPrompt,
@@ -47,7 +47,7 @@ import {
 } from '@/services';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
-import { sizesToSizesByResolution } from '@/lib/imageAspectOptions';
+import type { SizesByResolution } from '@/lib/imageAspectOptions';
 import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2 } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
@@ -279,8 +279,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 图生图模型池（有风格参考图）
   const [img2ImgPool, setImg2ImgPool] = useState<LiteraryAgentModelPool | null>(null);
 
-  // 生图模型尺寸白名单（按 modelId 或 modelName 缓存）
-  const [sizeCapsMap, setSizeCapsMap] = useState<Record<string, string[]>>({});
+  // 生图模型尺寸选项（按分辨率分组，从后端 adapter-info 获取）
+  const [sizesByResolutionForPicker, setSizesByResolutionForPicker] = useState<SizesByResolution>({ '1k': [], '2k': [], '4k': [] });
 
   // 右侧每条配图的运行状态（逐条 parse + gen）
   const [markerRunItems, setMarkerRunItems] = useState<MarkerRunItem[]>([]);
@@ -373,25 +373,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     };
   }, []);
 
-  // 加载生图模型的尺寸白名单
-  useEffect(() => {
-    void (async () => {
-      try {
-        const res = await getImageGenSizeCaps({ includeFallback: true });
-        if (res.success && res.data?.items) {
-          const map: Record<string, string[]> = {};
-          for (const item of res.data.items) {
-            if (item.allowedSizes && item.allowedSizes.length > 0) {
-              if (item.modelId) map[item.modelId] = item.allowedSizes;
-              if (item.modelName) map[item.modelName.toLowerCase()] = item.allowedSizes;
-            }
-          }
-          setSizeCapsMap(map);
-        }
-      } catch { /* ignore */ }
-    })();
-  }, []);
-
   // 根据是否有激活的参考图，决定当前使用哪个模型池来显示 imageGenModel
   useEffect(() => {
     const hasActiveRefImage = referenceImageConfigs.some((c) => c.isActive);
@@ -417,29 +398,34 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [referenceImageConfigs, text2ImgPool, img2ImgPool]);
 
-  // 根据当前生图模型池解析可用尺寸白名单
-  const allowedSizes = useMemo<string[]>(() => {
-    const hasActiveRefImage = referenceImageConfigs.some((c) => c.isActive);
-    const pool = hasActiveRefImage ? img2ImgPool : text2ImgPool;
-    if (!pool?.models?.length) return [];
-    // 遍历模型池中所有模型，收集白名单
-    for (const m of pool.models) {
-      const byId = sizeCapsMap[m.modelId];
-      if (byId?.length) return byId;
-      const byName = sizeCapsMap[(m.modelId || '').toLowerCase()];
-      if (byName?.length) return byName;
+  // 从后端获取生图模型的尺寸选项（按分辨率分组，与视觉创作一致）
+  useEffect(() => {
+    const modelName = imageGenModel?.modelName;
+    if (!modelName) {
+      setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
+      return;
     }
-    return [];
-  }, [sizeCapsMap, text2ImgPool, img2ImgPool, referenceImageConfigs]);
-
-  // 默认尺寸白名单（当模型没有学习到上游白名单时使用）
-  const defaultSizes = ['1024x1024', '1024x768', '768x1024', '1280x720', '720x1280'];
-
-  // 实际可选尺寸列表
-  const selectableSizes = allowedSizes.length > 0 ? allowedSizes : defaultSizes;
-
-  // 按分辨率分组（供 ImageSizePicker 使用）
-  const sizesByResolutionForPicker = useMemo(() => sizesToSizesByResolution(selectableSizes), [selectableSizes]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await getAdapterInfoByModelName(modelName);
+        if (cancelled) return;
+        if (res.success && res.data?.matched && res.data.sizesByResolution) {
+          const data = res.data.sizesByResolution;
+          setSizesByResolutionForPicker({
+            '1k': Array.isArray(data['1k']) ? data['1k'] : [],
+            '2k': Array.isArray(data['2k']) ? data['2k'] : [],
+            '4k': Array.isArray(data['4k']) ? data['4k'] : [],
+          });
+        } else {
+          setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
+        }
+      } catch {
+        if (!cancelled) setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [imageGenModel?.modelName]);
 
   useEffect(() => {
     let cancelled = false;
