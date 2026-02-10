@@ -1584,7 +1584,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
         }}
         title="LLM 请求详情"
         description={detail ? (joinBaseAndPath(detail.apiBase ?? '', detail.path ?? '') || '—') : '点击列表项查看详情'}
-        maxWidth={1200}
+        maxWidth={1500}
         contentStyle={{ height: '82vh' }}
         content={
           detailLoading ? (
@@ -2007,8 +2007,9 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                         <div className="grid gap-3" style={{ gridTemplateColumns: effInputs.length > 0 && effOutputs.length > 0 ? '1fr 1fr' : '1fr' }}>
                           {/* ===== Input 参考图 ===== */}
                           {effInputs.length > 0 && (
-                            <div className="space-y-2">
-                              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>Input</div>
+                            <div>
+                              <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Input</div>
+                              <div className="space-y-2" style={{ maxHeight: 420, overflowY: 'auto' }}>
                               {effInputs.map((img, idx) => (
                                 <div key={`in-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
                                   <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -2026,12 +2027,14 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                                   {img.sha256 && <div className="px-3 py-1 text-[10px] truncate" style={{ color: 'var(--text-muted)' }} title={img.sha256}>sha256: {img.sha256}</div>}
                                 </div>
                               ))}
+                              </div>
                             </div>
                           )}
                           {/* ===== Output 生成图 ===== */}
                           {effOutputs.length > 0 ? (
-                            <div className="space-y-2">
-                              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>Output</div>
+                            <div>
+                              <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Output</div>
+                              <div className="space-y-2" style={{ maxHeight: 420, overflowY: 'auto' }}>
                               {effOutputs.map((img, idx) => (
                                 <div key={`out-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
                                   <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -2049,6 +2052,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                                   {img.sha256 && <div className="px-3 py-1 text-[10px] truncate" style={{ color: 'var(--text-muted)' }} title={img.sha256}>sha256: {img.sha256}</div>}
                                 </div>
                               ))}
+                              </div>
                             </div>
                           ) : effInputs.length > 0 ? (
                             /* 有输入但无输出：显示状态 */
