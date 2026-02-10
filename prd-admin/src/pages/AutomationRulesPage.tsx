@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { Switch } from '@/components/design/Switch';
+import { GlassCard } from '@/components/design/GlassCard';
+import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { automationsService } from '@/services';
 import { toast } from '@/lib/toast';
@@ -190,28 +192,24 @@ export default function AutomationRulesPage() {
   const totalPages = Math.ceil(total / 20);
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
-      {/* 标题栏 */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold flex items-center gap-2">
-            <Zap size={22} /> 自动化
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            当事件发生时，自动执行 Webhook 推送、站内信通知等动作
-          </p>
-        </div>
-        <Button
-          size="sm"
-          onClick={() => {
-            resetForm();
-            setCreateOpen(true);
-          }}
-        >
-          <Plus size={14} /> 新建规则
-        </Button>
-      </div>
+    <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden">
+      <TabBar
+        title="自动化"
+        icon={<Zap size={16} />}
+        actions={
+          <Button
+            size="sm"
+            onClick={() => {
+              resetForm();
+              setCreateOpen(true);
+            }}
+          >
+            <Plus size={14} /> 新建规则
+          </Button>
+        }
+      />
 
+      <GlassCard glow className="flex-1 min-h-0 flex flex-col p-5">
       {/* 规则列表 */}
       {loading ? (
         <div className="flex items-center justify-center py-12">
@@ -324,6 +322,7 @@ export default function AutomationRulesPage() {
           </Button>
         </div>
       )}
+      </GlassCard>
 
       {/* 创建规则对话框 */}
       <Dialog
