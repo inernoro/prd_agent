@@ -1061,13 +1061,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             setArticleWithMarkers(runningArticle);
           }
 
-          // 统一默认 1:1 尺寸（用户可通过尺寸选择器调整）
-          // chunk.size 仅用于跳过意图模型，不覆盖默认尺寸
-          if (chunk.size) {
-            setMarkerDirectParsed(markerIndex, markerText, '1024x1024');
-          } else {
-            triggerPlanImageGen(markerIndex, markerText);
-          }
+          // Anchor 模式：marker text 即 prompt，无需意图模型解析，统一默认 1:1
+          setMarkerDirectParsed(markerIndex, markerText, '1024x1024');
         }
         // ====== Delta 事件：Anchor 模式为原始输出视觉反馈 ======
         else if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
@@ -1083,16 +1078,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           const extracted = extractMarkers(fullText);
           setMarkers(extracted);
 
-          // 对于 done 事件中的标记但尚未处理的，补充触发意图解析
+          // 对于 done 事件中的标记但尚未处理的，补充直接设为 parsed（无需意图模型）
           extracted.forEach((marker) => {
             setMarkerRunItems((prev) => {
               const existingItem = prev.find((x) => x.markerIndex === marker.index);
               if (existingItem && existingItem.status !== 'idle') return prev;
               if (!existingItem) {
-                triggerPlanImageGen(marker.index, marker.text);
                 return [
                   ...prev,
-                  { markerIndex: marker.index, markerText: marker.text, draftText: marker.text, status: 'parsing' as MarkerRunStatus },
+                  {
+                    markerIndex: marker.index,
+                    markerText: marker.text,
+                    draftText: marker.text,
+                    status: 'parsed' as MarkerRunStatus,
+                    planItem: { prompt: marker.text, count: 1, size: '1024x1024' },
+                  },
                 ];
               }
               return prev;
