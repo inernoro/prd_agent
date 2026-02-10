@@ -1772,26 +1772,139 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
 
               <GlassCard glow className="p-3 overflow-hidden flex flex-col min-h-0">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Response</div>
-                  {autoRefreshing ? (
-                    <div className="flex items-center gap-2">
-                      <Loader2 size={14} className="animate-spin" style={{ color: 'rgba(34,197,94,0.95)' }} />
-                      <span className="text-[11px] font-semibold" style={{ color: 'rgba(34,197,94,0.95)' }}>
-                        自动刷新中（2s）
-                      </span>
+                  <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>Response</div>
+                  <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                    <div className="flex items-center rounded-[8px] p-0.5" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+                      <button
+                        type="button"
+                        onClick={() => setAnswerView('preview')}
+                        className="h-7 px-2.5 rounded-[6px] text-[11px] font-semibold"
+                        style={{
+                          color: answerView === 'preview' ? 'var(--text-primary)' : 'var(--text-muted)',
+                          background: answerView === 'preview' ? 'rgba(231,206,151,0.10)' : 'transparent',
+                          border: answerView === 'preview' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                        }}
+                      >
+                        预览
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAnswerView('raw')}
+                        className="h-7 px-2.5 rounded-[6px] text-[11px] font-semibold"
+                        style={{
+                          color: answerView === 'raw' ? 'var(--text-primary)' : 'var(--text-muted)',
+                          background: answerView === 'raw' ? 'rgba(231,206,151,0.10)' : 'transparent',
+                          border: answerView === 'raw' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                        }}
+                      >
+                        Raw
+                      </button>
+                      {answerHasUnicodeEscapes ? (
+                        <button
+                          type="button"
+                          onClick={() => setAnswerVisibleChars((v) => !v)}
+                          className="h-7 px-2.5 rounded-[6px] text-[11px] font-semibold"
+                          title="当内容包含 \\uXXXX 时，可一键转换为真实字符，避免 Raw 难以阅读"
+                          style={{
+                            color: answerVisibleChars ? 'var(--text-primary)' : 'var(--text-muted)',
+                            background: answerVisibleChars ? 'rgba(231,206,151,0.10)' : 'transparent',
+                            border: answerVisibleChars ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                          }}
+                        >
+                          可见字符
+                        </button>
+                      ) : null}
                     </div>
-                  ) : (
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={refreshDetail}
-                      disabled={!selectedId}
-                      title="手动刷新详情"
+                      className="h-7 text-[11px] px-2.5"
+                      onClick={async () => {
+                        const text = answerDisplayText || '';
+                        try {
+                          await navigator.clipboard.writeText(text || '');
+                          setCopiedHint('已复制');
+                          setTimeout(() => setCopiedHint(''), 1200);
+                        } catch {
+                          setCopiedHint('复制失败（浏览器权限）');
+                          setTimeout(() => setCopiedHint(''), 2000);
+                        }
+                      }}
                     >
-                      <RefreshCw size={14} />
-                      刷新
+                      <Copy size={12} />
+                      复制
                     </Button>
-                  )}
+                    <SuccessConfettiButton
+                      title="对模型原始返回（Answer）做严格 JSON 校验"
+                      size="sm"
+                      style={
+                        {
+                          '--sa-h': '28px',
+                          '--sa-radius': '8px',
+                          '--sa-font': '11px',
+                          '--sa-px': '10px',
+                          '--sa-minw': '72px',
+                        } as unknown as React.CSSProperties
+                      }
+                      readyText={jsonCheckPhase === 'failed' ? '不通过' : 'JSON检查'}
+                      loadingText="检查中"
+                      successText="通过"
+                      showLoadingText
+                      loadingMinMs={680}
+                      completeMode="hold"
+                      disabled={!((detail?.answerText ?? '').trim()) || jsonCheckPhase === 'passed'}
+                      className={jsonCheckPhase === 'failed' ? 'llm-json-sa-failed' : jsonCheckPhase === 'passed' ? 'llm-json-sa-passed' : ''}
+                      onAction={() => {
+                        const raw = (detail?.answerText ?? '').trim();
+                        const res = validateStrictJson(raw);
+                        jsonCheckLastRef.current = res.ok ? { ok: true } : { ok: false, reason: res.reason };
+                        return res.ok;
+                      }}
+                      onPhaseChange={(p) => {
+                        if (p === 'loading') {
+                          setJsonCheckPhase('scanning');
+                          return;
+                        }
+                        if (p === 'complete') {
+                          setJsonCheckPhase('passed');
+                          setAnswerHint('扫描通过');
+                          window.setTimeout(() => setAnswerHint(''), 1200);
+                          return;
+                        }
+                        // 回到 ready（失败路径）：保持红色状态到弹窗关闭
+                        if (p === 'ready') {
+                          const last = jsonCheckLastRef.current;
+                          if (last && last.ok === false) {
+                            setJsonCheckPhase('failed');
+                            setAnswerHint(`JSON 不合法：${last.reason || '未知原因'}`);
+                            window.setTimeout(() => setAnswerHint(''), 2800);
+                          } else {
+                            setJsonCheckPhase('idle');
+                          }
+                        }
+                      }}
+                    />
+                    {autoRefreshing ? (
+                      <div className="flex items-center gap-1.5">
+                        <Loader2 size={12} className="animate-spin" style={{ color: 'rgba(34,197,94,0.95)' }} />
+                        <span className="text-[11px] font-semibold" style={{ color: 'rgba(34,197,94,0.95)' }}>
+                          自动刷新中
+                        </span>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="h-7 text-[11px] px-2.5"
+                        onClick={refreshDetail}
+                        disabled={!selectedId}
+                        title="手动刷新详情"
+                      >
+                        <RefreshCw size={12} />
+                        刷新
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
                   {(() => {
@@ -1848,121 +1961,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                   说明：`—` 表示未上报/未知；`0` 表示真实为 0。
                 </div>
                 <div className="mt-3 flex-1 min-h-0 overflow-auto">
-                  <div className="flex items-center justify-end gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center rounded-[12px] p-1" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
-                        <button
-                          type="button"
-                          onClick={() => setAnswerView('preview')}
-                          className="h-8 px-3 rounded-[10px] text-xs font-semibold"
-                          style={{
-                            color: answerView === 'preview' ? 'var(--text-primary)' : 'var(--text-muted)',
-                            background: answerView === 'preview' ? 'rgba(231,206,151,0.10)' : 'transparent',
-                            border: answerView === 'preview' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
-                          }}
-                        >
-                          预览
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setAnswerView('raw')}
-                          className="h-8 px-3 rounded-[10px] text-xs font-semibold"
-                          style={{
-                            color: answerView === 'raw' ? 'var(--text-primary)' : 'var(--text-muted)',
-                            background: answerView === 'raw' ? 'rgba(231,206,151,0.10)' : 'transparent',
-                            border: answerView === 'raw' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
-                          }}
-                        >
-                          Raw
-                        </button>
-                        {answerHasUnicodeEscapes ? (
-                          <button
-                            type="button"
-                            onClick={() => setAnswerVisibleChars((v) => !v)}
-                            className="h-8 px-3 rounded-[10px] text-xs font-semibold"
-                            title="当内容包含 \\uXXXX 时，可一键转换为真实字符，避免 Raw 难以阅读"
-                            style={{
-                              color: answerVisibleChars ? 'var(--text-primary)' : 'var(--text-muted)',
-                              background: answerVisibleChars ? 'rgba(231,206,151,0.10)' : 'transparent',
-                              border: answerVisibleChars ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
-                            }}
-                          >
-                            可见字符
-                          </button>
-                        ) : null}
-                      </div>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={async () => {
-                          const text = answerDisplayText || '';
-                          try {
-                            await navigator.clipboard.writeText(text || '');
-                            setCopiedHint('已复制');
-                            setTimeout(() => setCopiedHint(''), 1200);
-                          } catch {
-                            setCopiedHint('复制失败（浏览器权限）');
-                            setTimeout(() => setCopiedHint(''), 2000);
-                          }
-                        }}
-                      >
-                        <Copy size={16} />
-                        复制
-                      </Button>
-                      <SuccessConfettiButton
-                        title="对模型原始返回（Answer）做严格 JSON 校验"
-                        size="sm"
-                        style={
-                          {
-                            // 对齐本区域其它 secondary sm 按钮（35px 高度）
-                            '--sa-h': '35px',
-                            '--sa-radius': '10px',
-                            '--sa-font': '13px',
-                            '--sa-px': '14px',
-                            '--sa-minw': '86px',
-                          } as unknown as React.CSSProperties
-                        }
-                        readyText={jsonCheckPhase === 'failed' ? '不通过' : 'JSON检查'}
-                        loadingText="检查中"
-                        successText="通过"
-                        showLoadingText
-                        loadingMinMs={680}
-                        completeMode="hold"
-                        disabled={!((detail?.answerText ?? '').trim()) || jsonCheckPhase === 'passed'}
-                        className={jsonCheckPhase === 'failed' ? 'llm-json-sa-failed' : jsonCheckPhase === 'passed' ? 'llm-json-sa-passed' : ''}
-                        onAction={() => {
-                          const raw = (detail?.answerText ?? '').trim();
-                          const res = validateStrictJson(raw);
-                          jsonCheckLastRef.current = res.ok ? { ok: true } : { ok: false, reason: res.reason };
-                          return res.ok;
-                        }}
-                        onPhaseChange={(p) => {
-                          if (p === 'loading') {
-                            setJsonCheckPhase('scanning');
-                            return;
-                          }
-                          if (p === 'complete') {
-                            setJsonCheckPhase('passed');
-                            setAnswerHint('扫描通过');
-                            window.setTimeout(() => setAnswerHint(''), 1200);
-                            return;
-                          }
-                          // 回到 ready（失败路径）：保持红色状态到弹窗关闭
-                          if (p === 'ready') {
-                            const last = jsonCheckLastRef.current;
-                            if (last && last.ok === false) {
-                              setJsonCheckPhase('failed');
-                              setAnswerHint(`JSON 不合法：${last.reason || '未知原因'}`);
-                              window.setTimeout(() => setAnswerHint(''), 2800);
-                            } else {
-                              setJsonCheckPhase('idle');
-                            }
-                          }
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between gap-2">
+                  <div className="flex items-center justify-between gap-2">
                     <div className="text-xs" style={{ color: 'var(--text-muted)' }}>回答</div>
                     {answerHint ? (
                       <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>

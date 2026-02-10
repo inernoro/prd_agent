@@ -743,6 +743,19 @@ public class ImageGenRunWorker : BackgroundService
                 }
             }
 
+            // 蒙版：将 MaskBase64 作为额外的输入图记录（data URI 可直接用于前端 <img> 展示）
+            if (!string.IsNullOrWhiteSpace(run.MaskBase64))
+            {
+                var maskUrl = run.MaskBase64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                    ? run.MaskBase64
+                    : $"data:image/png;base64,{run.MaskBase64}";
+                inputs.Add(new LlmLogImage
+                {
+                    Url = maskUrl,
+                    Label = "蒙版"
+                });
+            }
+
             // output：生成结果图
             var outputs = new List<LlmLogImage>();
             if (outputImages is { Count: > 0 })
