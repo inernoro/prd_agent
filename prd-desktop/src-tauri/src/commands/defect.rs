@@ -50,19 +50,27 @@ pub async fn list_defects() -> Result<ApiResponse<serde_json::Value>, String> {
     client.get("/api/defect-agent/defects").await
 }
 
-/// 创建缺陷报告（assigneeUserId 硬编码为 "inernoro"）
+/// 获取缺陷管理用户列表（用于选择提交对象）
+#[command]
+pub async fn list_defect_users() -> Result<ApiResponse<serde_json::Value>, String> {
+    let client = ApiClient::new();
+    client.get("/api/defect-agent/users").await
+}
+
+/// 创建缺陷报告
 #[command]
 pub async fn create_defect(
     content: String,
     severity: String,
     title: Option<String>,
+    assignee_user_id: String,
 ) -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
     let request = CreateDefectRequest {
         content,
         severity,
         title,
-        assignee_user_id: "inernoro".to_string(),
+        assignee_user_id,
     };
     client.post("/api/defect-agent/defects", &request).await
 }

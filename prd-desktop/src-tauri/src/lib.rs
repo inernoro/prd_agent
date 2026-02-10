@@ -207,6 +207,7 @@ pub fn run() {
             commands::updater::check_for_update,
             commands::updater::fetch_update_manifests,
             commands::defect::list_defects,
+            commands::defect::list_defect_users,
             commands::defect::create_defect,
             commands::defect::submit_defect,
             commands::defect::get_defect,

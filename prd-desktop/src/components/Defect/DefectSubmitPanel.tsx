@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { invoke } from '../../lib/tauri';
 import { useDefectStore } from '../../stores/defectStore';
 import type { ApiResponse, DefectReport, DefectSeverity } from '../../types';
@@ -10,12 +10,46 @@ const severityOptions: { value: DefectSeverity; label: string; color: string }[]
   { value: 'trivial', label: '轻微', color: 'bg-blue-500' },
 ];
 
+const DEFAULT_ASSIGNEE_USERNAME = 'inernoro';
+
+interface DefectUser {
+  id: string;
+  username: string;
+  displayName?: string;
+}
+
 export default function DefectSubmitPanel() {
   const { setShowSubmitPanel, addDefectToList, loadStats } = useDefectStore();
   const [content, setContent] = useState('');
   const [severity, setSeverity] = useState<DefectSeverity>('minor');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  const [users, setUsers] = useState<DefectUser[]>([]);
+  const [assigneeUserId, setAssigneeUserId] = useState('');
+  const [usersLoading, setUsersLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const resp = await invoke<ApiResponse<{ items: DefectUser[] }>>('list_defect_users');
+        if (resp.success && resp.data) {
+          const items: DefectUser[] = Array.isArray(resp.data) ? resp.data : (resp.data as any).items ?? [];
+          setUsers(items);
+          const defaultUser = items.find((u) => u.username === DEFAULT_ASSIGNEE_USERNAME);
+          if (defaultUser) {
+            setAssigneeUserId(defaultUser.id);
+          } else if (items.length > 0) {
+            setAssigneeUserId(items[0].id);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load defect users:', err);
+      } finally {
+        setUsersLoading(false);
+      }
+    })();
+  }, []);
 
   const extractTitle = (text: string) => {
     const lines = text.split('\n').filter((l) => l.trim());
@@ -27,16 +61,21 @@ export default function DefectSubmitPanel() {
       setError('请输入问题描述');
       return;
     }
+    if (!assigneeUserId) {
+      setError('请选择提交对象');
+      return;
+    }
     setSubmitting(true);
     setError('');
     try {
       const title = extractTitle(content);
 
-      // Step 1: 创建缺陷（草稿），assigneeUserId 已在 Rust 层硬编码为 "inernoro"
+      // Step 1: 创建缺陷（草稿）
       const createResp = await invoke<ApiResponse<{ defect: DefectReport }>>('create_defect', {
         content: content.trim(),
         severity,
         title: title ?? null,
+        assigneeUserId: assigneeUserId,
       });
 
       if (!createResp.success || !createResp.data) {
@@ -88,12 +127,27 @@ export default function DefectSubmitPanel() {
 
         {/* Body */}
         <div className="px-5 py-4 space-y-4">
-          {/* 提交给：固定为 inernoro */}
+          {/* 提交给：用户下拉选择 */}
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1">提交给</label>
-            <div className="px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 text-sm">
-              inernoro
-            </div>
+            {usersLoading ? (
+              <div className="px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 text-sm text-text-secondary">
+                加载中...
+              </div>
+            ) : (
+              <select
+                value={assigneeUserId}
+                onChange={(e) => setAssigneeUserId(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500/30 appearance-none cursor-pointer"
+              >
+                {users.length === 0 && <option value="">暂无用户</option>}
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.displayName || u.username}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* 严重程度 */}
@@ -144,7 +198,7 @@ export default function DefectSubmitPanel() {
           </button>
           <button
             onClick={handleSubmit}
-            disabled={submitting || !content.trim()}
+            disabled={submitting || !content.trim() || !assigneeUserId}
             className="px-4 py-2 text-sm rounded-lg bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {submitting ? '提交中...' : '提交缺陷'}
