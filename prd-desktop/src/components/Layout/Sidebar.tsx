@@ -306,9 +306,7 @@ export default function Sidebar() {
             logout();
             return;
           }
-          if (!isSystemErrorCode(errorCode)) {
-            setInlineError(resp.error?.message || '创建群组失败');
-          }
+          setInlineError(resp.error?.message || '创建群组失败');
           return;
         }
 
@@ -337,9 +335,7 @@ export default function Sidebar() {
           logout();
           return;
         }
-        if (!isSystemErrorCode(errorCode)) {
-          setInlineError(resp.error?.message || '创建群组失败');
-        }
+        setInlineError(resp.error?.message || '创建群组失败');
         return;
       }
 
