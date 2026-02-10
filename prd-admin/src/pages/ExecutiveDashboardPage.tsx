@@ -351,6 +351,7 @@ function generateMockLeaderboard(): ExecutiveLeaderboard {
     { key: 'defects-created',  name: '提交缺陷',       category: 'activity', values: mkValues([[8,15],[3,8],[5,12],[20,35],[6,10],[4,9],[2,5],[15,25]]) },
     { key: 'defects-resolved', name: '解决缺陷',       category: 'activity', values: mkValues([[6,12],[5,10],[8,16],[18,30],[4,8],[3,7],[1,4],[12,22]]) },
     { key: 'images',           name: '图片生成',       category: 'activity', values: mkValues([[15,30],[60,100],[3,8],[5,12],[40,70],[20,40],[50,85],[10,20]]) },
+    { key: 'groups',            name: '群组参与',       category: 'activity', values: mkValues([[2,5],[3,6],[4,8],[1,3],[3,7],[2,5],[1,2],[2,4]]) },
   ];
 
   return { users: mockUsers, dimensions: mockDimensions };
@@ -438,63 +439,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
         </div>
       </GlassCard>
 
-      {/* ── Per-dimension Leaderboard Cards ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        {activeDims.map(dim => {
-          const meta = DIMENSION_META[dim.key] ?? { icon: Bot, color: 'rgba(148,163,184,0.7)', barColor: 'rgba(148,163,184,0.4)', short: dim.name };
-          const DimIcon = meta.icon;
-          const sortedEntries = scored
-            .map(u => ({ ...u, val: u.dimScores[dim.key] ?? 0 }))
-            .filter(u => u.val > 0)
-            .sort((a, b) => b.val - a.val);
-          const total = sortedEntries.reduce((s, e) => s + e.val, 0);
-          const maxVal = sortedEntries[0]?.val ?? 1;
-
-          return (
-            <GlassCard key={dim.key} glow className="!p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <DimIcon size={14} style={{ color: meta.color }} />
-                <span className="text-[13px] font-bold" style={{ color: 'var(--text-primary)' }}>{dim.name}</span>
-                <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>
-                  {sortedEntries.length} 人参与 · 总计 {total.toLocaleString()}
-                </span>
-              </div>
-              <div className="space-y-1">
-                {sortedEntries.map((u, idx) => {
-                  const mc = idx < 3 ? MEDAL_COLORS[idx] : null;
-                  const roleColor = ROLE_COLORS[u.role] ?? 'rgba(148,163,184,0.8)';
-                  const pct = (u.val / maxVal) * 100;
-                  return (
-                    <div key={u.userId} className="flex items-center gap-2 py-0.5">
-                      <span className="w-5 text-center flex-shrink-0">
-                        {mc ? <span className="text-[12px]">{mc.medal}</span> : <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>{idx + 1}</span>}
-                      </span>
-                      {u.avatarFileName ? (
-                        <img src={resolveAvatarUrl(u.avatarFileName)} className="w-5 h-5 rounded-full object-cover flex-shrink-0" alt="" />
-                      ) : (
-                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold flex-shrink-0"
-                          style={{ background: `${roleColor}22`, color: roleColor }}>{u.displayName[0]}</div>
-                      )}
-                      <div className="w-12 flex-shrink-0">
-                        <div className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{u.displayName}</div>
-                        <div className="text-[8px]" style={{ color: roleColor }}>{u.role}</div>
-                      </div>
-                      <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: meta.barColor }} />
-                      </div>
-                      <span className="text-[11px] font-bold tabular-nums w-10 text-right flex-shrink-0" style={{ color: meta.color }}>
-                        {u.val.toLocaleString()}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </GlassCard>
-          );
-        })}
-      </div>
-
-      {/* ── Zone 3: Full Ranking Table ── */}
+      {/* ── Full Ranking Table ── */}
       <GlassCard glow>
         <SectionTitle>综合排行榜</SectionTitle>
         <div className="overflow-x-auto">
@@ -596,6 +541,62 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
           </table>
         </div>
       </GlassCard>
+
+      {/* ── Per-dimension Leaderboard Cards ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {activeDims.map(dim => {
+          const meta = DIMENSION_META[dim.key] ?? { icon: Bot, color: 'rgba(148,163,184,0.7)', barColor: 'rgba(148,163,184,0.4)', short: dim.name };
+          const DimIcon = meta.icon;
+          const sortedEntries = scored
+            .map(u => ({ ...u, val: u.dimScores[dim.key] ?? 0 }))
+            .filter(u => u.val > 0)
+            .sort((a, b) => b.val - a.val);
+          const total = sortedEntries.reduce((s, e) => s + e.val, 0);
+          const maxVal = sortedEntries[0]?.val ?? 1;
+
+          return (
+            <GlassCard key={dim.key} glow className="!p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <DimIcon size={14} style={{ color: meta.color }} />
+                <span className="text-[13px] font-bold" style={{ color: 'var(--text-primary)' }}>{dim.name}</span>
+                <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>
+                  {sortedEntries.length} 人参与 · 总计 {total.toLocaleString()}
+                </span>
+              </div>
+              <div className="space-y-1">
+                {sortedEntries.map((u, idx) => {
+                  const mc = idx < 3 ? MEDAL_COLORS[idx] : null;
+                  const roleColor = ROLE_COLORS[u.role] ?? 'rgba(148,163,184,0.8)';
+                  const pct = (u.val / maxVal) * 100;
+                  return (
+                    <div key={u.userId} className="flex items-center gap-2 py-0.5">
+                      <span className="w-5 text-center flex-shrink-0">
+                        {mc ? <span className="text-[12px]">{mc.medal}</span> : <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>{idx + 1}</span>}
+                      </span>
+                      {u.avatarFileName ? (
+                        <img src={resolveAvatarUrl(u.avatarFileName)} className="w-5 h-5 rounded-full object-cover flex-shrink-0" alt="" />
+                      ) : (
+                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold flex-shrink-0"
+                          style={{ background: `${roleColor}22`, color: roleColor }}>{u.displayName[0]}</div>
+                      )}
+                      <div className="w-12 flex-shrink-0">
+                        <div className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{u.displayName}</div>
+                        <div className="text-[8px]" style={{ color: roleColor }}>{u.role}</div>
+                      </div>
+                      <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: meta.barColor }} />
+                      </div>
+                      <span className="text-[11px] font-bold tabular-nums w-10 text-right flex-shrink-0" style={{ color: meta.color }}>
+                        {u.val.toLocaleString()}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </GlassCard>
+          );
+        })}
+      </div>
     </div>
   );
 }
