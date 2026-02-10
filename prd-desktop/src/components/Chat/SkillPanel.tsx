@@ -31,9 +31,15 @@ export default function SkillPanel({ disabled, onExecuteSkill, onManageSkills }:
     setRuntimeContextScope,
     setRuntimeOutputMode,
     getSkillsForRole,
+    localSkills,
+    serverSkills,
   } = useSkillStore();
 
-  const skills = useMemo(() => getSkillsForRole(currentRole), [currentRole, getSkillsForRole]);
+  // 订阅 localSkills 和 serverSkills 作为依赖，确保数据变更后重新计算
+  const skills = useMemo(
+    () => getSkillsForRole(currentRole),
+    [currentRole, getSkillsForRole, localSkills, serverSkills]
+  );
 
   const activeSkill = useMemo(
     () => skills.find((s) => s.skillKey === activeSkillKey) ?? null,

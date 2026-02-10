@@ -3,7 +3,7 @@ mod models;
 mod services;
 
 use commands::session::StreamCancelState;
-use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::Emitter;
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
@@ -87,6 +87,17 @@ pub fn run() {
                 .id("check_update")
                 .build(app)?;
 
+            // macOS 需要 Edit 子菜单才能让 Cmd+C/V/X/A 等快捷键在 WebView 中生效
+            let edit_submenu = SubmenuBuilder::new(app, "编辑")
+                .item(&PredefinedMenuItem::undo(app, None)?)
+                .item(&PredefinedMenuItem::redo(app, None)?)
+                .separator()
+                .item(&PredefinedMenuItem::cut(app, None)?)
+                .item(&PredefinedMenuItem::copy(app, None)?)
+                .item(&PredefinedMenuItem::paste(app, None)?)
+                .item(&PredefinedMenuItem::select_all(app, None)?)
+                .build()?;
+
             let help_submenu = SubmenuBuilder::new(app, "帮助")
                 .item(&settings_item)
                 .separator()
@@ -95,7 +106,7 @@ pub fn run() {
                 .item(&check_update_item)
                 .build()?;
 
-            let menu = MenuBuilder::new(app).items(&[&help_submenu]).build()?;
+            let menu = MenuBuilder::new(app).items(&[&edit_submenu, &help_submenu]).build()?;
 
             app.set_menu(menu)?;
 

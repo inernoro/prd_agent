@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSkillStore } from '../../stores/skillStore';
 import { ContextScope, OutputMode, SkillItem } from '../../types';
@@ -22,10 +22,42 @@ const EMPTY_SKILL: Omit<SkillItem, 'source'> = {
   isEnabled: true,
 };
 
+const CATEGORY_OPTIONS = [
+  { value: '', label: '未分类' },
+  { value: '分析', label: '分析' },
+  { value: '生成', label: '生成' },
+  { value: '提取', label: '提取' },
+  { value: '翻译', label: '翻译' },
+  { value: '总结', label: '总结' },
+  { value: '检查', label: '检查' },
+  { value: '优化', label: '优化' },
+  { value: '其他', label: '其他' },
+];
+
+const EMOJI_LIST = [
+  '📝', '📊', '🔍', '💡', '🎯', '📋', '🛠️', '🚀',
+  '📐', '🧪', '📈', '🔧', '💬', '📖', '🎨', '⚡',
+  '🧩', '📌', '🏷️', '✅', '🔄', '📦', '🗂️', '💻',
+];
+
 export default function SkillManagerModal({ open, onClose }: Props) {
   const { localSkills, addLocalSkill, updateLocalSkill, removeLocalSkill } = useSkillStore();
   const [editing, setEditing] = useState<SkillItem | null>(null);
   const [isNew, setIsNew] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const emojiRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭 emoji picker
+  useEffect(() => {
+    if (!showEmojiPicker) return;
+    const onClick = (e: MouseEvent) => {
+      if (emojiRef.current && !emojiRef.current.contains(e.target as Node)) {
+        setShowEmojiPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [showEmojiPicker]);
 
   const handleStartNew = () => {
     setEditing({
@@ -35,11 +67,13 @@ export default function SkillManagerModal({ open, onClose }: Props) {
       order: localSkills.length + 1,
     });
     setIsNew(true);
+    setShowEmojiPicker(false);
   };
 
   const handleEdit = (skill: SkillItem) => {
     setEditing({ ...skill });
     setIsNew(false);
+    setShowEmojiPicker(false);
   };
 
   const handleSave = () => {
@@ -65,8 +99,8 @@ export default function SkillManagerModal({ open, onClose }: Props) {
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-bg-primary rounded-2xl shadow-2xl w-[640px] max-h-[80vh] flex flex-col overflow-hidden border border-black/10 dark:border-white/10">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="ui-glass-modal w-[640px] max-h-[80vh] flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-black/10 dark:border-white/10">
           <h2 className="text-base font-medium">管理我的技能</h2>
@@ -137,16 +171,49 @@ export default function SkillManagerModal({ open, onClose }: Props) {
                       placeholder="技能名称"
                     />
                   </label>
-                  <label className="block">
+                  <div className="block relative" ref={emojiRef}>
                     <span className="text-xs text-text-secondary mb-1 block">图标</span>
-                    <input
-                      type="text"
-                      value={editing.icon ?? ''}
-                      onChange={(e) => setEditing({ ...editing, icon: e.target.value })}
-                      className="w-full px-3 py-2 text-sm rounded-lg ui-control text-center"
-                      placeholder="emoji"
-                    />
-                  </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                      className="w-full px-3 py-2 text-sm rounded-lg ui-control text-center h-[38px] cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                    >
+                      {editing.icon || '选择'}
+                    </button>
+                    {showEmojiPicker && (
+                      <div className="absolute top-full left-0 mt-1 z-10 p-2 rounded-lg shadow-lg border border-black/10 dark:border-white/10 bg-white dark:bg-gray-800 w-[220px]">
+                        <div className="grid grid-cols-6 gap-1">
+                          {EMOJI_LIST.map((emoji) => (
+                            <button
+                              key={emoji}
+                              type="button"
+                              onClick={() => {
+                                setEditing({ ...editing, icon: emoji });
+                                setShowEmojiPicker(false);
+                              }}
+                              className={`w-8 h-8 flex items-center justify-center text-base rounded-md hover:bg-primary-500/15 transition-colors ${
+                                editing.icon === emoji ? 'bg-primary-500/20 ring-1 ring-primary-500/40' : ''
+                              }`}
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                        {editing.icon && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditing({ ...editing, icon: '' });
+                              setShowEmojiPicker(false);
+                            }}
+                            className="w-full mt-1.5 px-2 py-1 text-xs text-red-500 hover:bg-red-500/10 rounded-md transition-colors"
+                          >
+                            清除图标
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Description */}
@@ -164,13 +231,15 @@ export default function SkillManagerModal({ open, onClose }: Props) {
                 {/* Category */}
                 <label className="block">
                   <span className="text-xs text-text-secondary mb-1 block">分类</span>
-                  <input
-                    type="text"
+                  <select
                     value={editing.category ?? ''}
                     onChange={(e) => setEditing({ ...editing, category: e.target.value })}
                     className="w-full px-3 py-2 text-sm rounded-lg ui-control"
-                    placeholder="分析 / 生成 / 提取 ..."
-                  />
+                  >
+                    {CATEGORY_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
                 </label>
 
                 {/* Context Scope + Output Mode */}
@@ -208,7 +277,7 @@ export default function SkillManagerModal({ open, onClose }: Props) {
                     value={editing.promptTemplate}
                     onChange={(e) => setEditing({ ...editing, promptTemplate: e.target.value })}
                     className="w-full px-3 py-2 text-sm rounded-lg ui-control resize-y min-h-[120px]"
-                    placeholder="请输入技能的提示词模板，可使用 {{变量名}} 作为参数占位符"
+                    placeholder="请输入技能的提示词内容"
                   />
                 </label>
 
