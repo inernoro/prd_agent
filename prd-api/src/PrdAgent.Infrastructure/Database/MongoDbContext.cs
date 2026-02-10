@@ -788,6 +788,10 @@ public class MongoDbContext
         AutomationRules.Indexes.CreateOne(new CreateIndexModel<AutomationRule>(
             Builders<AutomationRule>.IndexKeys.Ascending(x => x.EventType).Ascending(x => x.Enabled),
             new CreateIndexOptions { Name = "idx_automation_rules_event_enabled" }));
+        // AutomationRules: 按 HookId 唯一索引（传入 Webhook 查询）
+        AutomationRules.Indexes.CreateOne(new CreateIndexModel<AutomationRule>(
+            Builders<AutomationRule>.IndexKeys.Ascending(x => x.HookId),
+            new CreateIndexOptions { Name = "idx_automation_rules_hook_id", Sparse = true }));
 
         // ModelExchanges：按 ModelAlias 唯一索引
         try

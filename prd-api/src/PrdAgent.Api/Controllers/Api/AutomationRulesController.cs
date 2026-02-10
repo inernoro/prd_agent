@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -38,21 +40,22 @@ public class AutomationRulesController : ControllerBase
 
     // ========== 规则 CRUD ==========
 
-    /// <summary>
-    /// 获取规则列表
-    /// </summary>
     [HttpGet("rules")]
     [ProducesResponseType(typeof(ApiResponse<PagedRulesResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> ListRules(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string? eventType = null,
-        [FromQuery] bool? enabled = null)
+        [FromQuery] bool? enabled = null,
+        [FromQuery] string? triggerType = null)
     {
         if (page <= 0) page = 1;
         if (pageSize <= 0 || pageSize > 100) pageSize = 20;
 
         var filter = Builders<AutomationRule>.Filter.Empty;
+
+        if (!string.IsNullOrWhiteSpace(triggerType))
+            filter &= Builders<AutomationRule>.Filter.Eq(r => r.TriggerType, triggerType);
 
         if (!string.IsNullOrWhiteSpace(eventType))
             filter &= Builders<AutomationRule>.Filter.Eq(r => r.EventType, eventType);
@@ -77,7 +80,10 @@ public class AutomationRulesController : ControllerBase
                 Id = rule.Id,
                 Name = rule.Name,
                 Enabled = rule.Enabled,
+                TriggerType = rule.TriggerType,
                 EventType = rule.EventType,
+                HookId = rule.HookId,
+                HookSecret = rule.HookSecret,
                 Actions = rule.Actions.Select(a => new ActionSummary
                 {
                     Type = a.Type,
@@ -105,9 +111,6 @@ public class AutomationRulesController : ControllerBase
         }));
     }
 
-    /// <summary>
-    /// 获取单个规则详情
-    /// </summary>
     [HttpGet("rules/{id}")]
     public async Task<IActionResult> GetRule(string id)
     {
@@ -118,48 +121,54 @@ public class AutomationRulesController : ControllerBase
         return Ok(ApiResponse<AutomationRule>.Ok(rule));
     }
 
-    /// <summary>
-    /// 创建规则
-    /// </summary>
     [HttpPost("rules")]
     [ProducesResponseType(typeof(ApiResponse<AutomationRule>), StatusCodes.Status201Created)]
     public async Task<IActionResult> CreateRule([FromBody] CreateRuleRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "规则名称不能为空"));
-        if (string.IsNullOrWhiteSpace(request.EventType))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "事件类型不能为空"));
         if (request.Actions == null || request.Actions.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "至少需要一个动作"));
 
-        // 验证动作
+        var triggerType = request.TriggerType ?? "event";
+
+        // 事件触发：必须有事件类型
+        if (triggerType == "event" && string.IsNullOrWhiteSpace(request.EventType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "事件类型不能为空"));
+
+        // 验证传出 Webhook 动作
         foreach (var action in request.Actions)
         {
             if (action.Type == "webhook" && string.IsNullOrWhiteSpace(action.WebhookUrl))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "Webhook 动作需要配置 URL"));
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "传出 Webhook 动作需要配置目标 URL"));
             if (action.Type == "webhook" && action.WebhookUrl != null && !action.WebhookUrl.StartsWith("https://"))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "Webhook URL 必须以 https:// 开头"));
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "传出 Webhook URL 必须以 https:// 开头"));
         }
 
         var rule = new AutomationRule
         {
             Name = request.Name,
             Enabled = request.Enabled,
-            EventType = request.EventType,
+            TriggerType = triggerType,
+            EventType = triggerType == "event" ? request.EventType : $"incoming.{Guid.NewGuid():N}",
             Actions = request.Actions,
             TitleTemplate = request.TitleTemplate,
             ContentTemplate = request.ContentTemplate,
             CreatedBy = GetUserId() ?? ""
         };
 
+        // 传入 Webhook：自动生成 HookId
+        if (triggerType == "incoming_webhook")
+        {
+            rule.HookId = GenerateHookId();
+            rule.HookSecret = request.HookSecret;
+        }
+
         await _db.AutomationRules.InsertOneAsync(rule);
 
         return CreatedAtAction(nameof(GetRule), new { id = rule.Id }, ApiResponse<AutomationRule>.Ok(rule));
     }
 
-    /// <summary>
-    /// 更新规则
-    /// </summary>
     [HttpPut("rules/{id}")]
     public async Task<IActionResult> UpdateRule(string id, [FromBody] UpdateRuleRequest request)
     {
@@ -188,9 +197,6 @@ public class AutomationRulesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { message = "规则已更新" }));
     }
 
-    /// <summary>
-    /// 删除规则
-    /// </summary>
     [HttpDelete("rules/{id}")]
     public async Task<IActionResult> DeleteRule(string id)
     {
@@ -201,9 +207,6 @@ public class AutomationRulesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { message = "规则已删除" }));
     }
 
-    /// <summary>
-    /// 切换规则启用/禁用
-    /// </summary>
     [HttpPost("rules/{id}/toggle")]
     public async Task<IActionResult> ToggleRule(string id)
     {
@@ -221,8 +224,27 @@ public class AutomationRulesController : ControllerBase
     }
 
     /// <summary>
-    /// 手动触发规则（测试用）
+    /// 重新生成传入 Webhook 的 HookId
     /// </summary>
+    [HttpPost("rules/{id}/regenerate-hook")]
+    public async Task<IActionResult> RegenerateHook(string id)
+    {
+        var rule = await _db.AutomationRules.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (rule == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "规则不存在"));
+        if (rule.TriggerType != "incoming_webhook")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅传入 Webhook 类型支持此操作"));
+
+        var newHookId = GenerateHookId();
+        await _db.AutomationRules.UpdateOneAsync(
+            r => r.Id == id,
+            Builders<AutomationRule>.Update
+                .Set(r => r.HookId, newHookId)
+                .Set(r => r.UpdatedAt, DateTime.UtcNow));
+
+        return Ok(ApiResponse<object>.Ok(new { hookId = newHookId }));
+    }
+
     [HttpPost("rules/{id}/trigger")]
     public async Task<IActionResult> TriggerRule(string id, [FromBody] TriggerRuleRequest request)
     {
@@ -239,32 +261,90 @@ public class AutomationRulesController : ControllerBase
         return Ok(ApiResponse<AutomationTriggerResult>.Ok(result));
     }
 
-    // ========== 事件类型注册表 ==========
+    // ========== 传入 Webhook 端点（外部系统调用） ==========
 
     /// <summary>
-    /// 获取预定义的事件类型列表
+    /// 传入 Webhook - 外部系统 POST 到此 URL 来触发规则
     /// </summary>
+    [HttpPost("hooks/{hookId}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> IncomingWebhook(string hookId, [FromBody] IncomingWebhookPayload? payload)
+    {
+        var rule = await _db.AutomationRules
+            .Find(r => r.HookId == hookId && r.TriggerType == "incoming_webhook")
+            .FirstOrDefaultAsync();
+
+        if (rule == null)
+            return NotFound(new { error = "Hook not found" });
+
+        if (!rule.Enabled)
+            return Ok(new { status = "skipped", message = "Rule is disabled" });
+
+        // 可选：HMAC 签名校验
+        if (!string.IsNullOrEmpty(rule.HookSecret))
+        {
+            var signature = Request.Headers["X-Hook-Signature"].FirstOrDefault();
+            if (string.IsNullOrEmpty(signature))
+                return Unauthorized(new { error = "Missing X-Hook-Signature header" });
+
+            var expected = ComputeHmac(payload?.RawBody ?? "", rule.HookSecret);
+            if (!string.Equals(signature, expected, StringComparison.OrdinalIgnoreCase))
+                return Unauthorized(new { error = "Invalid signature" });
+        }
+
+        var eventPayload = new AutomationEventPayload
+        {
+            EventType = rule.EventType,
+            Title = payload?.Title ?? $"Incoming: {rule.Name}",
+            Content = payload?.Content ?? "",
+            Variables = payload?.Variables,
+            SourceId = $"hook:{hookId}"
+        };
+
+        var result = await _automationHub.TriggerRuleAsync(rule.Id, eventPayload);
+
+        return Ok(new
+        {
+            status = result.AllSucceeded ? "ok" : "partial_failure",
+            actionsExecuted = result.ActionResults.Count,
+            allSucceeded = result.AllSucceeded
+        });
+    }
+
+    // ========== 注册表 ==========
+
     [HttpGet("event-types")]
     public IActionResult GetEventTypes()
     {
         return Ok(ApiResponse<object>.Ok(new { items = AutomationEventTypes.All }));
     }
 
-    // ========== 动作类型注册表 ==========
-
-    /// <summary>
-    /// 获取支持的动作类型
-    /// </summary>
     [HttpGet("action-types")]
     public IActionResult GetActionTypes()
     {
         var types = new List<object>
         {
-            new { type = "webhook", label = "Webhook", description = "HTTP POST 到外部 URL" },
+            new { type = "webhook", label = "传出 Webhook", description = "事件发生时，POST 到外部 URL（我们调别人）" },
             new { type = "admin_notification", label = "站内信", description = "发送站内通知给指定用户" }
         };
 
         return Ok(ApiResponse<object>.Ok(new { items = types }));
+    }
+
+    // ========== 工具方法 ==========
+
+    private static string GenerateHookId()
+    {
+        var bytes = RandomNumberGenerator.GetBytes(24);
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    private static string ComputeHmac(string payload, string secret)
+    {
+        var key = Encoding.UTF8.GetBytes(secret);
+        var data = Encoding.UTF8.GetBytes(payload);
+        var hash = HMACSHA256.HashData(key, data);
+        return $"sha256={Convert.ToHexString(hash).ToLowerInvariant()}";
     }
 }
 
@@ -274,7 +354,9 @@ public class CreateRuleRequest
 {
     public string Name { get; set; } = string.Empty;
     public bool Enabled { get; set; } = true;
+    public string? TriggerType { get; set; }
     public string EventType { get; set; } = string.Empty;
+    public string? HookSecret { get; set; }
     public List<AutomationAction> Actions { get; set; } = new();
     public string? TitleTemplate { get; set; }
     public string? ContentTemplate { get; set; }
@@ -298,12 +380,23 @@ public class TriggerRuleRequest
     public List<string>? Values { get; set; }
 }
 
+public class IncomingWebhookPayload
+{
+    public string? Title { get; set; }
+    public string? Content { get; set; }
+    public string? RawBody { get; set; }
+    public Dictionary<string, string>? Variables { get; set; }
+}
+
 public class RuleListItem
 {
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public bool Enabled { get; set; }
+    public string TriggerType { get; set; } = "event";
     public string EventType { get; set; } = string.Empty;
+    public string? HookId { get; set; }
+    public string? HookSecret { get; set; }
     public List<ActionSummary> Actions { get; set; } = new();
     public string? TitleTemplate { get; set; }
     public string? ContentTemplate { get; set; }

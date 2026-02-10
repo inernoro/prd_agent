@@ -12,7 +12,10 @@ export interface AutomationRule {
   id: string;
   name: string;
   enabled: boolean;
+  triggerType: string; // 'event' | 'incoming_webhook'
   eventType: string;
+  hookId?: string;
+  hookSecret?: string;
   actions: AutomationAction[];
   titleTemplate?: string;
   contentTemplate?: string;
@@ -34,7 +37,10 @@ export interface RuleListItem {
   id: string;
   name: string;
   enabled: boolean;
+  triggerType: string;
   eventType: string;
+  hookId?: string;
+  hookSecret?: string;
   actions: ActionSummary[];
   titleTemplate?: string;
   contentTemplate?: string;
@@ -56,7 +62,9 @@ export interface PagedRulesResponse {
 export interface CreateRuleRequest {
   name: string;
   enabled: boolean;
-  eventType: string;
+  triggerType?: string;
+  eventType?: string;
+  hookSecret?: string;
   actions: AutomationAction[];
   titleTemplate?: string;
   contentTemplate?: string;
@@ -104,12 +112,13 @@ export interface ActionTypeDef {
 }
 
 export interface IAutomationsService {
-  listRules(page: number, pageSize: number, eventType?: string, enabled?: boolean): Promise<PagedRulesResponse>;
+  listRules(page: number, pageSize: number, eventType?: string, enabled?: boolean, triggerType?: string): Promise<PagedRulesResponse>;
   getRule(id: string): Promise<AutomationRule>;
   createRule(request: CreateRuleRequest): Promise<AutomationRule>;
   updateRule(id: string, request: UpdateRuleRequest): Promise<void>;
   deleteRule(id: string): Promise<void>;
   toggleRule(id: string): Promise<{ enabled: boolean }>;
+  regenerateHook(id: string): Promise<{ hookId: string }>;
   triggerRule(id: string, request: TriggerRuleRequest): Promise<AutomationTriggerResult>;
   getEventTypes(): Promise<EventTypeDef[]>;
   getActionTypes(): Promise<ActionTypeDef[]>;

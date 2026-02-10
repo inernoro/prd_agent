@@ -12,11 +12,15 @@ import {
   Loader2,
   Trash2,
   Play,
-  Webhook,
   Bell,
   Zap,
   Check,
   X,
+  ArrowRight,
+  Copy,
+  RefreshCw,
+  Link,
+  ExternalLink,
 } from 'lucide-react';
 import type {
   RuleListItem,
@@ -31,16 +35,67 @@ function fmtDate(v?: string | null) {
 }
 
 const actionTypeLabels: Record<string, string> = {
-  webhook: 'Webhook',
+  webhook: '传出 Webhook',
   admin_notification: '站内信',
 };
 
 const actionTypeIcons: Record<string, React.ReactNode> = {
-  webhook: <Webhook size={12} />,
+  webhook: <ExternalLink size={12} />,
   admin_notification: <Bell size={12} />,
 };
 
+function FlowPreview({ triggerType, actions }: { triggerType: string; actions: AutomationAction[] }) {
+  const triggerLabel = triggerType === 'incoming_webhook' ? '外部系统 POST' : '系统事件触发';
+  const triggerSub = triggerType === 'incoming_webhook' ? '别人调用我们的 URL' : '内部事件匹配';
+  return (
+    <div className="flex items-center gap-2 p-3 rounded-lg text-xs" style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}>
+      <div className="text-center px-2">
+        <div className="font-medium" style={{ color: 'rgba(96,165,250,0.95)' }}>
+          {triggerType === 'incoming_webhook' ? <Link size={14} className="mx-auto mb-1" /> : <Zap size={14} className="mx-auto mb-1" />}
+          {triggerLabel}
+        </div>
+        <div style={{ color: 'rgba(96,165,250,0.6)' }}>{triggerSub}</div>
+      </div>
+      <ArrowRight size={14} style={{ color: 'rgba(96,165,250,0.5)', flexShrink: 0 }} />
+      <div className="text-center px-2">
+        <div className="font-medium" style={{ color: 'rgba(96,165,250,0.95)' }}>自动化引擎</div>
+        <div style={{ color: 'rgba(96,165,250,0.6)' }}>匹配规则</div>
+      </div>
+      <ArrowRight size={14} style={{ color: 'rgba(96,165,250,0.5)', flexShrink: 0 }} />
+      <div className="text-center px-2">
+        <div className="font-medium" style={{ color: 'rgba(96,165,250,0.95)' }}>
+          {actions.length > 0 ? actions.map((a) => actionTypeLabels[a.type] || a.type).join(' + ') : '执行动作'}
+        </div>
+        <div style={{ color: 'rgba(96,165,250,0.6)' }}>
+          {actions.some((a) => a.type === 'webhook') ? '我们 POST 到外部' : ''}
+          {actions.some((a) => a.type === 'webhook') && actions.some((a) => a.type === 'admin_notification') ? ' + ' : ''}
+          {actions.some((a) => a.type === 'admin_notification') ? '站内通知' : ''}
+          {actions.length === 0 && '待配置'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HookUrlDisplay({ hookId }: { hookId: string }) {
+  const url = `${window.location.origin}/api/automations/hooks/${hookId}`;
+  const handleCopy = () => {
+    navigator.clipboard.writeText(url);
+    toast.success('已复制 Webhook URL');
+  };
+  return (
+    <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
+      <Link size={14} style={{ color: 'rgba(34,197,94,0.8)', flexShrink: 0 }} />
+      <code className="flex-1 text-xs truncate" style={{ color: 'rgba(34,197,94,0.9)' }}>{url}</code>
+      <button onClick={handleCopy} className="p-1 rounded hover:bg-white/10" title="复制">
+        <Copy size={12} style={{ color: 'rgba(34,197,94,0.8)' }} />
+      </button>
+    </div>
+  );
+}
+
 export default function AutomationRulesPage() {
+  const [activeTab, setActiveTab] = useState('event');
   const [rules, setRules] = useState<RuleListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -50,8 +105,10 @@ export default function AutomationRulesPage() {
   // 创建对话框
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [formTriggerType, setFormTriggerType] = useState<'event' | 'incoming_webhook'>('event');
   const [formName, setFormName] = useState('');
   const [formEventType, setFormEventType] = useState('');
+  const [formHookSecret, setFormHookSecret] = useState('');
   const [formActions, setFormActions] = useState<AutomationAction[]>([]);
 
   // 测试对话框
@@ -64,7 +121,7 @@ export default function AutomationRulesPage() {
   const loadRules = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await automationsService.listRules(page, 20);
+      const data = await automationsService.listRules(page, 20, undefined, undefined, activeTab);
       setRules(data.items);
       setTotal(data.total);
     } catch (err) {
@@ -72,7 +129,7 @@ export default function AutomationRulesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page]);
+  }, [page, activeTab]);
 
   const loadEventTypes = useCallback(async () => {
     try {
@@ -87,6 +144,11 @@ export default function AutomationRulesPage() {
     loadRules();
     loadEventTypes();
   }, [loadRules, loadEventTypes]);
+
+  const handleTabChange = (key: string) => {
+    setActiveTab(key);
+    setPage(1);
+  };
 
   const handleToggle = async (id: string) => {
     try {
@@ -110,8 +172,12 @@ export default function AutomationRulesPage() {
   };
 
   const handleCreate = async () => {
-    if (!formName || !formEventType) {
-      toast.error('请填写规则名称和事件类型');
+    if (!formName) {
+      toast.error('请填写规则名称');
+      return;
+    }
+    if (formTriggerType === 'event' && !formEventType) {
+      toast.error('请选择或输入事件类型');
       return;
     }
     if (formActions.length === 0) {
@@ -124,7 +190,9 @@ export default function AutomationRulesPage() {
       const req: CreateRuleRequest = {
         name: formName,
         enabled: true,
-        eventType: formEventType,
+        triggerType: formTriggerType,
+        eventType: formTriggerType === 'event' ? formEventType : undefined,
+        hookSecret: formTriggerType === 'incoming_webhook' && formHookSecret ? formHookSecret : undefined,
         actions: formActions,
       };
       await automationsService.createRule(req);
@@ -161,9 +229,22 @@ export default function AutomationRulesPage() {
     }
   };
 
+  const handleRegenerateHook = async (id: string) => {
+    if (!confirm('重新生成后旧 URL 将立即失效，确定继续？')) return;
+    try {
+      await automationsService.regenerateHook(id);
+      toast.success('Hook URL 已重新生成');
+      loadRules();
+    } catch (err) {
+      toast.error('操作失败', String(err));
+    }
+  };
+
   const resetForm = () => {
     setFormName('');
+    setFormTriggerType(activeTab === 'incoming_webhook' ? 'incoming_webhook' : 'event');
     setFormEventType('');
+    setFormHookSecret('');
     setFormActions([]);
   };
 
@@ -191,11 +272,21 @@ export default function AutomationRulesPage() {
 
   const totalPages = Math.ceil(total / 20);
 
+  const emptyIcon = activeTab === 'incoming_webhook' ? <Link size={36} className="mx-auto mb-3 opacity-40" /> : <Zap size={36} className="mx-auto mb-3 opacity-40" />;
+  const emptyText = activeTab === 'incoming_webhook' ? '暂无传入 Webhook' : '暂无事件触发规则';
+  const emptyHint = activeTab === 'incoming_webhook'
+    ? '创建传入 Webhook 后，外部系统可以通过 POST 请求触发动作'
+    : '创建事件规则后，当系统事件发生时自动执行动作';
+
   return (
     <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden">
       <TabBar
-        title="自动化"
-        icon={<Zap size={16} />}
+        items={[
+          { key: 'event', label: '事件触发', icon: <Zap size={14} /> },
+          { key: 'incoming_webhook', label: '传入 Webhook', icon: <Link size={14} /> },
+        ]}
+        activeKey={activeTab}
+        onChange={handleTabChange}
         actions={
           <Button
             size="sm"
@@ -210,118 +301,125 @@ export default function AutomationRulesPage() {
       />
 
       <GlassCard glow className="flex-1 min-h-0 flex flex-col p-5">
-      {/* 规则列表 */}
-      {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 size={20} className="animate-spin text-muted-foreground" />
-        </div>
-      ) : rules.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground">
-          <Zap size={36} className="mx-auto mb-3 opacity-40" />
-          <p>暂无自动化规则</p>
-          <p className="text-xs mt-1">点击「新建规则」创建第一条自动化</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {rules.map((rule) => (
-            <div
-              key={rule.id}
-              className="p-4 rounded-xl border transition-colors"
-              style={{
-                background: 'rgba(255,255,255,0.02)',
-                borderColor: rule.enabled ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)',
-                opacity: rule.enabled ? 1 : 0.6,
-              }}
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{rule.name}</span>
-                    <Badge variant="subtle" size="sm">
-                      {rule.eventType}
-                    </Badge>
-                    {!rule.enabled && (
-                      <Badge variant="danger" size="sm">
-                        已禁用
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                    {/* 动作摘要 */}
-                    <div className="flex items-center gap-1.5">
-                      {rule.actions.map((a, i) => (
-                        <span
-                          key={i}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded"
-                          style={{ background: 'rgba(255,255,255,0.05)' }}
-                        >
-                          {actionTypeIcons[a.type]}
-                          {actionTypeLabels[a.type] || a.type}
-                        </span>
-                      ))}
+        {/* 规则列表 */}
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 size={20} className="animate-spin text-muted-foreground" />
+          </div>
+        ) : rules.length === 0 ? (
+          <div className="text-center py-16 text-muted-foreground">
+            {emptyIcon}
+            <p>{emptyText}</p>
+            <p className="text-xs mt-1">{emptyHint}</p>
+          </div>
+        ) : (
+          <div className="space-y-2 flex-1 overflow-y-auto">
+            {rules.map((rule) => (
+              <div
+                key={rule.id}
+                className="p-4 rounded-xl border transition-colors"
+                style={{
+                  background: 'rgba(255,255,255,0.02)',
+                  borderColor: rule.enabled ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)',
+                  opacity: rule.enabled ? 1 : 0.6,
+                }}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{rule.name}</span>
+                      {rule.triggerType === 'event' && (
+                        <Badge variant="subtle" size="sm">{rule.eventType}</Badge>
+                      )}
+                      {rule.triggerType === 'incoming_webhook' && (
+                        <Badge variant="success" size="sm">
+                          传入 Webhook
+                        </Badge>
+                      )}
+                      {!rule.enabled && (
+                        <Badge variant="danger" size="sm">已禁用</Badge>
+                      )}
                     </div>
-                    <span>|</span>
-                    <span>触发 {rule.triggerCount} 次</span>
-                    {rule.lastTriggeredAt && <span>最近: {fmtDate(rule.lastTriggeredAt)}</span>}
-                    <span>创建: {rule.createdByName}</span>
+
+                    {/* 传入 Webhook 显示 URL */}
+                    {rule.triggerType === 'incoming_webhook' && rule.hookId && (
+                      <div className="mt-2 flex items-center gap-1.5">
+                        <HookUrlDisplay hookId={rule.hookId} />
+                        <button
+                          onClick={() => handleRegenerateHook(rule.id)}
+                          className="p-1 rounded hover:bg-white/10 text-muted-foreground"
+                          title="重新生成 URL"
+                        >
+                          <RefreshCw size={12} />
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1.5">
+                        {rule.actions.map((a, i) => (
+                          <span
+                            key={i}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded"
+                            style={{ background: 'rgba(255,255,255,0.05)' }}
+                          >
+                            {actionTypeIcons[a.type]}
+                            {actionTypeLabels[a.type] || a.type}
+                          </span>
+                        ))}
+                      </div>
+                      <span>|</span>
+                      <span>触发 {rule.triggerCount} 次</span>
+                      {rule.lastTriggeredAt && <span>最近: {fmtDate(rule.lastTriggeredAt)}</span>}
+                      <span>创建: {rule.createdByName}</span>
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    title="手动触发"
-                    onClick={() => {
-                      setTriggerRuleId(rule.id);
-                      setTriggerTitle('');
-                      setTriggerContent('');
-                      setTriggerOpen(true);
-                    }}
-                    className="p-1.5 rounded-lg hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <Play size={14} />
-                  </button>
-                  <button
-                    title="删除"
-                    onClick={() => handleDelete(rule.id, rule.name)}
-                    className="p-1.5 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                  <Switch
-                    checked={rule.enabled}
-                    onCheckedChange={() => handleToggle(rule.id)}
-                    ariaLabel="启用/禁用"
-                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      title="手动触发"
+                      onClick={() => {
+                        setTriggerRuleId(rule.id);
+                        setTriggerTitle('');
+                        setTriggerContent('');
+                        setTriggerOpen(true);
+                      }}
+                      className="p-1.5 rounded-lg hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <Play size={14} />
+                    </button>
+                    <button
+                      title="删除"
+                      onClick={() => handleDelete(rule.id, rule.name)}
+                      className="p-1.5 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                    <Switch
+                      checked={rule.enabled}
+                      onCheckedChange={() => handleToggle(rule.id)}
+                      ariaLabel="启用/禁用"
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
 
-      {/* 分页 */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            上一页
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            {page} / {totalPages}
-          </span>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            下一页
-          </Button>
-        </div>
-      )}
+        {/* 分页 */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2 pt-3">
+            <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+              上一页
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              {page} / {totalPages}
+            </span>
+            <Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+              下一页
+            </Button>
+          </div>
+        )}
       </GlassCard>
 
       {/* 创建规则对话框 */}
@@ -329,48 +427,102 @@ export default function AutomationRulesPage() {
         open={createOpen}
         onOpenChange={(isOpen) => !isOpen && setCreateOpen(false)}
         title="新建自动化规则"
-        maxWidth={560}
+        maxWidth={600}
         contentClassName="max-h-[85vh] overflow-y-auto"
         content={
           <div className="space-y-4">
+            {/* 流程预览 */}
+            <FlowPreview triggerType={formTriggerType} actions={formActions} />
+
+            {/* 触发方式切换 */}
+            <div>
+              <label className="text-xs text-muted-foreground mb-1.5 block">触发方式</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setFormTriggerType('event')}
+                  className="flex-1 p-3 rounded-lg border text-left text-sm transition-all"
+                  style={{
+                    background: formTriggerType === 'event' ? 'rgba(59,130,246,0.1)' : 'rgba(255,255,255,0.02)',
+                    borderColor: formTriggerType === 'event' ? 'rgba(59,130,246,0.4)' : 'rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <div className="flex items-center gap-2 font-medium">
+                    <Zap size={14} /> 事件触发
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">系统内部事件发生时自动触发</div>
+                </button>
+                <button
+                  onClick={() => setFormTriggerType('incoming_webhook')}
+                  className="flex-1 p-3 rounded-lg border text-left text-sm transition-all"
+                  style={{
+                    background: formTriggerType === 'incoming_webhook' ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.02)',
+                    borderColor: formTriggerType === 'incoming_webhook' ? 'rgba(34,197,94,0.4)' : 'rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <div className="flex items-center gap-2 font-medium">
+                    <Link size={14} /> 传入 Webhook
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">外部系统 POST 到我们的 URL</div>
+                </button>
+              </div>
+            </div>
+
             {/* 规则名称 */}
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">规则名称</label>
               <input
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
-                placeholder="如：额度预警推送"
+                placeholder={formTriggerType === 'incoming_webhook' ? '如：GitHub Push 通知' : '如：额度预警推送'}
                 className={inputCls}
               />
             </div>
 
-            {/* 事件类型 */}
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">触发事件</label>
-              <select
-                value={formEventType}
-                onChange={(e) => setFormEventType(e.target.value)}
-                className={inputCls}
-              >
-                <option value="">选择事件类型...</option>
-                {eventTypes.map((et) => (
-                  <option key={et.eventType} value={et.eventType}>
-                    [{et.category}] {et.label}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-muted-foreground mt-1">或直接输入自定义事件类型（支持通配符 *）</p>
-              <input
-                value={formEventType}
-                onChange={(e) => setFormEventType(e.target.value)}
-                placeholder="如：visual-agent.image-gen.*"
-                className={inputCls + ' mt-1'}
-              />
-            </div>
+            {/* 事件触发：事件类型选择 */}
+            {formTriggerType === 'event' && (
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">触发事件</label>
+                <select
+                  value={formEventType}
+                  onChange={(e) => setFormEventType(e.target.value)}
+                  className={inputCls}
+                >
+                  <option value="">选择事件类型...</option>
+                  {eventTypes.map((et) => (
+                    <option key={et.eventType} value={et.eventType}>
+                      [{et.category}] {et.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground mt-1">或直接输入自定义事件类型（支持通配符 *）</p>
+                <input
+                  value={formEventType}
+                  onChange={(e) => setFormEventType(e.target.value)}
+                  placeholder="如：visual-agent.image-gen.*"
+                  className={inputCls + ' mt-1'}
+                />
+              </div>
+            )}
+
+            {/* 传入 Webhook：密钥（可选） */}
+            {formTriggerType === 'incoming_webhook' && (
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">签名密钥（可选）</label>
+                <input
+                  value={formHookSecret}
+                  onChange={(e) => setFormHookSecret(e.target.value)}
+                  placeholder="留空则不校验签名"
+                  className={inputCls}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  设置后，外部请求需在 <code className="px-1 py-0.5 rounded bg-white/5">X-Hook-Signature</code> 头中携带 HMAC-SHA256 签名
+                </p>
+              </div>
+            )}
 
             {/* 动作列表 */}
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">动作</label>
+              <label className="text-xs text-muted-foreground mb-1 block">执行动作</label>
               <div className="space-y-2">
                 {formActions.map((action, idx) => (
                   <div
@@ -383,10 +535,7 @@ export default function AutomationRulesPage() {
                         {actionTypeIcons[action.type]}
                         {actionTypeLabels[action.type] || action.type}
                       </span>
-                      <button
-                        onClick={() => removeAction(idx)}
-                        className="text-muted-foreground hover:text-red-400"
-                      >
+                      <button onClick={() => removeAction(idx)} className="text-muted-foreground hover:text-red-400">
                         <X size={14} />
                       </button>
                     </div>
@@ -395,7 +544,7 @@ export default function AutomationRulesPage() {
                         <input
                           value={action.webhookUrl || ''}
                           onChange={(e) => updateAction(idx, { webhookUrl: e.target.value })}
-                          placeholder="https://example.com/webhook"
+                          placeholder="https://example.com/webhook（我们 POST 到这个地址）"
                           className={inputCls}
                         />
                         <input
@@ -437,7 +586,7 @@ export default function AutomationRulesPage() {
               </div>
               <div className="flex gap-2 mt-2">
                 <Button variant="secondary" size="sm" onClick={() => addAction('webhook')}>
-                  <Webhook size={12} /> 添加 Webhook
+                  <ExternalLink size={12} /> 添加传出 Webhook
                 </Button>
                 <Button variant="secondary" size="sm" onClick={() => addAction('admin_notification')}>
                   <Bell size={12} /> 添加站内信

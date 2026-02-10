@@ -14,10 +14,11 @@ import type {
 const BASE = '/api/automations';
 
 export class AutomationsService implements IAutomationsService {
-  async listRules(page: number, pageSize: number, eventType?: string, enabled?: boolean): Promise<PagedRulesResponse> {
+  async listRules(page: number, pageSize: number, eventType?: string, enabled?: boolean, triggerType?: string): Promise<PagedRulesResponse> {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (eventType) params.append('eventType', eventType);
     if (enabled !== undefined) params.append('enabled', String(enabled));
+    if (triggerType) params.append('triggerType', triggerType);
     const res = await apiRequest<PagedRulesResponse>(`${BASE}/rules?${params}`);
     if (!res.success) throw new Error(res.error?.message || '请求失败');
     return res.data!;
@@ -47,6 +48,12 @@ export class AutomationsService implements IAutomationsService {
 
   async toggleRule(id: string): Promise<{ enabled: boolean }> {
     const res = await apiRequest<{ enabled: boolean }>(`${BASE}/rules/${id}/toggle`, { method: 'POST' });
+    if (!res.success) throw new Error(res.error?.message || '请求失败');
+    return res.data!;
+  }
+
+  async regenerateHook(id: string): Promise<{ hookId: string }> {
+    const res = await apiRequest<{ hookId: string }>(`${BASE}/rules/${id}/regenerate-hook`, { method: 'POST' });
     if (!res.success) throw new Error(res.error?.message || '请求失败');
     return res.data!;
   }

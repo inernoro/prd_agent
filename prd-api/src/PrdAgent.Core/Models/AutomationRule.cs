@@ -18,8 +18,17 @@ public class AutomationRule
 
     // ── 触发器 ──
 
-    /// <summary>事件类型（如 open-platform.quota.warning），支持通配符 *</summary>
+    /// <summary>触发方式：event（系统事件触发）或 incoming_webhook（外部调用传入）</summary>
+    public string TriggerType { get; set; } = "event";
+
+    /// <summary>事件类型（triggerType=event 时使用，支持通配符 *）</summary>
     public string EventType { get; set; } = string.Empty;
+
+    /// <summary>传入 Webhook 唯一标识（triggerType=incoming_webhook 时自动生成）</summary>
+    public string? HookId { get; set; }
+
+    /// <summary>传入 Webhook 验证密钥（可选，用于签名校验）</summary>
+    public string? HookSecret { get; set; }
 
     // ── 动作链 ──
 
