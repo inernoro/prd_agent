@@ -71,7 +71,7 @@ public class AttachmentsController : ControllerBase
         }
 
         // 存储到 COS / 本地
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "attachments", type: "chat");
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "img");
 
         var attachment = new Attachment
         {
