@@ -1,3 +1,4 @@
+using MongoDB.Bson.Serialization.Attributes;
 using PrdAgent.Core.Attributes;
 
 namespace PrdAgent.Core.Models;
@@ -5,6 +6,7 @@ namespace PrdAgent.Core.Models;
 /// <summary>
 /// 自动化规则：当事件触发时，执行一组动作
 /// </summary>
+[BsonIgnoreExtraElements]
 [AppOwnership(AppNames.System, AppNames.SystemDisplay, IsPrimary = true)]
 public class AutomationRule
 {
