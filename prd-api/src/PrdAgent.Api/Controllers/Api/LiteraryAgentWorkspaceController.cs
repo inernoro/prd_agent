@@ -223,7 +223,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         // Clean up related data
         await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == ws.Id, ct);
         await _db.ImageMasterMessages.DeleteManyAsync(x => x.WorkspaceId == ws.Id, ct);
-        await _db.ImageMasterCanvasObjects.DeleteManyAsync(x => x.SessionId == ws.Id, ct);
+        await _db.ImageMasterCanvases.DeleteManyAsync(x => x.WorkspaceId == ws.Id, ct);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -264,8 +264,8 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             .Limit(astLimit)
             .ToListAsync(ct);
 
-        var canvas = await _db.ImageMasterCanvasObjects
-            .Find(x => x.SessionId == ws.Id)
+        var canvas = await _db.ImageMasterCanvases
+            .Find(x => x.WorkspaceId == ws.Id)
             .FirstOrDefaultAsync(ct);
 
         var viewport = ws.ViewportByUserId != null && ws.ViewportByUserId.TryGetValue(adminId, out var vp)
