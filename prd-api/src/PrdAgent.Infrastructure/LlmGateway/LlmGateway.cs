@@ -264,7 +264,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             string? finishReason = null;
             var thinkingBuilder = new StringBuilder(); // 记录思考过程（用于日志）
-            var thinkTagStripper = new ThinkTagStripper(); // 剥离 <think> 标签
+            var thinkTagStripper = new ThinkTagStripper(captureThinking: request.IncludeThinking); // 剥离 <think> 标签，可选捕获
 
             while (!reader.EndOfStream)
             {
@@ -299,12 +299,17 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     continue;
                 }
 
-                // Thinking 类型（来自 reasoning_content 字段）：记录但不输出
+                // Thinking 类型（来自 reasoning_content 字段）
                 if (chunk.Type == GatewayChunkType.Thinking)
                 {
                     if (!string.IsNullOrEmpty(chunk.Content))
                     {
                         thinkingBuilder.Append(chunk.Content);
+                    }
+                    // 当 IncludeThinking 时，将思考块传递给调用方
+                    if (request.IncludeThinking && !string.IsNullOrEmpty(chunk.Content))
+                    {
+                        yield return chunk;
                     }
                     continue;
                 }
@@ -313,6 +318,18 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     // 通过 ThinkTagStripper 过滤 <think>...</think> 标签
                     var stripped = thinkTagStripper.Process(chunk.Content);
+
+                    // 当 IncludeThinking 时，将 <think> 标签内容作为 Thinking 块传递
+                    var capturedThink = thinkTagStripper.PopCapturedThinking();
+                    if (!string.IsNullOrEmpty(capturedThink))
+                    {
+                        thinkingBuilder.Append(capturedThink);
+                        if (request.IncludeThinking)
+                        {
+                            yield return GatewayStreamChunk.Thinking(capturedThink);
+                        }
+                    }
+
                     if (!string.IsNullOrEmpty(stripped))
                     {
                         textBuilder.Append(stripped);
@@ -1113,7 +1130,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string appCallerCode,
         string modelType,
         int maxTokens = 4096,
-        double temperature = 0.2)
+        double temperature = 0.2,
+        bool includeThinking = false)
     {
         if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
         {
@@ -1128,7 +1146,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             platformName: null,
             enablePromptCache: true,
             maxTokens: maxTokens,
-            temperature: temperature);
+            temperature: temperature,
+            includeThinking: includeThinking);
     }
 
     private static bool TryValidateAppCaller(string appCallerCode, string modelType, out string error)

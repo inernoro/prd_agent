@@ -28,6 +28,9 @@ public static class AdminPermissionCatalog
 
     public const string OpenPlatformManage = "open-platform.manage";
 
+    /// <summary>自动化规则管理权限</summary>
+    public const string AutomationsManage = "automations.manage";
+
     public const string DataRead = "data.read";
     public const string DataWrite = "data.write";
 
@@ -89,6 +92,11 @@ public static class AdminPermissionCatalog
     public const string DataMigrationAgentWrite = "data-migration-agent.write";
 
     /// <summary>
+    /// 总裁面板权限：查看总裁面板和周报
+    /// </summary>
+    public const string ExecutiveRead = "executive.read";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -120,6 +128,8 @@ public static class AdminPermissionCatalog
 
         new(OpenPlatformManage, "开放平台", "管理开放平台 App / 调用方 / 日志"),
 
+        new(AutomationsManage, "自动化", "管理自动化规则与事件通知"),
+
         new(DataRead, "数据管理-读", "查看导入导出/摘要"),
         new(DataWrite, "数据管理-写", "执行导入/清理等危险操作"),
 
@@ -134,6 +144,8 @@ public static class AdminPermissionCatalog
 
         new(LabRead, "实验室-读", "查看实验室功能"),
         new(LabWrite, "实验室-写", "使用实验室功能"),
+
+        new(ExecutiveRead, "总裁面板-读", "查看总裁面板和周报"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

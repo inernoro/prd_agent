@@ -108,6 +108,30 @@ public class OpenPlatformServiceImpl : OpenPlatformService
                 case "LastUsedAt":
                     updateList.Add(updateDef.Set(a => a.LastUsedAt, (DateTime)kvp.Value));
                     break;
+                case "WebhookUrl":
+                    updateList.Add(updateDef.Set(a => a.WebhookUrl, (string?)kvp.Value));
+                    break;
+                case "WebhookSecret":
+                    updateList.Add(updateDef.Set(a => a.WebhookSecret, (string?)kvp.Value));
+                    break;
+                case "WebhookEnabled":
+                    updateList.Add(updateDef.Set(a => a.WebhookEnabled, (bool)kvp.Value));
+                    break;
+                case "TokenQuotaLimit":
+                    updateList.Add(updateDef.Set(a => a.TokenQuotaLimit, (long)kvp.Value));
+                    break;
+                case "TokensUsed":
+                    updateList.Add(updateDef.Set(a => a.TokensUsed, (long)kvp.Value));
+                    break;
+                case "QuotaWarningThreshold":
+                    updateList.Add(updateDef.Set(a => a.QuotaWarningThreshold, (long)kvp.Value));
+                    break;
+                case "LastQuotaWarningAt":
+                    updateList.Add(updateDef.Set(a => a.LastQuotaWarningAt, (DateTime?)kvp.Value));
+                    break;
+                case "NotifyTarget":
+                    updateList.Add(updateDef.Set(a => a.NotifyTarget, (string)kvp.Value));
+                    break;
             }
         }
 

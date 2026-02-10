@@ -282,7 +282,8 @@ export async function* generateArticleMarkersReal(input: {
   articleContent: string;
   userInstruction?: string;
   idempotencyKey?: string;
-}): AsyncIterable<{ type: string; text?: string; fullText?: string; message?: string }> {
+  insertionMode?: 'legacy' | 'anchor';
+}): AsyncIterable<{ type: string; text?: string; fullText?: string; message?: string; index?: number; mode?: string; markerCount?: number; size?: string; anchor?: string }> {
   const headers: Record<string, string> = {
     Accept: 'text/event-stream',
     'Content-Type': 'application/json',
@@ -302,6 +303,7 @@ export async function* generateArticleMarkersReal(input: {
     body: JSON.stringify({
       articleContent: input.articleContent,
       userInstruction: input.userInstruction,
+      insertionMode: input.insertionMode,
     }),
   });
 

@@ -2010,7 +2010,11 @@ public class ImageMasterController : ControllerBase
         }
 
         var userInstruction = (request?.UserInstruction ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(userInstruction))
+        var insertionMode = (request?.InsertionMode ?? "anchor").Trim().ToLowerInvariant();
+        var isAnchorMode = insertionMode == "anchor";
+
+        // 锚点模式下 userInstruction 可为空（系统自动提供格式约束）；legacy 模式仍需用户提供
+        if (!isAnchorMode && string.IsNullOrWhiteSpace(userInstruction))
         {
             await WriteJsonResponseAsync(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "userInstruction 不能为空"), StatusCodes.Status400BadRequest, ct);
             return;
@@ -2024,7 +2028,7 @@ public class ImageMasterController : ControllerBase
         try
         {
             var appCallerCode = AppCallerRegistry.LiteraryAgent.Content.Chat;
-            var llmClient = _gateway.CreateClient(appCallerCode, "chat");
+            var llmClient = _gateway.CreateClient(appCallerCode, "chat", includeThinking: true);
             var requestId = Guid.NewGuid().ToString("N");
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: requestId,
@@ -2040,7 +2044,10 @@ public class ImageMasterController : ControllerBase
 
             // 调用主模型 LLM
             var client = llmClient;
-            var systemPrompt = userInstruction;
+            // Anchor 模式：自动包裹用户提示词，注入输出格式约束（用户旧提示词无需修改）
+            var systemPrompt = isAnchorMode
+                ? PrdAgent.Infrastructure.Prompts.Templates.ArticleIllustrationPrompt.WrapForAnchorMode(userInstruction)
+                : userInstruction;
             var userPrompt = articleContent;
 
             var messages = new List<LLMMessage>
@@ -2052,35 +2059,120 @@ public class ImageMasterController : ControllerBase
             // 只有显式取消 API 才能中断任务
             var fullResponse = new StringBuilder();
             var clientDisconnected = false;
+
+            // Anchor 模式：增量解析状态
+            string? pendingAnchor = null;
+            var lineBuffer = string.Empty;
+            var anchorInsertions = new List<PrdAgent.Core.Services.AnchorInsertion>();
+
             await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
             {
-                if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                // 思考过程：实时推送给前端展示
+                if (chunk.Type == "thinking" && !string.IsNullOrEmpty(chunk.Content))
                 {
-                    fullResponse.Append(chunk.Content);
-
-                    // SSE 写入捕获异常：客户端断开时不中断 LLM 处理
                     if (!clientDisconnected)
                     {
                         try
                         {
-                            var eventData = JsonSerializer.Serialize(new { type = "delta", text = chunk.Content }, JsonOptions);
-                            await Response.WriteAsync($"data: {eventData}\n\n");
+                            var thinkingData = JsonSerializer.Serialize(new
+                            {
+                                type = "thinking",
+                                text = chunk.Content
+                            }, JsonOptions);
+                            await Response.WriteAsync($"data: {thinkingData}\n\n");
                             await Response.Body.FlushAsync();
                         }
-                        catch (OperationCanceledException)
+                        catch (OperationCanceledException) { clientDisconnected = true; }
+                        catch (ObjectDisposedException) { clientDisconnected = true; }
+                        catch (Exception ex) when (ex.InnerException is OperationCanceledException) { clientDisconnected = true; }
+                    }
+                    continue;
+                }
+
+                if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    fullResponse.Append(chunk.Content);
+
+                    if (isAnchorMode)
+                    {
+                        // Anchor 模式：增量解析 @AFTER + [插图] 对，发现 marker 立即推送
+                        // 同时透传 delta 给前端，消除 thinking→marker 之间的视觉停顿
+                        if (!clientDisconnected)
                         {
-                            clientDisconnected = true;
-                            _logger.LogDebug("GenerateArticleMarkers: 客户端已断开，继续处理 LLM 响应");
+                            try
+                            {
+                                var deltaData = JsonSerializer.Serialize(new { type = "delta", text = chunk.Content }, JsonOptions);
+                                await Response.WriteAsync($"data: {deltaData}\n\n");
+                                await Response.Body.FlushAsync();
+                            }
+                            catch (OperationCanceledException) { clientDisconnected = true; }
+                            catch (ObjectDisposedException) { clientDisconnected = true; }
+                            catch (Exception ex) when (ex.InnerException is OperationCanceledException) { clientDisconnected = true; }
                         }
-                        catch (ObjectDisposedException)
+
+                        lineBuffer += chunk.Content;
+                        if (lineBuffer.Contains('\n'))
                         {
-                            clientDisconnected = true;
-                            _logger.LogDebug("GenerateArticleMarkers: 连接已关闭，继续处理 LLM 响应");
+                            var lines = lineBuffer.Split('\n');
+                            lineBuffer = lines[^1]; // 保留最后一个不完整的行
+
+                            for (int li = 0; li < lines.Length - 1; li++)
+                            {
+                                var parsed = PrdAgent.Core.Services.AnchorInsertionParser.TryParseLine(
+                                    lines[li], ref pendingAnchor, anchorInsertions.Count);
+                                if (parsed != null)
+                                {
+                                    anchorInsertions.Add(parsed);
+                                    // 立即推送 marker 事件，前端可以提前触发 planImageGen
+                                    if (!clientDisconnected)
+                                    {
+                                        try
+                                        {
+                                            var markerData = JsonSerializer.Serialize(new
+                                            {
+                                                type = "marker",
+                                                index = parsed.Index,
+                                                text = parsed.MarkerText,
+                                                size = parsed.Size,
+                                                anchor = parsed.AnchorText
+                                            }, JsonOptions);
+                                            await Response.WriteAsync($"data: {markerData}\n\n");
+                                            await Response.Body.FlushAsync();
+                                        }
+                                        catch (OperationCanceledException) { clientDisconnected = true; }
+                                        catch (ObjectDisposedException) { clientDisconnected = true; }
+                                        catch (Exception ex) when (ex.InnerException is OperationCanceledException) { clientDisconnected = true; }
+                                    }
+                                }
+                            }
                         }
-                        catch (Exception ex) when (ex.InnerException is OperationCanceledException)
+                    }
+                    else
+                    {
+                        // Legacy 模式：直接透传 delta
+                        if (!clientDisconnected)
                         {
-                            clientDisconnected = true;
-                            _logger.LogDebug("GenerateArticleMarkers: 客户端已断开（内部取消），继续处理 LLM 响应");
+                            try
+                            {
+                                var eventData = JsonSerializer.Serialize(new { type = "delta", text = chunk.Content }, JsonOptions);
+                                await Response.WriteAsync($"data: {eventData}\n\n");
+                                await Response.Body.FlushAsync();
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                clientDisconnected = true;
+                                _logger.LogDebug("GenerateArticleMarkers: 客户端已断开，继续处理 LLM 响应");
+                            }
+                            catch (ObjectDisposedException)
+                            {
+                                clientDisconnected = true;
+                                _logger.LogDebug("GenerateArticleMarkers: 连接已关闭，继续处理 LLM 响应");
+                            }
+                            catch (Exception ex) when (ex.InnerException is OperationCanceledException)
+                            {
+                                clientDisconnected = true;
+                                _logger.LogDebug("GenerateArticleMarkers: 客户端已断开（内部取消），继续处理 LLM 响应");
+                            }
                         }
                     }
                 }
@@ -2100,10 +2192,76 @@ public class ImageMasterController : ControllerBase
                 }
             }
 
+            // Anchor 模式：处理 lineBuffer 中最后一个不完整行
+            if (isAnchorMode && !string.IsNullOrWhiteSpace(lineBuffer))
+            {
+                var parsed = PrdAgent.Core.Services.AnchorInsertionParser.TryParseLine(
+                    lineBuffer, ref pendingAnchor, anchorInsertions.Count);
+                if (parsed != null)
+                {
+                    anchorInsertions.Add(parsed);
+                    if (!clientDisconnected)
+                    {
+                        try
+                        {
+                            var markerData = JsonSerializer.Serialize(new
+                            {
+                                type = "marker",
+                                index = parsed.Index,
+                                text = parsed.MarkerText,
+                                size = parsed.Size,
+                                anchor = parsed.AnchorText
+                            }, JsonOptions);
+                            await Response.WriteAsync($"data: {markerData}\n\n");
+                            await Response.Body.FlushAsync();
+                        }
+                        catch { /* 客户端已断开，忽略 */ }
+                    }
+                }
+            }
+
+            // 通知前端 LLM 流已结束，正在进行后处理（保存数据等）
+            if (!clientDisconnected)
+            {
+                try
+                {
+                    var finalizingData = JsonSerializer.Serialize(new { type = "finalizing" }, JsonOptions);
+                    await Response.WriteAsync($"data: {finalizingData}\n\n");
+                    await Response.Body.FlushAsync();
+                }
+                catch { clientDisconnected = true; }
+            }
+
+            // 生成最终的带标记文章内容
+            string generatedContent;
+            List<PrdAgent.Core.Services.ArticleMarker> extractedMarkers;
+
+            if (isAnchorMode)
+            {
+                // Anchor 模式：将锚点指令应用到原始文章
+                var mergeResult = PrdAgent.Core.Services.AnchorInsertionService.Apply(articleContent, anchorInsertions);
+                generatedContent = mergeResult.MergedContent;
+                extractedMarkers = PrdAgent.Core.Services.ArticleMarkerExtractor.Extract(generatedContent);
+
+                if (mergeResult.UnmatchedAnchors.Count > 0)
+                {
+                    _logger.LogWarning("GenerateArticleMarkers anchor mode: {UnmatchedCount}/{TotalCount} anchors unmatched for workspace {WorkspaceId}. Unmatched: {Unmatched}",
+                        mergeResult.UnmatchedAnchors.Count, mergeResult.TotalCount, wid,
+                        string.Join(" | ", mergeResult.UnmatchedAnchors.Select(a => a.Length > 40 ? a[..40] + "..." : a)));
+                }
+
+                _logger.LogInformation("GenerateArticleMarkers anchor mode completed for workspace {WorkspaceId}: {Matched}/{Total} anchors matched, {MarkerCount} markers extracted",
+                    wid, mergeResult.MatchedCount, mergeResult.TotalCount, extractedMarkers.Count);
+            }
+            else
+            {
+                // Legacy 模式：LLM 输出即为带标记的文章
+                generatedContent = fullResponse.ToString();
+                extractedMarkers = PrdAgent.Core.Services.ArticleMarkerExtractor.Extract(generatedContent);
+            }
+
             // 保存生成的内容到 workspace，并触发"提交型修改"逻辑（version++、清后续、清旧配图）
             var now = DateTime.UtcNow;
-            var generatedContent = fullResponse.ToString();
-            var extractedMarkers = PrdAgent.Core.Services.ArticleMarkerExtractor.Extract(generatedContent);
 
             // 快照当前 workflow 到历史（debug-only，最多保留 10 条）
             var history = ws.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>();
@@ -2158,15 +2316,21 @@ public class ImageMasterController : ControllerBase
                     .Set(x => x.UpdatedAt, now),
                 cancellationToken: CancellationToken.None);
 
-            _logger.LogInformation("GenerateArticleMarkers completed for workspace {WorkspaceId}, markers: {MarkerCount}, clientDisconnected: {ClientDisconnected}",
-                wid, extractedMarkers.Count, clientDisconnected);
+            _logger.LogInformation("GenerateArticleMarkers completed for workspace {WorkspaceId}, mode: {Mode}, markers: {MarkerCount}, clientDisconnected: {ClientDisconnected}",
+                wid, insertionMode, extractedMarkers.Count, clientDisconnected);
 
             // 发送完成事件（如果客户端仍连接）
             if (!clientDisconnected)
             {
                 try
                 {
-                    var doneData = JsonSerializer.Serialize(new { type = "done", fullText = generatedContent }, JsonOptions);
+                    var doneData = JsonSerializer.Serialize(new
+                    {
+                        type = "done",
+                        fullText = generatedContent,
+                        mode = insertionMode,
+                        markerCount = extractedMarkers.Count
+                    }, JsonOptions);
                     await Response.WriteAsync($"data: {doneData}\n\n");
                     await Response.Body.FlushAsync();
                 }

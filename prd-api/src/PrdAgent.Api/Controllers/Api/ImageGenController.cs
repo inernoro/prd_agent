@@ -1319,12 +1319,12 @@ public class ImageGenController : ControllerBase
         var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
         
-        // 文学创作场景：检查是否有激活的参考图配置
+        // 文学创作场景：检查是否有激活的参考图配置（必须按用户隔离）
         bool hasActiveReferenceImage = false;
         if (string.Equals(appKey, "literary-agent", StringComparison.OrdinalIgnoreCase) && initImageAssetSha256 == null)
         {
             var activeRefConfig = await _db.ReferenceImageConfigs
-                .Find(x => x.AppKey == "literary-agent" && x.IsActive)
+                .Find(x => x.AppKey == "literary-agent" && x.IsActive && x.CreatedByAdminId == adminId)
                 .FirstOrDefaultAsync(ct);
             hasActiveReferenceImage = activeRefConfig != null && !string.IsNullOrWhiteSpace(activeRefConfig.ImageSha256);
         }
@@ -1354,12 +1354,12 @@ public class ImageGenController : ControllerBase
         // 参考图风格提示词（用于追加到生图 prompt）
         string? referenceImagePrompt = null;
 
-        // 文学创作场景：若未指定参考图，自动从配置中获取底图
+        // 文学创作场景：若未指定参考图，自动从当前用户的配置中获取底图
         if (initImageAssetSha256 == null && appKey == "literary-agent")
         {
-            // 优先从新的 ReferenceImageConfigs 获取激活的配置
+            // 优先从新的 ReferenceImageConfigs 获取当前用户激活的配置
             var activeRefConfig = await _db.ReferenceImageConfigs
-                .Find(x => x.AppKey == "literary-agent" && x.IsActive)
+                .Find(x => x.AppKey == "literary-agent" && x.IsActive && x.CreatedByAdminId == adminId)
                 .FirstOrDefaultAsync(ct);
 
             if (activeRefConfig != null && !string.IsNullOrWhiteSpace(activeRefConfig.ImageSha256))

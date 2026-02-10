@@ -96,6 +96,13 @@ export type UnpublishLiteraryPromptContract = (input: {
 }) => Promise<ApiResponse<{ prompt: LiteraryPrompt }>>;
 
 /**
+ * AI 优化提示词：提取旧格式提示词中的风格描述部分，去除格式指令
+ */
+export type OptimizeLiteraryPromptContract = (input: {
+  content: string;
+}) => Promise<ApiResponse<{ optimizedContent: string }>>;
+
+/**
  * 海鲜市场 - 免费下载（Fork）
  */
 export type ForkLiteraryPromptContract = (input: {

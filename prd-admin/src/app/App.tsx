@@ -22,8 +22,10 @@ import { AiToolboxPage } from '@/pages/ai-toolbox';
 import { LandingPage } from '@/pages/home';
 import AssetsManagePage from '@/pages/AssetsManagePage';
 import OpenPlatformTabsPage from '@/pages/OpenPlatformTabsPage';
+import AutomationRulesPage from '@/pages/AutomationRulesPage';
 import AuthzPage from '@/pages/AuthzPage';
 import SettingsPage from '@/pages/SettingsPage';
+import ExecutiveDashboardPage from '@/pages/ExecutiveDashboardPage';
 import RichComposerLab from '@/pages/_dev/RichComposerLab';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
@@ -223,11 +225,13 @@ export default function App() {
         <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />
         <Route path="data" element={<RequirePermission perm="data.read"><DataManagePage /></RequirePermission>} />
         <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
+        <Route path="automations" element={<RequirePermission perm="automations.manage"><AutomationRulesPage /></RequirePermission>} />
         <Route path="prompts" element={<RequirePermission perm="prompts.read"><PromptStagesPage /></RequirePermission>} />
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="authz" element={<RequirePermission perm="authz.manage"><AuthzPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="settings.read"><SettingsPage /></RequirePermission>} />
+        <Route path="executive" element={<RequirePermission perm="executive.read"><ExecutiveDashboardPage /></RequirePermission>} />
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>
 

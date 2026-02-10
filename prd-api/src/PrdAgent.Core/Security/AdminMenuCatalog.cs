@@ -16,6 +16,9 @@ public static class AdminMenuCatalog
     /// </summary>
     public static readonly IReadOnlyList<AdminMenuDef> All = new List<AdminMenuDef>
     {
+        // 总裁面板
+        new("executive", "/executive", "总裁面板", "团队工作与 AI 使用全景", "Crown", 5),
+
         // 仪表盘：所有登录用户可见（只需 admin.access）
         new("dashboard", "/", "仪表盘", "LLM 可观测性与数据概览", "LayoutDashboard", 10),
 
@@ -51,6 +54,9 @@ public static class AdminMenuCatalog
         // 开放平台
         new("open-platform", "/open-platform", "开放平台", "API 应用与调用日志", "Plug", 120),
 
+        // 自动化
+        new("automations", "/automations", "自动化", "事件驱动的自动化规则引擎", "Zap", 125),
+
         // 权限管理
         new("authz", "/authz", "权限管理", "系统角色与用户权限", "UserCog", 130),
 
@@ -79,6 +85,17 @@ public static class AdminMenuCatalog
             if (menu.AppKey is "settings")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
+                {
+                    result.Add(menu);
+                }
+                continue;
+            }
+
+            // 总裁面板：需要独立权限
+            if (menu.AppKey is "executive")
+            {
+                if (permSet.Contains(AdminPermissionCatalog.ExecutiveRead) ||
+                    permSet.Contains(AdminPermissionCatalog.Super))
                 {
                     result.Add(menu);
                 }

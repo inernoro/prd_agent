@@ -286,6 +286,17 @@ public static class LiteraryAgent
         )]
         public const string Img2Img = "literary-agent.illustration.img2img::generation";
     }
+
+    public static class Prompt
+    {
+        [AppCallerMetadata(
+            "风格提示词优化",
+            "AI 提取旧提示词中的风格描述，去除格式指令",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Prompt"
+        )]
+        public const string Optimize = "literary-agent.prompt.optimize::chat";
+    }
 }
 
 /// <summary>
