@@ -2004,12 +2004,12 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                           {(detail?.questionText ?? '').trim() || '（无提示词）'}
                         </div>
                         {/* Input ← → Output 始终双栏 */}
-                        <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                        <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr', alignItems: 'stretch' }}>
                           {/* ===== Input 参考图（左） ===== */}
                           <div style={{ minWidth: 0 }}>
                             <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Input</div>
                             {effInputs.length > 0 ? (
-                              <div className="space-y-2" style={{ maxHeight: 420, overflowY: 'auto' }}>
+                              <div className="space-y-2">
                               {effInputs.map((img, idx) => (
                                 <div key={`in-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
                                   <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -2035,10 +2035,10 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                             )}
                           </div>
                           {/* ===== Output 生成图（右） ===== */}
-                          <div style={{ minWidth: 0 }}>
+                          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
                             <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Output</div>
                             {effOutputs.length > 0 ? (
-                              <div className="space-y-2" style={{ maxHeight: 420, overflowY: 'auto' }}>
+                              <div className="space-y-2">
                               {effOutputs.map((img, idx) => (
                                 <div key={`out-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
                                   <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -2058,7 +2058,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                               ))}
                               </div>
                             ) : (
-                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)', height: 120 }}>
+                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)', flex: 1, minHeight: 120 }}>
                                 {detail?.status === 'running' ? (
                                   <div className="flex flex-col items-center gap-2">
                                     <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
