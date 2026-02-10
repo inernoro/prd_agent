@@ -491,72 +491,64 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
         </div>
       </GlassCard>
 
-      {/* ── 4 Radars in ONE row ── */}
-      <div className="grid grid-cols-4 gap-3">
+      {/* ── Radars (left) + Dimension Overview (right) ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_1fr_1fr] gap-4">
+        {/* Two radars stacked */}
         <GlassCard glow className="!p-3">
           <SectionTitle>Agent 使用</SectionTitle>
           <EChart option={makeRadarOption(scored, dimensions, 'agent')} height={200} />
         </GlassCard>
         <GlassCard glow className="!p-3">
-          <SectionTitle>协作活跃</SectionTitle>
-          <EChart option={makeRadarOption(scored, dimensions, ['messages', 'sessions', 'groups'])} height={200} />
+          <SectionTitle>活动产出</SectionTitle>
+          <EChart option={makeRadarOption(scored, dimensions, 'activity')} height={200} />
         </GlassCard>
-        <GlassCard glow className="!p-3">
-          <SectionTitle>缺陷贡献</SectionTitle>
-          <EChart option={makeRadarOption(scored, dimensions, ['defects-created', 'defects-resolved', 'defect-agent'])} height={200} />
-        </GlassCard>
-        <GlassCard glow className="!p-3">
-          <SectionTitle>创意产出</SectionTitle>
-          <EChart option={makeRadarOption(scored, dimensions, ['images', 'visual-agent', 'literary-agent'])} height={200} />
-        </GlassCard>
-      </div>
 
-      {/* ── Dimension Overview ── */}
-      <GlassCard glow>
-        <SectionTitle>维度分布概览</SectionTitle>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-2">
-          {activeDims.map(dim => {
-            const meta = DIMENSION_META[dim.key] ?? { icon: Bot, color: 'rgba(148,163,184,0.7)', barColor: 'rgba(148,163,184,0.4)', short: dim.name };
-            const DimIcon = meta.icon;
-            const total = Object.values(dim.values).reduce((s, v) => s + v, 0);
-            const maxVal = Math.max(1, ...Object.values(dim.values));
-            const topUser = scored.find(u => (u.dimScores[dim.key] ?? 0) === maxVal);
+        {/* Dimension overview */}
+        <GlassCard glow className="!p-3">
+          <SectionTitle>维度分布</SectionTitle>
+          <div className="space-y-1.5">
+            {activeDims.map(dim => {
+              const meta = DIMENSION_META[dim.key] ?? { icon: Bot, color: 'rgba(148,163,184,0.7)', barColor: 'rgba(148,163,184,0.4)', short: dim.name };
+              const DimIcon = meta.icon;
+              const total = Object.values(dim.values).reduce((s, v) => s + v, 0);
+              const maxVal = Math.max(1, ...Object.values(dim.values));
+              const topUser = scored.find(u => (u.dimScores[dim.key] ?? 0) === maxVal);
 
-            return (
-              <div key={dim.key} className="flex items-center gap-2.5 py-1 px-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.02)' }}>
-                <DimIcon size={13} style={{ color: meta.color }} className="flex-shrink-0" />
-                <div className="w-14 flex-shrink-0">
-                  <div className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{meta.short}</div>
-                </div>
-                <div className="flex-1 h-3.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                  <div className="h-full flex">
-                    {scored.map((u, idx) => {
-                      const val = u.dimScores[dim.key] ?? 0;
-                      const pct = total > 0 ? (val / total) * 100 : 0;
-                      return pct > 0 ? (
-                        <div key={u.userId} className="h-full" style={{ width: `${pct}%`, background: USER_COLORS[idx % USER_COLORS.length], opacity: 0.8 }} title={`${u.displayName}: ${val}`} />
-                      ) : null;
-                    })}
+              return (
+                <div key={dim.key} className="flex items-center gap-2 py-0.5">
+                  <DimIcon size={11} style={{ color: meta.color }} className="flex-shrink-0" />
+                  <div className="w-12 flex-shrink-0">
+                    <div className="text-[10px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{meta.short}</div>
+                  </div>
+                  <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                    <div className="h-full flex">
+                      {scored.map((u, idx) => {
+                        const val = u.dimScores[dim.key] ?? 0;
+                        const pct = total > 0 ? (val / total) * 100 : 0;
+                        return pct > 0 ? (
+                          <div key={u.userId} className="h-full" style={{ width: `${pct}%`, background: USER_COLORS[idx % USER_COLORS.length], opacity: 0.8 }} title={`${u.displayName}: ${val}`} />
+                        ) : null;
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0 text-right">
+                    <span className="text-[10px] font-bold tabular-nums" style={{ color: meta.color }}>{total.toLocaleString()}</span>
+                    {topUser && <span className="text-[9px] ml-0.5" style={{ color: 'var(--text-muted)' }}>({topUser.displayName})</span>}
                   </div>
                 </div>
-                <div className="flex-shrink-0 text-right w-20">
-                  <span className="text-[11px] font-bold tabular-nums" style={{ color: meta.color }}>{total.toLocaleString()}</span>
-                  {topUser && <span className="text-[9px] ml-1" style={{ color: 'var(--text-muted)' }}>({topUser.displayName})</span>}
-                </div>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap gap-2 mt-2 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            {scored.slice(0, 8).map((u, idx) => (
+              <div key={u.userId} className="flex items-center gap-1">
+                <div className="w-2 h-2 rounded-full" style={{ background: USER_COLORS[idx % USER_COLORS.length] }} />
+                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>{u.displayName}</span>
               </div>
-            );
-          })}
-        </div>
-        {/* Legend */}
-        <div className="flex flex-wrap gap-3 mt-3 pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-          {scored.slice(0, 8).map((u, idx) => (
-            <div key={u.userId} className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full" style={{ background: USER_COLORS[idx % USER_COLORS.length] }} />
-              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{u.displayName}</span>
-            </div>
-          ))}
-        </div>
-      </GlassCard>
+            ))}
+          </div>
+        </GlassCard>
+      </div>
 
       {/* ── Zone 3: Full Ranking Table ── */}
       <GlassCard glow>
