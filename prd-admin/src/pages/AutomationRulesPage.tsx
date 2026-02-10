@@ -5,6 +5,11 @@ import { Switch } from '@/components/design/Switch';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
+import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
+import {
+  selectContentStyle,
+  selectItemClass,
+} from '@/components/design/selectStyles';
 import { automationsService } from '@/services';
 import { toast } from '@/lib/toast';
 import {
@@ -16,12 +21,12 @@ import {
   Zap,
   Check,
   X,
-  ArrowRight,
   Copy,
   RefreshCw,
   Link,
   ExternalLink,
   ChevronDown,
+  Search,
   Users,
 } from 'lucide-react';
 import type {
@@ -47,37 +52,16 @@ const actionTypeIcons: Record<string, React.ReactNode> = {
   admin_notification: <Bell size={12} />,
 };
 
-function FlowPreview({ triggerType, actions }: { triggerType: string; actions: AutomationAction[] }) {
-  const triggerLabel = triggerType === 'incoming_webhook' ? '外部系统 POST' : '系统事件触发';
-  const triggerSub = triggerType === 'incoming_webhook' ? '别人调用我们的 URL' : '内部事件匹配';
-  return (
-    <div className="flex items-center gap-2 p-3 rounded-lg text-xs" style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}>
-      <div className="text-center px-2">
-        <div className="font-medium" style={{ color: 'rgba(96,165,250,0.95)' }}>
-          {triggerType === 'incoming_webhook' ? <Link size={14} className="mx-auto mb-1" /> : <Zap size={14} className="mx-auto mb-1" />}
-          {triggerLabel}
-        </div>
-        <div style={{ color: 'rgba(96,165,250,0.6)' }}>{triggerSub}</div>
-      </div>
-      <ArrowRight size={14} style={{ color: 'rgba(96,165,250,0.5)', flexShrink: 0 }} />
-      <div className="text-center px-2">
-        <div className="font-medium" style={{ color: 'rgba(96,165,250,0.95)' }}>自动化引擎</div>
-        <div style={{ color: 'rgba(96,165,250,0.6)' }}>模板渲染</div>
-      </div>
-      <ArrowRight size={14} style={{ color: 'rgba(96,165,250,0.5)', flexShrink: 0 }} />
-      <div className="text-center px-2">
-        <div className="font-medium" style={{ color: 'rgba(96,165,250,0.95)' }}>
-          {actions.length > 0 ? actions.map((a) => actionTypeLabels[a.type] || a.type).join(' + ') : '执行动作'}
-        </div>
-        <div style={{ color: 'rgba(96,165,250,0.6)' }}>
-          {actions.some((a) => a.type === 'webhook') ? '我们 POST 到外部' : ''}
-          {actions.some((a) => a.type === 'webhook') && actions.some((a) => a.type === 'admin_notification') ? ' + ' : ''}
-          {actions.some((a) => a.type === 'admin_notification') ? '站内通知' : ''}
-          {actions.length === 0 && '待配置'}
-        </div>
-      </div>
-    </div>
-  );
+function getFlowSteps(triggerType: string, actions: AutomationAction[]) {
+  const triggerLabel = triggerType === 'incoming_webhook' ? '外部 POST' : '事件匹配';
+  const actionLabel = actions.length > 0
+    ? actions.map((a) => actionTypeLabels[a.type] || a.type).join(' + ')
+    : '执行动作';
+  return [
+    { key: 1, label: triggerLabel },
+    { key: 2, label: '模板渲染' },
+    { key: 3, label: actionLabel },
+  ];
 }
 
 function HookUrlDisplay({ hookId }: { hookId: string }) {
@@ -97,7 +81,7 @@ function HookUrlDisplay({ hookId }: { hookId: string }) {
   );
 }
 
-/** 用户多选下拉 */
+/** 用户多选下拉（复用 selectStyles 设计 token） */
 function UserMultiSelect({
   allUsers,
   selectedIds,
@@ -108,9 +92,10 @@ function UserMultiSelect({
   onChange: (ids: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const ref = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
-  // 点击外部关闭
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
@@ -119,11 +104,22 @@ function UserMultiSelect({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  useEffect(() => {
+    if (open) setTimeout(() => searchRef.current?.focus(), 100);
+    else setSearch('');
+  }, [open]);
+
   const toggle = (userId: string) => {
     onChange(
       selectedIds.includes(userId) ? selectedIds.filter((id) => id !== userId) : [...selectedIds, userId],
     );
   };
+
+  const filtered = allUsers.filter((u) => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return u.displayName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q);
+  });
 
   const selectedNames = selectedIds
     .map((id) => allUsers.find((u) => u.userId === id))
@@ -135,49 +131,83 @@ function UserMultiSelect({
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-sm text-left flex items-center justify-between gap-2"
+        className="relative w-full pr-9 h-9 rounded-[12px] text-sm outline-none transition-colors flex items-center px-3 hover:border-white/20"
+        style={{
+          background: 'var(--bg-input)',
+          border: '1px solid rgba(255,255,255,0.12)',
+          color: 'var(--text-primary)',
+        }}
       >
         <span className="truncate">
           {selectedIds.length === 0 ? (
-            <span className="text-muted-foreground">全局通知（所有管理员）</span>
+            <span style={{ color: 'var(--text-muted)' }}>全局通知（所有管理员）</span>
           ) : (
-            <span>{selectedNames.join('、')}</span>
+            selectedNames.join('、')
           )}
         </span>
-        <ChevronDown size={14} className="text-muted-foreground flex-shrink-0" />
+        <ChevronDown
+          size={16}
+          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"
+          style={{ color: 'var(--text-muted)' }}
+        />
       </button>
 
       {open && (
         <div
-          className="absolute z-50 mt-1 w-full rounded-lg border shadow-lg max-h-48 overflow-y-auto"
-          style={{ background: 'rgba(30,30,40,0.98)', borderColor: 'rgba(255,255,255,0.1)' }}
+          className="absolute z-[120] mt-2 w-full rounded-[14px] overflow-hidden"
+          style={selectContentStyle}
         >
-          {/* 全局通知选项 */}
-          <button
-            type="button"
-            onClick={() => { onChange([]); setOpen(false); }}
-            className="w-full px-3 py-2 text-sm text-left hover:bg-white/5 flex items-center gap-2"
-          >
-            <Users size={14} className="text-muted-foreground" />
-            <span>全局通知（所有管理员）</span>
-            {selectedIds.length === 0 && <Check size={12} className="ml-auto text-green-400" />}
-          </button>
-          <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
-          {allUsers.map((user) => (
+          {/* 搜索框 */}
+          <div className="p-2 border-b" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+              <input
+                ref={searchRef}
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="搜索用户..."
+                className="w-full pl-8 pr-3 h-8 rounded-[8px] text-sm outline-none"
+                style={{
+                  background: 'var(--bg-input)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  color: 'var(--text-primary)',
+                }}
+              />
+            </div>
+          </div>
+
+          {/* 选项列表 */}
+          <div className="p-1" style={{ maxHeight: 240, overflow: 'auto' }}>
+            {/* 全局通知选项 */}
             <button
-              key={user.userId}
               type="button"
-              onClick={() => toggle(user.userId)}
-              className="w-full px-3 py-2 text-sm text-left hover:bg-white/5 flex items-center gap-2"
+              onClick={() => { onChange([]); setOpen(false); }}
+              className={selectItemClass + ' w-full text-left flex items-center gap-2'}
             >
-              <span className="flex-1 truncate">{user.displayName}</span>
-              <span className="text-xs text-muted-foreground">@{user.username}</span>
-              {selectedIds.includes(user.userId) && <Check size={12} className="text-green-400 flex-shrink-0" />}
+              <Users size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+              <span className="flex-1">全局通知（所有管理员）</span>
+              {selectedIds.length === 0 && <Check size={12} className="text-green-400 flex-shrink-0" />}
             </button>
-          ))}
-          {allUsers.length === 0 && (
-            <div className="px-3 py-2 text-xs text-muted-foreground">暂无用户</div>
-          )}
+            <div className="mx-2 my-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+            {filtered.map((user) => (
+              <button
+                key={user.userId}
+                type="button"
+                onClick={() => toggle(user.userId)}
+                className={selectItemClass + ' w-full text-left flex items-center gap-2'}
+              >
+                <span className="flex-1 truncate">{user.displayName}</span>
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>@{user.username}</span>
+                {selectedIds.includes(user.userId) && <Check size={12} className="text-green-400 flex-shrink-0" />}
+              </button>
+            ))}
+            {filtered.length === 0 && (
+              <div className="px-3 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                未找到匹配用户
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -543,7 +573,11 @@ export default function AutomationRulesPage() {
         content={
           <div className="space-y-4">
             {/* 流程预览 */}
-            <FlowPreview triggerType={formTriggerType} actions={formActions} />
+            <WorkflowProgressBar
+              steps={getFlowSteps(formTriggerType, formActions)}
+              currentStep={3}
+              allCompleted
+            />
 
             {/* 触发方式切换 */}
             <div>
