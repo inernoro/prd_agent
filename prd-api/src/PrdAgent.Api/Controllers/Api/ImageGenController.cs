@@ -31,6 +31,7 @@ public class ImageGenController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly IModelDomainService _modelDomain;
+    private readonly IModelPoolQueryService _modelPoolQuery;
     private readonly OpenAIImageClient _imageClient;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
@@ -41,11 +42,20 @@ public class ImageGenController : ControllerBase
     private readonly IRunEventStore _runStore;
     private readonly IMultiImageComposeService _composeService;
 
+    // 硬编码的 appCallerCode（应用身份隔离原则）
+    private static class AppCallerCodes
+    {
+        public const string Text2Img = "visual-agent.image.text2img::generation";
+        public const string Img2Img = "visual-agent.image.img2img::generation";
+        public const string VisionGen = "visual-agent.image.vision::generation";
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public ImageGenController(
         MongoDbContext db,
         IModelDomainService modelDomain,
+        IModelPoolQueryService modelPoolQuery,
         OpenAIImageClient imageClient,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
@@ -58,6 +68,7 @@ public class ImageGenController : ControllerBase
     {
         _db = db;
         _modelDomain = modelDomain;
+        _modelPoolQuery = modelPoolQuery;
         _imageClient = imageClient;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
@@ -81,8 +92,69 @@ public class ImageGenController : ControllerBase
         return def != null && def.ModelTypes.Contains(ModelTypes.ImageGen);
     }
 
+    #region 模型池查询（硬编码 appCallerCode，应用身份隔离）
+
     /// <summary>
-    /// 批量生图：先用意图模型解析“将生成多少张 + 每张的 prompt”
+    /// 获取视觉创作所有生图场景的模型池列表（文生图 + 图生图 + 多图合成，合并去重）
+    /// </summary>
+    [HttpGet("models")]
+    public async Task<IActionResult> GetImageGenModels(CancellationToken ct)
+    {
+        var codes = new[] { AppCallerCodes.Text2Img, AppCallerCodes.Img2Img, AppCallerCodes.VisionGen };
+        const string modelType = "generation";
+
+        var seen = new HashSet<string>();
+        var merged = new List<ModelPoolForAppResult>();
+
+        foreach (var code in codes)
+        {
+            var pools = await _modelPoolQuery.GetModelPoolsAsync(code, modelType, ct);
+            foreach (var pool in pools)
+            {
+                if (seen.Add(pool.Id))
+                {
+                    merged.Add(pool);
+                }
+            }
+        }
+
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(merged));
+    }
+
+    /// <summary>
+    /// 获取视觉创作"文生图"可用的模型池列表
+    /// </summary>
+    [HttpGet("models/text2img")]
+    public async Task<IActionResult> GetText2ImgModels(CancellationToken ct)
+    {
+        var result = await _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.Text2Img, "generation", ct);
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
+    }
+
+    /// <summary>
+    /// 获取视觉创作"图生图"可用的模型池列表
+    /// </summary>
+    [HttpGet("models/img2img")]
+    public async Task<IActionResult> GetImg2ImgModels(CancellationToken ct)
+    {
+        var result = await _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.Img2Img, "generation", ct);
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
+    }
+
+    /// <summary>
+    /// 获取视觉创作"多图合成"可用的模型池列表
+    /// </summary>
+    [HttpGet("models/vision")]
+    public async Task<IActionResult> GetVisionGenModels(CancellationToken ct)
+    {
+        var result = await _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.VisionGen, "generation", ct);
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
+    }
+
+    #endregion
+
+    /// <summary>
+    /// 批量生图：先用意图模型解析"将生成多少张 + 每张的 prompt"
     /// </summary>
     [HttpPost("plan")]
     [ProducesResponseType(typeof(ApiResponse<ImageGenPlanResponse>), StatusCodes.Status200OK)]

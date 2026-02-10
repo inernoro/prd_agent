@@ -309,6 +309,8 @@ export const api = {
       plan: () => '/api/visual-agent/image-gen/plan',
       generate: () => '/api/visual-agent/image-gen/generate',
       sizeCaps: () => '/api/visual-agent/image-gen/size-caps',
+      /** 获取所有生图场景的模型池（合并去重） */
+      models: () => '/api/visual-agent/image-gen/models',
       runs: {
         create: () => '/api/visual-agent/image-gen/runs',
         byId: (runId: string) => `/api/visual-agent/image-gen/runs/${runId}`,

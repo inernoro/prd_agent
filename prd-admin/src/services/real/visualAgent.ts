@@ -1,5 +1,6 @@
 import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
+import type { ModelGroupForApp } from '@/types/modelGroup';
 import type {
   AddVisualAgentMessageContract,
   AddVisualAgentWorkspaceMessageContract,
@@ -392,4 +393,29 @@ export async function updateArticleMarkerReal(params: {
       body,
     }
   );
+}
+
+/**
+ * 获取视觉创作所有生图场景的模型池列表（后端合并去重）
+ * 调用 /api/visual-agent/image-gen/models
+ */
+export async function getVisualAgentImageGenModelsReal() {
+  const res = await apiRequest<ModelGroupForApp[]>(api.visualAgent.imageGen.models());
+  if (res.success && res.data) {
+    // 补齐 ModelGroup 基类中的可选/默认字段，与 modelGroups.ts 的 mapGroupFromApi 保持一致
+    res.data = res.data.map((g: any) => ({
+      ...g,
+      modelType: String(g?.modelType ?? '').trim(),
+      isDefaultForType: !!g?.isDefaultForType,
+      code: g?.code || '',
+      priority: g?.priority ?? 50,
+      strategyType: g?.strategyType ?? 0,
+      isSystemGroup: !!g?.isDefaultForType,
+      resolutionType: g?.resolutionType ?? 'DefaultPool',
+      isDedicated: !!g?.isDedicated,
+      isDefault: !!g?.isDefault,
+      isLegacy: !!g?.isLegacy,
+    })) as ModelGroupForApp[];
+  }
+  return res;
 }

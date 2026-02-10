@@ -27,10 +27,10 @@ import {
   getImageGenRun,
   getModels,
   getUserPreferences,
+  getVisualAgentImageGenModels,
   getWatermarkByApp,
   listWatermarksMarketplace,
   forkWatermark,
-  modelGroupsService,
   planImageGen,
   refreshVisualAgentWorkspaceCover,
   saveVisualAgentWorkspaceCanvas,
@@ -2028,35 +2028,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   useEffect(() => {
     setModelsLoading(true);
-    // 统一加载所有生成类型的模型池并合并去重
-    // 后端根据 images 数量自动路由（文生图/图生图/多图），前端不需要区分
-    const appCallerCodes = [
-      'visual-agent.image.text2img::generation',
-      'visual-agent.image.img2img::generation',
-      'visual-agent.image.vision::generation',
-    ];
+    // 通过视觉创作专属端点获取模型池（后端已合并去重所有生成类型）
     const emptyPools = { success: false, data: [] as ModelGroupForApp[] };
     Promise.all([
       getModels(),
-      ...appCallerCodes.map((code) =>
-        modelGroupsService.getModelGroupsForApp(code, 'generation').catch(() => emptyPools)
-      ),
+      getVisualAgentImageGenModels().catch(() => emptyPools),
     ])
-      .then(([modelsRes, ...poolResults]) => {
+      .then(([modelsRes, poolsRes]) => {
         const mr = modelsRes as { success: boolean; data?: Model[] };
         if (mr.success) setModels(mr.data ?? []);
-        // 合并所有池并按 id 去重
-        const seen = new Set<string>();
-        const merged: ModelGroupForApp[] = [];
-        for (const res of poolResults as { success: boolean; data?: ModelGroupForApp[] }[]) {
-          for (const pool of res.success ? res.data ?? [] : []) {
-            if (!seen.has(pool.id)) {
-              seen.add(pool.id);
-              merged.push(pool);
-            }
-          }
-        }
-        setImageGenPools(merged);
+        if (poolsRes.success) setImageGenPools(poolsRes.data ?? []);
       })
       .finally(() => setModelsLoading(false));
   }, []);
