@@ -491,19 +491,19 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
         </div>
       </GlassCard>
 
-      {/* ── Radars (left) + Dimension Overview (right) ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_1fr_1fr] gap-4">
-        {/* Two radars stacked */}
-        <GlassCard glow className="!p-3">
-          <SectionTitle>Agent 使用</SectionTitle>
-          <EChart option={makeRadarOption(scored, dimensions, 'agent')} height={200} />
-        </GlassCard>
-        <GlassCard glow className="!p-3">
-          <SectionTitle>活动产出</SectionTitle>
-          <EChart option={makeRadarOption(scored, dimensions, 'activity')} height={200} />
-        </GlassCard>
+      {/* ── Left: 2 Radars stacked | Right: Dimension Overview ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-3">
+          <GlassCard glow className="!p-3">
+            <SectionTitle>Agent 使用</SectionTitle>
+            <EChart option={makeRadarOption(scored, dimensions, 'agent')} height={200} />
+          </GlassCard>
+          <GlassCard glow className="!p-3">
+            <SectionTitle>活动产出</SectionTitle>
+            <EChart option={makeRadarOption(scored, dimensions, 'activity')} height={200} />
+          </GlassCard>
+        </div>
 
-        {/* Dimension overview */}
         <GlassCard glow className="!p-3">
           <SectionTitle>维度分布</SectionTitle>
           <div className="space-y-1.5">
