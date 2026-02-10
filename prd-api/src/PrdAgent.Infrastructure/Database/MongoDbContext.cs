@@ -125,6 +125,9 @@ public class MongoDbContext
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
     public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
 
+    // 技能设置（公共技能定义）
+    public IMongoCollection<SkillSettings> SkillSettings => _database.GetCollection<SkillSettings>("skill_settings");
+
     // 模型中继 (Exchange)
     public IMongoCollection<ModelExchange> ModelExchanges => _database.GetCollection<ModelExchange>("model_exchanges");
 

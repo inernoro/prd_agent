@@ -177,6 +177,55 @@ export interface DefectStats {
   bySeverity: Record<string, number>;
 }
 
+// ━━━ 附件类型 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+export interface AttachmentInfo {
+  attachmentId: string;
+  url: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
+// ━━━ 技能类型 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+export type ContextScope = 'all' | 'current' | 'prd';
+export type OutputMode = 'chat' | 'download' | 'clipboard';
+export type SkillSource = 'server' | 'local';
+
+export interface SkillParameter {
+  key: string;
+  label: string;
+  type: 'text' | 'select' | 'number';
+  defaultValue?: string;
+  options?: string[];
+  required: boolean;
+}
+
+export interface SkillItem {
+  skillKey: string;
+  title: string;
+  description: string;
+  icon?: string;
+  category?: string;
+  roles: string[];
+  order: number;
+  contextScope: ContextScope;
+  outputMode: OutputMode;
+  outputFileNameTemplate?: string;
+  promptTemplate: string;
+  parameters?: SkillParameter[];
+  isEnabled: boolean;
+  // 本地字段（仅客户端技能使用）
+  source?: SkillSource;
+}
+
+export interface SkillsClientResponse {
+  updatedAt: string;
+  skills: SkillItem[];
+}
+
+// ━━━ 工具栏模式 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+export type ToolbarMode = 'prompt' | 'skill';
+
 export interface StreamEvent {
   type: 'start' | 'delta' | 'done' | 'error' | 'blockStart' | 'blockDelta' | 'blockEnd' | 'phase' | 'citations';
   messageId?: string;

@@ -5,7 +5,11 @@ import { useMessageStore } from '../../stores/messageStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useConnectionStore } from '../../stores/connectionStore';
 import { useUiPrefsStore } from '../../stores/uiPrefsStore';
-import { ApiResponse, Message, PromptItem, UserRole } from '../../types';
+import { useSkillStore } from '../../stores/skillStore';
+import { ApiResponse, AttachmentInfo, ContextScope, Message, OutputMode, PromptItem, SkillItem, ToolbarMode, UserRole } from '../../types';
+import AttachmentPreview from './AttachmentPreview';
+import SkillPanel from './SkillPanel';
+import SkillManagerModal from './SkillManagerModal';
 
 function roleSuffix(role: UserRole) {
   if (role === 'DEV') return 'dev';
@@ -66,6 +70,17 @@ export default function ChatInput() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [inputHeight, setInputHeight] = useState(36);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 附件状态
+  const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+
+  // 工具栏模式：提示词 / 技能
+  const [toolbarMode, setToolbarMode] = useState<ToolbarMode>('prompt');
+
+  // 技能管理弹窗
+  const [showSkillManager, setShowSkillManager] = useState(false);
 
   const canChat = !!sessionId;
   const canChatNow = canChat && !isDisconnected;
@@ -83,7 +98,7 @@ export default function ChatInput() {
     if (isStreaming && isSubmitting) setIsSubmitting(false);
   }, [isStreaming, isSubmitting]);
 
-  // 外部触发：预填输入框（用于“重发”）
+  // 外部触发：预填输入框（用于"重发"）
   useEffect(() => {
     const onPrefill = (e: Event) => {
       const ce = e as CustomEvent<{ content?: string; resendMessageId?: string | null }>;
@@ -105,6 +120,18 @@ export default function ChatInput() {
     window.addEventListener('prdAgent:prefillChatInput' as any, onPrefill as EventListener);
     return () => window.removeEventListener('prdAgent:prefillChatInput' as any, onPrefill as EventListener);
   }, []);
+
+  // 加载服务端技能列表
+  useEffect(() => {
+    if (!sessionId) return;
+    invoke<ApiResponse<any>>('get_skills', { role: currentRole.toLowerCase() })
+      .then((resp) => {
+        if (resp?.success && resp.data) {
+          useSkillStore.getState().setServerSkills(resp.data);
+        }
+      })
+      .catch(() => { /* ignore */ });
+  }, [sessionId, currentRole]);
 
   const promptsForRole = useMemo(() => {
     const list = Array.isArray(prompts) ? prompts : [];
@@ -144,14 +171,57 @@ export default function ChatInput() {
         content: userMessage.content,
         role: currentRole.toLowerCase(),
         promptKey: p.promptKey,
+        attachmentIds: attachments.length ? attachments.map((a) => a.attachmentId) : undefined,
       });
       const runId = resp?.success ? String((resp as any).data?.runId || '') : '';
       if (runId) {
         ackPendingUserMessageRunId({ runId });
-        // 注意：不再调用 subscribe_chat_run，流式输出统一通过群组广播流（group-message）处理
       }
+      // 发送后清空附件
+      setAttachments([]);
     } catch (err) {
       console.error('Failed to send prompt explain:', err);
+      setIsSubmitting(false);
+    }
+  };
+
+  // 技能执行
+  const handleExecuteSkill = async (skill: SkillItem, contextScope: ContextScope, outputMode: OutputMode) => {
+    if (!sessionId || isStreaming || isSubmitting || isDisconnected) return;
+    try {
+      setIsSubmitting(true);
+      // 构建技能执行消息
+      const userContent = content.trim();
+      const text = userContent
+        ? `【${skill.title}】${userContent}`
+        : `【${skill.title}】`;
+      const userMessage = pushSimulatedUserMessage(text);
+
+      await waitForUiPaint();
+
+      // 将技能元信息作为 promptKey 传递，后端根据 skillKey 解析
+      const resp = await invoke<ApiResponse<any>>('create_chat_run', {
+        sessionId,
+        content: userMessage.content,
+        role: currentRole.toLowerCase(),
+        promptKey: `skill::${skill.skillKey}::${contextScope}::${outputMode}`,
+        attachmentIds: attachments.length ? attachments.map((a) => a.attachmentId) : undefined,
+      });
+
+      const data = resp?.success ? (resp as any).data : null;
+      const runId = data?.runId ? String(data.runId) : '';
+      const skippedAi = data?.skippedAiReply === true;
+
+      if (skippedAi) {
+        clearPendingAssistant();
+        setIsSubmitting(false);
+      } else if (runId) {
+        ackPendingUserMessageRunId({ runId });
+      }
+      setContent('');
+      setAttachments([]);
+    } catch (err) {
+      console.error('Failed to execute skill:', err);
       setIsSubmitting(false);
     }
   };
@@ -175,8 +245,11 @@ export default function ChatInput() {
     addUserMessageWithPendingAssistant({ userMessage });
     setContent('');
 
+    const attachmentIds = attachments.length ? attachments.map((a) => a.attachmentId) : undefined;
+    setAttachments([]);
+
     try {
-      // 先让“用户消息 + loading 气泡 + 滚到底”完成渲染，再开始请求
+      // 先让"用户消息 + loading 气泡 + 滚到底"完成渲染，再开始请求
       await waitForUiPaint();
       if (resendTargetMessageId) {
         const target = resendTargetMessageId;
@@ -186,6 +259,7 @@ export default function ChatInput() {
           messageId: target,
           content: userMessage.content,
           role: currentRole.toLowerCase(),
+          attachmentIds,
           skipAiReply: !aiAnyway || undefined,
         });
       } else {
@@ -193,6 +267,7 @@ export default function ChatInput() {
           sessionId,
           content: userMessage.content,
           role: currentRole.toLowerCase(),
+          attachmentIds,
           skipAiReply: !aiAnyway || undefined,
         });
         const data = resp?.success ? (resp as any).data : null;
@@ -234,6 +309,72 @@ export default function ChatInput() {
     }
   };
 
+  // 附件上传
+  const handleAttachmentClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        // 使用 FileReader 读取文件路径（Tauri 环境下使用 webkitRelativePath 或构造临时路径）
+        // 在 Tauri 中，我们直接通过 Tauri dialog API 获取路径
+        // 但这里通过 <input type="file"> 获取的是 File 对象，需要不同处理
+
+        // 将 File 转为 ArrayBuffer -> base64 -> 通过 Tauri 文件系统写入临时文件 -> 上传
+        // 更简单的方式：直接读取为 bytes 然后通过自定义 endpoint 上传
+        const reader = new FileReader();
+        const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+          reader.onload = () => resolve(reader.result as ArrayBuffer);
+          reader.onerror = reject;
+          reader.readAsArrayBuffer(file);
+        });
+
+        // 创建临时文件路径（通过 Tauri 写入临时目录）
+        const uint8 = new Uint8Array(arrayBuffer);
+        const tempFileName = `upload-${Date.now()}-${file.name}`;
+
+        try {
+          // 使用 Tauri fs plugin 写入临时目录
+          const { writeFile, BaseDirectory } = await import('@tauri-apps/plugin-fs');
+          await writeFile(tempFileName, uint8, { baseDir: BaseDirectory.Temp });
+
+          // 获取临时目录路径
+          const { tempDir } = await import('@tauri-apps/api/path');
+          const tempDirPath = await tempDir();
+          const fullPath = `${tempDirPath}${tempFileName}`;
+
+          const resp = await invoke<ApiResponse<AttachmentInfo>>('upload_attachment', {
+            filePath: fullPath,
+            fileName: file.name,
+          });
+
+          if (resp?.success && resp.data) {
+            setAttachments((prev) => [...prev, resp.data!]);
+          } else {
+            console.error('Upload failed:', resp?.error?.message);
+          }
+        } catch (innerErr) {
+          console.error('Failed to upload file via Tauri:', innerErr);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to handle file selection:', err);
+    } finally {
+      setIsUploading(false);
+      // Reset input
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleRemoveAttachment = (attachmentId: string) => {
+    setAttachments((prev) => prev.filter((a) => a.attachmentId !== attachmentId));
+  };
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -241,7 +382,7 @@ export default function ChatInput() {
     }
   };
 
-  // 统一控制高度：按钮与单行输入框永远对齐（避免反复出现“差一点点”）
+  // 统一控制高度：按钮与单行输入框永远对齐（避免反复出现"差一点点"）
   const CONTROL_HEIGHT = 36;
 
   const adjustTextareaHeight = useCallback(() => {
@@ -250,7 +391,7 @@ export default function ChatInput() {
       textarea.style.height = 'auto';
       const next = Math.max(CONTROL_HEIGHT, Math.min(textarea.scrollHeight, 200));
       textarea.style.height = next + 'px';
-      // 用 textarea 实际高度作为“对齐基准”：按钮容器强制同高，彻底杜绝像素漂移
+      // 用 textarea 实际高度作为"对齐基准"：按钮容器强制同高，彻底杜绝像素漂移
       setInputHeight(next);
     }
   }, []);
@@ -286,75 +427,124 @@ export default function ChatInput() {
     }
   }, [showAllPrompts, checkPromptsOverflow]);
 
+  const actionDisabled = isStreaming || isSubmitting || isDisconnected;
+
   return (
     <div className="border-t ui-glass-bar">
-      {/* 提示词栏：按当前角色展示 */}
+      {/* 工具栏区域：提示词 / 技能 模式切换 */}
       {canChat && document?.id && (
-        <div className="px-3 py-2 flex items-start gap-2 border-b border-black/10 dark:border-white/10 ui-glass-bar">
-          {/* 左侧：提示词区域 */}
-          <div className="flex-1 min-w-0 flex items-start gap-2">
-            <div className="text-xs text-text-secondary flex-shrink-0 py-1.5">提示词</div>
-            <div className="flex-1 min-w-0 flex items-center gap-1">
-              <div
-                ref={promptsContainerRef}
-                className={`flex items-center gap-1 ${
-                  showAllPrompts ? 'flex-wrap flex-1' : 'overflow-hidden'
+        <>
+          {/* Tab 切换 + 右侧控制 */}
+          <div className="px-3 py-1.5 flex items-center justify-between border-b border-black/10 dark:border-white/10 ui-glass-bar">
+            {/* 左侧：模式 Tab */}
+            <div className="flex items-center gap-0.5">
+              <button
+                onClick={() => setToolbarMode('prompt')}
+                className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                  toolbarMode === 'prompt'
+                    ? 'bg-primary-500/15 text-primary-600 dark:text-primary-300'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5'
                 }`}
               >
-                {promptsForRole.map((p) => (
-                  <button
-                    key={p.promptKey}
-                    onClick={() => handlePromptExplain(p)}
-                    disabled={isStreaming || isSubmitting || isDisconnected}
-                    className={`flex-shrink-0 px-2.5 py-1.5 text-xs ui-chip transition-colors ${
-                      isStreaming || isSubmitting || isDisconnected ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
-                    } text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5`}
-                    title={p.title}
-                  >
-                    <span className="hidden sm:inline">{p.title}</span>
-                    <span className="sm:hidden">{p.order}</span>
-                  </button>
-                ))}
-                {/* 展开时收起按钮放在末尾 */}
-                {showAllPrompts && (
-                  <button
-                    onClick={() => setShowAllPrompts(false)}
-                    className="flex-shrink-0 px-2 py-1.5 text-xs text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
-                  >
-                    收起
-                  </button>
-                )}
-              </div>
-              {/* 未展开时更多按钮显示在行尾 */}
-              {hasOverflow && !showAllPrompts && (
-                <button
-                  onClick={() => setShowAllPrompts(true)}
-                  className="flex-shrink-0 px-2 py-1.5 text-xs text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
-                >
-                  更多
-                </button>
-              )}
+                提示词
+              </button>
+              <button
+                onClick={() => setToolbarMode('skill')}
+                className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                  toolbarMode === 'skill'
+                    ? 'bg-primary-500/15 text-primary-600 dark:text-primary-300'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5'
+                }`}
+              >
+                技能
+              </button>
+            </div>
+
+            {/* 右侧：AI Anyway 开关 */}
+            <div className="flex-shrink-0 flex items-center gap-1.5">
+              <span className="text-xs text-text-secondary whitespace-nowrap">AI Anyway</span>
+              <button
+                onClick={toggleAiAnyway}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                  aiAnyway ? 'bg-primary-500' : 'bg-gray-300 dark:bg-gray-600'
+                }`}
+                aria-label="AI Anyway"
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                    aiAnyway ? 'translate-x-4' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
             </div>
           </div>
 
-          {/* 右侧：AI Anyway 开关 */}
-          <div className="flex-shrink-0 flex items-center gap-1.5 py-0.5">
-            <span className="text-xs text-text-secondary whitespace-nowrap">AI Anyway</span>
-            <button
-              onClick={toggleAiAnyway}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                aiAnyway ? 'bg-primary-500' : 'bg-gray-300 dark:bg-gray-600'
-              }`}
-              aria-label="AI Anyway"
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                  aiAnyway ? 'translate-x-4' : 'translate-x-0.5'
-                }`}
-              />
-            </button>
-          </div>
-        </div>
+          {/* 提示词模式面板 */}
+          {toolbarMode === 'prompt' && (
+            <div className="px-3 py-2 flex items-start gap-2 border-b border-black/10 dark:border-white/10 ui-glass-bar">
+              <div className="flex-1 min-w-0 flex items-start gap-2">
+                <div className="flex-1 min-w-0 flex items-center gap-1">
+                  <div
+                    ref={promptsContainerRef}
+                    className={`flex items-center gap-1 ${
+                      showAllPrompts ? 'flex-wrap flex-1' : 'overflow-hidden'
+                    }`}
+                  >
+                    {promptsForRole.map((p) => (
+                      <button
+                        key={p.promptKey}
+                        onClick={() => handlePromptExplain(p)}
+                        disabled={actionDisabled}
+                        className={`flex-shrink-0 px-2.5 py-1.5 text-xs ui-chip transition-colors ${
+                          actionDisabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+                        } text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5`}
+                        title={p.title}
+                      >
+                        <span className="hidden sm:inline">{p.title}</span>
+                        <span className="sm:hidden">{p.order}</span>
+                      </button>
+                    ))}
+                    {/* 展开时收起按钮放在末尾 */}
+                    {showAllPrompts && (
+                      <button
+                        onClick={() => setShowAllPrompts(false)}
+                        className="flex-shrink-0 px-2 py-1.5 text-xs text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
+                      >
+                        收起
+                      </button>
+                    )}
+                  </div>
+                  {/* 未展开时更多按钮显示在行尾 */}
+                  {hasOverflow && !showAllPrompts && (
+                    <button
+                      onClick={() => setShowAllPrompts(true)}
+                      className="flex-shrink-0 px-2 py-1.5 text-xs text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
+                    >
+                      更多
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 技能模式面板 */}
+          {toolbarMode === 'skill' && (
+            <SkillPanel
+              disabled={actionDisabled}
+              onExecuteSkill={handleExecuteSkill}
+              onManageSkills={() => setShowSkillManager(true)}
+            />
+          )}
+        </>
+      )}
+
+      {/* 附件预览条 */}
+      {attachments.length > 0 && (
+        <AttachmentPreview
+          attachments={attachments}
+          onRemove={handleRemoveAttachment}
+        />
       )}
 
       {/* 输入区域 */}
@@ -364,14 +554,34 @@ export default function ChatInput() {
         <div className="flex items-end" style={{ height: `${inputHeight}px` }}>
           <button
             type="button"
-            className="h-9 w-9 flex items-center justify-center text-text-secondary hover:text-primary-500 transition-colors rounded-lg hover:bg-black/5 dark:hover:bg-white/5"
+            onClick={handleAttachmentClick}
+            disabled={isUploading || !canChatNow}
+            className={`h-9 w-9 flex items-center justify-center text-text-secondary hover:text-primary-500 transition-colors rounded-lg hover:bg-black/5 dark:hover:bg-white/5 ${
+              isUploading ? 'animate-pulse' : ''
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
             aria-label="附件"
-            title="附件"
+            title={isUploading ? '上传中...' : '上传图片附件'}
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-            </svg>
+            {isUploading ? (
+              <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
+            )}
           </button>
+          {/* 隐藏的文件输入 */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+            multiple
+            onChange={handleFileSelected}
+            className="hidden"
+          />
         </div>
 
         {/* 关键：min-w-0 允许在网格中收缩，避免 placeholder 撑宽导致溢出 */}
@@ -385,7 +595,7 @@ export default function ChatInput() {
             onKeyDown={handleKeyDown}
             placeholder={
               isDisconnected
-                ? "服务器已断开连接，正在重连…"
+                ? "服务器已断开连接，正在重连..."
                 : (canChat ? "输入您的问题... (Enter 发送, Shift+Enter 换行)" : "该群组未绑定 PRD，无法提问")
             }
             className="w-full min-w-0 px-3 py-2 ui-control rounded-xl resize-none text-sm overflow-y-hidden"
@@ -415,6 +625,12 @@ export default function ChatInput() {
         </div>
         </div>
       </div>
+
+      {/* 技能管理弹窗 */}
+      <SkillManagerModal
+        open={showSkillManager}
+        onClose={() => setShowSkillManager(false)}
+      />
     </div>
   );
 }

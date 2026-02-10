@@ -217,6 +217,8 @@ pub fn run() {
             commands::defect::reject_defect,
             commands::defect::get_defect_stats,
             commands::devtools::open_devtools,
+            commands::attachment::upload_attachment,
+            commands::skill::get_skills,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
