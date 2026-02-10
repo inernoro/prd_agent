@@ -27,9 +27,6 @@ public class AutomationRule
     /// <summary>传入 Webhook 唯一标识（triggerType=incoming_webhook 时自动生成）</summary>
     public string? HookId { get; set; }
 
-    /// <summary>传入 Webhook 验证密钥（可选，用于签名校验）</summary>
-    public string? HookSecret { get; set; }
-
     // ── 动作链 ──
 
     /// <summary>动作列表（按顺序执行）</summary>

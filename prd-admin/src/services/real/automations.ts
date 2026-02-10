@@ -9,6 +9,7 @@ import type {
   AutomationTriggerResult,
   EventTypeDef,
   ActionTypeDef,
+  NotifyTarget,
 } from '../contracts/automations';
 
 const BASE = '/api/automations';
@@ -72,6 +73,12 @@ export class AutomationsService implements IAutomationsService {
 
   async getActionTypes(): Promise<ActionTypeDef[]> {
     const res = await apiRequest<{ items: ActionTypeDef[] }>(`${BASE}/action-types`);
+    if (!res.success) throw new Error(res.error?.message || '请求失败');
+    return res.data!.items;
+  }
+
+  async getNotifyTargets(): Promise<NotifyTarget[]> {
+    const res = await apiRequest<{ items: NotifyTarget[] }>(`${BASE}/notify-targets`);
     if (!res.success) throw new Error(res.error?.message || '请求失败');
     return res.data!.items;
   }

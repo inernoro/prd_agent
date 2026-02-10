@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { Switch } from '@/components/design/Switch';
@@ -21,12 +21,15 @@ import {
   RefreshCw,
   Link,
   ExternalLink,
+  ChevronDown,
+  Users,
 } from 'lucide-react';
 import type {
   RuleListItem,
   AutomationAction,
   EventTypeDef,
   CreateRuleRequest,
+  NotifyTarget,
 } from '@/services/contracts/automations';
 
 function fmtDate(v?: string | null) {
@@ -59,7 +62,7 @@ function FlowPreview({ triggerType, actions }: { triggerType: string; actions: A
       <ArrowRight size={14} style={{ color: 'rgba(96,165,250,0.5)', flexShrink: 0 }} />
       <div className="text-center px-2">
         <div className="font-medium" style={{ color: 'rgba(96,165,250,0.95)' }}>自动化引擎</div>
-        <div style={{ color: 'rgba(96,165,250,0.6)' }}>匹配规则</div>
+        <div style={{ color: 'rgba(96,165,250,0.6)' }}>模板渲染</div>
       </div>
       <ArrowRight size={14} style={{ color: 'rgba(96,165,250,0.5)', flexShrink: 0 }} />
       <div className="text-center px-2">
@@ -94,6 +97,93 @@ function HookUrlDisplay({ hookId }: { hookId: string }) {
   );
 }
 
+/** 用户多选下拉 */
+function UserMultiSelect({
+  allUsers,
+  selectedIds,
+  onChange,
+}: {
+  allUsers: NotifyTarget[];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const toggle = (userId: string) => {
+    onChange(
+      selectedIds.includes(userId) ? selectedIds.filter((id) => id !== userId) : [...selectedIds, userId],
+    );
+  };
+
+  const selectedNames = selectedIds
+    .map((id) => allUsers.find((u) => u.userId === id))
+    .filter(Boolean)
+    .map((u) => u!.displayName);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-sm text-left flex items-center justify-between gap-2"
+      >
+        <span className="truncate">
+          {selectedIds.length === 0 ? (
+            <span className="text-muted-foreground">全局通知（所有管理员）</span>
+          ) : (
+            <span>{selectedNames.join('、')}</span>
+          )}
+        </span>
+        <ChevronDown size={14} className="text-muted-foreground flex-shrink-0" />
+      </button>
+
+      {open && (
+        <div
+          className="absolute z-50 mt-1 w-full rounded-lg border shadow-lg max-h-48 overflow-y-auto"
+          style={{ background: 'rgba(30,30,40,0.98)', borderColor: 'rgba(255,255,255,0.1)' }}
+        >
+          {/* 全局通知选项 */}
+          <button
+            type="button"
+            onClick={() => { onChange([]); setOpen(false); }}
+            className="w-full px-3 py-2 text-sm text-left hover:bg-white/5 flex items-center gap-2"
+          >
+            <Users size={14} className="text-muted-foreground" />
+            <span>全局通知（所有管理员）</span>
+            {selectedIds.length === 0 && <Check size={12} className="ml-auto text-green-400" />}
+          </button>
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+          {allUsers.map((user) => (
+            <button
+              key={user.userId}
+              type="button"
+              onClick={() => toggle(user.userId)}
+              className="w-full px-3 py-2 text-sm text-left hover:bg-white/5 flex items-center gap-2"
+            >
+              <span className="flex-1 truncate">{user.displayName}</span>
+              <span className="text-xs text-muted-foreground">@{user.username}</span>
+              {selectedIds.includes(user.userId) && <Check size={12} className="text-green-400 flex-shrink-0" />}
+            </button>
+          ))}
+          {allUsers.length === 0 && (
+            <div className="px-3 py-2 text-xs text-muted-foreground">暂无用户</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AutomationRulesPage() {
   const [activeTab, setActiveTab] = useState('event');
   const [rules, setRules] = useState<RuleListItem[]>([]);
@@ -101,6 +191,7 @@ export default function AutomationRulesPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [eventTypes, setEventTypes] = useState<EventTypeDef[]>([]);
+  const [notifyTargets, setNotifyTargets] = useState<NotifyTarget[]>([]);
 
   // 创建对话框
   const [createOpen, setCreateOpen] = useState(false);
@@ -108,8 +199,9 @@ export default function AutomationRulesPage() {
   const [formTriggerType, setFormTriggerType] = useState<'event' | 'incoming_webhook'>('event');
   const [formName, setFormName] = useState('');
   const [formEventType, setFormEventType] = useState('');
-  const [formHookSecret, setFormHookSecret] = useState('');
   const [formActions, setFormActions] = useState<AutomationAction[]>([]);
+  const [formTitleTemplate, setFormTitleTemplate] = useState('');
+  const [formContentTemplate, setFormContentTemplate] = useState('');
 
   // 测试对话框
   const [triggerOpen, setTriggerOpen] = useState(false);
@@ -131,10 +223,14 @@ export default function AutomationRulesPage() {
     }
   }, [page, activeTab]);
 
-  const loadEventTypes = useCallback(async () => {
+  const loadMeta = useCallback(async () => {
     try {
-      const types = await automationsService.getEventTypes();
+      const [types, targets] = await Promise.all([
+        automationsService.getEventTypes(),
+        automationsService.getNotifyTargets(),
+      ]);
       setEventTypes(types);
+      setNotifyTargets(targets);
     } catch {
       // ignore
     }
@@ -142,8 +238,8 @@ export default function AutomationRulesPage() {
 
   useEffect(() => {
     loadRules();
-    loadEventTypes();
-  }, [loadRules, loadEventTypes]);
+    loadMeta();
+  }, [loadRules, loadMeta]);
 
   const handleTabChange = (key: string) => {
     setActiveTab(key);
@@ -192,8 +288,9 @@ export default function AutomationRulesPage() {
         enabled: true,
         triggerType: formTriggerType,
         eventType: formTriggerType === 'event' ? formEventType : undefined,
-        hookSecret: formTriggerType === 'incoming_webhook' && formHookSecret ? formHookSecret : undefined,
         actions: formActions,
+        titleTemplate: formTitleTemplate || undefined,
+        contentTemplate: formContentTemplate || undefined,
       };
       await automationsService.createRule(req);
       toast.success('规则已创建');
@@ -244,8 +341,9 @@ export default function AutomationRulesPage() {
     setFormName('');
     setFormTriggerType(activeTab === 'incoming_webhook' ? 'incoming_webhook' : 'event');
     setFormEventType('');
-    setFormHookSecret('');
     setFormActions([]);
+    setFormTitleTemplate('');
+    setFormContentTemplate('');
   };
 
   const addAction = (type: string) => {
@@ -277,6 +375,11 @@ export default function AutomationRulesPage() {
   const emptyHint = activeTab === 'incoming_webhook'
     ? '创建传入 Webhook 后，外部系统可以通过 POST 请求触发动作'
     : '创建事件规则后，当系统事件发生时自动执行动作';
+
+  // 模板占位符提示
+  const templateHint = formTriggerType === 'incoming_webhook'
+    ? '使用 {{字段名}} 引用外部 POST 的 JSON 字段，如 {{username}}、{{repo}}'
+    : '使用 {{title}}、{{eventType}}、{{sourceId}} 引用事件信息';
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden">
@@ -352,6 +455,14 @@ export default function AutomationRulesPage() {
                         >
                           <RefreshCw size={12} />
                         </button>
+                      </div>
+                    )}
+
+                    {/* 模板预览 */}
+                    {(rule.titleTemplate || rule.contentTemplate) && (
+                      <div className="mt-2 text-xs px-2 py-1.5 rounded" style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.12)' }}>
+                        {rule.titleTemplate && <div style={{ color: 'rgba(168,85,247,0.9)' }}>标题: {rule.titleTemplate}</div>}
+                        {rule.contentTemplate && <div style={{ color: 'rgba(168,85,247,0.7)' }}>内容: {rule.contentTemplate}</div>}
                       </div>
                     )}
 
@@ -504,21 +615,41 @@ export default function AutomationRulesPage() {
               </div>
             )}
 
-            {/* 传入 Webhook：密钥（可选） */}
-            {formTriggerType === 'incoming_webhook' && (
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">签名密钥（可选）</label>
+            {/* 消息模板 */}
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">消息模板（可选）</label>
+              <div className="space-y-2">
                 <input
-                  value={formHookSecret}
-                  onChange={(e) => setFormHookSecret(e.target.value)}
-                  placeholder="留空则不校验签名"
+                  value={formTitleTemplate}
+                  onChange={(e) => setFormTitleTemplate(e.target.value)}
+                  placeholder={formTriggerType === 'incoming_webhook' ? '标题模板，如：{{username}} 触发了 {{action}}' : '标题模板，如：[{{eventType}}] 告警'}
                   className={inputCls}
                 />
-                <p className="text-xs text-muted-foreground mt-1">
-                  设置后，外部请求需在 <code className="px-1 py-0.5 rounded bg-white/5">X-Hook-Signature</code> 头中携带 HMAC-SHA256 签名
-                </p>
+                <textarea
+                  value={formContentTemplate}
+                  onChange={(e) => setFormContentTemplate(e.target.value)}
+                  placeholder={formTriggerType === 'incoming_webhook'
+                    ? '内容模板，如：用户 {{username}} 在仓库 {{repo}} 的 {{branch}} 分支推送了代码'
+                    : '内容模板，如：{{title}} - 详情请查看'}
+                  className={inputCls + ' h-16 resize-none'}
+                />
               </div>
-            )}
+              <p className="text-xs text-muted-foreground mt-1">{templateHint}</p>
+              {formTriggerType === 'incoming_webhook' && (
+                <div className="mt-2 p-2 rounded-lg text-xs" style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.12)' }}>
+                  <div className="font-medium mb-1" style={{ color: 'rgba(168,85,247,0.9)' }}>示例</div>
+                  <div className="text-muted-foreground">
+                    外部 POST：<code className="px-1 py-0.5 rounded bg-white/5">{`{"username":"张三","repo":"my-project"}`}</code>
+                  </div>
+                  <div className="text-muted-foreground mt-0.5">
+                    内容模板：<code className="px-1 py-0.5 rounded bg-white/5">{`用户 {{username}} 推送到 {{repo}}`}</code>
+                  </div>
+                  <div className="mt-0.5" style={{ color: 'rgba(34,197,94,0.8)' }}>
+                    渲染结果：用户 张三 推送到 my-project
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* 动作列表 */}
             <div>
@@ -566,19 +697,14 @@ export default function AutomationRulesPage() {
                           <option value="warning">警告</option>
                           <option value="error">错误</option>
                         </select>
-                        <p className="text-xs text-muted-foreground">
-                          通知目标：留空为全局通知，填写用户 ID 以逗号分隔
-                        </p>
-                        <input
-                          value={(action.notifyUserIds || []).join(',')}
-                          onChange={(e) =>
-                            updateAction(idx, {
-                              notifyUserIds: e.target.value ? e.target.value.split(',').map((s) => s.trim()) : [],
-                            })
-                          }
-                          placeholder="留空 = 全局通知"
-                          className={inputCls}
-                        />
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">通知目标</p>
+                          <UserMultiSelect
+                            allUsers={notifyTargets}
+                            selectedIds={action.notifyUserIds || []}
+                            onChange={(ids) => updateAction(idx, { notifyUserIds: ids })}
+                          />
+                        </div>
                       </>
                     )}
                   </div>

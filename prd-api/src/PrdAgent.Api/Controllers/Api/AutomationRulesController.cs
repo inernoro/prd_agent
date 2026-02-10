@@ -1,5 +1,5 @@
 using System.Security.Cryptography;
-using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -83,7 +83,6 @@ public class AutomationRulesController : ControllerBase
                 TriggerType = rule.TriggerType,
                 EventType = rule.EventType,
                 HookId = rule.HookId,
-                HookSecret = rule.HookSecret,
                 Actions = rule.Actions.Select(a => new ActionSummary
                 {
                     Type = a.Type,
@@ -161,7 +160,6 @@ public class AutomationRulesController : ControllerBase
         if (triggerType == "incoming_webhook")
         {
             rule.HookId = GenerateHookId();
-            rule.HookSecret = request.HookSecret;
         }
 
         await _db.AutomationRules.InsertOneAsync(rule);
@@ -264,11 +262,12 @@ public class AutomationRulesController : ControllerBase
     // ========== 传入 Webhook 端点（外部系统调用） ==========
 
     /// <summary>
-    /// 传入 Webhook - 外部系统 POST 到此 URL 来触发规则
+    /// 传入 Webhook - 外部系统 POST 任意 JSON 到此 URL 来触发规则
+    /// JSON 的顶层字段自动展开为模板变量 {{key}}
     /// </summary>
     [HttpPost("hooks/{hookId}")]
     [AllowAnonymous]
-    public async Task<IActionResult> IncomingWebhook(string hookId, [FromBody] IncomingWebhookPayload? payload)
+    public async Task<IActionResult> IncomingWebhook(string hookId, [FromBody] JsonElement body)
     {
         var rule = await _db.AutomationRules
             .Find(r => r.HookId == hookId && r.TriggerType == "incoming_webhook")
@@ -280,24 +279,24 @@ public class AutomationRulesController : ControllerBase
         if (!rule.Enabled)
             return Ok(new { status = "skipped", message = "Rule is disabled" });
 
-        // 可选：HMAC 签名校验
-        if (!string.IsNullOrEmpty(rule.HookSecret))
+        // 将 JSON 顶层字段展开为模板变量
+        var variables = new Dictionary<string, string>();
+        if (body.ValueKind == JsonValueKind.Object)
         {
-            var signature = Request.Headers["X-Hook-Signature"].FirstOrDefault();
-            if (string.IsNullOrEmpty(signature))
-                return Unauthorized(new { error = "Missing X-Hook-Signature header" });
-
-            var expected = ComputeHmac(payload?.RawBody ?? "", rule.HookSecret);
-            if (!string.Equals(signature, expected, StringComparison.OrdinalIgnoreCase))
-                return Unauthorized(new { error = "Invalid signature" });
+            foreach (var prop in body.EnumerateObject())
+            {
+                variables[prop.Name] = prop.Value.ValueKind == JsonValueKind.String
+                    ? prop.Value.GetString()!
+                    : prop.Value.GetRawText();
+            }
         }
 
         var eventPayload = new AutomationEventPayload
         {
             EventType = rule.EventType,
-            Title = payload?.Title ?? $"Incoming: {rule.Name}",
-            Content = payload?.Content ?? "",
-            Variables = payload?.Variables,
+            Title = rule.Name,
+            Content = body.GetRawText(),
+            Variables = variables,
             SourceId = $"hook:{hookId}"
         };
 
@@ -307,7 +306,8 @@ public class AutomationRulesController : ControllerBase
         {
             status = result.AllSucceeded ? "ok" : "partial_failure",
             actionsExecuted = result.ActionResults.Count,
-            allSucceeded = result.AllSucceeded
+            allSucceeded = result.AllSucceeded,
+            receivedVariables = variables.Keys.ToList()
         });
     }
 
@@ -331,20 +331,33 @@ public class AutomationRulesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items = types }));
     }
 
+    /// <summary>
+    /// 获取用户列表（供通知目标下拉框使用）
+    /// </summary>
+    [HttpGet("notify-targets")]
+    public async Task<IActionResult> GetNotifyTargets()
+    {
+        var users = await _db.Users
+            .Find(_ => true)
+            .SortBy(u => u.DisplayName)
+            .ToListAsync();
+
+        var items = users.Select(u => new
+        {
+            userId = u.UserId,
+            displayName = string.IsNullOrWhiteSpace(u.DisplayName) ? u.Username : u.DisplayName,
+            username = u.Username
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
     // ========== 工具方法 ==========
 
     private static string GenerateHookId()
     {
         var bytes = RandomNumberGenerator.GetBytes(24);
         return Convert.ToHexString(bytes).ToLowerInvariant();
-    }
-
-    private static string ComputeHmac(string payload, string secret)
-    {
-        var key = Encoding.UTF8.GetBytes(secret);
-        var data = Encoding.UTF8.GetBytes(payload);
-        var hash = HMACSHA256.HashData(key, data);
-        return $"sha256={Convert.ToHexString(hash).ToLowerInvariant()}";
     }
 }
 
@@ -356,7 +369,6 @@ public class CreateRuleRequest
     public bool Enabled { get; set; } = true;
     public string? TriggerType { get; set; }
     public string EventType { get; set; } = string.Empty;
-    public string? HookSecret { get; set; }
     public List<AutomationAction> Actions { get; set; } = new();
     public string? TitleTemplate { get; set; }
     public string? ContentTemplate { get; set; }
@@ -380,14 +392,6 @@ public class TriggerRuleRequest
     public List<string>? Values { get; set; }
 }
 
-public class IncomingWebhookPayload
-{
-    public string? Title { get; set; }
-    public string? Content { get; set; }
-    public string? RawBody { get; set; }
-    public Dictionary<string, string>? Variables { get; set; }
-}
-
 public class RuleListItem
 {
     public string Id { get; set; } = string.Empty;
@@ -396,7 +400,6 @@ public class RuleListItem
     public string TriggerType { get; set; } = "event";
     public string EventType { get; set; } = string.Empty;
     public string? HookId { get; set; }
-    public string? HookSecret { get; set; }
     public List<ActionSummary> Actions { get; set; } = new();
     public string? TitleTemplate { get; set; }
     public string? ContentTemplate { get; set; }

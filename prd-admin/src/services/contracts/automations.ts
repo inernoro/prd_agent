@@ -15,7 +15,6 @@ export interface AutomationRule {
   triggerType: string; // 'event' | 'incoming_webhook'
   eventType: string;
   hookId?: string;
-  hookSecret?: string;
   actions: AutomationAction[];
   titleTemplate?: string;
   contentTemplate?: string;
@@ -40,7 +39,6 @@ export interface RuleListItem {
   triggerType: string;
   eventType: string;
   hookId?: string;
-  hookSecret?: string;
   actions: ActionSummary[];
   titleTemplate?: string;
   contentTemplate?: string;
@@ -64,7 +62,6 @@ export interface CreateRuleRequest {
   enabled: boolean;
   triggerType?: string;
   eventType?: string;
-  hookSecret?: string;
   actions: AutomationAction[];
   titleTemplate?: string;
   contentTemplate?: string;
@@ -111,6 +108,12 @@ export interface ActionTypeDef {
   description: string;
 }
 
+export interface NotifyTarget {
+  userId: string;
+  displayName: string;
+  username: string;
+}
+
 export interface IAutomationsService {
   listRules(page: number, pageSize: number, eventType?: string, enabled?: boolean, triggerType?: string): Promise<PagedRulesResponse>;
   getRule(id: string): Promise<AutomationRule>;
@@ -122,4 +125,5 @@ export interface IAutomationsService {
   triggerRule(id: string, request: TriggerRuleRequest): Promise<AutomationTriggerResult>;
   getEventTypes(): Promise<EventTypeDef[]>;
   getActionTypes(): Promise<ActionTypeDef[]>;
+  getNotifyTargets(): Promise<NotifyTarget[]>;
 }
