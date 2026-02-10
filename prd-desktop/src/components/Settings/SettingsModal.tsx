@@ -377,6 +377,19 @@ export default function SettingsModal() {
     } catch (e) {
       setUpdateStatus('error');
       const raw = String(e);
+      console.error('[Updater] downloadAndInstall error:', raw);
+      // ACL 权限不足：通常是 Tauri capabilities 缺少 dialog:allow-message 等权限
+      if (/not allowed by ACL/i.test(raw)) {
+        setUpdateError(
+          [
+            '更新失败：应用权限配置不足（ACL 错误）。',
+            '请升级到最新版本以修复此问题，可前往 GitHub Releases 手动下载。',
+            '',
+            `原始错误：${raw}`,
+          ].join('\n')
+        );
+        return;
+      }
       // 下载阶段 404：通常是 manifest 里写的安装包 URL 与 Release 实际资产文件名不一致（空格/点号/大小写）
       if (/status:\s*404/i.test(raw) || /\b404\b/.test(raw)) {
         setUpdateError(
