@@ -38,6 +38,7 @@ import {
   deactivateReferenceImageConfig,
   getLiteraryAgentAllModels,
   optimizeLiteraryPrompt,
+  getImageGenSizeCaps,
   // 海鲜市场 API
   publishLiteraryPrompt,
   unpublishLiteraryPrompt,
@@ -45,9 +46,9 @@ import {
   unpublishReferenceImageConfig,
 } from '@/services';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2 } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2, ChevronDown } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -276,6 +277,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 图生图模型池（有风格参考图）
   const [img2ImgPool, setImg2ImgPool] = useState<LiteraryAgentModelPool | null>(null);
 
+  // 生图模型尺寸白名单（按 modelId 或 modelName 缓存）
+  const [sizeCapsMap, setSizeCapsMap] = useState<Record<string, string[]>>({});
+
   // 右侧每条配图的运行状态（逐条 parse + gen）
   const [markerRunItems, setMarkerRunItems] = useState<MarkerRunItem[]>([]);
   const [markerRunItemsRestored, setMarkerRunItemsRestored] = useState(false); // 标记是否已从后端恢复
@@ -295,11 +299,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 当文章内容更新时，只在流式输出过程中自动滚动到最新的 marker
   useEffect(() => {
     if (isStreamingRef.current && articlePreviewRef.current && articleWithMarkers) {
-      // 只在有新插入的 marker 时才滚动到它，不做兜底滚底部
-      const markers = articlePreviewRef.current.querySelectorAll('.prd-md-marker-new');
-      if (markers.length > 0) {
-        markers[markers.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+      // 延迟一帧确保 DOM 已更新（React render → DOM paint → scrollIntoView）
+      requestAnimationFrame(() => {
+        const container = articlePreviewRef.current;
+        if (!container) return;
+        const markers = container.querySelectorAll('.prd-md-marker-new');
+        if (markers.length > 0) {
+          markers[markers.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      });
     }
   }, [articleWithMarkers]);
   
@@ -363,6 +371,25 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     };
   }, []);
 
+  // 加载生图模型的尺寸白名单
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await getImageGenSizeCaps({ includeFallback: true });
+        if (res.success && res.data?.items) {
+          const map: Record<string, string[]> = {};
+          for (const item of res.data.items) {
+            if (item.allowedSizes && item.allowedSizes.length > 0) {
+              if (item.modelId) map[item.modelId] = item.allowedSizes;
+              if (item.modelName) map[item.modelName.toLowerCase()] = item.allowedSizes;
+            }
+          }
+          setSizeCapsMap(map);
+        }
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
   // 根据是否有激活的参考图，决定当前使用哪个模型池来显示 imageGenModel
   useEffect(() => {
     const hasActiveRefImage = referenceImageConfigs.some((c) => c.isActive);
@@ -387,6 +414,27 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       }
     }
   }, [referenceImageConfigs, text2ImgPool, img2ImgPool]);
+
+  // 根据当前生图模型池解析可用尺寸白名单
+  const allowedSizes = useMemo<string[]>(() => {
+    const hasActiveRefImage = referenceImageConfigs.some((c) => c.isActive);
+    const pool = hasActiveRefImage ? img2ImgPool : text2ImgPool;
+    if (!pool?.models?.length) return [];
+    // 遍历模型池中所有模型，收集白名单
+    for (const m of pool.models) {
+      const byId = sizeCapsMap[m.modelId];
+      if (byId?.length) return byId;
+      const byName = sizeCapsMap[(m.modelId || '').toLowerCase()];
+      if (byName?.length) return byName;
+    }
+    return [];
+  }, [sizeCapsMap, text2ImgPool, img2ImgPool, referenceImageConfigs]);
+
+  // 默认尺寸白名单（当模型没有学习到上游白名单时使用）
+  const defaultSizes = ['1024x1024', '1024x768', '768x1024', '1280x720', '720x1280'];
+
+  // 实际可选尺寸列表
+  const selectableSizes = allowedSizes.length > 0 ? allowedSizes : defaultSizes;
 
   useEffect(() => {
     let cancelled = false;
@@ -1068,13 +1116,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const locateMarkerInPreview = (markerIndex: number) => {
     const container = articlePreviewRef.current;
+    console.log('[定位] markerIndex=', markerIndex, 'container=', !!container);
     if (!container) return;
     // 查找所有 marker（包含普通和流式动画两种 class）
     const markers = container.querySelectorAll('.prd-md-marker, .prd-md-marker-new');
+    console.log('[定位] 找到 marker DOM 元素数量=', markers.length, '目标 index=', markerIndex);
     const target = markers[markerIndex] as HTMLElement | undefined;
     if (target) {
+      console.log('[定位] 命中 marker DOM, tag=', target.tagName, 'text=', target.textContent?.slice(0, 40));
       target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      // 添加短暂高亮闪烁效果帮助用户定位
       target.style.outline = '2px solid rgba(245, 158, 11, 0.8)';
       target.style.outlineOffset = '2px';
       setTimeout(() => { target.style.outline = ''; target.style.outlineOffset = ''; }, 1500);
@@ -1082,8 +1132,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
     const imgAlt = `配图 ${markerIndex + 1}`;
     const img = container.querySelector(`img[alt="${imgAlt}"]`) as HTMLElement | null;
-    if (!img) return;
-    img.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    console.log('[定位] marker DOM 未命中, 尝试 img[alt="' + imgAlt + '"]', 'found=', !!img);
+    if (img) {
+      console.log('[定位] 命中 img 元素, src=', (img as HTMLImageElement).src?.slice(0, 60));
+      img.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+      console.warn('[定位] 未找到任何匹配元素! markerIndex=', markerIndex, 'markers.length=', markers.length);
+    }
   };
 
   // markerRunItems 状态变化时：立即刷新左侧预览（支持"单条先生成"不乱序）
@@ -2407,20 +2462,97 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       配图 {idx + 1}
                     </div>
                     <div className="flex items-center gap-2">
-                      {/* 显示图片尺寸（如果已解析） */}
-                      {it.planItem?.size && (
-                        <div
-                          className="text-[11px] px-2 py-0.5 rounded-full font-medium"
-                          style={{
-                            background: 'rgba(99, 102, 241, 0.12)',
-                            border: '1px solid rgba(99, 102, 241, 0.24)',
-                            color: 'rgba(99, 102, 241, 0.95)',
-                          }}
-                          title={`图片尺寸：${it.planItem.size}`}
-                        >
-                          {it.planItem.size}
-                        </div>
-                      )}
+                      {/* 尺寸选择器（可点击切换） */}
+                      {(() => {
+                        const currentSize = it.planItem?.size || '1024x1024';
+                        const isBusyItem = it.status === 'running' || it.status === 'parsing';
+                        const [sw, sh] = currentSize.split(/[xX×]/).map(Number);
+                        const ratio = (sw && sh) ? sw / sh : 1;
+                        // 比例框：总高度固定 16px，宽度按比例缩放
+                        const boxH = 14;
+                        const boxW = Math.round(boxH * Math.min(Math.max(ratio, 0.5), 2));
+                        return (
+                          <div className="relative group/size">
+                            <button
+                              className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium cursor-pointer"
+                              style={{
+                                background: 'rgba(99, 102, 241, 0.12)',
+                                border: '1px solid rgba(99, 102, 241, 0.24)',
+                                color: 'rgba(99, 102, 241, 0.95)',
+                              }}
+                              disabled={isBusyItem}
+                              title="点击切换图片尺寸"
+                            >
+                              <span
+                                style={{
+                                  display: 'inline-block',
+                                  width: boxW,
+                                  height: boxH,
+                                  border: '1.5px solid rgba(99, 102, 241, 0.7)',
+                                  borderRadius: 2,
+                                  flexShrink: 0,
+                                }}
+                              />
+                              {currentSize}
+                              <ChevronDown size={10} style={{ opacity: 0.6 }} />
+                            </button>
+                            {/* 下拉菜单 */}
+                            {!isBusyItem && (
+                              <div
+                                className="absolute right-0 top-full mt-1 z-50 rounded-lg py-1 hidden group-hover/size:block"
+                                style={{
+                                  background: 'var(--bg-elevated)',
+                                  border: '1px solid var(--border-subtle)',
+                                  boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                                  minWidth: 140,
+                                }}
+                              >
+                                {selectableSizes.map((s) => {
+                                  const [w, h] = s.split(/[xX×]/).map(Number);
+                                  const r = (w && h) ? w / h : 1;
+                                  const bH = 12;
+                                  const bW = Math.round(bH * Math.min(Math.max(r, 0.5), 2));
+                                  const isActive = s === currentSize;
+                                  return (
+                                    <button
+                                      key={s}
+                                      className="flex items-center gap-2 w-full px-3 py-1.5 text-[11px] text-left"
+                                      style={{
+                                        background: isActive ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                                        color: isActive ? 'rgba(99, 102, 241, 0.95)' : 'var(--text-secondary)',
+                                        fontWeight: isActive ? 600 : 400,
+                                      }}
+                                      onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)'; }}
+                                      onMouseLeave={(e) => { (e.target as HTMLElement).style.background = isActive ? 'rgba(99, 102, 241, 0.15)' : 'transparent'; }}
+                                      onClick={() => {
+                                        setMarkerRunItems((prev) =>
+                                          prev.map((x) =>
+                                            x.markerIndex === it.markerIndex
+                                              ? { ...x, planItem: { ...(x.planItem || { prompt: x.draftText || x.markerText, count: 1 }), size: s } }
+                                              : x
+                                          )
+                                        );
+                                      }}
+                                    >
+                                      <span
+                                        style={{
+                                          display: 'inline-block',
+                                          width: bW,
+                                          height: bH,
+                                          border: `1.5px solid ${isActive ? 'rgba(99, 102, 241, 0.7)' : 'rgba(255,255,255,0.3)'}`,
+                                          borderRadius: 2,
+                                          flexShrink: 0,
+                                        }}
+                                      />
+                                      {s}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {/* 状态标签 */}
                       <div
                         className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
@@ -2564,15 +2696,39 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         </div>
                       </>
                     ) : !showPlaceholder ? (
-                      <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                        <div
-                          className="w-10 h-10 rounded-lg flex items-center justify-center"
-                          style={{ background: 'rgba(255,255,255,0.05)', border: '1px dashed rgba(255,255,255,0.15)' }}
-                        >
-                          <ImageIcon size={18} style={{ opacity: 0.5 }} />
-                        </div>
-                        <div>待生成配图</div>
-                      </div>
+                      (() => {
+                        // 显示按当前选中尺寸的比例预览框
+                        const cs = it.planItem?.size || '1024x1024';
+                        const [cw, ch] = cs.split(/[xX×]/).map(Number);
+                        const cRatio = (cw && ch) ? cw / ch : 1;
+                        const containerH = 140; // 预留上下 padding
+                        const containerW = 280; // 约等于卡片宽度
+                        // 在容器内按比例显示，不超出边界
+                        let previewW: number, previewH: number;
+                        if (cRatio >= containerW / containerH) {
+                          previewW = Math.min(containerW, 240);
+                          previewH = Math.round(previewW / cRatio);
+                        } else {
+                          previewH = Math.min(containerH, 130);
+                          previewW = Math.round(previewH * cRatio);
+                        }
+                        return (
+                          <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                            <div
+                              className="rounded-lg flex items-center justify-center"
+                              style={{
+                                width: previewW,
+                                height: previewH,
+                                background: 'rgba(255,255,255,0.03)',
+                                border: '1.5px dashed rgba(99, 102, 241, 0.3)',
+                                transition: 'width 0.2s, height 0.2s',
+                              }}
+                            >
+                              <ImageIcon size={18} style={{ opacity: 0.4 }} />
+                            </div>
+                          </div>
+                        );
+                      })()
                     ) : null}
                   </div>
 
