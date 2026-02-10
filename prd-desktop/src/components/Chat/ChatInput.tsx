@@ -10,6 +10,7 @@ import { ApiResponse, AttachmentInfo, ContextScope, Message, OutputMode, PromptI
 import AttachmentPreview from './AttachmentPreview';
 import SkillPanel from './SkillPanel';
 import SkillManagerModal from './SkillManagerModal';
+import { open as tauriDialogOpen } from '@tauri-apps/plugin-dialog';
 
 function roleSuffix(role: UserRole) {
   if (role === 'DEV') return 'dev';
@@ -70,7 +71,7 @@ export default function ChatInput() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [inputHeight, setInputHeight] = useState(36);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // fileInputRef removed: using Tauri dialog instead of <input type="file">
 
   // 附件状态
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
@@ -309,65 +310,37 @@ export default function ChatInput() {
     }
   };
 
-  // 附件上传
-  const handleAttachmentClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    setIsUploading(true);
+  // 附件上传：使用 Tauri dialog 原生文件选择器，直接获取本地路径交给 Rust 上传
+  const handleAttachmentClick = async () => {
+    if (isUploading || !canChatNow) return;
     try {
-      for (const file of Array.from(files)) {
-        // 使用 FileReader 读取文件路径（Tauri 环境下使用 webkitRelativePath 或构造临时路径）
-        // 在 Tauri 中，我们直接通过 Tauri dialog API 获取路径
-        // 但这里通过 <input type="file"> 获取的是 File 对象，需要不同处理
+      const selected = await tauriDialogOpen({
+        multiple: true,
+        filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }],
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      if (paths.length === 0) return;
 
-        // 将 File 转为 ArrayBuffer -> base64 -> 通过 Tauri 文件系统写入临时文件 -> 上传
-        // 更简单的方式：直接读取为 bytes 然后通过自定义 endpoint 上传
-        const reader = new FileReader();
-        const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
-          reader.onload = () => resolve(reader.result as ArrayBuffer);
-          reader.onerror = reject;
-          reader.readAsArrayBuffer(file);
-        });
-
-        // 创建临时文件路径（通过 Tauri 写入临时目录）
-        const uint8 = new Uint8Array(arrayBuffer);
-        const tempFileName = `upload-${Date.now()}-${file.name}`;
-
+      setIsUploading(true);
+      for (const filePath of paths) {
         try {
-          // 使用 Tauri fs plugin 写入临时目录
-          const { writeFile, BaseDirectory } = await import('@tauri-apps/plugin-fs');
-          await writeFile(tempFileName, uint8, { baseDir: BaseDirectory.Temp });
-
-          // 获取临时目录路径
-          const { tempDir } = await import('@tauri-apps/api/path');
-          const tempDirPath = await tempDir();
-          const fullPath = `${tempDirPath}${tempFileName}`;
-
           const resp = await invoke<ApiResponse<AttachmentInfo>>('upload_attachment', {
-            filePath: fullPath,
-            fileName: file.name,
+            filePath,
           });
-
           if (resp?.success && resp.data) {
             setAttachments((prev) => [...prev, resp.data!]);
           } else {
             console.error('Upload failed:', resp?.error?.message);
           }
         } catch (innerErr) {
-          console.error('Failed to upload file via Tauri:', innerErr);
+          console.error('Failed to upload file:', innerErr);
         }
       }
-    } catch (err) {
-      console.error('Failed to handle file selection:', err);
-    } finally {
       setIsUploading(false);
-      // Reset input
-      if (fileInputRef.current) fileInputRef.current.value = '';
+    } catch (err) {
+      console.error('Failed to open file dialog:', err);
+      setIsUploading(false);
     }
   };
 
@@ -446,7 +419,7 @@ export default function ChatInput() {
                     : 'text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5'
                 }`}
               >
-                提示词
+                公共技能
               </button>
               <button
                 onClick={() => setToolbarMode('skill')}
@@ -456,7 +429,7 @@ export default function ChatInput() {
                     : 'text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5'
                 }`}
               >
-                技能
+                我的技能
               </button>
             </div>
 
@@ -573,15 +546,6 @@ export default function ChatInput() {
               </svg>
             )}
           </button>
-          {/* 隐藏的文件输入 */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
-            multiple
-            onChange={handleFileSelected}
-            className="hidden"
-          />
         </div>
 
         {/* 关键：min-w-0 允许在网格中收缩，避免 placeholder 撑宽导致溢出 */}

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useSkillStore } from '../../stores/skillStore';
 import { ContextScope, OutputMode, SkillItem } from '../../types';
 
@@ -25,8 +26,6 @@ export default function SkillManagerModal({ open, onClose }: Props) {
   const { localSkills, addLocalSkill, updateLocalSkill, removeLocalSkill } = useSkillStore();
   const [editing, setEditing] = useState<SkillItem | null>(null);
   const [isNew, setIsNew] = useState(false);
-
-  if (!open) return null;
 
   const handleStartNew = () => {
     setEditing({
@@ -63,12 +62,14 @@ export default function SkillManagerModal({ open, onClose }: Props) {
     }
   };
 
-  return (
+  if (!open) return null;
+
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-bg-primary rounded-2xl shadow-2xl w-[640px] max-h-[80vh] flex flex-col overflow-hidden border border-black/10 dark:border-white/10">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-black/10 dark:border-white/10">
-          <h2 className="text-base font-medium">管理自定义技能</h2>
+          <h2 className="text-base font-medium">管理我的技能</h2>
           <button
             onClick={onClose}
             className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary"
@@ -236,6 +237,7 @@ export default function SkillManagerModal({ open, onClose }: Props) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

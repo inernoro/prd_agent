@@ -44,7 +44,7 @@ export default function SkillPanel({ disabled, onExecuteSkill, onManageSkills }:
     <div className="px-3 py-2 flex flex-col gap-2 border-b border-black/10 dark:border-white/10 ui-glass-bar">
       {/* 技能列表 */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-text-secondary flex-shrink-0">技能</span>
+        <span className="text-xs text-text-secondary flex-shrink-0">我的技能</span>
         {skills.length === 0 && (
           <span className="text-xs text-text-secondary/60">暂无可用技能</span>
         )}
