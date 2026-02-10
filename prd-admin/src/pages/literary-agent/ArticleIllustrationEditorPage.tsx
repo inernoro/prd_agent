@@ -384,8 +384,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       const topPoolModel = sortedPoolModels[0];
       setImageGenModel({
         id: `pool-${pool.id}-${topPoolModel.modelId}`,
-        name: pool.name || topPoolModel.modelId,
-        modelName: topPoolModel.modelId,
+        name: pool.name || pool.code,
+        modelName: pool.code,
         platformId: topPoolModel.platformId,
         enabled: true,
         isImageGen: true,
@@ -863,7 +863,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           try {
             const planRes = await planImageGen({ text: markerText, maxItems: 1 });
             if (planRes.success && planRes.data?.items?.[0]) {
-              const planItem = planRes.data.items[0];
+              const rawPlanItem = planRes.data.items[0];
+              // 统一默认 1:1 尺寸，忽略意图模型推断的尺寸（用户可通过尺寸选择器调整）
+              const planItem = { ...rawPlanItem, size: '1024x1024' };
               setMarkerRunItems((prev) =>
                 prev.map((x) =>
                   x.markerIndex === markerIndex
@@ -874,7 +876,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               await updateMarkerStatus(markerIndex, {
                 status: 'parsed',
                 draftText: planItem.prompt,
-                planItem: { prompt: planItem.prompt, count: planItem.count, size: planItem.size },
+                planItem: { prompt: planItem.prompt, count: planItem.count, size: '1024x1024' },
               });
             } else {
               setMarkerRunItems((prev) =>
@@ -936,9 +938,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             setArticleWithMarkers(runningArticle);
           }
 
-          // 有尺寸时直接标记为已解析（跳过意图模型），无尺寸时走旧路径
+          // 统一默认 1:1 尺寸（用户可通过尺寸选择器调整）
+          // chunk.size 仅用于跳过意图模型，不覆盖默认尺寸
           if (chunk.size) {
-            setMarkerDirectParsed(markerIndex, markerText, chunk.size);
+            setMarkerDirectParsed(markerIndex, markerText, '1024x1024');
           } else {
             triggerPlanImageGen(markerIndex, markerText);
           }
@@ -1996,7 +1999,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       </span>
                     )}
                     <span className="text-[8px] opacity-60 mr-0.5">T2I</span>
-                    {text2ImgPool.models?.[0]?.modelId || text2ImgPool.code || '?'}
+                    {text2ImgPool.name || text2ImgPool.code}
                   </div>
                 ) : (
                   <div className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-500/10" title="文生图模型未配置">
@@ -2019,7 +2022,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       </span>
                     )}
                     <span className="text-[8px] opacity-60 mr-0.5">I2I</span>
-                    {img2ImgPool.models?.[0]?.modelId || img2ImgPool.code || '?'}
+                    {img2ImgPool.name || img2ImgPool.code}
                   </div>
                 ) : (
                   <div className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-500/10" title="图生图模型未配置">
