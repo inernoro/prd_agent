@@ -15,6 +15,8 @@ import type {
   LlmLogsMetaData,
   LlmModelStatsData,
   BatchModelStatsData,
+  GetReplayCurlContract,
+  ReplayCurlData,
 } from '@/services/contracts/llmLogs';
 
 function toQuery(params?: GetLlmLogsParams) {
@@ -47,9 +49,13 @@ export const getLlmModelStatsReal: GetLlmModelStatsContract = async (params?: Ge
 };
 
 export const getBatchModelStatsReal: GetBatchModelStatsContract = async (params: BatchModelStatsParams): Promise<ApiResponse<BatchModelStatsData>> => {
-  return await apiRequest<BatchModelStatsData>(api.logs.llm.batchModelStats(), { 
+  return await apiRequest<BatchModelStatsData>(api.logs.llm.batchModelStats(), {
     method: 'POST',
     body: JSON.stringify(params),
   });
+};
+
+export const getReplayCurlReal: GetReplayCurlContract = async (id: string): Promise<ApiResponse<ReplayCurlData>> => {
+  return await apiRequest<ReplayCurlData>(api.logs.llm.replayCurl(encodeURIComponent(id)), { method: 'GET' });
 };
 

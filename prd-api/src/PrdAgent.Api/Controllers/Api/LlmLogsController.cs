@@ -324,8 +324,12 @@ public class LlmLogsController : ControllerBase
     }
 
     /// <summary>
-    /// 生成可重放的 curl 命令（用于 Vision API 多图请求）
-    /// 通过 SHA256 从 COS 获取图片数据，构建完整请求
+    /// 生成可重放的 curl 命令（通用：恢复截断的文本 + 从 COS 恢复 base64 图片）。
+    /// 支持三种图片引用格式：
+    ///   1. [BASE64_IMAGE:sha256:mime] — 新格式（LogWriter 写入时自动提取）
+    ///   2. image_url.sha256 属性 — 旧格式（visionImageGen 路径）
+    ///   3. image_refs[] + prompt — 旧扁平格式（兼容历史日志）
+    /// 同时恢复被截断的 systemPromptText / questionText。
     /// </summary>
     [HttpGet("{id}/replay-curl")]
     public async Task<IActionResult> ReplayCurl(string id)
@@ -333,185 +337,156 @@ public class LlmLogsController : ControllerBase
         var log = await _db.LlmRequestLogs.Find(x => x.Id == id).FirstOrDefaultAsync();
         if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
 
-        // 只支持 vision-multi-image 类型
-        if (log.RequestType != "visionImageGen")
-        {
-            return BadRequest(ApiResponse<object>.Fail("INVALID_TYPE", "仅支持 Vision API 多图请求的 curl 重放"));
-        }
-
         try
         {
-            // 解析存储的请求体
             if (string.IsNullOrWhiteSpace(log.RequestBodyRedacted))
-            {
                 return BadRequest(ApiResponse<object>.Fail("NO_REQUEST_BODY", "请求体为空"));
-            }
 
-            using var doc = JsonDocument.Parse(log.RequestBodyRedacted);
-            var root = doc.RootElement;
+            // 先在原始 JSON 字符串上恢复 COS 引用（图片 + 长文本）
+            var restoreErrors = new List<string>();
+            var imageCount = 0;
+            var textCount = 0;
+            var bodyJson = log.RequestBodyRedacted!;
 
-            if (!root.TryGetProperty("model", out var modelEl))
+            // 恢复 [TEXT_COS:sha256:charcount] → 原始文本（从 COS 取回）
+            var textCosPattern = new Regex(@"\[TEXT_COS:([0-9a-f]{64}):(\d+)\]");
+            var textMatches = textCosPattern.Matches(bodyJson);
+            if (textMatches.Count > 0)
             {
-                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "请求体缺少 model 字段"));
-            }
-            var model = modelEl.GetString() ?? string.Empty;
-
-            // 新格式：messages[].content[] (贴近真实 Vision API 格式)
-            // 旧格式：image_refs[] + prompt (扁平格式，兼容历史日志)
-            var contentItems = new List<object>();
-            var imageErrors = new List<string>();
-            string? prompt = null;
-
-            if (root.TryGetProperty("messages", out var messagesEl) && messagesEl.ValueKind == JsonValueKind.Array)
-            {
-                // 新格式：从 messages[0].content[] 中提取
-                foreach (var msg in messagesEl.EnumerateArray())
+                var sb = new StringBuilder(bodyJson);
+                for (var i = textMatches.Count - 1; i >= 0; i--)
                 {
-                    if (!msg.TryGetProperty("content", out var contentEl) || contentEl.ValueKind != JsonValueKind.Array)
-                        continue;
-
-                    foreach (var item in contentEl.EnumerateArray())
-                    {
-                        if (!item.TryGetProperty("type", out var typeEl)) continue;
-                        var itemType = typeEl.GetString();
-
-                        if (itemType == "text" && item.TryGetProperty("text", out var textEl))
-                        {
-                            prompt = textEl.GetString();
-                            contentItems.Add(new { type = "text", text = prompt });
-                        }
-                        else if (itemType == "image_url" && item.TryGetProperty("image_url", out var imgUrlEl))
-                        {
-                            // 从 image_url.sha256 获取 SHA256，重新加载图片
-                            if (!imgUrlEl.TryGetProperty("sha256", out var sha256El))
-                            {
-                                imageErrors.Add("图片缺少 sha256");
-                                continue;
-                            }
-
-                            var sha256 = sha256El.GetString()?.Trim().ToLowerInvariant();
-                            if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64)
-                            {
-                                imageErrors.Add($"无效的 sha256: {sha256}");
-                                continue;
-                            }
-
-                            // 从 COS 加载图片
-                            var found = await _assetStorage.TryReadByShaAsync(
-                                sha256,
-                                HttpContext.RequestAborted,
-                                domain: AppDomainPaths.DomainVisualAgent,
-                                type: AppDomainPaths.TypeImg);
-
-                            if (found == null)
-                            {
-                                imageErrors.Add($"无法从 COS 加载图片: {sha256}");
-                                continue;
-                            }
-
-                            var base64 = Convert.ToBase64String(found.Value.bytes);
-                            var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime;
-                            var dataUrl = $"data:{mime};base64,{base64}";
-
-                            contentItems.Add(new
-                            {
-                                type = "image_url",
-                                image_url = new { url = dataUrl }
-                            });
-                        }
-                    }
-                }
-            }
-            else if (root.TryGetProperty("image_refs", out var imageRefsEl) && root.TryGetProperty("prompt", out var promptEl))
-            {
-                // 旧格式：兼容历史日志
-                prompt = promptEl.GetString() ?? string.Empty;
-                contentItems.Add(new { type = "text", text = prompt });
-
-                foreach (var imgRef in imageRefsEl.EnumerateArray())
-                {
-                    if (!imgRef.TryGetProperty("sha256", out var sha256El))
-                    {
-                        imageErrors.Add("缺少 sha256");
-                        continue;
-                    }
-
-                    var sha256 = sha256El.GetString()?.Trim().ToLowerInvariant();
-                    if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64)
-                    {
-                        imageErrors.Add($"无效的 sha256: {sha256}");
-                        continue;
-                    }
-
-                    var mime = "image/png";
-                    if (imgRef.TryGetProperty("mime", out var mimeEl))
-                    {
-                        mime = mimeEl.GetString() ?? "image/png";
-                    }
+                    var m = textMatches[i];
+                    var sha256 = m.Groups[1].Value;
 
                     var found = await _assetStorage.TryReadByShaAsync(
-                        sha256,
-                        HttpContext.RequestAborted,
+                        sha256, HttpContext.RequestAborted,
+                        domain: AppDomainPaths.DomainLogs,
+                        type: AppDomainPaths.TypeLog);
+
+                    if (found == null)
+                    {
+                        restoreErrors.Add($"COS 未找到文本: {sha256[..12]}...");
+                        continue;
+                    }
+
+                    textCount++;
+                    var text = Encoding.UTF8.GetString(found.Value.bytes);
+                    sb.Remove(m.Index, m.Length);
+                    sb.Insert(m.Index, text);
+                }
+                bodyJson = sb.ToString();
+            }
+
+            // 恢复 [BASE64_IMAGE:sha256:mime] → data:mime;base64,...（从 COS 取回原图）
+            var base64RefPattern = new Regex(@"\[BASE64_IMAGE:([0-9a-f]{64}):([^\]]+)\]");
+            var refMatches = base64RefPattern.Matches(bodyJson);
+            if (refMatches.Count > 0)
+            {
+                var sb = new StringBuilder(bodyJson);
+                // 倒序替换避免偏移
+                for (var i = refMatches.Count - 1; i >= 0; i--)
+                {
+                    var m = refMatches[i];
+                    var sha256 = m.Groups[1].Value;
+                    var mime = m.Groups[2].Value;
+
+                    var found = await _assetStorage.TryReadByShaAsync(
+                        sha256, HttpContext.RequestAborted,
                         domain: AppDomainPaths.DomainVisualAgent,
                         type: AppDomainPaths.TypeImg);
 
                     if (found == null)
                     {
-                        imageErrors.Add($"无法从 COS 加载图片: {sha256}");
+                        restoreErrors.Add($"COS 未找到图片: {sha256[..12]}...");
                         continue;
                     }
 
-                    var base64 = Convert.ToBase64String(found.Value.bytes);
-                    var dataUrl = $"data:{mime};base64,{base64}";
-
-                    contentItems.Add(new
-                    {
-                        type = "image_url",
-                        image_url = new { url = dataUrl }
-                    });
+                    imageCount++;
+                    var b64 = Convert.ToBase64String(found.Value.bytes);
+                    var actualMime = string.IsNullOrWhiteSpace(found.Value.mime) ? mime : found.Value.mime;
+                    var dataUrl = $"data:{actualMime};base64,{b64}";
+                    sb.Remove(m.Index, m.Length);
+                    sb.Insert(m.Index, dataUrl);
                 }
-            }
-            else
-            {
-                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "请求体格式不符合 Vision API 格式"));
+                bodyJson = sb.ToString();
             }
 
-            // 构建完整请求体
-            var fullRequest = new
+            // 恢复被截断的文本字段（systemPrompt / questionText）
+            bodyJson = RestoreTruncatedTextFields(bodyJson, log.SystemPromptText, log.QuestionText);
+
+            // 兼容旧 visionImageGen 格式：image_url.sha256 属性 + image_refs[]
+            using var doc = JsonDocument.Parse(bodyJson);
+            var root = doc.RootElement;
+            var hasOldSha256Refs = false;
+
+            if (root.TryGetProperty("messages", out var msgsEl) && msgsEl.ValueKind == JsonValueKind.Array)
             {
-                model = model,
-                max_tokens = 4096,
-                messages = new[]
+                foreach (var msg in msgsEl.EnumerateArray())
                 {
-                    new
+                    if (!msg.TryGetProperty("content", out var cEl) || cEl.ValueKind != JsonValueKind.Array) continue;
+                    foreach (var item in cEl.EnumerateArray())
                     {
-                        role = "user",
-                        content = contentItems
+                        if (item.TryGetProperty("type", out var t) && t.GetString() == "image_url"
+                            && item.TryGetProperty("image_url", out var iu) && iu.TryGetProperty("sha256", out _))
+                        {
+                            hasOldSha256Refs = true;
+                            break;
+                        }
                     }
+                    if (hasOldSha256Refs) break;
                 }
-            };
+            }
+            var hasOldImageRefs = root.TryGetProperty("image_refs", out _);
 
-            var requestJson = JsonSerializer.Serialize(fullRequest, new JsonSerializerOptions
+            if (hasOldSha256Refs || hasOldImageRefs)
             {
-                WriteIndented = false
-            });
+                // 走旧逻辑：完全重建请求体
+                return await ReplayCurlLegacy(log, root, restoreErrors);
+            }
 
-            // 构建 curl 命令
-            var endpoint = $"{log.ApiBase?.TrimEnd('/')}/{log.Path?.TrimStart('/')}";
-            var curlCommand = $"curl -X POST \"{endpoint}\" \\\n" +
-                              $"  -H \"Content-Type: application/json\" \\\n" +
-                              $"  -H \"Authorization: Bearer YOUR_API_KEY\" \\\n" +
-                              $"  -d '{requestJson}'";
+            // 通用路径：使用（已恢复图片引用的）bodyJson 构建 curl
+            var endpoint = JoinBaseAndPath(log.ApiBase, log.Path) ?? "https://api.example.com/v1/chat/completions";
+            var apiKeyPlaceholder = "YOUR_API_KEY";
+            try
+            {
+                var host = new Uri(endpoint).Host;
+                if (!string.IsNullOrEmpty(host)) apiKeyPlaceholder = $"{{{{{host}}}}}";
+            }
+            catch { }
+
+            // 决定认证头
+            var providerLower = (log.Provider ?? "").ToLowerInvariant();
+            var isAnthropicLike = providerLower.Contains("claude") || providerLower.Contains("anthropic");
+            var authHeader = isAnthropicLike
+                ? $"-H 'x-api-key: {apiKeyPlaceholder}'"
+                : $"-H 'Authorization: Bearer {apiKeyPlaceholder}'";
+
+            var method = string.IsNullOrWhiteSpace(log.HttpMethod) ? "POST" : log.HttpMethod.Trim().ToUpperInvariant();
+
+            // 美化 JSON
+            string prettyBody;
+            try
+            {
+                using var prettyDoc = JsonDocument.Parse(bodyJson);
+                prettyBody = JsonSerializer.Serialize(prettyDoc, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+            }
+            catch { prettyBody = bodyJson; }
+
+            var curl = $"curl -X {method} '{endpoint}' \\\n" +
+                       $"  -H 'Content-Type: application/json' \\\n" +
+                       $"  {authHeader} \\\n" +
+                       $"  --data-raw '{EscapeSingleQuotesForShell(prettyBody)}'";
 
             return Ok(ApiResponse<object>.Ok(new
             {
-                curl = curlCommand,
-                endpoint = endpoint,
-                model = model,
-                imageCount = contentItems.Count - 1, // 减去 text 项
-                imageErrors = imageErrors.Count > 0 ? imageErrors : null,
-                requestBodyLength = requestJson.Length,
-                warning = imageErrors.Count > 0 ? "部分图片加载失败，curl 可能不完整" : null
+                curl,
+                endpoint,
+                imageCount,
+                textCount,
+                restoreErrors = restoreErrors.Count > 0 ? restoreErrors : null,
+                requestBodyLength = prettyBody.Length,
+                warning = restoreErrors.Count > 0 ? "部分内容恢复失败，curl 可能不完整" : null
             }));
         }
         catch (JsonException ex)
@@ -519,6 +494,172 @@ public class LlmLogsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("JSON_PARSE_ERROR", $"解析请求体失败: {ex.Message}"));
         }
     }
+
+    /// <summary>旧 visionImageGen 格式：sha256 属性 / image_refs[]</summary>
+    private async Task<IActionResult> ReplayCurlLegacy(
+        LlmRequestLog log, JsonElement root, List<string> restoreErrors)
+    {
+        var model = root.TryGetProperty("model", out var mEl) ? mEl.GetString() ?? "" : "";
+        var contentItems = new List<object>();
+        string? prompt = null;
+
+        if (root.TryGetProperty("messages", out var messagesEl) && messagesEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var msg in messagesEl.EnumerateArray())
+            {
+                if (!msg.TryGetProperty("content", out var contentEl) || contentEl.ValueKind != JsonValueKind.Array)
+                    continue;
+                foreach (var item in contentEl.EnumerateArray())
+                {
+                    if (!item.TryGetProperty("type", out var typeEl)) continue;
+                    var itemType = typeEl.GetString();
+                    if (itemType == "text" && item.TryGetProperty("text", out var textEl))
+                    {
+                        prompt = textEl.GetString();
+                        contentItems.Add(new { type = "text", text = prompt });
+                    }
+                    else if (itemType == "image_url" && item.TryGetProperty("image_url", out var imgUrlEl))
+                    {
+                        var sha256 = imgUrlEl.TryGetProperty("sha256", out var s) ? s.GetString()?.Trim().ToLowerInvariant() : null;
+                        if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64)
+                        {
+                            restoreErrors.Add($"无效的 sha256: {sha256}");
+                            continue;
+                        }
+                        var found = await _assetStorage.TryReadByShaAsync(sha256, HttpContext.RequestAborted,
+                            domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                        if (found == null) { restoreErrors.Add($"COS 未找到图片: {sha256[..12]}..."); continue; }
+                        var b64 = Convert.ToBase64String(found.Value.bytes);
+                        var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime;
+                        contentItems.Add(new { type = "image_url", image_url = new { url = $"data:{mime};base64,{b64}" } });
+                    }
+                }
+            }
+        }
+        else if (root.TryGetProperty("image_refs", out var imageRefsEl) && root.TryGetProperty("prompt", out var promptEl))
+        {
+            prompt = promptEl.GetString() ?? string.Empty;
+            contentItems.Add(new { type = "text", text = prompt });
+            foreach (var imgRef in imageRefsEl.EnumerateArray())
+            {
+                var sha256 = imgRef.TryGetProperty("sha256", out var s) ? s.GetString()?.Trim().ToLowerInvariant() : null;
+                if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64) { restoreErrors.Add($"无效的 sha256: {sha256}"); continue; }
+                var mime = imgRef.TryGetProperty("mime", out var mimeEl) ? mimeEl.GetString() ?? "image/png" : "image/png";
+                var found = await _assetStorage.TryReadByShaAsync(sha256, HttpContext.RequestAborted,
+                    domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                if (found == null) { restoreErrors.Add($"COS 未找到图片: {sha256[..12]}..."); continue; }
+                var b64 = Convert.ToBase64String(found.Value.bytes);
+                contentItems.Add(new { type = "image_url", image_url = new { url = $"data:{mime};base64,{b64}" } });
+            }
+        }
+
+        var fullReq = new { model, max_tokens = 4096, messages = new[] { new { role = "user", content = contentItems } } };
+        var reqJson = JsonSerializer.Serialize(fullReq, new JsonSerializerOptions { WriteIndented = false });
+
+        var endpoint = JoinBaseAndPath(log.ApiBase, log.Path) ?? "https://api.example.com/v1/chat/completions";
+        var apiKeyPlaceholder = "YOUR_API_KEY";
+        try { var host = new Uri(endpoint).Host; if (!string.IsNullOrEmpty(host)) apiKeyPlaceholder = $"{{{{{host}}}}}"; } catch { }
+
+        var curl = $"curl -X POST '{endpoint}' \\\n" +
+                   $"  -H 'Content-Type: application/json' \\\n" +
+                   $"  -H 'Authorization: Bearer {apiKeyPlaceholder}' \\\n" +
+                   $"  --data-raw '{EscapeSingleQuotesForShell(reqJson)}'";
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            curl, endpoint, model,
+            imageCount = contentItems.Count - (string.IsNullOrWhiteSpace(prompt) ? 0 : 1),
+            restoreErrors = restoreErrors.Count > 0 ? restoreErrors : null,
+            requestBodyLength = reqJson.Length,
+            warning = restoreErrors.Count > 0 ? "部分内容恢复失败，curl 可能不完整" : null
+        }));
+    }
+
+    /// <summary>恢复 requestBody 中被截断的文本（系统提示词、用户消息）</summary>
+    private static string RestoreTruncatedTextFields(string bodyJson, string? systemPromptText, string? questionText)
+    {
+        if (string.IsNullOrWhiteSpace(bodyJson)) return bodyJson;
+
+        try
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(bodyJson);
+            if (node is not System.Text.Json.Nodes.JsonObject obj) return bodyJson;
+
+            var messages = obj["messages"] as System.Text.Json.Nodes.JsonArray;
+            if (messages == null) return bodyJson;
+
+            foreach (var msg in messages)
+            {
+                if (msg is not System.Text.Json.Nodes.JsonObject msgObj) continue;
+                var role = msgObj["role"]?.GetValue<string>();
+
+                // 恢复 system 消息的 content
+                if (role == "system" && !string.IsNullOrWhiteSpace(systemPromptText))
+                {
+                    var content = msgObj["content"];
+                    if (content is System.Text.Json.Nodes.JsonValue v && IsTruncatedOrRedacted(v.GetValue<string>()))
+                    {
+                        msgObj["content"] = systemPromptText;
+                    }
+                }
+
+                // 恢复最后一个 user 消息的文本
+                if (role == "user" && !string.IsNullOrWhiteSpace(questionText))
+                {
+                    var content = msgObj["content"];
+                    if (content is System.Text.Json.Nodes.JsonValue uv && IsTruncatedOrRedacted(uv.GetValue<string>()))
+                    {
+                        msgObj["content"] = questionText;
+                    }
+                    else if (content is System.Text.Json.Nodes.JsonArray arr)
+                    {
+                        foreach (var part in arr)
+                        {
+                            if (part is not System.Text.Json.Nodes.JsonObject po) continue;
+                            if (po["type"]?.GetValue<string>() != "text") continue;
+                            var txt = po["text"]?.GetValue<string>();
+                            if (IsTruncatedOrRedacted(txt)) po["text"] = questionText;
+                        }
+                    }
+                }
+            }
+
+            // 恢复顶层 system / system_prompt
+            foreach (var key in new[] { "system", "system_prompt", "systemPrompt" })
+            {
+                if (obj[key] is System.Text.Json.Nodes.JsonValue sv && !string.IsNullOrWhiteSpace(systemPromptText)
+                    && IsTruncatedOrRedacted(sv.GetValue<string>()))
+                {
+                    obj[key] = systemPromptText;
+                }
+            }
+
+            return obj.ToJsonString(new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        }
+        catch
+        {
+            return bodyJson;
+        }
+    }
+
+    private static bool IsTruncatedOrRedacted(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return false;
+        s = s.Trim();
+        if (s.StartsWith('[') && s.EndsWith(']') && (s.Contains("REDACTED") || s.Contains("PROMPT"))) return true;
+        return System.Text.RegularExpressions.Regex.IsMatch(s, @"\.\.\.\[\d+ chars trimmed\]$");
+    }
+
+    private static string JoinBaseAndPath(string? apiBase, string? path)
+    {
+        var b = (apiBase ?? "").TrimEnd('/');
+        var p = (path ?? "").TrimStart('/');
+        if (string.IsNullOrWhiteSpace(b)) return string.IsNullOrWhiteSpace(p) ? "" : p;
+        return string.IsNullOrWhiteSpace(p) ? b : $"{b}/{p}";
+    }
+
+    private static string EscapeSingleQuotesForShell(string s)
+        => s.Replace("'", "'\\''");
 
     /// <summary>
     /// 按模型聚合的近 N 天统计（用于模型管理页展示"请求次数/平均耗时/首字延迟/token"等）

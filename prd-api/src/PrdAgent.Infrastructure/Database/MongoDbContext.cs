@@ -124,6 +124,7 @@ public class MongoDbContext
     public IMongoCollection<RoutingRule> RoutingRules => _database.GetCollection<RoutingRule>("routing_rules");
     // AI Toolbox 百宝箱
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
+    public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
 
     // Webhook 通知
     public IMongoCollection<WebhookDeliveryLog> WebhookDeliveryLogs => _database.GetCollection<WebhookDeliveryLog>("webhook_delivery_logs");
@@ -792,6 +793,10 @@ public class MongoDbContext
         AutomationRules.Indexes.CreateOne(new CreateIndexModel<AutomationRule>(
             Builders<AutomationRule>.IndexKeys.Ascending(x => x.HookId),
             new CreateIndexOptions { Name = "idx_automation_rules_hook_id", Sparse = true }));
+        // ToolboxItems：按 createdByUserId 查询
+        ToolboxItems.Indexes.CreateOne(new CreateIndexModel<ToolboxItem>(
+            Builders<ToolboxItem>.IndexKeys.Ascending(x => x.CreatedByUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_toolbox_items_user_created" }));
 
         // ModelExchanges：按 ModelAlias 唯一索引
         try

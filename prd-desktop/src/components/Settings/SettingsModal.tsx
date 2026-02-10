@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { check as checkUpdate } from '@tauri-apps/plugin-updater';
 import { invoke } from '../../lib/tauri';
@@ -91,6 +91,9 @@ export default function SettingsModal() {
   // 网络诊断模态框
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
 
+  // 缓存 checkUpdate 返回的 update 对象，避免 downloadAndInstall 时重复请求
+  const pendingUpdateRef = useRef<any>(null);
+
   useEffect(() => {
     if (isModalOpen) {
       loadConfig();
@@ -98,6 +101,7 @@ export default function SettingsModal() {
       setUpdateStatus('idle');
       setUpdateInfo(null);
       setUpdateError('');
+      pendingUpdateRef.current = null;
       setClearConfirmStep(0);
       setCacheBytes(null);
       setCacheNote('');
@@ -252,11 +256,10 @@ export default function SettingsModal() {
     // 注意：公钥是编译时嵌入的，这里打印的是源代码中的值，运行中的客户端可能不同
     console.log('[Updater] Expected pubkey (from source):', 'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU2RThCQjIzRDhDOTAwQTIKUldTaUFNbllJN3ZvNWgxR3lnZWZNZ09ZbEZYMC9WVCthL0w3NW5CejRrdW53STEzc1FvcEE0dTUK');
     // 打印配置的 endpoints（这是源代码中的值，编译后会嵌入到二进制中）
-    console.log('[Updater] Configured endpoints (from source):');
-    console.log('  1. https://github.com/inernoro/prd_agent/releases/latest/download/latest-{{target}}.json');
-    console.log('  2. https://github.com/inernoro/prd_agent/releases/latest/download/latest.json');
+    console.log('[Updater] Configured endpoint (from source):');
+    console.log('  https://github.com/inernoro/prd_agent/releases/latest/download/latest-{{target}}.json');
     console.log(
-      '[Updater] Note: In our build pipeline, {{target}} is set to Rust target triple (e.g. aarch64-apple-darwin, x86_64-pc-windows-msvc)'
+      '[Updater] Note: {{target}} is Rust target triple (e.g. aarch64-apple-darwin, x86_64-pc-windows-msvc)'
     );
     
     // 通过 Tauri 后端 fetch manifest（绕过浏览器 CORS 限制）
@@ -320,6 +323,7 @@ export default function SettingsModal() {
         console.log('[Updater] No update available, current version is latest');
         return;
       }
+      pendingUpdateRef.current = res;
       setUpdateInfo({
         version: typeof res?.version === 'string' ? res.version : undefined,
         notes: typeof res?.body === 'string' ? res.body : typeof res?.notes === 'string' ? res.notes : undefined,
@@ -357,9 +361,12 @@ export default function SettingsModal() {
     setUpdateStatus('installing');
 
     try {
-      const res: any = await checkUpdate();
-      const available = Boolean(res?.available);
-      if (!available) {
+      // 优先使用 handleCheckUpdate 缓存的 update 对象，避免重复请求
+      let res: any = pendingUpdateRef.current;
+      if (!res || !Boolean(res?.available)) {
+        res = await checkUpdate();
+      }
+      if (!Boolean(res?.available)) {
         setUpdateStatus('no-update');
         return;
       }
@@ -371,12 +378,26 @@ export default function SettingsModal() {
       }
 
       // 大多数情况下 updater 会自动重启；这里提供兜底提示
+      pendingUpdateRef.current = null;
       setUpdateStatus('idle');
       setUpdateInfo(null);
       alert('更新已完成。如未自动重启，请手动关闭并重新打开应用。');
     } catch (e) {
       setUpdateStatus('error');
       const raw = String(e);
+      console.error('[Updater] downloadAndInstall error:', raw);
+      // ACL 权限不足：通常是 Tauri capabilities 缺少 dialog:allow-message 等权限
+      if (/not allowed by ACL/i.test(raw)) {
+        setUpdateError(
+          [
+            '更新失败：应用权限配置不足（ACL 错误）。',
+            '请升级到最新版本以修复此问题，可前往 GitHub Releases 手动下载。',
+            '',
+            `原始错误：${raw}`,
+          ].join('\n')
+        );
+        return;
+      }
       // 下载阶段 404：通常是 manifest 里写的安装包 URL 与 Release 实际资产文件名不一致（空格/点号/大小写）
       if (/status:\s*404/i.test(raw) || /\b404\b/.test(raw)) {
         setUpdateError(

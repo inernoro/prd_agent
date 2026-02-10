@@ -165,6 +165,7 @@ export const api = {
     llm: {
       list: () => '/api/logs/llm',
       byId: (id: string) => `/api/logs/llm/${id}`,
+      replayCurl: (id: string) => `/api/logs/llm/${id}/replay-curl`,
       meta: () => '/api/logs/llm/meta',
       modelStats: () => '/api/logs/llm/model-stats',
       batchModelStats: () => '/api/logs/llm/model-stats/batch',
@@ -244,6 +245,16 @@ export const api = {
     avatars: {
       nohead: () => '/api/assets/avatars/nohead',
     },
+  },
+
+  // ============ Executive 总裁面板 ============
+  executive: {
+    overview: () => '/api/executive/overview',
+    trends: () => '/api/executive/trends',
+    team: () => '/api/executive/team',
+    agents: () => '/api/executive/agents',
+    models: () => '/api/executive/models',
+    leaderboard: () => '/api/executive/leaderboard',
   },
 
   // ============ Dashboard 仪表盘 ============
@@ -495,6 +506,9 @@ export const api = {
     item: (id: string) => `/api/ai-toolbox/items/${id}`,
     runItem: (itemId: string) => `/api/ai-toolbox/items/${itemId}/run`,
     agents: () => '/api/ai-toolbox/agents',
+    // 直接对话 (SSE)
+    directChat: () => '/api/ai-toolbox/direct-chat',
+    capabilityChat: (key: string) => `/api/ai-toolbox/capabilities/${key}/chat`,
     // Legacy - 运行记录
     chat: () => '/api/ai-toolbox/chat',
     analyze: () => '/api/ai-toolbox/analyze',

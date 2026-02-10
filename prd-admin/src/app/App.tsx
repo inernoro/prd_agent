@@ -25,6 +25,7 @@ import OpenPlatformTabsPage from '@/pages/OpenPlatformTabsPage';
 import AutomationRulesPage from '@/pages/AutomationRulesPage';
 import AuthzPage from '@/pages/AuthzPage';
 import SettingsPage from '@/pages/SettingsPage';
+import ExecutiveDashboardPage from '@/pages/ExecutiveDashboardPage';
 import RichComposerLab from '@/pages/_dev/RichComposerLab';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
@@ -230,6 +231,7 @@ export default function App() {
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="authz" element={<RequirePermission perm="authz.manage"><AuthzPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="settings.read"><SettingsPage /></RequirePermission>} />
+        <Route path="executive" element={<RequirePermission perm="executive.read"><ExecutiveDashboardPage /></RequirePermission>} />
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>
 

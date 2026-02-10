@@ -90,9 +90,7 @@ public class GatewayLLMClient : ILLMClient
             {
                 QuestionText = messages.LastOrDefault(m => m.Role == "user")?.Content,
                 SystemPromptChars = systemPrompt?.Length,
-                SystemPromptText = systemPrompt?.Length > 500
-                    ? systemPrompt.Substring(0, 500) + "..."
-                    : systemPrompt
+                SystemPromptText = systemPrompt
             }
         };
 
@@ -106,6 +104,12 @@ public class GatewayLLMClient : ILLMClient
                     ErrorMessage = chunk.Error ?? "Gateway 返回错误"
                 };
                 yield break;
+            }
+
+            // 跳过思考过程块（Gateway 已过滤，此处为防御性检查）
+            if (chunk.Type == GatewayChunkType.Thinking)
+            {
+                continue;
             }
 
             if (chunk.Type == GatewayChunkType.Start)

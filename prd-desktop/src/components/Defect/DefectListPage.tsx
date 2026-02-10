@@ -33,6 +33,24 @@ export default function DefectListPage() {
     loadStats();
   }, []);
 
+  // Keyboard shortcut: Cmd+B / Ctrl+B
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+        const active = document.activeElement;
+        const isInInput = active instanceof HTMLInputElement ||
+                          active instanceof HTMLTextAreaElement ||
+                          (active instanceof HTMLElement && active.isContentEditable);
+        if (isInInput && !showSubmitPanel) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setShowSubmitPanel(!showSubmitPanel);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [showSubmitPanel, setShowSubmitPanel]);
+
   const selectedDefect = defects.find((d) => d.id === selectedDefectId);
 
   return (
