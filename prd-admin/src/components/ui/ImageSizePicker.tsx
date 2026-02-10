@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { ASPECT_OPTIONS, detectTierFromSize, detectAspectFromSize } from '@/lib/imageAspectOptions';
+import { detectTierFromSize, detectAspectFromSize } from '@/lib/imageAspectOptions';
 import type { SizesByResolution } from '@/lib/imageAspectOptions';
 
 type SizeOption = { size: string; aspectRatio: string };

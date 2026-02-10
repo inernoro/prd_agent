@@ -2028,7 +2028,7 @@ public class ImageMasterController : ControllerBase
         try
         {
             var appCallerCode = AppCallerRegistry.LiteraryAgent.Content.Chat;
-            var llmClient = _gateway.CreateClient(appCallerCode, "chat");
+            var llmClient = _gateway.CreateClient(appCallerCode, "chat", includeThinking: true);
             var requestId = Guid.NewGuid().ToString("N");
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: requestId,
@@ -2067,6 +2067,28 @@ public class ImageMasterController : ControllerBase
 
             await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
             {
+                // 思考过程：实时推送给前端展示
+                if (chunk.Type == "thinking" && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    if (!clientDisconnected)
+                    {
+                        try
+                        {
+                            var thinkingData = JsonSerializer.Serialize(new
+                            {
+                                type = "thinking",
+                                text = chunk.Content
+                            }, JsonOptions);
+                            await Response.WriteAsync($"data: {thinkingData}\n\n");
+                            await Response.Body.FlushAsync();
+                        }
+                        catch (OperationCanceledException) { clientDisconnected = true; }
+                        catch (ObjectDisposedException) { clientDisconnected = true; }
+                        catch (Exception ex) when (ex.InnerException is OperationCanceledException) { clientDisconnected = true; }
+                    }
+                    continue;
+                }
+
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {
                     fullResponse.Append(chunk.Content);

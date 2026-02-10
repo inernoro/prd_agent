@@ -50,7 +50,7 @@ import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import type { SizesByResolution } from '@/lib/imageAspectOptions';
 import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2 } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -215,6 +215,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
   const [generating, setGenerating] = useState(false);
   const [markerStreaming, setMarkerStreaming] = useState(false);
+  const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewIndex, setImagePreviewIndex] = useState(0);
@@ -289,6 +290,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const genAbortRef = useRef<AbortController | null>(null);
   const markerListRef = useRef<HTMLDivElement>(null); // 配图列表容器的 ref
   const articlePreviewRef = useRef<HTMLDivElement>(null); // 文章预览区域的 ref
+  const thinkingPanelRef = useRef<HTMLDivElement>(null); // 思考面板的 ref（自动滚动到底部）
   const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
   
   // 当配图列表增加时，只在流式输出过程中自动滚动到底部
@@ -298,6 +300,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [markerRunItems.length]);
   
+  // 思考面板自动滚动到底部
+  useEffect(() => {
+    if (thinkingPanelRef.current && thinkingContent) {
+      thinkingPanelRef.current.scrollTop = thinkingPanelRef.current.scrollHeight;
+    }
+  }, [thinkingContent]);
+
   // 当文章内容更新时，只在流式输出过程中自动滚动到最新的 marker
   useEffect(() => {
     if (isStreamingRef.current && articlePreviewRef.current && articleWithMarkers) {
@@ -825,6 +834,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     const systemPrompt = selectedPrompt?.content ?? '';
 
     setMarkerStreaming(true);
+    setThinkingContent('');
     isStreamingRef.current = true; // 标记开始流式输出
     // 3 状态模式：生成标记时直接跳到 MarkersGenerated，流式更新内容
     setPhase(2); // MarkersGenerated
@@ -919,6 +929,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       };
 
       for await (const chunk of stream) {
+        // ====== 思考过程：实时追加显示 ======
+        if (chunk.type === 'thinking' && chunk.text) {
+          setThinkingContent((prev) => prev + chunk.text);
+          continue;
+        }
+
         // ====== Anchor 模式：处理 marker 事件 ======
         if (chunk.type === 'marker' && chunk.text && chunk.index != null) {
           const markerIndex = chunk.index;
@@ -2162,6 +2178,53 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             {/* 标记生成中/完成/生图等阶段：显示 markdown 预览（流式更新） */}
             {phase === 2 && ( // MarkersGenerated
               <div className="p-4 relative">
+                {/* 思考过程面板：流式生成时显示 LLM reasoning */}
+                {thinkingContent && (
+                  <div
+                    className="mb-4 rounded-xl overflow-hidden"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(99, 102, 241, 0.06) 100%)',
+                      border: '1px solid rgba(168, 85, 247, 0.2)',
+                    }}
+                  >
+                    <div
+                      className="flex items-center gap-2 px-3 py-2"
+                      style={{
+                        borderBottom: '1px solid rgba(168, 85, 247, 0.12)',
+                        background: 'rgba(168, 85, 247, 0.04)',
+                      }}
+                    >
+                      {markerStreaming && (
+                        <span
+                          className="inline-block w-2 h-2 rounded-full"
+                          style={{
+                            background: 'rgba(168, 85, 247, 0.8)',
+                            animation: 'pulse 1.5s ease-in-out infinite',
+                          }}
+                        />
+                      )}
+                      <span
+                        className="text-[11px] font-semibold tracking-wide uppercase"
+                        style={{ color: 'rgba(168, 85, 247, 0.85)' }}
+                      >
+                        Thinking
+                      </span>
+                    </div>
+                    <div
+                      ref={thinkingPanelRef}
+                      className="px-3 py-2 text-[12px] leading-relaxed whitespace-pre-wrap"
+                      style={{
+                        color: 'rgba(255, 255, 255, 0.7)',
+                        maxHeight: markerStreaming ? 320 : 160,
+                        overflowY: 'auto',
+                        transition: 'max-height 0.3s ease',
+                      }}
+                    >
+                      {thinkingContent}
+                    </div>
+                  </div>
+                )}
+
                 <div className="prd-md">
                   <ReactMarkdown
                     key="article-preview-main"
