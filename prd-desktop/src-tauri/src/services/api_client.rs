@@ -153,6 +153,17 @@ impl ApiClient {
         API_BASE_URL.read().unwrap().clone()
     }
 
+    /// Build full URL: paths starting with `/api/` are used as-is (for agent controllers
+    /// like `/api/defect-agent/...`); other paths get the legacy `/api/v1` prefix.
+    fn build_url(path: &str) -> String {
+        let base = Self::get_base_url();
+        if path.starts_with("/api/") {
+            format!("{}{}", base, path)
+        } else {
+            format!("{}/api/v1{}", base, path)
+        }
+    }
+
     fn get_token() -> Option<String> {
         AUTH_TOKEN.read().unwrap().clone()
     }
@@ -264,7 +275,7 @@ impl ApiClient {
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<ApiResponse<T>, String> {
-        let url = format!("{}/api/v1{}", Self::get_base_url(), path);
+        let url = Self::build_url(path);
 
         #[cfg(debug_assertions)]
         eprintln!("[api] GET {}", url);
@@ -349,7 +360,7 @@ impl ApiClient {
         path: &str,
         body: &B,
     ) -> Result<ApiResponse<T>, String> {
-        let url = format!("{}/api/v1{}", Self::get_base_url(), path);
+        let url = Self::build_url(path);
 
         #[cfg(debug_assertions)]
         eprintln!("[api] POST {}", url);
@@ -431,7 +442,7 @@ impl ApiClient {
         path: &str,
         body: &B,
     ) -> Result<ApiResponse<T>, String> {
-        let url = format!("{}/api/v1{}", Self::get_base_url(), path);
+        let url = Self::build_url(path);
 
         #[cfg(debug_assertions)]
         eprintln!("[api] PUT {}", url);
@@ -508,7 +519,7 @@ impl ApiClient {
     }
 
     pub async fn delete<T: DeserializeOwned>(&self, path: &str) -> Result<ApiResponse<T>, String> {
-        let url = format!("{}/api/v1{}", Self::get_base_url(), path);
+        let url = Self::build_url(path);
 
         #[cfg(debug_assertions)]
         eprintln!("[api] DELETE {}", url);

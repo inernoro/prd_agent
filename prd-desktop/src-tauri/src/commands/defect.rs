@@ -47,7 +47,7 @@ struct EmptyBody {}
 #[command]
 pub async fn list_defects() -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
-    client.get("/defect-agent/defects").await
+    client.get("/api/defect-agent/defects").await
 }
 
 /// 创建缺陷报告（assigneeUserId 硬编码为 "inernoro"）
@@ -64,7 +64,7 @@ pub async fn create_defect(
         title,
         assignee_user_id: "inernoro".to_string(),
     };
-    client.post("/defect-agent/defects", &request).await
+    client.post("/api/defect-agent/defects", &request).await
 }
 
 /// 提交缺陷（触发 Agent 处理流程）
@@ -73,7 +73,7 @@ pub async fn submit_defect(id: String) -> Result<ApiResponse<serde_json::Value>,
     let client = ApiClient::new();
     let body = EmptyBody {};
     client
-        .post(&format!("/defect-agent/defects/{}/submit", id), &body)
+        .post(&format!("/api/defect-agent/defects/{}/submit", id), &body)
         .await
 }
 
@@ -81,7 +81,7 @@ pub async fn submit_defect(id: String) -> Result<ApiResponse<serde_json::Value>,
 #[command]
 pub async fn get_defect(id: String) -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
-    client.get(&format!("/defect-agent/defects/{}", id)).await
+    client.get(&format!("/api/defect-agent/defects/{}", id)).await
 }
 
 /// 获取缺陷消息列表（支持 afterSeq 增量拉取）
@@ -92,8 +92,8 @@ pub async fn get_defect_messages(
 ) -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
     let path = match after_seq {
-        Some(seq) => format!("/defect-agent/defects/{}/messages?afterSeq={}", id, seq),
-        None => format!("/defect-agent/defects/{}/messages", id),
+        Some(seq) => format!("/api/defect-agent/defects/{}/messages?afterSeq={}", id, seq),
+        None => format!("/api/defect-agent/defects/{}/messages", id),
     };
     client.get(&path).await
 }
@@ -107,7 +107,7 @@ pub async fn send_defect_message(
     let client = ApiClient::new();
     let request = SendDefectMessageRequest { content };
     client
-        .post(&format!("/defect-agent/defects/{}/messages", id), &request)
+        .post(&format!("/api/defect-agent/defects/{}/messages", id), &request)
         .await
 }
 
@@ -117,7 +117,7 @@ pub async fn process_defect(id: String) -> Result<ApiResponse<serde_json::Value>
     let client = ApiClient::new();
     let body = EmptyBody {};
     client
-        .post(&format!("/defect-agent/defects/{}/process", id), &body)
+        .post(&format!("/api/defect-agent/defects/{}/process", id), &body)
         .await
 }
 
@@ -130,7 +130,7 @@ pub async fn resolve_defect(
     let client = ApiClient::new();
     let request = ResolveDefectRequest { resolution };
     client
-        .post(&format!("/defect-agent/defects/{}/resolve", id), &request)
+        .post(&format!("/api/defect-agent/defects/{}/resolve", id), &request)
         .await
 }
 
@@ -143,7 +143,7 @@ pub async fn reject_defect(
     let client = ApiClient::new();
     let request = RejectDefectRequest { reason };
     client
-        .post(&format!("/defect-agent/defects/{}/reject", id), &request)
+        .post(&format!("/api/defect-agent/defects/{}/reject", id), &request)
         .await
 }
 
@@ -151,5 +151,5 @@ pub async fn reject_defect(
 #[command]
 pub async fn get_defect_stats() -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
-    client.get("/defect-agent/stats").await
+    client.get("/api/defect-agent/stats").await
 }
