@@ -75,10 +75,26 @@ public static class AdminMenuCatalog
 
         foreach (var menu in All)
         {
-            // 特殊菜单：仪表盘和系统设置，只需要基础访问权限
-            if (menu.AppKey is "dashboard" or "settings")
+            // 系统设置：只需要基础访问权限
+            if (menu.AppKey is "settings")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
+                {
+                    result.Add(menu);
+                }
+                continue;
+            }
+
+            // 仪表盘：需要 Access + 至少一个数据查看权限（Agent 体验者看不到仪表盘）
+            if (menu.AppKey is "dashboard")
+            {
+                if (permSet.Contains(AdminPermissionCatalog.Access) &&
+                    (permSet.Contains(AdminPermissionCatalog.ModelsRead) ||
+                     permSet.Contains(AdminPermissionCatalog.LogsRead) ||
+                     permSet.Contains(AdminPermissionCatalog.DataRead) ||
+                     permSet.Contains(AdminPermissionCatalog.UsersRead) ||
+                     permSet.Contains(AdminPermissionCatalog.GroupsRead) ||
+                     permSet.Contains(AdminPermissionCatalog.Super)))
                 {
                     result.Add(menu);
                 }
