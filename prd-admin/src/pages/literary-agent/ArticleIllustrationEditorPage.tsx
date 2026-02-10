@@ -401,19 +401,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [thinkingContent, rawMarkerOutput]);
 
-  // 当新 marker 插入文章时，自动滚动到最新 marker（仅在流式生成期间）
-  useEffect(() => {
-    if (!isStreamingRef.current || !articlePreviewRef.current || markers.length === 0) return;
-    // 延迟一帧确保 DOM 已更新（React render → DOM paint → scrollIntoView）
-    requestAnimationFrame(() => {
-      const container = articlePreviewRef.current;
-      if (!container) return;
-      const markerEls = container.querySelectorAll('.prd-md-marker-new');
-      if (markerEls.length > 0) {
-        markerEls[markerEls.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    });
-  }, [markers.length]);
+  // 流式生成期间不滚动文章（AI 视图独占左面板，文章未渲染）
+  // 文章在流式结束后才显示，无需自动滚动到 marker
   
   // 提示词模板管理（只有用户模板）
   const [userPrompts, setUserPrompts] = useState<PromptTemplate[]>([]);
@@ -1068,6 +1057,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         else if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
           // Anchor 模式：LLM 原始输出仅用于视觉反馈，文章由 marker 事件增量更新
           setRawMarkerOutput((prev) => prev + chunk.text);
+        }
+        // ====== 后处理中事件 ======
+        else if (chunk.type === 'finalizing') {
+          setRawMarkerOutput((prev) => prev + '\n\n✓ 标记生成完成，正在保存…');
         }
         // ====== 完成事件 ======
         else if (chunk.type === 'done' && chunk.fullText) {
@@ -2250,8 +2243,91 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             )}
 
-            {/* 标记生成中/完成/生图等阶段：显示 markdown 预览（流式更新） */}
-            {phase === 2 && ( // MarkersGenerated
+            {/* 标记生成中：全屏 AI 输出视图（Thinking + Raw Output） */}
+            {phase === 2 && markerStreaming && (
+              <div
+                ref={thinkingPanelRef}
+                className="h-full overflow-auto p-4"
+              >
+                {/* Thinking 区域 */}
+                {thinkingContent && (
+                  <div className="mb-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span
+                        className="inline-block w-2 h-2 rounded-full"
+                        style={{
+                          background: 'rgba(168, 85, 247, 0.8)',
+                          animation: 'pulse 1.5s ease-in-out infinite',
+                        }}
+                      />
+                      <span
+                        className="text-[11px] font-semibold tracking-wide uppercase"
+                        style={{ color: 'rgba(168, 85, 247, 0.85)' }}
+                      >
+                        Thinking
+                      </span>
+                    </div>
+                    <div
+                      className="rounded-xl px-3 py-2 text-[12px] leading-relaxed prd-md"
+                      style={{
+                        background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(99, 102, 241, 0.06) 100%)',
+                        border: '1px solid rgba(168, 85, 247, 0.15)',
+                        color: 'rgba(255, 255, 255, 0.7)',
+                      }}
+                    >
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {thinkingContent}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                )}
+
+                {/* Raw LLM 输出区域 */}
+                {rawMarkerOutput && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span
+                        className="inline-block w-2 h-2 rounded-full"
+                        style={{
+                          background: 'rgba(99, 102, 241, 0.8)',
+                          animation: 'pulse 1.5s ease-in-out infinite',
+                        }}
+                      />
+                      <span
+                        className="text-[11px] font-semibold tracking-wide uppercase"
+                        style={{ color: 'rgba(99, 102, 241, 0.85)' }}
+                      >
+                        Output
+                      </span>
+                    </div>
+                    <pre
+                      className="rounded-xl px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-all font-mono"
+                      style={{
+                        background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(34, 197, 94, 0.06) 100%)',
+                        border: '1px solid rgba(99, 102, 241, 0.15)',
+                        color: 'rgba(147, 197, 253, 0.75)',
+                        margin: 0,
+                      }}
+                    >
+                      {rawMarkerOutput}
+                    </pre>
+                  </div>
+                )}
+
+                {/* 空状态：等待 LLM 响应 */}
+                {!thinkingContent && !rawMarkerOutput && (
+                  <div className="h-full flex items-center justify-center">
+                    <div className="flex flex-col items-center gap-3">
+                      <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(168, 85, 247, 0.6)' }} />
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>等待 AI 响应…</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 标记生成完成：文章预览视图 */}
+            {phase === 2 && !markerStreaming && (
               <div className="p-4 relative" style={{ '--img-display-size': `${imageDisplaySize}%` } as React.CSSProperties}>
                 {/* 图片显示尺寸控制 - 右上角浮动 */}
                 {markerRunItems.some(x => x.assetUrl || x.url || x.base64) && (
@@ -2282,73 +2358,36 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     ))}
                   </div>
                 )}
-                {/* 思考 + 生成面板：先显示 thinking，再无缝过渡到 raw marker output */}
-                {(thinkingContent || rawMarkerOutput) && (
-                  <div
+
+                {/* 折叠的思考面板 */}
+                {thinkingContent && (
+                  <details
                     className="mb-4 rounded-xl overflow-hidden"
                     style={{
-                      background: rawMarkerOutput
-                        ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(34, 197, 94, 0.06) 100%)'
-                        : 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(99, 102, 241, 0.06) 100%)',
-                      border: `1px solid ${rawMarkerOutput ? 'rgba(99, 102, 241, 0.2)' : 'rgba(168, 85, 247, 0.2)'}`,
-                      transition: 'background 0.5s ease, border-color 0.5s ease',
+                      background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.06) 0%, rgba(99, 102, 241, 0.04) 100%)',
+                      border: '1px solid rgba(168, 85, 247, 0.15)',
                     }}
                   >
-                    <div
-                      className="flex items-center gap-2 px-3 py-2"
-                      style={{
-                        borderBottom: `1px solid ${rawMarkerOutput ? 'rgba(99, 102, 241, 0.12)' : 'rgba(168, 85, 247, 0.12)'}`,
-                        background: rawMarkerOutput ? 'rgba(99, 102, 241, 0.04)' : 'rgba(168, 85, 247, 0.04)',
-                      }}
+                    <summary
+                      className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none text-[11px] font-semibold tracking-wide uppercase"
+                      style={{ color: 'rgba(168, 85, 247, 0.7)' }}
                     >
-                      {markerStreaming && (
-                        <span
-                          className="inline-block w-2 h-2 rounded-full"
-                          style={{
-                            background: rawMarkerOutput ? 'rgba(99, 102, 241, 0.8)' : 'rgba(168, 85, 247, 0.8)',
-                            animation: 'pulse 1.5s ease-in-out infinite',
-                          }}
-                        />
-                      )}
-                      <span
-                        className="text-[11px] font-semibold tracking-wide uppercase"
-                        style={{ color: rawMarkerOutput ? 'rgba(99, 102, 241, 0.85)' : 'rgba(168, 85, 247, 0.85)' }}
-                      >
-                        {rawMarkerOutput ? 'Generating Markers' : 'Thinking'}
-                      </span>
-                    </div>
+                      Thinking
+                    </summary>
                     <div
-                      ref={thinkingPanelRef}
-                      className="px-3 py-2 text-[12px] leading-relaxed"
+                      className="px-3 py-2 text-[12px] leading-relaxed prd-md"
                       style={{
-                        color: 'rgba(255, 255, 255, 0.7)',
-                        maxHeight: markerStreaming ? 320 : 160,
+                        color: 'rgba(255, 255, 255, 0.6)',
+                        maxHeight: 200,
                         overflowY: 'auto',
-                        transition: 'max-height 0.3s ease',
+                        borderTop: '1px solid rgba(168, 85, 247, 0.1)',
                       }}
                     >
-                      {thinkingContent && (
-                        <div className="prd-md">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {thinkingContent}
-                          </ReactMarkdown>
-                        </div>
-                      )}
-                      {rawMarkerOutput && (
-                        <>
-                          {thinkingContent && (
-                            <div className="my-2 border-t" style={{ borderColor: 'rgba(99, 102, 241, 0.15)' }} />
-                          )}
-                          <pre
-                            className="text-[11px] leading-relaxed whitespace-pre-wrap break-all font-mono"
-                            style={{ color: 'rgba(147, 197, 253, 0.75)', margin: 0 }}
-                          >
-                            {rawMarkerOutput}
-                          </pre>
-                        </>
-                      )}
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {thinkingContent}
+                      </ReactMarkdown>
                     </div>
-                  </div>
+                  </details>
                 )}
 
                 <div className="prd-md">

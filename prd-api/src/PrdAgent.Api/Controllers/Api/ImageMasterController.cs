@@ -2220,6 +2220,18 @@ public class ImageMasterController : ControllerBase
                 }
             }
 
+            // 通知前端 LLM 流已结束，正在进行后处理（保存数据等）
+            if (!clientDisconnected)
+            {
+                try
+                {
+                    var finalizingData = JsonSerializer.Serialize(new { type = "finalizing" }, JsonOptions);
+                    await Response.WriteAsync($"data: {finalizingData}\n\n");
+                    await Response.Body.FlushAsync();
+                }
+                catch { clientDisconnected = true; }
+            }
+
             // 生成最终的带标记文章内容
             string generatedContent;
             List<PrdAgent.Core.Services.ArticleMarker> extractedMarkers;
