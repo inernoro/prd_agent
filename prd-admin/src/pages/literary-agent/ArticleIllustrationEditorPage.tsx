@@ -17,7 +17,7 @@ import {
   createLiteraryAgentImageGenRun,
   generateArticleMarkers,
   getVisualAgentWorkspaceDetail,
-  getModels,
+  getLiteraryAgentMainModel,
   planImageGen,
   streamLiteraryAgentImageGenRunWithRetry,
   updateVisualAgentWorkspace,
@@ -257,10 +257,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setText2ImgPool(null);
       setImg2ImgPool(null);
 
-      // 并行加载：所有模型池 + 全局模型列表
-      const [allPoolsRes, modelsRes] = await Promise.all([
+      // 并行加载：所有模型池 + 主模型信息
+      const [allPoolsRes, mainModelRes] = await Promise.all([
         getLiteraryAgentAllModels().catch(() => ({ success: false, data: null as LiteraryAgentAllModelsResponse | null })),
-        getModels(),
+        getLiteraryAgentMainModel().catch(() => ({ success: false, data: null as { model: null } | null })),
       ]);
       if (cancelled) return;
 
@@ -268,24 +268,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       if (allPoolsRes.success && allPoolsRes.data) {
         const t2iPools = allPoolsRes.data.text2img?.pools ?? [];
         const i2iPools = allPoolsRes.data.img2img?.pools ?? [];
-        
+
         // 查找专属模型池（isDedicated=true），否则用第一个
         const t2iPool = t2iPools.find((p) => p.isDedicated) ?? t2iPools[0] ?? null;
         const i2iPool = i2iPools.find((p) => p.isDedicated) ?? i2iPools[0] ?? null;
-        
+
         setText2ImgPool(t2iPool);
         setImg2ImgPool(i2iPool);
       }
 
-      if (!modelsRes.success) {
-        setImageGenModel(null);
-        setImageGenModelError(modelsRes.error?.message || '加载生图模型失败');
-        return;
+      // 获取主模型（用于显示标记生成模型名称）
+      if (mainModelRes.success && mainModelRes.data?.model) {
+        const m = mainModelRes.data.model;
+        setMainModel({ id: m.id, name: m.name, modelName: m.modelName, platformId: m.platformId ?? '', enabled: m.enabled, isMain: m.isMain } as Model);
       }
-
-      // 获取主模型（用于生成标记）
-      const mainList = (modelsRes.data ?? []).filter((m) => Boolean(m.enabled) && Boolean(m.isMain));
-      setMainModel(mainList[0] ?? null);
     })();
     return () => {
       cancelled = true;

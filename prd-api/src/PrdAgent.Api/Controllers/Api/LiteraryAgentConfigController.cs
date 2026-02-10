@@ -140,6 +140,35 @@ public class LiteraryAgentConfigController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 获取主模型信息（用于显示标记生成使用的模型名称）
+    /// </summary>
+    [HttpGet("models/main")]
+    public async Task<IActionResult> GetMainModel(CancellationToken ct)
+    {
+        var mainModel = await _db.LLMModels
+            .Find(m => m.IsMain && m.Enabled)
+            .FirstOrDefaultAsync(ct);
+
+        if (mainModel == null)
+        {
+            return Ok(ApiResponse<object>.Ok(new { model = (object?)null }));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            model = new
+            {
+                id = mainModel.Id,
+                name = mainModel.Name,
+                modelName = mainModel.ModelName,
+                platformId = mainModel.PlatformId,
+                enabled = mainModel.Enabled,
+                isMain = mainModel.IsMain,
+            }
+        }));
+    }
+
     #endregion
 
     #region 底图配置 CRUD

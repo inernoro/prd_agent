@@ -396,6 +396,14 @@ export async function updateArticleMarkerReal(params: {
 }
 
 /**
+ * 获取模型适配信息（尺寸选项等）
+ * 调用 /api/visual-agent/image-gen/adapter-info?modelId=xxx
+ */
+export async function getVisualAgentAdapterInfoReal(modelId: string) {
+  return await apiRequest<import('../contracts/models').ModelAdapterInfo>(api.visualAgent.imageGen.adapterInfo(modelId));
+}
+
+/**
  * 获取视觉创作所有生图场景的模型池列表（后端合并去重）
  * 调用 /api/visual-agent/image-gen/models
  */

@@ -191,6 +191,7 @@ export const getActiveReferenceImageConfigReal: GetActiveReferenceImageConfigCon
 import type {
   GetLiteraryAgentImageGenModelsContract,
   GetLiteraryAgentAllModelsContract,
+  GetLiteraryAgentMainModelContract,
   LiteraryAgentModelPool,
   LiteraryAgentAllModelsResponse,
 } from '../contracts/literaryAgentConfig';
@@ -213,6 +214,13 @@ export const getLiteraryAgentImageGenModelsReal: GetLiteraryAgentImageGenModelsC
 export const getLiteraryAgentAllModelsReal: GetLiteraryAgentAllModelsContract = async () => {
   return await apiRequest<LiteraryAgentAllModelsResponse>(
     api.literaryAgent.config.modelsAll(),
+    { method: 'GET' }
+  );
+};
+
+export const getLiteraryAgentMainModelReal: GetLiteraryAgentMainModelContract = async () => {
+  return await apiRequest<{ model: import('../contracts/literaryAgentConfig').LiteraryAgentMainModel | null }>(
+    api.literaryAgent.config.modelsMain(),
     { method: 'GET' }
   );
 };

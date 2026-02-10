@@ -151,6 +151,59 @@ public class ImageGenController : ControllerBase
         return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
     }
 
+    /// <summary>
+    /// 获取模型适配信息（尺寸选项、能力等，纯静态注册表查询，无需数据库）
+    /// </summary>
+    /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-4-turbo）</param>
+    [HttpGet("adapter-info")]
+    public IActionResult GetAdapterInfo([FromQuery] string modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "modelId 不能为空"));
+        }
+
+        var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(modelId.Trim());
+        if (adapterInfo == null || !adapterInfo.Matched)
+        {
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                matched = false,
+                modelId = modelId.Trim(),
+            }));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            matched = true,
+            modelId = modelId.Trim(),
+            adapterName = adapterInfo.AdapterName,
+            displayName = adapterInfo.DisplayName,
+            provider = adapterInfo.Provider,
+            officialDocUrl = adapterInfo.OfficialDocUrl,
+            lastUpdated = adapterInfo.LastUpdated,
+            sizeConstraint = new
+            {
+                type = adapterInfo.SizeConstraintType,
+                description = adapterInfo.SizeConstraintDescription,
+            },
+            sizesByResolution = adapterInfo.SizesByResolution,
+            sizeParamFormat = adapterInfo.SizeParamFormat,
+            limitations = new
+            {
+                mustBeDivisibleBy = adapterInfo.MustBeDivisibleBy,
+                maxWidth = adapterInfo.MaxWidth,
+                maxHeight = adapterInfo.MaxHeight,
+                minWidth = adapterInfo.MinWidth,
+                minHeight = adapterInfo.MinHeight,
+                maxPixels = adapterInfo.MaxPixels,
+                notes = adapterInfo.Notes,
+            },
+            supportsImageToImage = adapterInfo.SupportsImageToImage,
+            supportsInpainting = adapterInfo.SupportsInpainting,
+        }));
+    }
+
     #endregion
 
     /// <summary>

@@ -311,6 +311,8 @@ export const api = {
       sizeCaps: () => '/api/visual-agent/image-gen/size-caps',
       /** 获取所有生图场景的模型池（合并去重） */
       models: () => '/api/visual-agent/image-gen/models',
+      /** 根据平台侧模型ID获取适配信息（尺寸选项等） */
+      adapterInfo: (modelId: string) => `/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
       runs: {
         create: () => '/api/visual-agent/image-gen/runs',
         byId: (runId: string) => `/api/visual-agent/image-gen/runs/${runId}`,
@@ -358,6 +360,8 @@ export const api = {
       modelsAll: () => '/api/literary-agent/config/models/all',
       /** 兼容旧接口，根据是否有参考图自动选择 */
       modelsImageGen: () => '/api/literary-agent/config/models/image-gen',
+      /** 获取主模型信息（用于显示标记生成使用的模型名称） */
+      modelsMain: () => '/api/literary-agent/config/models/main',
     },
     /** 文学创作图片生成（应用身份隔离） */
     imageGen: {

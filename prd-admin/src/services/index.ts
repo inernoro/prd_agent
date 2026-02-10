@@ -162,6 +162,7 @@ import type {
   GetActiveReferenceImageConfigContract,
   GetLiteraryAgentImageGenModelsContract,
   GetLiteraryAgentAllModelsContract,
+  GetLiteraryAgentMainModelContract,
   CreateLiteraryAgentImageGenRunContract,
   CancelLiteraryAgentImageGenRunContract,
   StreamLiteraryAgentImageGenRunWithRetryContract,
@@ -339,6 +340,7 @@ import {
   updateArticleMarkerReal,
   generateVisualAgentWorkspaceTitleReal,
   getVisualAgentImageGenModelsReal,
+  getVisualAgentAdapterInfoReal,
 } from '@/services/real/visualAgent';
 import {
   exportConfigReal,
@@ -411,6 +413,7 @@ import {
   getActiveReferenceImageConfigReal,
   getLiteraryAgentImageGenModelsReal,
   getLiteraryAgentAllModelsReal,
+  getLiteraryAgentMainModelReal,
   createLiteraryAgentImageGenRunReal,
   cancelLiteraryAgentImageGenRunReal,
   streamLiteraryAgentImageGenRunWithRetryReal,
@@ -657,6 +660,7 @@ export const extractArticleMarkers = extractArticleMarkersReal;
 export const exportArticle = exportArticleReal;
 export const updateArticleMarker = updateArticleMarkerReal;
 export const getVisualAgentImageGenModels = getVisualAgentImageGenModelsReal;
+export const getVisualAgentAdapterInfo = getVisualAgentAdapterInfoReal;
 
 export const exportConfig: ExportConfigContract = withAuth(exportConfigReal);
 export const importConfig: ImportConfigContract = withAuth(importConfigReal);
@@ -693,6 +697,7 @@ export const deactivateReferenceImageConfig: DeactivateReferenceImageConfigContr
 export const getActiveReferenceImageConfig: GetActiveReferenceImageConfigContract = withAuth(getActiveReferenceImageConfigReal);
 export const getLiteraryAgentImageGenModels: GetLiteraryAgentImageGenModelsContract = withAuth(getLiteraryAgentImageGenModelsReal);
 export const getLiteraryAgentAllModels: GetLiteraryAgentAllModelsContract = withAuth(getLiteraryAgentAllModelsReal);
+export const getLiteraryAgentMainModel: GetLiteraryAgentMainModelContract = withAuth(getLiteraryAgentMainModelReal);
 export const createLiteraryAgentImageGenRun: CreateLiteraryAgentImageGenRunContract = withAuth(createLiteraryAgentImageGenRunReal);
 export const cancelLiteraryAgentImageGenRun: CancelLiteraryAgentImageGenRunContract = withAuth(cancelLiteraryAgentImageGenRunReal);
 export const streamLiteraryAgentImageGenRunWithRetry: StreamLiteraryAgentImageGenRunWithRetryContract = withAuth(streamLiteraryAgentImageGenRunWithRetryReal);

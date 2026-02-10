@@ -23,10 +23,9 @@ import {
   generateVisualAgentWorkspaceTitle,
   getVisualAgentWorkspaceDetail,
   listVisualAgentWorkspaceMessages,
-  getAdapterInfoByModelName,
   getImageGenRun,
-  getModels,
   getUserPreferences,
+  getVisualAgentAdapterInfo,
   getVisualAgentImageGenModels,
   getWatermarkByApp,
   listWatermarksMarketplace,
@@ -821,7 +820,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const imageGenSize = '1024x1024' as const;
   const DEFAULT_ZOOM = 0.5;
 
-  const [models, setModels] = useState<Model[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   // 统一模型池列表（合并所有生成类型，去重）
   const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
@@ -869,11 +867,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       });
   }, [filteredPools]);
 
-  // 合并模型列表：优先使用模型池；如果没有池则回退到 llm_models
+  // 模型列表：使用模型池（后端已包含 3 级回退：专属池 > 默认池 > 传统配置）
   const allImageGenModels = useMemo<ModelWithSource[]>(() => {
-    if (poolModels.length > 0) return poolModels;
-    return (models ?? []).filter((m) => m.isImageGen) as ModelWithSource[];
-  }, [poolModels, models]);
+    return poolModels;
+  }, [poolModels]);
 
   const serverDefaultModel = useMemo(() => {
     // 后端已按 priority + createdAt 排序，直接取第一个启用的模型
@@ -963,7 +960,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return;
     }
 
-    getAdapterInfoByModelName(modelCode)
+    getVisualAgentAdapterInfo(modelCode)
       .then((res) => {
         if (res.success && res.data?.matched && res.data.sizesByResolution) {
           const data = res.data.sizesByResolution;
@@ -2028,15 +2025,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   useEffect(() => {
     setModelsLoading(true);
-    // 通过视觉创作专属端点获取模型池（后端已合并去重所有生成类型）
-    const emptyPools = { success: false, data: [] as ModelGroupForApp[] };
-    Promise.all([
-      getModels(),
-      getVisualAgentImageGenModels().catch(() => emptyPools),
-    ])
-      .then(([modelsRes, poolsRes]) => {
-        const mr = modelsRes as { success: boolean; data?: Model[] };
-        if (mr.success) setModels(mr.data ?? []);
+    // 通过视觉创作专属端点获取模型池（后端已合并去重所有生成类型，含 3 级回退）
+    getVisualAgentImageGenModels()
+      .then((poolsRes) => {
         if (poolsRes.success) setImageGenPools(poolsRes.data ?? []);
       })
       .finally(() => setModelsLoading(false));
@@ -7274,8 +7265,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       const showModel = q === '' || 'model'.startsWith(q) || q.startsWith('m');
                       const showVision = q === '' || 'vision'.startsWith(q) || q.startsWith('v');
                       const showAscii = q === '' || 'ascii'.startsWith(q) || q.startsWith('a');
-                      const visionModels = (models ?? []).filter((m) => m.enabled && m.isVision);
-                      const imageModels = (models ?? []).filter((m) => m.enabled && m.isImageGen);
+                      const visionModels: ModelWithSource[] = []; // 视觉模型通过 Gateway 自动调度，暂不支持 @mention 选择
+                      const imageModels = enabledImageModels;
                       return (
                         <div className="p-2 space-y-2">
                           {showModel ? (
