@@ -183,6 +183,15 @@ const PRD_MD_STYLE = `
     75%  { opacity: 1; }
     100% { opacity: 0; }
   }
+
+  /* 文章内图片显示尺寸控制 */
+  .prd-md img[data-marker-idx] {
+    max-width: var(--img-display-size, 100%) !important;
+    transition: max-width 0.3s ease;
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+  }
 `;
 
 /**
@@ -357,6 +366,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
   const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
   const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
+  const [imageDisplaySize, setImageDisplaySize] = useState(100); // 文章内图片显示尺寸百分比
 
   // 当新 marker 卡片出现时，触发入场发光动画
   useEffect(() => {
@@ -2272,7 +2282,36 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
             {/* 标记生成中/完成/生图等阶段：显示 markdown 预览（流式更新） */}
             {phase === 2 && ( // MarkersGenerated
-              <div className="p-4 relative">
+              <div className="p-4 relative" style={{ '--img-display-size': `${imageDisplaySize}%` } as React.CSSProperties}>
+                {/* 图片显示尺寸控制 - 右上角浮动 */}
+                {markerRunItems.some(x => x.assetUrl || x.url || x.base64) && (
+                  <div
+                    className="sticky top-2 float-right z-10 flex items-center gap-0.5 rounded-lg px-1.5 py-1"
+                    style={{
+                      background: 'rgba(0,0,0,0.55)',
+                      backdropFilter: 'blur(10px)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                    }}
+                  >
+                    <ImageIcon size={11} style={{ color: 'var(--text-muted)', marginRight: 2 }} />
+                    {[30, 50, 75, 100].map(size => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={() => setImageDisplaySize(size)}
+                        className="px-1.5 py-0.5 text-[10px] rounded transition-colors"
+                        style={{
+                          background: imageDisplaySize === size ? 'rgba(147, 197, 253, 0.2)' : 'transparent',
+                          color: imageDisplaySize === size ? '#93C5FD' : 'rgba(255,255,255,0.45)',
+                          border: imageDisplaySize === size ? '1px solid rgba(147, 197, 253, 0.3)' : '1px solid transparent',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {size}%
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {/* 思考过程面板：流式生成时显示 LLM reasoning */}
                 {thinkingContent && (
                   <div
@@ -2579,7 +2618,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
 
-            <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-2">
+            <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-1.5">
               {/* 标记生成中的进度提示 */}
               {markerStreaming && (
                 <div
@@ -2623,7 +2662,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 return (
                   <div
                   key={it.markerIndex}
-                  className="p-3 rounded"
+                  className="p-2.5 rounded"
                   style={{
                     background: 'var(--bg-elevated)',
                     border: '1px solid var(--border-subtle)',
@@ -2706,9 +2745,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   ) : null}
 
                   <div
-                    className="mt-2 rounded-[12px] overflow-hidden relative group"
+                    className="mt-1.5 rounded-[10px] overflow-hidden relative group"
                     style={{
-                      height: 160,
+                      height: 120,
                       background: 'rgba(0,0,0,0.18)',
                       border: '1px solid rgba(255,255,255,0.10)',
                       cursor: canShow ? 'pointer' : 'default',
@@ -2737,7 +2776,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>解析尺寸…</span>
                           </>
                         ) : (
-                          <div style={{ width: '100%', height: '100%', maxWidth: 160, maxHeight: 160, aspectRatio: '1' }}>
+                          <div style={{ width: '100%', height: '100%', maxWidth: 120, maxHeight: 120, aspectRatio: '1' }}>
                             <PrdPetalBreathingLoader fill />
                           </div>
                         )}
@@ -2811,7 +2850,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         const cs = it.planItem?.size || '1024x1024';
                         const [cw, ch] = cs.split(/[xX×]/).map(Number);
                         const cRatio = (cw && ch) ? cw / ch : 1;
-                        const containerH = 140; // 预留上下 padding
+                        const containerH = 100; // 预留上下 padding
                         const containerW = 280; // 约等于卡片宽度
                         // 在容器内按比例显示，不超出边界
                         let previewW: number, previewH: number;
@@ -2819,7 +2858,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           previewW = Math.min(containerW, 240);
                           previewH = Math.round(previewW / cRatio);
                         } else {
-                          previewH = Math.min(containerH, 130);
+                          previewH = Math.min(containerH, 90);
                           previewW = Math.round(previewH * cRatio);
                         }
                         return (
@@ -2848,13 +2887,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       const v = e.target.value;
                       setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === it.markerIndex ? { ...x, draftText: v } : x)));
                     }}
-                    className="mt-2 w-full rounded-[12px] px-3 py-2 text-[12px] outline-none resize-none prd-field"
-                    style={{ minHeight: 84 }}
+                    className="mt-1.5 w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none resize-none prd-field"
+                    style={{ minHeight: 56 }}
                     placeholder="可编辑后右下角生成图片 / 重新生成"
                     disabled={it.status === 'running' || it.status === 'parsing'}
                   />
 
-                  <div className="mt-2 flex items-center justify-between gap-2">
+                  <div className="mt-1.5 flex items-center justify-between gap-2">
                     <Button
                       size="sm"
                       variant="secondary"
