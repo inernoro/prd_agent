@@ -3,6 +3,7 @@ import {
   Crown, Users, Bot, DollarSign, Link2, TrendingUp,
   MessageSquare, Image, Bug, Zap, Activity,
   BarChart3, RefreshCw, Loader2, ToggleLeft, ToggleRight,
+  Trophy, ArrowUpDown, ChevronUp, ChevronDown,
 } from 'lucide-react';
 import { TabBar } from '@/components/design/TabBar';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -255,152 +256,208 @@ function OverviewTab({ overview, trends, agents, loading }: {
   );
 }
 
-// ─── Tab: Team Leaderboard ───────────────────────────────────────────
+// ─── Tab: Team Panoramic Power Panel (全景战力面板) ───────────────────
 
-const MEDAL = ['🥇', '🥈', '🥉'];
-const MEDAL_GRADIENT = [
-  'linear-gradient(90deg, rgba(214,178,106,0.35) 0%, rgba(214,178,106,0.08) 100%)',
-  'linear-gradient(90deg, rgba(192,192,192,0.28) 0%, rgba(192,192,192,0.06) 100%)',
-  'linear-gradient(90deg, rgba(176,141,87,0.22) 0%, rgba(176,141,87,0.05) 100%)',
-];
-
-const DIMENSION_META: Record<string, { icon: typeof Bot; color: string; barColor: string }> = {
-  'prd-agent':        { icon: MessageSquare, color: 'rgba(59,130,246,0.95)',  barColor: 'rgba(59,130,246,0.7)' },
-  'visual-agent':     { icon: Image,         color: 'rgba(168,85,247,0.95)', barColor: 'rgba(168,85,247,0.7)' },
-  'literary-agent':   { icon: MessageSquare, color: 'rgba(34,197,94,0.95)',  barColor: 'rgba(34,197,94,0.65)' },
-  'defect-agent':     { icon: Bug,           color: 'rgba(239,68,68,0.85)',  barColor: 'rgba(239,68,68,0.6)' },
-  'ai-toolbox':       { icon: Zap,           color: 'rgba(214,178,106,0.95)', barColor: 'rgba(214,178,106,0.6)' },
-  'chat':             { icon: MessageSquare, color: 'rgba(100,116,139,0.8)', barColor: 'rgba(100,116,139,0.55)' },
-  'open-platform':    { icon: Link2,         color: 'rgba(251,146,60,0.9)',  barColor: 'rgba(251,146,60,0.6)' },
-  'messages':         { icon: MessageSquare, color: 'rgba(59,130,246,0.85)', barColor: 'rgba(59,130,246,0.6)' },
-  'sessions':         { icon: Activity,      color: 'rgba(34,197,94,0.85)',  barColor: 'rgba(34,197,94,0.55)' },
-  'defects-created':  { icon: Bug,           color: 'rgba(239,68,68,0.7)',   barColor: 'rgba(239,68,68,0.5)' },
-  'defects-resolved': { icon: Bug,           color: 'rgba(34,197,94,0.8)',   barColor: 'rgba(34,197,94,0.55)' },
-  'images':           { icon: Image,         color: 'rgba(168,85,247,0.85)', barColor: 'rgba(168,85,247,0.6)' },
-  'groups':           { icon: Users,         color: 'rgba(100,116,139,0.8)', barColor: 'rgba(100,116,139,0.5)' },
+const DIMENSION_META: Record<string, { icon: typeof Bot; color: string; barColor: string; short: string }> = {
+  'prd-agent':        { icon: MessageSquare, color: 'rgba(59,130,246,0.95)',  barColor: 'rgba(59,130,246,0.7)',  short: 'PRD' },
+  'visual-agent':     { icon: Image,         color: 'rgba(168,85,247,0.95)', barColor: 'rgba(168,85,247,0.7)',  short: '视觉' },
+  'literary-agent':   { icon: MessageSquare, color: 'rgba(34,197,94,0.95)',  barColor: 'rgba(34,197,94,0.65)',  short: '文学' },
+  'defect-agent':     { icon: Bug,           color: 'rgba(239,68,68,0.85)',  barColor: 'rgba(239,68,68,0.6)',   short: '缺陷' },
+  'ai-toolbox':       { icon: Zap,           color: 'rgba(214,178,106,0.95)', barColor: 'rgba(214,178,106,0.6)', short: '工具箱' },
+  'chat':             { icon: MessageSquare, color: 'rgba(100,116,139,0.8)', barColor: 'rgba(100,116,139,0.55)', short: '对话' },
+  'open-platform':    { icon: Link2,         color: 'rgba(251,146,60,0.9)',  barColor: 'rgba(251,146,60,0.6)',  short: '开放' },
+  'messages':         { icon: MessageSquare, color: 'rgba(59,130,246,0.85)', barColor: 'rgba(59,130,246,0.6)',  short: '消息' },
+  'sessions':         { icon: Activity,      color: 'rgba(34,197,94,0.85)',  barColor: 'rgba(34,197,94,0.55)',  short: '会话' },
+  'defects-created':  { icon: Bug,           color: 'rgba(239,68,68,0.7)',   barColor: 'rgba(239,68,68,0.5)',   short: '提缺陷' },
+  'defects-resolved': { icon: Bug,           color: 'rgba(34,197,94,0.8)',   barColor: 'rgba(34,197,94,0.55)',  short: '解缺陷' },
+  'images':           { icon: Image,         color: 'rgba(168,85,247,0.85)', barColor: 'rgba(168,85,247,0.6)',  short: '图片' },
+  'groups':           { icon: Users,         color: 'rgba(100,116,139,0.8)', barColor: 'rgba(100,116,139,0.5)', short: '群组' },
 };
 
-type RankedUser = { userId: string; displayName: string; role: string; avatarFileName: string | null; value: number; rank: number };
+const USER_COLORS = [
+  'rgba(59,130,246,0.85)', 'rgba(239,68,68,0.8)', 'rgba(34,197,94,0.85)',
+  'rgba(168,85,247,0.85)', 'rgba(214,178,106,0.9)', 'rgba(251,146,60,0.85)',
+  'rgba(236,72,153,0.8)', 'rgba(20,184,166,0.85)', 'rgba(99,102,241,0.85)',
+  'rgba(245,158,11,0.85)',
+];
 
-function DimensionLeaderboard({ dim, users }: { dim: LeaderboardDimension; users: ExecutiveLeaderboard['users'] }) {
-  const meta = DIMENSION_META[dim.key] ?? { icon: Bot, color: 'rgba(148,163,184,0.7)', barColor: 'rgba(148,163,184,0.4)' };
-  const DimIcon = meta.icon;
+type ScoredUser = {
+  userId: string; displayName: string; role: string; avatarFileName: string | null;
+  totalScore: number; dimScores: Record<string, number>; normalizedScores: Record<string, number>;
+};
 
-  // Sort users by value desc, keep only those with > 0
-  const ranked: RankedUser[] = useMemo(() => {
-    const userMap = new Map(users.map(u => [u.userId, u]));
-    const entries = Object.entries(dim.values)
-      .map(([uid, val]) => ({ uid, val, user: userMap.get(uid) }))
-      .filter((e): e is { uid: string; val: number; user: NonNullable<typeof e.user> } => e.val > 0 && !!e.user)
-      .sort((a, b) => b.val - a.val);
+/** Normalize each dimension to 0-100 and compute weighted composite score */
+function computeScores(data: ExecutiveLeaderboard): ScoredUser[] {
+  const { users, dimensions } = data;
+  const activeDims = dimensions.filter(d => Object.values(d.values).some(v => v > 0));
 
-    let currentRank = 0;
-    return entries.map((e, i) => {
-      if (i > 0 && e.val < entries[i - 1].val) currentRank = i;
-      return {
-        userId: e.uid,
-        displayName: e.user.displayName,
-        role: e.user.role,
-        avatarFileName: e.user.avatarFileName,
-        value: e.val,
-        rank: currentRank,
-      };
-    });
-  }, [dim, users]);
+  // Find max per dimension for normalization
+  const dimMax: Record<string, number> = {};
+  for (const dim of activeDims) {
+    dimMax[dim.key] = Math.max(1, ...Object.values(dim.values));
+  }
 
-  if (ranked.length === 0) return null;
+  return users.map(u => {
+    const dimScores: Record<string, number> = {};
+    const normalizedScores: Record<string, number> = {};
+    let totalScore = 0;
 
-  const maxVal = ranked[0].value;
-  const total = ranked.reduce((s, r) => s + r.value, 0);
+    for (const dim of activeDims) {
+      const raw = dim.values[u.userId] ?? 0;
+      dimScores[dim.key] = raw;
+      const normalized = (raw / dimMax[dim.key]) * 100;
+      normalizedScores[dim.key] = normalized;
+      totalScore += normalized;
+    }
+
+    return {
+      userId: u.userId, displayName: u.displayName, role: u.role,
+      avatarFileName: u.avatarFileName, totalScore, dimScores, normalizedScores,
+    };
+  }).sort((a, b) => b.totalScore - a.totalScore);
+}
+
+/** Make radar chart option for comparison */
+function makeRadarOption(
+  scoredUsers: ScoredUser[],
+  dims: LeaderboardDimension[],
+  highlightUserIds?: string[],
+): EChartsOption {
+  const activeDims = dims.filter(d => Object.values(d.values).some(v => v > 0));
+
+  return {
+    backgroundColor: 'transparent',
+    tooltip: {
+      backgroundColor: chartTooltipBg, borderColor: 'rgba(255,255,255,0.08)',
+      textStyle: { color: '#f7f7fb', fontSize: 11 },
+    },
+    legend: {
+      bottom: 0, left: 'center',
+      textStyle: { color: chartTextColor, fontSize: 10 },
+      icon: 'circle', itemWidth: 8, itemHeight: 8, itemGap: 12,
+    },
+    radar: {
+      indicator: activeDims.map(d => ({
+        name: DIMENSION_META[d.key]?.short ?? d.name,
+        max: 100,
+      })),
+      shape: 'polygon' as any,
+      radius: '60%',
+      axisName: { color: chartTextColor, fontSize: 10 },
+      splitArea: { areaStyle: { color: ['rgba(255,255,255,0.02)', 'rgba(255,255,255,0.04)'] } },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } },
+    },
+    series: [{
+      type: 'radar',
+      data: scoredUsers.slice(0, 8).map((u, i) => {
+        const isHighlighted = highlightUserIds ? highlightUserIds.includes(u.userId) : i < 3;
+        return {
+          name: u.displayName,
+          value: activeDims.map(d => Math.round(u.normalizedScores[d.key] ?? 0)),
+          symbol: isHighlighted ? 'circle' : 'none',
+          symbolSize: 4,
+          lineStyle: { width: isHighlighted ? 2.5 : 1, opacity: isHighlighted ? 0.9 : 0.3 },
+          areaStyle: { opacity: isHighlighted ? 0.15 : 0.02 },
+          itemStyle: { color: USER_COLORS[i % USER_COLORS.length] },
+        };
+      }),
+    }],
+  };
+}
+
+/** Mini radar chart for a single user's podium card */
+function makeMiniRadarOption(user: ScoredUser, dims: LeaderboardDimension[], color: string): EChartsOption {
+  const activeDims = dims.filter(d => Object.values(d.values).some(v => v > 0));
+  return {
+    backgroundColor: 'transparent',
+    radar: {
+      indicator: activeDims.map(d => ({ name: '', max: 100 })),
+      shape: 'polygon' as any,
+      radius: '75%',
+      splitArea: { areaStyle: { color: ['transparent', 'rgba(255,255,255,0.02)'] } },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } },
+      axisName: { show: false },
+    },
+    series: [{
+      type: 'radar',
+      data: [{
+        value: activeDims.map(d => Math.round(user.normalizedScores[d.key] ?? 0)),
+        symbol: 'none',
+        lineStyle: { width: 2, color },
+        areaStyle: { color, opacity: 0.2 },
+      }],
+    }],
+  };
+}
+
+const PODIUM_STYLES = [
+  { bg: 'linear-gradient(135deg, rgba(214,178,106,0.18) 0%, rgba(214,178,106,0.04) 100%)', border: 'rgba(214,178,106,0.3)', color: 'rgba(214,178,106,0.95)', medal: '🥇', label: 'MVP' },
+  { bg: 'linear-gradient(135deg, rgba(192,192,192,0.14) 0%, rgba(192,192,192,0.03) 100%)', border: 'rgba(192,192,192,0.25)', color: 'rgba(192,192,192,0.9)', medal: '🥈', label: '第二名' },
+  { bg: 'linear-gradient(135deg, rgba(176,141,87,0.12) 0%, rgba(176,141,87,0.03) 100%)', border: 'rgba(176,141,87,0.2)', color: 'rgba(176,141,87,0.85)', medal: '🥉', label: '第三名' },
+];
+
+function PodiumCard({ user, dims, style, rank }: { user: ScoredUser; dims: LeaderboardDimension[]; style: typeof PODIUM_STYLES[0]; rank: number }) {
+  const roleColor = ROLE_COLORS[user.role] ?? 'rgba(148,163,184,0.8)';
+  // Find top 2 dimensions for this user
+  const topDims = Object.entries(user.normalizedScores)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 2)
+    .map(([key]) => dims.find(d => d.key === key))
+    .filter(Boolean);
 
   return (
-    <GlassCard glow className="!p-5">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${meta.color}15` }}>
-            <DimIcon size={16} style={{ color: meta.color }} />
+    <div
+      className={`relative rounded-2xl p-5 transition-all ${rank === 0 ? 'lg:-mt-4 lg:mb-4' : ''}`}
+      style={{
+        background: style.bg,
+        border: `1px solid ${style.border}`,
+        minWidth: 0,
+      }}
+    >
+      {/* Medal badge */}
+      <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+        <div className="text-[28px] drop-shadow-lg">{style.medal}</div>
+      </div>
+
+      <div className="flex flex-col items-center text-center pt-4">
+        {/* Avatar */}
+        {user.avatarFileName ? (
+          <img src={resolveAvatarUrl(user.avatarFileName)} className="w-14 h-14 rounded-full object-cover mb-2 ring-2" style={{ ringColor: style.color }} alt="" />
+        ) : (
+          <div className="w-14 h-14 rounded-full flex items-center justify-center text-[20px] font-bold mb-2"
+            style={{ background: `${roleColor}22`, color: roleColor, boxShadow: `0 0 0 2px ${style.color}` }}>
+            {user.displayName[0]}
           </div>
-          <div>
-            <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>{dim.name}</div>
-            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              {ranked.length} 人参与 · 总计 {total.toLocaleString()}
-            </div>
-          </div>
+        )}
+
+        {/* Name + Role */}
+        <div className="text-[15px] font-bold mb-0.5" style={{ color: 'var(--text-primary)' }}>{user.displayName}</div>
+        <div className="text-[11px] font-medium mb-2" style={{ color: roleColor }}>{user.role}</div>
+
+        {/* Score */}
+        <div className="text-[26px] font-black tabular-nums mb-1" style={{ color: style.color }}>
+          {Math.round(user.totalScore)}
+        </div>
+        <div className="text-[10px] mb-3" style={{ color: 'var(--text-muted)' }}>综合战力分</div>
+
+        {/* Mini radar */}
+        <div className="w-full" style={{ height: 120 }}>
+          <EChart option={makeMiniRadarOption(user, dims, style.color)} height={120} />
+        </div>
+
+        {/* Top strengths */}
+        <div className="flex gap-2 mt-2 flex-wrap justify-center">
+          {topDims.map(d => d && (
+            <span key={d.key} className="text-[10px] px-2 py-0.5 rounded-full"
+              style={{ background: `${DIMENSION_META[d.key]?.color ?? style.color}15`, color: DIMENSION_META[d.key]?.color ?? style.color }}>
+              {DIMENSION_META[d.key]?.short ?? d.name}
+            </span>
+          ))}
         </div>
       </div>
-
-      {/* Bar chart leaderboard */}
-      <div className="space-y-2">
-        {ranked.map((item) => {
-          const pct = maxVal > 0 ? (item.value / maxVal) * 100 : 0;
-          const isTop3 = item.rank < 3;
-          const roleColor = ROLE_COLORS[item.role] ?? 'rgba(148,163,184,0.8)';
-
-          return (
-            <div key={item.userId} className="group relative">
-              <div
-                className="flex items-center gap-3 py-2 px-3 rounded-lg transition-colors"
-                style={{ background: isTop3 ? MEDAL_GRADIENT[item.rank] : 'rgba(255,255,255,0.02)' }}
-              >
-                {/* Rank */}
-                <div className="w-6 text-center flex-shrink-0">
-                  {isTop3 ? (
-                    <span className="text-[16px]">{MEDAL[item.rank]}</span>
-                  ) : (
-                    <span className="text-[12px] font-bold tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                      {item.rank + 1}
-                    </span>
-                  )}
-                </div>
-
-                {/* Avatar */}
-                <div className="flex-shrink-0">
-                  {item.avatarFileName ? (
-                    <img src={resolveAvatarUrl(item.avatarFileName)} className="w-7 h-7 rounded-full object-cover" alt="" />
-                  ) : (
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold"
-                      style={{ background: `${roleColor}22`, color: roleColor }}>
-                      {item.displayName[0]}
-                    </div>
-                  )}
-                </div>
-
-                {/* Name + Role */}
-                <div className="w-20 flex-shrink-0">
-                  <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                    {item.displayName}
-                  </div>
-                  <div className="text-[10px]" style={{ color: roleColor }}>{item.role}</div>
-                </div>
-
-                {/* Bar + Value */}
-                <div className="flex-1 flex items-center gap-3 min-w-0">
-                  <div className="flex-1 h-6 rounded-md overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                    <div
-                      className="h-full rounded-md transition-all duration-500"
-                      style={{
-                        width: `${Math.max(pct, 2)}%`,
-                        background: isTop3
-                          ? `linear-gradient(90deg, ${meta.barColor}, ${meta.color})`
-                          : meta.barColor,
-                        opacity: isTop3 ? 1 : 0.7,
-                      }}
-                    />
-                  </div>
-                  <span
-                    className="text-[14px] font-bold tabular-nums flex-shrink-0 w-14 text-right"
-                    style={{ color: isTop3 ? 'var(--text-primary)' : 'var(--text-secondary)' }}
-                  >
-                    {item.value.toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </GlassCard>
+    </div>
   );
 }
 
@@ -445,18 +502,40 @@ function generateMockLeaderboard(): ExecutiveLeaderboard {
 function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeaderboard | null; loading: boolean }) {
   const [useMock, setUseMock] = useState(false);
   const [mockData] = useState<ExecutiveLeaderboard>(() => generateMockLeaderboard());
+  const [sortKey, setSortKey] = useState<string>('total');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   if (loading && !leaderboard) return <LoadingSkeleton rows={8} />;
 
   const data = useMock ? mockData : leaderboard;
   if (!data || data.users.length === 0) return <EmptyHint text="暂无团队成员数据" />;
 
-  const { users, dimensions } = data;
-  const agentDims = dimensions.filter(d => d.category === 'agent');
-  const activityDims = dimensions.filter(d => d.category === 'activity');
+  const { dimensions } = data;
+  const activeDims = dimensions.filter(d => Object.values(d.values).some(v => v > 0));
+  const scored = computeScores(data);
 
-  // Filter out dimensions where nobody has any data
-  const hasData = (dim: LeaderboardDimension) => Object.values(dim.values).some(v => v > 0);
+  // Sorted for table
+  const tableSorted = [...scored].sort((a, b) => {
+    let va: number, vb: number;
+    if (sortKey === 'total') {
+      va = a.totalScore; vb = b.totalScore;
+    } else {
+      va = a.dimScores[sortKey] ?? 0; vb = b.dimScores[sortKey] ?? 0;
+    }
+    return sortDir === 'desc' ? vb - va : va - vb;
+  });
+
+  const toggleSort = (key: string) => {
+    if (sortKey === key) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    else { setSortKey(key); setSortDir('desc'); }
+  };
+
+  const SortIcon = ({ col }: { col: string }) => {
+    if (sortKey !== col) return <ArrowUpDown size={10} style={{ opacity: 0.3 }} />;
+    return sortDir === 'desc' ? <ChevronDown size={10} /> : <ChevronUp size={10} />;
+  };
+
+  const maxScore = scored[0]?.totalScore ?? 1;
 
   return (
     <div className="space-y-6">
@@ -476,33 +555,181 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
         </button>
       </div>
 
-      {/* Agent Usage Leaderboards */}
-      {agentDims.filter(hasData).length > 0 && (
-        <>
-          <div className="text-[12px] font-semibold uppercase tracking-wider px-1" style={{ color: 'var(--text-muted)' }}>
-            Agent 使用排行
+      {/* ── Zone 1: MVP Podium ── */}
+      {scored.length >= 3 && (
+        <div>
+          <div className="flex items-center gap-2 mb-4 px-1">
+            <Trophy size={14} style={{ color: 'rgba(214,178,106,0.9)' }} />
+            <span className="text-[12px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+              MVP 领奖台
+            </span>
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {agentDims.filter(hasData).map(dim => (
-              <DimensionLeaderboard key={dim.key} dim={dim} users={users} />
-            ))}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+            {/* Podium order: 2nd - 1st - 3rd */}
+            <PodiumCard user={scored[1]} dims={dimensions} style={PODIUM_STYLES[1]} rank={1} />
+            <PodiumCard user={scored[0]} dims={dimensions} style={PODIUM_STYLES[0]} rank={0} />
+            <PodiumCard user={scored[2]} dims={dimensions} style={PODIUM_STYLES[2]} rank={2} />
           </div>
-        </>
+        </div>
       )}
 
-      {/* Activity Leaderboards */}
-      {activityDims.filter(hasData).length > 0 && (
-        <>
-          <div className="text-[12px] font-semibold uppercase tracking-wider px-1" style={{ color: 'var(--text-muted)' }}>
-            工作活动排行
+      {/* ── Zone 2: Radar Comparison ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <GlassCard glow>
+          <SectionTitle>全员战力雷达</SectionTitle>
+          <EChart option={makeRadarOption(scored, dimensions)} height={360} />
+        </GlassCard>
+
+        <GlassCard glow>
+          <SectionTitle>维度分布概览</SectionTitle>
+          <div className="space-y-3 mt-2">
+            {activeDims.map(dim => {
+              const meta = DIMENSION_META[dim.key] ?? { icon: Bot, color: 'rgba(148,163,184,0.7)', barColor: 'rgba(148,163,184,0.4)', short: dim.name };
+              const DimIcon = meta.icon;
+              const total = Object.values(dim.values).reduce((s, v) => s + v, 0);
+              const maxVal = Math.max(1, ...Object.values(dim.values));
+              const topUser = scored.find(u => (u.dimScores[dim.key] ?? 0) === maxVal);
+
+              return (
+                <div key={dim.key} className="flex items-center gap-3 py-1.5 px-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                  <DimIcon size={14} style={{ color: meta.color }} className="flex-shrink-0" />
+                  <div className="w-16 flex-shrink-0">
+                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{meta.short}</div>
+                  </div>
+                  <div className="flex-1 h-4 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                    {/* Stacked bars for each user */}
+                    <div className="h-full flex">
+                      {scored.slice(0, 5).map((u, idx) => {
+                        const val = u.dimScores[dim.key] ?? 0;
+                        const pct = total > 0 ? (val / total) * 100 : 0;
+                        return pct > 0 ? (
+                          <div key={u.userId} className="h-full" style={{ width: `${pct}%`, background: USER_COLORS[idx % USER_COLORS.length], opacity: 0.8 }} title={`${u.displayName}: ${val}`} />
+                        ) : null;
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0 text-right w-20">
+                    <span className="text-[11px] font-bold tabular-nums" style={{ color: meta.color }}>{total.toLocaleString()}</span>
+                    {topUser && <span className="text-[10px] ml-1" style={{ color: 'var(--text-muted)' }}>({topUser.displayName})</span>}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {activityDims.filter(hasData).map(dim => (
-              <DimensionLeaderboard key={dim.key} dim={dim} users={users} />
+          {/* Legend for stacked bar colors */}
+          <div className="flex flex-wrap gap-3 mt-4 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            {scored.slice(0, 5).map((u, idx) => (
+              <div key={u.userId} className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full" style={{ background: USER_COLORS[idx % USER_COLORS.length] }} />
+                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{u.displayName}</span>
+              </div>
             ))}
           </div>
-        </>
-      )}
+        </GlassCard>
+      </div>
+
+      {/* ── Zone 3: Full Ranking Table ── */}
+      <GlassCard glow>
+        <SectionTitle>综合排行榜</SectionTitle>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                <th className="text-left py-2.5 pr-2 font-medium w-8" style={{ color: 'var(--text-muted)' }}>#</th>
+                <th className="text-left py-2.5 pr-4 font-medium" style={{ color: 'var(--text-muted)' }}>成员</th>
+                <th
+                  className="text-right py-2.5 px-2 font-medium cursor-pointer select-none whitespace-nowrap"
+                  style={{ color: sortKey === 'total' ? 'rgba(214,178,106,0.95)' : 'var(--text-muted)' }}
+                  onClick={() => toggleSort('total')}
+                >
+                  <span className="inline-flex items-center gap-1">综合分 <SortIcon col="total" /></span>
+                </th>
+                {activeDims.map(dim => {
+                  const meta = DIMENSION_META[dim.key];
+                  return (
+                    <th
+                      key={dim.key}
+                      className="text-right py-2.5 px-2 font-medium cursor-pointer select-none whitespace-nowrap"
+                      style={{ color: sortKey === dim.key ? (meta?.color ?? 'var(--text-primary)') : 'var(--text-muted)' }}
+                      onClick={() => toggleSort(dim.key)}
+                    >
+                      <span className="inline-flex items-center gap-1">{meta?.short ?? dim.name} <SortIcon col={dim.key} /></span>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {tableSorted.map((user, idx) => {
+                const roleColor = ROLE_COLORS[user.role] ?? 'rgba(148,163,184,0.8)';
+                const isTop3 = idx < 3 && sortKey === 'total' && sortDir === 'desc';
+                const medals = ['🥇', '🥈', '🥉'];
+
+                return (
+                  <tr
+                    key={user.userId}
+                    className="transition-colors hover:bg-white/[0.02]"
+                    style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: isTop3 ? 'rgba(214,178,106,0.04)' : undefined }}
+                  >
+                    <td className="py-2.5 pr-2">
+                      {isTop3 ? (
+                        <span className="text-[14px]">{medals[idx]}</span>
+                      ) : (
+                        <span className="text-[11px] font-bold tabular-nums" style={{ color: 'var(--text-muted)' }}>{idx + 1}</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-4">
+                      <div className="flex items-center gap-2">
+                        {user.avatarFileName ? (
+                          <img src={resolveAvatarUrl(user.avatarFileName)} className="w-6 h-6 rounded-full object-cover" alt="" />
+                        ) : (
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold"
+                            style={{ background: `${roleColor}22`, color: roleColor }}>
+                            {user.displayName[0]}
+                          </div>
+                        )}
+                        <div>
+                          <div className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{user.displayName}</div>
+                          <div className="text-[9px]" style={{ color: roleColor }}>{user.role}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-2 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <div className="w-16 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                          <div className="h-full rounded-full" style={{ width: `${(user.totalScore / maxScore) * 100}%`, background: 'linear-gradient(90deg, rgba(214,178,106,0.6), rgba(214,178,106,0.9))' }} />
+                        </div>
+                        <span className="tabular-nums font-bold text-[12px] w-10 text-right" style={{ color: isTop3 ? 'rgba(214,178,106,0.95)' : 'var(--text-primary)' }}>
+                          {Math.round(user.totalScore)}
+                        </span>
+                      </div>
+                    </td>
+                    {activeDims.map(dim => {
+                      const raw = user.dimScores[dim.key] ?? 0;
+                      const meta = DIMENSION_META[dim.key];
+                      const dimMax = Math.max(1, ...Object.values(dim.values));
+                      const pct = (raw / dimMax) * 100;
+
+                      return (
+                        <td key={dim.key} className="py-2.5 px-2 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <div className="w-10 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: meta?.barColor ?? 'rgba(148,163,184,0.5)' }} />
+                            </div>
+                            <span className="tabular-nums text-[11px] w-8 text-right" style={{ color: raw > 0 ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
+                              {raw > 0 ? raw.toLocaleString() : '-'}
+                            </span>
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </GlassCard>
     </div>
   );
 }
