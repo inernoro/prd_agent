@@ -3,7 +3,6 @@ import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { Switch } from '@/components/design/Switch';
 import { GlassCard } from '@/components/design/GlassCard';
-import { TabBar } from '@/components/design/TabBar';
 import { SearchableSelect } from '@/components/design/SearchableSelect';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import {
@@ -47,6 +46,14 @@ const actionTypeLabels: Record<string, string> = {
 const actionTypeIcons: Record<string, React.ReactNode> = {
   webhook: <ExternalLink size={12} />,
   admin_notification: <Bell size={12} />,
+};
+const triggerTypeLabel: Record<string, string> = {
+  event: '事件触发',
+  incoming_webhook: '传入 Webhook',
+};
+const triggerTypeIcon: Record<string, React.ReactNode> = {
+  event: <Zap size={12} />,
+  incoming_webhook: <Link size={12} />,
 };
 const inputCls =
   'w-full px-3 py-2 rounded-[12px] text-sm outline-none transition-colors'
@@ -155,7 +162,6 @@ function UserMultiSelect({ allUsers, selectedIds, onChange }: {
   );
 }
 
-// ── 编辑器面板右侧的 section 标题 ──
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
@@ -204,11 +210,12 @@ function ruleToEdit(rule: RuleListItem): EditState {
 }
 
 export default function AutomationRulesPage() {
-  const [activeTab, setActiveTab] = useState('event');
   const [rules, setRules] = useState<RuleListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [eventTypes, setEventTypes] = useState<EventTypeDef[]>([]);
   const [notifyTargets, setNotifyTargets] = useState<NotifyTarget[]>([]);
+  const [showNewMenu, setShowNewMenu] = useState(false);
+  const newMenuRef = useRef<HTMLDivElement>(null);
 
   // 编辑状态
   const [edit, setEdit] = useState<EditState | null>(null);
@@ -220,17 +227,26 @@ export default function AutomationRulesPage() {
   const [triggerContent, setTriggerContent] = useState('');
   const [triggering, setTriggering] = useState(false);
 
+  // 关闭新建菜单
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (newMenuRef.current && !newMenuRef.current.contains(e.target as Node)) setShowNewMenu(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
   const loadRules = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await automationsService.listRules(1, 100, undefined, undefined, activeTab);
+      const data = await automationsService.listRules(1, 100);
       setRules(data.items);
     } catch (err) {
       toast.error('加载失败', String(err));
     } finally {
       setLoading(false);
     }
-  }, [activeTab]);
+  }, []);
 
   const loadMeta = useCallback(async () => {
     try {
@@ -247,29 +263,24 @@ export default function AutomationRulesPage() {
 
   // ── 事件处理 ──
 
-  const handleTabChange = (key: string) => {
-    setActiveTab(key);
-    setEdit(null);
-  };
-
   const handleSelectRule = (rule: RuleListItem) => {
     setEdit(ruleToEdit(rule));
   };
 
-  const handleNew = () => {
-    setEdit(emptyEdit(activeTab === 'incoming_webhook' ? 'incoming_webhook' : 'event'));
+  const handleNew = (type: 'event' | 'incoming_webhook') => {
+    setEdit(emptyEdit(type));
+    setShowNewMenu(false);
   };
 
   const handleSave = async () => {
     if (!edit) return;
-    if (!edit.name) { toast.error('请填写规则名称'); return; }
+    if (!edit.name.trim()) { toast.error('请填写规则名称'); return; }
     if (edit.triggerType === 'event' && !edit.eventType) { toast.error('请选择触发事件'); return; }
     if (edit.actions.length === 0) { toast.error('至少添加一个执行动作'); return; }
 
     setSaving(true);
     try {
       if (edit.id) {
-        // 更新
         await automationsService.updateRule(edit.id, {
           name: edit.name,
           eventType: edit.eventType || undefined,
@@ -279,7 +290,6 @@ export default function AutomationRulesPage() {
         });
         toast.success('已保存');
       } else {
-        // 新建
         const req: CreateRuleRequest = {
           name: edit.name,
           enabled: true,
@@ -390,272 +400,285 @@ export default function AutomationRulesPage() {
   // ══════════════════ 渲染 ══════════════════
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden">
-      <TabBar
-        items={[
-          { key: 'event', label: '事件触发', icon: <Zap size={14} /> },
-          { key: 'incoming_webhook', label: '传入 Webhook', icon: <Link size={14} /> },
-        ]}
-        activeKey={activeTab}
-        onChange={handleTabChange}
-        actions={
-          <Button size="sm" onClick={handleNew}>
-            <Plus size={14} /> 新建
-          </Button>
-        }
-      />
-
+    <div className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden">
       {/* 主从面板 */}
-      <div className="grid gap-5 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '280px minmax(0, 1fr)' }}>
+      <GlassCard glow className="flex-1 min-h-0 overflow-hidden">
+        <div className="grid h-full" style={{ gridTemplateColumns: '280px minmax(0, 1fr)' }}>
 
-        {/* ── 左侧：规则列表 ── */}
-        <GlassCard glow className="p-4 h-full min-h-0 flex flex-col overflow-hidden">
-          <div className="text-[11px] font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
-            规则列表 ({rules.length})
-          </div>
-
-          {loading ? (
-            <div className="flex-1 flex items-center justify-center">
-              <Loader2 size={18} className="animate-spin text-muted-foreground" />
-            </div>
-          ) : rules.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
-              {activeTab === 'incoming_webhook' ? <Link size={28} className="mb-2 opacity-40" /> : <Zap size={28} className="mb-2 opacity-40" />}
-              <p className="text-xs">暂无规则</p>
-            </div>
-          ) : (
-            <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
-              {rules.map((rule) => {
-                const selected = edit?.id === rule.id;
-                return (
-                  <button
-                    key={rule.id}
-                    onClick={() => handleSelectRule(rule)}
-                    className="w-full text-left p-3 rounded-[12px] transition-all group"
-                    style={{
-                      background: selected ? 'rgba(59,130,246,0.12)' : 'rgba(255,255,255,0.02)',
-                      border: selected ? '1px solid rgba(59,130,246,0.3)' : '1px solid rgba(255,255,255,0.06)',
-                      opacity: rule.enabled ? 1 : 0.5,
-                    }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium truncate flex-1">{rule.name}</span>
-                      {!rule.enabled && <Badge variant="danger" size="sm">停</Badge>}
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-1.5">
-                      {rule.actions.map((a, i) => (
-                        <span key={i} className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full"
-                          style={{ background: 'rgba(255,255,255,0.06)' }}>
-                          {actionTypeIcons[a.type]}
-                          {actionTypeLabels[a.type]}
-                        </span>
-                      ))}
-                      <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>
-                        {rule.triggerCount}次
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </GlassCard>
-
-        {/* ── 右侧：编辑面板 ── */}
-        <GlassCard glow className="p-5 h-full min-h-0 flex flex-col overflow-hidden">
-          {!edit ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
-              <Zap size={32} className="mb-3 opacity-30" />
-              <p className="text-sm">选择一个规则或新建</p>
-            </div>
-          ) : (
-            <div className="flex-1 min-h-0 overflow-y-auto space-y-5">
-              {/* 头部：名称 + 开关 */}
-              <div className="flex items-center gap-3">
-                <input
-                  value={edit.name}
-                  onChange={(e) => patchEdit({ name: e.target.value })}
-                  placeholder="规则名称"
-                  className="flex-1 text-lg font-semibold bg-transparent outline-none border-b border-transparent focus:border-white/20 transition-colors pb-1"
-                  style={{ color: 'var(--text-primary)' }}
-                />
-                {edit.id && (
-                  <Switch checked={edit.enabled} onCheckedChange={() => handleToggle(edit.id!)} ariaLabel="启用" />
-                )}
-              </div>
-
-              {/* 流程预览 */}
-              <WorkflowProgressBar
-                steps={getFlowSteps(edit.triggerType, edit.actions)}
-                currentStep={3}
-                allCompleted
-              />
-
-              {/* ── 触发方式 ── */}
-              <div>
-                <SectionTitle>触发方式</SectionTitle>
-                <div className="flex gap-2">
-                  {(['event', 'incoming_webhook'] as const).map((tt) => {
-                    const active = edit.triggerType === tt;
-                    const isEvent = tt === 'event';
-                    return (
-                      <button key={tt}
-                        onClick={() => !edit.id && patchEdit({ triggerType: tt })}
-                        disabled={!!edit.id}
-                        className="flex-1 p-3 rounded-[12px] border text-left text-sm transition-all"
-                        style={{
-                          background: active ? (isEvent ? 'rgba(59,130,246,0.08)' : 'rgba(34,197,94,0.08)') : 'transparent',
-                          borderColor: active ? (isEvent ? 'rgba(59,130,246,0.3)' : 'rgba(34,197,94,0.3)') : 'rgba(255,255,255,0.06)',
-                          opacity: edit.id && !active ? 0.4 : 1,
-                          cursor: edit.id ? 'default' : 'pointer',
-                        }}
-                      >
-                        <div className="flex items-center gap-2 font-medium">
-                          {isEvent ? <Zap size={14} /> : <Link size={14} />}
-                          {isEvent ? '事件触发' : '传入 Webhook'}
+          {/* ── 左侧：规则列表 ── */}
+          <div className="h-full min-h-0 flex flex-col" style={{ borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+            {/* 列表头 */}
+            <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+                自动化规则 ({rules.length})
+              </span>
+              <div ref={newMenuRef} className="relative">
+                <button
+                  onClick={() => setShowNewMenu(!showNewMenu)}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-colors hover:bg-white/8"
+                  style={{ color: 'rgba(59,130,246,0.9)' }}
+                >
+                  <Plus size={14} /> 新建
+                </button>
+                {showNewMenu && (
+                  <div className="absolute right-0 top-full mt-1 z-[120] w-48 rounded-[12px] overflow-hidden" style={selectContentStyle}>
+                    <div className="p-1">
+                      <button onClick={() => handleNew('event')}
+                        className={selectItemClass + ' w-full text-left flex items-center gap-2'}
+                        style={{ color: 'var(--text-primary)' }}>
+                        <Zap size={14} style={{ color: 'rgba(59,130,246,0.8)' }} />
+                        <div>
+                          <div className="text-sm">事件触发</div>
+                          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>系统事件自动触发</div>
                         </div>
                       </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* ── 事件选择 ── */}
-              {edit.triggerType === 'event' && (
-                <div>
-                  <SectionTitle>触发事件</SectionTitle>
-                  <SearchableSelect
-                    value={edit.eventType}
-                    onValueChange={(v) => patchEdit({ eventType: v })}
-                    placeholder="选择事件..."
-                    leftIcon={<Zap size={14} />}
-                    options={eventTypes.map((et) => ({
-                      value: et.eventType,
-                      label: `[${et.category}] ${et.label}`,
-                      displayLabel: et.label,
-                    }))}
-                  />
-                </div>
-              )}
-
-              {/* ── Hook URL（传入 Webhook） ── */}
-              {edit.triggerType === 'incoming_webhook' && edit.hookId && (
-                <div>
-                  <SectionTitle>Webhook URL</SectionTitle>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1"><HookUrlDisplay hookId={edit.hookId} /></div>
-                    <Button variant="secondary" size="sm" onClick={handleRegenerateHook}>
-                      <RefreshCw size={12} /> 重新生成
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {/* ── 消息模板（仅传入 Webhook） ── */}
-              {edit.triggerType === 'incoming_webhook' && (
-                <div>
-                  <SectionTitle>消息模板</SectionTitle>
-                  <div className="space-y-2">
-                    <input
-                      value={edit.titleTemplate}
-                      onChange={(e) => patchEdit({ titleTemplate: e.target.value })}
-                      placeholder="标题模板，如：{{username}} 触发了 {{action}}"
-                      className={inputCls} style={inputStyle}
-                    />
-                    <textarea
-                      value={edit.contentTemplate}
-                      onChange={(e) => patchEdit({ contentTemplate: e.target.value })}
-                      placeholder="内容模板，如：用户 {{username}} 在仓库 {{repo}} 推送了代码"
-                      className={inputCls + ' h-20 resize-none'} style={inputStyle}
-                    />
-                  </div>
-                  <div className="mt-2 p-2.5 rounded-[10px] text-xs" style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.1)' }}>
-                    <div className="font-medium mb-1" style={{ color: 'rgba(168,85,247,0.9)' }}>示例</div>
-                    <div style={{ color: 'var(--text-muted)' }}>
-                      POST <code className="px-1 py-0.5 rounded bg-white/5">{`{"username":"张三","repo":"my-project"}`}</code>
-                    </div>
-                    <div className="mt-0.5" style={{ color: 'rgba(34,197,94,0.8)' }}>
-                      渲染 → 用户 张三 推送到 my-project
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ── 执行动作 ── */}
-              <div>
-                <SectionTitle>执行动作</SectionTitle>
-                <div className="space-y-2">
-                  {edit.actions.map((action, idx) => (
-                    <div key={idx} className="p-3 rounded-[12px] space-y-2"
-                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium flex items-center gap-1.5">
-                          {actionTypeIcons[action.type]}
-                          {actionTypeLabels[action.type]}
-                        </span>
-                        <button onClick={() => removeAction(idx)} className="text-muted-foreground hover:text-red-400 transition-colors">
-                          <X size={14} />
-                        </button>
-                      </div>
-                      {action.type === 'webhook' && (
-                        <div className="space-y-2">
-                          <input value={action.webhookUrl || ''} onChange={(e) => updateAction(idx, { webhookUrl: e.target.value })}
-                            placeholder="https://example.com/webhook" className={inputCls} style={inputStyle} />
-                          <input value={action.webhookSecret || ''} onChange={(e) => updateAction(idx, { webhookSecret: e.target.value })}
-                            placeholder="Bearer 凭证（可选）" className={inputCls} style={inputStyle} />
+                      <button onClick={() => handleNew('incoming_webhook')}
+                        className={selectItemClass + ' w-full text-left flex items-center gap-2'}
+                        style={{ color: 'var(--text-primary)' }}>
+                        <Link size={14} style={{ color: 'rgba(34,197,94,0.8)' }} />
+                        <div>
+                          <div className="text-sm">传入 Webhook</div>
+                          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>外部系统 POST 触发</div>
                         </div>
-                      )}
-                      {action.type === 'admin_notification' && (
-                        <div className="space-y-2">
-                          <div className="flex gap-2">
-                            <select value={action.notifyLevel || 'info'} onChange={(e) => updateAction(idx, { notifyLevel: e.target.value })}
-                              className={inputCls + ' w-32 flex-shrink-0'} style={inputStyle}>
-                              <option value="info">信息</option>
-                              <option value="warning">警告</option>
-                              <option value="error">错误</option>
-                            </select>
-                            <div className="flex-1">
-                              <UserMultiSelect allUsers={notifyTargets} selectedIds={action.notifyUserIds || []}
-                                onChange={(ids) => updateAction(idx, { notifyUserIds: ids })} />
-                            </div>
-                          </div>
-                        </div>
-                      )}
+                      </button>
                     </div>
-                  ))}
-                </div>
-                <div className="flex gap-2 mt-3">
-                  <Button variant="secondary" size="sm" onClick={() => addAction('webhook')}>
-                    <ExternalLink size={12} /> 传出 Webhook
-                  </Button>
-                  <Button variant="secondary" size="sm" onClick={() => addAction('admin_notification')}>
-                    <Bell size={12} /> 站内信
-                  </Button>
-                </div>
-              </div>
-
-              {/* ── 底部操作栏 ── */}
-              <div className="flex items-center gap-2 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                <Button size="sm" onClick={handleSave} disabled={saving}>
-                  {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                  {edit.id ? '保存' : '创建'}
-                </Button>
-                {edit.id && (
-                  <Button variant="secondary" size="sm" onClick={() => { setTriggerRuleId(edit.id!); setTriggerTitle(''); setTriggerContent(''); }}>
-                    <Play size={14} /> 测试
-                  </Button>
+                  </div>
                 )}
-                <div className="flex-1" />
-                <Button variant="secondary" size="sm" onClick={handleDelete} className="text-red-400 hover:text-red-300">
-                  <Trash2 size={14} /> {edit.id ? '删除' : '取消'}
-                </Button>
               </div>
             </div>
-          )}
-        </GlassCard>
-      </div>
 
-      {/* 手动触发浮层（小面板，不用 Dialog） */}
+            {/* 列表内容 */}
+            {loading ? (
+              <div className="flex-1 flex items-center justify-center">
+                <Loader2 size={18} className="animate-spin text-muted-foreground" />
+              </div>
+            ) : rules.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-2 px-4">
+                <Zap size={24} className="opacity-30" />
+                <p className="text-xs text-center">暂无规则，点击上方新建</p>
+              </div>
+            ) : (
+              <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
+                {rules.map((rule) => {
+                  const selected = edit?.id === rule.id;
+                  const isWebhook = rule.triggerType === 'incoming_webhook';
+                  return (
+                    <button
+                      key={rule.id}
+                      onClick={() => handleSelectRule(rule)}
+                      className="w-full text-left px-3 py-2.5 rounded-[10px] transition-all"
+                      style={{
+                        background: selected ? 'rgba(59,130,246,0.1)' : 'transparent',
+                        border: selected ? '1px solid rgba(59,130,246,0.25)' : '1px solid transparent',
+                        opacity: rule.enabled ? 1 : 0.5,
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="flex-shrink-0" style={{ color: isWebhook ? 'rgba(34,197,94,0.7)' : 'rgba(59,130,246,0.7)' }}>
+                          {isWebhook ? <Link size={13} /> : <Zap size={13} />}
+                        </span>
+                        <span className="text-sm font-medium truncate flex-1">{rule.name}</span>
+                        {!rule.enabled && <Badge variant="danger" size="sm">停</Badge>}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-1 ml-[21px]">
+                        {rule.actions.map((a, i) => (
+                          <span key={i} className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full"
+                            style={{ background: 'rgba(255,255,255,0.06)' }}>
+                            {actionTypeIcons[a.type]}
+                            {actionTypeLabels[a.type]}
+                          </span>
+                        ))}
+                        <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>
+                          {rule.triggerCount}次
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ── 右侧：编辑面板 ── */}
+          <div className="h-full min-h-0 flex flex-col">
+            {!edit ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-2">
+                <Zap size={28} className="opacity-20" />
+                <p className="text-sm opacity-60">选择规则或新建</p>
+              </div>
+            ) : (
+              <>
+                {/* 编辑器头部 */}
+                <div className="flex items-center gap-3 px-5 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                  <span className="flex-shrink-0" style={{ color: edit.triggerType === 'incoming_webhook' ? 'rgba(34,197,94,0.7)' : 'rgba(59,130,246,0.7)' }}>
+                    {triggerTypeIcon[edit.triggerType]}
+                  </span>
+                  <input
+                    value={edit.name}
+                    onChange={(e) => patchEdit({ name: e.target.value })}
+                    placeholder="规则名称"
+                    className="flex-1 text-sm font-semibold bg-transparent outline-none"
+                    style={{ color: 'var(--text-primary)' }}
+                  />
+                  <span className="text-[10px] px-2 py-0.5 rounded-full" style={{
+                    background: edit.triggerType === 'incoming_webhook' ? 'rgba(34,197,94,0.08)' : 'rgba(59,130,246,0.08)',
+                    color: edit.triggerType === 'incoming_webhook' ? 'rgba(34,197,94,0.8)' : 'rgba(59,130,246,0.8)',
+                    border: `1px solid ${edit.triggerType === 'incoming_webhook' ? 'rgba(34,197,94,0.15)' : 'rgba(59,130,246,0.15)'}`,
+                  }}>
+                    {triggerTypeLabel[edit.triggerType]}
+                  </span>
+                  {edit.id && (
+                    <Switch checked={edit.enabled} onCheckedChange={() => handleToggle(edit.id!)} ariaLabel="启用" />
+                  )}
+                </div>
+
+                {/* 编辑器内容 */}
+                <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
+                  {/* 流程预览 */}
+                  <WorkflowProgressBar
+                    steps={getFlowSteps(edit.triggerType, edit.actions)}
+                    currentStep={3}
+                    allCompleted
+                  />
+
+                  {/* ── 事件选择 ── */}
+                  {edit.triggerType === 'event' && (
+                    <div>
+                      <SectionTitle>触发事件</SectionTitle>
+                      <SearchableSelect
+                        value={edit.eventType}
+                        onValueChange={(v) => patchEdit({ eventType: v })}
+                        placeholder="选择事件..."
+                        leftIcon={<Zap size={14} />}
+                        options={eventTypes.map((et) => ({
+                          value: et.eventType,
+                          label: `[${et.category}] ${et.label}`,
+                          displayLabel: et.label,
+                        }))}
+                      />
+                    </div>
+                  )}
+
+                  {/* ── Hook URL（传入 Webhook） ── */}
+                  {edit.triggerType === 'incoming_webhook' && edit.hookId && (
+                    <div>
+                      <SectionTitle>Webhook URL</SectionTitle>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1"><HookUrlDisplay hookId={edit.hookId} /></div>
+                        <Button variant="secondary" size="sm" onClick={handleRegenerateHook}>
+                          <RefreshCw size={12} /> 重新生成
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── 消息模板（仅传入 Webhook） ── */}
+                  {edit.triggerType === 'incoming_webhook' && (
+                    <div>
+                      <SectionTitle>消息模板</SectionTitle>
+                      <div className="space-y-2">
+                        <input
+                          value={edit.titleTemplate}
+                          onChange={(e) => patchEdit({ titleTemplate: e.target.value })}
+                          placeholder="标题模板，如：{{username}} 触发了 {{action}}"
+                          className={inputCls} style={inputStyle}
+                        />
+                        <textarea
+                          value={edit.contentTemplate}
+                          onChange={(e) => patchEdit({ contentTemplate: e.target.value })}
+                          placeholder="内容模板，如：用户 {{username}} 在仓库 {{repo}} 推送了代码"
+                          className={inputCls + ' h-20 resize-none'} style={inputStyle}
+                        />
+                      </div>
+                      <div className="mt-2 p-2.5 rounded-[10px] text-xs" style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.1)' }}>
+                        <div className="font-medium mb-1" style={{ color: 'rgba(168,85,247,0.9)' }}>示例</div>
+                        <div style={{ color: 'var(--text-muted)' }}>
+                          POST <code className="px-1 py-0.5 rounded bg-white/5">{`{"username":"张三","repo":"my-project"}`}</code>
+                        </div>
+                        <div className="mt-0.5" style={{ color: 'rgba(34,197,94,0.8)' }}>
+                          渲染 → 用户 张三 推送到 my-project
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── 执行动作 ── */}
+                  <div>
+                    <SectionTitle>执行动作</SectionTitle>
+                    <div className="space-y-2">
+                      {edit.actions.map((action, idx) => (
+                        <div key={idx} className="p-3 rounded-[12px] space-y-2"
+                          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium flex items-center gap-1.5">
+                              {actionTypeIcons[action.type]}
+                              {actionTypeLabels[action.type]}
+                            </span>
+                            <button onClick={() => removeAction(idx)} className="text-muted-foreground hover:text-red-400 transition-colors">
+                              <X size={14} />
+                            </button>
+                          </div>
+                          {action.type === 'webhook' && (
+                            <div className="space-y-2">
+                              <input value={action.webhookUrl || ''} onChange={(e) => updateAction(idx, { webhookUrl: e.target.value })}
+                                placeholder="https://example.com/webhook" className={inputCls} style={inputStyle} />
+                              <input value={action.webhookSecret || ''} onChange={(e) => updateAction(idx, { webhookSecret: e.target.value })}
+                                placeholder="Bearer 凭证（可选）" className={inputCls} style={inputStyle} />
+                            </div>
+                          )}
+                          {action.type === 'admin_notification' && (
+                            <div className="space-y-2">
+                              <div className="flex gap-2">
+                                <select value={action.notifyLevel || 'info'} onChange={(e) => updateAction(idx, { notifyLevel: e.target.value })}
+                                  className={inputCls + ' w-32 flex-shrink-0'} style={inputStyle}>
+                                  <option value="info">信息</option>
+                                  <option value="warning">警告</option>
+                                  <option value="error">错误</option>
+                                </select>
+                                <div className="flex-1">
+                                  <UserMultiSelect allUsers={notifyTargets} selectedIds={action.notifyUserIds || []}
+                                    onChange={(ids) => updateAction(idx, { notifyUserIds: ids })} />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2 mt-3">
+                      <Button variant="secondary" size="sm" onClick={() => addAction('webhook')}>
+                        <ExternalLink size={12} /> 传出 Webhook
+                      </Button>
+                      <Button variant="secondary" size="sm" onClick={() => addAction('admin_notification')}>
+                        <Bell size={12} /> 站内信
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 底部操作栏 */}
+                <div className="flex items-center gap-2 px-5 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <Button size="sm" onClick={handleSave} disabled={saving}>
+                    {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    {edit.id ? '保存' : '创建'}
+                  </Button>
+                  {edit.id && (
+                    <Button variant="secondary" size="sm" onClick={() => { setTriggerRuleId(edit.id!); setTriggerTitle(''); setTriggerContent(''); }}>
+                      <Play size={14} /> 测试
+                    </Button>
+                  )}
+                  <div className="flex-1" />
+                  <Button variant="secondary" size="sm" onClick={handleDelete} className="text-red-400 hover:text-red-300">
+                    <Trash2 size={14} /> {edit.id ? '删除' : '取消'}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </GlassCard>
+
+      {/* 手动触发浮层 */}
       {triggerRuleId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}
           onClick={(e) => { if (e.target === e.currentTarget) setTriggerRuleId(null); }}>
