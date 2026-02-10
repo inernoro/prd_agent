@@ -264,7 +264,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             string? finishReason = null;
             var thinkingBuilder = new StringBuilder(); // 记录思考过程（用于日志）
-            var thinkTagStripper = new ThinkTagStripper(); // 剥离 <think> 标签
+            var thinkTagStripper = new ThinkTagStripper(captureThinking: request.IncludeThinking); // 剥离 <think> 标签，可选捕获
 
             while (!reader.EndOfStream)
             {
@@ -318,6 +318,18 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     // 通过 ThinkTagStripper 过滤 <think>...</think> 标签
                     var stripped = thinkTagStripper.Process(chunk.Content);
+
+                    // 当 IncludeThinking 时，将 <think> 标签内容作为 Thinking 块传递
+                    var capturedThink = thinkTagStripper.PopCapturedThinking();
+                    if (!string.IsNullOrEmpty(capturedThink))
+                    {
+                        thinkingBuilder.Append(capturedThink);
+                        if (request.IncludeThinking)
+                        {
+                            yield return GatewayStreamChunk.Thinking(capturedThink);
+                        }
+                    }
+
                     if (!string.IsNullOrEmpty(stripped))
                     {
                         textBuilder.Append(stripped);
