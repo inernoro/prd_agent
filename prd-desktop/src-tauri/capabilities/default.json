@@ -14,7 +14,12 @@
     "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-write-image",
     "updater:default",
-    "dialog:default"
+    "dialog:default",
+    "dialog:allow-ask",
+    "dialog:allow-confirm",
+    "dialog:allow-message",
+    "dialog:allow-save",
+    "dialog:allow-open"
   ]
 }
 

@@ -6,7 +6,7 @@ import { SearchableSelect, Select } from '@/components/design';
 import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
-import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts } from '@/services';
+import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts, getReplayCurl } from '@/services';
 import type { LlmLogsMetaUser, LlmLogsMetaRequestPurpose } from '@/services/contracts/llmLogs';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
@@ -422,53 +422,122 @@ function isPromptTokenText(v: unknown): v is string {
   return /^\[[A-Z0-9_]+\]$/.test(s);
 }
 
-function restoreSystemPromptInRequestBody(requestBodyRedacted: string, systemPromptText: string | null | undefined): string {
+/** 检测是否为后端截断的文本（包含 ...[N chars trimmed] 后缀） */
+function isTruncatedText(v: unknown): v is string {
+  if (typeof v !== 'string') return false;
+  return /\.\.\.\[\d+ chars trimmed\]$/.test(v.trim());
+}
+
+/** 检测文本是否需要被还原（token 占位符或截断文本） */
+function needsRestore(v: unknown): v is string {
+  return isPromptTokenText(v) || isTruncatedText(v);
+}
+
+/**
+ * 检测请求体是否包含需要后端 replay-curl 恢复的 COS 引用。
+ * 匹配格式：
+ *   1. [BASE64_IMAGE:<sha256>:<mime>] — 图片 SHA256 引用
+ *   2. [TEXT_COS:<sha256>:<charcount>] — 长文本 COS 引用
+ *   3. data:image/...;base64,...[N chars trimmed] — 旧截断格式
+ *   4. "sha256": "<hex>" — 旧 sha256 属性格式
+ */
+function needsBackendReplayCurl(requestBody?: string): boolean {
+  if (!requestBody) return false;
+  // 新格式: [BASE64_IMAGE:sha256:mime]
+  if (/\[BASE64_IMAGE:[0-9a-f]{64}:[^\]]+\]/.test(requestBody)) return true;
+  // COS 长文本引用: [TEXT_COS:sha256:charcount]
+  if (/\[TEXT_COS:[0-9a-f]{64}:\d+\]/.test(requestBody)) return true;
+  // 旧截断格式: 被截断的 base64 data URL
+  if (/data:image\/[^;]+;base64,[A-Za-z0-9+/].*\.\.\[\d+ chars trimmed\]/.test(requestBody)) return true;
+  // 旧 sha256 属性格式
+  if (/"sha256"\s*:\s*"[0-9a-f]{64}"/.test(requestBody)) return true;
+  return false;
+}
+
+/**
+ * 还原请求体中被截断/脱敏的内容（用于 curl 复制和 body 展示）。
+ *
+ * 后端日志存储会对请求体做两层处理：
+ * 1. OpenAIClient 路径：系统提示词替换为 token（如 [SYSTEM_PROMPT_REDACTED]）
+ * 2. LlmRequestLogWriter：>1024 字符存入 COS [TEXT_COS:sha256:charcount]，COS 不可用时截断
+ *
+ * 本函数从单独存储的 systemPromptText / questionText 还原这些被截断的内容（兼容旧日志）。
+ */
+function restoreTruncatedRequestBody(
+  requestBodyRedacted: string,
+  systemPromptText: string | null | undefined,
+  questionText: string | null | undefined
+): string {
   const raw = requestBodyRedacted || '';
+  if (!raw.trim()) return raw;
+
   const sp = (systemPromptText ?? '').trim();
-  if (!raw.trim() || !sp) return raw;
+  const qt = (questionText ?? '').trim();
+  if (!sp && !qt) return raw;
 
   const parsed = tryParseJsonObject(raw);
   if (!parsed) return raw;
 
-  // parsed 已经是 JSON.parse 的产物，这里用 JSON round-trip 作为深拷贝（避免直接 mutate 原引用）
   const obj = JSON.parse(JSON.stringify(parsed)) as any;
   let changed = false;
 
-  // 常见：Anthropic { system: "..." } / OpenAI { messages:[{role:"system",content:"..."}] }
-  const systemKeys = ['system', 'system_prompt', 'systemPrompt', 'system_prompt_text', 'systemPromptText'];
-  for (const k of systemKeys) {
-    if (isPromptTokenText(obj?.[k])) {
-      obj[k] = sp;
-      changed = true;
+  // Anthropic 顶层 system 字段
+  if (sp) {
+    const systemKeys = ['system', 'system_prompt', 'systemPrompt', 'system_prompt_text', 'systemPromptText'];
+    for (const k of systemKeys) {
+      if (needsRestore(obj?.[k])) {
+        obj[k] = sp;
+        changed = true;
+      }
     }
   }
 
   const messages = obj?.messages;
   if (Array.isArray(messages)) {
-    for (const m of messages) {
+    // 找到最后一条 user 消息的索引（用于 questionText 还原）
+    let lastUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i] && String(messages[i].role ?? '').toLowerCase() === 'user') {
+        lastUserIdx = i;
+        break;
+      }
+    }
+
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
       if (!m || typeof m !== 'object') continue;
       const role = String((m as any).role ?? '').toLowerCase();
-      if (role !== 'system') continue;
 
-      const c = (m as any).content;
-      if (isPromptTokenText(c)) {
-        (m as any).content = sp;
-        changed = true;
-        continue;
-      }
-
-      // 兼容：多模态 content 为数组/对象，且 token 在 text 字段里
-      if (Array.isArray(c)) {
-        for (const it of c) {
-          if (!it || typeof it !== 'object') continue;
-          if (isPromptTokenText((it as any).text)) {
-            (it as any).text = sp;
+      // 还原 system 消息
+      if (role === 'system' && sp) {
+        const c = (m as any).content;
+        if (needsRestore(c)) {
+          (m as any).content = sp;
+          changed = true;
+          continue;
+        }
+        // 兼容：多模态 content 为数组/对象
+        if (Array.isArray(c)) {
+          for (const it of c) {
+            if (!it || typeof it !== 'object') continue;
+            if (needsRestore((it as any).text)) {
+              (it as any).text = sp;
+              changed = true;
+            }
+          }
+        } else if (c && typeof c === 'object') {
+          if (needsRestore((c as any).text)) {
+            (c as any).text = sp;
             changed = true;
           }
         }
-      } else if (c && typeof c === 'object') {
-        if (isPromptTokenText((c as any).text)) {
-          (c as any).text = sp;
+      }
+
+      // 还原最后一条 user 消息（从 questionText）
+      if (role === 'user' && qt && i === lastUserIdx) {
+        const c = (m as any).content;
+        if (isTruncatedText(c)) {
+          (m as any).content = qt;
           changed = true;
         }
       }
@@ -564,10 +633,27 @@ function injectRefImageIntoRequestBody(bodyText: string, inputArtifacts: UploadA
   }
 }
 
+/**
+ * 从 URL 中提取域名，用作 Postman 环境变量名。
+ * 例: "https://api.apiyi.com/v1/chat/completions" → "api.apiyi.com"
+ */
+function extractDomainFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    const m = url.match(/https?:\/\/([^/:?\s]+)/);
+    return m ? m[1] : '';
+  }
+}
+
 function buildCurlFromLog(detail: LlmRequestLog, inputArtifacts?: UploadArtifact[]): string {
   const apiBase = (detail.apiBase ?? '').trim();
   const path = (detail.path ?? '').trim();
   const url = joinBaseAndPath(apiBase, path) || 'https://api.example.com/v1/chat/completions';
+
+  // 提取域名作为 Postman 环境变量占位符，例如 {{api.apiyi.com}}
+  const domain = extractDomainFromUrl(url);
+  const apiKeyPlaceholder = domain ? `{{${domain}}}` : 'YOUR_API_KEY';
 
   const headers: Record<string, string> = { ...(detail.requestHeadersRedacted ?? {}) };
   // 清理不适合重放的 header
@@ -576,15 +662,20 @@ function buildCurlFromLog(detail: LlmRequestLog, inputArtifacts?: UploadArtifact
     if (key === 'content-length' || key === 'host') delete headers[k];
   });
 
-  // 强制 API Key 占位符（避免任何真实值泄露）
-  const hasAuthorization = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization');
+  // 使用 Postman 环境变量占位符替换 API Key（避免真实值泄露，且 Postman 可自动匹配）
   const hasXApiKey = Object.keys(headers).some((k) => k.toLowerCase() === 'x-api-key');
+  const providerLower = (detail.provider ?? '').toLowerCase();
 
-  if (hasAuthorization || detail.provider.toLowerCase().includes('openai')) {
-    headers.Authorization = 'Bearer YOUR_API_KEY';
+  const isAnthropicLike = hasXApiKey || providerLower.includes('claude') || providerLower.includes('anthropic');
+
+  if (isAnthropicLike) {
+    // Anthropic 风格：x-api-key
+    headers['x-api-key'] = apiKeyPlaceholder;
   }
-  if (hasXApiKey || detail.provider.toLowerCase().includes('claude') || detail.provider.toLowerCase().includes('anthropic')) {
-    headers['x-api-key'] = 'YOUR_API_KEY';
+
+  // 所有非 Anthropic 平台统一补 Authorization Bearer（日志存储时 auth 头已脱敏移除）
+  if (!isAnthropicLike) {
+    headers.Authorization = `Bearer ${apiKeyPlaceholder}`;
   }
 
   // 默认 JSON
@@ -592,7 +683,7 @@ function buildCurlFromLog(detail: LlmRequestLog, inputArtifacts?: UploadArtifact
     headers['Content-Type'] = 'application/json';
   }
 
-  let restoredBody = restoreSystemPromptInRequestBody(detail.requestBodyRedacted || '', detail.systemPromptText);
+  let restoredBody = restoreTruncatedRequestBody(detail.requestBodyRedacted || '', detail.systemPromptText, detail.questionText);
   restoredBody = injectRefImageIntoRequestBody(restoredBody, inputArtifacts ?? []);
   const bodyPretty = tryPrettyJsonText(restoredBody);
   const headerArgs = Object.entries(headers)
@@ -703,7 +794,16 @@ function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
   );
 }
 
-export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; defaultAppKey?: string } = {}) {
+export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
+  embedded?: boolean;
+  defaultAppKey?: string;
+  /** 可选自定义 API 函数，用于应用身份隔离（如 visual-agent 使用域内日志端点） */
+  customApis?: {
+    getLogs?: typeof getLlmLogs;
+    getMeta?: typeof getLlmLogsMeta;
+    getDetail?: typeof getLlmLogDetail;
+  };
+} = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get('tab') ?? 'llm') as 'llm' | 'system';
 
@@ -877,7 +977,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
         setSearchParams(sp, { replace: true });
       }
 
-      const res = await getLlmLogs({
+      const fetchLogs = customApis?.getLogs ?? getLlmLogs;
+      const res = await fetchLogs({
         page: opts?.resetPage ? 1 : page,
         pageSize,
         model: qModel || undefined,
@@ -907,7 +1008,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
       resetJsonCheck();
     }
     try {
-      const res = await getLlmLogDetail(id);
+      const fetchDetail = customApis?.getDetail ?? getLlmLogDetail;
+      const res = await fetchDetail(id);
       if (res.success) setDetail(res.data);
     } finally {
       if (!silent) setDetailLoading(false);
@@ -925,7 +1027,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
     if (allowedSizesLoadingId === logId) return [];
     setAllowedSizesLoadingId(logId);
     try {
-      const res = await getLlmLogDetail(logId);
+      const fetchDetail2 = customApis?.getDetail ?? getLlmLogDetail;
+      const res = await fetchDetail2(logId);
       if (!res.success) return [];
       const sizes = extractAllowedSizesFromAnswerText((res.data?.answerText ?? '') as any);
       setAllowedSizesByLogId((p) => ({ ...p, [logId]: sizes }));
@@ -998,7 +1101,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
 
   useEffect(() => {
     (async () => {
-      const res = await getLlmLogsMeta();
+      const fetchMeta = customApis?.getMeta ?? getLlmLogsMeta;
+      const res = await fetchMeta();
       if (res.success) {
         setMetaModels(res.data.models ?? []);
         setMetaRequestPurposes(res.data.requestPurposes ?? []);
@@ -1030,7 +1134,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
   const isImageLikeLog = isImageGenRequest || hasLogImages || typeof detail?.imageSuccessCount === 'number';
   const prettyRequestBody = useMemo(() => {
     if (!detail) return '';
-    const restored = injectRefImageIntoRequestBody(detail.requestBodyRedacted || '', artifactInputs);
+    let restored = restoreTruncatedRequestBody(detail.requestBodyRedacted || '', detail.systemPromptText, detail.questionText);
+    restored = injectRefImageIntoRequestBody(restored, artifactInputs);
     return tryPrettyJsonText(restored);
   }, [detail, artifactInputs]);
   const curlText = useMemo(() => (detail ? buildCurlFromLog(detail, artifactInputs) : ''), [detail, artifactInputs]);
@@ -1605,6 +1710,26 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                       size="sm"
                       onClick={async () => {
                         try {
+                          // 检测是否需要后端恢复 base64 图片
+                          if (detail && needsBackendReplayCurl(detail.requestBodyRedacted)) {
+                            setCopiedHint('正在从 COS 恢复完整内容...');
+                            try {
+                              const resp = await getReplayCurl(detail.id);
+                              if (resp.success && resp.data?.curl) {
+                                await navigator.clipboard.writeText(resp.data.curl);
+                                const parts: string[] = [];
+                                if (resp.data.imageCount) parts.push(`${resp.data.imageCount} 张图片`);
+                                if (resp.data.textCount) parts.push(`${resp.data.textCount} 段文本`);
+                                const detail_str = parts.length > 0 ? `（已恢复 ${parts.join('、')}）` : '';
+                                const warn = resp.data.warning ? ` (${resp.data.warning})` : '';
+                                setCopiedHint(`curl 已复制${detail_str}${warn}`);
+                                setTimeout(() => setCopiedHint(''), 2500);
+                                return;
+                              }
+                            } catch {
+                              // 后端恢复失败，降级到本地 curl
+                            }
+                          }
                           await navigator.clipboard.writeText(curlText || '');
                           setCopiedHint('curl 已复制');
                           setTimeout(() => setCopiedHint(''), 1200);
@@ -1717,9 +1842,21 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                   </div>
                   <div>
                     {(() => {
-                      const headersObj = detail.requestHeadersRedacted ?? {};
+                      const headersObj = { ...(detail.requestHeadersRedacted ?? {}) };
+                      // 补回被脱敏移除的 auth 头，使用 Postman 环境变量占位符
+                      const detailUrl = joinBaseAndPath(detail.apiBase ?? '', detail.path ?? '');
+                      const detailDomain = extractDomainFromUrl(detailUrl);
+                      const keyPlaceholder = detailDomain ? `{{${detailDomain}}}` : 'YOUR_API_KEY';
+                      const pLower = (detail.provider ?? '').toLowerCase();
+                      const isAnthropic = Object.keys(headersObj).some((k) => k.toLowerCase() === 'x-api-key')
+                        || pLower.includes('claude') || pLower.includes('anthropic');
+                      if (isAnthropic) {
+                        headersObj['x-api-key'] = keyPlaceholder;
+                      } else {
+                        headersObj['Authorization'] = `Bearer ${keyPlaceholder}`;
+                      }
                       const headerKeys = Object.keys(headersObj).length;
-                      const headerChars = JSON.stringify(headersObj ?? {}).length;
+                      const headerChars = JSON.stringify(headersObj).length;
                       return (
                         <>
                           <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>

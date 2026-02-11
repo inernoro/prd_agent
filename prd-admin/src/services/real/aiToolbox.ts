@@ -311,3 +311,212 @@ export function subscribeToolboxRunEvents(
     abortController.abort();
   };
 }
+
+// ============ Direct Chat (SSE Streaming) ============
+
+export interface DirectChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/**
+ * 直接对话 SSE 流式调用
+ * 用于普通版 Agent 和自定义智能体
+ */
+export function streamDirectChat(
+  options: {
+    message: string;
+    agentKey?: string;
+    itemId?: string;
+    history?: DirectChatMessage[];
+    onText: (content: string) => void;
+    onError?: (error: string) => void;
+    onDone?: () => void;
+  }
+): () => void {
+  const token = useAuthStore.getState().token;
+  const url = api.aiToolbox.directChat();
+  const abortController = new AbortController();
+
+  (async () => {
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      };
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          message: options.message,
+          agentKey: options.agentKey,
+          itemId: options.itemId,
+          history: options.history,
+        }),
+        signal: abortController.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+      let currentData = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            currentEvent = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            currentData = line.slice(5).trim();
+          } else if (line === '' && currentEvent && currentData) {
+            try {
+              const data = JSON.parse(currentData);
+              if (currentEvent === 'text' && data.content) {
+                options.onText(data.content);
+              } else if (currentEvent === 'error') {
+                options.onError?.(data.message || '调用失败');
+                return;
+              } else if (currentEvent === 'done') {
+                options.onDone?.();
+                return;
+              }
+            } catch (e) {
+              console.error('解析 SSE 事件失败:', e);
+            }
+            currentEvent = '';
+            currentData = '';
+          }
+        }
+      }
+
+      options.onDone?.();
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') {
+        console.error('Direct chat SSE error:', e);
+        options.onError?.((e as Error).message);
+      }
+    }
+  })();
+
+  return () => {
+    abortController.abort();
+  };
+}
+
+/**
+ * 基础能力对话 SSE 流式调用
+ */
+export function streamCapabilityChat(
+  capabilityKey: string,
+  options: {
+    message: string;
+    history?: DirectChatMessage[];
+    onText: (content: string) => void;
+    onError?: (error: string) => void;
+    onDone?: () => void;
+  }
+): () => void {
+  const token = useAuthStore.getState().token;
+  const url = api.aiToolbox.capabilityChat(capabilityKey);
+  const abortController = new AbortController();
+
+  (async () => {
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      };
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          message: options.message,
+          history: options.history,
+        }),
+        signal: abortController.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+      let currentData = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            currentEvent = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            currentData = line.slice(5).trim();
+          } else if (line === '' && currentEvent && currentData) {
+            try {
+              const data = JSON.parse(currentData);
+              if (currentEvent === 'text' && data.content) {
+                options.onText(data.content);
+              } else if (currentEvent === 'error') {
+                options.onError?.(data.message || '调用失败');
+                return;
+              } else if (currentEvent === 'done') {
+                options.onDone?.();
+                return;
+              }
+            } catch (e) {
+              console.error('解析 SSE 事件失败:', e);
+            }
+            currentEvent = '';
+            currentData = '';
+          }
+        }
+      }
+
+      options.onDone?.();
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') {
+        console.error('Capability chat SSE error:', e);
+        options.onError?.((e as Error).message);
+      }
+    }
+  })();
+
+  return () => {
+    abortController.abort();
+  };
+}

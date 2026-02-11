@@ -124,8 +124,16 @@ export type GetVisualAgentWorkspaceDetailContract = (input: { id: string; messag
     assets: ImageAsset[];
     canvas: VisualAgentCanvas | null;
     viewport?: VisualAgentViewport | null;
+    hasMoreMessages?: boolean;
   }>
 >;
+
+/** 分页加载历史消息（向上滚动加载更早的消息） */
+export type ListVisualAgentWorkspaceMessagesContract = (input: {
+  id: string;
+  before?: string;
+  limit?: number;
+}) => Promise<ApiResponse<{ messages: VisualAgentMessage[]; hasMore: boolean }>>;
 
 export type SaveVisualAgentWorkspaceViewportContract = (input: {
   id: string;

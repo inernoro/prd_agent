@@ -104,6 +104,13 @@ public class GatewayRequest
     public int TimeoutSeconds { get; init; } = 120;
 
     /// <summary>
+    /// 是否在流式响应中包含思考过程（reasoning_content）
+    /// 默认 false（过滤思考内容，仅记录日志）
+    /// 设为 true 时，思考块将作为 GatewayChunkType.Thinking 传递给调用方
+    /// </summary>
+    public bool IncludeThinking { get; init; } = false;
+
+    /// <summary>
     /// 额外的请求上下文（可选）
     /// 用于日志记录的补充信息
     /// </summary>

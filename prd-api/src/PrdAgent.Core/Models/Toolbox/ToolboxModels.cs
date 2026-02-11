@@ -393,3 +393,57 @@ public enum ToolboxArtifactType
     Json,
     Text
 }
+
+/// <summary>
+/// 自定义工具/智能体
+/// </summary>
+public class ToolboxItem
+{
+    public string Id { get; set; } = string.Empty;
+
+    /// <summary>名称</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>描述</summary>
+    public string Description { get; set; } = string.Empty;
+
+    /// <summary>图标名称 (Lucide icon name)</summary>
+    public string Icon { get; set; } = "Bot";
+
+    /// <summary>标签</summary>
+    public List<string> Tags { get; set; } = new();
+
+    /// <summary>系统提示词</summary>
+    public string SystemPrompt { get; set; } = string.Empty;
+
+    /// <summary>开场白</summary>
+    public string? WelcomeMessage { get; set; }
+
+    /// <summary>引导问题</summary>
+    public List<string> ConversationStarters { get; set; } = new();
+
+    /// <summary>启用的能力工具 (webSearch, imageGen, codeInterpreter, fileReader)</summary>
+    public List<string> EnabledTools { get; set; } = new();
+
+    /// <summary>Temperature 参数</summary>
+    public double Temperature { get; set; } = 0.7;
+
+    /// <summary>是否启用长期记忆</summary>
+    public bool EnableMemory { get; set; }
+
+    /// <summary>使用次数</summary>
+    public int UsageCount { get; set; }
+
+    /// <summary>创建者用户 ID</summary>
+    public string CreatedByUserId { get; set; } = string.Empty;
+
+    /// <summary>创建者名称</summary>
+    public string? CreatedByName { get; set; }
+
+    /// <summary>创建时间</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>更新时间</summary>
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+

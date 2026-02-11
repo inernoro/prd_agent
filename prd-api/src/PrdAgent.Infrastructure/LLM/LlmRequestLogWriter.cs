@@ -6,6 +6,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -16,12 +17,17 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
     private readonly MongoDbContext _db;
     private readonly ILogger<LlmRequestLogWriter> _logger;
     private readonly IAppSettingsService _settingsService;
+    private readonly IAssetStorage _assetStorage;
 
-    public LlmRequestLogWriter(MongoDbContext db, ILogger<LlmRequestLogWriter> logger, LlmRequestLogBackground _, IAppSettingsService settingsService)
+    /// <summary>JSON 中字符串值超过此长度时，上传 COS 存储引用</summary>
+    private const int CosTextThreshold = 1024;
+
+    public LlmRequestLogWriter(MongoDbContext db, ILogger<LlmRequestLogWriter> logger, LlmRequestLogBackground _, IAppSettingsService settingsService, IAssetStorage assetStorage)
     {
         _db = db;
         _logger = logger;
         _settingsService = settingsService;
+        _assetStorage = assetStorage;
     }
 
     public async Task<string?> StartAsync(LlmLogStart start, CancellationToken ct = default)
@@ -33,9 +39,12 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
             var requestBodyChars = requestBodyRaw.Length;
             var requestBodyMaxChars = LlmLogLimits.GetRequestBodyMaxChars(settings);
 
-            // 先对 JSON 中每个值进行截断（超过 100 字符的值），再整体截断
-            var requestBodyTrimmed = TruncateJsonStringValues(requestBodyRaw, maxValueLength: 100);
-            var requestBodyStored = Truncate(requestBodyTrimmed, requestBodyMaxChars);
+            // JSON 字符串值处理：
+            //   - base64 data URL → SHA256 摘要引用 [BASE64_IMAGE:sha256:mime]（COS 反查恢复）
+            //   - 文本 > 1024 字符 → 上传 COS 存储引用 [TEXT_COS:sha256:charcount]
+            //   - 整体大小由 requestBodyMaxChars 兜底
+            var requestBodyProcessed = await ProcessJsonStringValuesForCosAsync(requestBodyRaw, ct);
+            var requestBodyStored = Truncate(requestBodyProcessed, requestBodyMaxChars);
             var requestBodyTruncated = requestBodyChars > requestBodyStored.Length;
 
             var log = new LlmRequestLog
@@ -126,37 +135,64 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
     }
 
     /// <summary>
-    /// 截断 JSON 字符串中超过指定长度的值（两个双引号之间的内容）
-    /// 不做 JSON 反序列化，直接用正则匹配处理
+    /// 异步处理 JSON 字符串值：
+    ///   - base64 data URL → SHA256 摘要引用 [BASE64_IMAGE:sha256:mime]
+    ///   - 文本 > CosTextThreshold → 上传 COS，替换为 [TEXT_COS:sha256:charcount]
+    ///   - 短文本保持不变
+    /// 不做 JSON 反序列化，直接用正则匹配处理。
     /// </summary>
-    /// <param name="json">原始 JSON 字符串</param>
-    /// <param name="maxValueLength">每个值的最大字符数（默认 100）</param>
-    /// <returns>截断后的 JSON 字符串</returns>
-    private static string TruncateJsonStringValues(string json, int maxValueLength = 100)
+    private async Task<string> ProcessJsonStringValuesForCosAsync(string json, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(json)) return json;
-        if (maxValueLength <= 0) return json;
 
-        // 匹配 JSON 字符串值："..."
-        // 需要处理转义字符，如 \" 不应该被当作结束引号
-        // 正则：匹配双引号开始，然后是非双引号或转义序列的字符，最后是双引号结束
+        // 匹配 JSON 字符串值："..."（处理转义字符）
         var pattern = @"""((?:[^""\\]|\\.)*)""";
+        var matches = Regex.Matches(json, pattern);
+        if (matches.Count == 0) return json;
 
-        return Regex.Replace(json, pattern, match =>
+        // 收集需要替换的匹配项（逆序替换避免偏移）
+        var replacements = new List<(int index, int length, string replacement)>();
+
+        foreach (Match match in matches)
         {
-            var fullMatch = match.Value;      // 包含引号的完整匹配
-            var content = match.Groups[1].Value; // 引号内的内容
+            var content = match.Groups[1].Value;
+            if (content.Length <= CosTextThreshold) continue;
 
-            // 如果内容长度超过限制，截断并添加标记
-            if (content.Length > maxValueLength)
+            // base64 data URL → SHA256 摘要引用（不上传 COS，图片已由原始上传流程存入）
+            if (TryExtractBase64DataUrlSha256(content, out var imgSha256, out var mime))
             {
-                // 截取前 maxValueLength 个字符，注意要处理可能截断转义序列的情况
-                var truncated = SafeTruncateJsonString(content, maxValueLength);
-                return $"\"{truncated}...[{content.Length - maxValueLength} chars trimmed]\"";
+                replacements.Add((match.Index, match.Length, $"\"[BASE64_IMAGE:{imgSha256}:{mime}]\""));
+                continue;
             }
 
-            return fullMatch;
-        });
+            // 长文本 → 上传 COS → [TEXT_COS:sha256:charcount]
+            try
+            {
+                var textBytes = Encoding.UTF8.GetBytes(content);
+                var stored = await _assetStorage.SaveAsync(textBytes, "text/plain", ct,
+                    domain: AppDomainPaths.DomainLogs, type: AppDomainPaths.TypeLog);
+                replacements.Add((match.Index, match.Length, $"\"[TEXT_COS:{stored.Sha256}:{content.Length}]\""));
+            }
+            catch (Exception ex)
+            {
+                // COS 上传失败，降级为截断
+                _logger.LogWarning(ex, "COS text upload failed, falling back to truncation");
+                var truncated = SafeTruncateJsonString(content, CosTextThreshold);
+                replacements.Add((match.Index, match.Length, $"\"{truncated}...[{content.Length - CosTextThreshold} chars trimmed]\""));
+            }
+        }
+
+        if (replacements.Count == 0) return json;
+
+        // 逆序替换（从后向前避免偏移问题）
+        var sb = new StringBuilder(json);
+        foreach (var (index, length, replacement) in replacements.OrderByDescending(r => r.index))
+        {
+            sb.Remove(index, length);
+            sb.Insert(index, replacement);
+        }
+
+        return sb.ToString();
     }
 
     /// <summary>
@@ -175,6 +211,43 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// 检测并提取 base64 data URL 的 SHA256 摘要（用于 COS 图片反查）。
+    /// 匹配格式: data:image/xxx;base64,<base64_data>
+    /// 返回原始字节的 SHA256 + MIME 类型，供 replay-curl 从 COS 恢复完整图片。
+    /// </summary>
+    private static bool TryExtractBase64DataUrlSha256(string content, out string sha256Hex, out string mime)
+    {
+        sha256Hex = string.Empty;
+        mime = "image/png";
+
+        const string dataPrefix = "data:";
+        const string base64Marker = ";base64,";
+
+        if (!content.StartsWith(dataPrefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var markerIdx = content.IndexOf(base64Marker, StringComparison.OrdinalIgnoreCase);
+        if (markerIdx < 0) return false;
+
+        mime = content[dataPrefix.Length..markerIdx];
+        var base64Data = content[(markerIdx + base64Marker.Length)..];
+
+        if (string.IsNullOrWhiteSpace(base64Data)) return false;
+
+        try
+        {
+            var bytes = Convert.FromBase64String(base64Data);
+            var hash = SHA256.HashData(bytes);
+            sha256Hex = Convert.ToHexString(hash).ToLowerInvariant();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string Sha256Hex(string input)

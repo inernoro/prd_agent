@@ -16,13 +16,10 @@ import {
 import {
   createLiteraryAgentImageGenRun,
   generateArticleMarkers,
-  getVisualAgentWorkspaceDetail,
-  getModels,
+  getLiteraryAgentMainModel,
   planImageGen,
   streamLiteraryAgentImageGenRunWithRetry,
-  updateVisualAgentWorkspace,
   updateArticleMarker,
-  uploadVisualAgentWorkspaceAsset,
   listLiteraryPrompts,
   createLiteraryPrompt,
   updateLiteraryPrompt,
@@ -43,6 +40,11 @@ import {
   publishReferenceImageConfig,
   unpublishReferenceImageConfig,
 } from '@/services';
+import {
+  getLiteraryAgentWorkspaceDetailReal as getLiteraryAgentWorkspaceDetail,
+  updateLiteraryAgentWorkspaceReal as updateLiteraryAgentWorkspace,
+  uploadLiteraryAgentWorkspaceAssetReal as uploadLiteraryAgentWorkspaceAsset,
+} from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
 import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2 } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
@@ -257,10 +259,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setText2ImgPool(null);
       setImg2ImgPool(null);
 
-      // 并行加载：所有模型池 + 全局模型列表
-      const [allPoolsRes, modelsRes] = await Promise.all([
+      // 并行加载：所有模型池 + 主模型信息
+      const [allPoolsRes, mainModelRes] = await Promise.all([
         getLiteraryAgentAllModels().catch(() => ({ success: false, data: null as LiteraryAgentAllModelsResponse | null })),
-        getModels(),
+        getLiteraryAgentMainModel().catch(() => ({ success: false, data: null as { model: null } | null })),
       ]);
       if (cancelled) return;
 
@@ -268,24 +270,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       if (allPoolsRes.success && allPoolsRes.data) {
         const t2iPools = allPoolsRes.data.text2img?.pools ?? [];
         const i2iPools = allPoolsRes.data.img2img?.pools ?? [];
-        
+
         // 查找专属模型池（isDedicated=true），否则用第一个
         const t2iPool = t2iPools.find((p) => p.isDedicated) ?? t2iPools[0] ?? null;
         const i2iPool = i2iPools.find((p) => p.isDedicated) ?? i2iPools[0] ?? null;
-        
+
         setText2ImgPool(t2iPool);
         setImg2ImgPool(i2iPool);
       }
 
-      if (!modelsRes.success) {
-        setImageGenModel(null);
-        setImageGenModelError(modelsRes.error?.message || '加载生图模型失败');
-        return;
+      // 获取主模型（用于显示标记生成模型名称）
+      if (mainModelRes.success && mainModelRes.data?.model) {
+        const m = mainModelRes.data.model;
+        setMainModel({ id: m.id, name: m.name, modelName: m.modelName, platformId: m.platformId ?? '', enabled: m.enabled, isMain: m.isMain } as Model);
       }
-
-      // 获取主模型（用于生成标记）
-      const mainList = (modelsRes.data ?? []).filter((m) => Boolean(m.enabled) && Boolean(m.isMain));
-      setMainModel(mainList[0] ?? null);
     })();
     return () => {
       cancelled = true;
@@ -426,7 +424,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   async function loadWorkspace() {
     try {
-      const res = await getVisualAgentWorkspaceDetail({ id: workspaceId });
+      const res = await getLiteraryAgentWorkspaceDetail({ id: workspaceId });
       if (res.success && res.data?.workspace) {
         const ws = res.data.workspace;
         const content = ws.articleContent || '';
@@ -607,7 +605,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   async function saveArticleContent() {
     try {
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: workspaceId,
         articleContent: debouncedArticleContent,
         idempotencyKey: `save-article-${workspaceId}-${Date.now()}`,
@@ -630,7 +628,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setUploadedFileName(fileName);
       
       // 保存到后端（提交型操作：会触发 version++，清空后续阶段）
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: workspaceId,
         articleContent: text,
         idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
@@ -687,7 +685,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setUploadedFileName(file.name);
       
       // 保存到后端
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: workspaceId,
         articleContent: text,
         idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
@@ -1329,7 +1327,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     const dataUrl = finalB64.startsWith('data:') ? finalB64 : `data:image/png;base64,${finalB64}`;
-    const up = await uploadVisualAgentWorkspaceAsset({ 
+    const up = await uploadLiteraryAgentWorkspaceAsset({ 
       id: workspaceId, 
       data: dataUrl, 
       prompt: plannedPrompt,

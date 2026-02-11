@@ -6,7 +6,11 @@ namespace PrdAgent.Api.Models.Requests;
 public record GenerateArticleMarkersRequest(
     string ArticleContent,
     string? UserInstruction,
-    string? IdempotencyKey
+    string? IdempotencyKey,
+    /// <summary>
+    /// 插入模式："legacy" = LLM 返回完整文章（默认，向后兼容），"anchor" = LLM 只返回锚点插入指令
+    /// </summary>
+    string? InsertionMode
 );
 
 /// <summary>

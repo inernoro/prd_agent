@@ -9,6 +9,7 @@ import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 import { readSseStream } from '@/lib/sse';
 import { apiRequest } from '@/services/real/apiClient';
+import { api } from '@/services/api';
 import { MessageSquare, Paperclip, Plus, Send, Square } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
@@ -17,7 +18,6 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
 import { toast } from '@/lib/toast';
-import { getAdminPrompts, getAdminSystemPrompts } from '@/services';
 import { useLocation } from 'react-router-dom';
 
 type LocalSession = {
@@ -518,7 +518,7 @@ export default function AiChatPage() {
   // 加载提示词列表（用于底部快捷标签）
   useEffect(() => {
     if (!token) return;
-    getAdminPrompts()
+    apiRequest<any>(api.prdAgent.prompts())
       .then((res) => {
         if (!res.success) return;
         const items = Array.isArray(res.data?.settings?.prompts) ? res.data.settings.prompts : [];
@@ -534,7 +534,7 @@ export default function AiChatPage() {
               role,
             };
           })
-          .filter((x) => x.promptKey && x.title && x.role === currentRole);
+          .filter((x: any) => x.promptKey && x.title && x.role === currentRole);
         // 按 order 排序
         mapped.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
         setPrompts(mapped);
@@ -552,7 +552,7 @@ export default function AiChatPage() {
   // 加载角色系统提示词（用于查看“系统提示词内容”）
   useEffect(() => {
     if (!token) return;
-    getAdminSystemPrompts()
+    apiRequest<any>(api.prdAgent.systemPrompts())
       .then((res) => {
         if (!res.success) return;
         const entries = Array.isArray(res.data?.settings?.entries) ? res.data.settings.entries : [];

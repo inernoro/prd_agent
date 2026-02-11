@@ -263,6 +263,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             using var reader = new StreamReader(stream);
 
             string? finishReason = null;
+            var thinkingBuilder = new StringBuilder(); // 记录思考过程（用于日志）
+            var thinkTagStripper = new ThinkTagStripper(captureThinking: request.IncludeThinking); // 剥离 <think> 标签，可选捕获
 
             while (!reader.EndOfStream)
             {
@@ -297,7 +299,44 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     continue;
                 }
 
-                if (!string.IsNullOrEmpty(chunk.Content))
+                // Thinking 类型（来自 reasoning_content 字段）
+                if (chunk.Type == GatewayChunkType.Thinking)
+                {
+                    if (!string.IsNullOrEmpty(chunk.Content))
+                    {
+                        thinkingBuilder.Append(chunk.Content);
+                    }
+                    // 当 IncludeThinking 时，将思考块传递给调用方
+                    if (request.IncludeThinking && !string.IsNullOrEmpty(chunk.Content))
+                    {
+                        yield return chunk;
+                    }
+                    continue;
+                }
+
+                if (!string.IsNullOrEmpty(chunk.Content) && chunk.Type == GatewayChunkType.Text)
+                {
+                    // 通过 ThinkTagStripper 过滤 <think>...</think> 标签
+                    var stripped = thinkTagStripper.Process(chunk.Content);
+
+                    // 当 IncludeThinking 时，将 <think> 标签内容作为 Thinking 块传递
+                    var capturedThink = thinkTagStripper.PopCapturedThinking();
+                    if (!string.IsNullOrEmpty(capturedThink))
+                    {
+                        thinkingBuilder.Append(capturedThink);
+                        if (request.IncludeThinking)
+                        {
+                            yield return GatewayStreamChunk.Thinking(capturedThink);
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(stripped))
+                    {
+                        textBuilder.Append(stripped);
+                        yield return GatewayStreamChunk.Text(stripped);
+                    }
+                }
+                else if (!string.IsNullOrEmpty(chunk.Content))
                 {
                     textBuilder.Append(chunk.Content);
                     yield return chunk;
@@ -312,6 +351,24 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     tokenUsage = chunk.TokenUsage;
                 }
+            }
+
+            // 刷新 ThinkTagStripper 缓冲区
+            var flushed = thinkTagStripper.Flush();
+            if (!string.IsNullOrEmpty(flushed))
+            {
+                textBuilder.Append(flushed);
+                yield return GatewayStreamChunk.Text(flushed);
+            }
+
+            // 记录思考过程（如果有）
+            if (thinkingBuilder.Length > 0)
+            {
+                _logger.LogDebug(
+                    "[LlmGateway] 模型思考过程已过滤（{ThinkingChars} 字符）。AppCallerCode: {AppCallerCode}, Model: {Model}",
+                    thinkingBuilder.Length,
+                    request.AppCallerCode,
+                    resolution?.ActualModel);
             }
 
             // 7. 更新健康状态（成功）
@@ -1081,7 +1138,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string appCallerCode,
         string modelType,
         int maxTokens = 4096,
-        double temperature = 0.2)
+        double temperature = 0.2,
+        bool includeThinking = false)
     {
         if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
         {
@@ -1096,7 +1154,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             platformName: null,
             enablePromptCache: true,
             maxTokens: maxTokens,
-            temperature: temperature);
+            temperature: temperature,
+            includeThinking: includeThinking);
     }
 
     private static bool TryValidateAppCaller(string appCallerCode, string modelType, out string error)

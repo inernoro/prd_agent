@@ -6,6 +6,10 @@ import type {
   UpdateAppRequest,
   RegenerateKeyResponse,
   PagedLogsResponse,
+  WebhookConfigResponse,
+  UpdateWebhookConfigRequest,
+  WebhookTestResponse,
+  PagedWebhookLogsResponse,
 } from '../contracts/openPlatform';
 import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
@@ -105,6 +109,56 @@ export class OpenPlatformService implements IOpenPlatformService {
     );
     if (!response.success) {
       throw new Error(response.error?.message || '获取日志失败');
+    }
+    return response.data!;
+  }
+
+  // ========== Webhook 配置 ==========
+
+  async getWebhookConfig(appId: string): Promise<WebhookConfigResponse> {
+    const response = await apiRequest<WebhookConfigResponse>(
+      `${api.openPlatform.apps.byId(appId)}/webhook`
+    );
+    if (!response.success) {
+      throw new Error(response.error?.message || '获取 Webhook 配置失败');
+    }
+    return response.data!;
+  }
+
+  async updateWebhookConfig(appId: string, request: UpdateWebhookConfigRequest): Promise<void> {
+    const response = await apiRequest(`${api.openPlatform.apps.byId(appId)}/webhook`, {
+      method: 'PUT',
+      body: request,
+    });
+    if (!response.success) {
+      throw new Error(response.error?.message || '更新 Webhook 配置失败');
+    }
+  }
+
+  async testWebhook(appId: string): Promise<WebhookTestResponse> {
+    const response = await apiRequest<WebhookTestResponse>(
+      `${api.openPlatform.apps.byId(appId)}/webhook/test`,
+      {
+        method: 'POST',
+        body: {},
+      }
+    );
+    if (!response.success) {
+      throw new Error(response.error?.message || '测试 Webhook 失败');
+    }
+    return response.data!;
+  }
+
+  async getWebhookLogs(appId: string, page: number, pageSize: number): Promise<PagedWebhookLogsResponse> {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      pageSize: pageSize.toString(),
+    });
+    const response = await apiRequest<PagedWebhookLogsResponse>(
+      `${api.openPlatform.apps.byId(appId)}/webhook/logs?${params.toString()}`
+    );
+    if (!response.success) {
+      throw new Error(response.error?.message || '获取 Webhook 日志失败');
     }
     return response.data!;
   }
