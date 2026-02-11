@@ -50,6 +50,9 @@ public class ThemeConfig
 
     /// <summary>侧边栏玻璃效果模式：auto | always | never</summary>
     public string SidebarGlass { get; set; } = "always";
+
+    /// <summary>性能模式：auto | quality | performance</summary>
+    public string PerformanceMode { get; set; } = "auto";
 }
 
 /// <summary>

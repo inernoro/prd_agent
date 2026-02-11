@@ -7,6 +7,27 @@ import type { ThemeConfig } from '@/types/theme';
 import { computeThemeVars } from './themeComputed';
 
 /**
+ * 检测当前平台是否为 Windows
+ */
+let _isWindows: boolean | null = null;
+export function isWindowsPlatform(): boolean {
+  if (_isWindows === null) {
+    _isWindows = navigator.userAgent.includes('Windows');
+  }
+  return _isWindows;
+}
+
+/**
+ * 根据配置判断是否应该启用性能模式（降低特效）
+ */
+export function shouldReduceEffects(config: ThemeConfig): boolean {
+  if (config.performanceMode === 'performance') return true;
+  if (config.performanceMode === 'quality') return false;
+  // auto: Windows 自动启用性能模式
+  return isWindowsPlatform();
+}
+
+/**
  * 将主题配置应用到 :root
  */
 export function applyThemeToDOM(config: ThemeConfig): void {
@@ -23,6 +44,14 @@ export function applyThemeToDOM(config: ThemeConfig): void {
   root.dataset.themeOpacity = config.opacity;
   root.dataset.themeGlow = config.enableGlow ? 'on' : 'off';
   root.dataset.themeSidebarGlass = config.sidebarGlass;
+
+  // 性能模式：设置 data 属性，全局 CSS 会根据此属性降低 backdrop-filter
+  const reduceEffects = shouldReduceEffects(config);
+  if (reduceEffects) {
+    root.dataset.perfMode = 'performance';
+  } else {
+    delete root.dataset.perfMode;
+  }
 }
 
 /**
@@ -64,6 +93,7 @@ export function clearThemeFromDOM(): void {
   delete root.dataset.themeOpacity;
   delete root.dataset.themeGlow;
   delete root.dataset.themeSidebarGlass;
+  delete root.dataset.perfMode;
 }
 
 /**

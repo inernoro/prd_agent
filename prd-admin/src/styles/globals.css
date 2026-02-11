@@ -1159,3 +1159,35 @@ select optgroup {
   stroke-dasharray: 1000;
   animation: line-draw 2s ease-out forwards;
 }
+
+/* ========================================
+   Performance Mode - 性能优先模式
+   Windows 平台 backdrop-filter 使用 CPU 光栅化（非 GPU），
+   blur(40px) + saturate + brightness 组合极度消耗性能。
+   当 html[data-perf-mode="performance"] 时全局降低特效。
+   ======================================== */
+
+html[data-perf-mode="performance"] * {
+  backdrop-filter: blur(4px) !important;
+  -webkit-backdrop-filter: blur(4px) !important;
+}
+
+/* 性能模式下减少过渡动画持续时间 */
+html[data-perf-mode="performance"] .transition-all {
+  transition-duration: 100ms !important;
+}
+
+/* 性能模式下禁用 will-change，减少合成层数量 */
+html[data-perf-mode="performance"] [style*="will-change"] {
+  will-change: auto !important;
+}
+
+/* 也尊重系统级别的减少动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

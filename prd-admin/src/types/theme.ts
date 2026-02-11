@@ -11,6 +11,9 @@ export type OpacityLevel = 'solid' | 'default' | 'translucent';
 /** 侧边栏玻璃效果模式 */
 export type SidebarGlassMode = 'auto' | 'always' | 'never';
 
+/** 性能模式 */
+export type PerformanceMode = 'auto' | 'quality' | 'performance';
+
 /**
  * 完整皮肤配置
  */
@@ -29,6 +32,9 @@ export interface ThemeConfig {
 
   /** 侧边栏玻璃效果模式 */
   sidebarGlass: SidebarGlassMode;
+
+  /** 性能模式：auto 自动检测平台, quality 始终高质量, performance 始终性能优先 */
+  performanceMode: PerformanceMode;
 }
 
 /** 默认主题配置 */
@@ -38,6 +44,7 @@ export const DEFAULT_THEME_CONFIG: ThemeConfig = {
   opacity: 'default',
   enableGlow: true,
   sidebarGlass: 'always',
+  performanceMode: 'auto',
 };
 
 /**
@@ -185,6 +192,19 @@ export const OPACITY_MAP: Record<
 /**
  * 侧边栏玻璃效果选项
  */
+/**
+ * 性能模式选项
+ */
+export const PERFORMANCE_MODE_OPTIONS: Array<{
+  value: PerformanceMode;
+  label: string;
+  description: string;
+}> = [
+  { value: 'auto', label: '自动', description: 'Windows 自动降低特效，macOS/Linux 保持高质量' },
+  { value: 'quality', label: '高质量', description: '始终使用完整液态玻璃特效（可能影响性能）' },
+  { value: 'performance', label: '性能优先', description: '降低模糊与特效强度，提升响应速度' },
+];
+
 export const SIDEBAR_GLASS_OPTIONS: Array<{
   value: SidebarGlassMode;
   label: string;

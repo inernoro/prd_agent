@@ -6,7 +6,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { getUserPreferences, updateThemeConfig } from '@/services';
-import type { ThemeConfig, ColorDepthLevel, OpacityLevel, SidebarGlassMode } from '@/types/theme';
+import type { ThemeConfig, ColorDepthLevel, OpacityLevel, SidebarGlassMode, PerformanceMode } from '@/types/theme';
 import { DEFAULT_THEME_CONFIG } from '@/types/theme';
 import { applyThemeToDOM } from '@/lib/themeApplier';
 import type { ThemeConfigResponse } from '@/services/contracts/userPreferences';
@@ -31,6 +31,9 @@ function parseThemeConfigResponse(response: ThemeConfigResponse): Partial<ThemeC
   }
   if (response.sidebarGlass && ['auto', 'always', 'never'].includes(response.sidebarGlass)) {
     result.sidebarGlass = response.sidebarGlass as SidebarGlassMode;
+  }
+  if (response.performanceMode && ['auto', 'quality', 'performance'].includes(response.performanceMode)) {
+    result.performanceMode = response.performanceMode as PerformanceMode;
   }
 
   return result;
@@ -74,7 +77,8 @@ export const useThemeStore = create<ThemeState>()(
               serverConfig.colorDepth !== currentConfig.colorDepth ||
               serverConfig.opacity !== currentConfig.opacity ||
               serverConfig.enableGlow !== currentConfig.enableGlow ||
-              serverConfig.sidebarGlass !== currentConfig.sidebarGlass;
+              serverConfig.sidebarGlass !== currentConfig.sidebarGlass ||
+              serverConfig.performanceMode !== currentConfig.performanceMode;
 
             if (isDifferent) {
               set({ config: serverConfig, loaded: true });
