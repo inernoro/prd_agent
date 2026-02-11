@@ -986,7 +986,7 @@ export default function AppShell() {
             paddingLeft: mainPadLeft,
             // 移动端留出顶部 header 和底部 tab 栏空间
             paddingTop: isMobile ? 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))' : undefined,
-            paddingBottom: isMobile ? 'calc(var(--mobile-tab-height, 56px) + env(safe-area-inset-bottom, 0px))' : undefined,
+            paddingBottom: isMobile ? 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px))' : undefined,
           }}
         >
           <div
