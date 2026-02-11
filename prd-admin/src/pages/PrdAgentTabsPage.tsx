@@ -7,7 +7,7 @@ import AiChatPage from './AiChatPage';
 
 export function PrdAgentTabsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const tabFromUrl = searchParams.get('tab') || 'groups';
+  const tabFromUrl = searchParams.get('tab') || 'chat';
   const [activeTab, setActiveTab] = useState(tabFromUrl);
 
   // 同步 URL 参数
@@ -24,11 +24,11 @@ export function PrdAgentTabsPage() {
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-5">
+    <div className="h-full min-h-0 flex flex-col gap-2">
       <TabBar
         items={[
-          { key: 'groups', label: '群组管理', icon: <Users2 size={14} /> },
           { key: 'chat', label: 'PRD 对话', icon: <MessagesSquare size={14} /> },
+          { key: 'groups', label: '群组管理', icon: <Users2 size={14} /> },
         ]}
         activeKey={activeTab}
         onChange={handleTabChange}
