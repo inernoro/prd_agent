@@ -76,13 +76,13 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
 
   return (
     <div
-      className="h-[46px] rounded-[14px] px-4 transition-all duration-200 relative overflow-hidden shrink-0"
+      className="min-h-[46px] rounded-[14px] px-4 transition-all duration-200 relative overflow-hidden shrink-0"
       style={variant === 'gold' ? glassBarGold : glassBar}
     >
-      <div className="h-full flex items-center justify-between gap-4">
+      <div className="h-full min-h-[46px] flex items-center justify-between gap-4 flex-wrap">
         {/* 左侧：标题或切换栏 */}
         {hasTabs ? (
-          <div className="relative flex items-center gap-2">
+          <div className="relative flex items-center gap-2 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
             {/* 滑动指示器 - macOS 风格 */}
             <div
               className="absolute rounded-[9px] h-[28px] pointer-events-none"
@@ -122,7 +122,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
                   }}
                   type="button"
                   onClick={() => handleChange(item.key)}
-                  className="relative flex items-center gap-2 px-3 h-[28px] text-[12px] font-semibold transition-colors duration-200"
+                  className="relative flex items-center gap-2 px-3 h-[28px] text-[12px] font-semibold transition-colors duration-200 whitespace-nowrap shrink-0"
                   style={{
                     color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
                     zIndex: 1,

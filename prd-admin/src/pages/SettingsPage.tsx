@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useSearchParams } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
@@ -32,6 +33,7 @@ function getIcon(name: string, size = 16) {
 function GeneralSettings() {
   const { navOrder, loaded, saving, loadFromServer, setNavOrder, reset } = useNavOrderStore();
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
+  const { isMobile } = useBreakpoint();
 
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -122,9 +124,9 @@ function GeneralSettings() {
       </div>
 
       {/* 左右分栏布局：左侧 1/4 导航顺序，右侧 3/4 皮肤编辑 */}
-      <div className="flex-1 min-h-0 grid grid-cols-4 gap-5">
+      <div className={`flex-1 min-h-0 grid gap-5 ${isMobile ? 'grid-cols-1' : 'grid-cols-4'}`}>
         {/* 左侧：导航顺序设置 */}
-        <div className="col-span-1 min-h-0 flex flex-col">
+        <div className={`${isMobile ? '' : 'col-span-1'} min-h-0 flex flex-col`}>
           <GlassCard glow accentHue={210} className="h-full flex flex-col overflow-hidden">
             <div className="flex items-center justify-between gap-3 mb-4 shrink-0">
               <div>
@@ -239,7 +241,7 @@ function GeneralSettings() {
         </div>
 
         {/* 右侧：皮肤编辑 */}
-        <div className="col-span-3 min-h-0 overflow-y-auto">
+        <div className={`${isMobile ? '' : 'col-span-3'} min-h-0 overflow-y-auto`}>
           <ThemeSkinEditor />
         </div>
       </div>

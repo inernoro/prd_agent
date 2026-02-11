@@ -108,6 +108,9 @@ export function BottomSheet({
             animation: open ? 'slideUp 250ms cubic-bezier(0.32, 0.72, 0, 1)' : undefined,
           }}
         >
+          {/* 无标题时提供隐藏的 DialogTitle 满足 Radix 无障碍要求 */}
+          {!title && <DialogPrimitive.Title className="sr-only">面板</DialogPrimitive.Title>}
+
           {/* 拖拽指示条 */}
           {showDragHandle && (
             <div className="flex justify-center pt-3 pb-1">

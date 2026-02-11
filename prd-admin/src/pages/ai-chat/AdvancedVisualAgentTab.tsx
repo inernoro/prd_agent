@@ -1,6 +1,7 @@
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { glassPanel, glassTooltip, glassInputArea, glassPopoverCompact } from '@/lib/glassStyles';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
@@ -816,6 +817,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
   const workspaceId = String(props.workspaceId ?? '').trim();
   const initialPromptFromProps = String(props.initialPrompt ?? '').trim();
+  const { isMobile } = useBreakpoint();
+  const [mobileShowChat, setMobileShowChat] = useState(false);
   // 固定默认参数：用户不需要选择
   // 输入区已移除“大小/比例”控制按钮：v1 固定用 1K 方形，避免过多配置干扰
   const imageGenSize = '1024x1024' as const;
@@ -6492,8 +6495,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             </div>
           </div>
 
-          {/* 左侧工具栏（液态大玻璃风格，上下半圆圆角） */}
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 z-20">
+          {/* 左侧工具栏（液态大玻璃风格，上下半圆圆角）— 移动端隐藏 */}
+          <div className={`absolute left-3 top-1/2 -translate-y-1/2 z-20 ${isMobile ? 'hidden' : ''}`}>
             <div
               className="rounded-full p-1.5 flex flex-col gap-1.5 bg-transparent"
               style={{
@@ -7024,12 +7027,31 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         </div>
           </div>
 
-          {/* 右侧：浮动对话面板（液态大玻璃效果） */}
+          {/* 移动端：浮动切换按钮 */}
+          {isMobile && (
+            <button
+              type="button"
+              onClick={() => setMobileShowChat((v) => !v)}
+              className="absolute right-3 bottom-3 z-40 h-12 w-12 rounded-full flex items-center justify-center"
+              style={{
+                ...glassPanel,
+                background: mobileShowChat ? 'var(--accent-gold)' : 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
+                color: mobileShowChat ? '#1a1a1a' : 'var(--text-primary)',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+              }}
+              aria-label={mobileShowChat ? '返回画布' : '打开聊天'}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            </button>
+          )}
+
+          {/* 右侧：浮动对话面板（液态大玻璃效果）— 移动端全屏覆盖 / 桌面端浮动 */}
           <div
-            className="absolute right-3 top-1/2 -translate-y-1/2 z-30 flex flex-col"
+            className={`${isMobile ? 'absolute inset-0' : 'absolute right-3 top-1/2 -translate-y-1/2'} z-30 flex flex-col`}
             style={{
-              width: 350,
-              height: '75%',
+              width: isMobile ? '100%' : 350,
+              height: isMobile ? '100%' : '75%',
+              display: isMobile && !mobileShowChat ? 'none' : undefined,
             }}
           >
             <div

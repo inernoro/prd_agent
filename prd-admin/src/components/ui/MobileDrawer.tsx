@@ -95,6 +95,7 @@ export function MobileDrawer({ open, onOpenChange, children, width = 280, side =
             paddingBottom: 'env(safe-area-inset-bottom, 0px)',
           }}
         >
+          <DialogPrimitive.Title className="sr-only">导航菜单</DialogPrimitive.Title>
           <div className="flex items-center justify-end px-3 pt-2 pb-1">
             <DialogPrimitive.Close
               className="h-9 w-9 inline-flex items-center justify-center rounded-xl hover:bg-white/5"
