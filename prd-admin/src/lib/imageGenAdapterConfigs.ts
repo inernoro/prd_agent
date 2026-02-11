@@ -26,6 +26,14 @@ export const IMAGE_GEN_ADAPTER_CONFIGS: AdapterConfig[] = [
     notes: ['支持 1K, 2K, 4K 三个档位'],
   },
   {
+    modelIdPattern: 'gemini-3-pro-image-preview*',
+    displayName: 'Gemini 3 Pro Image Preview',
+    provider: 'Google',
+    sizeConstraintType: 'whitelist',
+    allowedRatios: ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'],
+    notes: ['支持 1K, 2K, 4K 三个档位'],
+  },
+  {
     modelIdPattern: 'dall-e-3',
     displayName: 'DALL-E 3',
     provider: 'OpenAI',

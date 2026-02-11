@@ -78,6 +78,67 @@ public static class ImageGenModelConfigs
             SupportsInpainting = true,
         },
 
+        // ===== Gemini 3 Pro Image Preview =====
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "gemini-3-pro-image-preview*",
+            DisplayName = "Gemini 3 Pro Image Preview",
+            Provider = "Google",
+            LastUpdated = "2026-02-11",
+            SizeConstraintType = SizeConstraintTypes.Whitelist,
+            SizeConstraintDescription = "支持 1K/2K/4K 分辨率档位的固定尺寸",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new()
+                {
+                    new("1024x1024", "1:1"),
+                    new("832x1248", "2:3"),
+                    new("1248x832", "3:2"),
+                    new("864x1184", "3:4"),
+                    new("1184x864", "4:3"),
+                    new("896x1152", "4:5"),
+                    new("1152x896", "5:4"),
+                    new("768x1344", "9:16"),
+                    new("1344x768", "16:9"),
+                    new("1536x672", "21:9"),
+                },
+                ["2k"] = new()
+                {
+                    new("2048x2048", "1:1"),
+                    new("1696x2528", "2:3"),
+                    new("2528x1696", "3:2"),
+                    new("1792x2400", "3:4"),
+                    new("2400x1792", "4:3"),
+                    new("1856x2304", "4:5"),
+                    new("2304x1856", "5:4"),
+                    new("1536x2752", "9:16"),
+                    new("2752x1536", "16:9"),
+                    new("3168x1344", "21:9"),
+                },
+                ["4k"] = new()
+                {
+                    new("4096x4096", "1:1"),
+                    new("3392x5056", "2:3"),
+                    new("5056x3392", "3:2"),
+                    new("3584x4800", "3:4"),
+                    new("4800x3584", "4:3"),
+                    new("3712x4608", "4:5"),
+                    new("4608x3712", "5:4"),
+                    new("3072x5504", "9:16"),
+                    new("5504x3072", "16:9"),
+                    new("6336x2688", "21:9"),
+                },
+            },
+            SizeParamFormat = SizeParamFormats.WxH,
+            MaxWidth = 6144,
+            MaxHeight = 6144,
+            MinWidth = 768,
+            MinHeight = 672,
+            Notes = new List<string> { "支持 1K, 2K, 4K 三个档位", "4K 分辨率可能导致响应超时" },
+            SupportsImageToImage = true,
+            SupportsInpainting = true,
+        },
+
         // ===== DALL-E 3 =====
         new ImageGenModelAdapterConfig
         {
