@@ -1813,6 +1813,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (mode === 'replace') setSelection(keys);
     else if (mode === 'add') addSelection(keys);
     else removeSelection(keys);
+    // chip 插入会触发 Lexical 编辑器抢焦点，延迟恢复画布焦点
+    requestAnimationFrame(() => {
+      try { stageRef.current?.focus({ preventScroll: true }); } catch { /* ignore */ }
+    });
   }, [setSelection, addSelection, removeSelection]);
 
   const focusComposer = useCallback(() => {
