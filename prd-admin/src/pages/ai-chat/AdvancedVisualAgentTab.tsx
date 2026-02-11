@@ -1,6 +1,7 @@
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { glassPanel, glassTooltip, glassInputArea, glassPopoverCompact } from '@/lib/glassStyles';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
@@ -84,6 +85,7 @@ import {
   ImagePlus,
   MapPin,
   Maximize2,
+  MessageSquare,
   MousePointer2,
   Plus,
   Send,
@@ -816,6 +818,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
   const workspaceId = String(props.workspaceId ?? '').trim();
   const initialPromptFromProps = String(props.initialPrompt ?? '').trim();
+  const { isMobile } = useBreakpoint();
+  const [mobileShowChat, setMobileShowChat] = useState(false);
+  // 移动端默认使用 hand 工具，以便直接拖拽画布
+  const [activeTool, setActiveTool] = useState<CanvasTool>(
+    typeof window !== 'undefined' && window.innerWidth < 768 ? 'hand' : 'select'
+  );
   // 固定默认参数：用户不需要选择
   // 输入区已移除“大小/比例”控制按钮：v1 固定用 1K 方形，避免过多配置干扰
   const imageGenSize = '1024x1024' as const;
@@ -1266,7 +1274,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const HOVER_MENU_CLOSE_DELAY_MS = 320;
 
-  const [activeTool, setActiveTool] = useState<CanvasTool>('select');
+  // activeTool 已在上方通过 isMobile 初始化：移动端默认 'hand'，桌面端默认 'select'
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const toolMenuCloseTimerRef = useRef<number | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -6419,7 +6427,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           {/* 顶部居中：缩放浮层 */}
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
             <div
-              className="h-9 rounded-[999px] px-1.5 inline-flex items-center gap-1"
+              className="h-9 rounded-[999px] px-1.5 inline-flex items-center gap-1 whitespace-nowrap"
               style={{
                 ...glassTooltip,
                 border: '1px solid rgba(255,255,255,0.12)',
@@ -6430,7 +6438,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             >
               <button
                 type="button"
-                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
+                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5 shrink-0"
                 onClick={() => {
                   const c = stageCenterClient();
                   zoomAt(c.x, c.y, clampZoom(zoomRef.current / 1.07));
@@ -6441,12 +6449,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               >
                 <ZoomOut size={16} />
               </button>
-              <div className="px-1 text-[10px] font-semibold tabular-nums" title="缩放比例">
+              <div className="px-1 text-[10px] font-semibold tabular-nums shrink-0" title="缩放比例">
                 {Math.round(zoom * 100)}%
               </div>
               <button
                 type="button"
-                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
+                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5 shrink-0"
                 onClick={() => {
                   const c = stageCenterClient();
                   zoomAt(c.x, c.y, clampZoom(zoomRef.current * 1.07));
@@ -6457,43 +6465,48 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               >
                 <ZoomIn size={16} />
               </button>
+              {/* 移动端精简：只保留 适配 按钮，隐藏 100% 和排列 */}
               <button
                 type="button"
-                className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5"
+                className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5 whitespace-nowrap shrink-0"
                 onClick={fitToSelection}
                 disabled={canvas.length === 0}
                 title="适配选中/全部 (Shift+2) | 适配全部 (Shift+1) | 100% (Shift+0)"
               >
                 适配
               </button>
-              <button
-                type="button"
-                className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5"
-                onClick={() => {
-                  const c = stageCenterClient();
-                  zoomAt(c.x, c.y, 1);
-                }}
-                disabled={canvas.length === 0}
-                title="回到 100%"
-              >
-                100%
-              </button>
-              <div className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.15)' }} />
-              <button
-                type="button"
-                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
-                onClick={arrangeGrid}
-                disabled={canvas.length === 0}
-                title="自动排列（网格布局）"
-                aria-label="自动排列"
-              >
-                <Grid3X3 size={14} />
-              </button>
+              {!isMobile && (
+                <>
+                  <button
+                    type="button"
+                    className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5 whitespace-nowrap shrink-0"
+                    onClick={() => {
+                      const c = stageCenterClient();
+                      zoomAt(c.x, c.y, 1);
+                    }}
+                    disabled={canvas.length === 0}
+                    title="回到 100%"
+                  >
+                    100%
+                  </button>
+                  <div className="w-px h-4 mx-0.5 shrink-0" style={{ background: 'rgba(255,255,255,0.15)' }} />
+                  <button
+                    type="button"
+                    className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5 shrink-0"
+                    onClick={arrangeGrid}
+                    disabled={canvas.length === 0}
+                    title="自动排列（网格布局）"
+                    aria-label="自动排列"
+                  >
+                    <Grid3X3 size={14} />
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
-          {/* 左侧工具栏（液态大玻璃风格，上下半圆圆角） */}
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 z-20">
+          {/* 左侧工具栏（液态大玻璃风格，上下半圆圆角）— 移动端隐藏 */}
+          <div className={`absolute left-3 top-1/2 -translate-y-1/2 z-20 ${isMobile ? 'hidden' : ''}`}>
             <div
               className="rounded-full p-1.5 flex flex-col gap-1.5 bg-transparent"
               style={{
@@ -7024,21 +7037,108 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         </div>
           </div>
 
-          {/* 右侧：浮动对话面板（液态大玻璃效果） */}
+          {/* 移动端：底部工具栏 (替代隐藏的左侧工具栏) */}
+          {isMobile && (
+            <div
+              className="absolute left-1/2 -translate-x-1/2 bottom-3 z-40 inline-flex items-center gap-1 px-1.5 rounded-full h-12"
+              style={{
+                ...glassTooltip,
+                border: '1px solid rgba(255,255,255,0.14)',
+                background: 'rgba(0,0,0,0.45)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+              }}
+            >
+              {/* 手型工具 — 拖拽画布 */}
+              <button
+                type="button"
+                onClick={() => { setActiveTool('hand'); setMobileShowChat(false); }}
+                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: activeTool === 'hand' && !mobileShowChat ? 'rgba(255,255,255,0.15)' : 'transparent',
+                  color: activeTool === 'hand' && !mobileShowChat ? 'var(--text-primary)' : 'var(--text-muted)',
+                }}
+                aria-label="拖拽画布"
+              >
+                <Hand size={18} />
+              </button>
+              {/* 选择工具 — 选中/移动图片 */}
+              <button
+                type="button"
+                onClick={() => { setActiveTool('select'); setMobileShowChat(false); }}
+                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: activeTool === 'select' && !mobileShowChat ? 'rgba(255,255,255,0.15)' : 'transparent',
+                  color: activeTool === 'select' && !mobileShowChat ? 'var(--text-primary)' : 'var(--text-muted)',
+                }}
+                aria-label="选择/移动"
+              >
+                <MousePointer2 size={18} />
+              </button>
+              <div className="w-px h-5 shrink-0" style={{ background: 'rgba(255,255,255,0.15)' }} />
+              {/* 上传图片 */}
+              <button
+                type="button"
+                onClick={() => openImageFilePicker()}
+                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                }}
+                aria-label="上传图片"
+              >
+                <ImagePlus size={18} />
+              </button>
+              {/* 手绘板 */}
+              <button
+                type="button"
+                onClick={() => setDrawingBoardOpen(true)}
+                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                }}
+                aria-label="手绘板"
+              >
+                <PenTool size={18} />
+              </button>
+              <div className="w-px h-5 shrink-0" style={{ background: 'rgba(255,255,255,0.15)' }} />
+              {/* 聊天面板切换 */}
+              <button
+                type="button"
+                onClick={() => setMobileShowChat((v) => !v)}
+                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: mobileShowChat ? 'var(--accent-gold)' : 'transparent',
+                  color: mobileShowChat ? '#1a1a1a' : 'var(--text-muted)',
+                }}
+                aria-label={mobileShowChat ? '返回画布' : '打开聊天'}
+              >
+                <MessageSquare size={18} />
+              </button>
+            </div>
+          )}
+
+          {/* 右侧：浮动对话面板（液态大玻璃效果）— 移动端全屏覆盖 / 桌面端浮动 */}
           <div
-            className="absolute right-3 top-1/2 -translate-y-1/2 z-30 flex flex-col"
+            className={`${isMobile ? 'absolute inset-0' : 'absolute right-3 top-1/2 -translate-y-1/2'} z-30 flex flex-col`}
             style={{
-              width: 350,
-              height: '75%',
+              width: isMobile ? '100%' : 350,
+              height: isMobile ? '100%' : '75%',
+              display: isMobile && !mobileShowChat ? 'none' : undefined,
+              // 移动端：底部留出工具栏空间
+              paddingBottom: isMobile ? 60 : undefined,
             }}
           >
             <div
-              className="flex flex-col p-2.5 rounded-[14px] h-full"
+              className={`flex flex-col h-full ${isMobile ? 'p-3' : 'p-2.5 rounded-[14px]'}`}
               style={{
                 ...glassPanel,
-                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(30, 30, 35, 0.85)) 0%, var(--glass-bg-end, rgba(25, 25, 30, 0.80)) 100%)',
-                border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
-                boxShadow: '0 12px 40px rgba(0,0,0,0.50), 0 0 0 1px rgba(255, 255, 255, 0.05) inset',
+                background: isMobile
+                  ? 'linear-gradient(180deg, rgba(18, 18, 22, 0.96) 0%, rgba(14, 14, 18, 0.98) 100%)'
+                  : 'linear-gradient(180deg, var(--glass-bg-start, rgba(30, 30, 35, 0.85)) 0%, var(--glass-bg-end, rgba(25, 25, 30, 0.80)) 100%)',
+                border: isMobile ? 'none' : '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
+                boxShadow: isMobile ? 'none' : '0 12px 40px rgba(0,0,0,0.50), 0 0 0 1px rgba(255, 255, 255, 0.05) inset',
+                borderRadius: isMobile ? 0 : 14,
               }}
             >
             <div className="flex items-start justify-between gap-2">
@@ -7046,33 +7146,49 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                   Hi，我是你的 AI 设计师
                 </div>
-                <div className="mt-0.5 text-[9px] leading-tight" style={{ color: 'var(--text-muted)' }}>
-                  点画板图片即可选中，未来可作为图生图首帧。
-                </div>
+                {!isMobile && (
+                  <div className="mt-0.5 text-[9px] leading-tight" style={{ color: 'var(--text-muted)' }}>
+                    点画板图片即可选中，未来可作为图生图首帧。
+                  </div>
+                )}
               </div>
-              <button
-                type="button"
-                onClick={() => setShowLogs(true)}
-                className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
-                style={{ color: 'var(--text-muted)' }}
-                aria-label="查看 LLM 日志"
-                title="查看 LLM 日志"
-              >
-                <Eye size={14} />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDefectFlash(false); // 用户点击后停止闪烁
-                  useGlobalDefectStore.getState().openDialog();
-                }}
-                className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
-                style={{ color: 'var(--text-muted)' }}
-                aria-label="提交缺陷"
-                title="提交缺陷"
-              >
-                <Bug size={14} className={defectFlash ? 'defect-submit-flash' : ''} />
-              </button>
+              <div className="flex items-center gap-0.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowLogs(true)}
+                  className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
+                  style={{ color: 'var(--text-muted)' }}
+                  aria-label="查看 LLM 日志"
+                  title="查看 LLM 日志"
+                >
+                  <Eye size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDefectFlash(false);
+                    useGlobalDefectStore.getState().openDialog();
+                  }}
+                  className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
+                  style={{ color: 'var(--text-muted)' }}
+                  aria-label="提交缺陷"
+                  title="提交缺陷"
+                >
+                  <Bug size={14} className={defectFlash ? 'defect-submit-flash' : ''} />
+                </button>
+                {/* 移动端：关闭聊天面板按钮 */}
+                {isMobile && (
+                  <button
+                    type="button"
+                    onClick={() => setMobileShowChat(false)}
+                    className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
+                    style={{ color: 'var(--text-muted)' }}
+                    aria-label="关闭聊天"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                )}
+              </div>
             </div>
 
             {(!input.trim() && messages.length === 0) ? (

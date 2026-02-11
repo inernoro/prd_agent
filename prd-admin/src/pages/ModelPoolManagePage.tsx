@@ -40,6 +40,7 @@ import {
   FoldVertical,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { getModelTypeDisplayName, getModelTypeIcon } from '@/lib/appCallerUtils';
@@ -84,6 +85,7 @@ function keyOfModel(m: Pick<ModelGroupItem, 'platformId' | 'modelId'>) {
 }
 
 export function ModelPoolManagePage() {
+  const { isMobile } = useBreakpoint();
   const [pools, setPools] = useState<ModelGroup[]>([]);
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [loading, setLoading] = useState(true);
@@ -373,8 +375,8 @@ export function ModelPoolManagePage() {
         title="模型池管理"
         icon={<Database size={16} />}
         actions={
-          <>
-            <div className="relative max-w-md">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className={`relative ${isMobile ? 'w-full' : 'max-w-md'}`}>
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
               <input
                 type="text"
@@ -417,7 +419,7 @@ export function ModelPoolManagePage() {
               <Plus size={14} />
               新建模型池
             </Button>
-          </>
+          </div>
         }
       />
 
@@ -436,18 +438,20 @@ export function ModelPoolManagePage() {
             </div>
           ) : (
             <div className="flex flex-col">
-              {/* 列表头（池行对齐用） */}
-              <div
-                className="flex items-center gap-3 pl-12 pr-4 py-2 text-[11px] font-semibold select-none"
-                style={{ color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-              >
-                <span className="w-5 shrink-0" />
-                <span className="min-w-[120px] flex-[2]">名称</span>
-                <span className="min-w-[100px] flex-1">代码</span>
-                <span className="w-[80px] shrink-0 text-center">策略</span>
-                <span className="min-w-[120px] flex-1">健康状态</span>
-                <span className="w-[120px] shrink-0" />
-              </div>
+              {/* 列表头（池行对齐用） — 移动端隐藏 */}
+              {!isMobile && (
+                <div
+                  className="flex items-center gap-3 pl-12 pr-4 py-2 text-[11px] font-semibold select-none"
+                  style={{ color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+                >
+                  <span className="w-5 shrink-0" />
+                  <span className="min-w-[120px] flex-[2]">名称</span>
+                  <span className="min-w-[100px] flex-1">代码</span>
+                  <span className="w-[80px] shrink-0 text-center">策略</span>
+                  <span className="min-w-[120px] flex-1">健康状态</span>
+                  <span className="w-[120px] shrink-0" />
+                </div>
+              )}
 
               {/* 按类型分组 */}
               {groupedByType.map((group) => {
@@ -468,7 +472,7 @@ export function ModelPoolManagePage() {
                   <div key={group.type}>
                     {/* ── 第一级：类型分组头 ── */}
                     <div
-                      className="flex items-center gap-3 px-4 py-2 cursor-pointer select-none"
+                      className={`flex items-center gap-3 px-4 py-2 cursor-pointer select-none ${isMobile ? 'flex-wrap gap-y-1' : ''}`}
                       style={{ background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
                       onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
                       onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; }}
@@ -566,7 +570,7 @@ export function ModelPoolManagePage() {
                       return (
                         <div key={pool.id}>
                           <div
-                            className="group flex items-center gap-3 pl-12 pr-4 py-2.5 transition-colors cursor-pointer"
+                            className={`group transition-colors cursor-pointer ${isMobile ? 'flex flex-col gap-2 px-3 py-2.5' : 'flex items-center gap-3 pl-12 pr-4 py-2.5'}`}
                             style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
                             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
@@ -577,129 +581,243 @@ export function ModelPoolManagePage() {
                               return next;
                             })}
                           >
-                            {/* 展开箭头 */}
-                            <span className="w-5 shrink-0 flex items-center justify-center">
-                              {modelCount > 0 ? (
-                                isExpanded
-                                  ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
-                                  : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />
-                              ) : (
-                                <span className="w-3 h-px" style={{ background: 'rgba(255,255,255,0.1)' }} />
-                              )}
-                            </span>
+                            {isMobile ? (
+                              /* ── 移动端：卡片式堆叠布局 ── */
+                              <>
+                                <div className="flex items-center gap-2">
+                                  <span className="w-5 shrink-0 flex items-center justify-center">
+                                    {modelCount > 0 ? (
+                                      isExpanded
+                                        ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
+                                        : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />
+                                    ) : (
+                                      <span className="w-3 h-px" style={{ background: 'rgba(255,255,255,0.1)' }} />
+                                    )}
+                                  </span>
+                                  <span className="text-[13px] font-semibold truncate min-w-0 flex-1" style={{ color: 'var(--text-primary)' }}>
+                                    {pool.name}
+                                  </span>
+                                  {pool.isDefaultForType && (
+                                    <span
+                                      className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium"
+                                      style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}
+                                    >
+                                      备用
+                                    </span>
+                                  )}
+                                  <span
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap shrink-0"
+                                    style={{ background: `${strategyOpt.color}12`, color: strategyOpt.color }}
+                                  >
+                                    <StrategyIcon size={10} />
+                                    {STRATEGY_LABEL_MAP[pool.strategyType ?? 0] || '快速'}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 pl-7">
+                                  <span
+                                    className="text-[12px] font-mono truncate"
+                                    style={{ color: 'var(--text-muted)' }}
+                                    title={pool.code || pool.id}
+                                  >
+                                    {pool.code || pool.id}
+                                  </span>
+                                  <span className="mx-1" style={{ color: 'var(--text-muted)' }}>·</span>
+                                  <div className="flex items-center gap-1.5 whitespace-nowrap">
+                                    {modelCount === 0 ? (
+                                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无模型</span>
+                                    ) : healthyCnt === modelCount ? (
+                                      <span className="text-[11px] flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
+                                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(34,197,94,0.95)' }} />
+                                        {modelCount} 模型
+                                      </span>
+                                    ) : (
+                                      <span className="text-[11px] flex items-center gap-2">
+                                        {healthyCnt > 0 && (
+                                          <span className="flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
+                                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(34,197,94,0.95)' }} />
+                                            {healthyCnt}
+                                          </span>
+                                        )}
+                                        {degradedCnt > 0 && (
+                                          <span className="flex items-center gap-1" style={{ color: 'rgba(251,191,36,0.95)' }}>
+                                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(251,191,36,0.95)' }} />
+                                            {degradedCnt}
+                                          </span>
+                                        )}
+                                        {unavailableCnt > 0 && (
+                                          <span className="flex items-center gap-1" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(239,68,68,0.95)' }} />
+                                            {unavailableCnt}
+                                          </span>
+                                        )}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                {/* 操作按钮 — 移动端始终可见 */}
+                                <div className="flex items-center gap-0.5 pl-7">
+                                  <Tooltip content="预测下次调度路径">
+                                    <button
+                                      className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                                      onClick={(e) => { e.stopPropagation(); handlePredict(pool); }}
+                                    >
+                                      <Radar size={14} style={{ color: 'rgba(56,189,248,0.85)' }} />
+                                    </button>
+                                  </Tooltip>
+                                  <Tooltip content="复制为新模型池">
+                                    <button
+                                      className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                                      onClick={(e) => { e.stopPropagation(); handleCopyPool(pool); }}
+                                    >
+                                      <Copy size={14} style={{ color: 'var(--text-muted)' }} />
+                                    </button>
+                                  </Tooltip>
+                                  <Tooltip content="编辑模型池">
+                                    <button
+                                      className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                                      onClick={(e) => { e.stopPropagation(); handleEditPool(pool); }}
+                                    >
+                                      <Edit size={14} style={{ color: 'var(--text-muted)' }} />
+                                    </button>
+                                  </Tooltip>
+                                  <Tooltip content="删除模型池">
+                                    <button
+                                      className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                                      onClick={(e) => { e.stopPropagation(); handleDeletePool(pool); }}
+                                    >
+                                      <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
+                                    </button>
+                                  </Tooltip>
+                                </div>
+                              </>
+                            ) : (
+                              /* ── 桌面端：表格式行布局 ── */
+                              <>
+                                {/* 展开箭头 */}
+                                <span className="w-5 shrink-0 flex items-center justify-center">
+                                  {modelCount > 0 ? (
+                                    isExpanded
+                                      ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
+                                      : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />
+                                  ) : (
+                                    <span className="w-3 h-px" style={{ background: 'rgba(255,255,255,0.1)' }} />
+                                  )}
+                                </span>
 
-                            {/* 名称 */}
-                            <div className="min-w-[120px] flex-[2] flex items-center gap-2">
-                              <span className="text-[13px] font-semibold truncate min-w-0" style={{ color: 'var(--text-primary)' }}>
-                                {pool.name}
-                              </span>
-                              {pool.isDefaultForType && (
+                                {/* 名称 */}
+                                <div className="min-w-[120px] flex-[2] flex items-center gap-2">
+                                  <span className="text-[13px] font-semibold truncate min-w-0" style={{ color: 'var(--text-primary)' }}>
+                                    {pool.name}
+                                  </span>
+                                  {pool.isDefaultForType && (
+                                    <span
+                                      className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium"
+                                      style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}
+                                    >
+                                      备用
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* 代码 */}
                                 <span
-                                  className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium"
-                                  style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}
+                                  className="min-w-[100px] flex-1 text-[12px] font-mono truncate"
+                                  style={{ color: 'var(--text-muted)' }}
+                                  title={pool.code || pool.id}
                                 >
-                                  备用
+                                  {pool.code || pool.id}
                                 </span>
-                              )}
-                            </div>
 
-                            {/* 代码 */}
-                            <span
-                              className="min-w-[100px] flex-1 text-[12px] font-mono truncate"
-                              style={{ color: 'var(--text-muted)' }}
-                              title={pool.code || pool.id}
-                            >
-                              {pool.code || pool.id}
-                            </span>
-
-                            {/* 策略 */}
-                            <span className="w-[80px] shrink-0 text-center">
-                              <span
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap"
-                                style={{ background: `${strategyOpt.color}12`, color: strategyOpt.color }}
-                              >
-                                <StrategyIcon size={10} />
-                                {STRATEGY_LABEL_MAP[pool.strategyType ?? 0] || '快速'}
-                              </span>
-                            </span>
-
-                            {/* 健康状态 */}
-                            <div className="min-w-[120px] flex-1 flex items-center gap-1.5 whitespace-nowrap">
-                              {modelCount === 0 ? (
-                                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无模型</span>
-                              ) : healthyCnt === modelCount ? (
-                                <span className="text-[11px] flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
-                                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(34,197,94,0.95)' }} />
-                                  {modelCount} 模型 · 全部健康
+                                {/* 策略 */}
+                                <span className="w-[80px] shrink-0 text-center">
+                                  <span
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap"
+                                    style={{ background: `${strategyOpt.color}12`, color: strategyOpt.color }}
+                                  >
+                                    <StrategyIcon size={10} />
+                                    {STRATEGY_LABEL_MAP[pool.strategyType ?? 0] || '快速'}
+                                  </span>
                                 </span>
-                              ) : (
-                                <span className="text-[11px] flex items-center gap-2">
-                                  {healthyCnt > 0 && (
-                                    <span className="flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
+
+                                {/* 健康状态 */}
+                                <div className="min-w-[120px] flex-1 flex items-center gap-1.5 whitespace-nowrap">
+                                  {modelCount === 0 ? (
+                                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无模型</span>
+                                  ) : healthyCnt === modelCount ? (
+                                    <span className="text-[11px] flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
                                       <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(34,197,94,0.95)' }} />
-                                      {healthyCnt}
+                                      {modelCount} 模型 · 全部健康
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] flex items-center gap-2">
+                                      {healthyCnt > 0 && (
+                                        <span className="flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
+                                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(34,197,94,0.95)' }} />
+                                          {healthyCnt}
+                                        </span>
+                                      )}
+                                      {degradedCnt > 0 && (
+                                        <span className="flex items-center gap-1" style={{ color: 'rgba(251,191,36,0.95)' }}>
+                                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(251,191,36,0.95)' }} />
+                                          {degradedCnt} 降权
+                                        </span>
+                                      )}
+                                      {unavailableCnt > 0 && (
+                                        <span className="flex items-center gap-1" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(239,68,68,0.95)' }} />
+                                          {unavailableCnt} 不可用
+                                        </span>
+                                      )}
                                     </span>
                                   )}
-                                  {degradedCnt > 0 && (
-                                    <span className="flex items-center gap-1" style={{ color: 'rgba(251,191,36,0.95)' }}>
-                                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(251,191,36,0.95)' }} />
-                                      {degradedCnt} 降权
-                                    </span>
-                                  )}
-                                  {unavailableCnt > 0 && (
-                                    <span className="flex items-center gap-1" style={{ color: 'rgba(239,68,68,0.95)' }}>
-                                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(239,68,68,0.95)' }} />
-                                      {unavailableCnt} 不可用
-                                    </span>
-                                  )}
-                                </span>
-                              )}
-                            </div>
+                                </div>
 
-                            {/* 操作按钮 */}
-                            <div className="w-[120px] shrink-0 flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <Tooltip content="预测下次调度路径">
-                                <button
-                                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-                                  onClick={(e) => { e.stopPropagation(); handlePredict(pool); }}
-                                >
-                                  <Radar size={14} style={{ color: 'rgba(56,189,248,0.85)' }} />
-                                </button>
-                              </Tooltip>
-                              <Tooltip content="复制为新模型池">
-                                <button
-                                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-                                  onClick={(e) => { e.stopPropagation(); handleCopyPool(pool); }}
-                                >
-                                  <Copy size={14} style={{ color: 'var(--text-muted)' }} />
-                                </button>
-                              </Tooltip>
-                              <Tooltip content="编辑模型池">
-                                <button
-                                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-                                  onClick={(e) => { e.stopPropagation(); handleEditPool(pool); }}
-                                >
-                                  <Edit size={14} style={{ color: 'var(--text-muted)' }} />
-                                </button>
-                              </Tooltip>
-                              <Tooltip content="删除模型池">
-                                <button
-                                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-                                  onClick={(e) => { e.stopPropagation(); handleDeletePool(pool); }}
-                                >
-                                  <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
-                                </button>
-                              </Tooltip>
-                            </div>
+                                {/* 操作按钮 */}
+                                <div className="w-[120px] shrink-0 flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Tooltip content="预测下次调度路径">
+                                    <button
+                                      className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                                      onClick={(e) => { e.stopPropagation(); handlePredict(pool); }}
+                                    >
+                                      <Radar size={14} style={{ color: 'rgba(56,189,248,0.85)' }} />
+                                    </button>
+                                  </Tooltip>
+                                  <Tooltip content="复制为新模型池">
+                                    <button
+                                      className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                                      onClick={(e) => { e.stopPropagation(); handleCopyPool(pool); }}
+                                    >
+                                      <Copy size={14} style={{ color: 'var(--text-muted)' }} />
+                                    </button>
+                                  </Tooltip>
+                                  <Tooltip content="编辑模型池">
+                                    <button
+                                      className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                                      onClick={(e) => { e.stopPropagation(); handleEditPool(pool); }}
+                                    >
+                                      <Edit size={14} style={{ color: 'var(--text-muted)' }} />
+                                    </button>
+                                  </Tooltip>
+                                  <Tooltip content="删除模型池">
+                                    <button
+                                      className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                                      onClick={(e) => { e.stopPropagation(); handleDeletePool(pool); }}
+                                    >
+                                      <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
+                                    </button>
+                                  </Tooltip>
+                                </div>
+                              </>
+                            )}
                           </div>
 
                           {/* ── 第三级：展开的模型列表 ── */}
                           {isExpanded && pool.models && pool.models.length > 0 && (
                             <div
-                              className="py-2 pr-4 pl-12"
+                              className={`py-2 pr-4 ${isMobile ? 'pl-3' : 'pl-12'}`}
                               style={{ background: 'rgba(255,255,255,0.015)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
                             >
-                              <div className="ml-5 space-y-1">
+                              <div className={`${isMobile ? 'ml-2' : 'ml-5'} space-y-1`}>
                                 {pool.models.map((model, idx) => {
                                   const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
                                   return (
@@ -773,11 +891,11 @@ export function ModelPoolManagePage() {
           open={showPoolDialog}
           onOpenChange={setShowPoolDialog}
           title={editingPool ? '编辑模型池' : '新建模型池'}
-          maxWidth={760}
+          maxWidth={isMobile ? undefined : 760}
           content={
             <div className="space-y-4">
               {/* ── 第一行：名称 / 代码 / 模型类型 ── */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>
                 <div>
                   <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                     模型池名称
@@ -821,8 +939,8 @@ export function ModelPoolManagePage() {
               </div>
 
               {/* ── 第二行：优先级 / 调度策略 icons / 设为默认 ── */}
-              <div className="flex items-end gap-3">
-                <div className="w-[80px] shrink-0">
+              <div className={`flex gap-3 ${isMobile ? 'flex-col' : 'items-end'}`}>
+                <div className={isMobile ? 'w-full' : 'w-[80px] shrink-0'}>
                   <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                     优先级
                   </label>

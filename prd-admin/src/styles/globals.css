@@ -1199,3 +1199,44 @@ html[data-perf-mode="performance"] [style*="will-change"] {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ========================================
+   移动端适配动画 & 工具类
+   ======================================== */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+/* Dialog 居中动画 (已有的 prd-dialog-content 不带动画时的兜底) */
+.prd-dialog-content {
+  transform: translate(-50%, -50%);
+}
+
+.prd-dialog-overlay {
+  animation: fadeIn 150ms ease-out;
+}
+
+/* 移动端 hover 替代: 触控设备上始终显示原本 hover 才可见的操作按钮 */
+@media (hover: none) and (pointer: coarse) {
+  .mobile-show-actions {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+}

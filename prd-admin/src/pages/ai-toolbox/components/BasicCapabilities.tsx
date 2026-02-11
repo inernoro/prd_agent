@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useToolboxStore, type ToolboxPageTab } from '@/stores/toolboxStore';
 import { Button } from '@/components/design/Button';
 import { streamCapabilityChat } from '@/services/real/aiToolbox';
@@ -142,6 +143,7 @@ interface ChatMessage {
 }
 
 export function BasicCapabilities() {
+  const { isMobile } = useBreakpoint();
   const { pageTab, setPageTab } = useToolboxStore();
   const [selectedCapability, setSelectedCapability] = useState<string | null>(null);
   const [inputText, setInputText] = useState('');
@@ -309,7 +311,7 @@ export function BasicCapabilities() {
     <div className="h-full min-h-0 flex flex-col gap-3" style={pageContainerStyle}>
       {/* Header */}
       <div className="px-4 pt-3">
-        <div className="flex items-center justify-between">
+        <div className={`flex ${isMobile ? 'flex-col gap-2.5' : 'items-center justify-between'}`}>
           {/* Page Tab Switcher */}
           <div
             className="flex items-center gap-0.5 p-0.5 rounded-xl"
@@ -322,7 +324,7 @@ export function BasicCapabilities() {
               <button
                 key={tab.key}
                 onClick={() => setPageTab(tab.key)}
-                className="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-2"
+                className={`${isMobile ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm'} rounded-lg font-medium transition-all duration-200 flex items-center gap-1.5`}
                 style={{
                   background: pageTab === tab.key
                     ? 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
@@ -340,7 +342,7 @@ export function BasicCapabilities() {
           </div>
 
           {/* Actions */}
-          <Button variant="secondary" size="sm">
+          <Button variant="secondary" size="sm" className={isMobile ? 'self-end' : ''}>
             <Settings size={13} />
             配置模型池
           </Button>
@@ -348,9 +350,9 @@ export function BasicCapabilities() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 min-h-0 flex gap-3 overflow-hidden px-4 pb-3">
+      <div className={`flex-1 min-h-0 flex ${isMobile ? 'flex-col' : ''} gap-3 overflow-hidden px-4 pb-3`}>
         {/* Capabilities List */}
-        <div className="w-80 flex-shrink-0 overflow-auto">
+        <div className={`${isMobile ? 'max-h-[35vh] min-h-0' : 'w-80 flex-shrink-0'} overflow-auto`}>
           <div className="space-y-4">
             {Object.entries(groupedCapabilities).map(([category, caps]) => (
               <div key={category}>

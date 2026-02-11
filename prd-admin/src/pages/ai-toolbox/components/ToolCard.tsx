@@ -2,6 +2,7 @@ import type { ToolboxItem } from '@/services';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import {
   ArrowUpRight,
   FileText,
@@ -96,6 +97,7 @@ function getPalette(iconName: string) {
 export function ToolCard({ item }: ToolCardProps) {
   const { selectItem } = useToolboxStore();
   const navigate = useNavigate();
+  const { isMobile } = useBreakpoint();
   const palette = getPalette(item.icon);
   const IconComponent = getIconComponent(item.icon);
   const isCustomized = !!item.routePath;
@@ -153,8 +155,8 @@ export function ToolCard({ item }: ToolCardProps) {
           {item.description}
         </div>
 
-        {/* Tags */}
-        {item.tags.length > 0 && (
+        {/* Tags — 移动端隐藏以节省空间 */}
+        {!isMobile && item.tags.length > 0 && (
           <div className="flex flex-wrap gap-1 mb-2.5">
             {item.tags.slice(0, 3).map((tag) => (
               <span

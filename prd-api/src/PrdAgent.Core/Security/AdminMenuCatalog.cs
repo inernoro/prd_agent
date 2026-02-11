@@ -19,11 +19,11 @@ public static class AdminMenuCatalog
         // 总裁面板（替代原仪表盘）
         new("executive", "/executive", "总裁面板", null, "Crown", 5),
 
+        // AI 百宝箱（Agent 统一入口，PRD协作已合并至此）
+        new("ai-toolbox", "/ai-toolbox", "AI 百宝箱", null, "Sparkles", 8),
+
         // 用户管理
         new("users", "/users", "用户管理", null, "Users", 20),
-
-        // PRD 协作（群组 + PRD Agent 对话，双页签）
-        new("prd-agent", "/prd-agent", "PRD 协作", null, "MessagesSquare", 30),
 
         // 模型管理
         new("mds", "/mds", "模型管理", null, "Cpu", 40),
@@ -33,9 +33,6 @@ public static class AdminMenuCatalog
 
         // 技能管理
         new("skills", "/skills", "技能管理", null, "Zap", 55),
-
-        // AI 百宝箱（Agent 统一入口）
-        new("ai-toolbox", "/ai-toolbox", "AI 百宝箱", null, "Sparkles", 60),
 
         // 日志
         new("logs", "/logs", "请求日志", null, "ScrollText", 100),

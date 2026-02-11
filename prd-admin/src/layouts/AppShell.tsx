@@ -26,19 +26,24 @@ import {
   Zap,
   Crown,
   Sparkles,
+  Menu,
+  ChevronDown,
   type LucideIcon,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
-import { glassPanel, glassSidebar, glassFloatingButton } from '@/lib/glassStyles';
+import { glassPanel, glassSidebar, glassFloatingButton, glassMobileHeader } from '@/lib/glassStyles';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useNavOrderStore } from '@/stores/navOrderStore';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
+import { MobileDrawer } from '@/components/ui/MobileDrawer';
+import { MobileTabBar } from '@/components/ui/MobileTabBar';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateUserAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
@@ -92,6 +97,9 @@ export default function AppShell() {
   const collapsed = useLayoutStore((s) => s.navCollapsed);
   const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
+  const mobileDrawerOpen = useLayoutStore((s) => s.mobileDrawerOpen);
+  const setMobileDrawerOpen = useLayoutStore((s) => s.setMobileDrawerOpen);
+  const { isMobile } = useBreakpoint();
   const { navOrder, loaded: navOrderLoaded, loadFromServer: loadNavOrder } = useNavOrderStore();
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
@@ -100,6 +108,7 @@ export default function AppShell() {
   const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(new Set());
   const [toastCollapsed, setToastCollapsed] = useState(false);
   const [toastHovering, setToastHovering] = useState(false);
+  const [mobileMoreExpanded, setMobileMoreExpanded] = useState(false);
 
   // 导航滚动状态：用于显示渐变阴影指示器
   const navRef = useRef<HTMLElement>(null);
@@ -134,52 +143,6 @@ export default function AppShell() {
     };
   }, [updateNavScrollState]);
 
-  // 兜底：部分 WebView/快捷键拦截环境下 Cmd/Ctrl+A 在输入控件中可能无法触发默认"全选"
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return;
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (!(e.key === 'a' || e.key === 'A')) return;
-
-      const active = document.activeElement;
-      if (!active) return;
-
-      // 仅在“可编辑内容”范围内兜底，避免影响页面级“全选”
-      if (active instanceof HTMLTextAreaElement) {
-        if (active.disabled) return;
-        e.preventDefault();
-        e.stopPropagation();
-        active.select();
-        return;
-      }
-
-      if (active instanceof HTMLInputElement) {
-        if (active.disabled) return;
-        const type = String(active.getAttribute('type') ?? 'text').toLowerCase();
-        // 这些类型不具备文本选择语义
-        if (['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'range', 'color'].includes(type)) return;
-        e.preventDefault();
-        e.stopPropagation();
-        active.select();
-        return;
-      }
-
-      if (active instanceof HTMLElement && active.isContentEditable) {
-        e.preventDefault();
-        e.stopPropagation();
-        const selection = window.getSelection();
-        if (!selection) return;
-        const range = document.createRange();
-        range.selectNodeContents(active);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      }
-    };
-
-    // capture：优先于页面/画布层快捷键，避免误伤输入区
-    window.addEventListener('keydown', onKeyDown, true);
-    return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, []);
 
   // 加载用户导航顺序偏好
   useEffect(() => {
@@ -239,9 +202,11 @@ export default function AppShell() {
 
   const asideWidth = collapsed ? 72 : 220;
   const asideGap = 18;
-  // 专注模式（fullBleedMain）下隐藏侧栏，主区最大化
-  const focusHideAside = fullBleedMain;
-  const mainPadLeft = focusHideAside ? asideGap : asideWidth + asideGap * 2;
+  // 专注模式（fullBleedMain）或移动端下隐藏侧栏，主区最大化
+  const focusHideAside = fullBleedMain || isMobile;
+  const mainPadLeft = focusHideAside ? (isMobile ? 0 : asideGap) : asideWidth + asideGap * 2;
+
+  // 移动端底部 Tab 栏: 5 固定 Tab（首页/浏览/+/资产/我的），不再依赖后端菜单
 
   // 过滤活跃通知：仅显示状态为 open 的通知
   const activeNotifications = useMemo(
@@ -417,9 +382,164 @@ export default function AppShell() {
           </div>
         )
       )}
+      {/* ── 移动端: 顶部导航栏 ── */}
+      {isMobile && (
+        <header
+          className="fixed top-0 left-0 right-0 z-100 flex items-center gap-3 px-4"
+          style={{
+            ...glassMobileHeader,
+            height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setMobileDrawerOpen(true)}
+            className="h-9 w-9 inline-flex items-center justify-center rounded-xl"
+            style={{ color: 'var(--text-primary)' }}
+            aria-label="打开导航菜单"
+          >
+            <Menu size={20} />
+          </button>
+          <div className="flex-1 min-w-0 text-center">
+            <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {visibleItems.find((it) => it.key === activeKey)?.label || 'PRD Agent'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setNotificationDialogOpen(true);
+              void loadNotifications({ silent: true });
+            }}
+            className="relative h-9 w-9 inline-flex items-center justify-center rounded-xl"
+            style={{ color: 'var(--text-secondary)' }}
+            aria-label="通知"
+          >
+            <Bell size={18} />
+            {notificationCount > 0 && (
+              <span
+                className="absolute top-1 right-1 h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold"
+                style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+              >
+                {notificationCount > 9 ? '9+' : notificationCount}
+              </span>
+            )}
+          </button>
+        </header>
+      )}
+
+      {/* ── 移动端: 侧滑抽屉导航 ── */}
+      {isMobile && (
+        <MobileDrawer open={mobileDrawerOpen} onOpenChange={setMobileDrawerOpen}>
+          {/* 用户信息 */}
+          <div className="px-4 py-3 flex items-center gap-3">
+            <div className="h-10 w-10 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10">
+              {(() => {
+                const url = resolveAvatarUrl({
+                  username: user?.username,
+                  userType: user?.userType,
+                  botKind: user?.botKind,
+                  avatarFileName: user?.avatarFileName ?? null,
+                  avatarUrl: user?.avatarUrl,
+                });
+                return <img src={url} alt="avatar" className="h-full w-full object-cover" />;
+              })()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                {user?.displayName || 'Admin'}
+              </div>
+              <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                {user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}
+              </div>
+            </div>
+          </div>
+
+          {/* 导航列表 — 核心项 + 折叠更多 */}
+          {(() => {
+            const PRIMARY_COUNT = 5;
+            const primaryItems = visibleItems.slice(0, PRIMARY_COUNT);
+            const secondaryItems = visibleItems.slice(PRIMARY_COUNT);
+            const renderItem = (it: typeof visibleItems[number]) => {
+              const active = it.key === activeKey;
+              return (
+                <button
+                  key={it.key}
+                  type="button"
+                  onClick={() => { navigate(it.key); setMobileDrawerOpen(false); }}
+                  className={cn(
+                    'flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors',
+                    'min-h-[var(--mobile-min-touch,44px)]',
+                  )}
+                  style={{
+                    background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+                    color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  }}
+                >
+                  <span style={{ color: active ? 'var(--accent-gold)' : undefined }}>{it.icon}</span>
+                  <span className="text-sm">{it.label}</span>
+                </button>
+              );
+            };
+            return (
+              <nav className="flex flex-col gap-0.5 px-2 mt-2">
+                {primaryItems.map(renderItem)}
+
+                {secondaryItems.length > 0 && (
+                  <>
+                    <div className="h-px mx-3 my-1.5" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                    <button
+                      type="button"
+                      onClick={() => setMobileMoreExpanded((v) => !v)}
+                      className="flex items-center gap-3 px-3 py-2 rounded-xl min-h-[40px]"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      <ChevronDown
+                        size={16}
+                        className="transition-transform duration-200"
+                        style={{ transform: mobileMoreExpanded ? 'rotate(180deg)' : undefined }}
+                      />
+                      <span className="text-xs">更多</span>
+                      <span className="text-[10px] ml-auto opacity-40">{secondaryItems.length}</span>
+                    </button>
+                    {mobileMoreExpanded && secondaryItems.map(renderItem)}
+                  </>
+                )}
+              </nav>
+            );
+          })()}
+
+          {/* 底部操作 */}
+          <div className="mt-auto px-4 py-4 flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={() => { setAvatarOpen(true); setMobileDrawerOpen(false); }}
+              className="flex items-center gap-3 px-3 py-2.5 rounded-xl min-h-[44px]"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              <Settings size={18} />
+              <span className="text-sm">修改头像</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => { logout(); setMobileDrawerOpen(false); }}
+              className="flex items-center gap-3 px-3 py-2.5 rounded-xl min-h-[44px]"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              <LogOut size={18} />
+              <span className="text-sm">退出登录</span>
+            </button>
+          </div>
+        </MobileDrawer>
+      )}
+
+      {/* ── 移动端: 底部 Tab 栏 (5 固定 Tab: 首页/浏览/+/资产/我的) ── */}
+      {isMobile && <MobileTabBar />}
+
       {/* 主体容器（背景动画已临时移除以消除渲染卡顿） */}
       <div className="relative h-full w-full">
-        {/* 悬浮侧边栏：不贴左边，像“挂着” */}
+        {/* 悬浮侧边栏：不贴左边，像"挂着" (移动端隐藏) */}
         <aside
           className={cn(
             'absolute flex flex-col p-2.5 transition-[width] duration-220 ease-out',
@@ -850,12 +970,18 @@ export default function AppShell() {
 
         <main
           className="relative h-full w-full overflow-auto flex flex-col transition-[padding-left] duration-220 ease-out"
-          style={{ background: 'var(--bg-base)', paddingLeft: mainPadLeft }}
+          style={{
+            background: 'var(--bg-base)',
+            paddingLeft: mainPadLeft,
+            // 移动端留出顶部 header 和底部 tab 栏空间
+            paddingTop: isMobile ? 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))' : undefined,
+            paddingBottom: isMobile ? 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px))' : undefined,
+          }}
         >
           <div
             className={cn(
               'relative w-full flex-1 min-h-0 flex flex-col',
-              fullBleedMain ? 'px-3 py-3' : 'px-5 py-5'
+              isMobile ? 'px-[var(--mobile-padding,16px)] py-3' : fullBleedMain ? 'px-3 py-3' : 'px-5 py-5'
             )}
           >
             <div className="flex-1 min-h-0">

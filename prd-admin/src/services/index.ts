@@ -473,6 +473,16 @@ import {
   handleAdminNotificationReal,
   handleAllAdminNotificationsReal,
 } from '@/services/real/notifications';
+import type {
+  GetMobileFeedContract,
+  GetMobileStatsContract,
+  GetMobileAssetsContract,
+} from '@/services/contracts/mobile';
+import {
+  getMobileFeedReal,
+  getMobileStatsReal,
+  getMobileAssetsReal,
+} from '@/services/real/mobile';
 
 function withAuth<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<ApiResponse<TResult>>
@@ -756,6 +766,11 @@ export const deleteDefectFolder: DeleteDefectFolderContract = withAuth(deleteDef
 export const moveDefectToFolder: MoveDefectToFolderContract = withAuth(moveDefectToFolderReal);
 export const batchMoveDefects: BatchMoveDefectsContract = withAuth(batchMoveDefectsReal);
 export const previewApiLogs: PreviewApiLogsContract = withAuth(previewApiLogsReal);
+
+// ─── Mobile Dashboard ───
+export const getMobileFeed: GetMobileFeedContract = withAuth(getMobileFeedReal);
+export const getMobileStats: GetMobileStatsContract = withAuth(getMobileStatsReal);
+export const getMobileAssets: GetMobileAssetsContract = withAuth(getMobileAssetsReal);
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
 export const automationsService: IAutomationsService = new AutomationsService();

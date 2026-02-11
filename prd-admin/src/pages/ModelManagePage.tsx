@@ -38,6 +38,7 @@ import type { ModelGroupItem } from '@/types/modelGroup';
 import { Activity, Check, ChevronLeft, ChevronRight, Clock, Database, DatabaseZap, Eye, EyeOff, ImagePlus, LayoutGrid, Link2, Loader2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
 import { glassPanel } from '@/lib/glassStyles';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { apiRequest } from '@/services/real/apiClient';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
 import { ModelKpiRail } from '@/components/model/ModelKpiRail';
@@ -240,6 +241,7 @@ function aggregateModelStats(items: LlmModelStatsItem[]): Record<string, Aggrega
 }
 
 export default function ModelManagePage() {
+  const { isMobile } = useBreakpoint();
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1161,9 +1163,9 @@ export default function ModelManagePage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5">
-      <div className={`grid gap-5 flex-1 min-h-0 transition-all ${platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[256px_1fr]'}`}>
-        {/* 左侧：平台列表（导航风格） */}
-        <GlassCard glow className="p-0 overflow-hidden flex flex-col">
+      <div className={`grid gap-5 flex-1 min-h-0 transition-all ${isMobile ? 'grid-cols-1' : platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[256px_1fr]'}`}>
+        {/* 左侧：平台列表（导航风格），移动端隐藏 */}
+        <GlassCard glow className={`p-0 overflow-hidden flex flex-col ${isMobile ? 'hidden' : ''}`}>
           {/* 折叠/展开按钮 */}
           <div className="p-2 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             {!platformSidebarCollapsed && (
@@ -1403,7 +1405,7 @@ export default function ModelManagePage() {
 
         {/* 右侧：平台详情 + 模型列表 */}
         <GlassCard glow variant={selectedPlatform ? 'gold' : 'default'} className="p-0 overflow-hidden flex flex-col">
-          <div className="p-4 flex items-start justify-between gap-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <div className={`p-4 flex ${isMobile ? 'flex-col gap-3' : 'items-start justify-between gap-4'}`} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             <div className="min-w-0">
               <div className="flex items-center gap-2 min-w-0">
                 <div className="text-lg font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -1417,14 +1419,14 @@ export default function ModelManagePage() {
                 </div>
               ) : (
                 <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  从左侧选择一个平台以查看配置与模型列表
+                  {isMobile ? '点击上方"平台管理"选择平台' : '从左侧选择一个平台以查看配置与模型列表'}
                 </div>
               )}
             </div>
 
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="flex items-center gap-2">
-                <div className="relative">
+            <div className={`flex items-center gap-3 ${isMobile ? 'flex-wrap' : 'shrink-0'}`}>
+              <div className={`flex items-center gap-2 ${isMobile ? 'w-full' : ''}`}>
+                <div className={`relative ${isMobile ? 'flex-1' : ''}`}>
                   <Search
                     size={16}
                     className="absolute left-3 top-1/2 -translate-y-1/2"
@@ -1442,8 +1444,8 @@ export default function ModelManagePage() {
                     data-lpignore="true"
                     data-1p-ignore="true"
                     data-bwignore="true"
-                    className="h-10 rounded-[14px] pl-9 pr-4 text-sm outline-none"
-                    style={{ ...inputStyle, width: 260 }}
+                    className={`h-10 rounded-[14px] pl-9 pr-4 text-sm outline-none ${isMobile ? 'w-full' : ''}`}
+                    style={{ ...inputStyle, ...(isMobile ? {} : { width: 260 }) }}
                     placeholder="搜索模型..."
                   />
                 </div>
@@ -1635,7 +1637,7 @@ export default function ModelManagePage() {
                               <div
                                 key={m.id}
                                 className={[
-                                  'px-4 py-3 flex items-center justify-between hover:bg-white/2',
+                                  `px-4 py-3 flex ${isMobile ? 'flex-col gap-2' : 'items-center justify-between'} hover:bg-white/2`,
                                   mainJustSetId === m.id ? 'main-row-flash' : '',
                                 ].join(' ')}
                               >
@@ -1807,7 +1809,7 @@ export default function ModelManagePage() {
                                     })()}
                                   </div>
 
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-2 flex-wrap">
                                     {/* 一键添加到模型池按钮 */}
                                     <button
                                       type="button"
@@ -2021,7 +2023,7 @@ export default function ModelManagePage() {
             )}
           </div>
 
-          <div className="p-3 flex items-center gap-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+          <div className="p-3 flex items-center gap-2 flex-wrap" style={{ borderTop: '1px solid var(--border-subtle)' }}>
             {isAll ? (
               <Button
                 variant="secondary"

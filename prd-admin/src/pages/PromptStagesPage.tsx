@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -202,6 +203,7 @@ function validatePrompts(prompts: PromptEntry[]) {
 export default function PromptStagesPage() {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
+  const { isMobile } = useBreakpoint();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -907,7 +909,7 @@ export default function PromptStagesPage() {
       </style>
 
       {showUserPrompts && (
-        <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}>
+        <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: isMobile ? '1fr' : '320px minmax(0, 1fr)' }}>
         <GlassCard glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
           <div className="flex items-center justify-between gap-3 min-w-0">
             <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>快捷指令</div>
@@ -1046,7 +1048,7 @@ export default function PromptStagesPage() {
         </GlassCard>
 
         <GlassCard glow className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
-          <div className="flex items-start justify-between gap-3">
+          <div className={`flex ${isMobile ? 'flex-col gap-2' : 'items-start justify-between gap-3'}`}>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -1064,9 +1066,11 @@ export default function PromptStagesPage() {
                   ariaLabel="切换角色（PM/DEV/QA）"
                 />
               </div>
-              <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                提示词模板用于"聚焦指令"：点击 Desktop 的提示词按钮会触发注入，输出应严格遵守结构与约束。
-              </div>
+              {!isMobile && (
+                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  提示词模板用于"聚焦指令"：点击 Desktop 的提示词按钮会触发注入，输出应严格遵守结构与约束。
+                </div>
+              )}
               <div className="mt-3 flex items-center gap-2 flex-wrap">
                 <Button
                   variant="secondary"
@@ -1126,27 +1130,48 @@ export default function PromptStagesPage() {
                     恢复默认
                   </Button>
                 </ConfirmTip>
+                {/* 移动端：删除按钮内联到操作行 */}
+                {isMobile && (
+                  <ConfirmTip
+                    title="删除提示词？"
+                    description="将删除当前提示词（不可恢复）。建议先保存导出或复制内容。"
+                    confirmText="确认删除"
+                    onConfirm={() => {
+                      if (stage?.promptKey) removePrompt(stage.promptKey);
+                    }}
+                    disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}
+                    side="top"
+                    align="end"
+                  >
+                    <Button variant="danger" size="sm" disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}>
+                      <Trash2 size={14} />
+                      删除
+                    </Button>
+                  </ConfirmTip>
+                )}
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
-              <ConfirmTip
-                title="删除提示词？"
-                description="将删除当前提示词（不可恢复）。建议先保存导出或复制内容。"
-                confirmText="确认删除"
-                onConfirm={() => {
-                  if (stage?.promptKey) removePrompt(stage.promptKey);
-                }}
-                disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}
-                side="top"
-                align="end"
-              >
-                <Button variant="danger" size="xs" disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}>
-                  <Trash2 size={14} />
-                  删除
-                </Button>
-              </ConfirmTip>
-            </div>
+            {!isMobile && (
+              <div className="flex items-center gap-2 shrink-0">
+                <ConfirmTip
+                  title="删除提示词？"
+                  description="将删除当前提示词（不可恢复）。建议先保存导出或复制内容。"
+                  confirmText="确认删除"
+                  onConfirm={() => {
+                    if (stage?.promptKey) removePrompt(stage.promptKey);
+                  }}
+                  disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}
+                  side="top"
+                  align="end"
+                >
+                  <Button variant="danger" size="xs" disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}>
+                    <Trash2 size={14} />
+                    删除
+                  </Button>
+                </ConfirmTip>
+              </div>
+            )}
           </div>
 
           <div className="mt-4 flex-1 min-h-0 flex flex-col gap-3">
@@ -1225,7 +1250,7 @@ export default function PromptStagesPage() {
       {showSystemPrompts && (
         <div
           className="grid gap-6 flex-1 min-h-0 overflow-x-hidden"
-          style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}
+          style={{ gridTemplateColumns: isMobile ? '1fr' : '320px minmax(0, 1fr)' }}
         >
               <GlassCard glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
             <div className="flex items-center justify-between gap-3 min-w-0">

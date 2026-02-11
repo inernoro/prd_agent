@@ -14,6 +14,8 @@ import type { VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import { Plus, Pencil, Trash2, FileText, SquarePen, FolderOpen, ChevronDown, ChevronRight, FolderPlus, MoveRight, BookOpen } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { cn } from '@/lib/cn';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -98,6 +100,7 @@ type FolderGroup = {
 
 export default function LiteraryAgentWorkspaceListPage() {
   const navigate = useNavigate();
+  const { isMobile } = useBreakpoint();
   const [items, setItems] = useState<VisualAgentWorkspace[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
@@ -421,7 +424,7 @@ export default function LiteraryAgentWorkspaceListPage() {
         </div>
         <div className="px-2 pb-2 flex-1 min-h-0 overflow-hidden">
           <div
-            className="h-full overflow-hidden border rounded-[5px] text-[10px] flex flex-col"
+            className="h-full overflow-hidden border rounded-[5px] text-[12px] md:text-[10px] flex flex-col"
             style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
           >
             <div className="p-1.5 flex-1 overflow-hidden">
@@ -436,6 +439,7 @@ export default function LiteraryAgentWorkspaceListPage() {
                   'flex items-center gap-0.5',
                   'opacity-0 pointer-events-none transition-opacity duration-100',
                   'group-hover:opacity-100 group-hover:pointer-events-auto',
+                  'mobile-show-actions',
                 ].join(' ')}
               >
                 <Button
@@ -509,7 +513,7 @@ export default function LiteraryAgentWorkspaceListPage() {
         </div>
         {/* 文章网格 */}
         {!isCollapsed && (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 pl-6">
+          <div className={cn("grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2", isMobile ? '' : 'pl-6')}>
             {groupItems.map(renderCard)}
           </div>
         )}

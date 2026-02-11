@@ -279,7 +279,7 @@ export default function OpenPlatformPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full min-w-[700px]">
             <thead style={{ background: 'rgba(255,255,255,0.02)' }}>
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium">应用名称</th>

@@ -57,6 +57,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import {
@@ -98,6 +99,7 @@ const HEALTH_STATUS_MAP = {
 };
 
 export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (actions: React.ReactNode) => void }) {
+  const { isMobile } = useBreakpoint();
   const token = useAuthStore((s) => s.token);
   const navigate = useNavigate();
   const [appCallers, setAppCallers] = useState<LLMAppCaller[]>([]);
@@ -866,20 +868,20 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const actionsSetRef = useRef(false);
   const actions = useMemo(() => (
         <>
-          <Button variant="secondary" size="sm" onClick={handleInitDefaultApps}>
+          <Button variant="secondary" size="sm" onClick={handleInitDefaultApps} title="初始化应用">
             <RefreshCw size={14} />
-            初始化应用
+            {!isMobile && '初始化应用'}
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => setShowConfigDialog(true)}>
+          <Button variant="secondary" size="sm" onClick={() => setShowConfigDialog(true)} title="系统配置">
             <Settings size={14} />
-            系统配置
+            {!isMobile && '系统配置'}
           </Button>
-          <Button variant="primary" size="sm" onClick={() => window.location.href = '/mds?tab=pools'}>
+          <Button variant="primary" size="sm" onClick={() => window.location.href = '/mds?tab=pools'} title="新建模型池">
             <Plus size={14} />
-            新建模型池
+            {!isMobile && '新建模型池'}
           </Button>
         </>
-  ), [handleInitDefaultApps]);
+  ), [handleInitDefaultApps, isMobile]);
 
   useEffect(() => {
     if (!actionsSetRef.current && onActionsReady) {

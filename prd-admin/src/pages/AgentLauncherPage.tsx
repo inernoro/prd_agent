@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Search, Sparkles, Loader2 } from 'lucide-react';
 import { ToolCard } from '@/pages/ai-toolbox/components/ToolCard';
 import { useToolboxStore } from '@/stores/toolboxStore';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 
 export default function AgentLauncherPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const { items, itemsLoading, loadItems } = useToolboxStore();
+  const { isMobile } = useBreakpoint();
 
   useEffect(() => {
     loadItems();
@@ -28,7 +30,7 @@ export default function AgentLauncherPage() {
       style={{ background: 'var(--bg-base)' }}
     >
       <div className="flex-1 min-h-0 overflow-auto">
-        <div className="mx-auto w-full px-6 py-12" style={{ maxWidth: '900px' }}>
+        <div className={`mx-auto w-full ${isMobile ? 'px-4 py-6' : 'px-6 py-12'}`} style={{ maxWidth: '900px' }}>
           {/* Greeting */}
           <div className="text-center mb-8">
             <div className="inline-flex items-center gap-2 mb-4">
@@ -49,7 +51,7 @@ export default function AgentLauncherPage() {
           </div>
 
           {/* Search Input */}
-          <div className="relative mb-10 mx-auto" style={{ maxWidth: '600px' }}>
+          <div className={`relative ${isMobile ? 'mb-6' : 'mb-10'} mx-auto`} style={{ maxWidth: '600px' }}>
             <Search
               size={18}
               className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -115,7 +117,7 @@ export default function AgentLauncherPage() {
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div className={`grid ${isMobile ? 'grid-cols-1 gap-2' : 'grid-cols-2 md:grid-cols-3 gap-3'}`}>
               {filteredItems.map((item) => (
                 <ToolCard key={item.id} item={item} />
               ))}

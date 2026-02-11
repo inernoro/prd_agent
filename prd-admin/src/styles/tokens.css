@@ -40,10 +40,24 @@
   --radius-lg: 14px;
   --radius-xl: 16px;
 
-  /* 更“薄”的层级：以描边为主，阴影更克制 */
+  /* 更"薄"的层级：以描边为主，阴影更克制 */
   --shadow-card: 0 2px 14px rgba(0, 0, 0, 0.28);
   --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.36);
   --shadow-gold: 0 10px 22px rgba(214, 178, 106, 0.16);
+
+  /* ── 移动端适配 Token ── */
+  --mobile-padding: 16px;
+  --mobile-padding-sm: 12px;
+  --mobile-radius: 12px;
+  --mobile-header-height: 48px;
+  --mobile-tab-height: 56px;
+  --mobile-min-touch: 44px;
+}
+
+@media (max-width: 479px) {
+  :root {
+    --mobile-padding: 12px;
+  }
 }
 
 html, body {

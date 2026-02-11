@@ -1,6 +1,5 @@
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
-import { TabBar } from '@/components/design/TabBar';
 import { GlassSwitch } from '@/components/design/GlassSwitch';
 import { Dialog } from '@/components/ui/Dialog';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
@@ -10,7 +9,7 @@ import type { ApiResponse } from '@/types/api';
 import { readSseStream } from '@/lib/sse';
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
-import { MessageSquare, Paperclip, Plus, Send, Square } from 'lucide-react';
+import { Paperclip, Plus, Send, Square } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
@@ -1168,18 +1167,14 @@ export default function AiChatPage() {
   );
 
   const chatPanel = (
-    <div className="h-full min-h-0 flex flex-col gap-4">
-      {/* 头部 TabBar */}
-      <TabBar
-        title="PRD Agent"
-        icon={<MessageSquare size={16} />}
-        actions={
-          <>
-            {headerLeftContent}
-            {headerRightActions}
-          </>
-        }
-      />
+    <div className="h-full min-h-0 flex flex-col gap-2">
+      {/* 紧凑操作栏（不再使用独立 TabBar，由父级 PrdAgentTabsPage 提供标签栏） */}
+      <div className="flex items-center justify-between gap-3 flex-wrap px-1">
+        {headerLeftContent}
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {headerRightActions}
+        </div>
+      </div>
 
       {/* 内容区 */}
       <GlassCard className="flex-1 min-h-0 flex flex-col" overflow="hidden" padding="none" glow accentHue={210}>

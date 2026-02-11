@@ -43,6 +43,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 
 function safeIdempotencyKey() {
   const c = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
@@ -245,7 +246,7 @@ function CollectionValidationDialog({ open, onOpenChange, collectionName, onRefr
   return (
     <Dialog open={open} onOpenChange={onOpenChange} title={`字段匹配验证：${collectionName}`} description={data?.hasEntity ? `实体类：${data.entityName}` : '无对应实体类'} maxWidth={1200} content={
       <div className="flex flex-col gap-4 min-h-[400px] max-h-[70vh]">
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="rounded-[10px] p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
             <div className="text-xs" style={{ color: 'var(--text-muted)' }}>扫描文档</div>
             <div className="text-lg font-bold mt-1" style={{ color: 'var(--text-primary)' }}>{fmtNum(data?.scannedDocuments ?? 0)}</div>
@@ -336,6 +337,7 @@ function MappingRow({ mapping, onView, onValidate, onDelete, deleting }: { mappi
 }
 
 export default function DataManagePage() {
+  const { isMobile } = useBreakpoint();
   const [summary, setSummary] = useState<DataSummaryResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -444,7 +446,7 @@ export default function DataManagePage() {
   );
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden overflow-y-auto">
+    <div className={`h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto ${isMobile ? 'gap-4' : 'gap-5'}`}>
       <TabBar title="数据管理" icon={<Database size={16} />} actions={<>
         <Button variant="secondary" size="sm" onClick={() => { void loadSummary(); void loadMappings(); }} disabled={loading || mappingsLoading}><RefreshCw size={14} className={loading || mappingsLoading ? 'animate-spin' : ''} />刷新</Button>
         <Button variant="primary" size="sm" onClick={() => setTransferOpen(true)}><Database size={14} />配置导入/导出</Button>
@@ -479,7 +481,7 @@ export default function DataManagePage() {
             {mappings?.unmappedEntities ? <Badge variant="warning" size="sm">{mappings.unmappedEntities} 无数据</Badge> : null}
           </div>
         </div>
-        <div className="flex items-center gap-3 mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
           <div className="flex-1 flex items-center gap-2 flex-wrap">
             <Button variant={selectedApp === null ? 'primary' : 'secondary'} size="xs" onClick={() => setSelectedApp(null)}>全部</Button>
             {mappings?.appStats.map((app) => (
@@ -490,9 +492,11 @@ export default function DataManagePage() {
           </div>
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-            <input type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="搜索集合或实体..." className="h-[32px] pl-9 pr-3 rounded-[8px] text-sm outline-none transition-all prd-field w-[200px]" />
+            <input type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="搜索集合或实体..." className="h-[32px] pl-9 pr-3 rounded-[8px] text-sm outline-none transition-all prd-field w-full sm:w-[200px]" />
           </div>
         </div>
+        <div className="overflow-x-auto">
+        <div className="min-w-[600px]">
         <div className="grid gap-3 items-center px-3 py-2 rounded-[8px] text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ gridTemplateColumns: '2fr 4fr 6fr', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.03)' }}>
           <div>应用</div><div>实体类</div><div>集合名 / 操作</div>
         </div>
@@ -506,6 +510,8 @@ export default function DataManagePage() {
               <MappingRow key={mapping.collectionName} mapping={mapping} onView={() => setViewerCollection(mapping.collectionName)} onValidate={() => setValidationCollection(mapping.collectionName)} onDelete={() => handleDeleteCollection(mapping.collectionName)} deleting={deletingCollection === mapping.collectionName} />
             ))
           )}
+        </div>
+        </div>
         </div>
       </GlassCard>
 
@@ -527,7 +533,7 @@ export default function DataManagePage() {
           {usersPurgeStep === 1 ? (<>
             <div className="rounded-[12px] p-4" style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(0,0,0,0.08) 100%)', border: '1px solid rgba(255,255,255,0.08)' }}>
               {usersPreviewLoading ? (<div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-muted)' }}><RefreshCw size={14} className="animate-spin" />加载预览中...</div>) : usersPreview ? (
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>总用户</div><div className="text-xl font-bold mt-1" style={{ color: 'var(--text-primary)' }}>{fmtNum(usersPreview.totalUsers)}</div></div>
                   <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>管理员</div><div className="text-xl font-bold mt-1" style={{ color: 'rgba(34,197,94,0.95)' }}>{fmtNum(usersPreview.adminUsers)}</div></div>
                   <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>将删除</div><div className="text-xl font-bold mt-1" style={{ color: 'rgba(239,68,68,0.95)' }}>{fmtNum(usersPreview.willDeleteUsers)}</div></div>
@@ -538,15 +544,19 @@ export default function DataManagePage() {
             {usersPreview?.notes?.length ? <div className="text-xs space-y-1" style={{ color: 'var(--text-muted)' }}>{usersPreview.notes.map((t, idx) => <div key={idx}>- {t}</div>)}</div> : null}
             <div className="space-y-2">
               <div className="flex items-center gap-2"><Users size={14} style={{ color: 'rgba(239,68,68,0.75)' }} /><span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>将删除的用户（示例）</span></div>
-              <div className="rounded-[12px] p-3 space-y-2 max-h-[200px] overflow-y-auto" style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="rounded-[12px] p-3 max-h-[200px] overflow-y-auto overflow-x-auto" style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="min-w-[500px] space-y-2">
                 <div className="grid gap-2 px-3 py-2 rounded-[8px] text-[10px] font-semibold uppercase tracking-wider" style={{ gridTemplateColumns: '1.2fr 1fr 0.6fr 0.6fr 1fr', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.03)' }}><div>账号</div><div>UserId</div><div>Role</div><div>Status</div><div>CreatedAt</div></div>
                 {usersPreviewLoading ? <div className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</div> : usersPreview?.sampleWillDeleteUsers?.length ? usersPreview.sampleWillDeleteUsers.map((u) => <UserRow key={u.userId} u={u} />) : <div className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>无（可能只有管理员账号）</div>}
+                </div>
               </div>
             </div>
             <div className="space-y-2">
               <div className="flex items-center gap-2"><Users size={14} style={{ color: 'rgba(34,197,94,0.75)' }} /><span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>将保留的管理员（示例）</span></div>
-              <div className="rounded-[12px] p-3 space-y-2 max-h-[150px] overflow-y-auto" style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="rounded-[12px] p-3 max-h-[150px] overflow-y-auto overflow-x-auto" style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="min-w-[500px] space-y-2">
                 {usersPreview?.sampleWillKeepAdmins?.length ? usersPreview.sampleWillKeepAdmins.map((u) => <UserRow key={u.userId} u={u} />) : <div className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>无管理员账号（异常）</div>}
+                </div>
               </div>
             </div>
           </>) : (<>
