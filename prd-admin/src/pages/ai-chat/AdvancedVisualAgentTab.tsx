@@ -8483,11 +8483,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           imageWidth={inpaintTarget.naturalW || inpaintTarget.w || 1024}
           imageHeight={inpaintTarget.naturalH || inpaintTarget.h || 1024}
           onCancel={() => setInpaintTarget(null)}
-          onConfirm={(maskDataUri) => {
+          onConfirm={async (maskDataUri) => {
             const target = inpaintTarget;
             setInpaintTarget(null);
             // 弹出提示词输入
-            const desc = window.prompt('请输入重绘区域的描述（如：将这里替换为蓝色的天空）');
+            const desc = await systemDialog.prompt({
+              title: '局部重绘',
+              message: '请输入重绘区域的描述',
+              placeholder: '如：将这里替换为蓝色的天空',
+            });
             if (!desc?.trim()) {
               toast.error('请输入重绘描述');
               return;
@@ -8511,7 +8515,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           }
 
           // 弹出提示词输入
-          const desc = window.prompt('请描述你想基于这张草图生成的图片（如：一只猫坐在窗台上，水彩风格）');
+          const desc = await systemDialog.prompt({
+            title: '草图生成',
+            message: '请描述你想基于这张草图生成的图片',
+            placeholder: '如：一只猫坐在窗台上，水彩风格',
+          });
           if (!desc?.trim()) {
             toast.error('请输入生成描述');
             return;
