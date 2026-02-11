@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { glassDropdown } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -384,7 +385,7 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
                           </DropdownMenu.Trigger>
                           <DropdownMenu.Portal>
                             <DropdownMenu.Content align="end" sideOffset={4} className="z-50 rounded-lg p-1 min-w-[100px]"
-                              style={{ background: 'rgba(30,30,35,0.95)', border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(20px)' }}>
+                              style={{ ...glassDropdown }}>
                               <DropdownMenu.Item className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10"
                                 onSelect={() => setEditingWorkflow(wf)}><Pencil size={12} />编辑</DropdownMenu.Item>
                               <DropdownMenu.Item className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10 text-red-400"
@@ -501,7 +502,7 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
                         </DropdownMenu.Trigger>
                         <DropdownMenu.Portal>
                           <DropdownMenu.Content align="end" sideOffset={4} className="z-50 rounded-lg p-1 min-w-[100px]"
-                            style={{ background: 'rgba(30,30,35,0.95)', border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(20px)' }}>
+                            style={{ ...glassDropdown }}>
                             <DropdownMenu.Item className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10"
                               onSelect={() => setEditingMapping(m)}><Pencil size={12} />编辑</DropdownMenu.Item>
                             <DropdownMenu.Item className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10 text-red-400"

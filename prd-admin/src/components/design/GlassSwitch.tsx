@@ -1,5 +1,6 @@
 import { cn } from '@/lib/cn';
 import { useEffect, useRef, useState } from 'react';
+import { glassSwitchTrack } from '@/lib/glassStyles';
 
 export interface GlassSwitchOption {
   key: string;
@@ -122,12 +123,7 @@ export function GlassSwitch({
         fullWidth && 'w-full',
         className
       )}
-      style={{
-        background: 'rgba(255, 255, 255, 0.04)',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-        backdropFilter: 'blur(12px) saturate(150%)',
-        WebkitBackdropFilter: 'blur(12px) saturate(150%)',
-      }}
+      style={glassSwitchTrack}
     >
       {/* 滑动指示器 */}
       <div

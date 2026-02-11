@@ -1,4 +1,5 @@
 import { GlassCard } from '@/components/design/GlassCard';
+import { glassPanel, glassToolbar, glassInputArea } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
@@ -459,11 +460,8 @@ function FloatingToolbar(props: {
     <div
       className="rounded-2xl p-1.5 flex flex-col gap-1 bg-transparent"
       style={{
+        ...glassToolbar,
         background: 'rgba(18, 18, 22, 0.6)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        backdropFilter: 'blur(16px)',
-        WebkitBackdropFilter: 'blur(16px)',
-        boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
       }}
     >
       <ToolbarButton
@@ -657,10 +655,9 @@ function QuickInputBox(props: {
       <div
         className="rounded-[20px] overflow-hidden cursor-text transition-all duration-300"
         style={{
+          ...glassInputArea,
           // 暖褐色调磨砂玻璃，与金色主题协调
           background: 'rgba(28, 24, 20, 0.82)',
-          backdropFilter: 'blur(24px) saturate(1.4)',
-          WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
           // 聚焦时边框变亮 - 使用柔和的琥珀金
           border: isFocused
             ? '1px solid rgba(212, 170, 85, 0.5)'
@@ -828,11 +825,7 @@ function QuickInputBox(props: {
                         style={{
                           outline: 'none',
                           zIndex: 90,
-                          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          ...glassPanel,
                         }}
                       >
                         {(['1k', '2k', '4k'] as const).map((tier) => {
@@ -923,11 +916,7 @@ function QuickInputBox(props: {
                         style={{
                           outline: 'none',
                           zIndex: 90,
-                          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          ...glassPanel,
                         }}
                       >
                         {ASPECT_OPTIONS.map((opt) => {

@@ -1,4 +1,5 @@
 import { cn } from '@/lib/cn';
+import { glassPanel } from '@/lib/glassStyles';
 
 export function selectSizeClass(uiSize: 'sm' | 'md') {
   return uiSize === 'sm' ? 'h-9 rounded-[12px] text-sm' : 'h-10 rounded-[14px] text-[13px]';
@@ -39,11 +40,7 @@ export const selectTriggerStyle: React.CSSProperties = {
 export const selectContentClass = 'z-[120] rounded-[14px] overflow-hidden';
 
 export const selectContentStyle: React.CSSProperties = {
-  background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-  border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-  boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-  backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-  WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+  ...glassPanel,
   minWidth: 'var(--radix-select-trigger-width)',
   maxHeight: 'var(--radix-select-content-available-height)',
 };

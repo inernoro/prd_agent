@@ -15,6 +15,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
+import { glassPanel } from '@/lib/glassStyles';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 
 type UserRow = {
@@ -905,11 +906,7 @@ export default function UsersPage() {
                             className="rounded-[10px] p-1 min-w-[160px]"
                             style={{
                               zIndex: 90,
-                              background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                              boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                              backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                              WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                              ...glassPanel,
                             }}
                           >
                             {/* 状态切换 */}
@@ -944,11 +941,7 @@ export default function UsersPage() {
                                   className="rounded-[10px] p-1 min-w-[100px]"
                                   style={{
                                     zIndex: 91,
-                                    background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                                    border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                                    boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                                    backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                                    WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                                    ...glassPanel,
                                   }}
                                 >
                                   {(['PM', 'DEV', 'QA', 'ADMIN'] as const).map((r) => (

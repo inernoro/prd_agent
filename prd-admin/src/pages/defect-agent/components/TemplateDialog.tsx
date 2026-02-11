@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
+import { glassPanel } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { useDefectStore } from '@/stores/defectStore';
 import {
@@ -148,11 +149,7 @@ export function TemplateDialog() {
       <div
         className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[480px] max-h-[80vh] overflow-hidden rounded-2xl flex flex-col"
         style={{
-          background:
-            'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+          ...glassPanel,
           boxShadow:
             '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
         }}

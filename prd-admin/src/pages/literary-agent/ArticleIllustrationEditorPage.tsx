@@ -1,3 +1,4 @@
+import { glassBadge, glassFloatingButton } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
@@ -2091,9 +2092,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <div 
                 className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none"
                 style={{
+                  ...glassBadge,
                   background: 'rgba(147, 197, 253, 0.15)',
                   border: '2px dashed rgba(147, 197, 253, 0.6)',
-                  backdropFilter: 'blur(4px)',
                 }}
               >
                 <div className="text-center">
@@ -2279,8 +2280,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <div
                     className="sticky top-2 float-right z-10 flex items-center gap-0.5 rounded-lg px-1.5 py-1"
                     style={{
+                      ...glassFloatingButton,
                       background: 'rgba(0,0,0,0.55)',
-                      backdropFilter: 'blur(10px)',
                       border: '1px solid rgba(255,255,255,0.1)',
                     }}
                   >
@@ -2768,9 +2769,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           <button
                             className="p-2 rounded-lg"
                             style={{
+                              ...glassFloatingButton,
                               background: 'rgba(0, 0, 0, 0.6)',
                               border: '1px solid rgba(255, 255, 255, 0.2)',
-                              backdropFilter: 'blur(10px)',
                             }}
                             onClick={async () => {
                               try {
@@ -2787,9 +2788,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           <button
                             className="p-2 rounded-lg"
                             style={{
+                              ...glassFloatingButton,
                               background: 'rgba(0, 0, 0, 0.6)',
                               border: '1px solid rgba(255, 255, 255, 0.2)',
-                              backdropFilter: 'blur(10px)',
                             }}
                             onClick={async () => {
                               try {
@@ -3878,8 +3879,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           <div
                             className="w-1/3 aspect-square rounded-xl flex items-center justify-center"
                             style={{
+                              ...glassBadge,
                               background: 'rgba(0, 0, 0, 0.6)',
-                              backdropFilter: 'blur(4px)',
                             }}
                           >
                             <Upload size={32} style={{ color: 'rgba(255, 255, 255, 0.9)' }} />

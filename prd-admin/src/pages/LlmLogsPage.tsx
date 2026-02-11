@@ -11,6 +11,7 @@ import type { LlmLogsMetaUser, LlmLogsMetaRequestPurpose } from '@/services/cont
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { AppCallerKeyIcon } from '@/lib/appCallerUtils';
+import { glassPanel } from '@/lib/glassStyles';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -1646,11 +1647,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                   className="rounded-[12px] p-2 min-w-[260px] max-w-[520px]"
                                   style={{
                                     zIndex: 120,
-                                    background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                                    border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                                    boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                                    backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                                    WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                                    ...glassPanel,
                                   }}
                                   onClick={(e) => e.stopPropagation()}
                                 >

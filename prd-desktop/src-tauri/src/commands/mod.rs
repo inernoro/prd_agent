@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod attachment;
 pub mod auth;
 pub mod branding;
 pub mod config;
@@ -10,4 +11,5 @@ pub mod intent;
 pub mod prd_comments;
 pub mod preview_ask_history;
 pub mod session;
+pub mod skill;
 pub mod updater;

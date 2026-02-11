@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import { glassDropdown } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -464,9 +465,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                               sideOffset={4}
                               className="z-50 rounded-lg p-1 min-w-[140px]"
                               style={{
-                                background: 'rgba(30,30,35,0.95)',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                backdropFilter: 'blur(20px)',
+                                ...glassDropdown,
                               }}
                             >
                               <DropdownMenu.Item

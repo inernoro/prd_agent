@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { glassPopoverCompact } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Switch } from '@/components/design/Switch';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -693,8 +694,9 @@ export default function AutomationRulesPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}
           onClick={(e) => { if (e.target === e.currentTarget) setTriggerRuleId(null); }}>
           <div className="w-[400px] rounded-[16px] p-5 space-y-3" style={{
+            ...glassPopoverCompact,
             background: 'rgba(25,25,30,0.95)', border: '1px solid rgba(255,255,255,0.1)',
-            backdropFilter: 'blur(20px)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
           }}>
             <div className="text-sm font-semibold">手动触发</div>
             <input value={triggerTitle} onChange={(e) => setTriggerTitle(e.target.value)}

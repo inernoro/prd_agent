@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
+import { glassPanel } from '@/lib/glassStyles';
 import { detectTierFromSize, detectAspectFromSize } from '@/lib/imageAspectOptions';
 import type { SizesByResolution } from '@/lib/imageAspectOptions';
 
@@ -122,12 +123,8 @@ export function ImageSizePicker({ sizesByResolution, value, onChange, disabled }
           sideOffset={10}
           className="z-50 rounded-[16px] p-3"
           style={{
+            ...glassPanel,
             width: 280,
-            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
           }}
           onPointerDownOutside={(e) => e.preventDefault()}
           onInteractOutside={(e) => e.preventDefault()}

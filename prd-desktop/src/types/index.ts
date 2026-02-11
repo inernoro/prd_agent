@@ -177,6 +177,65 @@ export interface DefectStats {
   bySeverity: Record<string, number>;
 }
 
+// ━━━ 附件类型 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+export interface AttachmentInfo {
+  attachmentId: string;
+  url: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
+// ━━━ 技能类型（统一模型，替代 PromptItem + SkillItem） ━━━━━━━━
+export type ContextScope = 'all' | 'current' | 'prd' | 'none';
+export type OutputMode = 'chat' | 'download' | 'clipboard';
+export type SkillVisibility = 'system' | 'public' | 'personal';
+
+export interface SkillParameter {
+  key: string;
+  label: string;
+  type: 'text' | 'select' | 'number' | 'boolean';
+  defaultValue?: string;
+  options?: { value: string; label: string }[];
+  required: boolean;
+}
+
+export interface SkillInputConfig {
+  contextScope: ContextScope;
+  acceptsUserInput: boolean;
+  userInputPlaceholder?: string;
+  acceptsAttachments: boolean;
+  parameters: SkillParameter[];
+}
+
+export interface SkillOutputConfig {
+  mode: OutputMode;
+  fileNameTemplate?: string;
+  echoToChat: boolean;
+}
+
+/** 统一技能（服务端返回，不含 execution 配置） */
+export interface Skill {
+  skillKey: string;
+  title: string;
+  description: string;
+  icon?: string;
+  category: string;
+  tags: string[];
+  roles: string[];
+  order: number;
+  visibility: SkillVisibility;
+  input: SkillInputConfig;
+  output: SkillOutputConfig;
+  isEnabled: boolean;
+  isBuiltIn: boolean;
+  usageCount: number;
+}
+
+export interface SkillsResponse {
+  skills: Skill[];
+}
+
 export interface StreamEvent {
   type: 'start' | 'delta' | 'done' | 'error' | 'blockStart' | 'blockDelta' | 'blockEnd' | 'phase' | 'citations';
   messageId?: string;
