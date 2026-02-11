@@ -108,6 +108,14 @@ function IndexPage() {
   return <AgentLauncherPage />;
 }
 
+/** /executive 路由：移动端 inline 渲染 MobileHomePage，桌面端渲染总裁面板。
+ *  不使用 Navigate 重定向，避免闪烁。 */
+function ExecutivePage() {
+  const { isMobile } = useBreakpoint();
+  if (isMobile) return <MobileHomePage />;
+  return <ExecutiveDashboardPage />;
+}
+
 export default function App() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const setPermissions = useAuthStore((s) => s.setPermissions);
@@ -248,7 +256,7 @@ export default function App() {
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
-        <Route path="executive" element={<RequirePermission perm="executive.read"><ExecutiveDashboardPage /></RequirePermission>} />
+        <Route path="executive" element={<RequirePermission perm="access"><ExecutivePage /></RequirePermission>} />
         {/* 移动端专属路由 */}
         <Route path="my-assets" element={<RequirePermission perm="access"><MobileAssetsPage /></RequirePermission>} />
         <Route path="profile" element={<RequirePermission perm="access"><MobileProfilePage /></RequirePermission>} />
