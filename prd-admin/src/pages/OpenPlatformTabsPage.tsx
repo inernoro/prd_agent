@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { TabBar } from '@/components/design/TabBar';
-import { Mail, Webhook, ListChecks, Plug, ScrollText } from 'lucide-react';
+import { Mail, Webhook, ListChecks, Plug, ScrollText, BookOpen } from 'lucide-react';
 
 // 子页面组件
 import EmailChannelPanel from './open-platform/EmailChannelPanel';
@@ -9,6 +9,7 @@ import ChannelsPanel from './open-platform/ChannelsPanel';
 import AppsPanel from './open-platform/AppsPanel';
 import TasksPanel from './open-platform/TasksPanel';
 import LogsPanel from './open-platform/LogsPanel';
+import TutorialEmailPanel from './open-platform/TutorialEmailPanel';
 
 /**
  * 开放平台 - Tab 容器页面
@@ -34,6 +35,7 @@ export default function OpenPlatformTabsPage() {
   const [tasksActions, setTasksActions] = useState<React.ReactNode>(null);
   const [appsActions, setAppsActions] = useState<React.ReactNode>(null);
   const [logsActions, setLogsActions] = useState<React.ReactNode>(null);
+  const [tutorialActions, setTutorialActions] = useState<React.ReactNode>(null);
 
   // 同步 URL 参数到状态
   useEffect(() => {
@@ -55,6 +57,7 @@ export default function OpenPlatformTabsPage() {
       case 'tasks': return tasksActions;
       case 'apps': return appsActions;
       case 'logs': return logsActions;
+      case 'tutorial': return tutorialActions;
       default: return null;
     }
   };
@@ -68,6 +71,7 @@ export default function OpenPlatformTabsPage() {
           { key: 'tasks', label: '任务监控', icon: <ListChecks size={14} /> },
           { key: 'apps', label: 'API 应用', icon: <Plug size={14} /> },
           { key: 'logs', label: '调用日志', icon: <ScrollText size={14} /> },
+          { key: 'tutorial', label: '教程邮件', icon: <BookOpen size={14} /> },
         ]}
         activeKey={activeTab}
         onChange={handleTabChange}
@@ -80,6 +84,7 @@ export default function OpenPlatformTabsPage() {
         {activeTab === 'tasks' && <TasksPanel onActionsReady={setTasksActions} />}
         {activeTab === 'apps' && <AppsPanel onActionsReady={setAppsActions} />}
         {activeTab === 'logs' && <LogsPanel onActionsReady={setLogsActions} />}
+        {activeTab === 'tutorial' && <TutorialEmailPanel onActionsReady={setTutorialActions} />}
       </div>
     </div>
   );

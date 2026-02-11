@@ -196,6 +196,10 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailHandler, PrdAgent.Infr
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailChannelService, PrdAgent.Infrastructure.Services.EmailChannelService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.EmailChannelWorker>();
 
+// 教程邮件服务
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.ITutorialEmailService, PrdAgent.Infrastructure.Services.TutorialEmailService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.TutorialEmailWorker>();
+
 // 应用注册中心服务
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAppRegistryService, PrdAgent.Infrastructure.Services.AppRegistryService>();
 

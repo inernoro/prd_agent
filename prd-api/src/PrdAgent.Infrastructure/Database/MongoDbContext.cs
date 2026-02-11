@@ -138,6 +138,12 @@ public class MongoDbContext
     // 模型中继 (Exchange)
     public IMongoCollection<ModelExchange> ModelExchanges => _database.GetCollection<ModelExchange>("model_exchanges");
 
+    // Tutorial Email 教程邮件
+    public IMongoCollection<TutorialEmailSequence> TutorialEmailSequences => _database.GetCollection<TutorialEmailSequence>("tutorial_email_sequences");
+    public IMongoCollection<TutorialEmailTemplate> TutorialEmailTemplates => _database.GetCollection<TutorialEmailTemplate>("tutorial_email_templates");
+    public IMongoCollection<TutorialEmailAsset> TutorialEmailAssets => _database.GetCollection<TutorialEmailAsset>("tutorial_email_assets");
+    public IMongoCollection<TutorialEmailEnrollment> TutorialEmailEnrollments => _database.GetCollection<TutorialEmailEnrollment>("tutorial_email_enrollments");
+
     private void CreateIndexes()
     {
         static bool IsIndexConflict(MongoCommandException ex)
@@ -834,6 +840,48 @@ public class MongoDbContext
                     Name = "uniq_exchange_model_alias",
                     Unique = true
                 }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // ========== Tutorial Email 教程邮件索引 ==========
+
+        // TutorialEmailSequences：按 sequenceKey 唯一
+        try
+        {
+            TutorialEmailSequences.Indexes.CreateOne(new CreateIndexModel<TutorialEmailSequence>(
+                Builders<TutorialEmailSequence>.IndexKeys.Ascending(x => x.SequenceKey),
+                new CreateIndexOptions { Name = "uniq_tutorial_email_sequences_key", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // TutorialEmailTemplates：按 createdAt 排序
+        TutorialEmailTemplates.Indexes.CreateOne(new CreateIndexModel<TutorialEmailTemplate>(
+            Builders<TutorialEmailTemplate>.IndexKeys.Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_tutorial_email_templates_created" }));
+
+        // TutorialEmailAssets：按 uploadedAt 排序；按 tags 多值索引
+        TutorialEmailAssets.Indexes.CreateOne(new CreateIndexModel<TutorialEmailAsset>(
+            Builders<TutorialEmailAsset>.IndexKeys.Descending(x => x.UploadedAt),
+            new CreateIndexOptions { Name = "idx_tutorial_email_assets_uploaded" }));
+        TutorialEmailAssets.Indexes.CreateOne(new CreateIndexModel<TutorialEmailAsset>(
+            Builders<TutorialEmailAsset>.IndexKeys.Ascending(x => x.Tags),
+            new CreateIndexOptions { Name = "idx_tutorial_email_assets_tags" }));
+
+        // TutorialEmailEnrollments：按 status + nextSendAt（Worker 轮询）；按 userId + sequenceKey 唯一
+        TutorialEmailEnrollments.Indexes.CreateOne(new CreateIndexModel<TutorialEmailEnrollment>(
+            Builders<TutorialEmailEnrollment>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.NextSendAt),
+            new CreateIndexOptions { Name = "idx_tutorial_email_enrollments_status_next" }));
+        try
+        {
+            TutorialEmailEnrollments.Indexes.CreateOne(new CreateIndexModel<TutorialEmailEnrollment>(
+                Builders<TutorialEmailEnrollment>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.SequenceKey),
+                new CreateIndexOptions { Name = "uniq_tutorial_email_enrollments_user_seq", Unique = true }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
         {

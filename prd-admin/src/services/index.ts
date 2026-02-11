@@ -921,3 +921,34 @@ export const validateCollection: ValidateCollectionContract = withAuth(validateC
 export const deleteCollection: DeleteCollectionContract = withAuth(deleteCollectionReal);
 export const deleteDocument: DeleteDocumentContract = withAuth(deleteDocumentReal);
 export const deleteAppData: DeleteAppDataContract = withAuth(deleteAppDataReal);
+
+// Tutorial Email 教程邮件
+export {
+  listTutorialEmailSequences,
+  getTutorialEmailSequence,
+  createTutorialEmailSequence,
+  updateTutorialEmailSequence,
+  deleteTutorialEmailSequence,
+  listTutorialEmailTemplates,
+  getTutorialEmailTemplate,
+  createTutorialEmailTemplate,
+  updateTutorialEmailTemplate,
+  deleteTutorialEmailTemplate,
+  listTutorialEmailAssets,
+  createTutorialEmailAsset,
+  deleteTutorialEmailAsset,
+  listTutorialEmailEnrollments,
+  enrollTutorialEmailUser,
+  unsubscribeTutorialEmailEnrollment,
+  batchEnrollTutorialEmail,
+  testSendTutorialEmail,
+  generateTutorialEmailTemplate,
+  quickSendTutorialEmail,
+} from '@/services/real/tutorialEmail';
+export type {
+  TutorialEmailSequence,
+  TutorialEmailTemplate,
+  TutorialEmailAsset,
+  TutorialEmailEnrollment,
+  TutorialEmailStep,
+} from '@/services/real/tutorialEmail';
