@@ -86,8 +86,8 @@ export function TaskDetailDrawer({
         <div
           className="sticky top-0 z-10 p-4 border-b"
           style={{
-            background: 'rgba(255,255,255,0.02)',
-            borderColor: 'rgba(255,255,255,0.08)',
+            background: 'var(--list-item-bg)',
+            borderColor: 'var(--border-subtle)',
           }}
         >
           <div className="flex items-center justify-between">
@@ -176,8 +176,8 @@ export function TaskDetailDrawer({
             <div
               className="p-3 rounded-lg text-sm whitespace-pre-wrap"
               style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                background: 'var(--nested-block-bg)',
+                border: '1px solid var(--border-subtle)',
                 maxHeight: '200px',
                 overflow: 'auto',
               }}
@@ -194,8 +194,8 @@ export function TaskDetailDrawer({
                 <div
                   className="p-3 rounded-lg text-xs font-mono"
                   style={{
-                    background: 'rgba(0,0,0,0.3)',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'var(--nested-block-bg)',
+                    border: '1px solid var(--border-subtle)',
                   }}
                 >
                   <pre className="overflow-auto">{JSON.stringify(task.parsedParameters, null, 2)}</pre>
@@ -215,8 +215,8 @@ export function TaskDetailDrawer({
                       key={att.id}
                       className="flex items-center justify-between p-3 rounded-lg"
                       style={{
-                        background: 'rgba(255,255,255,0.03)',
-                        border: '1px solid rgba(255,255,255,0.08)',
+                        background: 'var(--nested-block-bg)',
+                        border: '1px solid var(--border-subtle)',
                       }}
                     >
                       <div>
@@ -344,8 +344,8 @@ export function TaskDetailDrawer({
                       key={idx}
                       className="p-3 rounded-lg"
                       style={{
-                        background: 'rgba(255,255,255,0.03)',
-                        border: '1px solid rgba(255,255,255,0.08)',
+                        background: 'var(--nested-block-bg)',
+                        border: '1px solid var(--border-subtle)',
                       }}
                     >
                       <div className="flex items-center justify-between">
@@ -353,7 +353,7 @@ export function TaskDetailDrawer({
                         <span className="text-xs text-muted-foreground">{fmtDate(resp.sentAt)}</span>
                       </div>
                       {resp.messageId && (
-                        <div className="text-xs text-muted-foreground mt-2 font-mono px-2 py-1 rounded" style={{ background: 'rgba(0,0,0,0.2)' }}>
+                        <div className="text-xs text-muted-foreground mt-2 font-mono px-2 py-1 rounded" style={{ background: 'var(--nested-block-bg)' }}>
                           {resp.messageId}
                         </div>
                       )}
@@ -375,8 +375,8 @@ export function TaskDetailDrawer({
                 <div
                   className="p-3 rounded-lg text-xs font-mono"
                   style={{
-                    background: 'rgba(0,0,0,0.3)',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'var(--nested-block-bg)',
+                    border: '1px solid var(--border-subtle)',
                   }}
                 >
                   <pre className="overflow-auto">{JSON.stringify(task.metadata, null, 2)}</pre>

@@ -62,7 +62,7 @@ const inputCls =
   + ' hover:border-white/20 focus:ring-2 focus:ring-white/10';
 const inputStyle: React.CSSProperties = {
   background: 'var(--bg-input)',
-  border: '1px solid rgba(255,255,255,0.12)',
+  border: '1px solid var(--border-default)',
   color: 'var(--text-primary)',
 };
 
@@ -152,12 +152,12 @@ function UserMultiSelect({ allUsers, selectedIds, onChange }: {
       </button>
       {open && (
         <div className="absolute z-[120] mt-2 w-full rounded-[14px] overflow-hidden" style={selectContentStyle}>
-          <div className="p-2 border-b" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+          <div className="p-2 border-b" style={{ borderColor: 'var(--border-default)' }}>
             <div className="relative">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
               <input ref={searchRef} type="text" value={search} onChange={(e) => setSearch(e.target.value)}
                 placeholder="搜索用户..." className="w-full pl-8 pr-3 h-8 rounded-[8px] text-sm outline-none"
-                style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
               />
             </div>
           </div>
@@ -168,7 +168,7 @@ function UserMultiSelect({ allUsers, selectedIds, onChange }: {
               <span className="flex-1">全局通知（所有管理员）</span>
               {selectedIds.length === 0 && <Check size={12} className="text-green-400 flex-shrink-0" />}
             </button>
-            <div className="mx-2 my-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+            <div className="mx-2 my-1" style={{ borderTop: '1px solid var(--nested-block-border)' }} />
             {filtered.map((user) => (
               <button key={user.userId} type="button" onClick={() => toggle(user.userId)}
                 className={selectItemClass + ' w-full text-left flex items-center gap-2'}>
@@ -430,9 +430,9 @@ export default function AutomationRulesPage() {
         <div className="grid h-full" style={{ gridTemplateColumns: isMobile ? '1fr' : '280px minmax(0, 1fr)', gridTemplateRows: isMobile ? 'auto minmax(0, 1fr)' : undefined }}>
 
           {/* ── 左侧：规则列表 ── */}
-          <div className="min-h-0 flex flex-col" style={{ borderRight: isMobile ? 'none' : '1px solid rgba(255,255,255,0.06)', borderBottom: isMobile ? '1px solid rgba(255,255,255,0.06)' : 'none', maxHeight: isMobile ? '40vh' : undefined, height: isMobile ? 'auto' : '100%' }}>
+          <div className="min-h-0 flex flex-col" style={{ borderRight: isMobile ? 'none' : '1px solid var(--nested-block-border)', borderBottom: isMobile ? '1px solid var(--nested-block-border)' : 'none', maxHeight: isMobile ? '40vh' : undefined, height: isMobile ? 'auto' : '100%' }}>
             {/* 列表头 */}
-            <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--nested-block-border)' }}>
               <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
                 自动化规则 ({rules.length})
               </span>
@@ -508,7 +508,7 @@ export default function AutomationRulesPage() {
                       <div className="flex items-center gap-1.5 mt-1 ml-[21px]">
                         {rule.actions.map((a, i) => (
                           <span key={i} className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full"
-                            style={{ background: 'rgba(255,255,255,0.06)' }}>
+                            style={{ background: 'var(--bg-input-hover)' }}>
                             {actionTypeIcons[a.type]}
                             {actionTypeLabels[a.type]}
                           </span>
@@ -534,7 +534,7 @@ export default function AutomationRulesPage() {
             ) : (
               <>
                 {/* 编辑器头部 */}
-                <div className="flex items-center gap-3 px-5 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="flex items-center gap-3 px-5 py-3" style={{ borderBottom: '1px solid var(--nested-block-border)' }}>
                   <span className="flex-shrink-0" style={{ color: edit.triggerType === 'incoming_webhook' ? 'rgba(34,197,94,0.7)' : 'rgba(59,130,246,0.7)' }}>
                     {triggerTypeIcon[edit.triggerType]}
                   </span>
@@ -625,7 +625,7 @@ export default function AutomationRulesPage() {
                     <div className="space-y-2">
                       {edit.actions.map((action, idx) => (
                         <div key={idx} className="p-3 rounded-[12px] space-y-2"
-                          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                          style={{ background: 'var(--list-item-bg)', border: '1px solid var(--border-subtle)' }}>
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-medium flex items-center gap-1.5">
                               {actionTypeIcons[action.type]}
@@ -670,7 +670,7 @@ export default function AutomationRulesPage() {
                 </div>
 
                 {/* 底部操作栏 */}
-                <div className="flex flex-wrap items-center gap-2 px-5 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="flex flex-wrap items-center gap-2 px-5 py-3" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
                   <Button size="sm" onClick={handleSave} disabled={saving}>
                     {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                     {edit.id ? '保存' : '创建'}

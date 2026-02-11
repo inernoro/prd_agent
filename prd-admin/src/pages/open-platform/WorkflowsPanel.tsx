@@ -156,7 +156,7 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
     <div className="h-full overflow-auto p-1">
       <GlassCard glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <div className="p-4 border-b border-white/10" style={{ background: 'var(--list-item-bg)' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <FileText size={18} className="text-muted-foreground" />
@@ -196,7 +196,7 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
                     <Tooltip.Portal>
                       <Tooltip.Content
                         className="px-3 py-2 text-sm rounded-lg max-w-xs"
-                        style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid rgba(255,255,255,0.1)' }}
+                        style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid var(--border-default)' }}
                         sideOffset={5}
                       >
                         配置不同的邮箱前缀，发送到对应地址的邮件会触发相应的处理流程
@@ -223,7 +223,7 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
                   <div
                     key={wf.id}
                     className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/[0.03]"
-                    style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+                    style={{ border: '1px solid var(--nested-block-border)' }}
                   >
                     <div className="flex items-center gap-4 flex-1 min-w-0">
                       <div className="flex-1 min-w-0">

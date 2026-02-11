@@ -369,7 +369,7 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
               ) : (
                 <div className="space-y-2">
                   {workflows.map((wf) => (
-                    <div key={wf.id} className="flex items-center justify-between p-3 rounded-lg" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div key={wf.id} className="flex items-center justify-between p-3 rounded-lg" style={{ border: '1px solid var(--nested-block-border)' }}>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-sm">{wf.displayName}</span>
@@ -483,7 +483,7 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
               ) : (
                 <div className="space-y-2">
                   {mappings.map((m) => (
-                    <div key={m.id} className="flex items-center justify-between p-3 rounded-lg" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div key={m.id} className="flex items-center justify-between p-3 rounded-lg" style={{ border: '1px solid var(--nested-block-border)' }}>
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.1)' }}>
                           <Mail size={14} className="text-blue-400" />

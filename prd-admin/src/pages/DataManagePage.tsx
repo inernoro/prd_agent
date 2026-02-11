@@ -264,7 +264,7 @@ function CollectionValidationDialog({ open, onOpenChange, collectionName, onRefr
             <div className="text-lg font-bold mt-1" style={{ color: 'rgba(59,130,246,0.95)' }}>{data?.entityFields.length ?? 0}</div>
           </div>
         </div>
-        <div className="flex-1 overflow-auto rounded-[12px]" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="flex-1 overflow-auto rounded-[12px]" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
           {loading ? (
             <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-muted)' }}><RefreshCw size={20} className="animate-spin mr-2" />扫描中...</div>
           ) : !data?.hasEntity ? (
@@ -284,13 +284,13 @@ function CollectionValidationDialog({ open, onOpenChange, collectionName, onRefr
                   <div className="space-y-1 mb-2">
                     {item.issues.map((issue, i) => (<div key={i} className="text-xs flex items-center gap-2" style={{ color: 'rgba(239,68,68,0.9)' }}><AlertTriangle size={12} />{issue}</div>))}
                   </div>
-                  <pre className="p-2 rounded-[6px] text-xs overflow-x-auto max-h-[150px]" style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)' }}>{JSON.stringify(item.document, null, 2)}</pre>
+                  <pre className="p-2 rounded-[6px] text-xs overflow-x-auto max-h-[150px]" style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}>{JSON.stringify(item.document, null, 2)}</pre>
                 </div>
               ))}
             </div>
           )}
         </div>
-        <div className="flex items-center justify-end gap-2 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="flex items-center justify-end gap-2 pt-2" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
           <Button variant="secondary" size="sm" onClick={loadData} disabled={loading}><RefreshCw size={14} className={loading ? 'animate-spin' : ''} />重新扫描</Button>
         </div>
       </div>
@@ -307,13 +307,13 @@ function MappingRow({ mapping, onView, onValidate, onDelete, deleting }: { mappi
     if (!mapping.existsInDatabase) return 'rgba(239,68,68,0.15)';
     if (!mapping.hasEntity) return 'rgba(239,68,68,0.1)';
     if (mapping.appOwners.length === 0) return 'rgba(168,85,247,0.1)';
-    return 'rgba(255,255,255,0.02)';
+    return 'var(--list-item-bg)';
   };
   const protectedCollections = ['users', 'llmplatforms', 'llmmodels', 'system_roles'];
   const isProtected = protectedCollections.includes(mapping.collectionName.toLowerCase());
 
   return (
-    <div className="grid gap-3 items-center px-3 py-2.5 rounded-[10px] transition-colors hover:bg-white/3" style={{ gridTemplateColumns: '2fr 4fr 6fr', background: getStatusColor(), border: '1px solid rgba(255,255,255,0.05)' }}>
+    <div className="grid gap-3 items-center px-3 py-2.5 rounded-[10px] transition-colors hover:bg-white/3" style={{ gridTemplateColumns: '2fr 4fr 6fr', background: getStatusColor(), border: '1px solid var(--bg-card-hover)' }}>
       <div className="min-w-0"><Badge variant={mapping.appOwners.length > 0 ? 'subtle' : 'danger'} size="sm">{appDisplay}</Badge></div>
       <div className="min-w-0">
         <div className="text-sm font-medium truncate" style={{ color: mapping.hasEntity ? 'var(--text-primary)' : 'rgba(239,68,68,0.8)' }}>{entityDisplay}</div>
@@ -436,7 +436,7 @@ export default function DataManagePage() {
   };
 
   const UserRow = ({ u }: { u: AdminUserPreviewItem }) => (
-    <div className="grid gap-2 rounded-[10px] px-3 py-2.5 transition-colors hover:bg-white/3" style={{ gridTemplateColumns: '1.2fr 1fr 0.6fr 0.6fr 1fr', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+    <div className="grid gap-2 rounded-[10px] px-3 py-2.5 transition-colors hover:bg-white/3" style={{ gridTemplateColumns: '1.2fr 1fr 0.6fr 0.6fr 1fr', background: 'var(--list-item-bg)', border: '1px solid var(--bg-card-hover)' }}>
       <div className="min-w-0"><div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{u.username || '-'}</div><div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{u.displayName || '-'}</div></div>
       <div className="min-w-0 text-xs font-mono self-center truncate" style={{ color: 'var(--text-secondary)' }}>{u.userId?.slice(0, 8) || '-'}...</div>
       <div className="text-xs self-center" style={{ color: 'var(--text-secondary)' }}>{u.role}</div>
@@ -497,7 +497,7 @@ export default function DataManagePage() {
         </div>
         <div className="overflow-x-auto">
         <div className="min-w-[600px]">
-        <div className="grid gap-3 items-center px-3 py-2 rounded-[8px] text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ gridTemplateColumns: '2fr 4fr 6fr', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.03)' }}>
+        <div className="grid gap-3 items-center px-3 py-2 rounded-[8px] text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ gridTemplateColumns: '2fr 4fr 6fr', color: 'var(--text-muted)', background: 'var(--nested-block-bg)' }}>
           <div>应用</div><div>实体类</div><div>集合名 / 操作</div>
         </div>
         <div className="space-y-1.5 max-h-[400px] overflow-y-auto">
@@ -531,7 +531,7 @@ export default function DataManagePage() {
       <Dialog open={usersPurgeOpen} onOpenChange={(open) => { setUsersPurgeOpen(open); if (!open) { setUsersPurgeStep(1); setUsersConfirmText(''); setUsersPreview(null); } }} title={usersPurgeStep === 1 ? '预览：清理用户数据' : '二次确认：删除用户数据'} description={usersPurgeStep === 1 ? '将删除非管理员用户账号（ADMIN 保留）。' : '该操作不可恢复。'} maxWidth={900} content={
         <div className="min-h-0 flex flex-col gap-4">
           {usersPurgeStep === 1 ? (<>
-            <div className="rounded-[12px] p-4" style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(0,0,0,0.08) 100%)', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="rounded-[12px] p-4" style={{ background: 'linear-gradient(135deg, var(--bg-input) 0%, rgba(0,0,0,0.08) 100%)', border: '1px solid var(--border-subtle)' }}>
               {usersPreviewLoading ? (<div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-muted)' }}><RefreshCw size={14} className="animate-spin" />加载预览中...</div>) : usersPreview ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>总用户</div><div className="text-xl font-bold mt-1" style={{ color: 'var(--text-primary)' }}>{fmtNum(usersPreview.totalUsers)}</div></div>
@@ -544,16 +544,16 @@ export default function DataManagePage() {
             {usersPreview?.notes?.length ? <div className="text-xs space-y-1" style={{ color: 'var(--text-muted)' }}>{usersPreview.notes.map((t, idx) => <div key={idx}>- {t}</div>)}</div> : null}
             <div className="space-y-2">
               <div className="flex items-center gap-2"><Users size={14} style={{ color: 'rgba(239,68,68,0.75)' }} /><span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>将删除的用户（示例）</span></div>
-              <div className="rounded-[12px] p-3 max-h-[200px] overflow-y-auto overflow-x-auto" style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="rounded-[12px] p-3 max-h-[200px] overflow-y-auto overflow-x-auto" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
                 <div className="min-w-[500px] space-y-2">
-                <div className="grid gap-2 px-3 py-2 rounded-[8px] text-[10px] font-semibold uppercase tracking-wider" style={{ gridTemplateColumns: '1.2fr 1fr 0.6fr 0.6fr 1fr', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.03)' }}><div>账号</div><div>UserId</div><div>Role</div><div>Status</div><div>CreatedAt</div></div>
+                <div className="grid gap-2 px-3 py-2 rounded-[8px] text-[10px] font-semibold uppercase tracking-wider" style={{ gridTemplateColumns: '1.2fr 1fr 0.6fr 0.6fr 1fr', color: 'var(--text-muted)', background: 'var(--nested-block-bg)' }}><div>账号</div><div>UserId</div><div>Role</div><div>Status</div><div>CreatedAt</div></div>
                 {usersPreviewLoading ? <div className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</div> : usersPreview?.sampleWillDeleteUsers?.length ? usersPreview.sampleWillDeleteUsers.map((u) => <UserRow key={u.userId} u={u} />) : <div className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>无（可能只有管理员账号）</div>}
                 </div>
               </div>
             </div>
             <div className="space-y-2">
               <div className="flex items-center gap-2"><Users size={14} style={{ color: 'rgba(34,197,94,0.75)' }} /><span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>将保留的管理员（示例）</span></div>
-              <div className="rounded-[12px] p-3 max-h-[150px] overflow-y-auto overflow-x-auto" style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="rounded-[12px] p-3 max-h-[150px] overflow-y-auto overflow-x-auto" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
                 <div className="min-w-[500px] space-y-2">
                 {usersPreview?.sampleWillKeepAdmins?.length ? usersPreview.sampleWillKeepAdmins.map((u) => <UserRow key={u.userId} u={u} />) : <div className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>无管理员账号（异常）</div>}
                 </div>
@@ -563,7 +563,7 @@ export default function DataManagePage() {
             <div className="rounded-[12px] px-4 py-3 text-sm flex items-center gap-3" style={{ background: 'linear-gradient(135deg, rgba(239,68,68,0.15) 0%, rgba(239,68,68,0.08) 100%)', border: '1px solid rgba(239,68,68,0.30)', color: 'rgba(239,68,68,0.95)' }}><AlertTriangle size={18} />将删除非管理员用户账号，该操作不可恢复。</div>
             <div className="space-y-3"><div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>请输入 <code className="px-1.5 py-0.5 rounded bg-white/5 font-mono">DELETE</code> 以确认</div><input value={usersConfirmText} onChange={(e) => setUsersConfirmText(e.target.value)} placeholder="DELETE" className="w-full h-[44px] rounded-[12px] px-4 text-sm outline-none transition-all prd-field" autoFocus /></div>
           </>)}
-          <div className="pt-3 flex items-center justify-end gap-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="pt-3 flex items-center justify-end gap-2" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
             <Button variant="secondary" size="sm" onClick={() => { if (usersPurgeStep === 1) setUsersPurgeOpen(false); else { setUsersPurgeStep(1); setUsersConfirmText(''); } }}>{usersPurgeStep === 1 ? '取消' : '返回预览'}</Button>
             {usersPurgeStep === 1 ? <Button variant="primary" size="sm" disabled={usersPreviewLoading} onClick={() => setUsersPurgeStep(2)}>下一步</Button> : <Button variant="danger" size="sm" disabled={usersConfirmText !== 'DELETE' || loading} onClick={doPurgeUsers}>确认删除</Button>}
           </div>
