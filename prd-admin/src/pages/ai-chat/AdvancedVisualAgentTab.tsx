@@ -17,20 +17,18 @@ import type { MarketplaceWatermarkConfig } from '@/services/contracts/watermark'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Popover from '@radix-ui/react-popover';
 import {
-  addVisualAgentWorkspaceMessage,
   deleteVisualAgentWorkspaceAsset,
   createWorkspaceImageGenRun,
   generateVisualAgentWorkspaceTitle,
   getVisualAgentWorkspaceDetail,
   listVisualAgentWorkspaceMessages,
-  getAdapterInfoByModelName,
   getImageGenRun,
-  getModels,
   getUserPreferences,
+  getVisualAgentAdapterInfo,
+  getVisualAgentImageGenModels,
   getWatermarkByApp,
   listWatermarksMarketplace,
   forkWatermark,
-  modelGroupsService,
   planImageGen,
   refreshVisualAgentWorkspaceCover,
   saveVisualAgentWorkspaceCanvas,
@@ -65,7 +63,7 @@ import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/image
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
-import type { ImageAsset, VisualAgentCanvas, VisualAgentMessage, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
+import type { ImageAsset, VisualAgentCanvas, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import type { Model } from '@/types/admin';
 import {
   ArrowUpToLine,
@@ -107,6 +105,7 @@ import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { MessageContentRenderer } from './components/MessageContentRenderer';
 import { ChatMessageItem } from './components/ChatMessageItem';
 import { LlmLogsPanel } from '@/pages/LlmLogsPage';
+import { getVisualAgentLogsReal, getVisualAgentLogsMetaReal, getVisualAgentLogDetailReal } from '@/services/real/visualAgent';
 
 type CanvasImageItem = {
   key: string;
@@ -821,7 +820,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const imageGenSize = '1024x1024' as const;
   const DEFAULT_ZOOM = 0.5;
 
-  const [models, setModels] = useState<Model[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   // 统一模型池列表（合并所有生成类型，去重）
   const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
@@ -869,11 +867,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       });
   }, [filteredPools]);
 
-  // 合并模型列表：优先使用模型池；如果没有池则回退到 llm_models
+  // 模型列表：使用模型池（后端已包含 3 级回退：专属池 > 默认池 > 传统配置）
   const allImageGenModels = useMemo<ModelWithSource[]>(() => {
-    if (poolModels.length > 0) return poolModels;
-    return (models ?? []).filter((m) => m.isImageGen) as ModelWithSource[];
-  }, [poolModels, models]);
+    return poolModels;
+  }, [poolModels]);
 
   const serverDefaultModel = useMemo(() => {
     // 后端已按 priority + createdAt 排序，直接取第一个启用的模型
@@ -963,7 +960,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return;
     }
 
-    getAdapterInfoByModelName(modelCode)
+    getVisualAgentAdapterInfo(modelCode)
       .then((res) => {
         if (res.success && res.data?.matched && res.data.sizesByResolution) {
           const data = res.data.sizesByResolution;
@@ -1722,6 +1719,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (mode === 'replace') setSelection(keys);
     else if (mode === 'add') addSelection(keys);
     else removeSelection(keys);
+    // chip 插入会触发 Lexical 编辑器抢焦点，延迟恢复画布焦点
+    requestAnimationFrame(() => {
+      try { stageRef.current?.focus({ preventScroll: true }); } catch { /* ignore */ }
+    });
   }, [setSelection, addSelection, removeSelection]);
 
   const focusComposer = useCallback(() => {
@@ -1822,16 +1823,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     workspaceRef.current = workspace;
   }, [workspace]);
 
+  // pushMsg：仅更新本地 UI 状态（消息持久化由后端 CreateRun / Worker 自动完成）
   const pushMsg = useCallback((role: UiMsg['role'], content: string) => {
     const msg: UiMsg = { id: `${role}-${Date.now()}`, role, content, ts: Date.now() };
     setMessages((prev) => prev.concat(msg));
-    const ws = workspaceRef.current;
-    if (ws?.id) {
-      const backendRole: VisualAgentMessage['role'] = role === 'User' ? 'User' : 'Assistant';
-      addVisualAgentWorkspaceMessage({ id: ws.id, role: backendRole, content }).catch((err) => {
-        console.warn('[pushMsg] 消息持久化失败（刷新后可能丢失）:', err);
-      });
-    }
   }, []);
 
   const MAX_GEN_CONCURRENCY = 3;
@@ -2028,35 +2023,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   useEffect(() => {
     setModelsLoading(true);
-    // 统一加载所有生成类型的模型池并合并去重
-    // 后端根据 images 数量自动路由（文生图/图生图/多图），前端不需要区分
-    const appCallerCodes = [
-      'visual-agent.image.text2img::generation',
-      'visual-agent.image.img2img::generation',
-      'visual-agent.image.vision::generation',
-    ];
-    const emptyPools = { success: false, data: [] as ModelGroupForApp[] };
-    Promise.all([
-      getModels(),
-      ...appCallerCodes.map((code) =>
-        modelGroupsService.getModelGroupsForApp(code, 'generation').catch(() => emptyPools)
-      ),
-    ])
-      .then(([modelsRes, ...poolResults]) => {
-        const mr = modelsRes as { success: boolean; data?: Model[] };
-        if (mr.success) setModels(mr.data ?? []);
-        // 合并所有池并按 id 去重
-        const seen = new Set<string>();
-        const merged: ModelGroupForApp[] = [];
-        for (const res of poolResults as { success: boolean; data?: ModelGroupForApp[] }[]) {
-          for (const pool of res.success ? res.data ?? [] : []) {
-            if (!seen.has(pool.id)) {
-              seen.add(pool.id);
-              merged.push(pool);
-            }
-          }
-        }
-        setImageGenPools(merged);
+    // 通过视觉创作专属端点获取模型池（后端已合并去重所有生成类型，含 3 级回退）
+    getVisualAgentImageGenModels()
+      .then((poolsRes) => {
+        if (poolsRes.success) setImageGenPools(poolsRes.data ?? []);
       })
       .finally(() => setModelsLoading(false));
   }, []);
@@ -3173,7 +3143,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const uiSizeToken = forcedSize ? `(@size:${forcedSize}) ` : '';
     const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
     const uiModelToken = modelPoolName ? `(@model:${modelPoolName}) ` : '';
-    pushMsg('User', `${uiSizeToken}${uiModelToken}${display || reqText}`);
+    const userMsgForBackend = `${uiSizeToken}${uiModelToken}${display || reqText}`;
+    pushMsg('User', userMsgForBackend);
 
     // ========== 统一图片引用：如果有选中图片但没有 @imgN，也加入 imageRefs ==========
     // 这样后端只需处理 imageRefs，无需区分 initImageAssetSha256
@@ -3510,6 +3481,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           responseFormat: 'url',
           // 统一使用 imageRefs（后端兼容层会处理 initImageAssetSha256）
           imageRefs: imageRefsForBackend.length > 0 ? imageRefsForBackend : undefined,
+          userMessageContent: userMsgForBackend,
         },
         idempotencyKey: `imRun_${workspaceId}_${key}`,
       });
@@ -3630,7 +3602,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const label = actionLabel || '快捷编辑';
       const refSrc = sourceItem.originalSrc || sourceItem.src || '';
       const refTag = sourceItem.refId ? ` @img${sourceItem.refId}` : '';
-      pushMsg('User', `[${label}]${refTag} ${prompt}`);
+      const qaUserMsg = `[${label}]${refTag} ${prompt}`;
+      pushMsg('User', qaUserMsg);
+      // 标记：后端消息会在上传后用 COS URL 重新构建（qaMsgForBackend）
+      let qaMsgForBackend = qaUserMsg;
       // 尺寸自适应：基于源图原始尺寸（支持外部覆盖，如 HD 放大需要升档）
       const refDim =
         sourceItem.naturalW && sourceItem.naturalH
@@ -3668,6 +3643,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           });
           if (up.success) {
             assetSha256 = up.data.asset.sha256;
+            // 用 COS URL 重建后端消息（刷新后不再依赖 canvas refId）
+            const cosUrl = up.data.asset.url || '';
+            if (cosUrl) {
+              const imgTag = maskBase64 ? `[IMG:${cosUrl}|参考图] [蒙版已应用]` : `[IMG:${cosUrl}|参考图]`;
+              qaMsgForBackend = `[${label}] ${imgTag} ${prompt}`;
+            }
             // 更新源图的 syncStatus
             setCanvas((prev) =>
               prev.map((x) =>
@@ -3748,6 +3729,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               },
             ],
             maskBase64: maskBase64 || undefined,
+            userMessageContent: qaMsgForBackend,
           },
           idempotencyKey: `qaRun_${workspaceId}_${key}`,
         });
@@ -7293,8 +7275,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       const showModel = q === '' || 'model'.startsWith(q) || q.startsWith('m');
                       const showVision = q === '' || 'vision'.startsWith(q) || q.startsWith('v');
                       const showAscii = q === '' || 'ascii'.startsWith(q) || q.startsWith('a');
-                      const visionModels = (models ?? []).filter((m) => m.enabled && m.isVision);
-                      const imageModels = (models ?? []).filter((m) => m.enabled && m.isImageGen);
+                      const visionModels: ModelWithSource[] = []; // 视觉模型通过 Gateway 自动调度，暂不支持 @mention 选择
+                      const imageModels = enabledImageModels;
                       return (
                         <div className="p-2 space-y-2">
                           {showModel ? (
@@ -8097,6 +8079,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           <LlmLogsPanel
             embedded
             defaultAppKey="visual-agent"
+            customApis={{
+              getLogs: getVisualAgentLogsReal,
+              getMeta: getVisualAgentLogsMetaReal,
+              getDetail: getVisualAgentLogDetailReal,
+            }}
           />
         }
       />
@@ -8167,11 +8154,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           imageWidth={inpaintTarget.naturalW || inpaintTarget.w || 1024}
           imageHeight={inpaintTarget.naturalH || inpaintTarget.h || 1024}
           onCancel={() => setInpaintTarget(null)}
-          onConfirm={(maskDataUri) => {
+          onConfirm={async (maskDataUri) => {
             const target = inpaintTarget;
             setInpaintTarget(null);
             // 弹出提示词输入
-            const desc = window.prompt('请输入重绘区域的描述（如：将这里替换为蓝色的天空）');
+            const desc = await systemDialog.prompt({
+              title: '局部重绘',
+              message: '请输入重绘区域的描述',
+              placeholder: '如：将这里替换为蓝色的天空',
+            });
             if (!desc?.trim()) {
               toast.error('请输入重绘描述');
               return;
@@ -8195,7 +8186,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           }
 
           // 弹出提示词输入
-          const desc = window.prompt('请描述你想基于这张草图生成的图片（如：一只猫坐在窗台上，水彩风格）');
+          const desc = await systemDialog.prompt({
+            title: '草图生成',
+            message: '请描述你想基于这张草图生成的图片',
+            placeholder: '如：一只猫坐在窗台上，水彩风格',
+          });
           if (!desc?.trim()) {
             toast.error('请输入生成描述');
             return;
@@ -8207,7 +8202,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             return;
           }
           const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-          pushMsg('User', `[手绘板生图] ${desc.trim()}`);
+          const sketchUserMsg = `[手绘板生图] ${desc.trim()}`;
+          pushMsg('User', sketchUserMsg);
+          // 后端消息会在上传后用 COS URL 重建
+          let sketchMsgForBackend = sketchUserMsg;
 
           // 添加草图到画布（用于展示参考）
           const sketchKey = `sketch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -8252,6 +8250,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
           const assetSha256 = up.data.asset.sha256;
           const refSrc = up.data.asset.url || '';
+          // 用 COS URL 重建后端消息（刷新后可直接展示草图缩略图）
+          if (refSrc) {
+            sketchMsgForBackend = `[手绘板生图] [IMG:${refSrc}|手绘草图] ${desc.trim()}`;
+          }
           setCanvas(prev =>
             prev.map(x =>
               x.key === sketchKey
@@ -8304,6 +8306,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     label: '手绘草图',
                   },
                 ],
+                userMessageContent: sketchMsgForBackend,
               },
               idempotencyKey: `sketchRun_${workspaceId}_${genKey}`,
             });

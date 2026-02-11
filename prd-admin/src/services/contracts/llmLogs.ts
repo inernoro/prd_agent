@@ -98,5 +98,19 @@ export type BatchModelStatsData = {
 
 export type GetBatchModelStatsContract = (params: BatchModelStatsParams) => Promise<ApiResponse<BatchModelStatsData>>;
 
+// replay-curl 响应数据
+export type ReplayCurlData = {
+  curl: string;
+  endpoint?: string;
+  model?: string;
+  imageCount?: number;
+  textCount?: number;
+  restoreErrors?: string[] | null;
+  requestBodyLength?: number;
+  warning?: string | null;
+};
+
+export type GetReplayCurlContract = (id: string) => Promise<ApiResponse<ReplayCurlData>>;
+
 
 

@@ -165,6 +165,7 @@ export const api = {
     llm: {
       list: () => '/api/logs/llm',
       byId: (id: string) => `/api/logs/llm/${id}`,
+      replayCurl: (id: string) => `/api/logs/llm/${id}/replay-curl`,
       meta: () => '/api/logs/llm/meta',
       modelStats: () => '/api/logs/llm/model-stats',
       batchModelStats: () => '/api/logs/llm/model-stats/batch',
@@ -246,6 +247,16 @@ export const api = {
     },
   },
 
+  // ============ Executive 总裁面板 ============
+  executive: {
+    overview: () => '/api/executive/overview',
+    trends: () => '/api/executive/trends',
+    team: () => '/api/executive/team',
+    agents: () => '/api/executive/agents',
+    models: () => '/api/executive/models',
+    leaderboard: () => '/api/executive/leaderboard',
+  },
+
   // ============ Dashboard 仪表盘 ============
   dashboard: {
     notifications: {
@@ -308,6 +319,14 @@ export const api = {
       plan: () => '/api/visual-agent/image-gen/plan',
       generate: () => '/api/visual-agent/image-gen/generate',
       sizeCaps: () => '/api/visual-agent/image-gen/size-caps',
+      /** 获取所有生图场景的模型池（合并去重） */
+      models: () => '/api/visual-agent/image-gen/models',
+      /** 根据平台侧模型ID获取适配信息（尺寸选项等） */
+      adapterInfo: (modelId: string) => `/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
+      /** Visual Agent 域内日志查询（避免跨权限调用 /api/logs/llm） */
+      logs: () => '/api/visual-agent/image-gen/logs',
+      logsMeta: () => '/api/visual-agent/image-gen/logs/meta',
+      logDetail: (id: string) => `/api/visual-agent/image-gen/logs/${id}`,
       runs: {
         create: () => '/api/visual-agent/image-gen/runs',
         byId: (runId: string) => `/api/visual-agent/image-gen/runs/${runId}`,
@@ -320,6 +339,14 @@ export const api = {
     uploadArtifacts: () => '/api/visual-agent/upload-artifacts',
   },
 
+  // ============ PRD Agent ============
+  prdAgent: {
+    /** 提示词（只读，供 PRD Agent 页面快捷标签使用） */
+    prompts: () => '/api/prd-agent/prompts',
+    /** 系统提示词（只读，供 PRD Agent 页面展示系统提示词内容） */
+    systemPrompts: () => '/api/prd-agent/prompts/system',
+  },
+
   // ============ Literary Agent 文学创作 ============
   literaryAgent: {
     prompts: {
@@ -330,6 +357,13 @@ export const api = {
       publish: (id: string) => `/api/literary-agent/prompts/${id}/publish`,
       unpublish: (id: string) => `/api/literary-agent/prompts/${id}/unpublish`,
       fork: (id: string) => `/api/literary-agent/prompts/${id}/fork`,
+    },
+    /** 文学创作工作区（应用身份隔离，避免跨权限调用 visual-agent） */
+    workspaces: {
+      list: () => '/api/literary-agent/workspaces',
+      byId: (id: string) => `/api/literary-agent/workspaces/${id}`,
+      detail: (id: string) => `/api/literary-agent/workspaces/${id}/detail`,
+      assets: (id: string) => `/api/literary-agent/workspaces/${id}/assets`,
     },
     config: {
       get: () => '/api/literary-agent/config',
@@ -355,6 +389,8 @@ export const api = {
       modelsAll: () => '/api/literary-agent/config/models/all',
       /** 兼容旧接口，根据是否有参考图自动选择 */
       modelsImageGen: () => '/api/literary-agent/config/models/image-gen',
+      /** 获取主模型信息（用于显示标记生成使用的模型名称） */
+      modelsMain: () => '/api/literary-agent/config/models/main',
     },
     /** 文学创作图片生成（应用身份隔离） */
     imageGen: {

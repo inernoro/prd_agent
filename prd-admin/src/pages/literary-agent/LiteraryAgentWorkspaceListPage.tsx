@@ -5,11 +5,11 @@ import { useContextMenu, type ContextMenuItem } from '@/components/ui/ContextMen
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import {
-  createVisualAgentWorkspace,
-  deleteVisualAgentWorkspace,
-  listVisualAgentWorkspaces,
-  updateVisualAgentWorkspace,
-} from '@/services';
+  listLiteraryAgentWorkspacesReal as listLiteraryAgentWorkspaces,
+  createLiteraryAgentWorkspaceReal as createLiteraryAgentWorkspace,
+  updateLiteraryAgentWorkspaceReal as updateLiteraryAgentWorkspace,
+  deleteLiteraryAgentWorkspaceReal as deleteLiteraryAgentWorkspace,
+} from '@/services/real/literaryAgentConfig';
 import type { VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import { Plus, Pencil, Trash2, FileText, SquarePen, FolderOpen, ChevronDown, ChevronRight, FolderPlus, MoveRight, BookOpen } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
@@ -109,7 +109,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await listVisualAgentWorkspaces({ limit: 100 });
+      const res = await listLiteraryAgentWorkspaces({ limit: 100 });
       if (!res.success) {
         setError(res.error?.message || '加载失败');
         return;
@@ -165,7 +165,7 @@ export default function LiteraryAgentWorkspaceListPage() {
       cancelText: '取消',
     });
     if (!title) return;
-    const res = await createVisualAgentWorkspace({
+    const res = await createLiteraryAgentWorkspace({
       title,
       scenarioType: 'article-illustration',
       idempotencyKey: `create-literary-${Date.now()}`,
@@ -176,7 +176,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     }
     // 如果指定了文件夹，设置 folderName
     if (folderName && res.data?.workspace?.id) {
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: res.data.workspace.id,
         folderName,
         idempotencyKey: `set-folder-${res.data.workspace.id}-${Date.now()}`,
@@ -198,13 +198,13 @@ export default function LiteraryAgentWorkspaceListPage() {
     });
     if (!name) return;
     // 创建一个新文章并设置 folderName
-    const res = await createVisualAgentWorkspace({
+    const res = await createLiteraryAgentWorkspace({
       title: '未命名',
       scenarioType: 'article-illustration',
       idempotencyKey: `create-literary-folder-${Date.now()}`,
     });
     if (res.success && res.data?.workspace?.id) {
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: res.data.workspace.id,
         folderName: name,
         idempotencyKey: `set-folder-${res.data.workspace.id}-${Date.now()}`,
@@ -226,7 +226,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     // 批量更新所有同名文章的 folderName
     const toUpdate = items.filter((ws) => ws.folderName === oldName);
     for (const ws of toUpdate) {
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: ws.id,
         folderName: newName,
         idempotencyKey: `rename-folder-${ws.id}-${Date.now()}`,
@@ -247,7 +247,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     if (!ok) return;
     const toUpdate = items.filter((ws) => ws.folderName === folderName);
     for (const ws of toUpdate) {
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: ws.id,
         folderName: null,
         idempotencyKey: `delete-folder-${ws.id}-${Date.now()}`,
@@ -266,7 +266,7 @@ export default function LiteraryAgentWorkspaceListPage() {
       cancelText: '取消',
     });
     if (!title || title === ws.title) return;
-    const res = await updateVisualAgentWorkspace({ id: ws.id, title, idempotencyKey: `rename-${ws.id}-${Date.now()}` });
+    const res = await updateLiteraryAgentWorkspace({ id: ws.id, title, idempotencyKey: `rename-${ws.id}-${Date.now()}` });
     if (!res.success) {
       toast.error('重命名失败', res.error?.message || '未知错误');
       return;
@@ -283,7 +283,7 @@ export default function LiteraryAgentWorkspaceListPage() {
       cancelText: '取消',
     });
     if (!ok) return;
-    const res = await deleteVisualAgentWorkspace({ id: ws.id, idempotencyKey: `delete-${ws.id}-${Date.now()}` });
+    const res = await deleteLiteraryAgentWorkspace({ id: ws.id, idempotencyKey: `delete-${ws.id}-${Date.now()}` });
     if (!res.success) {
       toast.error('删除失败', res.error?.message || '未知错误');
       return;
@@ -292,7 +292,7 @@ export default function LiteraryAgentWorkspaceListPage() {
   };
 
   const onMoveToFolder = async (ws: VisualAgentWorkspace, targetFolder: string | null) => {
-    await updateVisualAgentWorkspace({
+    await updateLiteraryAgentWorkspace({
       id: ws.id,
       folderName: targetFolder,
       idempotencyKey: `move-${ws.id}-${Date.now()}`,

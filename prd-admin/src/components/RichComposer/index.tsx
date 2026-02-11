@@ -187,9 +187,9 @@ function EditorInner({
           }
         }, { discrete: true }); // discrete: 避免触发不必要的副作用
         
-        // 恢复焦点（DOM 更新可能是异步的，需要延迟恢复）
+        // 恢复焦点：requestAnimationFrame 确保在 Lexical 内部调度完成后执行
         if (prevActiveElement) {
-          queueMicrotask(() => {
+          requestAnimationFrame(() => {
             if (document.activeElement !== prevActiveElement) {
               try {
                 prevActiveElement.focus({ preventScroll: true });

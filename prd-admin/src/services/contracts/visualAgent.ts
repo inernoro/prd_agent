@@ -184,6 +184,8 @@ export type CreateWorkspaceImageGenRunInput = {
   imageRefs?: ImageRefForBackend[];
   /** 局部重绘蒙版（data URI，白色=重绘区域，黑色=保持） */
   maskBase64?: string;
+  /** 用户消息内容（后端自动存入 image_master_messages，含标签/引用等完整文案） */
+  userMessageContent?: string;
 };
 
 /** 图片引用（发送给后端） */

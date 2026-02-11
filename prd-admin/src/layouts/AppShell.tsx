@@ -23,6 +23,9 @@ import {
   CheckCircle2,
   X,
   Bug,
+  Zap,
+  Crown,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -61,6 +64,10 @@ const iconMap: Record<string, LucideIcon> = {
   Plug,
   UserCog,
   FlaskConical,
+  Zap,
+  Bug,
+  Crown,
+  Sparkles,
 };
 
 const notificationTone = {
@@ -216,6 +223,15 @@ export default function AppShell() {
     return items;
   }, [menuCatalog, menuCatalogLoaded, navOrder]);
   
+  // 若用户在首页（仪表盘）但菜单中不含仪表盘，自动跳转到第一个可用页面
+  useEffect(() => {
+    if (location.pathname !== '/' || !menuCatalogLoaded || visibleItems.length === 0) return;
+    const hasDashboard = visibleItems.some((item) => item.key === '/');
+    if (!hasDashboard) {
+      navigate(visibleItems[0].key, { replace: true });
+    }
+  }, [location.pathname, menuCatalogLoaded, visibleItems, navigate]);
+
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const isLabPage = location.pathname.startsWith('/lab');
 

@@ -46,6 +46,7 @@ public class MongoDbContext
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
+    public IMongoCollection<AutomationRule> AutomationRules => _database.GetCollection<AutomationRule>("automation_rules");
     /// <summary>
     /// Prompts 配置（集合名保持 promptstages 以兼容历史数据；语义已迁移为“提示词”）
     /// </summary>
@@ -130,6 +131,9 @@ public class MongoDbContext
 
     // 统一技能集合（替代 prompt_stages + skill_settings）
     public IMongoCollection<Skill> Skills => _database.GetCollection<Skill>("skills");
+
+    // Webhook 通知
+    public IMongoCollection<WebhookDeliveryLog> WebhookDeliveryLogs => _database.GetCollection<WebhookDeliveryLog>("webhook_delivery_logs");
 
     // 模型中继 (Exchange)
     public IMongoCollection<ModelExchange> ModelExchanges => _database.GetCollection<ModelExchange>("model_exchanges");
@@ -776,6 +780,25 @@ public class MongoDbContext
             Builders<ToolboxRun>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_toolbox_runs_status_created" }));
 
+        // ========== Webhook 通知投递日志索引 ==========
+
+        // WebhookDeliveryLogs：按 appId + createdAt 查询
+        WebhookDeliveryLogs.Indexes.CreateOne(new CreateIndexModel<WebhookDeliveryLog>(
+            Builders<WebhookDeliveryLog>.IndexKeys.Ascending(x => x.AppId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_webhook_delivery_logs_app_created" }));
+        // TTL（默认保留 30 天）
+        WebhookDeliveryLogs.Indexes.CreateOne(new CreateIndexModel<WebhookDeliveryLog>(
+            Builders<WebhookDeliveryLog>.IndexKeys.Ascending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "ttl_webhook_delivery_logs", ExpireAfter = TimeSpan.FromDays(30) }));
+
+        // AutomationRules: 按事件类型 + 启用状态索引
+        AutomationRules.Indexes.CreateOne(new CreateIndexModel<AutomationRule>(
+            Builders<AutomationRule>.IndexKeys.Ascending(x => x.EventType).Ascending(x => x.Enabled),
+            new CreateIndexOptions { Name = "idx_automation_rules_event_enabled" }));
+        // AutomationRules: 按 HookId 唯一索引（传入 Webhook 查询）
+        AutomationRules.Indexes.CreateOne(new CreateIndexModel<AutomationRule>(
+            Builders<AutomationRule>.IndexKeys.Ascending(x => x.HookId),
+            new CreateIndexOptions { Name = "idx_automation_rules_hook_id", Sparse = true }));
         // ToolboxItems：按 createdByUserId 查询
         ToolboxItems.Indexes.CreateOne(new CreateIndexModel<ToolboxItem>(
             Builders<ToolboxItem>.IndexKeys.Ascending(x => x.CreatedByUserId).Descending(x => x.CreatedAt),
