@@ -708,13 +708,13 @@ select optgroup {
 }
 
 .prd-login-card {
-  /* 登录窗：稍微更“实”一点，避免在动效背景上看不清 */
-  background: linear-gradient(180deg, rgba(255,255,255,0.075) 0%, rgba(255,255,255,0.040) 100%);
-  border: 1px solid rgba(255,255,255,0.16);
+  /* 登录窗：微磨砂玻璃，透而不虚 */
+  background: linear-gradient(180deg, rgba(18, 18, 24, 0.82) 0%, rgba(14, 14, 20, 0.88) 100%);
+  border: 1px solid rgba(255,255,255,0.12);
   box-shadow:
     0 24px 90px rgba(0,0,0,0.55),
     0 1px 0 rgba(255,255,255,0.06) inset;
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(40px) saturate(160%);
 }
 
 .prd-login-leftGlow {
@@ -1238,5 +1238,11 @@ html[data-perf-mode="performance"] [style*="will-change"] {
   .mobile-show-actions {
     opacity: 1 !important;
     pointer-events: auto !important;
+  }
+  /* 触控设备上确保卡片内操作按钮有足够的可点击面积 (≥36px) */
+  .mobile-show-actions button,
+  .mobile-show-actions [role="button"] {
+    min-height: 36px;
+    min-width: 36px;
   }
 }

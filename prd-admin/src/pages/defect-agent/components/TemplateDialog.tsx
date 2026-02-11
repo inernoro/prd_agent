@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
-import { glassPanel } from '@/lib/glassStyles';
+import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { useDefectStore } from '@/stores/defectStore';
 import {
@@ -11,7 +11,6 @@ import {
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import {
-  X,
   Plus,
   Pencil,
   Trash2,
@@ -81,7 +80,6 @@ export function TemplateDialog() {
     setSaving(true);
     try {
       if (editingTemplate) {
-        // Update
         const res = await updateDefectTemplate({
           id: editingTemplate.id,
           name: name.trim(),
@@ -96,7 +94,6 @@ export function TemplateDialog() {
           toast.error(res.error?.message || '更新失败');
         }
       } else {
-        // Create
         const res = await createDefectTemplate({
           name: name.trim(),
           description: description.trim() || undefined,
@@ -137,53 +134,22 @@ export function TemplateDialog() {
   };
 
   return (
-    <>
-      {/* 遮罩层 */}
-      <div
-        className="fixed inset-0 z-40"
-        style={{ background: 'rgba(0, 0, 0, 0.5)' }}
-        onClick={() => setShowTemplateDialog(false)}
-      />
-
-      {/* 弹窗内容 - 使用液态玻璃样式 */}
-      <div
-        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[480px] max-h-[80vh] overflow-hidden rounded-2xl flex flex-col"
-        style={{
-          ...glassPanel,
-          boxShadow:
-            '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div
-          className="flex items-center justify-between px-5 py-4 flex-shrink-0"
-          style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
-        >
-          <div
-            className="text-[15px] font-semibold"
-            style={{ color: 'var(--text-primary)' }}
-          >
-            我的模板
-          </div>
-          <div className="flex items-center gap-2">
-            {!isCreating && (
-              <Button variant="secondary" size="sm" onClick={startCreate}>
-                <Plus size={12} />
-                新建
-              </Button>
-            )}
-            <button
-              onClick={() => setShowTemplateDialog(false)}
-              className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
-            >
-              <X size={16} style={{ color: 'var(--text-muted)' }} />
-            </button>
-          </div>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-4">
+    <Dialog
+      open
+      onOpenChange={(open) => { if (!open) setShowTemplateDialog(false); }}
+      title="我的模板"
+      maxWidth={480}
+      titleAction={
+        !isCreating ? (
+          <Button variant="secondary" size="sm" onClick={startCreate}>
+            <Plus size={12} />
+            新建
+          </Button>
+        ) : undefined
+      }
+      contentStyle={{ maxHeight: 'min(70vh, 520px)' }}
+      content={
+        <div className="h-full overflow-y-auto -mx-1 px-1">
           {/* Create/Edit Form */}
           {isCreating && (
             <GlassCard glow className="mb-4">
@@ -201,8 +167,8 @@ export function TemplateDialog() {
                   placeholder="模板名称"
                   className="w-full px-3 py-2 rounded-lg text-[13px] outline-none"
                   style={{
-                    background: 'rgba(255,255,255,0.06)',
-                    border: '1px solid rgba(255,255,255,0.1)',
+                    background: 'var(--bg-input-hover)',
+                    border: '1px solid var(--border-default)',
                     color: 'var(--text-primary)',
                   }}
                 />
@@ -213,8 +179,8 @@ export function TemplateDialog() {
                   rows={2}
                   className="w-full px-3 py-2 rounded-lg text-[13px] outline-none resize-none"
                   style={{
-                    background: 'rgba(255,255,255,0.06)',
-                    border: '1px solid rgba(255,255,255,0.1)',
+                    background: 'var(--bg-input-hover)',
+                    border: '1px solid var(--border-default)',
                     color: 'var(--text-primary)',
                   }}
                 />
@@ -229,8 +195,8 @@ export function TemplateDialog() {
                     设为默认模板
                   </span>
                 </label>
-                <div className="flex items-center gap-2 justify-end pt-2">
-                  <Button variant="secondary" size="sm" onClick={cancelEdit}>
+                <div className="flex items-center gap-2 justify-end pt-1">
+                  <Button variant="ghost" size="sm" onClick={cancelEdit}>
                     取消
                   </Button>
                   <Button
@@ -367,7 +333,7 @@ export function TemplateDialog() {
             </div>
           )}
         </div>
-      </div>
-    </>
+      }
+    />
   );
 }
