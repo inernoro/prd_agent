@@ -270,7 +270,9 @@ public class LlmLogsController : ControllerBase
                 x.CacheReadInputTokens,
                 x.Error,
                 x.QuestionText,
-                x.AnswerText
+                x.AnswerText,
+                x.IsFallback,
+                x.ExpectedModel
             })
             .ToListAsync();
 
@@ -306,6 +308,8 @@ public class LlmLogsController : ControllerBase
             x.CacheCreationInputTokens,
             x.CacheReadInputTokens,
             x.Error,
+            x.IsFallback,
+            x.ExpectedModel,
 
             questionPreview = TruncatePreview(x.QuestionText, 260),
             answerPreview = ExtractAnswerPreviewText(x.AnswerText)

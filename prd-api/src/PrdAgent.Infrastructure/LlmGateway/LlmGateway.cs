@@ -890,7 +890,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     IsExchange: resolution.IsExchange ? true : null,
                     ExchangeId: resolution.ExchangeId,
                     ExchangeName: resolution.ExchangeName,
-                    ExchangeTransformerType: resolution.ExchangeTransformerType),
+                    ExchangeTransformerType: resolution.ExchangeTransformerType,
+                    ImageReferences: request.Context?.ImageReferences,
+                    IsFallback: resolution.IsFallback ? true : null,
+                    FallbackReason: resolution.FallbackReason,
+                    ExpectedModel: resolution.ExpectedModel),
                 ct);
         }
         catch (Exception ex)
@@ -1035,7 +1039,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     IsExchange: resolution.IsExchange ? true : null,
                     ExchangeId: resolution.ExchangeId,
                     ExchangeName: resolution.ExchangeName,
-                    ExchangeTransformerType: resolution.ExchangeTransformerType),
+                    ExchangeTransformerType: resolution.ExchangeTransformerType,
+                    ImageReferences: request.Context?.ImageReferences,
+                    IsFallback: resolution.IsFallback ? true : null,
+                    FallbackReason: resolution.FallbackReason,
+                    ExpectedModel: resolution.ExpectedModel),
                 ct);
         }
         catch (Exception ex)

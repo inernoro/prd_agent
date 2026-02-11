@@ -193,12 +193,20 @@ public class GatewayLLMClient : ILLMClient
                 // 添加图片附件
                 foreach (var attachment in msg.Attachments.Where(a => a.Type == "image"))
                 {
+                    // 优先使用 Url；若为空则用 Base64Data 构造 data URI
+                    var imageUrl = attachment.Url;
+                    if (string.IsNullOrWhiteSpace(imageUrl) && !string.IsNullOrWhiteSpace(attachment.Base64Data))
+                    {
+                        var mime = string.IsNullOrWhiteSpace(attachment.MimeType) ? "image/png" : attachment.MimeType;
+                        imageUrl = $"data:{mime};base64,{attachment.Base64Data}";
+                    }
+
                     contentArray.Add(new JsonObject
                     {
                         ["type"] = "image_url",
                         ["image_url"] = new JsonObject
                         {
-                            ["url"] = attachment.Url
+                            ["url"] = imageUrl ?? string.Empty
                         }
                     });
                 }

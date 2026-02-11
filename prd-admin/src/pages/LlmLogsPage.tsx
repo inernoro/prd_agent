@@ -5,7 +5,6 @@ import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { SearchableSelect, Select } from '@/components/design';
 import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
-import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts, getReplayCurl } from '@/services';
 import type { LlmLogsMetaUser, LlmLogsMetaRequestPurpose } from '@/services/contracts/llmLogs';
@@ -139,17 +138,6 @@ function fmtNum(v: number | null | undefined): string {
   return typeof v === 'number' && Number.isFinite(v) ? String(v) : '—';
 }
 
-function fmtBytes(v: number | null | undefined): string {
-  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return '—';
-  if (v < 1024) return `${v} B`;
-  const kb = v / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  if (mb < 1024) return `${mb.toFixed(2)} MB`;
-  const gb = mb / 1024;
-  return `${gb.toFixed(2)} GB`;
-}
-
 type RequestTypeTone = 'gold' | 'green' | 'blue' | 'purple' | 'muted';
 
 function normalizeRequestType(t: string | null | undefined): string {
@@ -246,49 +234,6 @@ function tryPrettyJsonText(text: string): string {
     return JSON.stringify(obj, null, 2);
   } catch {
     return text;
-  }
-}
-
-/** 从请求体 JSON 中提取所有内嵌图片（inline_data / image_url / mask 等） */
-function extractInlineImagesFromBody(bodyJson: string | null | undefined): { label: string; src: string }[] {
-  if (!bodyJson) return [];
-  try {
-    const obj = JSON.parse(bodyJson) as any;
-    const results: { label: string; src: string }[] = [];
-
-    // 顶层 image 字段（URL 或 data URI）
-    if (typeof obj?.image === 'string' && (obj.image.startsWith('http') || obj.image.startsWith('data:'))) {
-      results.push({ label: '参考图', src: obj.image });
-    }
-
-    // 顶层 mask 字段（URL 或 data URI）
-    if (typeof obj?.mask === 'string' && (obj.mask.startsWith('http') || obj.mask.startsWith('data:'))) {
-      results.push({ label: '蒙版', src: obj.mask });
-    }
-
-    // 遍历 messages / contents 中的图片部分
-    const msgs = Array.isArray(obj?.messages) ? obj.messages : Array.isArray(obj?.contents) ? obj.contents : [];
-    for (const msg of msgs) {
-      const parts = Array.isArray(msg?.content) ? msg.content : Array.isArray(msg?.parts) ? msg.parts : [];
-      for (const part of parts) {
-        // OpenAI 格式: { type: "image_url", image_url: { url: "data:..." } }
-        if (part?.type === 'image_url' && typeof part?.image_url?.url === 'string') {
-          const url = part.image_url.url;
-          if (url.startsWith('data:') || url.startsWith('http')) {
-            results.push({ label: '参考图', src: url });
-          }
-        }
-        // Gemini 格式: { inline_data: { mime_type: "image/png", data: "base64..." } }
-        if (part?.inline_data && typeof part.inline_data.data === 'string' && part.inline_data.data.length > 100) {
-          const mime = part.inline_data.mime_type || 'image/png';
-          results.push({ label: '参考图', src: `data:${mime};base64,${part.inline_data.data}` });
-        }
-      }
-    }
-
-    return results;
-  } catch {
-    return [];
   }
 }
 
@@ -688,6 +633,72 @@ function injectRefImageIntoRequestBody(bodyText: string, inputArtifacts: UploadA
   }
 }
 
+type InlineImagePreview = {
+  label: string;
+  url: string;
+  sha256?: string;
+};
+
+function extractInlineImagesFromBody(bodyJson: string | null | undefined): InlineImagePreview[] {
+  if (!bodyJson) return [];
+  try {
+    const obj = JSON.parse(bodyJson) as any;
+    const out: InlineImagePreview[] = [];
+    const seen = new Set<string>();
+    const push = (label: string, urlLike: unknown, sha256?: string | null) => {
+      if (typeof urlLike !== 'string') return;
+      const url = urlLike.trim();
+      if (!url) return;
+      if (!(url.startsWith('http') || url.startsWith('data:image/'))) return;
+      if (seen.has(url)) return;
+      seen.add(url);
+      out.push({ label, url, sha256: (sha256 ?? '').trim() || undefined });
+    };
+
+    if (typeof obj?.image === 'string') {
+      push('参考图', obj.image, typeof obj?.imageSha256 === 'string' ? obj.imageSha256 : undefined);
+    } else if (Array.isArray(obj?.image)) {
+      for (const item of obj.image) push('参考图', item);
+    }
+    if (typeof obj?.mask === 'string') push('蒙版', obj.mask);
+
+    const msgs = Array.isArray(obj?.messages) ? obj.messages : Array.isArray(obj?.contents) ? obj.contents : [];
+    for (const msg of msgs) {
+      const parts = Array.isArray(msg?.content) ? msg.content : Array.isArray(msg?.parts) ? msg.parts : [];
+      for (const part of parts) {
+        if (part?.type === 'image_url') {
+          push('参考图', part?.image_url?.url ?? part?.url);
+        }
+        if (part?.inline_data && typeof part.inline_data.data === 'string' && part.inline_data.data.length > 100) {
+          const mime = String(part.inline_data.mime_type ?? 'image/png').trim() || 'image/png';
+          push('参考图', `data:${mime};base64,${part.inline_data.data}`);
+        }
+      }
+    }
+
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function resolveBodyInlineImages(
+  imageReferences: LlmRequestLog['imageReferences'],
+  requestBodyRedacted: string | null | undefined
+): InlineImagePreview[] {
+  // 优先新字段 imageReferences（COS URL）；若为空则回退到 requestBody 解析，兼容旧日志。
+  const refs = Array.isArray(imageReferences) ? imageReferences : [];
+  const fromRefs = refs
+    .map((r) => ({
+      label: (r?.label ?? '').trim() || '参考图',
+      url: (r?.cosUrl ?? '').trim(),
+      sha256: (r?.sha256 ?? '').trim() || undefined,
+    }))
+    .filter((x) => x.url);
+  if (fromRefs.length > 0) return fromRefs;
+  return extractInlineImagesFromBody(requestBodyRedacted);
+}
+
 /**
  * 从 URL 中提取域名，用作 Postman 环境变量名。
  * 例: "https://api.apiyi.com/v1/chat/completions" → "api.apiyi.com"
@@ -909,8 +920,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
   const [tokenPreviewTitle, setTokenPreviewTitle] = useState('');
   const [prdCache, setPrdCache] = useState<Record<string, { title: string; content: string }>>({});
 
-  const [artifactsLoading, setArtifactsLoading] = useState(false);
-  const [artifactsError, setArtifactsError] = useState<string>('');
+  const [, setArtifactsLoading] = useState(false);
+  const [, setArtifactsError] = useState<string>('');
   const [artifacts, setArtifacts] = useState<UploadArtifact[]>([]);
   const artifactsRidRef = useRef<string>('');
 
@@ -1186,26 +1197,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
     const v = normalizeRequestType(detail?.requestType);
     return v === 'generation' || v === 'imagegen' || v === 'image_gen' || v === 'image-generate';
   }, [detail?.requestType]);
-  const hasImageArtifacts = artifactInputs.length > 0 || artifactOutputs.length > 0;
-  const bodyHasInitImage = useMemo(() => {
-    try {
-      const obj = JSON.parse(detail?.requestBodyRedacted || '');
-      return obj?.initImageProvided === true;
-    } catch { return false; }
-  }, [detail?.requestBodyRedacted]);
-  const bodyImageUrl = useMemo(() => {
-    try {
-      const obj = JSON.parse(detail?.requestBodyRedacted || '');
-      if (typeof obj?.image === 'string' && obj.image.startsWith('http')) return obj.image;
-    } catch { /* ignore */ }
-    return null;
-  }, [detail?.requestBodyRedacted]);
-  /** 从请求体中提取的内嵌图片（蒙版、参考图等） */
-  const bodyInlineImages = useMemo(
-    () => extractInlineImagesFromBody(detail?.requestBodyRedacted),
-    [detail?.requestBodyRedacted]
-  );
-  const isImageLikeLog = isImageGenRequest || hasImageArtifacts || typeof detail?.imageSuccessCount === 'number';
+  const hasLogImages = (detail?.inputImages?.length ?? 0) > 0 || (detail?.outputImages?.length ?? 0) > 0;
+  const isImageLikeLog = isImageGenRequest || hasLogImages || typeof detail?.imageSuccessCount === 'number';
   const prettyRequestBody = useMemo(() => {
     if (!detail) return '';
     let restored = restoreTruncatedRequestBody(detail.requestBodyRedacted || '', detail.systemPromptText, detail.questionText);
@@ -1570,6 +1563,17 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                             );
                           }
                         })()}
+                        {/* 模型降级标签 */}
+                        {it.isFallback ? (
+                          <label
+                            className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
+                            title={it.expectedModel ? `期望模型 ${it.expectedModel}，实际使用 ${it.model}` : '模型池回退'}
+                            style={{ background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.30)', color: 'rgba(245, 158, 11, 0.95)' }}
+                          >
+                            <RefreshCw size={10} />
+                            已降级
+                          </label>
+                        ) : null}
                         {(() => {
                           const hint = extractImageSizeAdjustmentHint(it);
                           if (!hint) return null;
@@ -1752,7 +1756,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
         }}
         title="LLM 请求详情"
         description={detail ? (joinBaseAndPath(detail.apiBase ?? '', detail.path ?? '') || '—') : '点击列表项查看详情'}
-        maxWidth={1200}
+        maxWidth={1500}
         contentStyle={{ height: '82vh' }}
         content={
           detailLoading ? (
@@ -1870,6 +1874,15 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                     );
                   })}
                 </div>
+                {detail.isFallback ? (
+                  <div className="mt-2 rounded-[10px] px-3 py-2" style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
+                    <div className="text-[12px] font-semibold" style={{ color: 'rgba(245, 158, 11, 0.95)' }}>模型已降级</div>
+                    <div className="text-[11px] mt-0.5" style={{ color: 'rgba(245, 158, 11, 0.75)' }}>
+                      {detail.expectedModel ? `期望: ${detail.expectedModel} → 实际: ${detail.model}` : ''}
+                      {detail.fallbackReason ? ` · ${detail.fallbackReason}` : ''}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="mt-3 flex-1 min-h-0 overflow-auto space-y-3">
                   <div>
                     {(() => {
@@ -1963,532 +1976,349 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
 
               <GlassCard glow className="p-3 overflow-hidden flex flex-col min-h-0">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Response</div>
-                  {autoRefreshing ? (
-                    <div className="flex items-center gap-2">
-                      <Loader2 size={14} className="animate-spin" style={{ color: 'rgba(34,197,94,0.95)' }} />
-                      <span className="text-[11px] font-semibold" style={{ color: 'rgba(34,197,94,0.95)' }}>
-                        自动刷新中（2s）
-                      </span>
+                  <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>Response</div>
+                  <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                    <div className="flex items-center rounded-[8px] p-0.5" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+                      <button
+                        type="button"
+                        onClick={() => setAnswerView('preview')}
+                        className="h-7 px-2.5 rounded-[6px] text-[11px] font-semibold"
+                        style={{
+                          color: answerView === 'preview' ? 'var(--text-primary)' : 'var(--text-muted)',
+                          background: answerView === 'preview' ? 'rgba(231,206,151,0.10)' : 'transparent',
+                          border: answerView === 'preview' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                        }}
+                      >
+                        预览
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAnswerView('raw')}
+                        className="h-7 px-2.5 rounded-[6px] text-[11px] font-semibold"
+                        style={{
+                          color: answerView === 'raw' ? 'var(--text-primary)' : 'var(--text-muted)',
+                          background: answerView === 'raw' ? 'rgba(231,206,151,0.10)' : 'transparent',
+                          border: answerView === 'raw' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                        }}
+                      >
+                        Raw
+                      </button>
+                      {answerHasUnicodeEscapes ? (
+                        <button
+                          type="button"
+                          onClick={() => setAnswerVisibleChars((v) => !v)}
+                          className="h-7 px-2.5 rounded-[6px] text-[11px] font-semibold"
+                          title="当内容包含 \\uXXXX 时，可一键转换为真实字符，避免 Raw 难以阅读"
+                          style={{
+                            color: answerVisibleChars ? 'var(--text-primary)' : 'var(--text-muted)',
+                            background: answerVisibleChars ? 'rgba(231,206,151,0.10)' : 'transparent',
+                            border: answerVisibleChars ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                          }}
+                        >
+                          可见字符
+                        </button>
+                      ) : null}
                     </div>
-                  ) : (
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={refreshDetail}
-                      disabled={!selectedId}
-                      title="手动刷新详情"
+                      className="h-7 text-[11px] px-2.5"
+                      onClick={async () => {
+                        const text = answerDisplayText || '';
+                        try {
+                          await navigator.clipboard.writeText(text || '');
+                          setCopiedHint('已复制');
+                          setTimeout(() => setCopiedHint(''), 1200);
+                        } catch {
+                          setCopiedHint('复制失败（浏览器权限）');
+                          setTimeout(() => setCopiedHint(''), 2000);
+                        }
+                      }}
                     >
-                      <RefreshCw size={14} />
-                      刷新
+                      <Copy size={12} />
+                      复制
                     </Button>
-                  )}
-                </div>
-                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  {(() => {
-                    const s = (detail.tokenUsageSource ?? '').trim().toLowerCase();
-                    const label = s === 'reported' ? '上游上报' : (s === 'estimated' ? '估算' : '未上报');
-                    const img = typeof detail.imageSuccessCount === 'number' ? detail.imageSuccessCount : null;
-                    return (
-                      <>
-                        Token统计来源：{label}{img != null ? ` · 生图成功张数：${img}` : ''}
-                      </>
-                    );
-                  })()}
-                </div>
-                <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                  {[
-                    ...(isImageLikeLog
-                      ? []
-                      : [
-                          { k: 'Input tokens（输入）', v: fmtNum(detail.inputTokens) },
-                          { k: 'Output tokens（输出）', v: fmtNum(detail.outputTokens) },
-                          { k: 'Cache read（缓存命中读入）', v: fmtNum(detail.cacheReadInputTokens) },
-                          { k: 'Cache create（缓存写入/创建）', v: fmtNum(detail.cacheCreationInputTokens) },
-                        ]),
-                    { k: 'Assembled chars（拼接字符数）', v: fmtNum(detail.assembledTextChars) },
-                    // 这里用完整 hash，超长由 marquee 自动循环滚动
-                    { k: 'Assembled hash（拼接哈希）', v: (detail.assembledTextHash ?? '').trim() || '—' },
-                  ].map((it) => (
-                    <div
-                      key={it.k}
-                      className="rounded-[12px] px-3 py-2 min-w-0 overflow-hidden"
-                      style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', minWidth: 0 }}
-                    >
-                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        {it.k}
+                    <SuccessConfettiButton
+                      title="对模型原始返回（Answer）做严格 JSON 校验"
+                      size="sm"
+                      style={
+                        {
+                          '--sa-h': '28px',
+                          '--sa-radius': '8px',
+                          '--sa-font': '11px',
+                          '--sa-px': '10px',
+                          '--sa-minw': '72px',
+                        } as unknown as React.CSSProperties
+                      }
+                      readyText={jsonCheckPhase === 'failed' ? '不通过' : 'JSON检查'}
+                      loadingText="检查中"
+                      successText="通过"
+                      showLoadingText
+                      loadingMinMs={680}
+                      completeMode="hold"
+                      disabled={!((detail?.answerText ?? '').trim()) || jsonCheckPhase === 'passed'}
+                      className={jsonCheckPhase === 'failed' ? 'llm-json-sa-failed' : jsonCheckPhase === 'passed' ? 'llm-json-sa-passed' : ''}
+                      onAction={() => {
+                        const raw = (detail?.answerText ?? '').trim();
+                        const res = validateStrictJson(raw);
+                        jsonCheckLastRef.current = res.ok ? { ok: true } : { ok: false, reason: res.reason };
+                        return res.ok;
+                      }}
+                      onPhaseChange={(p) => {
+                        if (p === 'loading') {
+                          setJsonCheckPhase('scanning');
+                          return;
+                        }
+                        if (p === 'complete') {
+                          setJsonCheckPhase('passed');
+                          setAnswerHint('扫描通过');
+                          window.setTimeout(() => setAnswerHint(''), 1200);
+                          return;
+                        }
+                        // 回到 ready（失败路径）：保持红色状态到弹窗关闭
+                        if (p === 'ready') {
+                          const last = jsonCheckLastRef.current;
+                          if (last && last.ok === false) {
+                            setJsonCheckPhase('failed');
+                            setAnswerHint(`JSON 不合法：${last.reason || '未知原因'}`);
+                            window.setTimeout(() => setAnswerHint(''), 2800);
+                          } else {
+                            setJsonCheckPhase('idle');
+                          }
+                        }
+                      }}
+                    />
+                    {autoRefreshing ? (
+                      <div className="flex items-center gap-1.5">
+                        <Loader2 size={12} className="animate-spin" style={{ color: 'rgba(34,197,94,0.95)' }} />
+                        <span className="text-[11px] font-semibold" style={{ color: 'rgba(34,197,94,0.95)' }}>
+                          自动刷新中
+                        </span>
                       </div>
-                      <div className="mt-1 min-w-0">
-                        <NewsMarquee
-                          text={String(it.v ?? '—')}
-                          title={String(it.v ?? '')}
-                          style={{
-                            color: 'var(--text-primary)',
-                            fontSize: 14,
-                            lineHeight: '1.2',
-                            fontWeight: 700,
-                            fontFamily:
-                              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  说明：`—` 表示未上报/未知；`0` 表示真实为 0。
-                </div>
-                <div className="mt-3 flex-1 min-h-0 overflow-auto">
-                  <div className="flex items-center justify-end gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center rounded-[12px] p-1" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
-                        <button
-                          type="button"
-                          onClick={() => setAnswerView('preview')}
-                          className="h-8 px-3 rounded-[10px] text-xs font-semibold"
-                          style={{
-                            color: answerView === 'preview' ? 'var(--text-primary)' : 'var(--text-muted)',
-                            background: answerView === 'preview' ? 'rgba(231,206,151,0.10)' : 'transparent',
-                            border: answerView === 'preview' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
-                          }}
-                        >
-                          预览
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setAnswerView('raw')}
-                          className="h-8 px-3 rounded-[10px] text-xs font-semibold"
-                          style={{
-                            color: answerView === 'raw' ? 'var(--text-primary)' : 'var(--text-muted)',
-                            background: answerView === 'raw' ? 'rgba(231,206,151,0.10)' : 'transparent',
-                            border: answerView === 'raw' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
-                          }}
-                        >
-                          Raw
-                        </button>
-                        {answerHasUnicodeEscapes ? (
-                          <button
-                            type="button"
-                            onClick={() => setAnswerVisibleChars((v) => !v)}
-                            className="h-8 px-3 rounded-[10px] text-xs font-semibold"
-                            title="当内容包含 \\uXXXX 时，可一键转换为真实字符，避免 Raw 难以阅读"
-                            style={{
-                              color: answerVisibleChars ? 'var(--text-primary)' : 'var(--text-muted)',
-                              background: answerVisibleChars ? 'rgba(231,206,151,0.10)' : 'transparent',
-                              border: answerVisibleChars ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
-                            }}
-                          >
-                            可见字符
-                          </button>
-                        ) : null}
-                      </div>
+                    ) : (
                       <Button
                         variant="secondary"
                         size="sm"
-                        onClick={async () => {
-                          const text = answerDisplayText || '';
-                          try {
-                            await navigator.clipboard.writeText(text || '');
-                            setCopiedHint('已复制');
-                            setTimeout(() => setCopiedHint(''), 1200);
-                          } catch {
-                            setCopiedHint('复制失败（浏览器权限）');
-                            setTimeout(() => setCopiedHint(''), 2000);
-                          }
-                        }}
+                        className="h-7 text-[11px] px-2.5"
+                        onClick={refreshDetail}
+                        disabled={!selectedId}
+                        title="手动刷新详情"
                       >
-                        <Copy size={16} />
-                        复制
+                        <RefreshCw size={12} />
+                        刷新
                       </Button>
-                      <SuccessConfettiButton
-                        title="对模型原始返回（Answer）做严格 JSON 校验"
-                        size="sm"
-                        style={
-                          {
-                            // 对齐本区域其它 secondary sm 按钮（35px 高度）
-                            '--sa-h': '35px',
-                            '--sa-radius': '10px',
-                            '--sa-font': '13px',
-                            '--sa-px': '14px',
-                            '--sa-minw': '86px',
-                          } as unknown as React.CSSProperties
-                        }
-                        readyText={jsonCheckPhase === 'failed' ? '不通过' : 'JSON检查'}
-                        loadingText="检查中"
-                        successText="通过"
-                        showLoadingText
-                        loadingMinMs={680}
-                        completeMode="hold"
-                        disabled={!((detail?.answerText ?? '').trim()) || jsonCheckPhase === 'passed'}
-                        className={jsonCheckPhase === 'failed' ? 'llm-json-sa-failed' : jsonCheckPhase === 'passed' ? 'llm-json-sa-passed' : ''}
-                        onAction={() => {
-                          const raw = (detail?.answerText ?? '').trim();
-                          const res = validateStrictJson(raw);
-                          jsonCheckLastRef.current = res.ok ? { ok: true } : { ok: false, reason: res.reason };
-                          return res.ok;
-                        }}
-                        onPhaseChange={(p) => {
-                          if (p === 'loading') {
-                            setJsonCheckPhase('scanning');
-                            return;
-                          }
-                          if (p === 'complete') {
-                            setJsonCheckPhase('passed');
-                            setAnswerHint('扫描通过');
-                            window.setTimeout(() => setAnswerHint(''), 1200);
-                            return;
-                          }
-                          // 回到 ready（失败路径）：保持红色状态到弹窗关闭
-                          if (p === 'ready') {
-                            const last = jsonCheckLastRef.current;
-                            if (last && last.ok === false) {
-                              setJsonCheckPhase('failed');
-                              setAnswerHint(`JSON 不合法：${last.reason || '未知原因'}`);
-                              window.setTimeout(() => setAnswerHint(''), 2800);
-                            } else {
-                              setJsonCheckPhase('idle');
-                            }
-                          }
-                        }}
-                      />
+                    )}
+                  </div>
+                </div>
+                {!isImageLikeLog && (
+                  <>
+                    <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                      {(() => {
+                        const s = (detail.tokenUsageSource ?? '').trim().toLowerCase();
+                        const label = s === 'reported' ? '上游上报' : (s === 'estimated' ? '估算' : '未上报');
+                        return <>Token统计来源：{label}</>;
+                      })()}
                     </div>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between gap-2">
-                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>回答</div>
-                    {answerHint ? (
-                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        {answerHint}
-                      </div>
-                    ) : null}
-                  </div>
+                    <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+                      {[
+                        { k: 'Input tokens（输入）', v: fmtNum(detail.inputTokens) },
+                        { k: 'Output tokens（输出）', v: fmtNum(detail.outputTokens) },
+                        { k: 'Cache read（缓存命中读入）', v: fmtNum(detail.cacheReadInputTokens) },
+                        { k: 'Cache create（缓存写入/创建）', v: fmtNum(detail.cacheCreationInputTokens) },
+                        { k: 'Assembled chars（拼接字符数）', v: fmtNum(detail.assembledTextChars) },
+                        { k: 'Assembled hash（拼接哈希）', v: (detail.assembledTextHash ?? '').trim() || '—' },
+                      ].map((it) => (
+                        <div
+                          key={it.k}
+                          className="rounded-[12px] px-3 py-2 min-w-0 overflow-hidden"
+                          style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', minWidth: 0 }}
+                        >
+                          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            {it.k}
+                          </div>
+                          <div className="mt-1 min-w-0">
+                            <NewsMarquee
+                              text={String(it.v ?? '—')}
+                              title={String(it.v ?? '')}
+                              style={{
+                                color: 'var(--text-primary)',
+                                fontSize: 14,
+                                lineHeight: '1.2',
+                                fontWeight: 700,
+                                fontFamily:
+                                  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      说明：`—` 表示未上报/未知；`0` 表示真实为 0。
+                    </div>
+                  </>
+                )}
+                <div className={`${isImageLikeLog ? 'mt-2' : 'mt-3'} flex-1 min-h-0 overflow-auto`}>
+                  {!isImageLikeLog && (
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>回答</div>
+                      {answerHint ? (
+                        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          {answerHint}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
 
                   <div className="mt-3">
-                    {(hasImageArtifacts || bodyHasInitImage || bodyInlineImages.length > 0) ? (
-                    <div className="mb-3">
-                      <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
-                        <span>图片预览</span>
-                        {detail?.requestId ? (
-                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                            requestId: {detail.requestId}
-                          </span>
-                        ) : null}
-                      </div>
+                    {(() => {
+                      // 新日志优先使用 inputImages/outputImages；旧日志回退到 imageReferences/requestBody/artifacts。
+                      const effInputs: { url: string; label: string; sha256?: string }[] = [];
+                      const effOutputs: { url: string; label: string; sha256?: string; originalUrl?: string }[] = [];
+                      const inputSeen = new Set<string>();
+                      const outputSeen = new Set<string>();
 
-                      {artifactsLoading ? (
-                        <div className="text-[12px] py-6 text-center" style={{ color: 'var(--text-muted)' }}>
-                          加载中…
+                      const pushInput = (urlLike: string | null | undefined, label: string, sha256?: string) => {
+                        const url = String(urlLike ?? '').trim();
+                        if (!url || inputSeen.has(url)) return;
+                        inputSeen.add(url);
+                        effInputs.push({ url, label: label || '参考图', sha256: (sha256 ?? '').trim() || undefined });
+                      };
+
+                      const pushOutput = (urlLike: string | null | undefined, label: string, sha256?: string, originalUrl?: string) => {
+                        const url = String(urlLike ?? '').trim();
+                        if (!url || outputSeen.has(url)) return;
+                        outputSeen.add(url);
+                        effOutputs.push({
+                          url,
+                          label: label || '生成结果',
+                          sha256: (sha256 ?? '').trim() || undefined,
+                          originalUrl: (originalUrl ?? '').trim() || undefined,
+                        });
+                      };
+
+                      // 1) 新字段（Worker 直写 COS URL）
+                      if (Array.isArray(detail?.inputImages)) {
+                        for (const img of detail!.inputImages!) {
+                          pushInput(img.url, img.label || '参考图', img.sha256 ?? undefined);
+                        }
+                      }
+                      if (Array.isArray(detail?.outputImages)) {
+                        for (const img of detail!.outputImages!) {
+                          pushOutput(img.url, img.label || '生成结果', img.sha256 ?? undefined, img.originalUrl ?? undefined);
+                        }
+                      }
+
+                      // 2) 旧日志回退：requestBody/imageReferences
+                      if (effInputs.length === 0) {
+                        const restoredBody = restoreTruncatedRequestBody(
+                          detail?.requestBodyRedacted || '',
+                          detail?.systemPromptText,
+                          detail?.questionText
+                        );
+                        const legacyInputs = resolveBodyInlineImages(detail?.imageReferences, restoredBody);
+                        for (const img of legacyInputs) {
+                          pushInput(img.url, img.label, img.sha256);
+                        }
+                      }
+
+                      // 3) 旧日志回退：artifacts
+                      if (effInputs.length === 0 && artifactInputs.length > 0) {
+                        for (const img of artifactInputs) {
+                          pushInput(img.cosUrl, '参考图', img.sha256);
+                        }
+                      }
+                      if (effOutputs.length === 0 && artifactOutputs.length > 0) {
+                        for (const img of artifactOutputs) {
+                          pushOutput(img.cosUrl, '生成结果', img.sha256, undefined);
+                        }
+                      }
+
+                      if (effInputs.length === 0 && effOutputs.length === 0) return null;
+
+                      return (
+                    <div className="mb-3">
+                      <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+                        {/* Prompt */}
+                        <div className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)' }}>
+                          {(detail?.questionText ?? '').trim() || '（无提示词）'}
                         </div>
-                      ) : artifactsError ? (
-                        <div className="text-[12px] py-6 text-center" style={{ color: 'rgba(239,68,68,0.92)' }}>
-                          加载失败：{artifactsError}
-                        </div>
-                      ) : (
-                        <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
-                          {artifactInputs.length >= 2 && artifactOutputs.length >= 1 ? (
-                            <>
-                              <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                <img
-                                  src={artifactOutputs[0].cosUrl}
-                                  alt="output"
-                                  style={{ width: '100%', height: 360, objectFit: 'contain', display: 'block' }}
-                                />
-                              </div>
-                              <div className="mt-3 flex gap-2 overflow-auto">
-                                {artifactInputs.map((it) => (
-                                  <div key={it.id} className="shrink-0 rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.16)' }}>
-                                    <img src={it.cosUrl} alt="input" style={{ width: 140, height: 140, objectFit: 'cover', display: 'block' }} />
-                                  </div>
-                                ))}
-                              </div>
-                              <div className="mt-3 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                                {(detail?.questionText ?? '').trim() || '（无提示词）'}
-                              </div>
-                            </>
-                          ) : artifactInputs.length === 1 && artifactOutputs.length >= 1 ? (
-                            <>
-                              <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                                {(detail?.questionText ?? '').trim() || '（无提示词）'}
-                              </div>
-                              <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                                {[artifactInputs[0], artifactOutputs[0]].map((it, idx) => (
-                                  <div key={it.id} className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                    <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                      <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                        {idx === 0 ? '参考图' : '结果图'}
-                                      </div>
-                                      <Button
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={async () => {
-                                          try {
-                                            await navigator.clipboard.writeText(it.cosUrl || '');
-                                            setCopiedHint('已复制');
-                                            setTimeout(() => setCopiedHint(''), 1200);
-                                          } catch {
-                                            setCopiedHint('复制失败（浏览器权限）');
-                                            setTimeout(() => setCopiedHint(''), 2000);
-                                          }
-                                        }}
-                                      >
-                                        <Copy size={14} />
-                                        复制URL
-                                      </Button>
+                        {/* Input ← → Output 始终双栏 */}
+                        <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr', alignItems: 'stretch' }}>
+                          {/* ===== Input 参考图（左） ===== */}
+                          <div style={{ minWidth: 0 }}>
+                            <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Input</div>
+                            {effInputs.length > 0 ? (
+                              <div className="space-y-2">
+                              {effInputs.map((img, idx) => (
+                                <div key={`in-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                      {img.label}{effInputs.length > 1 ? ` #${idx + 1}` : ''}
                                     </div>
-                                    <img src={it.cosUrl} alt={idx === 0 ? 'input' : 'output'} style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
-                                    <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                      <div className="truncate" title={it.cosUrl}>
-                                        {it.cosUrl}
-                                      </div>
-                                      <div className="mt-1 flex items-center justify-between gap-2">
-                                        <span>
-                                          {it.width}×{it.height}
-                                        </span>
-                                        <span>
-                                          {fmtBytes(it.sizeBytes)} · {String(it.mime || '').toLowerCase()}
-                                        </span>
-                                      </div>
-                                      <div className="mt-1 truncate" title={it.sha256}>
-                                        sha256: {it.sha256}
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </>
-                          ) : artifactInputs.length >= 1 && artifactOutputs.length === 0 ? (
-                            <>
-                              <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                                {(detail?.questionText ?? '').trim() || '（无提示词）'}
-                              </div>
-                              <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                                {/* 参考图 */}
-                                <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                      参考图
-                                    </div>
-                                    <Button
-                                      variant="secondary"
-                                      size="sm"
-                                      onClick={async () => {
-                                        try {
-                                          await navigator.clipboard.writeText(artifactInputs[0].cosUrl || '');
-                                          setCopiedHint('已复制');
-                                          setTimeout(() => setCopiedHint(''), 1200);
-                                        } catch {
-                                          setCopiedHint('复制失败（浏览器权限）');
-                                          setTimeout(() => setCopiedHint(''), 2000);
-                                        }
-                                      }}
-                                    >
-                                      <Copy size={14} />
-                                      复制URL
+                                    <Button variant="secondary" size="sm" onClick={async () => {
+                                      try { await navigator.clipboard.writeText(img.url); setCopiedHint('已复制'); setTimeout(() => setCopiedHint(''), 1200); }
+                                      catch { setCopiedHint('复制失败'); setTimeout(() => setCopiedHint(''), 2000); }
+                                    }}>
+                                      <Copy size={12} /> URL
                                     </Button>
                                   </div>
-                                  <img src={artifactInputs[0].cosUrl} alt="input" style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
-                                  <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                    <div className="truncate" title={artifactInputs[0].cosUrl}>
-                                      {artifactInputs[0].cosUrl}
-                                    </div>
-                                    <div className="mt-1 flex items-center justify-between gap-2">
-                                      <span>
-                                        {artifactInputs[0].width}×{artifactInputs[0].height}
-                                      </span>
-                                      <span>
-                                        {fmtBytes(artifactInputs[0].sizeBytes)} · {String(artifactInputs[0].mime || '').toLowerCase()}
-                                      </span>
-                                    </div>
-                                    <div className="mt-1 truncate" title={artifactInputs[0].sha256}>
-                                      sha256: {artifactInputs[0].sha256}
-                                    </div>
-                                  </div>
+                                  <img src={img.url} alt={img.label} style={{ width: '100%', height: 200, objectFit: 'contain', display: 'block', background: 'rgba(0,0,0,0.08)' }} />
+                                  {img.sha256 && <div className="px-3 py-1 text-[10px] truncate" style={{ color: 'var(--text-muted)' }} title={img.sha256}>sha256: {img.sha256}</div>}
                                 </div>
-                                {/* 结果图 - 加载中/失败 */}
-                                <div className="rounded-[14px] overflow-hidden relative" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                      结果图
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center justify-center" style={{ height: 320 }}>
-                                    {detail?.status === 'running' ? (
-                                      <div className="flex flex-col items-center gap-3">
-                                        <PrdPetalBreathingLoader size={72} />
-                                        <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>生成中…</div>
-                                      </div>
-                                    ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (
-                                      <div className="flex flex-col items-center gap-3">
-                                        <PrdPetalBreathingLoader size={72} paused grayscale />
-                                        <div className="text-[12px]" style={{ color: 'rgba(239,68,68,0.85)' }}>
-                                          {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>等待结果</div>
-                                    )}
-                                  </div>
-                                </div>
+                              ))}
                               </div>
-                            </>
-                          ) : bodyHasInitImage && artifactInputs.length === 0 ? (
-                            <>
-                              <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                                {(detail?.questionText ?? '').trim() || '（无提示词）'}
+                            ) : (
+                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)', height: 120 }}>
+                                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>（无输入）</div>
                               </div>
-                              <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                                {/* 参考图 - 从 body 中提取 URL 或降级 */}
-                                <div className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                      参考图
-                                    </div>
-                                    {bodyImageUrl && (
-                                      <Button
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={async () => {
-                                          try {
-                                            await navigator.clipboard.writeText(bodyImageUrl);
-                                            setCopiedHint('已复制');
-                                            setTimeout(() => setCopiedHint(''), 1200);
-                                          } catch {
-                                            setCopiedHint('复制失败（浏览器权限）');
-                                            setTimeout(() => setCopiedHint(''), 2000);
-                                          }
-                                        }}
-                                      >
-                                        <Copy size={14} />
-                                        复制URL
-                                      </Button>
-                                    )}
-                                  </div>
-                                  {bodyImageUrl ? (
-                                    <img src={bodyImageUrl} alt="input" style={{ width: '100%', height: 320, objectFit: 'contain', display: 'block' }} />
-                                  ) : (
-                                    <div className="flex items-center justify-center" style={{ height: 320 }}>
-                                      <div className="flex flex-col items-center gap-2">
-                                        <PrdPetalBreathingLoader size={48} paused grayscale />
-                                        <div className="text-[11px] text-center px-4" style={{ color: 'var(--text-muted)' }}>
-                                          参考图未记录（历史数据）
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                                {/* 结果图 - 加载中/失败 */}
-                                <div className="rounded-[14px] overflow-hidden relative" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                      结果图
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center justify-center" style={{ height: 320 }}>
-                                    {detail?.status === 'running' ? (
-                                      <div className="flex flex-col items-center gap-3">
-                                        <PrdPetalBreathingLoader size={72} />
-                                        <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>生成中…</div>
-                                      </div>
-                                    ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (
-                                      <div className="flex flex-col items-center gap-3">
-                                        <PrdPetalBreathingLoader size={72} paused grayscale />
-                                        <div className="text-[12px]" style={{ color: 'rgba(239,68,68,0.85)' }}>
-                                          {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>等待结果</div>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </>
-                          ) : (
-                            <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                              <div className="rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-                                  提示词
-                                </div>
-                                <div className="text-[12px]" style={{ color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>
-                                  {(detail?.questionText ?? '').trim() || '（无提示词）'}
-                                </div>
-                              </div>
-                              <div className="grid gap-2">
-                                {artifactOutputs.slice(0, 4).map((it) => (
-                                  <div key={it.id} className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                    <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                      <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                        结果图
-                                      </div>
-                                      <Button
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={async () => {
-                                          try {
-                                            await navigator.clipboard.writeText(it.cosUrl || '');
-                                            setCopiedHint('已复制');
-                                            setTimeout(() => setCopiedHint(''), 1200);
-                                          } catch {
-                                            setCopiedHint('复制失败（浏览器权限）');
-                                            setTimeout(() => setCopiedHint(''), 2000);
-                                          }
-                                        }}
-                                      >
-                                        <Copy size={14} />
-                                        复制URL
-                                      </Button>
-                                    </div>
-                                    <img src={it.cosUrl} alt="output" style={{ width: '100%', height: 220, objectFit: 'contain', display: 'block' }} />
-                                    <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                      <div className="truncate" title={it.cosUrl}>
-                                        {it.cosUrl}
-                                      </div>
-                                      <div className="mt-1 flex items-center justify-between gap-2">
-                                        <span>
-                                          {it.width}×{it.height}
-                                        </span>
-                                        <span>
-                                          {fmtBytes(it.sizeBytes)} · {String(it.mime || '').toLowerCase()}
-                                        </span>
-                                      </div>
-                                      <div className="mt-1 truncate" title={it.sha256}>
-                                        sha256: {it.sha256}
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* 请求体内嵌图片（蒙版、多参考图等） */}
-                      {bodyInlineImages.length > 0 && (
-                        <div className="mt-3">
-                          <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-                            请求体内嵌图片（{bodyInlineImages.length}张）
+                            )}
                           </div>
-                          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(bodyInlineImages.length, 3)}, minmax(0, 1fr))` }}>
-                            {bodyInlineImages.map((img, idx) => (
-                              <div key={idx} className="rounded-[14px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                <div className="px-3 py-2 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                  <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                    {img.label}{bodyInlineImages.length > 1 ? ` #${idx + 1}` : ''}
+                          {/* ===== Output 生成图（右） ===== */}
+                          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                            <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Output</div>
+                            {effOutputs.length > 0 ? (
+                              <div className="space-y-2">
+                              {effOutputs.map((img, idx) => (
+                                <div key={`out-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                      {img.label}{effOutputs.length > 1 ? ` #${idx + 1}` : ''}
+                                    </div>
+                                    <Button variant="secondary" size="sm" onClick={async () => {
+                                      try { await navigator.clipboard.writeText(img.url); setCopiedHint('已复制'); setTimeout(() => setCopiedHint(''), 1200); }
+                                      catch { setCopiedHint('复制失败'); setTimeout(() => setCopiedHint(''), 2000); }
+                                    }}>
+                                      <Copy size={12} /> URL
+                                    </Button>
                                   </div>
+                                  <img src={img.url} alt={img.label} style={{ width: '100%', height: 280, objectFit: 'contain', display: 'block', background: 'rgba(0,0,0,0.08)' }} />
+                                  {img.sha256 && <div className="px-3 py-1 text-[10px] truncate" style={{ color: 'var(--text-muted)' }} title={img.sha256}>sha256: {img.sha256}</div>}
                                 </div>
-                                <img
-                                  src={img.src}
-                                  alt={img.label}
-                                  style={{ width: '100%', height: 200, objectFit: 'contain', display: 'block', background: 'rgba(0,0,0,0.08)' }}
-                                />
+                              ))}
                               </div>
-                            ))}
+                            ) : (
+                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)', flex: 1, minHeight: 120 }}>
+                                {detail?.status === 'running' ? (
+                                  <div className="flex flex-col items-center gap-2">
+                                    <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+                                    <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>生成中…</div>
+                                  </div>
+                                ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (
+                                  <div className="text-[11px]" style={{ color: 'rgba(239,68,68,0.85)' }}>
+                                    {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
+                                  </div>
+                                ) : (
+                                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>（无输出）</div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
-                      )}
+                      </div>
                     </div>
-                    ) : null}
-
+                      );
+                    })()}
                     {imageGenUpstream ? (
                       <div className="mb-3">
                         <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
