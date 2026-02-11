@@ -72,15 +72,16 @@ interface FixedTab {
   icon: LucideIcon;
   path: string;           // 路由路径（center 无路由）
   matchPrefix?: string;   // active 匹配前缀
+  exactMatch?: boolean;   // 是否精确匹配（首页需要）
   isCenter?: boolean;     // 中间 + 按钮
 }
 
 const FIXED_TABS: FixedTab[] = [
-  { key: 'home',    label: '首页', icon: Home,       path: '/agent-launcher', matchPrefix: '/agent-launcher' },
-  { key: 'explore', label: '浏览', icon: Compass,    path: '/marketplace',    matchPrefix: '/marketplace' },
-  { key: 'create',  label: '',     icon: Plus,        path: '',                isCenter: true },
-  { key: 'assets',  label: '资产', icon: FolderOpen,  path: '/assets',         matchPrefix: '/assets' },
-  { key: 'me',      label: '我的', icon: UserCircle,  path: '/settings',       matchPrefix: '/settings' },
+  { key: 'home',    label: '首页', icon: Home,       path: '/',             matchPrefix: '/', exactMatch: true },
+  { key: 'explore', label: '浏览', icon: Compass,    path: '/ai-toolbox',   matchPrefix: '/ai-toolbox' },
+  { key: 'create',  label: '',     icon: Plus,        path: '',              isCenter: true },
+  { key: 'assets',  label: '资产', icon: FolderOpen,  path: '/my-assets',    matchPrefix: '/my-assets' },
+  { key: 'me',      label: '我的', icon: UserCircle,  path: '/profile',      matchPrefix: '/profile' },
 ];
 
 interface MobileTabBarProps {
@@ -135,7 +136,11 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
         <div className="relative h-[var(--mobile-tab-height,60px)] flex items-stretch">
           {FIXED_TABS.map((tab) => {
             const prefix = tab.matchPrefix ?? tab.path;
-            const active = !tab.isCenter && (location.pathname === prefix || location.pathname.startsWith(prefix + '/'));
+            const active = !tab.isCenter && (
+              tab.exactMatch
+                ? location.pathname === prefix
+                : location.pathname === prefix || location.pathname.startsWith(prefix + '/')
+            );
             const Icon = tab.icon;
 
             if (tab.isCenter) {

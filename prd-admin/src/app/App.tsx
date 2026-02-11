@@ -23,11 +23,15 @@ import SettingsPage from '@/pages/SettingsPage';
 import ExecutiveDashboardPage from '@/pages/ExecutiveDashboardPage';
 import { PrdAgentTabsPage } from '@/pages/PrdAgentTabsPage';
 import AgentLauncherPage from '@/pages/AgentLauncherPage';
+import MobileHomePage from '@/pages/MobileHomePage';
+import MobileAssetsPage from '@/pages/MobileAssetsPage';
+import MobileProfilePage from '@/pages/MobileProfilePage';
 import RichComposerLab from '@/pages/_dev/RichComposerLab';
 import MobileAuditPage from '@/pages/_dev/MobileAuditPage';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 import { AgentSwitcherProvider } from '@/components/agent-switcher';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -90,11 +94,13 @@ function RequirePermission({ perm, children }: { perm: string; children: React.R
   return <>{children}</>;
 }
 
-/** 首页路由：管理员进总裁面板，Agent 体验者进 Cmd+K 选择页 */
+/** 首页路由：移动端进 MobileHomePage，桌面管理员进总裁面板，其余进 Agent 选择页 */
 function IndexPage() {
   const perms = useAuthStore((s) => s.permissions);
   const loaded = useAuthStore((s) => s.permissionsLoaded);
+  const { isMobile } = useBreakpoint();
   if (!loaded) return null;
+  if (isMobile) return <MobileHomePage />;
   if (perms.includes('executive.read') || perms.includes('super')) {
     return <Navigate to="/executive" replace />;
   }
@@ -242,6 +248,9 @@ export default function App() {
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
         <Route path="executive" element={<RequirePermission perm="executive.read"><ExecutiveDashboardPage /></RequirePermission>} />
+        {/* 移动端专属路由 */}
+        <Route path="my-assets" element={<RequirePermission perm="access"><MobileAssetsPage /></RequirePermission>} />
+        <Route path="profile" element={<RequirePermission perm="access"><MobileProfilePage /></RequirePermission>} />
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>
 
