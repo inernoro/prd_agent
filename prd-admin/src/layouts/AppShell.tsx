@@ -44,7 +44,6 @@ import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
-import type { MobileTabItem } from '@/components/ui/MobileTabBar';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateUserAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
@@ -207,15 +206,7 @@ export default function AppShell() {
   const focusHideAside = fullBleedMain || isMobile;
   const mainPadLeft = focusHideAside ? (isMobile ? 0 : asideGap) : asideWidth + asideGap * 2;
 
-  // 移动端底部 Tab 栏: 取前 5 个导航项
-  const mobileTabItems: MobileTabItem[] = useMemo(() => {
-    return visibleItems.slice(0, 5).map((it) => {
-      // 从 JSX 图标中提取 LucideIcon 组件
-      const iconElement = it.icon as React.ReactElement<{ size?: number }>;
-      const IconComp = (iconElement?.type as LucideIcon) || LayoutDashboard;
-      return { key: it.key, label: it.label, icon: IconComp, path: it.key };
-    });
-  }, [visibleItems]);
+  // 移动端底部 Tab 栏: 5 固定 Tab（首页/浏览/+/资产/我的），不再依赖后端菜单
 
   // 过滤活跃通知：仅显示状态为 open 的通知
   const activeNotifications = useMemo(
@@ -543,10 +534,8 @@ export default function AppShell() {
         </MobileDrawer>
       )}
 
-      {/* ── 移动端: 底部 Tab 栏 ── */}
-      {isMobile && mobileTabItems.length > 0 && (
-        <MobileTabBar items={mobileTabItems} />
-      )}
+      {/* ── 移动端: 底部 Tab 栏 (5 固定 Tab: 首页/浏览/+/资产/我的) ── */}
+      {isMobile && <MobileTabBar />}
 
       {/* 主体容器（背景动画已临时移除以消除渲染卡顿） */}
       <div className="relative h-full w-full">

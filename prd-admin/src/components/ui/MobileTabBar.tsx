@@ -1,181 +1,265 @@
+import { useState, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/cn';
-import type { LucideIcon } from 'lucide-react';
+import {
+  Home,
+  Compass,
+  Plus,
+  FolderOpen,
+  UserCircle,
+  MessageSquare,
+  Image,
+  PenLine,
+  Bug,
+  type LucideIcon,
+} from 'lucide-react';
+import { BottomSheet } from './BottomSheet';
 
-export interface MobileTabItem {
+/* ── Agent 快捷入口定义 ── */
+interface AgentShortcut {
+  key: string;
+  label: string;
+  subtitle: string;
+  icon: LucideIcon;
+  path: string;
+  color: string;       // 图标主色
+  glowColor: string;   // 发光色
+}
+
+const AGENT_SHORTCUTS: AgentShortcut[] = [
+  {
+    key: 'prd-agent',
+    label: 'PRD Agent',
+    subtitle: '智能解读与问答',
+    icon: MessageSquare,
+    path: '/prd-agent',
+    color: 'rgba(129, 140, 248, 0.95)',
+    glowColor: 'rgba(129, 140, 248, 0.3)',
+  },
+  {
+    key: 'visual-agent',
+    label: '视觉创作',
+    subtitle: '高级视觉工作区',
+    icon: Image,
+    path: '/visual-agent',
+    color: 'rgba(251, 146, 60, 0.95)',
+    glowColor: 'rgba(251, 146, 60, 0.3)',
+  },
+  {
+    key: 'literary-agent',
+    label: '文学创作',
+    subtitle: '文章配图与创作',
+    icon: PenLine,
+    path: '/literary-agent',
+    color: 'rgba(52, 211, 153, 0.95)',
+    glowColor: 'rgba(52, 211, 153, 0.3)',
+  },
+  {
+    key: 'defect-agent',
+    label: '缺陷管理',
+    subtitle: '提交与跟踪',
+    icon: Bug,
+    path: '/defect-agent',
+    color: 'rgba(248, 113, 113, 0.95)',
+    glowColor: 'rgba(248, 113, 113, 0.3)',
+  },
+];
+
+/* ── 底部5个固定Tab ── */
+interface FixedTab {
   key: string;
   label: string;
   icon: LucideIcon;
-  /** 路由路径 (点击时跳转) */
-  path: string;
-  /** 匹配路由前缀 (判断是否 active)，默认使用 path */
-  matchPrefix?: string;
+  path: string;           // 路由路径（center 无路由）
+  matchPrefix?: string;   // active 匹配前缀
+  isCenter?: boolean;     // 中间 + 按钮
 }
 
+const FIXED_TABS: FixedTab[] = [
+  { key: 'home',    label: '首页', icon: Home,       path: '/agent-launcher', matchPrefix: '/agent-launcher' },
+  { key: 'explore', label: '浏览', icon: Compass,    path: '/marketplace',    matchPrefix: '/marketplace' },
+  { key: 'create',  label: '',     icon: Plus,        path: '',                isCenter: true },
+  { key: 'assets',  label: '资产', icon: FolderOpen,  path: '/assets',         matchPrefix: '/assets' },
+  { key: 'me',      label: '我的', icon: UserCircle,  path: '/settings',       matchPrefix: '/settings' },
+];
+
 interface MobileTabBarProps {
-  items: MobileTabItem[];
   className?: string;
 }
 
 /**
- * 移动端底部 Tab 导航栏。
+ * 移动端底部 Tab 导航栏 — 5 固定 Tab。
  *
- * 设计哲学："黑暗中透着光明"
- * - 深色磨砂玻璃底座
- * - 中间第 3 项悬浮上抬，高对比度发光按钮
- * - 常规项使用圆点指示器 + 高对比度激活态
- * - 整体对比度高，不显呆板
+ * | 首页 | 浏览 | + | 资产 | 我的 |
+ *
+ * 中间 "+" 弹出 Agent 快捷面板（BottomSheet），其余 4 个为路由导航。
  */
-export function MobileTabBar({ items, className }: MobileTabBarProps) {
+export function MobileTabBar({ className }: MobileTabBarProps) {
   const location = useLocation();
   const navigate = useNavigate();
+  const [sheetOpen, setSheetOpen] = useState(false);
 
-  const centerIndex = Math.floor(items.length / 2); // 第 3 项 (index 2)
+  const handleAgentSelect = useCallback((path: string) => {
+    setSheetOpen(false);
+    navigate(path);
+  }, [navigate]);
 
   return (
-    <nav
-      className={cn('fixed left-0 right-0 bottom-0 z-100', className)}
-      style={{
-        height: 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px))',
-        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-      }}
-    >
-      {/* 玻璃底座 */}
-      <div
-        className="absolute inset-0"
+    <>
+      <nav
+        className={cn('fixed left-0 right-0 bottom-0 z-100', className)}
         style={{
-          background: 'linear-gradient(0deg, rgba(10, 10, 14, 0.97) 0%, rgba(16, 16, 22, 0.92) 100%)',
-          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-          backdropFilter: 'blur(48px) saturate(200%)',
-          WebkitBackdropFilter: 'blur(48px) saturate(200%)',
+          height: 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px))',
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         }}
-      />
-      {/* 顶部高光线 — 细微的光带 */}
-      <div
-        className="absolute top-0 left-[10%] right-[10%] h-px"
-        style={{
-          background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.12) 30%, rgba(255, 255, 255, 0.18) 50%, rgba(255, 255, 255, 0.12) 70%, transparent 100%)',
-        }}
-      />
+      >
+        {/* 玻璃底座 */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background: 'linear-gradient(0deg, rgba(10, 10, 14, 0.97) 0%, rgba(16, 16, 22, 0.92) 100%)',
+            borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+            backdropFilter: 'blur(48px) saturate(200%)',
+            WebkitBackdropFilter: 'blur(48px) saturate(200%)',
+          }}
+        />
+        {/* 顶部高光线 */}
+        <div
+          className="absolute top-0 left-[12%] right-[12%] h-px"
+          style={{
+            background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.10) 30%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.10) 70%, transparent 100%)',
+          }}
+        />
 
-      {/* 按钮区域 */}
-      <div className="relative h-[var(--mobile-tab-height,60px)] flex items-end">
-        {items.map((item, index) => {
-          const prefix = item.matchPrefix ?? item.path;
-          const active = location.pathname === prefix || location.pathname.startsWith(prefix + '/');
-          const Icon = item.icon;
-          const isCenter = index === centerIndex;
+        {/* 5 Tabs */}
+        <div className="relative h-[var(--mobile-tab-height,60px)] flex items-stretch">
+          {FIXED_TABS.map((tab) => {
+            const prefix = tab.matchPrefix ?? tab.path;
+            const active = !tab.isCenter && (location.pathname === prefix || location.pathname.startsWith(prefix + '/'));
+            const Icon = tab.icon;
 
-          if (isCenter) {
-            // ── 中间悬浮按钮 ──
+            if (tab.isCenter) {
+              /* ── 中间 "+" 按钮 ── */
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => setSheetOpen(true)}
+                  className="flex-1 flex items-center justify-center active:scale-95 transition-transform"
+                  style={{ minHeight: 'var(--mobile-min-touch, 44px)' }}
+                >
+                  <div
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 14,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: 'linear-gradient(145deg, var(--accent-gold, #f5b228) 0%, rgba(220, 140, 20, 0.90) 100%)',
+                      boxShadow: `0 0 16px 2px rgba(245, 178, 40, 0.25), 0 2px 8px -1px rgba(245, 158, 11, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.25)`,
+                      border: '1px solid rgba(255, 220, 100, 0.20)',
+                    }}
+                  >
+                    <Icon
+                      size={22}
+                      strokeWidth={2.5}
+                      style={{ color: 'rgba(15, 10, 0, 0.85)' }}
+                    />
+                  </div>
+                </button>
+              );
+            }
+
+            /* ── 常规 Tab ── */
             return (
               <button
-                key={item.key}
-                onClick={() => navigate(item.path)}
-                className="flex-1 flex flex-col items-center justify-end pb-1 relative"
+                key={tab.key}
+                onClick={() => navigate(tab.path)}
+                className="flex-1 flex flex-col items-center justify-center gap-[3px] transition-all duration-200 active:scale-95"
                 style={{ minHeight: 'var(--mobile-min-touch, 44px)' }}
               >
-                {/* 悬浮圆形按钮 — 上抬 */}
-                <div
-                  className="absolute flex items-center justify-center transition-transform active:scale-95"
-                  style={{
-                    width: 50,
-                    height: 50,
-                    borderRadius: '50%',
-                    bottom: 22,
-                    // 高对比度渐变：从亮金到暖橙
-                    background: active
-                      ? 'linear-gradient(145deg, rgba(255, 200, 60, 0.95) 0%, rgba(245, 158, 11, 0.90) 50%, rgba(220, 120, 20, 0.85) 100%)'
-                      : 'linear-gradient(145deg, rgba(255, 200, 60, 0.80) 0%, rgba(245, 158, 11, 0.72) 50%, rgba(220, 120, 20, 0.65) 100%)',
-                    // 多层发光 — 黑暗中透着光明
-                    boxShadow: active
-                      ? `0 0 20px 4px rgba(245, 178, 40, 0.45),
-                         0 4px 14px -2px rgba(245, 158, 11, 0.60),
-                         0 0 40px 8px rgba(245, 158, 11, 0.15),
-                         inset 0 1px 0 rgba(255, 255, 255, 0.35)`
-                      : `0 0 16px 3px rgba(245, 178, 40, 0.30),
-                         0 4px 12px -2px rgba(245, 158, 11, 0.40),
-                         0 0 30px 6px rgba(245, 158, 11, 0.10),
-                         inset 0 1px 0 rgba(255, 255, 255, 0.25)`,
-                    // 外圈描边
-                    border: '2px solid rgba(255, 220, 100, 0.30)',
-                  }}
-                >
-                  <Icon
-                    size={22}
-                    strokeWidth={2.4}
-                    style={{
-                      color: 'rgba(20, 10, 0, 0.88)',
-                      filter: 'drop-shadow(0 1px 1px rgba(255, 255, 255, 0.2))',
-                    }}
-                  />
-                </div>
-                {/* 标签 */}
-                <span
-                  className="text-[9px] leading-tight font-semibold"
-                  style={{
-                    color: active ? 'rgba(255, 200, 80, 0.95)' : 'rgba(255, 200, 80, 0.65)',
-                  }}
-                >
-                  {item.label}
-                </span>
-              </button>
-            );
-          }
-
-          // ── 常规项 ──
-          return (
-            <button
-              key={item.key}
-              onClick={() => navigate(item.path)}
-              className="flex-1 flex flex-col items-center justify-center gap-1 transition-all duration-200 active:scale-95"
-              style={{
-                minHeight: 'var(--mobile-min-touch, 44px)',
-                paddingBottom: 2,
-              }}
-            >
-              <div className="relative">
                 <Icon
                   size={21}
                   strokeWidth={active ? 2.2 : 1.6}
                   style={{
-                    color: active
-                      ? 'rgba(255, 255, 255, 0.95)'
-                      : 'rgba(255, 255, 255, 0.35)',
-                    transition: 'color 0.2s ease, filter 0.2s ease',
-                    filter: active ? 'drop-shadow(0 0 6px rgba(255, 255, 255, 0.2))' : 'none',
+                    color: active ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.35)',
+                    transition: 'color 0.2s ease',
+                    filter: active ? 'drop-shadow(0 0 4px rgba(255,255,255,0.15))' : 'none',
                   }}
                 />
-              </div>
-              <div className="flex flex-col items-center gap-0.5">
                 <span
-                  className={cn('text-[10px] leading-tight', active ? 'font-semibold' : 'font-normal')}
+                  className={cn('text-[10px] leading-none', active ? 'font-semibold' : 'font-normal')}
                   style={{
-                    color: active
-                      ? 'rgba(255, 255, 255, 0.90)'
-                      : 'rgba(255, 255, 255, 0.32)',
+                    color: active ? 'rgba(255, 255, 255, 0.88)' : 'rgba(255, 255, 255, 0.30)',
                     transition: 'color 0.2s ease',
                   }}
                 >
-                  {item.label}
+                  {tab.label}
                 </span>
-                {/* 激活圆点指示器 */}
+                {/* 激活指示条 */}
                 <div
-                  className="h-[3px] rounded-full transition-all duration-300"
+                  className="rounded-full transition-all duration-300"
                   style={{
-                    width: active ? 16 : 0,
+                    width: active ? 14 : 0,
+                    height: 2.5,
                     background: active
-                      ? 'linear-gradient(90deg, rgba(245, 178, 40, 0.8) 0%, rgba(255, 220, 100, 0.95) 50%, rgba(245, 178, 40, 0.8) 100%)'
+                      ? 'linear-gradient(90deg, rgba(245,178,40,0.7), rgba(255,220,100,0.95), rgba(245,178,40,0.7))'
                       : 'transparent',
-                    boxShadow: active ? '0 0 8px 1px rgba(245, 178, 40, 0.4)' : 'none',
+                    boxShadow: active ? '0 0 6px 1px rgba(245,178,40,0.35)' : 'none',
                     opacity: active ? 1 : 0,
                   }}
                 />
-              </div>
-            </button>
-          );
-        })}
-      </div>
-    </nav>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+
+      {/* ── Agent 快捷入口 BottomSheet ── */}
+      <BottomSheet open={sheetOpen} onOpenChange={setSheetOpen} title="选择 Agent">
+        <div className="grid grid-cols-2 gap-3 pb-2">
+          {AGENT_SHORTCUTS.map((agent) => {
+            const AgentIcon = agent.icon;
+            return (
+              <button
+                key={agent.key}
+                onClick={() => handleAgentSelect(agent.path)}
+                className="flex flex-col items-start gap-3 rounded-2xl p-4 text-left transition-all duration-150 active:scale-[0.97]"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                }}
+              >
+                <div
+                  className="flex items-center justify-center rounded-xl"
+                  style={{
+                    width: 40,
+                    height: 40,
+                    background: `${agent.glowColor}`,
+                    boxShadow: `0 0 12px ${agent.glowColor}`,
+                  }}
+                >
+                  <AgentIcon size={20} style={{ color: agent.color }} />
+                </div>
+                <div>
+                  <div
+                    className="text-sm font-semibold mb-0.5"
+                    style={{ color: 'var(--text-primary, rgba(255,255,255,0.95))' }}
+                  >
+                    {agent.label}
+                  </div>
+                  <div
+                    className="text-[11px]"
+                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
+                  >
+                    {agent.subtitle}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </BottomSheet>
+    </>
   );
 }
