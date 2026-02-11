@@ -31,12 +31,11 @@ import {
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
+import { glassPanel, glassSidebar, glassFloatingButton } from '@/lib/glassStyles';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useNavOrderStore } from '@/stores/navOrderStore';
-import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
-import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
@@ -94,8 +93,6 @@ export default function AppShell() {
   const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
   const { navOrder, loaded: navOrderLoaded, loadFromServer: loadNavOrder } = useNavOrderStore();
-  const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
-  const backdropRunning = backdropCount > 0;
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
@@ -331,10 +328,9 @@ export default function AppShell() {
             type="button"
             className="fixed bottom-5 right-5 z-[120] h-12 w-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105"
             style={{
+              ...glassFloatingButton,
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
               border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
-              boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-              backdropFilter: 'blur(18px)',
             }}
             onClick={() => setToastCollapsed(false)}
             onMouseEnter={() => setToastHovering(true)}
@@ -355,10 +351,10 @@ export default function AppShell() {
           <div
             className="fixed bottom-5 right-5 z-[120] w-[360px] rounded-[18px] p-4 shadow-xl"
             style={{
+              ...glassFloatingButton,
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
               border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
               boxShadow: '0 12px 30px rgba(0,0,0,0.45)',
-              backdropFilter: 'blur(18px)',
             }}
             onMouseEnter={() => setToastHovering(true)}
             onMouseLeave={() => setToastHovering(false)}
@@ -421,49 +417,8 @@ export default function AppShell() {
           </div>
         )
       )}
-      {/* 全局背景：覆盖侧边栏 + 主区（像背景色一样） */}
-      <RecursiveGridBackdrop
-        className="absolute inset-0"
-        // 与 thirdparty/ref/递归网络.html 一致：rot += 0.02deg @60fps => 1.2deg/s
-        speedDegPerSec={1.2}
-        shouldRun={backdropRunning}
-        stopRequestId={pendingStopId}
-        stopBrakeMs={2000}
-        onFullyStopped={(id) => {
-          if (!id) return;
-          backdropMotionController.markStopped(id);
-        }}
-        persistKey="prd-recgrid-rot"
-        persistMode="readwrite"
-        // 统一使用较淡的线条颜色，避免状态切换时的突变闪烁
-        // 刹车时内部会按 brakeStrokeFadeMs 渐变到 strokeBraking
-        strokeRunning={'rgba(231, 206, 151, 0.65)'}
-        strokeBraking={'rgba(231, 206, 151, 0.25)'}
-        // 刹车阶段按 2s 渐隐，更符合"缓慢结束"的体感
-        brakeStrokeFadeMs={2000}
-        brakeDecelerationRate={0.965}
-        brakeMinSpeedDegPerSec={0.015}
-      />
-      {/* 隔离层：阻断 backdrop-filter 对 Canvas 动画的实时采样，避免模糊重算导致卡顿 */}
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background: 'rgba(5, 5, 7, 0.15)',
-          willChange: 'transform',
-          transform: 'translateZ(0)',
-        }}
-      />
-      {/* 运行态高亮：解析/任务运行时让背景整体更"亮"一点 */}
-      <div
-        className="pointer-events-none absolute inset-0 transition-opacity duration-[2000ms] ease-out"
-        style={{
-          opacity: backdropRunning ? 0.8 : 0,
-          background:
-            'radial-gradient(900px 520px at 50% 18%, rgba(214, 178, 106, 0.12) 0%, transparent 60%), radial-gradient(820px 520px at 22% 55%, rgba(124, 252, 0, 0.04) 0%, transparent 65%), radial-gradient(1200px 700px at 60% 70%, rgba(255, 255, 255, 0.03) 0%, transparent 70%)',
-        }}
-      />
-
-      <div className="relative z-10 h-full w-full">
+      {/* 主体容器（背景动画已临时移除以消除渲染卡顿） */}
+      <div className="relative h-full w-full">
         {/* 悬浮侧边栏：不贴左边，像“挂着” */}
         <aside
           className={cn(
@@ -482,19 +437,11 @@ export default function AppShell() {
             // 强制创建持久的 GPU 合成层，避免状态变化时频繁创建/销毁合成层导致闪烁
             transform: 'translateZ(0)',
             willChange: 'transform',
-            ...(useSidebarGlass ? {
-              background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.06)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.02)) 100%)',
-              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
-              backdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
-              WebkitBackdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
-              boxShadow: '0 12px 48px -8px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.15) inset, 0 2px 0 0 rgba(255, 255, 255, 0.2) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.15) inset',
-            } : {
+            ...(useSidebarGlass ? glassSidebar : {
               backgroundColor: 'var(--bg-elevated, #121216)',
               backgroundImage: 'linear-gradient(135deg, rgba(20,20,24,1) 0%, rgba(14,14,17,1) 100%)',
               border: '1px solid var(--border-faint, rgba(255, 255, 255, 0.05))',
               boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
             }),
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
@@ -569,13 +516,7 @@ export default function AppShell() {
             <DropdownMenu.Portal>
               <DropdownMenu.Content
                 className="min-w-[220px] rounded-[16px] p-2 z-50"
-                style={{
-                  background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                  border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                  boxShadow: '0 18px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                  backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                  WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                }}
+                style={glassPanel}
                 sideOffset={8}
                 side="bottom"
                 align="start"
@@ -780,11 +721,6 @@ export default function AppShell() {
                     {!collapsed && (
                       <div className="min-w-0 flex-1 text-left">
                         <div className="text-sm font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">{it.label}</div>
-                        {it.description && (
-                          <div className="text-[10px] truncate mt-0.5 leading-tight" style={{ color: 'var(--text-muted)', opacity: active ? 0.8 : 0.6 }}>
-                            {it.description}
-                          </div>
-                        )}
                       </div>
                     )}
                     {active && !collapsed && (
@@ -914,17 +850,8 @@ export default function AppShell() {
 
         <main
           className="relative h-full w-full overflow-auto flex flex-col transition-[padding-left] duration-220 ease-out"
-          // 让递归线条背景可见；前景可读性由 Card 等“实底组件”承担
-          style={{ background: 'transparent', paddingLeft: mainPadLeft }}
+          style={{ background: 'var(--bg-base)', paddingLeft: mainPadLeft }}
         >
-          {/* 主内容区背景：满屏暗角 + 轻微渐变（不随 max-width 截断） */}
-          <div
-            className="pointer-events-none absolute inset-0"
-            style={{
-              background:
-                'radial-gradient(900px 520px at 50% 18%, rgba(214, 178, 106, 0.08) 0%, transparent 60%), radial-gradient(820px 520px at 22% 55%, rgba(124, 252, 0, 0.035) 0%, transparent 65%), radial-gradient(1200px 700px at 60% 70%, rgba(255, 255, 255, 0.025) 0%, transparent 70%)',
-            }}
-          />
           <div
             className={cn(
               'relative w-full flex-1 min-h-0 flex flex-col',

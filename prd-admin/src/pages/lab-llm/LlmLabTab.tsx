@@ -4,6 +4,7 @@ import JSZip from 'jszip';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 import { GlassCard } from '@/components/design/GlassCard';
+import { glassPanel, glassTooltip, glassBadge } from '@/lib/glassStyles';
 import { GlassSwitch } from '@/components/design/GlassSwitch';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -2482,10 +2483,9 @@ export default function LlmLabTab() {
           key={copyToast.id}
           className="fixed left-1/2 top-[88px] -translate-x-1/2 z-[9999] px-3 py-2 rounded-[12px] text-[13px] font-semibold"
           style={{
+            ...glassTooltip,
             background: 'rgba(0,0,0,0.72)',
-            border: '1px solid rgba(255,255,255,0.12)',
             color: 'rgba(255,255,255,0.92)',
-            backdropFilter: 'blur(10px)',
             boxShadow: '0 10px 28px rgba(0,0,0,0.35)',
             pointerEvents: 'none',
           }}
@@ -2869,11 +2869,7 @@ export default function LlmLabTab() {
                             className="rounded-[12px] p-1 min-w-[200px]"
                             style={{
                               zIndex: 90,
-                              background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                              boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                              backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                              WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                              ...glassPanel,
                             }}
                           >
                             {ASPECT_OPTIONS.map((opt) => {
@@ -3100,9 +3096,9 @@ export default function LlmLabTab() {
                       <div
                         className="absolute inset-0 rounded-[14px] flex items-center justify-center"
                         style={{
+                          ...glassBadge,
                           background: 'rgba(0,0,0,0.35)',
                           border: '1px solid rgba(255,255,255,0.10)',
-                          backdropFilter: 'blur(6px)',
                         }}
                       >
                         <Button

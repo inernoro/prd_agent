@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { HexColorPicker } from 'react-colorful';
+import { glassPopoverCompact } from '@/lib/glassStyles';
 
 type ColorPickerProps = {
   value: string;
@@ -62,9 +63,7 @@ export function ColorPicker({ value, onChange, title }: ColorPickerProps) {
           <Popover.Content
             className="rounded-xl p-3 shadow-xl"
             style={{
-              background: 'rgba(30, 30, 35, 0.95)',
-              backdropFilter: 'blur(20px)',
-              border: '1px solid rgba(255,255,255,0.1)',
+              ...glassPopoverCompact,
               zIndex: 9999,
             }}
             sideOffset={8}

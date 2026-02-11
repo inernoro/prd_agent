@@ -32,6 +32,7 @@ import {
 } from '@/services';
 import type { WatermarkFontInfo, WatermarkConfig } from '@/services/contracts/watermark';
 import { toast } from '@/lib/toast';
+import { glassPopoverCompact, glassBadge, glassPanel } from '@/lib/glassStyles';
 import { systemDialog } from '@/lib/systemDialog';
 import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Droplet, Plus, CheckCircle2, FlaskConical, Share2, GitFork, Eye, PaintBucket } from 'lucide-react';
 
@@ -1603,24 +1604,22 @@ function PositionModeSwitch(props: {
     <div
       className="relative inline-flex items-center gap-1 p-1 h-9 rounded-[10px]"
       style={{
+        ...glassPopoverCompact,
         background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)',
         border: '1px solid rgba(255, 255, 255, 0.12)',
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
       }}
     >
       {/* 滑动指示器 */}
       <div
         className="absolute rounded-[7px] h-7 pointer-events-none"
         style={{
+          ...glassBadge,
           left: indicatorStyle.left,
           width: indicatorStyle.width,
           transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
           background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%)',
           border: '1px solid rgba(255, 255, 255, 0.18)',
           boxShadow: '0 2px 8px -1px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1) inset',
-          backdropFilter: 'blur(8px)',
-          WebkitBackdropFilter: 'blur(8px)',
         }}
       />
 
@@ -1677,23 +1676,21 @@ function ScaleModeSwitch(props: { enabled: boolean; onToggle: (next: boolean) =>
     <div
       className="relative inline-flex items-center gap-1 p-1 h-9 rounded-[10px]"
       style={{
+        ...glassPopoverCompact,
         background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)',
         border: '1px solid rgba(255, 255, 255, 0.12)',
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
       }}
     >
       <div
         className="absolute rounded-[7px] h-7 pointer-events-none"
         style={{
+          ...glassBadge,
           left: indicatorStyle.left,
           width: indicatorStyle.width,
           transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
           background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%)',
           border: '1px solid rgba(255, 255, 255, 0.18)',
           boxShadow: '0 2px 8px -1px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1) inset',
-          backdropFilter: 'blur(8px)',
-          WebkitBackdropFilter: 'blur(8px)',
         }}
       />
       {([
@@ -1769,11 +1766,7 @@ function FontSelect(props: {
         <DropdownMenu.Content
           className="z-120 rounded-[14px] overflow-hidden"
           style={{
-            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+            ...glassPanel,
             minWidth: 240,
           }}
           sideOffset={8}

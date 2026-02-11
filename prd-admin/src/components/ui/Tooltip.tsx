@@ -1,5 +1,6 @@
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import React, { useState } from 'react';
+import { glassTooltip } from '@/lib/glassStyles';
 
 export function Tooltip({
   content,
@@ -50,12 +51,8 @@ export function Tooltip({
           alignOffset={-6}
           className="rounded-[12px] px-3 py-2 text-xs"
           style={{
-            background: 'rgba(20, 20, 24, 0.95)',
-            border: '1px solid rgba(255,255,255,0.12)',
+            ...glassTooltip,
             color: 'rgba(255,255,255,0.95)',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.08) inset',
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
             maxWidth: 240,
             userSelect: 'none',
             zIndex: 9999,

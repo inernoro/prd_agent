@@ -4,16 +4,20 @@
  */
 
 import { GlassCard } from '@/components/design/GlassCard';
+import { glassPanel } from '@/lib/glassStyles';
 import { useThemeStore } from '@/stores/themeStore';
 import {
   COLOR_DEPTH_MAP,
   OPACITY_MAP,
   SIDEBAR_GLASS_OPTIONS,
+  PERFORMANCE_MODE_OPTIONS,
   type ColorDepthLevel,
   type OpacityLevel,
   type SidebarGlassMode,
+  type PerformanceMode,
 } from '@/types/theme';
-import { RotateCcw, Sparkles, Palette, Layers, PanelLeft, Save } from 'lucide-react';
+import { isWindowsPlatform } from '@/lib/themeApplier';
+import { RotateCcw, Sparkles, Palette, Layers, PanelLeft, Save, Gauge } from 'lucide-react';
 
 export function ThemeSkinEditor() {
   const { config, setConfig, reset, saving } = useThemeStore();
@@ -235,6 +239,45 @@ export function ThemeSkinEditor() {
           </div>
         </SettingSection>
 
+        {/* 性能模式 */}
+        <SettingSection
+          icon={<Gauge size={14} />}
+          title="性能模式"
+          description={isWindowsPlatform() ? 'Windows 检测到，建议使用自动或性能优先' : '调整渲染特效强度'}
+        >
+          <div className="space-y-2">
+            {PERFORMANCE_MODE_OPTIONS.map((option) => {
+              const isActive = config.performanceMode === option.value;
+              return (
+                <button
+                  key={option.value}
+                  onClick={() => setConfig({ performanceMode: option.value as PerformanceMode })}
+                  className="w-full p-3 rounded-lg transition-all text-left"
+                  style={{
+                    background: isActive
+                      ? 'rgba(214, 178, 106, 0.15)'
+                      : 'rgba(255, 255, 255, 0.04)',
+                    border: `1px solid ${isActive ? 'rgba(214, 178, 106, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
+                  }}
+                >
+                  <div
+                    className="text-xs font-medium"
+                    style={{ color: isActive ? 'var(--accent-gold)' : 'var(--text-primary)' }}
+                  >
+                    {option.label}
+                  </div>
+                  <div
+                    className="text-xs mt-0.5"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    {option.description}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </SettingSection>
+
         {/* 实时预览 */}
         <SettingSection
           icon={<Palette size={14} />}
@@ -246,9 +289,9 @@ export function ThemeSkinEditor() {
             <div
               className="p-3 rounded-lg"
               style={{
+                ...glassPanel,
                 background: `linear-gradient(180deg, var(--glass-bg-start, rgba(255,255,255,0.08)) 0%, var(--glass-bg-end, rgba(255,255,255,0.03)) 100%)`,
                 border: `1px solid var(--glass-border, rgba(255,255,255,0.14))`,
-                backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
               }}
             >
               <div className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -263,11 +306,11 @@ export function ThemeSkinEditor() {
             <div
               className="p-3 rounded-lg relative overflow-hidden"
               style={{
+                ...glassPanel,
                 background: config.enableGlow
                   ? `radial-gradient(ellipse 100% 60% at 50% -10%, rgba(214, 178, 106, 0.25) 0%, transparent 65%), linear-gradient(180deg, var(--glass-bg-start, rgba(255,255,255,0.08)) 0%, var(--glass-bg-end, rgba(255,255,255,0.03)) 100%)`
                   : `linear-gradient(180deg, var(--glass-bg-start, rgba(255,255,255,0.08)) 0%, var(--glass-bg-end, rgba(255,255,255,0.03)) 100%)`,
                 border: `1px solid var(--glass-border, rgba(255,255,255,0.14))`,
-                backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
               }}
             >
               <div className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>

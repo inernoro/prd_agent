@@ -2,6 +2,7 @@ import { cn } from '@/lib/cn';
 import { useToastStore } from '@/lib/toast';
 import { CheckCircle2, XCircle, Info, AlertTriangle, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { glassToast } from '@/lib/glassStyles';
 
 const icons = {
   success: CheckCircle2,
@@ -75,11 +76,7 @@ function ToastItem({ toast }: { toast: { id: string; type: 'success' | 'error' |
         'flex items-start gap-3 transition-all duration-300',
         isExiting ? 'opacity-0 translate-x-8' : 'opacity-100 translate-x-0'
       )}
-      style={{
-        background: color.bg,
-        border: `1px solid ${color.border}`,
-        backdropFilter: 'blur(12px)',
-      }}
+      style={glassToast(color.bg, color.border)}
     >
       <Icon size={20} style={{ color: color.icon, flexShrink: 0, marginTop: 2 }} />
       

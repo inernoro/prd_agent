@@ -40,8 +40,9 @@ export interface ComputedThemeVars {
 
 /**
  * 根据主题配置计算 CSS 变量值
+ * @param reduceEffects 是否为性能模式（输出实底暗色替代玻璃透明）
  */
-export function computeThemeVars(config: ThemeConfig): ComputedThemeVars {
+export function computeThemeVars(config: ThemeConfig, reduceEffects = false): ComputedThemeVars {
   const depth = COLOR_DEPTH_MAP[config.colorDepth];
   const opacity = OPACITY_MAP[config.opacity];
 
@@ -50,6 +51,54 @@ export function computeThemeVars(config: ThemeConfig): ComputedThemeVars {
 
   // 玻璃亮度倍数（受色深影响）
   const glassBrightness = depth.glassBrightness;
+
+  // ── 性能模式（Obsidian 风格）：实底暗色表面，不依赖 backdrop-filter ──
+  if (reduceEffects) {
+    // 从 bgElevated hex 提取 RGB，构造高不透明度的实底表面
+    const r = parseInt(depth.bgElevated.slice(1, 3), 16);
+    const g = parseInt(depth.bgElevated.slice(3, 5), 16);
+    const b = parseInt(depth.bgElevated.slice(5, 7), 16);
+
+    // 基于色深的表面亮度微调
+    const lift = { darker: 6, default: 10, lighter: 16 }[config.colorDepth] ?? 10;
+    const sr = Math.min(255, r + lift);
+    const sg = Math.min(255, g + lift);
+    const sb = Math.min(255, b + lift);
+
+    // 表面透明度基于 opacity 配置
+    const surfaceAlpha = { solid: 0.97, default: 0.94, translucent: 0.88 }[config.opacity] ?? 0.94;
+
+    return {
+      '--bg-base': depth.bgBase,
+      '--bg-elevated': depth.bgElevated,
+      '--bg-card': depth.bgCard,
+
+      // 实底暗色表面（替代透明玻璃）
+      '--glass-bg-start': `rgba(${sr}, ${sg}, ${sb}, ${surfaceAlpha})`,
+      '--glass-bg-end': `rgba(${r}, ${g}, ${b}, ${Math.min(1, surfaceAlpha + 0.02)})`,
+      '--glass-border': `rgba(255, 255, 255, ${(0.07 * glassBrightness).toFixed(4)})`,
+
+      // 边框
+      '--border-subtle': `rgba(255, 255, 255, ${(0.06 * borderMultiplier * glassBrightness).toFixed(4)})`,
+      '--border-default': `rgba(255, 255, 255, ${(0.09 * borderMultiplier * glassBrightness).toFixed(4)})`,
+      '--border-hover': `rgba(255, 255, 255, ${(0.14 * borderMultiplier * glassBrightness).toFixed(4)})`,
+      '--border-faint': `rgba(255, 255, 255, ${(0.04 * borderMultiplier * glassBrightness).toFixed(4)})`,
+
+      // 内嵌块样式
+      '--nested-block-bg': `rgba(255, 255, 255, 0.035)`,
+      '--nested-block-border': `rgba(255, 255, 255, 0.06)`,
+      '--list-item-bg': `rgba(255, 255, 255, 0.03)`,
+      '--list-item-border': `rgba(255, 255, 255, 0.05)`,
+      '--list-item-hover-bg': `rgba(255, 255, 255, 0.06)`,
+
+      // 表格样式
+      '--table-header-bg': `rgba(255, 255, 255, 0.03)`,
+      '--table-row-border': `rgba(255, 255, 255, 0.05)`,
+      '--table-row-hover-bg': `rgba(255, 255, 255, 0.03)`,
+    };
+  }
+
+  // ── 质量模式（液态玻璃）──
 
   // 计算最终的玻璃透明度值（透明度 × 亮度倍数）
   const glassStartAlpha = Math.min(1, opacity.glassStart * glassBrightness);

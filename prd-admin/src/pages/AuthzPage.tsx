@@ -20,6 +20,7 @@ import {
 import type { SystemRoleDto } from '@/services/contracts/authz';
 import type { AdminUser } from '@/types/admin';
 import { useAuthStore } from '@/stores/authStore';
+import { glassPopoverCompact } from '@/lib/glassStyles';
 import { PermissionMatrix } from './authz/PermissionMatrix';
 import { MenuPermissionDialog } from './authz/MenuPermissionDialog';
 
@@ -404,8 +405,8 @@ export default function AuthzPage() {
           <div
             className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[360px] max-h-[70vh] overflow-hidden rounded-2xl"
             style={{
+              ...glassPopoverCompact,
               background: 'rgba(24, 24, 28, 0.95)',
-              backdropFilter: 'blur(20px)',
               border: '1px solid rgba(255, 255, 255, 0.1)',
               boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
             }}
@@ -529,8 +530,8 @@ export default function AuthzPage() {
           <div
             className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[400px] max-h-[70vh] overflow-hidden rounded-2xl"
             style={{
+              ...glassPopoverCompact,
               background: 'rgba(24, 24, 28, 0.95)',
-              backdropFilter: 'blur(20px)',
               border: '1px solid rgba(255, 255, 255, 0.1)',
               boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
             }}

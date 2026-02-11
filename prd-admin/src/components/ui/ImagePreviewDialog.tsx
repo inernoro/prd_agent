@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { glassPanel } from '@/lib/glassStyles';
 
 interface ImageItem {
   url: string;
@@ -52,13 +53,10 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
         onClick={onClose}
         className="absolute top-4 right-4 z-10"
         style={{
+          ...glassPanel,
           width: '40px',
           height: '40px',
           borderRadius: '50%',
-          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -69,7 +67,7 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
           e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)';
+          e.currentTarget.style.background = glassPanel.background as string;
         }}
       >
         <X size={20} style={{ color: 'white' }} />
@@ -90,11 +88,8 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
         <div
           className="absolute bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-full text-sm font-medium"
           style={{
-            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+            ...glassPanel,
             color: 'white',
-            backdropFilter: 'blur(40px) saturate(180%)',
-            WebkitBackdropFilter: 'blur(40px) saturate(180%)',
           }}
         >
           {currentIndex + 1} / {images.length}
@@ -107,13 +102,10 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
               onClick={() => setCurrentIndex(prev => (prev > 0 ? prev - 1 : images.length - 1))}
               className="absolute left-4 top-1/2 transform -translate-y-1/2"
               style={{
+                ...glassPanel,
                 width: '48px',
                 height: '48px',
                 borderRadius: '50%',
-                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                backdropFilter: 'blur(40px) saturate(180%)',
-                WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -124,7 +116,7 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
                 e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)';
+                e.currentTarget.style.background = glassPanel.background as string;
               }}
             >
               <ChevronLeft size={24} style={{ color: 'white' }} />
@@ -134,13 +126,10 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
               onClick={() => setCurrentIndex(prev => (prev < images.length - 1 ? prev + 1 : 0))}
               className="absolute right-4 top-1/2 transform -translate-y-1/2"
               style={{
+                ...glassPanel,
                 width: '48px',
                 height: '48px',
                 borderRadius: '50%',
-                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                backdropFilter: 'blur(40px) saturate(180%)',
-                WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -151,7 +140,7 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
                 e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)';
+                e.currentTarget.style.background = glassPanel.background as string;
               }}
             >
               <ChevronRight size={24} style={{ color: 'white' }} />

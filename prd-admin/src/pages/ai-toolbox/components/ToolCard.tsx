@@ -3,9 +3,7 @@ import { useToolboxStore } from '@/stores/toolboxStore';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import {
-  Zap,
-  Sparkles,
-  ExternalLink,
+  ArrowUpRight,
   FileText,
   Palette,
   PenTool,
@@ -18,8 +16,10 @@ import {
   Lightbulb,
   Target,
   Wrench,
+  Sparkles,
   Rocket,
   MessageSquare,
+  Zap,
   Brain,
   Cpu,
   Database,
@@ -51,41 +51,59 @@ const ICON_MAP: Record<string, LucideIcon> = {
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
 };
 
-// 图标名称到色相的映射
-const ICON_HUE_MAP: Record<string, number> = {
-  FileText: 210, Palette: 330, PenTool: 45, Bug: 0, Code2: 180, Languages: 200,
-  FileSearch: 50, BarChart3: 270, Bot: 210, Lightbulb: 45, Target: 0, Wrench: 30,
-  Sparkles: 280, Rocket: 210, MessageSquare: 180, Zap: 45, Brain: 270, Cpu: 200,
-  Database: 220, Globe: 180, Image: 330, Music: 300, Video: 0, BookOpen: 140,
-  GraduationCap: 220, Briefcase: 30, Heart: 350, Star: 45, Shield: 210, Lock: 200,
-  Search: 180, Layers: 240,
+const ACCENT_PALETTE: Record<string, { from: string; soft: string }> = {
+  FileText:     { from: '#3B82F6', soft: '#93C5FD' },
+  Palette:      { from: '#A855F7', soft: '#D8B4FE' },
+  PenTool:      { from: '#F59E0B', soft: '#FDE68A' },
+  Bug:          { from: '#EF4444', soft: '#FCA5A5' },
+  Code2:        { from: '#10B981', soft: '#6EE7B7' },
+  Languages:    { from: '#06B6D4', soft: '#67E8F9' },
+  FileSearch:   { from: '#EAB308', soft: '#FDE68A' },
+  BarChart3:    { from: '#8B5CF6', soft: '#C4B5FD' },
+  Bot:          { from: '#6366F1', soft: '#A5B4FC' },
+  Lightbulb:    { from: '#F59E0B', soft: '#FDE68A' },
+  Target:       { from: '#EF4444', soft: '#FCA5A5' },
+  Wrench:       { from: '#78716C', soft: '#D6D3D1' },
+  Sparkles:     { from: '#A855F7', soft: '#D8B4FE' },
+  Rocket:       { from: '#3B82F6', soft: '#93C5FD' },
+  MessageSquare:{ from: '#14B8A6', soft: '#5EEAD4' },
+  Brain:        { from: '#D946EF', soft: '#F0ABFC' },
+  Cpu:          { from: '#64748B', soft: '#94A3B8' },
+  Database:     { from: '#0EA5E9', soft: '#7DD3FC' },
+  Globe:        { from: '#22D3EE', soft: '#A5F3FC' },
+  Image:        { from: '#EC4899', soft: '#F9A8D4' },
+  Music:        { from: '#D946EF', soft: '#F0ABFC' },
+  Video:        { from: '#F43F5E', soft: '#FDA4AF' },
+  BookOpen:     { from: '#22C55E', soft: '#86EFAC' },
+  GraduationCap:{ from: '#3B82F6', soft: '#93C5FD' },
+  Briefcase:    { from: '#78716C', soft: '#A8A29E' },
+  Heart:        { from: '#F43F5E', soft: '#FDA4AF' },
+  Star:         { from: '#F59E0B', soft: '#FCD34D' },
+  Shield:       { from: '#3B82F6', soft: '#93C5FD' },
+  Lock:         { from: '#64748B', soft: '#94A3B8' },
+  Search:       { from: '#14B8A6', soft: '#5EEAD4' },
+  Layers:       { from: '#8B5CF6', soft: '#C4B5FD' },
 };
 
-// 获取图标组件
 function getIconComponent(iconName: string): LucideIcon {
   return ICON_MAP[iconName] || Bot;
 }
 
-// 获取强调色色相
-function getAccentHue(iconName: string): number {
-  return ICON_HUE_MAP[iconName] ?? 210;
+function getPalette(iconName: string) {
+  return ACCENT_PALETTE[iconName] ?? ACCENT_PALETTE.Bot;
 }
 
 export function ToolCard({ item }: ToolCardProps) {
   const { selectItem } = useToolboxStore();
   const navigate = useNavigate();
-  const accentHue = getAccentHue(item.icon);
+  const palette = getPalette(item.icon);
   const IconComponent = getIconComponent(item.icon);
-
-  // 判断是否为定制版（有专门路由页面）
   const isCustomized = !!item.routePath;
 
   const handleClick = () => {
     if (isCustomized && item.routePath) {
-      // 定制版：跳转到专门页面
       navigate(item.routePath);
     } else {
-      // 普通版：显示对话界面
       selectItem(item);
     }
   };
@@ -93,136 +111,102 @@ export function ToolCard({ item }: ToolCardProps) {
   return (
     <GlassCard
       variant="subtle"
-      accentHue={accentHue}
-      glow
       padding="none"
       interactive
       onClick={handleClick}
       className="group"
     >
-      <div className="p-3">
-        {/* Icon with glow effect */}
-        <div className="relative mb-3">
+      <div className="p-3 flex flex-col h-full">
+        {/* Icon + Title row */}
+        <div className="flex items-start gap-2.5 mb-2">
           <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 group-hover:scale-110"
+            className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
             style={{
-              background: `linear-gradient(135deg, hsla(${accentHue}, 70%, 60%, 0.18) 0%, hsla(${accentHue}, 70%, 40%, 0.1) 100%)`,
-              boxShadow: `0 3px 12px -3px hsla(${accentHue}, 70%, 50%, 0.35), inset 0 1px 0 0 rgba(255,255,255,0.12)`,
-              border: `1px solid hsla(${accentHue}, 60%, 60%, 0.25)`,
+              background: `${palette.from}15`,
+              border: `1px solid ${palette.from}20`,
             }}
           >
-            <IconComponent
-              size={20}
-              style={{ color: `hsla(${accentHue}, 70%, 70%, 1)` }}
-            />
+            <IconComponent size={18} style={{ color: palette.soft }} />
           </div>
-          {/* Subtle glow behind icon */}
-          <div
-            className="absolute inset-0 -z-10 blur-lg opacity-40 group-hover:opacity-60 transition-opacity"
-            style={{
-              background: `radial-gradient(circle, hsla(${accentHue}, 70%, 50%, 0.5) 0%, transparent 70%)`,
-            }}
-          />
-        </div>
-
-        {/* Name */}
-        <div
-          className="font-semibold text-[13px] mb-1 truncate"
-          style={{ color: 'rgba(255, 255, 255, 0.95)' }}
-        >
-          {item.name}
+          <div className="flex-1 min-w-0 pt-0.5">
+            <div className="flex items-center gap-1">
+              <div
+                className="font-semibold text-[13px] truncate flex-1"
+                style={{ color: 'var(--text-primary, rgba(255, 255, 255, 0.95))' }}
+              >
+                {item.name}
+              </div>
+              <ArrowUpRight
+                size={12}
+                className="shrink-0 opacity-0 group-hover:opacity-60 transition-opacity duration-200"
+                style={{ color: palette.soft }}
+              />
+            </div>
+          </div>
         </div>
 
         {/* Description */}
         <div
-          className="text-[11px] line-clamp-2 mb-2.5 leading-relaxed"
-          style={{ color: 'rgba(255, 255, 255, 0.55)', minHeight: '2.2em' }}
+          className="text-[11px] line-clamp-2 leading-relaxed mb-3"
+          style={{ color: 'var(--text-muted, rgba(255, 255, 255, 0.45))', minHeight: '2.2em' }}
         >
           {item.description}
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between">
-          {/* Type badges - 定制版显示两个标签 */}
-          <div className="flex flex-col gap-1">
-            {/* 定制版标签 */}
-            {isCustomized && (
-              <span
-                className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5 w-fit"
-                style={{
-                  background: 'rgba(168, 85, 247, 0.15)',
-                  color: 'rgb(192, 132, 252)',
-                  border: '1px solid rgba(168, 85, 247, 0.25)',
-                }}
-              >
-                <ExternalLink size={8} />
-                定制版
-              </span>
-            )}
-            {/* 内置/自定义 标签 */}
-            <span
-              className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5 w-fit"
-              style={{
-                background: item.type === 'builtin'
-                  ? `hsla(${accentHue}, 60%, 50%, 0.15)`
-                  : 'rgba(34, 197, 94, 0.15)',
-                color: item.type === 'builtin'
-                  ? `hsla(${accentHue}, 70%, 70%, 1)`
-                  : 'rgb(74, 222, 128)',
-                border: item.type === 'builtin'
-                  ? `1px solid hsla(${accentHue}, 60%, 50%, 0.25)`
-                  : '1px solid rgba(34, 197, 94, 0.25)',
-              }}
-            >
-              {item.type === 'builtin' ? (
-                <>
-                  <Sparkles size={8} />
-                  内置
-                </>
-              ) : (
-                '自定义'
-              )}
-            </span>
-          </div>
-
-          {/* Usage count */}
-          {item.usageCount > 0 && (
-            <span
-              className="flex items-center gap-0.5 text-[10px]"
-              style={{ color: 'rgba(255, 255, 255, 0.5)' }}
-            >
-              <Zap size={9} style={{ color: `hsla(${accentHue}, 70%, 65%, 0.9)` }} />
-              {item.usageCount}
-            </span>
-          )}
-        </div>
-
         {/* Tags */}
         {item.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-2.5 pt-2.5 border-t" style={{ borderColor: 'rgba(255, 255, 255, 0.06)' }}>
+          <div className="flex flex-wrap gap-1 mb-2.5">
             {item.tags.slice(0, 3).map((tag) => (
               <span
                 key={tag}
-                className="text-[10px] px-1.5 py-0.5 rounded"
+                className="text-[10px] px-1.5 py-0.5 rounded-md"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  color: 'rgba(255, 255, 255, 0.55)',
-                  border: '1px solid rgba(255, 255, 255, 0.04)',
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  color: 'var(--text-muted, rgba(255, 255, 255, 0.5))',
                 }}
               >
                 {tag}
               </span>
             ))}
             {item.tags.length > 3 && (
-              <span
-                className="text-[10px] px-1.5 py-0.5"
-                style={{ color: 'rgba(255, 255, 255, 0.4)' }}
-              >
+              <span className="text-[10px] px-1" style={{ color: 'rgba(255, 255, 255, 0.3)' }}>
                 +{item.tags.length - 3}
               </span>
             )}
           </div>
         )}
+
+        {/* Footer */}
+        <div
+          className="flex items-center justify-between pt-2 mt-auto"
+          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.05)' }}
+        >
+          <span
+            className="text-[10px] px-2 py-0.5 rounded-full font-medium inline-flex items-center gap-1"
+            style={{
+              background: isCustomized ? `${palette.from}15` : 'rgba(255, 255, 255, 0.04)',
+              color: isCustomized ? palette.soft : 'rgba(255, 255, 255, 0.4)',
+              border: isCustomized ? `1px solid ${palette.from}20` : '1px solid rgba(255, 255, 255, 0.04)',
+            }}
+          >
+            {isCustomized ? (
+              <>
+                <Sparkles size={8} />
+                定制版
+              </>
+            ) : item.type === 'builtin' ? '内置' : '自定义'}
+          </span>
+
+          {item.usageCount > 0 && (
+            <span
+              className="flex items-center gap-0.5 text-[10px]"
+              style={{ color: 'rgba(255, 255, 255, 0.35)' }}
+            >
+              <Zap size={8} style={{ color: palette.soft, opacity: 0.7 }} />
+              {item.usageCount}
+            </span>
+          )}
+        </div>
       </div>
     </GlassCard>
   );

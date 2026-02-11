@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
+import { glassPanel } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { Select } from '@/components/design/Select';
@@ -184,10 +185,7 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
                           sideOffset={8}
                           className="z-50 rounded-xl p-2 min-w-[140px]"
                           style={{
-                            background: 'linear-gradient(180deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
-                            border: '1px solid rgba(255,255,255,0.15)',
-                            boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
-                            backdropFilter: 'blur(40px)',
+                            ...glassPanel,
                           }}
                         >
                           <DropdownMenu.Item

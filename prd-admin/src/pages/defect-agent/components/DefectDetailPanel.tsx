@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useCallback, useRef, type DragEvent, type ClipboardEvent } from 'react';
 import { Button } from '@/components/design/Button';
+import { glassPanel } from '@/lib/glassStyles';
 import { useDefectStore } from '@/stores/defectStore';
 import { useAuthStore } from '@/stores/authStore';
 import {
@@ -392,11 +393,7 @@ export function DefectDetailPanel() {
           minHeight: showChat ? '620px' : '520px',
           maxWidth: '95vw',
           maxHeight: '85vh',
-          background:
-            'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+          ...glassPanel,
           boxShadow:
             '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
         }}
