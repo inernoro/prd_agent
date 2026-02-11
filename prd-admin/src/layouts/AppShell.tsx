@@ -142,52 +142,6 @@ export default function AppShell() {
     };
   }, [updateNavScrollState]);
 
-  // 兜底：部分 WebView/快捷键拦截环境下 Cmd/Ctrl+A 在输入控件中可能无法触发默认"全选"
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return;
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (!(e.key === 'a' || e.key === 'A')) return;
-
-      const active = document.activeElement;
-      if (!active) return;
-
-      // 仅在“可编辑内容”范围内兜底，避免影响页面级“全选”
-      if (active instanceof HTMLTextAreaElement) {
-        if (active.disabled) return;
-        e.preventDefault();
-        e.stopPropagation();
-        active.select();
-        return;
-      }
-
-      if (active instanceof HTMLInputElement) {
-        if (active.disabled) return;
-        const type = String(active.getAttribute('type') ?? 'text').toLowerCase();
-        // 这些类型不具备文本选择语义
-        if (['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'range', 'color'].includes(type)) return;
-        e.preventDefault();
-        e.stopPropagation();
-        active.select();
-        return;
-      }
-
-      if (active instanceof HTMLElement && active.isContentEditable) {
-        e.preventDefault();
-        e.stopPropagation();
-        const selection = window.getSelection();
-        if (!selection) return;
-        const range = document.createRange();
-        range.selectNodeContents(active);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      }
-    };
-
-    // capture：优先于页面/画布层快捷键，避免误伤输入区
-    window.addEventListener('keydown', onKeyDown, true);
-    return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, []);
 
   // 加载用户导航顺序偏好
   useEffect(() => {

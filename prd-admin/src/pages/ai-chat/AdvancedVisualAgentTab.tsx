@@ -7075,6 +7075,33 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <MousePointer2 size={18} />
               </button>
               <div className="w-px h-5 shrink-0" style={{ background: 'rgba(255,255,255,0.15)' }} />
+              {/* 上传图片 */}
+              <button
+                type="button"
+                onClick={() => openImageFilePicker()}
+                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                }}
+                aria-label="上传图片"
+              >
+                <ImagePlus size={18} />
+              </button>
+              {/* 手绘板 */}
+              <button
+                type="button"
+                onClick={() => setDrawingBoardOpen(true)}
+                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                }}
+                aria-label="手绘板"
+              >
+                <PenTool size={18} />
+              </button>
+              <div className="w-px h-5 shrink-0" style={{ background: 'rgba(255,255,255,0.15)' }} />
               {/* 聊天面板切换 */}
               <button
                 type="button"
