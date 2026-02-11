@@ -1037,8 +1037,6 @@ public class ImageGenRunWorker : BackgroundService
 
             if (target == null)
             {
-                // 从 run.ImageRefs 中找到当前图片的 refId（用于消息中 @imgN 引用的稳定性）
-                var firstRef = run.ImageRefs?.FirstOrDefault();
                 var o = new JsonObject
                 {
                     ["id"] = key, // 使用 id 字段，与前端保持一致
@@ -1051,7 +1049,8 @@ public class ImageGenRunWorker : BackgroundService
                     ["sha256"] = asset.Sha256,
                     ["createdAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 };
-                if (firstRef != null && firstRef.RefId > 0) o["refId"] = firstRef.RefId;
+                // 占位元素缺失时，必须分配新的唯一 refId，避免复用输入图 refId 导致 @imgN 解析命中错误图片。
+                o["refId"] = AllocateNextCanvasRefId(elements);
                 if (run.TargetX.HasValue) o["x"] = run.TargetX.Value;
                 if (run.TargetY.HasValue) o["y"] = run.TargetY.Value;
                 if (run.TargetW.HasValue) o["w"] = run.TargetW.Value;
@@ -1078,6 +1077,54 @@ public class ImageGenRunWorker : BackgroundService
                 cancellationToken: ct);
             if (res.ModifiedCount > 0) return;
         }
+    }
+
+    private static int AllocateNextCanvasRefId(JsonArray elements)
+    {
+        var maxRefId = 0;
+        foreach (var n in elements)
+        {
+            if (n is not JsonObject o) continue;
+            if (!TryGetPositiveIntFromNode(o["refId"], out var refId)) continue;
+            if (refId > maxRefId) maxRefId = refId;
+        }
+
+        // 约定 refId 从 1 开始递增
+        return maxRefId + 1;
+    }
+
+    private static bool TryGetPositiveIntFromNode(JsonNode? node, out int value)
+    {
+        value = 0;
+        if (node is not JsonValue v) return false;
+
+        if (v.TryGetValue<int>(out var intVal) && intVal > 0)
+        {
+            value = intVal;
+            return true;
+        }
+
+        if (v.TryGetValue<long>(out var longVal) && longVal > 0 && longVal <= int.MaxValue)
+        {
+            value = (int)longVal;
+            return true;
+        }
+
+        if (v.TryGetValue<double>(out var doubleVal) && doubleVal > 0 && doubleVal <= int.MaxValue)
+        {
+            value = (int)Math.Floor(doubleVal);
+            return true;
+        }
+
+        if (v.TryGetValue<string>(out var strVal)
+            && int.TryParse(strVal, out var parsed)
+            && parsed > 0)
+        {
+            value = parsed;
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>

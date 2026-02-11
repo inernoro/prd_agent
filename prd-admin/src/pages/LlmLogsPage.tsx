@@ -633,6 +633,72 @@ function injectRefImageIntoRequestBody(bodyText: string, inputArtifacts: UploadA
   }
 }
 
+type InlineImagePreview = {
+  label: string;
+  url: string;
+  sha256?: string;
+};
+
+function extractInlineImagesFromBody(bodyJson: string | null | undefined): InlineImagePreview[] {
+  if (!bodyJson) return [];
+  try {
+    const obj = JSON.parse(bodyJson) as any;
+    const out: InlineImagePreview[] = [];
+    const seen = new Set<string>();
+    const push = (label: string, urlLike: unknown, sha256?: string | null) => {
+      if (typeof urlLike !== 'string') return;
+      const url = urlLike.trim();
+      if (!url) return;
+      if (!(url.startsWith('http') || url.startsWith('data:image/'))) return;
+      if (seen.has(url)) return;
+      seen.add(url);
+      out.push({ label, url, sha256: (sha256 ?? '').trim() || undefined });
+    };
+
+    if (typeof obj?.image === 'string') {
+      push('参考图', obj.image, typeof obj?.imageSha256 === 'string' ? obj.imageSha256 : undefined);
+    } else if (Array.isArray(obj?.image)) {
+      for (const item of obj.image) push('参考图', item);
+    }
+    if (typeof obj?.mask === 'string') push('蒙版', obj.mask);
+
+    const msgs = Array.isArray(obj?.messages) ? obj.messages : Array.isArray(obj?.contents) ? obj.contents : [];
+    for (const msg of msgs) {
+      const parts = Array.isArray(msg?.content) ? msg.content : Array.isArray(msg?.parts) ? msg.parts : [];
+      for (const part of parts) {
+        if (part?.type === 'image_url') {
+          push('参考图', part?.image_url?.url ?? part?.url);
+        }
+        if (part?.inline_data && typeof part.inline_data.data === 'string' && part.inline_data.data.length > 100) {
+          const mime = String(part.inline_data.mime_type ?? 'image/png').trim() || 'image/png';
+          push('参考图', `data:${mime};base64,${part.inline_data.data}`);
+        }
+      }
+    }
+
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function resolveBodyInlineImages(
+  imageReferences: LlmRequestLog['imageReferences'],
+  requestBodyRedacted: string | null | undefined
+): InlineImagePreview[] {
+  // 优先新字段 imageReferences（COS URL）；若为空则回退到 requestBody 解析，兼容旧日志。
+  const refs = Array.isArray(imageReferences) ? imageReferences : [];
+  const fromRefs = refs
+    .map((r) => ({
+      label: (r?.label ?? '').trim() || '参考图',
+      url: (r?.cosUrl ?? '').trim(),
+      sha256: (r?.sha256 ?? '').trim() || undefined,
+    }))
+    .filter((x) => x.url);
+  if (fromRefs.length > 0) return fromRefs;
+  return extractInlineImagesFromBody(requestBodyRedacted);
+}
+
 /**
  * 从 URL 中提取域名，用作 Postman 环境变量名。
  * 例: "https://api.apiyi.com/v1/chat/completions" → "api.apiyi.com"
@@ -1126,6 +1192,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
     return arr;
   }, [artifacts]);
   const artifactInputs = useMemo(() => artifactsSorted.filter((x) => String(x.kind).toLowerCase() === 'input_image'), [artifactsSorted]);
+  const artifactOutputs = useMemo(() => artifactsSorted.filter((x) => String(x.kind).toLowerCase() === 'output_image'), [artifactsSorted]);
   const isImageGenRequest = useMemo(() => {
     const v = normalizeRequestType(detail?.requestType);
     return v === 'generation' || v === 'imagegen' || v === 'image_gen' || v === 'image-generate';
@@ -2105,21 +2172,65 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
 
                   <div className="mt-3">
                     {(() => {
-                      // inputImages/outputImages：Worker 直写 COS URL，无回退
+                      // 新日志优先使用 inputImages/outputImages；旧日志回退到 imageReferences/requestBody/artifacts。
                       const effInputs: { url: string; label: string; sha256?: string }[] = [];
                       const effOutputs: { url: string; label: string; sha256?: string; originalUrl?: string }[] = [];
+                      const inputSeen = new Set<string>();
+                      const outputSeen = new Set<string>();
 
-                      // inputImages（Worker 直写 COS URL）
+                      const pushInput = (urlLike: string | null | undefined, label: string, sha256?: string) => {
+                        const url = String(urlLike ?? '').trim();
+                        if (!url || inputSeen.has(url)) return;
+                        inputSeen.add(url);
+                        effInputs.push({ url, label: label || '参考图', sha256: (sha256 ?? '').trim() || undefined });
+                      };
+
+                      const pushOutput = (urlLike: string | null | undefined, label: string, sha256?: string, originalUrl?: string) => {
+                        const url = String(urlLike ?? '').trim();
+                        if (!url || outputSeen.has(url)) return;
+                        outputSeen.add(url);
+                        effOutputs.push({
+                          url,
+                          label: label || '生成结果',
+                          sha256: (sha256 ?? '').trim() || undefined,
+                          originalUrl: (originalUrl ?? '').trim() || undefined,
+                        });
+                      };
+
+                      // 1) 新字段（Worker 直写 COS URL）
                       if (Array.isArray(detail?.inputImages)) {
                         for (const img of detail!.inputImages!) {
-                          if (img.url) effInputs.push({ url: img.url, label: img.label || '参考图', sha256: img.sha256 ?? undefined });
+                          pushInput(img.url, img.label || '参考图', img.sha256 ?? undefined);
+                        }
+                      }
+                      if (Array.isArray(detail?.outputImages)) {
+                        for (const img of detail!.outputImages!) {
+                          pushOutput(img.url, img.label || '生成结果', img.sha256 ?? undefined, img.originalUrl ?? undefined);
                         }
                       }
 
-                      // outputImages（Worker 直写 COS URL）
-                      if (Array.isArray(detail?.outputImages)) {
-                        for (const img of detail!.outputImages!) {
-                          if (img.url) effOutputs.push({ url: img.url, label: img.label || '生成结果', sha256: img.sha256 ?? undefined, originalUrl: img.originalUrl ?? undefined });
+                      // 2) 旧日志回退：requestBody/imageReferences
+                      if (effInputs.length === 0) {
+                        const restoredBody = restoreTruncatedRequestBody(
+                          detail?.requestBodyRedacted || '',
+                          detail?.systemPromptText,
+                          detail?.questionText
+                        );
+                        const legacyInputs = resolveBodyInlineImages(detail?.imageReferences, restoredBody);
+                        for (const img of legacyInputs) {
+                          pushInput(img.url, img.label, img.sha256);
+                        }
+                      }
+
+                      // 3) 旧日志回退：artifacts
+                      if (effInputs.length === 0 && artifactInputs.length > 0) {
+                        for (const img of artifactInputs) {
+                          pushInput(img.cosUrl, '参考图', img.sha256);
+                        }
+                      }
+                      if (effOutputs.length === 0 && artifactOutputs.length > 0) {
+                        for (const img of artifactOutputs) {
+                          pushOutput(img.cosUrl, '生成结果', img.sha256, undefined);
                         }
                       }
 
