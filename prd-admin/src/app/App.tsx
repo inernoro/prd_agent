@@ -107,6 +107,13 @@ function IndexPage() {
   return <AgentLauncherPage />;
 }
 
+/** 桌面专属路由守卫：移动端访问时重定向回首页 */
+function DesktopOnly({ children }: { children: React.ReactNode }) {
+  const { isMobile } = useBreakpoint();
+  if (isMobile) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 export default function App() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const setPermissions = useAuthStore((s) => s.setPermissions);
@@ -247,7 +254,7 @@ export default function App() {
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
-        <Route path="executive" element={<RequirePermission perm="executive.read"><ExecutiveDashboardPage /></RequirePermission>} />
+        <Route path="executive" element={<DesktopOnly><RequirePermission perm="executive.read"><ExecutiveDashboardPage /></RequirePermission></DesktopOnly>} />
         {/* 移动端专属路由 */}
         <Route path="my-assets" element={<RequirePermission perm="access"><MobileAssetsPage /></RequirePermission>} />
         <Route path="profile" element={<RequirePermission perm="access"><MobileProfilePage /></RequirePermission>} />
