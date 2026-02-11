@@ -1225,13 +1225,8 @@ export default function PromptStagesPage() {
       {showSystemPrompts && (
         <div
           className="grid gap-6 flex-1 min-h-0 overflow-x-hidden"
-          style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px' }}
+          style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}
         >
-          <div className="min-h-0 flex flex-col">
-            <div
-              className="grid gap-6 flex-1 min-h-0 overflow-x-hidden"
-              style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}
-            >
               <GlassCard glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
             <div className="flex items-center justify-between gap-3 min-w-0">
               <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>系统指令</div>
@@ -1404,8 +1399,6 @@ export default function PromptStagesPage() {
               生效范围：仅 PRD 问答（会话问答 / 本章提问）。不影响 gaps/分析等需要 JSON 输出的内部任务。
             </div>
           </GlassCard>
-            </div>
-          </div>
         </div>
       )}
 
