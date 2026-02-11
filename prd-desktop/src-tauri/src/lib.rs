@@ -230,6 +230,10 @@ pub fn run() {
             commands::devtools::open_devtools,
             commands::attachment::upload_attachment,
             commands::skill::get_skills,
+            commands::skill::execute_skill,
+            commands::skill::create_skill,
+            commands::skill::update_skill,
+            commands::skill::delete_skill,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

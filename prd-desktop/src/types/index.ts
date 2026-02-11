@@ -186,45 +186,55 @@ export interface AttachmentInfo {
   size: number;
 }
 
-// ━━━ 技能类型 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-export type ContextScope = 'all' | 'current' | 'prd';
+// ━━━ 技能类型（统一模型，替代 PromptItem + SkillItem） ━━━━━━━━
+export type ContextScope = 'all' | 'current' | 'prd' | 'none';
 export type OutputMode = 'chat' | 'download' | 'clipboard';
-export type SkillSource = 'server' | 'local';
+export type SkillVisibility = 'system' | 'public' | 'personal';
 
 export interface SkillParameter {
   key: string;
   label: string;
-  type: 'text' | 'select' | 'number';
+  type: 'text' | 'select' | 'number' | 'boolean';
   defaultValue?: string;
-  options?: string[];
+  options?: { value: string; label: string }[];
   required: boolean;
 }
 
-export interface SkillItem {
+export interface SkillInputConfig {
+  contextScope: ContextScope;
+  acceptsUserInput: boolean;
+  userInputPlaceholder?: string;
+  acceptsAttachments: boolean;
+  parameters: SkillParameter[];
+}
+
+export interface SkillOutputConfig {
+  mode: OutputMode;
+  fileNameTemplate?: string;
+  echoToChat: boolean;
+}
+
+/** 统一技能（服务端返回，不含 execution 配置） */
+export interface Skill {
   skillKey: string;
   title: string;
   description: string;
   icon?: string;
-  category?: string;
+  category: string;
+  tags: string[];
   roles: string[];
   order: number;
-  contextScope: ContextScope;
-  outputMode: OutputMode;
-  outputFileNameTemplate?: string;
-  promptTemplate: string;
-  parameters?: SkillParameter[];
+  visibility: SkillVisibility;
+  input: SkillInputConfig;
+  output: SkillOutputConfig;
   isEnabled: boolean;
-  // 本地字段（仅客户端技能使用）
-  source?: SkillSource;
+  isBuiltIn: boolean;
+  usageCount: number;
 }
 
-export interface SkillsClientResponse {
-  updatedAt: string;
-  skills: SkillItem[];
+export interface SkillsResponse {
+  skills: Skill[];
 }
-
-// ━━━ 工具栏模式 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-export type ToolbarMode = 'prompt' | 'skill';
 
 export interface StreamEvent {
   type: 'start' | 'delta' | 'done' | 'error' | 'blockStart' | 'blockDelta' | 'blockEnd' | 'phase' | 'citations';
