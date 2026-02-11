@@ -131,7 +131,7 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
     <div className="h-full overflow-auto p-1">
       <GlassCard glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <div className="p-4 border-b border-white/10" style={{ background: 'var(--list-item-bg)' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <ListTodo size={18} className="text-muted-foreground" />
@@ -153,7 +153,7 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
               <div className="grid grid-cols-5 gap-3">
                 <div
                   className="p-3 rounded-lg text-center"
-                  style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}
+                  style={{ background: 'var(--list-item-bg)', border: '1px solid var(--nested-block-border)' }}
                 >
                   <div className="text-2xl font-bold">{stats.todayTotal}</div>
                   <div className="text-xs text-muted-foreground mt-1">今日任务</div>
@@ -205,7 +205,7 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     className="h-8 pl-8 pr-3 text-sm rounded-lg outline-none"
-                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '160px' }}
+                    style={{ background: 'var(--bg-card-hover)', border: '1px solid var(--border-default)', width: '160px' }}
                   />
                 </div>
                 <Select value={channelTypeFilter} onChange={(e) => setChannelTypeFilter(e.target.value)} uiSize="sm">
@@ -236,7 +236,7 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
                     className="p-4 rounded-lg transition-colors hover:bg-white/[0.03] cursor-pointer"
                     style={{
                       background: statusBgColors[task.status] || 'transparent',
-                      border: `1px solid ${statusBorderColors[task.status] || 'rgba(255,255,255,0.06)'}`,
+                      border: `1px solid ${statusBorderColors[task.status] || 'var(--nested-block-border)'}`,
                     }}
                     onClick={() => openDetail(task)}
                   >
@@ -245,7 +245,7 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
                         {/* 通道图标 */}
                         <div
                           className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-                          style={{ background: 'rgba(255,255,255,0.05)' }}
+                          style={{ background: 'var(--bg-card-hover)' }}
                         >
                           {channelIcons[task.channelType] || <Webhook size={16} />}
                         </div>
@@ -274,7 +274,7 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
                         </div>
 
                         {/* 任务 ID */}
-                        <code className="text-xs text-muted-foreground px-2 py-1 rounded flex-shrink-0" style={{ background: 'rgba(0,0,0,0.2)' }}>
+                        <code className="text-xs text-muted-foreground px-2 py-1 rounded flex-shrink-0" style={{ background: 'var(--nested-block-bg)' }}>
                           {task.id.slice(-12)}
                         </code>
                       </div>

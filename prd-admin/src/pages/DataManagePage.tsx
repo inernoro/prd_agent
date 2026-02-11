@@ -80,7 +80,7 @@ function StatCard({
   loading?: boolean;
 }) {
   const accentColors = {
-    default: { bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.06)', icon: 'rgba(255,255,255,0.5)', text: 'var(--text-primary)' },
+    default: { bg: 'var(--bg-input)', border: 'var(--nested-block-border)', icon: 'rgba(255,255,255,0.5)', text: 'var(--text-primary)' },
     gold: { bg: 'rgba(214,178,106,0.06)', border: 'rgba(214,178,106,0.12)', icon: 'var(--accent-gold)', text: 'var(--accent-gold)' },
     blue: { bg: 'rgba(59,130,246,0.06)', border: 'rgba(59,130,246,0.12)', icon: 'rgba(59,130,246,0.9)', text: 'rgba(59,130,246,0.95)' },
     green: { bg: 'rgba(34,197,94,0.06)', border: 'rgba(34,197,94,0.12)', icon: 'rgba(34,197,94,0.9)', text: 'rgba(34,197,94,0.95)' },
@@ -91,13 +91,13 @@ function StatCard({
   return (
     <div className="relative overflow-hidden rounded-[12px] p-3.5 transition-all duration-200" style={{ background: colors.bg, border: `1px solid ${colors.border}` }}>
       <div className="relative flex items-start gap-3">
-        <div className="shrink-0 w-9 h-9 rounded-[10px] flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.05)' }}>
+        <div className="shrink-0 w-9 h-9 rounded-[10px] flex items-center justify-center" style={{ background: 'var(--bg-input)', border: '1px solid var(--bg-card-hover)' }}>
           <span style={{ color: colors.icon }}>{icon}</span>
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-[11px] font-semibold uppercase tracking-wider truncate" style={{ color: 'var(--text-muted)' }}>{label}</div>
           <div className="mt-1 text-xl font-bold tabular-nums tracking-tight" style={{ color: colors.text, letterSpacing: '-0.02em' }}>
-            {loading ? <span className="inline-block w-14 h-6 rounded-[8px] animate-pulse" style={{ background: 'rgba(255,255,255,0.05)' }} /> : value}
+            {loading ? <span className="inline-block w-14 h-6 rounded-[8px] animate-pulse" style={{ background: 'var(--bg-card-hover)' }} /> : value}
           </div>
           {subValue && <div className="mt-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>{subValue}</div>}
         </div>
@@ -168,16 +168,16 @@ function CollectionDataViewerDialog({ open, onOpenChange, collectionName }: { op
           </div>
           <Button variant="secondary" size="xs" onClick={loadData} disabled={loading}><RefreshCw size={13} className={loading ? 'animate-spin' : ''} />刷新</Button>
         </div>
-        <div className="flex-1 overflow-auto rounded-[12px]" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="flex-1 overflow-auto rounded-[12px]" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
           {loading ? (
             <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-muted)' }}><RefreshCw size={20} className="animate-spin mr-2" />加载中...</div>
           ) : viewMode === 'table' ? (
             <div className="overflow-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
+                  <tr style={{ background: 'var(--nested-block-bg)' }}>
                     {data?.fields.map((field) => (
-                      <th key={field} className="px-3 py-2 text-left font-semibold whitespace-nowrap" style={{ color: 'var(--text-secondary)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>{field}</th>
+                      <th key={field} className="px-3 py-2 text-left font-semibold whitespace-nowrap" style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--nested-block-border)' }}>{field}</th>
                     ))}
                   </tr>
                 </thead>
@@ -185,7 +185,7 @@ function CollectionDataViewerDialog({ open, onOpenChange, collectionName }: { op
                   {data?.data.map((row, idx) => (
                     <tr key={idx} className="hover:bg-white/3 transition-colors">
                       {data.fields.map((field) => (
-                        <td key={field} className="px-3 py-2 whitespace-nowrap max-w-[300px] truncate" style={{ color: 'var(--text-primary)', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                        <td key={field} className="px-3 py-2 whitespace-nowrap max-w-[300px] truncate" style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--bg-input)' }}>
                           {typeof (row as Record<string, unknown>)[field] === 'object' ? JSON.stringify((row as Record<string, unknown>)[field]) : String((row as Record<string, unknown>)[field] ?? '-')}
                         </td>
                       ))}
@@ -197,12 +197,12 @@ function CollectionDataViewerDialog({ open, onOpenChange, collectionName }: { op
           ) : (
             <div className="p-4 space-y-3 overflow-auto">
               {data?.data.map((row, idx) => (
-                <pre key={idx} className="p-3 rounded-[8px] text-xs overflow-x-auto" style={{ background: 'rgba(255,255,255,0.03)', color: 'var(--text-primary)' }}>{JSON.stringify(row, null, 2)}</pre>
+                <pre key={idx} className="p-3 rounded-[8px] text-xs overflow-x-auto" style={{ background: 'var(--nested-block-bg)', color: 'var(--text-primary)' }}>{JSON.stringify(row, null, 2)}</pre>
               ))}
             </div>
           )}
         </div>
-        <div className="flex items-center justify-between pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="flex items-center justify-between pt-2" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
           <div className="text-xs" style={{ color: 'var(--text-muted)' }}>第 {page} / {data?.totalPages ?? 1} 页</div>
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="xs" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}><ChevronLeft size={14} />上一页</Button>
@@ -247,7 +247,7 @@ function CollectionValidationDialog({ open, onOpenChange, collectionName, onRefr
     <Dialog open={open} onOpenChange={onOpenChange} title={`字段匹配验证：${collectionName}`} description={data?.hasEntity ? `实体类：${data.entityName}` : '无对应实体类'} maxWidth={1200} content={
       <div className="flex flex-col gap-4 min-h-[400px] max-h-[70vh]">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="rounded-[10px] p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="rounded-[10px] p-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
             <div className="text-xs" style={{ color: 'var(--text-muted)' }}>扫描文档</div>
             <div className="text-lg font-bold mt-1" style={{ color: 'var(--text-primary)' }}>{fmtNum(data?.scannedDocuments ?? 0)}</div>
           </div>

@@ -148,7 +148,7 @@ export default function IdentityMappingsPage() {
       />
 
       <GlassCard glow className="flex-1 flex flex-col">
-        <div className="p-4 border-b flex items-center gap-4" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+        <div className="p-4 border-b flex items-center gap-4" style={{ borderColor: 'var(--nested-block-border)' }}>
           <div className="flex items-center gap-2 flex-1">
             <Search size={16} className="text-muted-foreground" />
             <input
@@ -158,8 +158,8 @@ export default function IdentityMappingsPage() {
               onChange={(e) => setSearch(e.target.value)}
               className="flex-1 px-3 py-2 rounded-md outline-none transition-colors"
               style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                background: 'var(--nested-block-bg)',
+                border: '1px solid var(--border-subtle)',
                 color: 'var(--text-primary)',
               }}
             />
@@ -185,7 +185,7 @@ export default function IdentityMappingsPage() {
 
         <div className="flex-1 overflow-auto">
           <table className="w-full">
-            <thead style={{ background: 'rgba(255,255,255,0.02)' }}>
+            <thead style={{ background: 'var(--list-item-bg)' }}>
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium">通道标识</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">通道类型</th>
@@ -200,8 +200,8 @@ export default function IdentityMappingsPage() {
                 <tr
                   key={mapping.id}
                   className="transition-colors"
-                  style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
+                  style={{ borderTop: '1px solid var(--bg-input)' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--list-item-bg)')}
                   onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                 >
                   <td className="px-4 py-3">
@@ -264,7 +264,7 @@ export default function IdentityMappingsPage() {
                             </DropdownMenu.Item>
                             <DropdownMenu.Separator
                               className="my-1 h-px"
-                              style={{ background: 'rgba(255,255,255,0.10)' }}
+                              style={{ background: 'var(--border-default)' }}
                             />
                             <DropdownMenu.Item
                               className="flex items-center gap-2 px-3 py-2 text-sm rounded-[10px] cursor-pointer outline-none transition-colors"
@@ -296,7 +296,7 @@ export default function IdentityMappingsPage() {
         {total > pageSize && (
           <div
             className="p-4 border-t flex justify-between items-center"
-            style={{ borderColor: 'rgba(255,255,255,0.06)' }}
+            style={{ borderColor: 'var(--nested-block-border)' }}
           >
             <div className="text-sm text-muted-foreground">
               共 {total} 条，第 {page} / {Math.ceil(total / pageSize)} 页

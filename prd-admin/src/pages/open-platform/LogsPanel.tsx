@@ -87,7 +87,7 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
     <div className="h-full overflow-auto p-1">
       <GlassCard glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <div className="p-4 border-b border-white/10" style={{ background: 'var(--list-item-bg)' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <FileText size={18} className="text-muted-foreground" />
@@ -111,7 +111,7 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
                     type="text"
                     placeholder="搜索..."
                     className="h-8 pl-8 pr-3 text-sm rounded-lg outline-none"
-                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '140px' }}
+                    style={{ background: 'var(--bg-card-hover)', border: '1px solid var(--border-default)', width: '140px' }}
                     disabled
                   />
                 </div>
@@ -178,7 +178,7 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
                         </div>
 
                         {/* 请求 ID */}
-                        <code className="text-xs text-muted-foreground px-2 py-1 rounded flex-shrink-0" style={{ background: 'rgba(0,0,0,0.2)' }}>
+                        <code className="text-xs text-muted-foreground px-2 py-1 rounded flex-shrink-0" style={{ background: 'var(--nested-block-bg)' }}>
                           {log.requestId.slice(-12)}
                         </code>
                       </div>
@@ -315,14 +315,14 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
                 <div className="grid grid-cols-2 gap-4">
                   <div
                     className="p-3 rounded-lg"
-                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+                    style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
                   >
                     <div className="text-xs text-muted-foreground mb-1">开始时间</div>
                     <div className="text-sm font-medium">{fmtDate(selectedLog.startedAt)}</div>
                   </div>
                   <div
                     className="p-3 rounded-lg"
-                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+                    style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
                   >
                     <div className="text-xs text-muted-foreground mb-1">结束时间</div>
                     <div className="text-sm font-medium">{fmtDate(selectedLog.endedAt)}</div>

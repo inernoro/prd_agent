@@ -1233,7 +1233,7 @@ function LogsDialog({
           </div>
 
           {total > pageSize && (
-            <div className="flex justify-between items-center pt-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+            <div className="flex justify-between items-center pt-4 border-t" style={{ borderColor: 'var(--nested-block-border)' }}>
               <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
                 共 {total} 条，第 {page} / {Math.ceil(total / pageSize)} 页
               </div>
@@ -1406,12 +1406,12 @@ function CurlCommandDialog({ open, onClose, curlCommand }: { open: boolean; onCl
                 复制命令
               </Button>
             </div>
-            <pre className="p-4 rounded-lg text-xs overflow-x-auto" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <pre className="p-4 rounded-lg text-xs overflow-x-auto" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}>
               <code style={{ color: 'var(--text-secondary)' }}>{curlCommand}</code>
             </pre>
           </div>
 
-          <div className="flex justify-end pt-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+          <div className="flex justify-end pt-4 border-t" style={{ borderColor: 'var(--nested-block-border)' }}>
             <Button onClick={onClose}>关闭</Button>
           </div>
         </div>

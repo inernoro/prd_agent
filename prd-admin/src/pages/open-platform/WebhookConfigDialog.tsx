@@ -250,7 +250,7 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
             {/* 请求结构说明 */}
             <div
               className="p-3 rounded-lg text-xs space-y-2"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+              style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}
             >
               <p className="font-medium text-muted-foreground">Webhook请求结构</p>
               <pre className="text-[11px] text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">
@@ -322,7 +322,7 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
                     <span>已使用 {(config.tokensUsed ?? 0).toLocaleString()} / {tokenQuotaLimit.toLocaleString()} tokens</span>
                     <span>{usedPercent.toFixed(1)}%</span>
                   </div>
-                  <div className="h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                  <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-input-hover)' }}>
                     <div
                       className="h-full rounded-full transition-all"
                       style={{
@@ -365,8 +365,8 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
                       onClick={() => setNotifyTarget(opt.value)}
                       className="px-3 py-1.5 rounded-lg text-xs border transition-colors"
                       style={{
-                        background: notifyTarget === opt.value ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.03)',
-                        borderColor: notifyTarget === opt.value ? 'rgba(59,130,246,0.4)' : 'rgba(255,255,255,0.08)',
+                        background: notifyTarget === opt.value ? 'rgba(59,130,246,0.15)' : 'var(--nested-block-bg)',
+                        borderColor: notifyTarget === opt.value ? 'rgba(59,130,246,0.4)' : 'var(--border-subtle)',
                         color: notifyTarget === opt.value ? 'rgb(147,197,253)' : undefined,
                       }}
                     >
@@ -426,7 +426,7 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
                       <div
                         key={log.id}
                         className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs"
-                        style={{ background: 'rgba(255,255,255,0.02)' }}
+                        style={{ background: 'var(--list-item-bg)' }}
                       >
                         <div className="flex items-center gap-2">
                           {log.success ? (

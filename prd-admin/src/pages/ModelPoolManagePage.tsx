@@ -591,7 +591,7 @@ export function ModelPoolManagePage() {
                                         ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
                                         : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />
                                     ) : (
-                                      <span className="w-3 h-px" style={{ background: 'rgba(255,255,255,0.1)' }} />
+                                      <span className="w-3 h-px" style={{ background: 'var(--border-default)' }} />
                                     )}
                                   </span>
                                   <span className="text-[13px] font-semibold truncate min-w-0 flex-1" style={{ color: 'var(--text-primary)' }}>
@@ -700,7 +700,7 @@ export function ModelPoolManagePage() {
                                       ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
                                       : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />
                                   ) : (
-                                    <span className="w-3 h-px" style={{ background: 'rgba(255,255,255,0.1)' }} />
+                                    <span className="w-3 h-px" style={{ background: 'var(--border-default)' }} />
                                   )}
                                 </span>
 
@@ -1374,7 +1374,7 @@ function InlineDispatchPreview({
                     )}
                   </div>
                   {platformNameById.get(m.platformId) && (
-                    <span className="text-[9px] px-1 py-0.5 rounded shrink-0" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                    <span className="text-[9px] px-1 py-0.5 rounded shrink-0" style={{ background: 'var(--bg-input-hover)', color: 'var(--text-muted)' }}>
                       {platformNameById.get(m.platformId)}
                     </span>
                   )}

@@ -2251,8 +2251,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                             {effInputs.length > 0 ? (
                               <div className="space-y-2">
                               {effInputs.map((img, idx) => (
-                                <div key={`in-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                <div key={`in-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                                     <div className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                                       {img.label}{effInputs.length > 1 ? ` #${idx + 1}` : ''}
                                     </div>
@@ -2269,7 +2269,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                               ))}
                               </div>
                             ) : (
-                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)', height: 120 }}>
+                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)', height: 120 }}>
                                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>（无输入）</div>
                               </div>
                             )}
@@ -2280,8 +2280,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                             {effOutputs.length > 0 ? (
                               <div className="space-y-2">
                               {effOutputs.map((img, idx) => (
-                                <div key={`out-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                <div key={`out-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                                     <div className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                                       {img.label}{effOutputs.length > 1 ? ` #${idx + 1}` : ''}
                                     </div>
@@ -2298,7 +2298,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                               ))}
                               </div>
                             ) : (
-                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)', flex: 1, minHeight: 120 }}>
+                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)', flex: 1, minHeight: 120 }}>
                                 {detail?.status === 'running' ? (
                                   <div className="flex flex-col items-center gap-2">
                                     <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} />

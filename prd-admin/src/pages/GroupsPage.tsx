@@ -411,7 +411,7 @@ export default function GroupsPage() {
                 setPage(1);
               }}
               className="h-8 w-full rounded-lg pl-8 pr-3 text-xs outline-none"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)' }}
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
               placeholder="搜索群组名/群组ID/群主"
             />
           </div>
@@ -473,22 +473,22 @@ export default function GroupsPage() {
                     </div>
 
                     {/* 统计数据网格 - 4列 */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 my-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 my-3 py-2 rounded-lg" style={{ background: 'var(--nested-block-bg)' }}>
                       <div className="text-center">
                         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g.memberCount}</div>
                         <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>成员</div>
                       </div>
-                      <div className="text-center" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div className="text-center" style={{ borderLeft: '1px solid var(--nested-block-border)' }}>
                         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g.messageCount ?? 0}</div>
                         <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>消息</div>
                       </div>
-                      <div className="text-center" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div className="text-center" style={{ borderLeft: '1px solid var(--nested-block-border)' }}>
                         <div className="text-sm font-semibold" style={{ color: hasWarning ? 'rgba(245,158,11,0.95)' : 'var(--text-primary)' }}>
                           {g.pendingGapCount ?? 0}
                         </div>
                         <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>缺失</div>
                       </div>
-                      <div className="text-center" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div className="text-center" style={{ borderLeft: '1px solid var(--nested-block-border)' }}>
                         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{formatTokens(g.prdTokenEstimate)}</div>
                         <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>Tokens</div>
                       </div>
@@ -516,7 +516,7 @@ export default function GroupsPage() {
                     </div>
 
                     {/* Footer：快捷操作 + 复制 */}
-                    <div className="flex items-center justify-between pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div className="flex items-center justify-between pt-2" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
                       <div className="flex items-center gap-1">
                         <button
                           className="px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors hover:brightness-110"
@@ -713,7 +713,7 @@ export default function GroupsPage() {
                 {tab === 'members' ? (
                   <div className="overflow-x-auto">
                   <table className="w-full text-sm">
-                    <thead style={{ background: 'rgba(255,255,255,0.03)' }}>
+                    <thead style={{ background: 'var(--nested-block-bg)' }}>
                       <tr>
                         <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>成员</th>
                         <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>角色</th>
@@ -802,7 +802,7 @@ export default function GroupsPage() {
                     </div>
                     <div className="overflow-x-auto">
                     <table className="w-full text-sm">
-                    <thead style={{ background: 'rgba(255,255,255,0.03)' }}>
+                    <thead style={{ background: 'var(--nested-block-bg)' }}>
                       <tr>
                         <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>问题</th>
                         <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>类型</th>
@@ -904,15 +904,15 @@ export default function GroupsPage() {
                       .prd-md p { margin: 8px 0; }
                       .prd-md ul,.prd-md ol { margin: 8px 0; padding-left: 18px; }
                       .prd-md li { margin: 4px 0; }
-                      .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 12px 0; }
-                      .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.04); color: var(--text-secondary); border-radius: 10px; }
+                      .prd-md hr { border: 0; border-top: 1px solid var(--border-default); margin: 12px 0; }
+                      .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(255,255,255,0.16); background: var(--bg-input); color: var(--text-secondary); border-radius: 10px; }
                       .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
-                      .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
-                      .prd-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 12px; overflow: auto; }
+                      .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 6px; border-radius: 8px; }
+                      .prd-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 14px; padding: 12px; overflow: auto; }
                       .prd-md pre code { background: transparent; border: 0; padding: 0; }
                       .prd-md table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-                      .prd-md th,.prd-md td { border: 1px solid rgba(255,255,255,0.10); padding: 6px 8px; }
-                      .prd-md th { color: var(--text-primary); background: rgba(255,255,255,0.03); }
+                      .prd-md th,.prd-md td { border: 1px solid var(--border-default); padding: 6px 8px; }
+                      .prd-md th { color: var(--text-primary); background: var(--nested-block-bg); }
                     `}</style>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="text-xs" style={{ color: 'var(--text-muted)' }}>

@@ -1723,7 +1723,7 @@ export default function UsersPage() {
                             min={1}
                             max={10000}
                             className="mt-1 h-10 w-full rounded-[10px] px-3 text-sm outline-none"
-                            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                            style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                           />
                         </div>
                       </div>

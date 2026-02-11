@@ -415,13 +415,13 @@ export function DefectDetailPanel() {
           {/* Header - 固定高度 52px */}
           <div
             className="flex items-center justify-between px-5 h-[52px] flex-shrink-0"
-            style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
+            style={{ borderBottom: '1px solid var(--nested-block-border)' }}
           >
             {/* 左侧：Bug icon + 缺陷编号 */}
             <div
               className="flex items-center gap-1.5 px-2 py-1 rounded flex-shrink-0"
               style={{
-                background: 'rgba(255,255,255,0.06)',
+                background: 'var(--bg-input-hover)',
               }}
             >
               <Bug size={14} style={{ color: 'var(--accent-primary)' }} />
@@ -474,8 +474,8 @@ export function DefectDetailPanel() {
                       key={att.id}
                       className="flex-shrink-0 w-[100px] h-[70px] rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-white/30 transition-all"
                       style={{
-                        background: 'rgba(0,0,0,0.3)',
-                        border: '1px solid rgba(255,255,255,0.1)',
+                        background: 'var(--nested-block-bg)',
+                        border: '1px solid var(--border-default)',
                       }}
                       onClick={() => att.url && setLightboxImage(att.url)}
                       title="点击查看大图"
@@ -516,9 +516,9 @@ export function DefectDetailPanel() {
                       rel="noopener noreferrer"
                       className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] hover:bg-white/10 hover:ring-2 hover:ring-white/30 transition-all"
                       style={{
-                        background: 'rgba(255,255,255,0.05)',
+                        background: 'var(--bg-card-hover)',
                         color: 'var(--text-secondary)',
-                        border: '1px solid rgba(255,255,255,0.08)',
+                        border: '1px solid var(--border-subtle)',
                       }}
                     >
                       <FileText size={12} />
@@ -588,7 +588,7 @@ export function DefectDetailPanel() {
                 style={{
                   background: 'rgba(255,255,255,0)',
                   color: 'var(--text-secondary)',
-                  border: '1px solid rgba(255,255,255,0.06)',
+                  border: '1px solid var(--nested-block-border)',
                   minHeight: hasScreenshots
                     ? (isShortContent ? '220px' : '360px')
                     : (isShortContent ? '240px' : '440px'),
@@ -609,8 +609,8 @@ export function DefectDetailPanel() {
                         style={{
                           width: '100px',
                           height: '70px',
-                          background: 'rgba(0,0,0,0.3)',
-                          border: '1px solid rgba(255,255,255,0.1)',
+                          background: 'var(--nested-block-bg)',
+                          border: '1px solid var(--border-default)',
                         }}
                         onClick={() => setLightboxImage(seg.content)}
                         title={seg.name || '点击查看大图'}
@@ -693,7 +693,7 @@ export function DefectDetailPanel() {
           {/* Actions - 最小高度 60px，与右侧对齐 */}
           <div
             className={`px-5 min-h-[60px] flex ${isMobile ? 'flex-col gap-2 py-3' : 'items-center justify-between'} flex-shrink-0`}
-            style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
+            style={{ borderTop: '1px solid var(--nested-block-border)' }}
           >
             {/* Left: 严重程度 + 人员信息 + 删除按钮 */}
             <div className={`flex items-center gap-3 ${isMobile ? 'flex-wrap' : ''}`}>
@@ -718,11 +718,11 @@ export function DefectDetailPanel() {
               <div
                 className="inline-flex items-center gap-1.5 px-2 py-1 rounded flex-shrink-0 text-[11px]"
                 style={{
-                  background: 'rgba(255,255,255,0.06)',
+                  background: 'var(--bg-input-hover)',
                   color: 'var(--text-muted)',
                   border: userId && defect.reporterId === userId
                     ? '1px solid rgba(255, 255, 255, 0.5)'
-                    : '1px solid rgba(255,255,255,0.08)',
+                    : '1px solid var(--border-subtle)',
                 }}
                 title={defect.reporterName || '未知'}
               >
@@ -742,11 +742,11 @@ export function DefectDetailPanel() {
               <div
                 className="inline-flex items-center gap-1.5 px-2 py-1 rounded flex-shrink-0 text-[11px]"
                 style={{
-                  background: 'rgba(255,255,255,0.06)',
+                  background: 'var(--bg-input-hover)',
                   color: 'var(--text-muted)',
                   border: userId && defect.assigneeId === userId
                     ? '1px solid rgba(255, 255, 255, 0.5)'
-                    : '1px solid rgba(255,255,255,0.08)',
+                    : '1px solid var(--border-subtle)',
                 }}
                 title={defect.assigneeName || '未指派'}
               >
@@ -845,21 +845,21 @@ export function DefectDetailPanel() {
           <div
             className={`${isMobile ? 'w-full' : 'w-[45%]'} flex flex-col`}
             style={{
-              borderLeft: isMobile ? 'none' : '1px solid rgba(255, 255, 255, 0.06)',
-              borderTop: isMobile ? '1px solid rgba(255, 255, 255, 0.06)' : 'none',
+              borderLeft: isMobile ? 'none' : '1px solid var(--nested-block-border)',
+              borderTop: isMobile ? '1px solid var(--nested-block-border)' : 'none',
             }}
           >
             {/* Chat Header - 与左侧 Header 高度对齐 (52px) */}
             <div
               className="px-4 h-[52px] flex items-center gap-2 flex-shrink-0"
-              style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
+              style={{ borderBottom: '1px solid var(--nested-block-border)' }}
             >
               <MessageCircle size={14} style={{ color: 'var(--text-muted)' }} />
               <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
                 评论
               </span>
               {messages.length > 0 && (
-                <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
+                <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
                   {messages.filter(m => m.role === 'user').length}
                 </span>
               )}
@@ -909,7 +909,7 @@ export function DefectDetailPanel() {
                           className="w-5 h-5 rounded-full flex-shrink-0 overflow-hidden flex items-center justify-center"
                           style={{
                             background: isAssistant ? 'rgba(100,180,255,0.2)' : 'rgba(255,180,70,0.15)',
-                            border: '1px solid rgba(255,255,255,0.1)',
+                            border: '1px solid var(--border-default)',
                           }}
                         >
                           {avatarSrc ? (
@@ -932,7 +932,7 @@ export function DefectDetailPanel() {
                           className="group relative max-w-[90%] rounded-[10px] px-3 py-2 text-[12px] leading-relaxed"
                           style={{
                             background: isUser ? 'rgb(50, 45, 35)' : 'rgb(35, 35, 40)',
-                            border: '1px solid rgba(255,255,255,0.08)',
+                            border: '1px solid var(--border-subtle)',
                             color: 'var(--text-primary)',
                           }}
                         >
@@ -947,8 +947,8 @@ export function DefectDetailPanel() {
                                 className="block w-full mt-2 rounded-lg overflow-hidden hover:ring-2 hover:ring-white/30 transition-all"
                                 style={{
                                   maxWidth: '180px',
-                                  background: 'rgba(0,0,0,0.3)',
-                                  border: '1px solid rgba(255,255,255,0.1)',
+                                  background: 'var(--nested-block-bg)',
+                                  border: '1px solid var(--border-default)',
                                 }}
                                 onClick={() => setLightboxImage(seg.content)}
                                 title={seg.name || '点击查看大图'}
@@ -974,8 +974,8 @@ export function DefectDetailPanel() {
                                 type="button"
                                 className="flex items-center gap-2 rounded-lg px-2 py-1 text-[11px] hover:ring-2 hover:ring-white/30 transition-all"
                                 style={{
-                                  background: 'rgba(255,255,255,0.06)',
-                                  border: '1px solid rgba(255,255,255,0.08)',
+                                  background: 'var(--bg-input-hover)',
+                                  border: '1px solid var(--border-subtle)',
                                   color: 'var(--text-secondary)',
                                 }}
                                 onClick={() => att.url && setLightboxImage(att.url)}
@@ -995,8 +995,8 @@ export function DefectDetailPanel() {
                                 rel="noopener noreferrer"
                                 className="flex items-center gap-2 rounded-lg px-2 py-1 text-[11px] hover:ring-2 hover:ring-white/30 transition-all"
                                 style={{
-                                  background: 'rgba(255,255,255,0.06)',
-                                  border: '1px solid rgba(255,255,255,0.08)',
+                                  background: 'var(--bg-input-hover)',
+                                  border: '1px solid var(--border-subtle)',
                                   color: 'var(--text-secondary)',
                                 }}
                               >
@@ -1024,7 +1024,7 @@ export function DefectDetailPanel() {
             {/* Chat Input - 与左侧 Footer 高度对齐 (min 60px) */}
             <div
               className="px-4 min-h-[60px] flex items-center flex-shrink-0"
-              style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
+              style={{ borderTop: '1px solid var(--nested-block-border)' }}
             >
               <div className="w-full space-y-2">
                 {pendingAttachments.length > 0 && (
@@ -1034,8 +1034,8 @@ export function DefectDetailPanel() {
                         key={att.id}
                         className="group relative flex items-center gap-2 rounded-lg px-2 py-1 text-[11px]"
                         style={{
-                          background: 'rgba(255,255,255,0.06)',
-                          border: '1px solid rgba(255,255,255,0.08)',
+                          background: 'var(--bg-input-hover)',
+                          border: '1px solid var(--border-subtle)',
                           color: 'var(--text-secondary)',
                         }}
                       >
@@ -1064,10 +1064,10 @@ export function DefectDetailPanel() {
                 <div
                   className="flex items-center gap-2 rounded-lg px-3 py-2 transition-all duration-200"
                   style={{
-                    background: 'rgba(255,255,255,0.04)',
-                    border: commentFocused 
-                      ? '1px solid rgba(214, 178, 106, 0.55)' 
-                      : '1px solid rgba(255,255,255,0.08)',
+                    background: 'var(--bg-input)',
+                    border: commentFocused
+                      ? '1px solid rgba(214, 178, 106, 0.55)'
+                      : '1px solid var(--border-subtle)',
                     boxShadow: commentFocused 
                       ? '0 0 0 2px rgba(214, 178, 106, 0.15)' 
                       : 'none',

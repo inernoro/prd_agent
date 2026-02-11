@@ -202,7 +202,7 @@ export default function ChannelTasksPage() {
 
       {/* 任务列表 */}
       <GlassCard glow className="flex-1 flex flex-col">
-        <div className="p-4 border-b flex items-center gap-4" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+        <div className="p-4 border-b flex items-center gap-4" style={{ borderColor: 'var(--nested-block-border)' }}>
           <div className="flex items-center gap-2 flex-1">
             <Search size={16} className="text-muted-foreground" />
             <input
@@ -212,8 +212,8 @@ export default function ChannelTasksPage() {
               onChange={(e) => setSearch(e.target.value)}
               className="flex-1 px-3 py-2 rounded-md outline-none transition-colors"
               style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                background: 'var(--nested-block-bg)',
+                border: '1px solid var(--border-subtle)',
                 color: 'var(--text-primary)',
               }}
             />
@@ -245,7 +245,7 @@ export default function ChannelTasksPage() {
 
         <div className="flex-1 overflow-auto">
           <table className="w-full">
-            <thead style={{ background: 'rgba(255,255,255,0.02)' }}>
+            <thead style={{ background: 'var(--list-item-bg)' }}>
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium">任务 ID</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">通道</th>
@@ -262,13 +262,13 @@ export default function ChannelTasksPage() {
                 <tr
                   key={task.id}
                   className="transition-colors cursor-pointer"
-                  style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
+                  style={{ borderTop: '1px solid var(--bg-input)' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--list-item-bg)')}
                   onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   onClick={() => handleViewDetail(task)}
                 >
                   <td className="px-4 py-3">
-                    <code className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(0,0,0,0.2)' }}>
+                    <code className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'var(--nested-block-bg)' }}>
                       {task.id}
                     </code>
                   </td>
@@ -349,7 +349,7 @@ export default function ChannelTasksPage() {
         {total > pageSize && (
           <div
             className="p-4 border-t flex justify-between items-center"
-            style={{ borderColor: 'rgba(255,255,255,0.06)' }}
+            style={{ borderColor: 'var(--nested-block-border)' }}
           >
             <div className="text-sm text-muted-foreground">
               共 {total} 条，第 {page} / {Math.ceil(total / pageSize)} 页

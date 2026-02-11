@@ -122,7 +122,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
     <div className="h-full overflow-auto p-1">
       <GlassCard glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <div className="p-4 border-b border-white/10" style={{ background: 'var(--list-item-bg)' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Webhook size={18} className="text-muted-foreground" />
@@ -141,8 +141,8 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
               <div
                 className="p-4 rounded-lg"
                 style={{
-                  background: webhookStats.isEnabled ? 'rgba(34,197,94,0.06)' : 'rgba(255,255,255,0.02)',
-                  border: webhookStats.isEnabled ? '1px solid rgba(34,197,94,0.2)' : '1px solid rgba(255,255,255,0.06)',
+                  background: webhookStats.isEnabled ? 'rgba(34,197,94,0.06)' : 'var(--list-item-bg)',
+                  border: webhookStats.isEnabled ? '1px solid rgba(34,197,94,0.2)' : '1px solid var(--nested-block-border)',
                 }}
               >
                 <div className="flex items-center justify-between">
@@ -150,7 +150,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
                     <div
                       className="w-12 h-12 rounded-lg flex items-center justify-center"
                       style={{
-                        background: webhookStats.isEnabled ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.05)',
+                        background: webhookStats.isEnabled ? 'rgba(34,197,94,0.15)' : 'var(--bg-card-hover)',
                         color: webhookStats.isEnabled ? 'rgb(34,197,94)' : 'var(--text-muted)',
                       }}
                     >
@@ -190,7 +190,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     className="h-8 pl-8 pr-3 text-sm rounded-lg outline-none"
-                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '160px' }}
+                    style={{ background: 'var(--bg-card-hover)', border: '1px solid var(--border-default)', width: '160px' }}
                   />
                 </div>
                 <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)} className="whitespace-nowrap flex-shrink-0">
@@ -211,12 +211,12 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
                   <div
                     key={wl.id}
                     className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/[0.03]"
-                    style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+                    style={{ border: '1px solid var(--nested-block-border)' }}
                   >
                     <div className="flex items-center gap-4 flex-1 min-w-0">
                       <div
                         className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-                        style={{ background: 'rgba(255,255,255,0.05)' }}
+                        style={{ background: 'var(--bg-card-hover)' }}
                       >
                         <Webhook size={16} />
                       </div>

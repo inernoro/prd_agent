@@ -279,7 +279,7 @@ export default function SystemLogsTab() {
 
   const inputStyle: React.CSSProperties = {
     background: 'var(--bg-input)',
-    border: '1px solid rgba(255,255,255,0.12)',
+    border: '1px solid var(--border-default)',
     color: 'var(--text-primary)',
   };
 
@@ -480,7 +480,7 @@ export default function SystemLogsTab() {
                     fadingOutIds.has(it.id) ? 'animate-fade-out' : ''
                   }`}
                   style={{
-                    background: 'rgba(255,255,255,0.05)',
+                    background: 'var(--bg-card-hover)',
                     border: '1px solid rgba(59, 130, 246, 0.2)',
                     animation: fadingOutIds.has(it.id) ? 'fadeOut 0.5s ease-out forwards' : undefined,
                   }}
@@ -686,7 +686,7 @@ export default function SystemLogsTab() {
                   </div>
                   <div
                     style={{
-                      background: 'rgba(0,0,0,0.2)',
+                      background: 'var(--nested-block-bg)',
                       border: '1px solid var(--border-subtle)',
                       borderRadius: 12,
                       padding: 12,
@@ -712,7 +712,7 @@ export default function SystemLogsTab() {
                           <div
                             key={llm.id}
                             className="flex items-center gap-3 text-xs p-2 rounded-lg"
-                            style={{ background: 'rgba(255,255,255,0.05)' }}
+                            style={{ background: 'var(--bg-card-hover)' }}
                           >
                             <Badge
                               variant={llm.status === 'succeeded' ? 'success' : llm.status === 'failed' ? 'subtle' : 'new'}

@@ -296,7 +296,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
     <div className="h-full overflow-hidden p-1">
       <GlassCard glow className="h-full flex flex-col">
         {/* ============ 顶部统计栏 ============ */}
-        <div className="p-4 border-b border-white/10 flex-shrink-0" style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <div className="p-4 border-b border-white/10 flex-shrink-0" style={{ background: 'var(--list-item-bg)' }}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <Key size={18} className="text-muted-foreground" />
@@ -309,7 +309,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
 
           {/* 统计卡片 - 横向排列 */}
           <div className="grid grid-cols-4 gap-3">
-            <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
               <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.1)' }}>
                 <Layers size={16} className="text-blue-400" />
               </div>
@@ -319,7 +319,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
               </div>
             </div>
 
-            <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
               <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'rgba(34,197,94,0.1)' }}>
                 <Activity size={16} className="text-green-400" />
               </div>
@@ -329,7 +329,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
               </div>
             </div>
 
-            <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
               <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'rgba(251,191,36,0.1)' }}>
                 <Zap size={16} className="text-amber-400" />
               </div>
@@ -339,7 +339,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
               </div>
             </div>
 
-            <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
               <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'rgba(168,85,247,0.1)' }}>
                 <TrendingUp size={16} className="text-purple-400" />
               </div>
@@ -383,7 +383,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     className="h-8 pl-8 pr-3 text-sm rounded-lg outline-none"
-                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '160px' }}
+                    style={{ background: 'var(--bg-card-hover)', border: '1px solid var(--border-default)', width: '160px' }}
                   />
                 </div>
                 <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)} className="whitespace-nowrap">
@@ -405,7 +405,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                     <div
                       key={app.id}
                       className={`flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-white/[0.03] ${selectedIds.has(app.id) ? 'bg-blue-500/10' : ''}`}
-                      style={{ border: selectedIds.has(app.id) ? '1px solid rgba(59,130,246,0.3)' : '1px solid rgba(255,255,255,0.06)' }}
+                      style={{ border: selectedIds.has(app.id) ? '1px solid rgba(59,130,246,0.3)' : '1px solid var(--nested-block-border)' }}
                     >
                       {/* 选择框 */}
                       <button
@@ -438,7 +438,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
 
                       {/* 密钥信息 */}
                       <div className="flex-shrink-0 text-right">
-                        <code className="text-xs px-2 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                        <code className="text-xs px-2 py-0.5 rounded" style={{ background: 'var(--bg-card-hover)' }}>
                           {app.apiKeyMasked}
                         </code>
                         <div className="text-[10px] text-muted-foreground mt-0.5">
@@ -529,7 +529,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
               {endpointStats.map((ep, idx) => {
                 const Icon = ep.icon;
                 return (
-                  <div key={idx} className="p-3 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div key={idx} className="p-3 rounded-lg" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
                     <div className="flex items-center gap-2 mb-2">
                       <div className="w-7 h-7 rounded flex items-center justify-center" style={{ background: colorMap[ep.color] }}>
                         <Icon size={14} className={textColorMap[ep.color]} />
@@ -540,15 +540,15 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                       </div>
                     </div>
                     <div className="grid grid-cols-3 gap-2 text-center">
-                      <div className="p-1.5 rounded" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                      <div className="p-1.5 rounded" style={{ background: 'var(--nested-block-bg)' }}>
                         <div className="text-sm font-semibold">{ep.today.toLocaleString()}</div>
                         <div className="text-[10px] text-muted-foreground">今日请求</div>
                       </div>
-                      <div className="p-1.5 rounded" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                      <div className="p-1.5 rounded" style={{ background: 'var(--nested-block-bg)' }}>
                         <div className="text-sm font-semibold text-green-400">{ep.success}%</div>
                         <div className="text-[10px] text-muted-foreground">成功率</div>
                       </div>
-                      <div className="p-1.5 rounded" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                      <div className="p-1.5 rounded" style={{ background: 'var(--nested-block-bg)' }}>
                         <div className="text-sm font-semibold">{ep.latency}s</div>
                         <div className="text-[10px] text-muted-foreground">平均延迟</div>
                       </div>
@@ -564,7 +564,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
               <button
                 onClick={showCurlCommand}
                 className="w-full p-2.5 rounded-lg text-left text-sm hover:bg-white/5 transition-colors flex items-center gap-2"
-                style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+                style={{ border: '1px solid var(--nested-block-border)' }}
               >
                 <Code size={14} className="text-muted-foreground" />
                 <span>查看 curl 调用示例</span>
@@ -572,7 +572,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
               <a
                 href="#"
                 className="w-full p-2.5 rounded-lg text-left text-sm hover:bg-white/5 transition-colors flex items-center gap-2 block"
-                style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+                style={{ border: '1px solid var(--nested-block-border)' }}
               >
                 <ExternalLink size={14} className="text-muted-foreground" />
                 <span>查看 API 文档</span>
@@ -750,7 +750,7 @@ function CreateAppDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
                   <Tooltip.Portal>
                     <Tooltip.Content
                       className="px-3 py-2 text-xs rounded-lg max-w-xs"
-                      style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid rgba(255,255,255,0.1)' }}
+                      style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid var(--border-default)' }}
                       sideOffset={5}
                     >
                       忽略 API 请求中的 system message
@@ -897,7 +897,7 @@ function ApiKeyDialog({ open, onClose, apiKey }: { open: boolean; onClose: () =>
           <div className="flex gap-2">
             <code
               className="flex-1 px-3 py-2 rounded-lg text-sm break-all font-mono"
-              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+              style={{ background: 'var(--bg-card-hover)', border: '1px solid var(--border-default)' }}
             >
               {apiKey}
             </code>
@@ -951,7 +951,7 @@ function CurlCommandDialog({ open, onClose, curlCommand }: { open: boolean; onCl
 
           <pre
             className="p-4 rounded-lg text-xs overflow-x-auto font-mono"
-            style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)' }}
+            style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
           >
             <code>{curlCommand}</code>
           </pre>

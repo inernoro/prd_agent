@@ -99,7 +99,7 @@ export function PermissionPopover({
         {/* Header */}
         <div
           className="flex items-center justify-between px-4 py-3"
-          style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
+          style={{ borderBottom: '1px solid var(--nested-block-border)' }}
         >
           <div>
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -167,7 +167,7 @@ export function PermissionPopover({
         {/* Footer */}
         <div
           className="flex items-center justify-between px-4 py-3"
-          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
+          style={{ borderTop: '1px solid var(--nested-block-border)' }}
         >
           <div className="flex items-center gap-2">
             {!isBuiltIn && permDefs.length > 0 && (
