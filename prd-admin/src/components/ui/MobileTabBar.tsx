@@ -155,15 +155,15 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      background: 'linear-gradient(145deg, var(--accent-gold, #f5b228) 0%, rgba(220, 140, 20, 0.90) 100%)',
-                      boxShadow: `0 0 16px 2px rgba(245, 178, 40, 0.25), 0 2px 8px -1px rgba(245, 158, 11, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.25)`,
-                      border: '1px solid rgba(255, 220, 100, 0.20)',
+                      background: 'rgba(255, 255, 255, 0.12)',
+                      boxShadow: '0 0 12px 1px rgba(255, 255, 255, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+                      border: '1px solid rgba(255, 255, 255, 0.15)',
                     }}
                   >
                     <Icon
                       size={22}
                       strokeWidth={2.5}
-                      style={{ color: 'rgba(15, 10, 0, 0.85)' }}
+                      style={{ color: 'rgba(255, 255, 255, 0.90)' }}
                     />
                   </div>
                 </button>
