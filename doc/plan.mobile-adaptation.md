@@ -1,6 +1,6 @@
 # 移动端适配功能规划
 
-> **文档版本**：v1.0
+> **文档版本**：v1.1 (验证修订版)
 > **创建日期**：2026-02-11
 > **目标范围**：prd-admin (React 18 管理后台)
 > **当前状态**：移动端可渲染但未优化 (适配评分 4/10)
@@ -49,6 +49,7 @@
 | **`ResponsiveDialog`** | `components/ui/ResponsiveDialog.tsx` | 桌面=居中弹窗，移动端=BottomSheet 自动切换 | 所有使用 Dialog 的地方 |
 | **`SwipeableContainer`** | `components/ui/SwipeableContainer.tsx` | 手势容器，支持左右滑动切换 Tab / 删除操作 | 列表项、Tab 切换 |
 | **`CollapsibleFilterPanel`** | `components/design/CollapsibleFilterPanel.tsx` | 可折叠的筛选面板（移动端默认收起） | 日志查询、数据管理 |
+| **`SplitToTabLayout`** | `components/design/SplitToTabLayout.tsx` | 桌面=左右分栏，移动端=Tab 切换。解决 VisualAgent/LiteraryAgent/DefectAgent 等所有双面板页面的适配 | VisualAgentEditor, ArticleIllustrationEditor, DefectDetailPanel, DrawingBoardDialog |
 
 ### 2.2 已有组件改造（需要适配）
 
@@ -149,8 +150,13 @@ xl:  1024 - 1279px  → 平板横屏 / 小笔记本
 | **PromptStagesPage** | 提示词列表 | 单列卡片 | P2 |
 | **AuthzPage** | 权限矩阵表格 | 单角色详情视图（非矩阵） | P2 |
 | **ExecutiveDashboardPage** | KPI 多列网格 | 单列 KPI 卡片堆叠 | P2 |
-| **VisualAgentFullscreenPage** | 画布全屏 | 暂不适配（仅限桌面端提示） | P3 |
-| **LiteraryAgentEditorPage** | 编辑器 | 简化工具栏，全屏编辑 | P3 |
+| **VisualAgentWorkspaceListPage** | 5列固定网格 + 浮动工具栏 | 响应式网格(1→2→3列) + 底部工具栏 + 快捷输入全宽 | P1 |
+| **VisualAgentEditor (AdvancedVisualAgentTab)** | 双面板(画布70%+聊天30%) | Tab 切换(画布/聊天) + 底部工具条 + 长按替代右键 | P1 |
+| **DrawingBoardDialog** | 双面板(画板70%+聊天30%) 1160px | Tab 切换(画板/聊天) + 全屏画板 | P1 |
+| **LiteraryAgentWorkspaceListPage** | 卡片网格 + 文件夹 | 单列卡片 + hover按钮始终可见 | P1 |
+| **ArticleIllustrationEditorPage** | 左(文章预览) + 右(w-96标记列表) | Tab 切换(文章/标记/配置) + BottomSheet | P1 |
+| **ConfigManagementDialog** | 三列配置(1500px宽弹窗) | Tab 切换(提示词/风格图/水印) + 全宽弹窗 | P1 |
+| **DefectAgentPage** | 卡片网格(已响应式) | 优化 DefectDetailPanel 双面板→堆叠 | P2 |
 | **ModelPoolManagePage** | 策略可视化 | 暂不适配（仅限桌面端提示） | P3 |
 
 ---
@@ -239,62 +245,94 @@ Step 2.4  创建 SwipeableContainer 组件
           用途: Tab 切换、列表项操作
 ```
 
-### Phase 3：页面级适配 (P0 Pages)
+### Phase 3：复杂页面适配 — 视觉创作 (VisualAgent)
 
 ```
-Step 3.1  适配 LoginPage
+Step 3.1  适配 VisualAgentWorkspaceListPage
+          - 5列固定网格 → ResponsiveGrid (xs:1, sm:2, lg:3, xl:5)
+          - 浮动工具栏 → 移动端移至底部 BottomSheet
+          - 快捷输入框 maxWidth:680px → 移动端 100% 宽度
+          - 场景标签 → 移动端横向滚动
+          - 卡片 hover 效果 → 移动端始终可见
+
+Step 3.2  适配 AdvancedVisualAgentTab (核心编辑器)
+          - 使用 SplitToTabLayout: 桌面=画布+聊天并排 / 移动端=Tab切换
+          - 移动端 Tab 1 (画布): 全屏画布 + 底部精简工具条
+          - 移动端 Tab 2 (聊天): 全屏聊天 + 消息列表 + 输入框
+          - 画布工具栏: 桌面顶部横排 → 移动端底部单行可滚动
+          - 右键菜单 → 长按触发上下文菜单
+          - 拖拽手柄: 20px → 移动端 44px 最小触控区
+          - 缩放: 滚轮 → 捏合手势 (pinch-to-zoom)
+          - 多选: Shift+Click → 移动端长按进入多选模式
+
+Step 3.3  适配 DrawingBoardDialog
+          - 1160px 双面板 → 移动端全屏 + Tab切换(画板/AI聊天)
+          - 画笔工具栏保持, 移动端底部固定
+          - 颜色选择 9 色 → 移动端横向滚动
+          - 触控绘画天然适合移动端 (核心优势)
+
+Step 3.4  适配 ImageQuickActionBar / ImageQuickEditInput
+          - QuickEditInput width:320px → 移动端 100%
+          - ActionBar 36px → 移动端保持, 横向滚动
+```
+
+### Phase 4：复杂页面适配 — 文学创作 (LiteraryAgent)
+
+```
+Step 4.1  适配 LiteraryAgentWorkspaceListPage
+          - 网格已有 grid-cols-2 md:3 lg:4 xl:5 → 调整为 xs:1 sm:2
+          - 文件夹缩进 pl-6 → 移动端取消缩进
+          - hover 操作按钮 → 移动端始终可见
+          - 预览文字 text-[10px] → 移动端 text-[12px]
+          - 右键菜单 → 长按触发
+
+Step 4.2  适配 ArticleIllustrationEditorPage (核心编辑器)
+          - 使用 SplitToTabLayout: 桌面=文章预览+标记面板 / 移动端=Tab切换
+          - 移动端 Tab 1 (文章): 全宽文章预览 + Markdown渲染
+          - 移动端 Tab 2 (标记): 全宽标记列表 + 单个标记图片生成
+          - 移动端 Tab 3 (配置): 配置药丸 + 模型池信息
+          - 右侧栏 w-96 → 移动端隐藏, 内容移至 Tab
+          - 图片尺寸 4 按钮 → 移动端下拉选择
+          - 工作流进度条保留, 移动端全宽
+          - 文件上传: 拖拽 + 点击 → 移动端仅点击 (原生文件选择器)
+
+Step 4.3  适配 ConfigManagementDialog
+          - maxWidth:1500px → 移动端全屏 BottomSheet
+          - 三列配置 → 移动端 Tab 切换 (提示词/风格图/水印)
+          - 市场 3 列 → 移动端单列卡片
+          - 搜索+排序栏保留, 移动端全宽
+```
+
+### Phase 5：基础页面适配 (P0 + P1)
+
+```
+Step 5.1  适配 LoginPage
           - 验证现有响应式是否满足
           - 添加 safe-area padding
           - 确保键盘弹出时表单不被遮挡
 
-Step 3.2  适配 AgentLauncherPage
+Step 5.2  适配 AgentLauncherPage
           - 使用 ResponsiveGrid 替代内联 grid
           - 移动端单列展示 Agent 卡片
-          - 调整卡片尺寸和间距
 
-Step 3.3  适配 AiChatPage
-          - 移动端隐藏侧面板（设置/附件）
+Step 5.3  适配 AiChatPage
+          - 移动端隐藏侧面板
           - 全屏对话视图
-          - 浮动按钮打开设置 (BottomSheet)
           - 输入框 sticky 底部 + safe-area
-          - 消息气泡最大宽度调整
-```
 
-### Phase 4：页面级适配 (P1 Pages)
-
-```
-Step 4.1  适配 UsersPage
-          - 使用 SearchFilterBar + ResponsiveGrid
-          - 移动端 2 列用户卡片
-
-Step 4.2  适配 LlmLogsPage
-          - CollapsibleFilterPanel 替代现有筛选栏
-          - 日志项改为卡片视图
+Step 5.4  适配 UsersPage / LlmLogsPage
+          - SearchFilterBar + ResponsiveGrid
           - 详情弹窗使用 ResponsiveDialog
 
-Step 4.3  适配 LandingPage
-          - 验证并微调 Hero section 间距
-          - 确保 CTA 按钮触控友好 (48px min)
-```
+Step 5.5  适配 DefectAgentPage
+          - DefectDetailPanel 600-900px → 移动端全屏 + 左右面板堆叠
+          - DefectSubmitPanel max-w-[760px] → 移动端全屏 BottomSheet
+          - hover 操作按钮 → 移动端始终可见
 
-### Phase 5：页面级适配 (P2 Pages)
-
-```
-Step 5.1  适配 ModelManageTabsPage
-          - TabBar 横向滚动
-          - 模型列表改卡片视图
-
-Step 5.2  适配 PromptStagesPage
-          - 提示词列表单列
-          - 编辑弹窗 → BottomSheet
-
-Step 5.3  适配 AuthzPage
-          - 移动端改为：角色列表 → 点击 → 权限详情页
-          - 放弃矩阵视图
-
-Step 5.4  适配 ExecutiveDashboardPage
-          - KPI 卡片单列堆叠
-          - 图表全宽显示
+Step 5.6  适配剩余 P2 页面
+          - ModelManageTabsPage: TabBar 横向滚动 + 卡片视图
+          - AuthzPage: 移动端单角色详情视图
+          - ExecutiveDashboardPage: KPI 卡片单列堆叠
 ```
 
 ### Phase 6：交互增强 (Touch & Gesture)

@@ -190,3 +190,39 @@ export const glassDropdown: React.CSSProperties = {
   backdropFilter: 'blur(20px)',
   WebkitBackdropFilter: 'blur(20px)',
 };
+
+// ── 移动端专用预设 ──
+
+/**
+ * BottomSheet — 底部弹出面板（移动端替代 Dialog）
+ */
+export const glassBottomSheet: React.CSSProperties = {
+  background:
+    'linear-gradient(180deg, var(--glass-bg-start, rgba(24, 24, 28, 0.98)) 0%, var(--glass-bg-end, rgba(18, 18, 22, 0.99)) 100%)',
+  borderTop: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+  boxShadow: '0 -12px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+  backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+  WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+};
+
+/**
+ * 移动端顶部导航栏
+ */
+export const glassMobileHeader: React.CSSProperties = {
+  background:
+    'linear-gradient(180deg, var(--glass-bg-start, rgba(18, 18, 22, 0.95)) 0%, var(--glass-bg-end, rgba(18, 18, 22, 0.88)) 100%)',
+  borderBottom: '1px solid var(--glass-border, rgba(255, 255, 255, 0.1))',
+  backdropFilter: 'blur(40px) saturate(180%)',
+  WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+};
+
+/**
+ * 移动端底部 Tab 栏
+ */
+export const glassMobileTabBar: React.CSSProperties = {
+  background:
+    'linear-gradient(0deg, var(--glass-bg-start, rgba(18, 18, 22, 0.96)) 0%, var(--glass-bg-end, rgba(18, 18, 22, 0.90)) 100%)',
+  borderTop: '1px solid var(--glass-border, rgba(255, 255, 255, 0.1))',
+  backdropFilter: 'blur(40px) saturate(200%)',
+  WebkitBackdropFilter: 'blur(40px) saturate(200%)',
+};

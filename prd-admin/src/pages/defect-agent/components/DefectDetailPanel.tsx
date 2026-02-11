@@ -3,6 +3,7 @@ import { Button } from '@/components/design/Button';
 import { glassPanel } from '@/lib/glassStyles';
 import { useDefectStore } from '@/stores/defectStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import {
   deleteDefect,
   processDefect,
@@ -110,6 +111,7 @@ export function DefectDetailPanel() {
     loadStats,
   } = useDefectStore();
   const userId = useAuthStore((s) => s.user?.userId);
+  const { isMobile } = useBreakpoint();
 
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -386,21 +388,30 @@ export function DefectDetailPanel() {
 
       {/* 弹窗内容 - 液态玻璃样式 */}
       <div
-        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[201] overflow-hidden rounded-2xl flex"
+        className={
+          isMobile
+            ? 'fixed inset-0 z-[201] overflow-hidden flex flex-col'
+            : 'fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[201] overflow-hidden rounded-2xl flex'
+        }
         style={{
-          width: showChat ? '900px' : '600px',
-          height: showChat ? '620px' : '520px',
-          minHeight: showChat ? '620px' : '520px',
-          maxWidth: '95vw',
-          maxHeight: '85vh',
+          ...(isMobile
+            ? { width: '100vw', height: '100vh' }
+            : {
+                width: showChat ? '900px' : '600px',
+                height: showChat ? '620px' : '520px',
+                minHeight: showChat ? '620px' : '520px',
+                maxWidth: '95vw',
+                maxHeight: '85vh',
+              }),
           ...glassPanel,
-          boxShadow:
-            '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+          boxShadow: isMobile
+            ? 'none'
+            : '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
         }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 左侧：缺陷信息 */}
-        <div className={`flex flex-col ${showChat ? 'w-[55%]' : 'w-full'}`}>
+        <div className={`flex flex-col ${showChat ? (isMobile ? 'w-full' : 'w-[55%]') : 'w-full'}`}>
           {/* Header - 固定高度 52px */}
           <div
             className="flex items-center justify-between px-5 h-[52px] flex-shrink-0"
@@ -681,11 +692,11 @@ export function DefectDetailPanel() {
 
           {/* Actions - 最小高度 60px，与右侧对齐 */}
           <div
-            className="px-5 min-h-[60px] flex items-center justify-between flex-shrink-0"
+            className={`px-5 min-h-[60px] flex ${isMobile ? 'flex-col gap-2 py-3' : 'items-center justify-between'} flex-shrink-0`}
             style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
           >
             {/* Left: 严重程度 + 人员信息 + 删除按钮 */}
-            <div className="flex items-center gap-3">
+            <div className={`flex items-center gap-3 ${isMobile ? 'flex-wrap' : ''}`}>
               {/* 严重程度 */}
               <div
                 className="flex items-center gap-2 text-[12px]"
@@ -832,8 +843,11 @@ export function DefectDetailPanel() {
         {/* 右侧：聊天面板 */}
         {showChat && (
           <div
-            className="w-[45%] flex flex-col"
-            style={{ borderLeft: '1px solid rgba(255, 255, 255, 0.06)' }}
+            className={`${isMobile ? 'w-full' : 'w-[45%]'} flex flex-col`}
+            style={{
+              borderLeft: isMobile ? 'none' : '1px solid rgba(255, 255, 255, 0.06)',
+              borderTop: isMobile ? '1px solid rgba(255, 255, 255, 0.06)' : 'none',
+            }}
           >
             {/* Chat Header - 与左侧 Header 高度对齐 (52px) */}
             <div

@@ -33,6 +33,7 @@ import {
   FilePlus,
   Bug,
 } from 'lucide-react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -651,7 +652,7 @@ function QuickInputBox(props: {
   const canSubmit = value.trim() && !loading;
 
   return (
-    <div className="max-w-[680px] w-full mx-auto px-6 mt-8">
+    <div className="max-w-full sm:max-w-[680px] w-full mx-auto px-3 sm:px-6 mt-8">
       <div
         className="rounded-[20px] overflow-hidden cursor-text transition-all duration-300"
         style={{
@@ -1066,7 +1067,7 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
   const { onSelect, activeKey } = props;
 
   return (
-    <div className="flex items-center justify-center gap-2.5 flex-wrap px-6 mt-6">
+    <div className="flex items-center justify-start sm:justify-center gap-2.5 flex-nowrap overflow-x-auto sm:flex-wrap px-3 sm:px-6 mt-6 no-scrollbar">
       {SCENARIO_TAGS.map((tag) => {
         const Icon = tag.icon;
         const isActive = activeKey === tag.key;
@@ -1078,7 +1079,7 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
             <button
               key={tag.key}
               type="button"
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-all duration-200 hover:scale-[1.02]"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-all duration-200 hover:scale-[1.02] shrink-0"
               style={{
                 background: 'linear-gradient(135deg, rgba(212,170,85,0.12) 0%, rgba(195,155,65,0.06) 100%)',
                 border: '1px solid rgba(212,170,85,0.35)',
@@ -1099,7 +1100,7 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
             key={tag.key}
             type="button"
             onClick={() => onSelect(tag.prompt)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 hover:bg-white/8"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 hover:bg-white/8 shrink-0"
             style={{
               background: isActive ? 'rgba(255,250,240,0.1)' : 'transparent',
               border: isActive ? '1px solid rgba(255,250,240,0.22)' : '1px solid rgba(255,255,255,0.1)',
@@ -1281,12 +1282,9 @@ function ProjectCarousel(props: {
           </h2>
         </div>
       </div>
-      {/* 网格布局，固定5列，居中 */}
+      {/* 网格布局，响应式列数 */}
       <div
-        className="grid gap-5 pb-6 px-5 max-w-[1340px] mx-auto"
-        style={{
-          gridTemplateColumns: 'repeat(5, 250px)',
-        }}
+        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-5 pb-6 px-5 max-w-[1340px] mx-auto"
       >
         <NewProjectCard onClick={onCreate} />
         {items.map((ws) => (
@@ -1310,6 +1308,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const _fullscreenMode = props.fullscreenMode;
   void _fullscreenMode; // 避免 TS6133 警告
   const navigate = useNavigate();
+  const { isMobile } = useBreakpoint();
 
   // 统一使用 /visual-agent 路径（现在所有模式都是全屏）
   const getEditorPath = (workspaceId: string) => {
@@ -1634,10 +1633,12 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       {/* 夜景背景 */}
       <NightSkyBackground />
 
-      {/* 浮动工具栏 - 页面左侧垂直居中 */}
-      <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
-        <FloatingToolbar onNewProject={onCreate} onNewFolder={onCreateFolder} />
-      </div>
+      {/* 浮动工具栏 - 桌面端页面左侧垂直居中，移动端隐藏 */}
+      {!isMobile && (
+        <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
+          <FloatingToolbar onNewProject={onCreate} onNewFolder={onCreateFolder} />
+        </div>
+      )}
 
       {/* 顶部居中区域 - 调整间距使布局更紧凑 */}
       <div className="flex flex-col items-center justify-center pt-[8vh] pb-4 relative z-10">

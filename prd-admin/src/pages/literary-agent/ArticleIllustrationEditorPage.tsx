@@ -60,6 +60,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
 import { useDebounce } from '@/hooks/useDebounce';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -284,6 +285,8 @@ const PanelCard = ({ className, children }: { className?: string; children: Reac
 );
 
 export default function ArticleIllustrationEditorPage({ workspaceId }: { workspaceId: string }) {
+  const { isMobile } = useBreakpoint();
+  const [mobileTab, setMobileTab] = useState<'article' | 'markers'>('article');
   const [articleContent, setArticleContent] = useState('');
   const [articleWithMarkers, setArticleWithMarkers] = useState('');
   const [articleWithImages, setArticleWithImages] = useState('');
@@ -1987,9 +1990,38 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
 
   return (
-    <div className="h-full min-h-0 flex gap-4">
+    <div className={cn("h-full min-h-0 flex", isMobile ? "flex-col gap-3" : "gap-4")}>
+      {/* 移动端标签栏 */}
+      {isMobile && (
+        <div className="flex-shrink-0 flex rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border-default)' }}>
+          <button
+            className={cn(
+              "flex-1 px-4 py-2 text-sm font-medium transition-colors",
+              mobileTab === 'article'
+                ? "text-white"
+                : "text-[var(--text-muted)]"
+            )}
+            style={mobileTab === 'article' ? { background: 'var(--accent-primary)' } : { background: 'var(--panel)' }}
+            onClick={() => setMobileTab('article')}
+          >
+            文章预览
+          </button>
+          <button
+            className={cn(
+              "flex-1 px-4 py-2 text-sm font-medium transition-colors",
+              mobileTab === 'markers'
+                ? "text-white"
+                : "text-[var(--text-muted)]"
+            )}
+            style={mobileTab === 'markers' ? { background: 'var(--accent-primary)' } : { background: 'var(--panel)' }}
+            onClick={() => setMobileTab('markers')}
+          >
+            配图工作台
+          </button>
+        </div>
+      )}
       {/* 左侧：文章编辑器 */}
-      <div className="flex-1 min-w-0 flex flex-col gap-4">
+      <div className={cn("flex-1 min-w-0 flex flex-col gap-4", isMobile && mobileTab !== 'article' && "hidden")}>
         <GlassCard glow className="flex-1 min-h-0 flex flex-col">
           {/* 精简头部：标题 + 模型信息 */}
           <div className="mb-2 flex items-center justify-between">
@@ -2360,7 +2392,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       </div>
 
       {/* 右侧：工作台 */}
-      <div className="w-96 flex flex-col gap-3">
+      <div className={cn("flex flex-col gap-3", isMobile ? "w-full" : "w-96", isMobile && mobileTab !== 'markers' && "hidden")}>
         {/* 顶部：工作流进度 + 配置折叠区 */}
         <PanelCard>
           <WorkflowProgressBar
