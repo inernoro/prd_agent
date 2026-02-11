@@ -33,10 +33,11 @@ import type {
   ForceExpireUserContract,
 } from '@/services/contracts/adminUsers';
 import type { GetActiveGroupsContract, GetGapStatsContract, GetMessageTrendContract, GetOverviewStatsContract, GetTokenUsageContract } from '@/services/contracts/adminStats';
+import type { GetExecutiveOverviewContract, GetExecutiveTrendsContract, GetExecutiveTeamContract, GetExecutiveAgentsContract, GetExecutiveModelsContract, GetExecutiveLeaderboardContract } from '@/services/contracts/executive';
 import type { CreatePlatformContract, DeletePlatformContract, GetPlatformsContract, UpdatePlatformContract } from '@/services/contracts/platforms';
 import type { ClearImageGenModelContract, ClearIntentModelContract, ClearVisionModelContract, CreateModelContract, DeleteModelContract, GetModelsContract, SetImageGenModelContract, SetIntentModelContract, SetMainModelContract, SetVisionModelContract, TestModelContract, UpdateModelContract, UpdateModelPrioritiesContract, GetModelAdapterInfoContract, GetModelsAdapterInfoBatchContract, GetAdapterInfoByModelNameContract } from '@/services/contracts/models';
 import type { ActivateLLMConfigContract, CreateLLMConfigContract, DeleteLLMConfigContract, GetLLMConfigsContract, UpdateLLMConfigContract } from '@/services/contracts/llmConfigs';
-import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContract, GetLlmModelStatsContract } from '@/services/contracts/llmLogs';
+import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContract, GetLlmModelStatsContract, GetReplayCurlContract } from '@/services/contracts/llmLogs';
 import type { GetAdminDocumentContentContract } from '@/services/contracts/adminDocuments';
 import type { ListUploadArtifactsContract } from '@/services/contracts/uploadArtifacts';
 import type { AdminImpersonateContract } from '@/services/contracts/lab';
@@ -101,6 +102,7 @@ import type {
   GetVisualAgentWorkspaceCanvasContract,
   GetVisualAgentWorkspaceDetailContract,
   ListVisualAgentSessionsContract,
+  ListVisualAgentWorkspaceMessagesContract,
   ListVisualAgentWorkspacesContract,
   SaveVisualAgentCanvasContract,
   SaveVisualAgentWorkspaceCanvasContract,
@@ -146,6 +148,7 @@ import type {
   PublishLiteraryPromptContract,
   UnpublishLiteraryPromptContract,
   ForkLiteraryPromptContract,
+  OptimizeLiteraryPromptContract,
 } from '@/services/contracts/literaryPrompts';
 import type {
   GetLiteraryAgentConfigContract,
@@ -162,6 +165,7 @@ import type {
   GetActiveReferenceImageConfigContract,
   GetLiteraryAgentImageGenModelsContract,
   GetLiteraryAgentAllModelsContract,
+  GetLiteraryAgentMainModelContract,
   CreateLiteraryAgentImageGenRunContract,
   CancelLiteraryAgentImageGenRunContract,
   StreamLiteraryAgentImageGenRunWithRetryContract,
@@ -206,6 +210,7 @@ import type {
   PreviewApiLogsContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
+import type { IAutomationsService } from '@/services/contracts/automations';
 import type { IModelGroupsService } from '@/services/contracts/modelGroups';
 import type { IAppCallersService } from '@/services/contracts/appCallers';
 import type { ISchedulerConfigService } from '@/services/contracts/schedulerConfig';
@@ -260,10 +265,11 @@ import {
   initializeUsersReal,
 } from '@/services/real/adminUsers';
 import { getActiveGroupsReal, getGapStatsReal, getMessageTrendReal, getOverviewStatsReal, getTokenUsageReal } from '@/services/real/adminStats';
+import { getExecutiveOverviewReal, getExecutiveTrendsReal, getExecutiveTeamReal, getExecutiveAgentsReal, getExecutiveModelsReal, getExecutiveLeaderboardReal } from '@/services/real/executive';
 import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatformReal } from '@/services/real/platforms';
 import { clearImageGenModelReal, clearIntentModelReal, clearVisionModelReal, createModelReal, deleteModelReal, getModelsReal, setImageGenModelReal, setIntentModelReal, setMainModelReal, setVisionModelReal, testModelReal, updateModelReal, updateModelPrioritiesReal, getModelAdapterInfoReal, getModelsAdapterInfoBatchReal, getAdapterInfoByModelNameReal } from '@/services/real/models';
 import { activateLLMConfigReal, createLLMConfigReal, deleteLLMConfigReal, getLLMConfigsReal, updateLLMConfigReal } from '@/services/real/llmConfigs';
-import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal, getLlmModelStatsReal, getBatchModelStatsReal } from '@/services/real/llmLogs';
+import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal, getLlmModelStatsReal, getBatchModelStatsReal, getReplayCurlReal } from '@/services/real/llmLogs';
 import { getAdminDocumentContentReal } from '@/services/real/adminDocuments';
 import { listUploadArtifactsReal } from '@/services/real/uploadArtifacts';
 import {
@@ -322,6 +328,7 @@ import {
   getVisualAgentSessionReal,
   getVisualAgentWorkspaceCanvasReal,
   getVisualAgentWorkspaceDetailReal,
+  listVisualAgentWorkspaceMessagesReal,
   listVisualAgentSessionsReal,
   listVisualAgentWorkspacesReal,
   saveVisualAgentCanvasReal,
@@ -337,6 +344,8 @@ import {
   exportArticleReal,
   updateArticleMarkerReal,
   generateVisualAgentWorkspaceTitleReal,
+  getVisualAgentImageGenModelsReal,
+  getVisualAgentAdapterInfoReal,
 } from '@/services/real/visualAgent';
 import {
   exportConfigReal,
@@ -394,6 +403,7 @@ import {
   publishLiteraryPromptReal,
   unpublishLiteraryPromptReal,
   forkLiteraryPromptReal,
+  optimizeLiteraryPromptReal,
 } from '@/services/real/literaryPrompts';
 import {
   getLiteraryAgentConfigReal,
@@ -410,6 +420,7 @@ import {
   getActiveReferenceImageConfigReal,
   getLiteraryAgentImageGenModelsReal,
   getLiteraryAgentAllModelsReal,
+  getLiteraryAgentMainModelReal,
   createLiteraryAgentImageGenRunReal,
   cancelLiteraryAgentImageGenRunReal,
   streamLiteraryAgentImageGenRunWithRetryReal,
@@ -454,6 +465,7 @@ import {
   previewApiLogsReal,
 } from '@/services/real/defectAgent';
 import { OpenPlatformService } from '@/services/real/openPlatform';
+import { AutomationsService } from '@/services/real/automations';
 import { ModelGroupsService } from '@/services/real/modelGroups';
 import { AppCallersService } from '@/services/real/appCallers';
 import { SchedulerConfigService } from '@/services/real/schedulerConfig';
@@ -511,6 +523,14 @@ export const getMessageTrend: GetMessageTrendContract = withAuth(getMessageTrend
 export const getActiveGroups: GetActiveGroupsContract = withAuth(getActiveGroupsReal);
 export const getGapStats: GetGapStatsContract = withAuth(getGapStatsReal);
 
+// Executive Dashboard
+export const getExecutiveOverview: GetExecutiveOverviewContract = withAuth(getExecutiveOverviewReal);
+export const getExecutiveTrends: GetExecutiveTrendsContract = withAuth(getExecutiveTrendsReal);
+export const getExecutiveTeam: GetExecutiveTeamContract = withAuth(getExecutiveTeamReal);
+export const getExecutiveAgents: GetExecutiveAgentsContract = withAuth(getExecutiveAgentsReal);
+export const getExecutiveModels: GetExecutiveModelsContract = withAuth(getExecutiveModelsReal);
+export const getExecutiveLeaderboard: GetExecutiveLeaderboardContract = withAuth(getExecutiveLeaderboardReal);
+
 export const getAdminGroups: GetAdminGroupsContract = withAuth(getAdminGroupsReal);
 export const getAdminGroupMembers: GetAdminGroupMembersContract = withAuth(getAdminGroupMembersReal);
 export const removeAdminGroupMember: RemoveAdminGroupMemberContract = withAuth(removeAdminGroupMemberReal);
@@ -561,6 +581,7 @@ export const getLlmLogDetail: GetLlmLogDetailContract = withAuth(getLlmLogDetail
 export const getLlmLogsMeta: GetLlmLogsMetaContract = withAuth(getLlmLogsMetaReal);
 export const getLlmModelStats: GetLlmModelStatsContract = withAuth(getLlmModelStatsReal);
 export const getBatchModelStats = withAuth(getBatchModelStatsReal);
+export const getReplayCurl: GetReplayCurlContract = withAuth(getReplayCurlReal);
 export const listUploadArtifacts: ListUploadArtifactsContract = withAuth(listUploadArtifactsReal);
 export const getAdminDocumentContent: GetAdminDocumentContentContract = withAuth(getAdminDocumentContentReal);
 
@@ -647,6 +668,7 @@ export const updateVisualAgentWorkspace: UpdateVisualAgentWorkspaceContract = wi
 export const deleteVisualAgentWorkspace: DeleteVisualAgentWorkspaceContract = withAuth(deleteVisualAgentWorkspaceReal);
 export const getVisualAgentWorkspaceDetail: GetVisualAgentWorkspaceDetailContract = withAuth(getVisualAgentWorkspaceDetailReal);
 export const addVisualAgentWorkspaceMessage: AddVisualAgentWorkspaceMessageContract = withAuth(addVisualAgentWorkspaceMessageReal);
+export const listVisualAgentWorkspaceMessages: ListVisualAgentWorkspaceMessagesContract = withAuth(listVisualAgentWorkspaceMessagesReal);
 export const getVisualAgentWorkspaceCanvas: GetVisualAgentWorkspaceCanvasContract = withAuth(getVisualAgentWorkspaceCanvasReal);
 export const saveVisualAgentWorkspaceCanvas: SaveVisualAgentWorkspaceCanvasContract = withAuth(saveVisualAgentWorkspaceCanvasReal);
 export const saveVisualAgentWorkspaceViewport: SaveVisualAgentWorkspaceViewportContract = withAuth(saveVisualAgentWorkspaceViewportReal);
@@ -660,6 +682,8 @@ export const generateArticleMarkers = generateArticleMarkersReal;
 export const extractArticleMarkers = extractArticleMarkersReal;
 export const exportArticle = exportArticleReal;
 export const updateArticleMarker = updateArticleMarkerReal;
+export const getVisualAgentImageGenModels = getVisualAgentImageGenModelsReal;
+export const getVisualAgentAdapterInfo = getVisualAgentAdapterInfoReal;
 
 export const exportConfig: ExportConfigContract = withAuth(exportConfigReal);
 export const importConfig: ImportConfigContract = withAuth(importConfigReal);
@@ -678,6 +702,7 @@ export const listLiteraryPromptsMarketplace: ListLiteraryPromptsMarketplaceContr
 export const publishLiteraryPrompt: PublishLiteraryPromptContract = withAuth(publishLiteraryPromptReal);
 export const unpublishLiteraryPrompt: UnpublishLiteraryPromptContract = withAuth(unpublishLiteraryPromptReal);
 export const forkLiteraryPrompt: ForkLiteraryPromptContract = withAuth(forkLiteraryPromptReal);
+export const optimizeLiteraryPrompt: OptimizeLiteraryPromptContract = withAuth(optimizeLiteraryPromptReal);
 
 // Literary Agent Config
 export const getLiteraryAgentConfig: GetLiteraryAgentConfigContract = withAuth(getLiteraryAgentConfigReal);
@@ -696,6 +721,7 @@ export const deactivateReferenceImageConfig: DeactivateReferenceImageConfigContr
 export const getActiveReferenceImageConfig: GetActiveReferenceImageConfigContract = withAuth(getActiveReferenceImageConfigReal);
 export const getLiteraryAgentImageGenModels: GetLiteraryAgentImageGenModelsContract = withAuth(getLiteraryAgentImageGenModelsReal);
 export const getLiteraryAgentAllModels: GetLiteraryAgentAllModelsContract = withAuth(getLiteraryAgentAllModelsReal);
+export const getLiteraryAgentMainModel: GetLiteraryAgentMainModelContract = withAuth(getLiteraryAgentMainModelReal);
 export const createLiteraryAgentImageGenRun: CreateLiteraryAgentImageGenRunContract = withAuth(createLiteraryAgentImageGenRunReal);
 export const cancelLiteraryAgentImageGenRun: CancelLiteraryAgentImageGenRunContract = withAuth(cancelLiteraryAgentImageGenRunReal);
 export const streamLiteraryAgentImageGenRunWithRetry: StreamLiteraryAgentImageGenRunWithRetryContract = withAuth(streamLiteraryAgentImageGenRunWithRetryReal);
@@ -741,6 +767,7 @@ export const batchMoveDefects: BatchMoveDefectsContract = withAuth(batchMoveDefe
 export const previewApiLogs: PreviewApiLogsContract = withAuth(previewApiLogsReal);
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
+export const automationsService: IAutomationsService = new AutomationsService();
 export const modelGroupsService: IModelGroupsService = new ModelGroupsService();
 export const appCallersService: IAppCallersService = new AppCallersService();
 export const schedulerConfigService: ISchedulerConfigService = new SchedulerConfigService();
@@ -860,6 +887,8 @@ export {
   runToolboxItem,
   listToolboxAgents,
   subscribeToolboxRunEvents,
+  streamDirectChat,
+  streamCapabilityChat,
   // Legacy API
   getToolboxRun,
   listToolboxRuns,
@@ -869,6 +898,7 @@ export type {
   ToolboxItemRun,
   AgentInfo,
   ToolboxRunEvent,
+  DirectChatMessage,
   // Legacy types
   IntentResult,
   ToolboxArtifact,

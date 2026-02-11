@@ -16,7 +16,7 @@ public static class GroupPermissionService
         return permission switch
         {
             // PM 权限
-            GroupPermission.CreateGroup => userRole == UserRole.PM || userRole == UserRole.ADMIN,
+            GroupPermission.CreateGroup => true,
             GroupPermission.DeleteGroup => userRole == UserRole.PM || userRole == UserRole.ADMIN,
             GroupPermission.InviteMembers => userRole == UserRole.PM || userRole == UserRole.ADMIN,
             GroupPermission.RemoveMembers => userRole == UserRole.PM || userRole == UserRole.ADMIN,

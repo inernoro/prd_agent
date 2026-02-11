@@ -1,5 +1,6 @@
 import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
+import type { ModelGroupForApp } from '@/types/modelGroup';
 import type {
   AddVisualAgentMessageContract,
   AddVisualAgentWorkspaceMessageContract,
@@ -11,6 +12,7 @@ import type {
   GetVisualAgentSessionContract,
   GetVisualAgentWorkspaceCanvasContract,
   GetVisualAgentWorkspaceDetailContract,
+  ListVisualAgentWorkspaceMessagesContract,
   ListVisualAgentWorkspacesContract,
   SaveVisualAgentCanvasContract,
   SaveVisualAgentWorkspaceCanvasContract,
@@ -197,6 +199,17 @@ export const addVisualAgentWorkspaceMessageReal: AddVisualAgentWorkspaceMessageC
   });
 };
 
+export const listVisualAgentWorkspaceMessagesReal: ListVisualAgentWorkspaceMessagesContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.before) qs.set('before', input.before);
+  if (input.limit != null) qs.set('limit', String(input.limit));
+  const q = qs.toString();
+  return await apiRequest<{ messages: VisualAgentMessage[]; hasMore: boolean }>(
+    `${api.visualAgent.imageMaster.workspaces.messages(encodeURIComponent(input.id))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
 export const getVisualAgentWorkspaceCanvasReal: GetVisualAgentWorkspaceCanvasContract = async (input) => {
   return await apiRequest<{ canvas: VisualAgentCanvas | null }>(api.visualAgent.imageMaster.workspaces.canvas(encodeURIComponent(input.id)), {
     method: 'GET',
@@ -269,7 +282,8 @@ export async function* generateArticleMarkersReal(input: {
   articleContent: string;
   userInstruction?: string;
   idempotencyKey?: string;
-}): AsyncIterable<{ type: string; text?: string; fullText?: string; message?: string }> {
+  insertionMode?: 'legacy' | 'anchor';
+}): AsyncIterable<{ type: string; text?: string; fullText?: string; message?: string; index?: number; mode?: string; markerCount?: number; size?: string; anchor?: string }> {
   const headers: Record<string, string> = {
     Accept: 'text/event-stream',
     'Content-Type': 'application/json',
@@ -289,6 +303,7 @@ export async function* generateArticleMarkersReal(input: {
     body: JSON.stringify({
       articleContent: input.articleContent,
       userInstruction: input.userInstruction,
+      insertionMode: input.insertionMode,
     }),
   });
 
@@ -380,4 +395,61 @@ export async function updateArticleMarkerReal(params: {
       body,
     }
   );
+}
+
+/**
+ * 获取模型适配信息（尺寸选项等）
+ * 调用 /api/visual-agent/image-gen/adapter-info?modelId=xxx
+ */
+export async function getVisualAgentAdapterInfoReal(modelId: string) {
+  return await apiRequest<import('../contracts/models').ModelAdapterInfo>(api.visualAgent.imageGen.adapterInfo(modelId));
+}
+
+/**
+ * 获取视觉创作所有生图场景的模型池列表（后端合并去重）
+ * 调用 /api/visual-agent/image-gen/models
+ */
+export async function getVisualAgentImageGenModelsReal() {
+  const res = await apiRequest<ModelGroupForApp[]>(api.visualAgent.imageGen.models());
+  if (res.success && res.data) {
+    // 补齐 ModelGroup 基类中的可选/默认字段，与 modelGroups.ts 的 mapGroupFromApi 保持一致
+    res.data = res.data.map((g: any) => ({
+      ...g,
+      modelType: String(g?.modelType ?? '').trim(),
+      isDefaultForType: !!g?.isDefaultForType,
+      code: g?.code || '',
+      priority: g?.priority ?? 50,
+      strategyType: g?.strategyType ?? 0,
+      isSystemGroup: !!g?.isDefaultForType,
+      resolutionType: g?.resolutionType ?? 'DefaultPool',
+      isDedicated: !!g?.isDedicated,
+      isDefault: !!g?.isDefault,
+      isLegacy: !!g?.isLegacy,
+    })) as ModelGroupForApp[];
+  }
+  return res;
+}
+
+// ========== Visual Agent 域内日志查询（避免跨权限调用 /api/logs/llm）==========
+
+function toLogsQuery(params?: Record<string, any>): string {
+  if (!params) return '';
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v != null && v !== '') sp.set(k, String(v));
+  }
+  const qs = sp.toString();
+  return qs ? `?${qs}` : '';
+}
+
+export async function getVisualAgentLogsReal(params?: any) {
+  return await apiRequest<any>(`${api.visualAgent.imageGen.logs()}${toLogsQuery(params)}`, { method: 'GET' });
+}
+
+export async function getVisualAgentLogsMetaReal() {
+  return await apiRequest<any>(api.visualAgent.imageGen.logsMeta(), { method: 'GET' });
+}
+
+export async function getVisualAgentLogDetailReal(id: string) {
+  return await apiRequest<any>(api.visualAgent.imageGen.logDetail(id), { method: 'GET' });
 }

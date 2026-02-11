@@ -1,9 +1,11 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { formatDistanceToNow } from '@/lib/dateUtils';
+import { streamDirectChat } from '@/services/real/aiToolbox';
+import type { DirectChatMessage } from '@/services/real/aiToolbox';
 import {
   ArrowLeft, Edit, Trash2, Zap, Tag, Calendar, User, Send,
   FileText, Palette, PenTool, Bug, Code2, Languages, FileSearch, BarChart3,
@@ -77,6 +79,7 @@ export function ToolDetail() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -90,13 +93,21 @@ export function ToolDetail() {
     }
   }, [input]);
 
+  // 组件卸载时中止进行中的流
+  useEffect(() => {
+    return () => {
+      abortRef.current?.();
+    };
+  }, []);
+
   if (!selectedItem) return null;
 
   const IconComponent = getIconComponent(selectedItem.icon);
   const accentHue = getAccentHue(selectedItem.icon);
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     if (!input.trim() && attachments.length === 0) return;
+    if (!selectedItem) return;
 
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
@@ -113,22 +124,62 @@ export function ToolDetail() {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    const messageText = input.trim();
     setInput('');
     setAttachments([]);
     setIsLoading(true);
 
-    // 模拟 AI 响应（实际应调用 API）
-    setTimeout(() => {
-      const assistantMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: generateMockResponse(selectedItem.agentKey, userMessage.content),
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, assistantMessage]);
-      setIsLoading(false);
-    }, 1500);
-  };
+    // 构建历史消息（排除当前消息）
+    const history: DirectChatMessage[] = messages.map(m => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    // 创建流式助手消息
+    const assistantId = (Date.now() + 1).toString();
+    setMessages(prev => [...prev, {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      isStreaming: true,
+    }]);
+
+    // 调用真实 SSE 流式 API
+    const abort = streamDirectChat({
+      message: messageText,
+      agentKey: selectedItem.agentKey,
+      itemId: selectedItem.type === 'custom' ? selectedItem.id : undefined,
+      history,
+      onText: (content) => {
+        setMessages(prev => prev.map(m =>
+          m.id === assistantId
+            ? { ...m, content: m.content + content }
+            : m
+        ));
+      },
+      onError: (error) => {
+        setMessages(prev => prev.map(m =>
+          m.id === assistantId
+            ? { ...m, content: m.content || `[错误] ${error}`, isStreaming: false }
+            : m
+        ));
+        setIsLoading(false);
+        abortRef.current = null;
+      },
+      onDone: () => {
+        setMessages(prev => prev.map(m =>
+          m.id === assistantId
+            ? { ...m, isStreaming: false }
+            : m
+        ));
+        setIsLoading(false);
+        abortRef.current = null;
+      },
+    });
+
+    abortRef.current = abort;
+  }, [input, attachments, selectedItem, messages]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -342,7 +393,7 @@ export function ToolDetail() {
                 {messages.map((message) => (
                   <MessageBubble key={message.id} message={message} accentHue={accentHue} />
                 ))}
-                {isLoading && (
+                {isLoading && messages[messages.length - 1]?.content === '' && (
                   <div className="flex items-start gap-3">
                     <div
                       className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
@@ -589,15 +640,3 @@ function getWelcomeText(agentKey?: string): string {
   }
 }
 
-function generateMockResponse(agentKey?: string, userInput?: string): string {
-  switch (agentKey) {
-    case 'prd-agent':
-      return `我已经分析了你的需求。这是一个关于"${userInput?.slice(0, 20)}..."的问题。\n\n**关键点：**\n1. 需求背景已理解\n2. 建议补充用户场景\n3. 技术可行性需要评估\n\n你还有其他问题吗？`;
-    case 'visual-agent':
-      return `正在根据描述"${userInput?.slice(0, 30)}..."生成图片...\n\n图片生成中，预计需要 10-20 秒。生成完成后会显示预览。`;
-    case 'literary-agent':
-      return `好的，我来为你创作关于"${userInput?.slice(0, 20)}..."的内容：\n\n春风轻拂，万物复苏。在这个美好的季节里，一切都充满了生机与希望...\n\n需要我继续扩展或修改方向吗？`;
-    default:
-      return `收到你的消息："${userInput?.slice(0, 50)}${(userInput?.length || 0) > 50 ? '...' : ''}"\n\n我正在处理你的请求，这是一个模拟响应。实际使用时会调用对应的 AI 服务。`;
-  }
-}

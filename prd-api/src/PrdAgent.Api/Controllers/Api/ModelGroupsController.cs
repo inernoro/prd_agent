@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Models;
 using PrdAgent.Core.Helpers;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.ModelPool;
@@ -21,12 +22,14 @@ namespace PrdAgent.Api.Controllers.Api;
 public class ModelGroupsController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly IModelPoolQueryService _modelPoolQuery;
     private readonly ILogger<ModelGroupsController> _logger;
     private readonly IConfiguration _config;
 
-    public ModelGroupsController(MongoDbContext db, ILogger<ModelGroupsController> logger, IConfiguration config)
+    public ModelGroupsController(MongoDbContext db, IModelPoolQueryService modelPoolQuery, ILogger<ModelGroupsController> logger, IConfiguration config)
     {
         _db = db;
+        _modelPoolQuery = modelPoolQuery;
         _logger = logger;
         _config = config;
     }
@@ -98,124 +101,30 @@ public class ModelGroupsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("APP_CODE_NOT_REGISTERED", "appCallerCode 未注册或不支持该 modelType"));
         }
 
-        var result = new List<ModelGroupForAppResponse>();
+        var pools = await _modelPoolQuery.GetModelPoolsAsync(appCallerCode, modelType);
 
-        // Step 1: 查找 appCallerCode 绑定的专属模型池（最高优先级）
-        if (!string.IsNullOrWhiteSpace(appCallerCode))
+        // 管理端点保留富 DTO（含 CreatedAt/UpdatedAt 及完整 ModelGroupItem）
+        var result = pools.Select(p => new ModelGroupForAppResponse
         {
-            var app = await _db.LLMAppCallers.Find(a => a.AppCode == appCallerCode).FirstOrDefaultAsync();
-            if (app != null)
+            Id = p.Id,
+            Name = p.Name,
+            Code = p.Code,
+            Priority = p.Priority,
+            ModelType = p.ModelType,
+            IsDefaultForType = p.IsDefaultForType,
+            Description = p.Description,
+            Models = p.Models.Select(m => new ModelGroupItem
             {
-                var requirement = app.ModelRequirements.FirstOrDefault(r => r.ModelType == modelType);
-                if (requirement != null && requirement.ModelGroupIds.Count > 0)
-                {
-                    var dedicatedGroups = await _db.ModelGroups
-                        .Find(g => requirement.ModelGroupIds.Contains(g.Id))
-                        .SortBy(g => g.Priority)
-                        .ThenBy(g => g.CreatedAt)
-                        .ToListAsync();
-
-                    if (dedicatedGroups.Count > 0)
-                    {
-                        // 有专属模型池，只返回专属模型池
-                        foreach (var group in dedicatedGroups)
-                        {
-                            result.Add(new ModelGroupForAppResponse
-                            {
-                                Id = group.Id,
-                                Name = group.Name,
-                                Code = group.Code,
-                                Priority = group.Priority,
-                                ModelType = group.ModelType,
-                                IsDefaultForType = group.IsDefaultForType,
-                                Description = group.Description,
-                                Models = group.Models,
-                                CreatedAt = group.CreatedAt,
-                                UpdatedAt = group.UpdatedAt,
-                                ResolutionType = "DedicatedPool",
-                                IsDedicated = true,
-                                IsDefault = false,
-                                IsLegacy = false
-                            });
-                        }
-                        return Ok(ApiResponse<List<ModelGroupForAppResponse>>.Ok(result));
-                    }
-                }
-            }
-        }
-
-        // Step 2: 没有专属模型池，查找该类型的默认模型池
-        var defaultGroups = await _db.ModelGroups
-            .Find(g => g.ModelType == modelType && g.IsDefaultForType)
-            .SortBy(g => g.Priority)
-            .ThenBy(g => g.CreatedAt)
-            .ToListAsync();
-
-        if (defaultGroups.Count > 0)
-        {
-            // 有默认模型池，只返回默认模型池
-            foreach (var group in defaultGroups)
-            {
-                result.Add(new ModelGroupForAppResponse
-                {
-                    Id = group.Id,
-                    Name = group.Name,
-                    Code = group.Code,
-                    Priority = group.Priority,
-                    ModelType = group.ModelType,
-                    IsDefaultForType = group.IsDefaultForType,
-                    Description = group.Description,
-                    Models = group.Models,
-                    CreatedAt = group.CreatedAt,
-                    UpdatedAt = group.UpdatedAt,
-                    ResolutionType = "DefaultPool",
-                    IsDedicated = false,
-                    IsDefault = true,
-                    IsLegacy = false
-                });
-            }
-            return Ok(ApiResponse<List<ModelGroupForAppResponse>>.Ok(result));
-        }
-
-        // Step 3: 没有模型池，查找传统配置的默认生图模型（仅当 modelType 为 generation 时）
-        if (modelType == "generation")
-        {
-            var legacyModel = await _db.LLMModels
-                .Find(m => m.IsImageGen && m.Enabled)
-                .FirstOrDefaultAsync();
-
-            if (legacyModel != null)
-            {
-                result.Add(new ModelGroupForAppResponse
-                {
-                    Id = $"legacy-{legacyModel.Id}",
-                    Name = $"默认生图 - {legacyModel.Name}",
-                    Code = legacyModel.ModelName, // 使用模型名称作为 code
-                    Priority = 1,
-                    ModelType = modelType,
-                    IsDefaultForType = false,
-                    Description = "传统配置的默认生图模型（isImageGen）",
-                    Models = new List<ModelGroupItem>
-                    {
-                        new ModelGroupItem
-                        {
-                            ModelId = legacyModel.ModelName,
-                            PlatformId = legacyModel.PlatformId ?? string.Empty,
-                            Priority = 1,
-                            HealthStatus = ModelHealthStatus.Healthy,
-                            EnablePromptCache = legacyModel.EnablePromptCache,
-                            MaxTokens = legacyModel.MaxTokens
-                        }
-                    },
-                    CreatedAt = legacyModel.CreatedAt,
-                    UpdatedAt = legacyModel.UpdatedAt,
-                    ResolutionType = "DirectModel",
-                    IsDedicated = false,
-                    IsDefault = false,
-                    IsLegacy = true
-                });
-            }
-        }
+                ModelId = m.ModelId,
+                PlatformId = m.PlatformId,
+                Priority = m.Priority,
+                HealthStatus = Enum.TryParse<ModelHealthStatus>(m.HealthStatus, out var hs) ? hs : ModelHealthStatus.Healthy
+            }).ToList(),
+            ResolutionType = p.ResolutionType,
+            IsDedicated = p.IsDedicated,
+            IsDefault = p.IsDefault,
+            IsLegacy = p.IsLegacy
+        }).ToList();
 
         return Ok(ApiResponse<List<ModelGroupForAppResponse>>.Ok(result));
     }

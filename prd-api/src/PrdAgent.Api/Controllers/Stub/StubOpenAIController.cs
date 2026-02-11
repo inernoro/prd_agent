@@ -224,6 +224,139 @@ public class StubOpenAIController : ControllerBase
         Console.WriteLine($"[Stub] 请求完成，总时长: {totalTime:F1}ms");
     }
 
+    /// <summary>
+    /// Google Gemini 兼容：generateContent（返回 inline base64 图片）
+    /// - 支持 text + image modalities
+    /// - 请求格式：{ contents: [{ parts: [{ text }, { inline_data }] }], generationConfig: { responseModalities, imageConfig } }
+    /// - 响应格式：{ candidates: [{ content: { parts: [{ inlineData: { mimeType, data } }] } }] }
+    /// </summary>
+    [HttpPost("v1beta/models/{model}:generateContent")]
+    public IActionResult GenerateContent(string model, [FromBody] JsonElement body)
+    {
+        // 提取 prompt 文本
+        var prompt = "PRD STUB";
+        try
+        {
+            if (body.TryGetProperty("contents", out var contents) && contents.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var content in contents.EnumerateArray())
+                {
+                    if (!content.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array) continue;
+                    foreach (var part in parts.EnumerateArray())
+                    {
+                        if (part.TryGetProperty("text", out var textEl) && textEl.ValueKind == JsonValueKind.String)
+                        {
+                            var t = textEl.GetString();
+                            if (!string.IsNullOrWhiteSpace(t)) { prompt = t!; break; }
+                        }
+                    }
+                    if (prompt != "PRD STUB") break;
+                }
+            }
+        }
+        catch { /* ignore parsing errors */ }
+
+        // 检查是否请求图片输出
+        var wantImage = false;
+        var aspectRatio = "1:1";
+        try
+        {
+            if (body.TryGetProperty("generationConfig", out var gc))
+            {
+                if (gc.TryGetProperty("responseModalities", out var rm) && rm.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var mod in rm.EnumerateArray())
+                    {
+                        if (mod.ValueKind == JsonValueKind.String &&
+                            string.Equals(mod.GetString(), "IMAGE", StringComparison.OrdinalIgnoreCase))
+                        {
+                            wantImage = true;
+                        }
+                    }
+                }
+                if (gc.TryGetProperty("imageConfig", out var ic))
+                {
+                    if (ic.TryGetProperty("aspectRatio", out var ar) && ar.ValueKind == JsonValueKind.String)
+                    {
+                        aspectRatio = ar.GetString() ?? "1:1";
+                    }
+                }
+            }
+        }
+        catch { /* ignore */ }
+
+        if (wantImage)
+        {
+            // 根据 aspectRatio 计算尺寸
+            var (w, h) = aspectRatio switch
+            {
+                "16:9" => (1024, 576),
+                "9:16" => (576, 1024),
+                "4:3" => (1024, 768),
+                "3:4" => (768, 1024),
+                "3:2" => (1024, 683),
+                "2:3" => (683, 1024),
+                _ => (1024, 1024)
+            };
+
+            var color = RandomColor();
+            var wm = BuildCenterWatermarkText(prompt, null, null);
+            var imgBytes = RenderSolidPng(w, h, color, watermarkText: wm);
+            var b64 = Convert.ToBase64String(imgBytes);
+
+            var responsePayload = new
+            {
+                candidates = new[]
+                {
+                    new
+                    {
+                        content = new
+                        {
+                            parts = new object[]
+                            {
+                                new
+                                {
+                                    inlineData = new
+                                    {
+                                        mimeType = "image/png",
+                                        data = b64
+                                    }
+                                }
+                            }
+                        },
+                        finishReason = "STOP"
+                    }
+                },
+                modelVersion = model
+            };
+            return Ok(responsePayload);
+        }
+        else
+        {
+            // 文本响应
+            var reply = $"[stub-gemini] {prompt}";
+            var responsePayload = new
+            {
+                candidates = new[]
+                {
+                    new
+                    {
+                        content = new
+                        {
+                            parts = new object[]
+                            {
+                                new { text = reply }
+                            }
+                        },
+                        finishReason = "STOP"
+                    }
+                },
+                modelVersion = model
+            };
+            return Ok(responsePayload);
+        }
+    }
+
     [HttpPost("v1/images/generations")]
     public IActionResult ImageGenerations([FromBody] StubImageGenRequest request)
     {

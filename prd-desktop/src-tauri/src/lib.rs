@@ -207,6 +207,8 @@ pub fn run() {
             commands::updater::check_for_update,
             commands::updater::fetch_update_manifests,
             commands::defect::list_defects,
+            commands::defect::list_defect_users,
+            commands::defect::list_defect_templates,
             commands::defect::create_defect,
             commands::defect::submit_defect,
             commands::defect::get_defect,
@@ -216,6 +218,9 @@ pub fn run() {
             commands::defect::resolve_defect,
             commands::defect::reject_defect,
             commands::defect::get_defect_stats,
+            commands::defect::polish_defect,
+            commands::defect::preview_defect_logs,
+            commands::defect::add_defect_attachment,
             commands::devtools::open_devtools,
         ])
         .build(tauri::generate_context!())

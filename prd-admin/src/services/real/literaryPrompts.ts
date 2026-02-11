@@ -9,6 +9,7 @@ import type {
   PublishLiteraryPromptContract,
   UnpublishLiteraryPromptContract,
   ForkLiteraryPromptContract,
+  OptimizeLiteraryPromptContract,
   LiteraryPrompt,
   MarketplaceLiteraryPrompt,
 } from '../contracts/literaryPrompts';
@@ -81,6 +82,16 @@ export const unpublishLiteraryPromptReal: UnpublishLiteraryPromptContract = asyn
   return await apiRequest<{ prompt: LiteraryPrompt }>(
     `${api.literaryAgent.prompts.byId(encodeURIComponent(input.id))}/unpublish`,
     { method: 'POST' }
+  );
+};
+
+export const optimizeLiteraryPromptReal: OptimizeLiteraryPromptContract = async (input) => {
+  return await apiRequest<{ optimizedContent: string }>(
+    `${api.literaryAgent.prompts.list()}/optimize`,
+    {
+      method: 'POST',
+      body: { content: input.content },
+    }
   );
 };
 

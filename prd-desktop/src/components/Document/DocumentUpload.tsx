@@ -54,6 +54,7 @@ export default function DocumentUpload() {
             logout();
             return;
           }
+          setError(createResp.error?.message || '创建群组失败');
           // 退化：仅进入上传会话（旧行为）
           const session: Session = {
             sessionId: response.data.sessionId,

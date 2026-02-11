@@ -218,6 +218,23 @@ export interface LiteraryAgentAllModelsResponse {
  */
 export type GetLiteraryAgentAllModelsContract = () => Promise<ApiResponse<LiteraryAgentAllModelsResponse>>;
 
+/**
+ * 主模型信息（用于显示标记生成使用的模型名称）
+ */
+export interface LiteraryAgentMainModel {
+  id: string;
+  name: string;
+  modelName: string;
+  platformId?: string | null;
+  enabled: boolean;
+  isMain: boolean;
+}
+
+/**
+ * 获取主模型信息
+ */
+export type GetLiteraryAgentMainModelContract = () => Promise<ApiResponse<{ model: LiteraryAgentMainModel | null }>>;
+
 // ========== 图片生成 API（应用身份隔离）==========
 
 import type { ImageGenRunStreamEvent, CreateImageGenRunInput } from './imageGen';

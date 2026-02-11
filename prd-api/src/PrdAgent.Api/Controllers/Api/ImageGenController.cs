@@ -31,6 +31,7 @@ public class ImageGenController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly IModelDomainService _modelDomain;
+    private readonly IModelPoolQueryService _modelPoolQuery;
     private readonly OpenAIImageClient _imageClient;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
@@ -41,11 +42,20 @@ public class ImageGenController : ControllerBase
     private readonly IRunEventStore _runStore;
     private readonly IMultiImageComposeService _composeService;
 
+    // 硬编码的 appCallerCode（应用身份隔离原则）
+    private static class AppCallerCodes
+    {
+        public const string Text2Img = "visual-agent.image.text2img::generation";
+        public const string Img2Img = "visual-agent.image.img2img::generation";
+        public const string VisionGen = "visual-agent.image.vision::generation";
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public ImageGenController(
         MongoDbContext db,
         IModelDomainService modelDomain,
+        IModelPoolQueryService modelPoolQuery,
         OpenAIImageClient imageClient,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
@@ -58,6 +68,7 @@ public class ImageGenController : ControllerBase
     {
         _db = db;
         _modelDomain = modelDomain;
+        _modelPoolQuery = modelPoolQuery;
         _imageClient = imageClient;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
@@ -81,8 +92,265 @@ public class ImageGenController : ControllerBase
         return def != null && def.ModelTypes.Contains(ModelTypes.ImageGen);
     }
 
+    #region 模型池查询（硬编码 appCallerCode，应用身份隔离）
+
     /// <summary>
-    /// 批量生图：先用意图模型解析“将生成多少张 + 每张的 prompt”
+    /// 获取视觉创作所有生图场景的模型池列表（文生图 + 图生图 + 多图合成，合并去重）
+    /// </summary>
+    [HttpGet("models")]
+    public async Task<IActionResult> GetImageGenModels(CancellationToken ct)
+    {
+        var codes = new[] { AppCallerCodes.Text2Img, AppCallerCodes.Img2Img, AppCallerCodes.VisionGen };
+        const string modelType = "generation";
+
+        var seen = new HashSet<string>();
+        var merged = new List<ModelPoolForAppResult>();
+
+        foreach (var code in codes)
+        {
+            var pools = await _modelPoolQuery.GetModelPoolsAsync(code, modelType, ct);
+            foreach (var pool in pools)
+            {
+                if (seen.Add(pool.Id))
+                {
+                    merged.Add(pool);
+                }
+            }
+        }
+
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(merged));
+    }
+
+    /// <summary>
+    /// 获取视觉创作"文生图"可用的模型池列表
+    /// </summary>
+    [HttpGet("models/text2img")]
+    public async Task<IActionResult> GetText2ImgModels(CancellationToken ct)
+    {
+        var result = await _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.Text2Img, "generation", ct);
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
+    }
+
+    /// <summary>
+    /// 获取视觉创作"图生图"可用的模型池列表
+    /// </summary>
+    [HttpGet("models/img2img")]
+    public async Task<IActionResult> GetImg2ImgModels(CancellationToken ct)
+    {
+        var result = await _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.Img2Img, "generation", ct);
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
+    }
+
+    /// <summary>
+    /// 获取视觉创作"多图合成"可用的模型池列表
+    /// </summary>
+    [HttpGet("models/vision")]
+    public async Task<IActionResult> GetVisionGenModels(CancellationToken ct)
+    {
+        var result = await _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.VisionGen, "generation", ct);
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
+    }
+
+    /// <summary>
+    /// 获取模型适配信息（尺寸选项、能力等，纯静态注册表查询，无需数据库）
+    /// </summary>
+    /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-4-turbo）</param>
+    [HttpGet("adapter-info")]
+    public IActionResult GetAdapterInfo([FromQuery] string modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "modelId 不能为空"));
+        }
+
+        var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(modelId.Trim());
+        if (adapterInfo == null || !adapterInfo.Matched)
+        {
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                matched = false,
+                modelId = modelId.Trim(),
+            }));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            matched = true,
+            modelId = modelId.Trim(),
+            adapterName = adapterInfo.AdapterName,
+            displayName = adapterInfo.DisplayName,
+            provider = adapterInfo.Provider,
+            officialDocUrl = adapterInfo.OfficialDocUrl,
+            lastUpdated = adapterInfo.LastUpdated,
+            sizeConstraint = new
+            {
+                type = adapterInfo.SizeConstraintType,
+                description = adapterInfo.SizeConstraintDescription,
+            },
+            sizesByResolution = adapterInfo.SizesByResolution,
+            sizeParamFormat = adapterInfo.SizeParamFormat,
+            limitations = new
+            {
+                mustBeDivisibleBy = adapterInfo.MustBeDivisibleBy,
+                maxWidth = adapterInfo.MaxWidth,
+                maxHeight = adapterInfo.MaxHeight,
+                minWidth = adapterInfo.MinWidth,
+                minHeight = adapterInfo.MinHeight,
+                maxPixels = adapterInfo.MaxPixels,
+                notes = adapterInfo.Notes,
+            },
+            supportsImageToImage = adapterInfo.SupportsImageToImage,
+            supportsInpainting = adapterInfo.SupportsInpainting,
+        }));
+    }
+
+    #endregion
+
+    #region 日志查询（应用域内转发，避免前端跨权限调用 /api/logs/llm）
+
+    /// <summary>
+    /// 获取 visual-agent 相关的 LLM 请求日志（只读）
+    /// 硬编码 requestPurpose 前缀为 visual-agent，避免数据泄露
+    /// </summary>
+    [HttpGet("logs")]
+    public async Task<IActionResult> GetLogs(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 30,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null,
+        [FromQuery] string? model = null,
+        [FromQuery] string? status = null,
+        [FromQuery] string? requestPurpose = null,
+        CancellationToken ct = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 10, 200);
+
+        // 强制过滤 requestPurpose 以 visual-agent 开头
+        var filter = Builders<LlmRequestLog>.Filter.Regex(
+            x => x.RequestPurpose,
+            new MongoDB.Bson.BsonRegularExpression("^visual-agent", "i"));
+
+        if (from.HasValue) filter &= Builders<LlmRequestLog>.Filter.Gte(x => x.StartedAt, from.Value);
+        if (to.HasValue) filter &= Builders<LlmRequestLog>.Filter.Lte(x => x.StartedAt, to.Value);
+        if (!string.IsNullOrWhiteSpace(model)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Model, model);
+        if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Status, status);
+        if (!string.IsNullOrWhiteSpace(requestPurpose))
+        {
+            // 在 visual-agent 范围内进一步过滤
+            var rp = requestPurpose.Trim();
+            if (!rp.StartsWith("visual-agent", StringComparison.OrdinalIgnoreCase))
+                rp = "visual-agent." + rp;
+            filter &= Builders<LlmRequestLog>.Filter.Regex(
+                x => x.RequestPurpose,
+                new MongoDB.Bson.BsonRegularExpression($"^{Regex.Escape(rp)}", "i"));
+        }
+
+        var total = await _db.LlmRequestLogs.CountDocumentsAsync(filter, cancellationToken: ct);
+        var rawItems = await _db.LlmRequestLogs.Find(filter)
+            .SortByDescending(x => x.StartedAt)
+            .Skip((page - 1) * pageSize)
+            .Limit(pageSize)
+            .Project(x => new
+            {
+                x.Id, x.RequestId, x.Provider, x.Model, x.PlatformId, x.PlatformName,
+                x.ModelResolutionType, x.ModelGroupId, x.ModelGroupName,
+                x.RequestPurpose, x.RequestPurposeDisplayName,
+                x.Status, x.StartedAt, x.FirstByteAt, x.EndedAt, x.DurationMs, x.StatusCode,
+                x.InputTokens, x.OutputTokens, x.Error,
+                x.QuestionText, x.AnswerText
+            })
+            .ToListAsync(ct);
+
+        var items = rawItems.Select(x => new
+        {
+            x.Id, x.RequestId, x.Provider, x.Model, x.PlatformId, x.PlatformName,
+            x.ModelResolutionType, x.ModelGroupId, x.ModelGroupName,
+            x.RequestPurpose, x.RequestPurposeDisplayName,
+            x.Status, x.StartedAt, x.FirstByteAt, x.EndedAt, x.DurationMs, x.StatusCode,
+            x.InputTokens, x.OutputTokens, x.Error,
+            questionPreview = TruncatePreview(x.QuestionText, 260),
+            answerPreview = TruncatePreview(x.AnswerText, 1800)
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
+    /// <summary>
+    /// 获取 visual-agent 日志的元数据（模型列表、状态列表等）
+    /// 只返回 visual-agent 范围内的数据
+    /// </summary>
+    [HttpGet("logs/meta")]
+    public async Task<IActionResult> GetLogsMeta(CancellationToken ct)
+    {
+        var vaFilter = Builders<LlmRequestLog>.Filter.Regex(
+            x => x.RequestPurpose,
+            new MongoDB.Bson.BsonRegularExpression("^visual-agent", "i"));
+
+        var models = (await _db.LlmRequestLogs
+                .Distinct(x => x.Model, vaFilter)
+                .ToListAsync(ct))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var requestPurposeAggregation = await _db.LlmRequestLogs
+            .Aggregate()
+            .Match(vaFilter)
+            .Group(x => x.RequestPurpose, g => new
+            {
+                Value = g.Key,
+                StoredDisplayName = g.First().RequestPurposeDisplayName
+            })
+            .ToListAsync(ct);
+
+        var requestPurposes = requestPurposeAggregation
+            .Where(x => !string.IsNullOrWhiteSpace(x.Value))
+            .Select(x => new
+            {
+                value = x.Value,
+                displayName = !string.IsNullOrWhiteSpace(x.StoredDisplayName)
+                    ? x.StoredDisplayName
+                    : AppCallerRegistrationService.FindByAppCode(x.Value!)?.DisplayName ?? x.Value
+            })
+            .OrderBy(x => x.displayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var statuses = new[] { "running", "succeeded", "failed", "cancelled" };
+
+        return Ok(ApiResponse<object>.Ok(new { models, requestPurposes, statuses }));
+    }
+
+    /// <summary>
+    /// 获取 visual-agent 日志详情
+    /// </summary>
+    [HttpGet("logs/{id}")]
+    public async Task<IActionResult> GetLogDetail(string id, CancellationToken ct)
+    {
+        var log = await _db.LlmRequestLogs.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
+        // 安全检查：只允许查看 visual-agent 的日志
+        if (string.IsNullOrWhiteSpace(log.RequestPurpose) ||
+            !log.RequestPurpose.StartsWith("visual-agent", StringComparison.OrdinalIgnoreCase))
+        {
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
+        }
+        return Ok(ApiResponse<object>.Ok(log));
+    }
+
+    private static string TruncatePreview(string? s, int maxChars)
+    {
+        var raw = (s ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(raw)) return string.Empty;
+        if (raw.Length <= maxChars) return raw;
+        return raw[..maxChars] + "…";
+    }
+
+    #endregion
+
+    /// <summary>
+    /// 批量生图：先用意图模型解析"将生成多少张 + 每张的 prompt"
     /// </summary>
     [HttpPost("plan")]
     [ProducesResponseType(typeof(ApiResponse<ImageGenPlanResponse>), StatusCodes.Status200OK)]
@@ -1051,12 +1319,12 @@ public class ImageGenController : ControllerBase
         var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
         
-        // 文学创作场景：检查是否有激活的参考图配置
+        // 文学创作场景：检查是否有激活的参考图配置（必须按用户隔离）
         bool hasActiveReferenceImage = false;
         if (string.Equals(appKey, "literary-agent", StringComparison.OrdinalIgnoreCase) && initImageAssetSha256 == null)
         {
             var activeRefConfig = await _db.ReferenceImageConfigs
-                .Find(x => x.AppKey == "literary-agent" && x.IsActive)
+                .Find(x => x.AppKey == "literary-agent" && x.IsActive && x.CreatedByAdminId == adminId)
                 .FirstOrDefaultAsync(ct);
             hasActiveReferenceImage = activeRefConfig != null && !string.IsNullOrWhiteSpace(activeRefConfig.ImageSha256);
         }
@@ -1086,12 +1354,12 @@ public class ImageGenController : ControllerBase
         // 参考图风格提示词（用于追加到生图 prompt）
         string? referenceImagePrompt = null;
 
-        // 文学创作场景：若未指定参考图，自动从配置中获取底图
+        // 文学创作场景：若未指定参考图，自动从当前用户的配置中获取底图
         if (initImageAssetSha256 == null && appKey == "literary-agent")
         {
-            // 优先从新的 ReferenceImageConfigs 获取激活的配置
+            // 优先从新的 ReferenceImageConfigs 获取当前用户激活的配置
             var activeRefConfig = await _db.ReferenceImageConfigs
-                .Find(x => x.AppKey == "literary-agent" && x.IsActive)
+                .Find(x => x.AppKey == "literary-agent" && x.IsActive && x.CreatedByAdminId == adminId)
                 .FirstOrDefaultAsync(ct);
 
             if (activeRefConfig != null && !string.IsNullOrWhiteSpace(activeRefConfig.ImageSha256))

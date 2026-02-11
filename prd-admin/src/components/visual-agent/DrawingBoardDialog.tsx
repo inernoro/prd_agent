@@ -42,33 +42,15 @@ const DEFAULT_BRUSH_IDX = 1;
 /** 画布背景色（柔和浅灰，替代纯白） */
 const CANVAS_BG = '#f0f0f0';
 
-/** 画布最大像素维度（内部分辨率） */
-const MAX_CANVAS_DIM = 640;
+/** 可选的画布比例子集（仅限 ASPECT_OPTIONS 中存在的 id） */
+const DRAWING_ASPECT_IDS: AspectOptionId[] = ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2'];
 
-/** 可选的画布比例子集 */
-const DRAWING_ASPECTS: { id: AspectOptionId; label: string; w: number; h: number }[] = [
-  { id: '1:1',  label: '1:1',  w: 1, h: 1 },
-  { id: '4:3',  label: '4:3',  w: 4, h: 3 },
-  { id: '3:4',  label: '3:4',  w: 3, h: 4 },
-  { id: '16:9', label: '16:9', w: 16, h: 9 },
-  { id: '9:16', label: '9:16', w: 9, h: 16 },
-  { id: '3:2',  label: '3:2',  w: 3, h: 2 },
-];
-
-/** 根据比例计算画布内部像素尺寸 */
+/** 根据比例直接使用生成目标尺寸作为画布内部分辨率 */
 function computeCanvasDims(aspectId: AspectOptionId): { w: number; h: number } {
-  const a = DRAWING_ASPECTS.find(x => x.id === aspectId) ?? DRAWING_ASPECTS[0];
-  const ratio = a.w / a.h;
-  if (ratio >= 1) {
-    return { w: MAX_CANVAS_DIM, h: Math.round(MAX_CANVAS_DIM / ratio) };
-  }
-  return { w: Math.round(MAX_CANVAS_DIM * ratio), h: MAX_CANVAS_DIM };
-}
-
-/** 获取比例对应的1k生成尺寸字符串 */
-function getGenSize(aspectId: AspectOptionId): string {
   const opt = ASPECT_OPTIONS.find(x => x.id === aspectId);
-  return opt?.size1k ?? '1024x1024';
+  const size = opt?.size1k ?? '1024x1024';
+  const [wStr, hStr] = size.split('x');
+  return { w: parseInt(wStr, 10) || 1024, h: parseInt(hStr, 10) || 1024 };
 }
 
 // ─── Props ────────────────────────────────────────────
@@ -412,8 +394,8 @@ export function DrawingBoardDialog({
     const chatHistory: DrawingBoardChatMsg[] = messages
       .filter(m => m.content.trim())
       .map(m => ({ role: m.role, content: m.content }));
-    onConfirm(dataUri, chatHistory, getGenSize(aspectId));
-  }, [onConfirm, messages, aspectId]);
+    onConfirm(dataUri, chatHistory, `${canvasDims.w}x${canvasDims.h}`);
+  }, [onConfirm, messages, canvasDims.w, canvasDims.h]);
 
   // ── Cleanup on close ──
   useEffect(() => {
@@ -553,24 +535,24 @@ export function DrawingBoardDialog({
           <RectangleHorizontal size={12} style={{ color: 'rgba(255,255,255,0.4)' }} />
           <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>画布比例</span>
           <div className="w-px h-3 mx-0.5" style={{ background: 'rgba(255,255,255,0.1)' }} />
-          {DRAWING_ASPECTS.map(a => (
+          {DRAWING_ASPECT_IDS.map(id => (
             <button
-              key={a.id}
+              key={id}
               type="button"
               className="px-2 py-0.5 rounded-md text-[10px] font-medium transition-all"
               style={{
-                background: aspectId === a.id ? 'rgba(59,130,246,0.2)' : 'transparent',
-                color: aspectId === a.id ? '#93c5fd' : 'rgba(255,255,255,0.45)',
-                border: aspectId === a.id ? '1px solid rgba(59,130,246,0.3)' : '1px solid transparent',
+                background: aspectId === id ? 'rgba(59,130,246,0.2)' : 'transparent',
+                color: aspectId === id ? '#93c5fd' : 'rgba(255,255,255,0.45)',
+                border: aspectId === id ? '1px solid rgba(59,130,246,0.3)' : '1px solid transparent',
               }}
-              onClick={() => setAspectId(a.id)}
+              onClick={() => setAspectId(id)}
             >
-              {a.label}
+              {id}
             </button>
           ))}
           <div className="flex-1" />
           <span className="text-[10px] tabular-nums" style={{ color: 'rgba(255,255,255,0.3)' }}>
-            {canvasDims.w}×{canvasDims.h} → 生成 {getGenSize(aspectId)}
+            {canvasDims.w}×{canvasDims.h}
           </span>
         </div>
 

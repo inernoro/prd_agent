@@ -19,6 +19,7 @@ public class GatewayLLMClient : ILLMClient
     private readonly bool _enablePromptCache;
     private readonly int _maxTokens;
     private readonly double _temperature;
+    private readonly bool _includeThinking;
 
     /// <summary>
     /// 创建基于 Gateway 的 LLM 客户端
@@ -31,7 +32,8 @@ public class GatewayLLMClient : ILLMClient
         string? platformName = null,
         bool enablePromptCache = true,
         int maxTokens = 4096,
-        double temperature = 0.2)
+        double temperature = 0.2,
+        bool includeThinking = false)
     {
         _gateway = gateway;
         _appCallerCode = appCallerCode;
@@ -41,6 +43,7 @@ public class GatewayLLMClient : ILLMClient
         _enablePromptCache = enablePromptCache;
         _maxTokens = maxTokens;
         _temperature = temperature;
+        _includeThinking = includeThinking;
     }
 
     /// <summary>AppCallerCode（用于测试断言）</summary>
@@ -85,14 +88,13 @@ public class GatewayLLMClient : ILLMClient
             ModelType = _modelType,
             RequestBody = requestBody,
             EnablePromptCache = enablePromptCache,
+            IncludeThinking = _includeThinking,
             TimeoutSeconds = 120,
             Context = new GatewayRequestContext
             {
                 QuestionText = messages.LastOrDefault(m => m.Role == "user")?.Content,
                 SystemPromptChars = systemPrompt?.Length,
-                SystemPromptText = systemPrompt?.Length > 500
-                    ? systemPrompt.Substring(0, 500) + "..."
-                    : systemPrompt
+                SystemPromptText = systemPrompt
             }
         };
 
@@ -106,6 +108,20 @@ public class GatewayLLMClient : ILLMClient
                     ErrorMessage = chunk.Error ?? "Gateway 返回错误"
                 };
                 yield break;
+            }
+
+            // 思考过程块：当 includeThinking 启用时传递给调用方
+            if (chunk.Type == GatewayChunkType.Thinking)
+            {
+                if (_includeThinking && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    yield return new LLMStreamChunk
+                    {
+                        Type = "thinking",
+                        Content = chunk.Content
+                    };
+                }
+                continue;
             }
 
             if (chunk.Type == GatewayChunkType.Start)
@@ -177,12 +193,20 @@ public class GatewayLLMClient : ILLMClient
                 // 添加图片附件
                 foreach (var attachment in msg.Attachments.Where(a => a.Type == "image"))
                 {
+                    // 优先使用 Url；若为空则用 Base64Data 构造 data URI
+                    var imageUrl = attachment.Url;
+                    if (string.IsNullOrWhiteSpace(imageUrl) && !string.IsNullOrWhiteSpace(attachment.Base64Data))
+                    {
+                        var mime = string.IsNullOrWhiteSpace(attachment.MimeType) ? "image/png" : attachment.MimeType;
+                        imageUrl = $"data:{mime};base64,{attachment.Base64Data}";
+                    }
+
                     contentArray.Add(new JsonObject
                     {
                         ["type"] = "image_url",
                         ["image_url"] = new JsonObject
                         {
-                            ["url"] = attachment.Url
+                            ["url"] = imageUrl ?? string.Empty
                         }
                     });
                 }

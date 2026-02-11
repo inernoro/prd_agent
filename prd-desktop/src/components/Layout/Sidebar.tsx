@@ -306,9 +306,7 @@ export default function Sidebar() {
             logout();
             return;
           }
-          if (!isSystemErrorCode(errorCode)) {
-            setInlineError(resp.error?.message || '创建群组失败');
-          }
+          setInlineError(resp.error?.message || '创建群组失败');
           return;
         }
 
@@ -337,9 +335,7 @@ export default function Sidebar() {
           logout();
           return;
         }
-        if (!isSystemErrorCode(errorCode)) {
-          setInlineError(resp.error?.message || '创建群组失败');
-        }
+        setInlineError(resp.error?.message || '创建群组失败');
         return;
       }
 
@@ -739,13 +735,13 @@ export default function Sidebar() {
                 title="缺陷管理"
                 aria-label="缺陷管理"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 9v2m0 4h.01M5.07 19H19a2.13 2.13 0 001.85-3.19L13.85 4.17a2.13 2.13 0 00-3.7 0L3.22 15.81A2.13 2.13 0 005.07 19z"
-                  />
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 2l1.88 1.88M14.12 3.88 16 2" />
+                  <path d="M9 7.13v-1a3 3 0 1 1 6 0v1" />
+                  <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6" />
+                  <path d="M12 20v-9" />
+                  <path d="M6.53 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4" />
+                  <path d="M20.97 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4" />
                 </svg>
               </button>
             </div>
