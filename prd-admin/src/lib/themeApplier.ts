@@ -31,7 +31,8 @@ export function shouldReduceEffects(config: ThemeConfig): boolean {
  * 将主题配置应用到 :root
  */
 export function applyThemeToDOM(config: ThemeConfig): void {
-  const vars = computeThemeVars(config);
+  const reduceEffects = shouldReduceEffects(config);
+  const vars = computeThemeVars(config, reduceEffects);
   const root = document.documentElement;
 
   // 注入计算后的 CSS 变量
@@ -45,8 +46,7 @@ export function applyThemeToDOM(config: ThemeConfig): void {
   root.dataset.themeGlow = config.enableGlow ? 'on' : 'off';
   root.dataset.themeSidebarGlass = config.sidebarGlass;
 
-  // 性能模式：设置 data 属性，全局 CSS 会根据此属性降低 backdrop-filter
-  const reduceEffects = shouldReduceEffects(config);
+  // 性能模式：设置 data 属性，全局 CSS 会根据此属性清除 backdrop-filter
   if (reduceEffects) {
     root.dataset.perfMode = 'performance';
   } else {
