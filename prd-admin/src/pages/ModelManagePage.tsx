@@ -998,7 +998,7 @@ export default function ModelManagePage() {
               ? 'rgba(168,85,247,0.18)'
               : t.includes('deepseek')
                 ? 'rgba(239,68,68,0.16)'
-                : 'rgba(255,255,255,0.08)';
+                : 'var(--border-subtle)';
     const fg =
       t.includes('openai')
         ? 'rgba(16,185,129,0.95)'
@@ -1150,7 +1150,7 @@ export default function ModelManagePage() {
 
   const inputStyle: React.CSSProperties = {
     background: 'var(--bg-input)',
-    border: '1px solid rgba(255,255,255,0.12)',
+    border: '1px solid var(--border-default)',
     color: 'var(--text-primary)',
   };
 
@@ -1176,7 +1176,7 @@ export default function ModelManagePage() {
               onClick={() => setPlatformSidebarCollapsed((prev) => !prev)}
               className="inline-flex items-center justify-center h-8 w-8 rounded-[8px] transition-colors hover:bg-white/6 shrink-0 ml-auto"
               style={{
-                border: '1px solid rgba(255,255,255,0.12)',
+                border: '1px solid var(--border-default)',
                 color: 'var(--text-secondary)',
               }}
               title={platformSidebarCollapsed ? '展开平台列表' : '折叠平台列表'}
@@ -1225,13 +1225,13 @@ export default function ModelManagePage() {
               }}
               className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition-colors hover:bg-white/2 cursor-pointer select-none"
               style={{
-                background: selectedPlatformId === '__all__' ? 'rgba(255,255,255,0.04)' : 'transparent',
+                background: selectedPlatformId === '__all__' ? 'var(--bg-input)' : 'transparent',
                 border: selectedPlatformId === '__all__' ? '1px solid var(--border-default)' : '1px solid transparent',
               }}
             >
               <div
                 className="h-9 w-9 rounded-full flex items-center justify-center text-[12px] font-extrabold"
-                style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(247,247,251,0.78)', border: '1px solid var(--border-subtle)' }}
+                style={{ background: 'var(--border-subtle)', color: 'rgba(247,247,251,0.78)', border: '1px solid var(--border-subtle)' }}
               >
                 <LayoutGrid size={16} />
               </div>
@@ -1261,7 +1261,7 @@ export default function ModelManagePage() {
                     }}
                     className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition-colors hover:bg-white/2 cursor-pointer select-none"
                     style={{
-                      background: isSelected ? 'rgba(255,255,255,0.04)' : 'transparent',
+                      background: isSelected ? 'var(--bg-input)' : 'transparent',
                       border: isSelected ? '1px solid var(--border-default)' : '1px solid transparent',
                     }}
                   >
@@ -1292,7 +1292,7 @@ export default function ModelManagePage() {
                       style={
                         p.enabled
                           ? { background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(34,197,94,0.95)' }
-                          : { background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-secondary)' }
+                          : { background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }
                       }
                       disabled={loading || platformTogglingId === p.id}
                       aria-label={p.enabled ? '点击禁用平台' : '点击启用平台'}
@@ -1390,7 +1390,7 @@ export default function ModelManagePage() {
                 <Trash2 size={16} />
                 删除
               </button>
-              <div className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
+              <div className="h-px my-1" style={{ background: 'var(--border-subtle)' }} />
               <button
                 type="button"
                 className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
@@ -1513,8 +1513,8 @@ export default function ModelManagePage() {
                     }}
                     className="relative h-7 w-12 rounded-full transition-colors"
                     style={{
-                      background: selectedPlatform.enabled ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.10)',
-                      border: selectedPlatform.enabled ? '1px solid rgba(34,197,94,0.35)' : '1px solid rgba(255,255,255,0.14)',
+                      background: selectedPlatform.enabled ? 'rgba(34,197,94,0.22)' : 'var(--border-default)',
+                      border: selectedPlatform.enabled ? '1px solid rgba(34,197,94,0.35)' : '1px solid var(--border-default)',
                     }}
                     aria-label={selectedPlatform.enabled ? '已启用，点击关闭' : '已禁用，点击启用'}
                   >
@@ -1545,7 +1545,7 @@ export default function ModelManagePage() {
                           className="flex h-[30px] box-border items-center overflow-hidden rounded-[14px]"
                           style={{
                             background: 'var(--bg-input)',
-                            border: '1px solid rgba(255,255,255,0.12)',
+                            border: '1px solid var(--border-default)',
                           }}
                         >
                           <input
@@ -1576,7 +1576,7 @@ export default function ModelManagePage() {
                             {showApiKey ? <EyeOff size={18} /> : <Eye size={18} />}
                           </button>
 
-                          <div className="h-6 w-px" style={{ background: 'rgba(255,255,255,0.12)' }} />
+                          <div className="h-6 w-px" style={{ background: 'var(--border-default)' }} />
 
                           <button
                             type="button"
@@ -1767,8 +1767,8 @@ export default function ModelManagePage() {
                                             text={`请求 ${formatCompactZh(s.requestCount)}`}
                                             title={`${titlePrefix} · 请求次数${sFromLogs ? '' : '（模型计数）'}`}
                                             style={{
-                                              background: 'rgba(255,255,255,0.05)',
-                                              border: '1px solid rgba(255,255,255,0.12)',
+                                              background: 'var(--bg-card-hover)',
+                                              border: '1px solid var(--border-default)',
                                               color: white,
                                             }}
                                           />
@@ -1815,7 +1815,7 @@ export default function ModelManagePage() {
                                       type="button"
                                       className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed hover:bg-white/6"
                                       style={{
-                                        border: '1px solid rgba(255,255,255,0.10)',
+                                        border: '1px solid var(--border-default)',
                                         color: 'var(--text-secondary)',
                                       }}
                                       title="一键添加到模型池"
@@ -1835,7 +1835,7 @@ export default function ModelManagePage() {
                                           ? testResult.ok
                                             ? { background: 'rgba(34,197,94,0.18)', border: '1px solid rgba(34,197,94,0.35)', color: 'rgba(34,197,94,0.95)' }
                                             : { background: 'rgba(239,68,68,0.14)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }
-                                          : { border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)' }
+                                          : { border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }
                                       }
                                       title={testResult?.modelId === m.id && !testResult.ok ? testResult.msg : `测试：${m.name}`}
                                     >
@@ -1849,7 +1849,7 @@ export default function ModelManagePage() {
                                     </button>
 
                                     {/* 操作按钮组（主/意图/识图/生图）- 用圆角矩形框框选 */}
-                                    <div className="inline-flex items-center gap-1 rounded-[10px] px-1.5 py-1" style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.03)' }}>
+                                    <div className="inline-flex items-center gap-1 rounded-[10px] px-1.5 py-1" style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)' }}>
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -1932,7 +1932,7 @@ export default function ModelManagePage() {
                                           onClick={(e) => e.stopPropagation()}
                                           className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors hover:bg-white/6"
                                           style={{
-                                            border: '1px solid rgba(255,255,255,0.10)',
+                                            border: '1px solid var(--border-default)',
                                             color: 'var(--text-secondary)',
                                           }}
                                           aria-label="更多操作"
@@ -1967,7 +1967,7 @@ export default function ModelManagePage() {
                                             <DatabaseZap size={14} />
                                             {m.enablePromptCache ? 'Prompt Cache: 开' : 'Prompt Cache: 关'}
                                           </DropdownMenu.Item>
-                                          <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
+                                          <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--border-subtle)' }} />
                                           <DropdownMenu.Item
                                             className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
                                             style={{ color: 'var(--text-primary)' }}
@@ -1980,7 +1980,7 @@ export default function ModelManagePage() {
                                             <Pencil size={14} />
                                             编辑
                                           </DropdownMenu.Item>
-                                          <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
+                                          <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--border-subtle)' }} />
                                           <ConfirmTip
                                             title={`确认删除模型"${m.name}"？`}
                                             description="该操作不可撤销"
@@ -2446,7 +2446,7 @@ export default function ModelManagePage() {
               </label>
 
               {/* 预览将添加的模型 */}
-              <div className="rounded-[12px] p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div className="rounded-[12px] p-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}>
                 <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
                   将添加的模型
                 </div>

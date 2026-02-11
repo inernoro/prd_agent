@@ -161,7 +161,7 @@ function StatRow({ label, value, sub, icon: Icon }: { label: string; value: stri
 function ProgressBar({ value, max, color }: { value: number; max: number; color: string }) {
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   return (
-    <div className="h-1.5 rounded-full w-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
+    <div className="h-1.5 rounded-full w-full" style={{ background: 'var(--bg-input-hover)' }}>
       <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
     </div>
   );
@@ -171,7 +171,7 @@ function LoadingSkeleton({ rows = 3 }: { rows?: number }) {
   return (
     <div className="space-y-3 animate-pulse">
       {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="h-4 rounded" style={{ background: 'rgba(255,255,255,0.06)', width: `${70 + Math.random() * 30}%` }} />
+        <div key={i} className="h-4 rounded" style={{ background: 'var(--bg-input-hover)', width: `${70 + Math.random() * 30}%` }} />
       ))}
     </div>
   );
@@ -388,7 +388,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
         <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
             <thead>
-              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                 <th className="text-left py-2.5 pr-2 font-medium w-8" style={{ color: 'var(--text-muted)' }}>#</th>
                 <th className="text-left py-2.5 pr-4 font-medium" style={{ color: 'var(--text-muted)' }}>成员</th>
                 <th
@@ -450,7 +450,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                     </td>
                     <td className="py-2.5 px-2 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <div className="w-16 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                        <div className="w-16 h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-input-hover)' }}>
                           <div className="h-full rounded-full" style={{ width: `${(user.totalScore / maxScore) * 100}%`, background: 'linear-gradient(90deg, rgba(214,178,106,0.6), rgba(214,178,106,0.9))' }} />
                         </div>
                         <span className="tabular-nums font-bold text-[12px] w-10 text-right" style={{ color: isTop3 ? 'rgba(214,178,106,0.95)' : 'var(--text-primary)' }}>
@@ -467,7 +467,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                       return (
                         <td key={dim.key} className="py-2.5 px-2 text-right">
                           <div className="flex items-center justify-end gap-1.5">
-                            <div className="w-10 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                            <div className="w-10 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-input-hover)' }}>
                               <div className="h-full rounded-full" style={{ width: `${pct}%`, background: meta?.barColor ?? 'rgba(148,163,184,0.5)' }} />
                             </div>
                             <span className="tabular-nums text-[11px] w-8 text-right" style={{ color: raw > 0 ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
@@ -526,7 +526,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                         <div className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{u.displayName}</div>
                         <div className="text-[8px]" style={{ color: roleColor }}>{u.role}</div>
                       </div>
-                      <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                      <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'var(--bg-input)' }}>
                         <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: meta.barColor }} />
                       </div>
                       <span className="text-[11px] font-bold tabular-nums w-10 text-right flex-shrink-0" style={{ color: meta.color }}>
@@ -589,7 +589,7 @@ function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]
         <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
             <thead>
-              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                 <th className="text-left py-2 pr-4 font-medium" style={{ color: 'var(--text-muted)' }}>Agent</th>
                 <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>调用次数</th>
                 <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>用户数</th>
@@ -645,7 +645,7 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
         <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
             <thead>
-              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                 <th className="text-left py-2 font-medium" style={{ color: 'var(--text-muted)' }}>模型</th>
                 <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>调用</th>
                 <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>输入 Token</th>
@@ -715,7 +715,7 @@ function IntegrationsTab() {
               {idx < roadmap.length - 1 && (
                 <div className="hidden md:block absolute top-5 -right-2 w-4 h-0.5" style={{ background: 'rgba(255,255,255,0.1)' }} />
               )}
-              <div className="p-4 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="p-4 rounded-xl" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
                 <div className="flex items-center gap-2 mb-3">
                   <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold"
                     style={{ background: 'rgba(214,178,106,0.15)', color: 'rgba(214,178,106,0.9)' }}>
@@ -813,7 +813,7 @@ export default function ExecutiveDashboardPage() {
               value={days}
               onChange={e => setDays(Number(e.target.value))}
               className="text-xs px-2 py-1 rounded-md border-0 outline-none cursor-pointer"
-              style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)' }}
+              style={{ background: 'var(--bg-input-hover)', color: 'var(--text-secondary)' }}
             >
               {DAYS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>

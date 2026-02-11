@@ -222,8 +222,8 @@ export default function AuthzPage() {
       onClick={() => setUserDropdownOpen(true)}
       className="h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors"
       style={{
-        background: activeUser ? 'rgba(214, 178, 106, 0.15)' : 'rgba(255, 255, 255, 0.06)',
-        border: activeUser ? '1px solid rgba(214, 178, 106, 0.3)' : '1px solid rgba(255, 255, 255, 0.1)',
+        background: activeUser ? 'rgba(214, 178, 106, 0.15)' : 'var(--bg-input-hover)',
+        border: activeUser ? '1px solid rgba(214, 178, 106, 0.3)' : '1px solid var(--border-default)',
         color: activeUser ? 'rgba(214, 178, 106, 0.95)' : 'var(--text-secondary)',
       }}
     >
@@ -257,8 +257,8 @@ export default function AuthzPage() {
         onClick={() => setCreateOpen(true)}
         className="h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors hover:bg-white/10"
         style={{
-          background: 'rgba(255, 255, 255, 0.06)',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
+          background: 'var(--bg-input-hover)',
+          border: '1px solid var(--border-default)',
           color: 'var(--text-secondary)',
         }}
       >
@@ -278,8 +278,8 @@ export default function AuthzPage() {
         }}
         className="h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors hover:bg-white/10"
         style={{
-          background: activeUser ? 'rgba(214, 178, 106, 0.12)' : 'rgba(255, 255, 255, 0.06)',
-          border: activeUser ? '1px solid rgba(214, 178, 106, 0.25)' : '1px solid rgba(255, 255, 255, 0.1)',
+          background: activeUser ? 'rgba(214, 178, 106, 0.12)' : 'var(--bg-input-hover)',
+          border: activeUser ? '1px solid rgba(214, 178, 106, 0.25)' : '1px solid var(--border-default)',
           color: activeUser ? 'rgba(214, 178, 106, 0.95)' : 'var(--text-secondary)',
         }}
       >
@@ -294,8 +294,8 @@ export default function AuthzPage() {
         disabled={resetSubmitting}
         className="h-7 w-7 flex items-center justify-center rounded-lg transition-colors hover:bg-white/10 disabled:opacity-50"
         style={{
-          background: 'rgba(255, 255, 255, 0.06)',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
+          background: 'var(--bg-input-hover)',
+          border: '1px solid var(--border-default)',
           color: 'var(--text-secondary)',
         }}
       >
@@ -356,8 +356,8 @@ export default function AuthzPage() {
                 onChange={(e) => setCreateKey(e.target.value)}
                 className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.12)',
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-default)',
                   color: 'var(--text-primary)',
                 }}
                 placeholder="例如：ops 或 content_viewer"
@@ -372,8 +372,8 @@ export default function AuthzPage() {
                 onChange={(e) => setCreateName(e.target.value)}
                 className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.12)',
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-default)',
                   color: 'var(--text-primary)',
                 }}
                 placeholder="例如：内容只读"
@@ -407,14 +407,14 @@ export default function AuthzPage() {
             style={{
               ...glassPopoverCompact,
               background: 'rgba(24, 24, 28, 0.95)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
+              border: '1px solid var(--border-default)',
               boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
             }}
           >
             {/* Header */}
             <div
               className="flex items-center justify-between px-5 py-4"
-              style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
+              style={{ borderBottom: '1px solid var(--nested-block-border)' }}
             >
               <div>
                 <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -456,7 +456,7 @@ export default function AuthzPage() {
                         }}
                         className="w-full px-4 py-3 text-left rounded-xl transition-all duration-200"
                         style={{
-                          background: isSelected ? 'rgba(214, 178, 106, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                          background: isSelected ? 'rgba(214, 178, 106, 0.15)' : 'var(--list-item-bg)',
                           border: isSelected ? '1px solid rgba(214, 178, 106, 0.3)' : '1px solid transparent',
                         }}
                       >
@@ -475,7 +475,7 @@ export default function AuthzPage() {
                           <span
                             className="text-[11px] px-2 py-0.5 rounded-md"
                             style={{
-                              background: userRole?.isBuiltIn ? 'rgba(214, 178, 106, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                              background: userRole?.isBuiltIn ? 'rgba(214, 178, 106, 0.1)' : 'var(--bg-card-hover)',
                               color: userRole?.isBuiltIn ? 'rgba(214, 178, 106, 0.8)' : 'var(--text-muted)',
                             }}
                           >
@@ -493,7 +493,7 @@ export default function AuthzPage() {
             <div
               className="px-5 py-3 text-xs flex items-center justify-between"
               style={{
-                borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+                borderTop: '1px solid var(--nested-block-border)',
                 color: 'var(--text-muted)',
               }}
             >
@@ -532,14 +532,14 @@ export default function AuthzPage() {
             style={{
               ...glassPopoverCompact,
               background: 'rgba(24, 24, 28, 0.95)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
+              border: '1px solid var(--border-default)',
               boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
             }}
           >
             {/* Header */}
             <div
               className="flex items-center justify-between px-5 py-4"
-              style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
+              style={{ borderBottom: '1px solid var(--nested-block-border)' }}
             >
               <div>
                 <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -600,8 +600,8 @@ export default function AuthzPage() {
                       disabled={assignRoleSubmitting}
                       className="w-full px-4 py-3 text-left rounded-xl transition-all duration-200 disabled:opacity-50"
                       style={{
-                        background: isCurrentRole ? 'rgba(214, 178, 106, 0.15)' : 'rgba(255, 255, 255, 0.02)',
-                        border: isCurrentRole ? '1px solid rgba(214, 178, 106, 0.3)' : '1px solid rgba(255, 255, 255, 0.06)',
+                        background: isCurrentRole ? 'rgba(214, 178, 106, 0.15)' : 'var(--list-item-bg)',
+                        border: isCurrentRole ? '1px solid rgba(214, 178, 106, 0.3)' : '1px solid var(--nested-block-border)',
                       }}
                     >
                       <div className="flex items-center justify-between">
@@ -609,7 +609,7 @@ export default function AuthzPage() {
                           <div
                             className="w-9 h-9 rounded-[10px] flex items-center justify-center"
                             style={{
-                              background: role.isBuiltIn ? 'rgba(214, 178, 106, 0.12)' : 'rgba(255, 255, 255, 0.05)',
+                              background: role.isBuiltIn ? 'rgba(214, 178, 106, 0.12)' : 'var(--bg-card-hover)',
                             }}
                           >
                             {role.isBuiltIn ? (
@@ -652,7 +652,7 @@ export default function AuthzPage() {
             <div
               className="px-5 py-3 text-[11px]"
               style={{
-                borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+                borderTop: '1px solid var(--nested-block-border)',
                 color: 'var(--text-muted)',
               }}
             >

@@ -263,7 +263,7 @@ export default function OpenPlatformPage() {
       />
 
       <GlassCard glow className="mt-6">
-        <div className="p-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+        <div className="p-4 border-b" style={{ borderColor: 'var(--nested-block-border)' }}>
           <input
             type="text"
             placeholder="搜索应用名称或描述..."
@@ -271,8 +271,8 @@ export default function OpenPlatformPage() {
             onChange={(e) => setSearch(e.target.value)}
             className="w-full px-3 py-2 rounded-md outline-none transition-colors"
             style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: 'var(--nested-block-bg)',
+              border: '1px solid var(--border-subtle)',
               color: 'var(--text-primary)',
             }}
           />
@@ -280,7 +280,7 @@ export default function OpenPlatformPage() {
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[700px]">
-            <thead style={{ background: 'rgba(255,255,255,0.02)' }}>
+            <thead style={{ background: 'var(--list-item-bg)' }}>
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium">应用名称</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">绑定信息</th>
@@ -292,20 +292,20 @@ export default function OpenPlatformPage() {
             </thead>
             <tbody>
               {apps.map((app) => (
-                <tr key={app.id} className="transition-colors" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }} onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                <tr key={app.id} className="transition-colors" style={{ borderTop: '1px solid var(--bg-input)' }} onMouseEnter={(e) => e.currentTarget.style.background = 'var(--list-item-bg)'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
                   <td className="px-4 py-3">
                     <div className="font-medium">{app.appName}</div>
                     {app.description && <div className="text-sm text-muted-foreground">{app.description}</div>}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-2 px-2 py-1 rounded-lg text-sm" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)' }}>
+                      <div className="flex items-center gap-2 px-2 py-1 rounded-lg text-sm" style={{ background: 'var(--bg-card-hover)', border: '1px solid var(--border-default)' }}>
                         <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-semibold" style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}>
                           {app.boundUserName.charAt(0).toUpperCase()}
                         </div>
                         <span className="font-medium">{app.boundUserName}</span>
                       </div>
-                      <div className="flex items-center gap-2 px-2 py-1 rounded-lg text-sm" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)' }}>
+                      <div className="flex items-center gap-2 px-2 py-1 rounded-lg text-sm" style={{ background: 'var(--bg-card-hover)', border: '1px solid var(--border-default)' }}>
                         <div className="w-5 h-5 rounded flex items-center justify-center text-xs" style={{ background: 'rgba(59,130,246,0.15)', color: 'rgba(96,165,250,0.95)' }}>
                           #
                         </div>
@@ -384,7 +384,7 @@ export default function OpenPlatformPage() {
                               <RefreshCw size={14} />
                               <span>重新生成密钥</span>
                             </DropdownMenu.Item>
-                            <DropdownMenu.Separator className="my-1 h-px" style={{ background: 'rgba(255,255,255,0.10)' }} />
+                            <DropdownMenu.Separator className="my-1 h-px" style={{ background: 'var(--border-default)' }} />
                             <DropdownMenu.Item
                               className="flex items-center gap-2 px-3 py-2 text-sm rounded-[10px] cursor-pointer outline-none transition-colors"
                               style={{ color: 'rgba(239,68,68,0.95)' }}
@@ -411,7 +411,7 @@ export default function OpenPlatformPage() {
         </div>
 
         {total > pageSize && (
-          <div className="p-4 border-t flex justify-between items-center" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+          <div className="p-4 border-t flex justify-between items-center" style={{ borderColor: 'var(--nested-block-border)' }}>
             <div className="text-sm text-muted-foreground">
               共 {total} 条，第 {page} / {Math.ceil(total / pageSize)} 页
             </div>
@@ -1098,7 +1098,7 @@ function LogsDialog({
 
           {/* 筛选面板 */}
           {showFilters && (
-            <div className="p-4 rounded-lg" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="p-4 rounded-lg" style={{ background: 'var(--list-item-bg)', border: '1px solid var(--nested-block-border)' }}>
               <div className="flex items-center gap-2 mb-3">
                 <Filter size={14} style={{ color: 'var(--accent-gold)' }} />
                 <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>筛选条件</span>
@@ -1158,7 +1158,7 @@ function LogsDialog({
           )}
           <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
             <table className="w-full text-sm">
-              <thead className="sticky top-0" style={{ background: 'rgba(255,255,255,0.02)' }}>
+              <thead className="sticky top-0" style={{ background: 'var(--list-item-bg)' }}>
                 <tr>
                   <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>时间</th>
                   <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>应用</th>
@@ -1174,8 +1174,8 @@ function LogsDialog({
                   <tr 
                     key={log.id} 
                     className="transition-colors cursor-pointer"
-                    style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
+                    style={{ borderTop: '1px solid var(--bg-input)' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'var(--list-item-bg)'}
                     onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                     onClick={() => handleViewDetail(log)}
                   >
@@ -1188,7 +1188,7 @@ function LogsDialog({
                       <div className="font-medium" style={{ color: 'var(--text-primary)' }}>{log.appName}</div>
                     </td>
                     <td className="px-3 py-2.5">
-                      <code className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)' }}>
+                      <code className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}>
                         {log.path}
                       </code>
                     </td>
@@ -1268,7 +1268,7 @@ function LogsDialog({
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>请求 ID</div>
-                  <code className="text-xs px-2 py-1 rounded block" style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)' }}>
+                  <code className="text-xs px-2 py-1 rounded block" style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}>
                     {selectedLog.requestId}
                   </code>
                 </div>
@@ -1298,7 +1298,7 @@ function LogsDialog({
 
               <div>
                 <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>请求路径</div>
-                <code className="text-xs px-2 py-1 rounded block" style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)' }}>
+                <code className="text-xs px-2 py-1 rounded block" style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}>
                   {selectedLog.method} {selectedLog.path}
                 </code>
               </div>
@@ -1319,7 +1319,7 @@ function LogsDialog({
               {selectedLog.groupId && (
                 <div>
                   <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>群组 ID</div>
-                  <code className="text-xs px-2 py-1 rounded block" style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)' }}>
+                  <code className="text-xs px-2 py-1 rounded block" style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}>
                     {selectedLog.groupId}
                   </code>
                 </div>
@@ -1328,7 +1328,7 @@ function LogsDialog({
               {selectedLog.sessionId && (
                 <div>
                   <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>会话 ID</div>
-                  <code className="text-xs px-2 py-1 rounded block" style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)' }}>
+                  <code className="text-xs px-2 py-1 rounded block" style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}>
                     {selectedLog.sessionId}
                   </code>
                 </div>
