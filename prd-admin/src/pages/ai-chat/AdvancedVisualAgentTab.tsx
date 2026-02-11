@@ -1,6 +1,6 @@
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
-import { glassPanel } from '@/lib/glassStyles';
+import { glassPanel, glassTooltip, glassInputArea, glassPopoverCompact } from '@/lib/glassStyles';
 import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
@@ -4810,12 +4810,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           <div
             className="inline-flex items-center gap-2 rounded-full px-4 h-10 text-[13px] font-semibold"
             style={{
+              ...glassTooltip,
               background: 'rgba(0,0,0,0.50)',
               border: '1px solid rgba(255,255,255,0.18)',
               color: 'rgba(255,255,255,0.92)',
               boxShadow: '0 20px 60px rgba(0,0,0,0.45)',
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
             }}
           >
             <Check size={16} />
@@ -6044,11 +6043,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div
                   className="w-[560px] max-w-[82vw] rounded-[12px] p-3"
                   style={{
+                    ...glassInputArea,
                     background: 'rgba(0,0,0,0.14)',
                     border: '1px solid var(--border-subtle, rgba(255,255,255,0.12))',
                     boxShadow: '0 24px 90px rgba(0,0,0,0.45)',
-                    backdropFilter: 'blur(20px) saturate(180%)',
-                    WebkitBackdropFilter: 'blur(20px) saturate(180%)',
                     minHeight: 148,
                   }}
                 >
@@ -6423,10 +6421,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div
               className="h-9 rounded-[999px] px-1.5 inline-flex items-center gap-1"
               style={{
+                ...glassTooltip,
                 border: '1px solid rgba(255,255,255,0.12)',
                 background: 'rgba(0,0,0,0.25)',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
                 boxShadow: '0 18px 60px rgba(0,0,0,0.50)',
                 color: 'var(--text-secondary)',
               }}
@@ -6500,10 +6497,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div
               className="rounded-full p-1.5 flex flex-col gap-1.5 bg-transparent"
               style={{
-                border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                backdropFilter: 'blur(40px) saturate(180%)',
-                WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+                ...glassPanel,
                 boxShadow: '0 18px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
               }}
             >
@@ -6561,12 +6555,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       sideOffset={8}
                       className="z-50 rounded-[18px] p-2"
                       style={{
+                        ...glassPanel,
                         minWidth: 220,
                         background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
                         border: '1px solid rgba(0, 0, 0, 0.08)',
                         boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
-                        backdropFilter: 'blur(40px) saturate(180%)',
-                        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                         color: '#0b0b0f',
                       }}
                       onPointerEnter={() => {
@@ -6689,12 +6682,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       sideOffset={8}
                       className="z-50 rounded-[18px] p-3"
                       style={{
+                        ...glassPanel,
                         minWidth: 260,
                         background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
                         border: '1px solid rgba(0, 0, 0, 0.08)',
                         boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
-                        backdropFilter: 'blur(40px) saturate(180%)',
-                        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                         color: '#0b0b0f',
                       }}
                       onPointerEnter={() => {
@@ -6813,12 +6805,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       sideOffset={8}
                       className="z-50 rounded-[18px] p-3"
                       style={{
+                        ...glassPanel,
                         minWidth: 320,
                         background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
                         border: '1px solid rgba(0, 0, 0, 0.08)',
                         boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
-                        backdropFilter: 'blur(40px) saturate(180%)',
-                        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                       }}
                       onPointerEnter={() => {
                         if (shapeMenuCloseTimerRef.current != null) {
@@ -7044,11 +7035,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div
               className="flex flex-col p-2.5 rounded-[14px] h-full"
               style={{
+                ...glassPanel,
                 background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(30, 30, 35, 0.85)) 0%, var(--glass-bg-end, rgba(25, 25, 30, 0.80)) 100%)',
                 border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
                 boxShadow: '0 12px 40px rgba(0,0,0,0.50), 0 0 0 1px rgba(255, 255, 255, 0.05) inset',
-                backdropFilter: 'blur(40px) saturate(180%)',
-                WebkitBackdropFilter: 'blur(40px) saturate(180%)',
               }}
             >
             <div className="flex items-start justify-between gap-2">
@@ -7150,10 +7140,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               ref={inputPanelRef}
               className="mt-2 rounded-[12px] p-2 relative shrink-0"
               style={{
+                ...glassTooltip,
                 border: directPrompt ? '1px solid var(--border-subtle)' : '1px solid rgba(251,146,60,0.55)',
                 background: directPrompt ? 'rgba(20,20,24,0.72)' : 'rgba(251,146,60,0.06)',
-                backdropFilter: 'blur(12px)',
-                WebkitBackdropFilter: 'blur(12px)',
+                boxShadow: undefined,
               }}
             >
               {/* 若直连被关闭（auto/解析模式）：做明显提示，避免用户误以为"直连默认开启" */}
@@ -7251,12 +7241,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div
                   className="absolute left-2 right-2 z-30 rounded-[14px] overflow-hidden"
                   style={{
+                    ...glassTooltip,
                     bottom: 56, // 让出底部工具条高度，避免挤压
                     border: '1px solid rgba(255,255,255,0.12)',
                     background: 'rgba(0,0,0,0.32)',
                     boxShadow: '0 24px 90px rgba(0,0,0,0.65)',
-                    backdropFilter: 'blur(10px)',
-                    WebkitBackdropFilter: 'blur(10px)',
                   }}
                 >
                   <div className="px-3 py-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
@@ -7396,12 +7385,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       <div
                         className="absolute bottom-full right-0 mb-2 z-50 rounded-[14px] p-3"
                         style={{
+                          ...glassPopoverCompact,
                           width: 260,
                           background: 'rgba(32, 32, 36, 0.96)',
                           border: '1px solid rgba(255, 255, 255, 0.18)',
                           boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.08) inset',
-                          backdropFilter: 'blur(24px)',
-                          WebkitBackdropFilter: 'blur(24px)',
                         }}
                       >
                         {/* 分辨率（档位）- 只显示模型支持的分辨率 */}
@@ -7704,12 +7692,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           <div
             className="absolute rounded-[12px] py-1.5 min-w-[170px] shadow-2xl"
             style={{
+              ...glassTooltip,
               left: imgContextMenu.x,
               top: imgContextMenu.y,
               background: 'rgba(32,32,38,0.96)',
               border: '1px solid rgba(255,255,255,0.12)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -7783,10 +7770,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   <div
                     className="absolute left-full top-0 ml-1 rounded-[10px] py-1 min-w-[120px] shadow-2xl opacity-0 pointer-events-none group-hover/export:opacity-100 group-hover/export:pointer-events-auto transition-opacity duration-150"
                     style={{
+                      ...glassTooltip,
                       background: 'rgba(32,32,38,0.96)',
                       border: '1px solid rgba(255,255,255,0.12)',
-                      backdropFilter: 'blur(12px)',
-                      WebkitBackdropFilter: 'blur(12px)',
                     }}
                   >
                     <button

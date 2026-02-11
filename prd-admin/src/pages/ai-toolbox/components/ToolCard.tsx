@@ -1,11 +1,8 @@
 import type { ToolboxItem } from '@/services';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useNavigate } from 'react-router-dom';
-import { GlassCard } from '@/components/design/GlassCard';
 import {
-  Zap,
-  Sparkles,
-  ExternalLink,
+  ArrowUpRight,
   FileText,
   Palette,
   PenTool,
@@ -18,8 +15,10 @@ import {
   Lightbulb,
   Target,
   Wrench,
+  Sparkles,
   Rocket,
   MessageSquare,
+  Zap,
   Brain,
   Cpu,
   Database,
@@ -51,179 +50,202 @@ const ICON_MAP: Record<string, LucideIcon> = {
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
 };
 
-// 图标名称到色相的映射
-const ICON_HUE_MAP: Record<string, number> = {
-  FileText: 210, Palette: 330, PenTool: 45, Bug: 0, Code2: 180, Languages: 200,
-  FileSearch: 50, BarChart3: 270, Bot: 210, Lightbulb: 45, Target: 0, Wrench: 30,
-  Sparkles: 280, Rocket: 210, MessageSquare: 180, Zap: 45, Brain: 270, Cpu: 200,
-  Database: 220, Globe: 180, Image: 330, Music: 300, Video: 0, BookOpen: 140,
-  GraduationCap: 220, Briefcase: 30, Heart: 350, Star: 45, Shield: 210, Lock: 200,
-  Search: 180, Layers: 240,
+/**
+ * 精心策划的色彩调色板 —— 柔和有机的渐变，避免金属质感
+ * 每个 agent 类型有独特的 from→to 渐变和对应的柔和文字色
+ */
+const ACCENT_PALETTE: Record<string, { from: string; to: string; soft: string }> = {
+  FileText:     { from: '#3B82F6', to: '#818CF8', soft: '#93C5FD' },  // 天蓝 → 薰衣草
+  Palette:      { from: '#A855F7', to: '#EC4899', soft: '#D8B4FE' },  // 紫 → 粉
+  PenTool:      { from: '#F59E0B', to: '#FB923C', soft: '#FDE68A' },  // 琥珀 → 橘
+  Bug:          { from: '#EF4444', to: '#F97316', soft: '#FCA5A5' },  // 红 → 橙
+  Code2:        { from: '#10B981', to: '#06B6D4', soft: '#6EE7B7' },  // 翠绿 → 青
+  Languages:    { from: '#06B6D4', to: '#3B82F6', soft: '#67E8F9' },  // 青 → 蓝
+  FileSearch:   { from: '#EAB308', to: '#84CC16', soft: '#FDE68A' },  // 黄 → 绿
+  BarChart3:    { from: '#8B5CF6', to: '#6366F1', soft: '#C4B5FD' },  // 紫罗兰 → 靛
+  Bot:          { from: '#6366F1', to: '#8B5CF6', soft: '#A5B4FC' },  // 靛 → 紫罗兰
+  Lightbulb:    { from: '#F59E0B', to: '#FBBF24', soft: '#FDE68A' },  // 暖金
+  Target:       { from: '#EF4444', to: '#DC2626', soft: '#FCA5A5' },  // 正红
+  Wrench:       { from: '#78716C', to: '#A8A29E', soft: '#D6D3D1' },  // 石墨
+  Sparkles:     { from: '#A855F7', to: '#7C3AED', soft: '#D8B4FE' },  // 魔法紫
+  Rocket:       { from: '#3B82F6', to: '#1D4ED8', soft: '#93C5FD' },  // 深蓝
+  MessageSquare:{ from: '#14B8A6', to: '#0D9488', soft: '#5EEAD4' },  // 碧绿
+  Brain:        { from: '#D946EF', to: '#A855F7', soft: '#F0ABFC' },  // 品红 → 紫
+  Cpu:          { from: '#64748B', to: '#475569', soft: '#94A3B8' },  // 钢灰
+  Database:     { from: '#0EA5E9', to: '#0284C7', soft: '#7DD3FC' },  // 海蓝
+  Globe:        { from: '#22D3EE', to: '#06B6D4', soft: '#A5F3FC' },  // 天青
+  Image:        { from: '#EC4899', to: '#F43F5E', soft: '#F9A8D4' },  // 玫瑰
+  Music:        { from: '#D946EF', to: '#C026D3', soft: '#F0ABFC' },  // 品红
+  Video:        { from: '#F43F5E', to: '#E11D48', soft: '#FDA4AF' },  // 玫瑰红
+  BookOpen:     { from: '#22C55E', to: '#16A34A', soft: '#86EFAC' },  // 翠绿
+  GraduationCap:{ from: '#3B82F6', to: '#2563EB', soft: '#93C5FD' }, // 学院蓝
+  Briefcase:    { from: '#78716C', to: '#57534E', soft: '#A8A29E' },  // 商务灰
+  Heart:        { from: '#F43F5E', to: '#E11D48', soft: '#FDA4AF' },  // 心红
+  Star:         { from: '#F59E0B', to: '#D97706', soft: '#FCD34D' },  // 金星
+  Shield:       { from: '#3B82F6', to: '#1E40AF', soft: '#93C5FD' },  // 守护蓝
+  Lock:         { from: '#64748B', to: '#334155', soft: '#94A3B8' },  // 安全灰
+  Search:       { from: '#14B8A6', to: '#0D9488', soft: '#5EEAD4' },  // 探索青
+  Layers:       { from: '#8B5CF6', to: '#6D28D9', soft: '#C4B5FD' },  // 层叠紫
 };
 
-// 获取图标组件
 function getIconComponent(iconName: string): LucideIcon {
   return ICON_MAP[iconName] || Bot;
 }
 
-// 获取强调色色相
-function getAccentHue(iconName: string): number {
-  return ICON_HUE_MAP[iconName] ?? 210;
+function getPalette(iconName: string) {
+  return ACCENT_PALETTE[iconName] ?? ACCENT_PALETTE.Bot;
 }
 
 export function ToolCard({ item }: ToolCardProps) {
   const { selectItem } = useToolboxStore();
   const navigate = useNavigate();
-  const accentHue = getAccentHue(item.icon);
+  const palette = getPalette(item.icon);
   const IconComponent = getIconComponent(item.icon);
-
-  // 判断是否为定制版（有专门路由页面）
   const isCustomized = !!item.routePath;
 
   const handleClick = () => {
     if (isCustomized && item.routePath) {
-      // 定制版：跳转到专门页面
       navigate(item.routePath);
     } else {
-      // 普通版：显示对话界面
       selectItem(item);
     }
   };
 
   return (
-    <GlassCard
-      variant="subtle"
-      accentHue={accentHue}
-      glow
-      padding="none"
-      interactive
+    <div
+      className="group relative rounded-2xl cursor-pointer transition-all duration-300 ease-out hover:-translate-y-1"
+      style={{
+        background: 'var(--glass-bg-end, #111114)',
+        border: '1px solid rgba(255, 255, 255, 0.06)',
+        boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.3)',
+      }}
       onClick={handleClick}
-      className="group"
     >
-      <div className="p-3">
-        {/* Icon with glow effect */}
-        <div className="relative mb-3">
+      {/* Hover border glow */}
+      <div
+        className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+        style={{
+          border: `1px solid ${palette.from}25`,
+          boxShadow: `0 8px 32px -8px ${palette.from}20, 0 0 0 1px ${palette.from}10`,
+        }}
+      />
+
+      {/* Aurora gradient header */}
+      <div
+        className="relative h-[52px] rounded-t-2xl overflow-hidden"
+      >
+        {/* Multi-layer gradient - creates organic aurora feel */}
+        <div
+          className="absolute inset-0 opacity-[0.35] group-hover:opacity-[0.55] transition-opacity duration-500"
+          style={{
+            background: `
+              radial-gradient(ellipse 80% 120% at 80% 10%, ${palette.from}80 0%, transparent 60%),
+              radial-gradient(ellipse 60% 100% at 20% 80%, ${palette.to}60 0%, transparent 50%),
+              linear-gradient(135deg, ${palette.from}30 0%, ${palette.to}20 100%)
+            `,
+          }}
+        />
+        {/* Noise texture overlay for organic feel */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background: 'radial-gradient(ellipse 100% 100% at 50% 0%, rgba(255,255,255,0.04) 0%, transparent 70%)',
+          }}
+        />
+        {/* Icon floating on the gradient */}
+        <div className="absolute inset-0 flex items-center justify-center">
           <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 group-hover:scale-110"
+            className="w-9 h-9 rounded-xl flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
             style={{
-              background: `linear-gradient(135deg, hsla(${accentHue}, 70%, 60%, 0.18) 0%, hsla(${accentHue}, 70%, 40%, 0.1) 100%)`,
-              boxShadow: `0 3px 12px -3px hsla(${accentHue}, 70%, 50%, 0.35), inset 0 1px 0 0 rgba(255,255,255,0.12)`,
-              border: `1px solid hsla(${accentHue}, 60%, 60%, 0.25)`,
+              background: 'rgba(0, 0, 0, 0.25)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
             }}
           >
-            <IconComponent
-              size={20}
-              style={{ color: `hsla(${accentHue}, 70%, 70%, 1)` }}
-            />
+            <IconComponent size={18} style={{ color: palette.soft }} />
           </div>
-          {/* Subtle glow behind icon */}
-          <div
-            className="absolute inset-0 -z-10 blur-lg opacity-40 group-hover:opacity-60 transition-opacity"
-            style={{
-              background: `radial-gradient(circle, hsla(${accentHue}, 70%, 50%, 0.5) 0%, transparent 70%)`,
-            }}
-          />
         </div>
+      </div>
 
-        {/* Name */}
-        <div
-          className="font-semibold text-[13px] mb-1 truncate"
-          style={{ color: 'rgba(255, 255, 255, 0.95)' }}
-        >
-          {item.name}
+      {/* Content area */}
+      <div className="px-3 pb-3 pt-2.5">
+        {/* Name + arrow */}
+        <div className="flex items-center gap-1.5 mb-1">
+          <div
+            className="font-semibold text-[13px] truncate flex-1"
+            style={{ color: 'var(--text-primary, rgba(255, 255, 255, 0.95))' }}
+          >
+            {item.name}
+          </div>
+          <ArrowUpRight
+            size={12}
+            className="shrink-0 opacity-0 group-hover:opacity-60 transition-all duration-200 -translate-x-1 group-hover:translate-x-0"
+            style={{ color: palette.soft }}
+          />
         </div>
 
         {/* Description */}
         <div
-          className="text-[11px] line-clamp-2 mb-2.5 leading-relaxed"
-          style={{ color: 'rgba(255, 255, 255, 0.55)', minHeight: '2.2em' }}
+          className="text-[11px] line-clamp-2 leading-relaxed mb-3"
+          style={{ color: 'var(--text-muted, rgba(255, 255, 255, 0.45))', minHeight: '2.2em' }}
         >
           {item.description}
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between">
-          {/* Type badges - 定制版显示两个标签 */}
-          <div className="flex flex-col gap-1">
-            {/* 定制版标签 */}
-            {isCustomized && (
-              <span
-                className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5 w-fit"
-                style={{
-                  background: 'rgba(168, 85, 247, 0.15)',
-                  color: 'rgb(192, 132, 252)',
-                  border: '1px solid rgba(168, 85, 247, 0.25)',
-                }}
-              >
-                <ExternalLink size={8} />
-                定制版
-              </span>
-            )}
-            {/* 内置/自定义 标签 */}
-            <span
-              className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5 w-fit"
-              style={{
-                background: item.type === 'builtin'
-                  ? `hsla(${accentHue}, 60%, 50%, 0.15)`
-                  : 'rgba(34, 197, 94, 0.15)',
-                color: item.type === 'builtin'
-                  ? `hsla(${accentHue}, 70%, 70%, 1)`
-                  : 'rgb(74, 222, 128)',
-                border: item.type === 'builtin'
-                  ? `1px solid hsla(${accentHue}, 60%, 50%, 0.25)`
-                  : '1px solid rgba(34, 197, 94, 0.25)',
-              }}
-            >
-              {item.type === 'builtin' ? (
-                <>
-                  <Sparkles size={8} />
-                  内置
-                </>
-              ) : (
-                '自定义'
-              )}
-            </span>
-          </div>
-
-          {/* Usage count */}
-          {item.usageCount > 0 && (
-            <span
-              className="flex items-center gap-0.5 text-[10px]"
-              style={{ color: 'rgba(255, 255, 255, 0.5)' }}
-            >
-              <Zap size={9} style={{ color: `hsla(${accentHue}, 70%, 65%, 0.9)` }} />
-              {item.usageCount}
-            </span>
-          )}
-        </div>
-
         {/* Tags */}
         {item.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-2.5 pt-2.5 border-t" style={{ borderColor: 'rgba(255, 255, 255, 0.06)' }}>
+          <div className="flex flex-wrap gap-1 mb-2.5">
             {item.tags.slice(0, 3).map((tag) => (
               <span
                 key={tag}
-                className="text-[10px] px-1.5 py-0.5 rounded"
+                className="text-[10px] px-1.5 py-0.5 rounded-md"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  color: 'rgba(255, 255, 255, 0.55)',
-                  border: '1px solid rgba(255, 255, 255, 0.04)',
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  color: 'var(--text-muted, rgba(255, 255, 255, 0.5))',
                 }}
               >
                 {tag}
               </span>
             ))}
             {item.tags.length > 3 && (
-              <span
-                className="text-[10px] px-1.5 py-0.5"
-                style={{ color: 'rgba(255, 255, 255, 0.4)' }}
-              >
+              <span className="text-[10px] px-1" style={{ color: 'rgba(255, 255, 255, 0.3)' }}>
                 +{item.tags.length - 3}
               </span>
             )}
           </div>
         )}
+
+        {/* Footer divider + info */}
+        <div
+          className="flex items-center justify-between pt-2"
+          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.05)' }}
+        >
+          <span
+            className="text-[10px] px-2 py-0.5 rounded-full font-medium inline-flex items-center gap-1"
+            style={{
+              background: isCustomized ? `${palette.from}15` : 'rgba(255, 255, 255, 0.04)',
+              color: isCustomized ? palette.soft : 'rgba(255, 255, 255, 0.4)',
+              border: isCustomized ? `1px solid ${palette.from}20` : '1px solid rgba(255, 255, 255, 0.04)',
+            }}
+          >
+            {isCustomized ? (
+              <>
+                <Sparkles size={8} />
+                定制版
+              </>
+            ) : item.type === 'builtin' ? '内置' : '自定义'}
+          </span>
+
+          {item.usageCount > 0 && (
+            <span
+              className="flex items-center gap-0.5 text-[10px]"
+              style={{ color: 'rgba(255, 255, 255, 0.35)' }}
+            >
+              <Zap size={8} style={{ color: palette.soft, opacity: 0.7 }} />
+              {item.usageCount}
+            </span>
+          )}
+        </div>
       </div>
-    </GlassCard>
+    </div>
   );
 }

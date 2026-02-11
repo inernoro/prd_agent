@@ -1,5 +1,6 @@
 import { Play } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
+import { glassInputArea } from '@/lib/glassStyles';
 
 export type ImageQuickEditInputProps = {
   /** 提交快捷编辑 */
@@ -44,6 +45,7 @@ export function ImageQuickEditInput({
     <div
       className="flex items-center gap-1.5 rounded-[10px] px-2"
       style={{
+        ...glassInputArea,
         width: 320,
         height: 38,
         background: focused
@@ -52,8 +54,6 @@ export function ImageQuickEditInput({
         border: focused
           ? '1px solid rgba(99, 102, 241, 0.50)'
           : '1px solid rgba(255, 255, 255, 0.14)',
-        backdropFilter: 'blur(16px)',
-        WebkitBackdropFilter: 'blur(16px)',
         boxShadow: focused
           ? '0 8px 32px rgba(0,0,0,0.45), 0 0 0 2px rgba(99, 102, 241, 0.18)'
           : '0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.06) inset',

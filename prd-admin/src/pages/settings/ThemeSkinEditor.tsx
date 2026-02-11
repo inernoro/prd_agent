@@ -4,6 +4,7 @@
  */
 
 import { GlassCard } from '@/components/design/GlassCard';
+import { glassPanel } from '@/lib/glassStyles';
 import { useThemeStore } from '@/stores/themeStore';
 import {
   COLOR_DEPTH_MAP,
@@ -288,9 +289,9 @@ export function ThemeSkinEditor() {
             <div
               className="p-3 rounded-lg"
               style={{
+                ...glassPanel,
                 background: `linear-gradient(180deg, var(--glass-bg-start, rgba(255,255,255,0.08)) 0%, var(--glass-bg-end, rgba(255,255,255,0.03)) 100%)`,
                 border: `1px solid var(--glass-border, rgba(255,255,255,0.14))`,
-                backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
               }}
             >
               <div className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -305,11 +306,11 @@ export function ThemeSkinEditor() {
             <div
               className="p-3 rounded-lg relative overflow-hidden"
               style={{
+                ...glassPanel,
                 background: config.enableGlow
                   ? `radial-gradient(ellipse 100% 60% at 50% -10%, rgba(214, 178, 106, 0.25) 0%, transparent 65%), linear-gradient(180deg, var(--glass-bg-start, rgba(255,255,255,0.08)) 0%, var(--glass-bg-end, rgba(255,255,255,0.03)) 100%)`
                   : `linear-gradient(180deg, var(--glass-bg-start, rgba(255,255,255,0.08)) 0%, var(--glass-bg-end, rgba(255,255,255,0.03)) 100%)`,
                 border: `1px solid var(--glass-border, rgba(255,255,255,0.14))`,
-                backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
               }}
             >
               <div className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>

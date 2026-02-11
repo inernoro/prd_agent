@@ -138,3 +138,55 @@ export const glassToast = (bg: string, borderColor: string): React.CSSProperties
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
 });
+
+/**
+ * 小型状态徽章（DefectCard 状态标签、TabBar indicator 等）
+ */
+export const glassBadge: React.CSSProperties = {
+  backdropFilter: 'blur(8px)',
+  WebkitBackdropFilter: 'blur(8px)',
+};
+
+/**
+ * 浮动按钮（返回按钮、缩放控件等圆形/胶囊浮动控件）
+ */
+export const glassFloatingButton: React.CSSProperties = {
+  background: 'var(--glass-bg-end, rgba(18, 18, 22, 0.8))',
+  border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
+  boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+  backdropFilter: 'blur(12px)',
+  WebkitBackdropFilter: 'blur(12px)',
+};
+
+/**
+ * 输入区域背景（textarea、input 等带模糊的编辑区）
+ */
+export const glassInputArea: React.CSSProperties = {
+  background: 'var(--glass-bg-end, rgba(20, 20, 25, 0.9))',
+  border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.1))',
+  backdropFilter: 'blur(16px)',
+  WebkitBackdropFilter: 'blur(16px)',
+};
+
+/**
+ * 侧面抽屉面板（TaskDetailDrawer 等从侧边滑出的大面板）
+ */
+export const glassDrawer: React.CSSProperties = {
+  background:
+    'linear-gradient(180deg, var(--glass-bg-start, rgba(20, 20, 25, 0.98)) 0%, var(--glass-bg-end, rgba(16, 16, 20, 0.98)) 100%)',
+  border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.1))',
+  boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.04) inset',
+  backdropFilter: 'blur(40px)',
+  WebkitBackdropFilter: 'blur(40px)',
+};
+
+/**
+ * 下拉菜单（DropdownMenu.Content 等中等尺寸弹出菜单）
+ */
+export const glassDropdown: React.CSSProperties = {
+  background: 'var(--glass-bg-end, rgba(30, 30, 35, 0.95))',
+  border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.1))',
+  boxShadow: '0 12px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+  backdropFilter: 'blur(20px)',
+  WebkitBackdropFilter: 'blur(20px)',
+};

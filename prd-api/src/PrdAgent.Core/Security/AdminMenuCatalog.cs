@@ -32,12 +32,8 @@ public static class AdminMenuCatalog
         // 提示词管理
         new("prompts", "/prompts", "提示词管理", "PRD 问答提示词配置", "FileText", 50),
 
-        // Agent 体验类菜单
-        new("prd-agent", "/prd-agent", "PRD Agent", "PRD 智能解读与问答", "MessagesSquare", 60),
-        new("defect-agent", "/defect-agent", "缺陷管理 Agent", "缺陷提交与跟踪", "Bug", 65),
-        new("visual-agent", "/visual-agent", "视觉创作 Agent", "高级视觉创作工作区", "Wand2", 70),
-        new("literary-agent", "/literary-agent", "文学创作 Agent", "文章配图智能生成", "PenLine", 80),
-        new("ai-toolbox", "/ai-toolbox", "AI 百宝箱", "多 Agent 协作智能助手", "Sparkles", 85),
+        // AI 百宝箱（Agent 统一入口，各 Agent 不再独立显示在导航中）
+        new("ai-toolbox", "/ai-toolbox", "AI 百宝箱", null, "Sparkles", 60),
 
         // 资源管理
         new("assets", "/assets", "资源管理", "Desktop 资源与品牌配置", "Image", 90),
@@ -81,8 +77,8 @@ public static class AdminMenuCatalog
 
         foreach (var menu in All)
         {
-            // 系统设置：只需要基础访问权限
-            if (menu.AppKey is "settings")
+            // AI 百宝箱 / 系统设置：只需要基础访问权限
+            if (menu.AppKey is "ai-toolbox" or "settings")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
                 {

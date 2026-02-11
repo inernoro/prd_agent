@@ -1,5 +1,6 @@
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
+import { glassDrawer } from '@/lib/glassStyles';
 import { X, RotateCcw, XCircle, Clock, User, Mail, FileText, AlertCircle, Download } from 'lucide-react';
 import type { ChannelTask } from '@/services/contracts/channels';
 import {
@@ -75,9 +76,9 @@ export function TaskDetailDrawer({
       <div
         className="relative w-full max-w-lg h-full overflow-y-auto"
         style={{
+          ...glassDrawer,
           background: 'linear-gradient(180deg, rgba(20,20,25,0.98) 0%, rgba(15,15,20,0.98) 100%)',
           borderLeft: '1px solid rgba(255,255,255,0.1)',
-          backdropFilter: 'blur(40px)',
         }}
         onClick={(e) => e.stopPropagation()}
       >

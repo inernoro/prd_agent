@@ -1,5 +1,5 @@
 import { GlassCard } from '@/components/design/GlassCard';
-import { glassPanel } from '@/lib/glassStyles';
+import { glassPanel, glassToolbar, glassInputArea } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
@@ -460,11 +460,8 @@ function FloatingToolbar(props: {
     <div
       className="rounded-2xl p-1.5 flex flex-col gap-1 bg-transparent"
       style={{
+        ...glassToolbar,
         background: 'rgba(18, 18, 22, 0.6)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        backdropFilter: 'blur(16px)',
-        WebkitBackdropFilter: 'blur(16px)',
-        boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
       }}
     >
       <ToolbarButton
@@ -658,10 +655,9 @@ function QuickInputBox(props: {
       <div
         className="rounded-[20px] overflow-hidden cursor-text transition-all duration-300"
         style={{
+          ...glassInputArea,
           // 暖褐色调磨砂玻璃，与金色主题协调
           background: 'rgba(28, 24, 20, 0.82)',
-          backdropFilter: 'blur(24px) saturate(1.4)',
-          WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
           // 聚焦时边框变亮 - 使用柔和的琥珀金
           border: isFocused
             ? '1px solid rgba(212, 170, 85, 0.5)'

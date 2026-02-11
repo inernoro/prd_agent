@@ -31,7 +31,7 @@ import {
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
-import { glassPanel, glassSidebar } from '@/lib/glassStyles';
+import { glassPanel, glassSidebar, glassFloatingButton } from '@/lib/glassStyles';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useLayoutStore } from '@/stores/layoutStore';
@@ -332,10 +332,9 @@ export default function AppShell() {
             type="button"
             className="fixed bottom-5 right-5 z-[120] h-12 w-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105"
             style={{
+              ...glassFloatingButton,
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
               border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
-              boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-              backdropFilter: 'blur(12px)',
             }}
             onClick={() => setToastCollapsed(false)}
             onMouseEnter={() => setToastHovering(true)}
@@ -356,10 +355,10 @@ export default function AppShell() {
           <div
             className="fixed bottom-5 right-5 z-[120] w-[360px] rounded-[18px] p-4 shadow-xl"
             style={{
+              ...glassFloatingButton,
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
               border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
               boxShadow: '0 12px 30px rgba(0,0,0,0.45)',
-              backdropFilter: 'blur(12px)',
             }}
             onMouseEnter={() => setToastHovering(true)}
             onMouseLeave={() => setToastHovering(false)}
@@ -767,11 +766,6 @@ export default function AppShell() {
                     {!collapsed && (
                       <div className="min-w-0 flex-1 text-left">
                         <div className="text-sm font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">{it.label}</div>
-                        {it.description && (
-                          <div className="text-[10px] truncate mt-0.5 leading-tight" style={{ color: 'var(--text-muted)', opacity: active ? 0.8 : 0.6 }}>
-                            {it.description}
-                          </div>
-                        )}
                       </div>
                     )}
                     {active && !collapsed && (

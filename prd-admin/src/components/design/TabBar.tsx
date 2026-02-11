@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { glassBar, glassBarGold } from '@/lib/glassStyles';
+import { glassBar, glassBarGold, glassBadge } from '@/lib/glassStyles';
 
 export interface TabBarItem {
   key: string;
@@ -103,8 +103,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
                   0 1px 0 0 rgba(255, 255, 255, 0.2) inset
                 `,
                 // 额外的模糊效果
-                backdropFilter: 'blur(8px)',
-                WebkitBackdropFilter: 'blur(8px)',
+                ...glassBadge,
               }}
             />
             

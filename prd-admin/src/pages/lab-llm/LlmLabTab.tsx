@@ -4,7 +4,7 @@ import JSZip from 'jszip';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 import { GlassCard } from '@/components/design/GlassCard';
-import { glassPanel } from '@/lib/glassStyles';
+import { glassPanel, glassTooltip, glassBadge } from '@/lib/glassStyles';
 import { GlassSwitch } from '@/components/design/GlassSwitch';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -2483,10 +2483,9 @@ export default function LlmLabTab() {
           key={copyToast.id}
           className="fixed left-1/2 top-[88px] -translate-x-1/2 z-[9999] px-3 py-2 rounded-[12px] text-[13px] font-semibold"
           style={{
+            ...glassTooltip,
             background: 'rgba(0,0,0,0.72)',
-            border: '1px solid rgba(255,255,255,0.12)',
             color: 'rgba(255,255,255,0.92)',
-            backdropFilter: 'blur(10px)',
             boxShadow: '0 10px 28px rgba(0,0,0,0.35)',
             pointerEvents: 'none',
           }}
@@ -3097,9 +3096,9 @@ export default function LlmLabTab() {
                       <div
                         className="absolute inset-0 rounded-[14px] flex items-center justify-center"
                         style={{
+                          ...glassBadge,
                           background: 'rgba(0,0,0,0.35)',
                           border: '1px solid rgba(255,255,255,0.10)',
-                          backdropFilter: 'blur(6px)',
                         }}
                       >
                         <Button
