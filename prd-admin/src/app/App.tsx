@@ -24,6 +24,7 @@ import ExecutiveDashboardPage from '@/pages/ExecutiveDashboardPage';
 import { PrdAgentTabsPage } from '@/pages/PrdAgentTabsPage';
 import AgentLauncherPage from '@/pages/AgentLauncherPage';
 import RichComposerLab from '@/pages/_dev/RichComposerLab';
+import MobileAuditPage from '@/pages/_dev/MobileAuditPage';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 import { AgentSwitcherProvider } from '@/components/agent-switcher';
@@ -154,6 +155,7 @@ export default function App() {
 
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
+        <Route path="/_dev/mobile-audit" element={<MobileAuditPage />} />
 
         {/* 视觉创作 Agent - 独立全屏页面，不使用 AppShell 布局 */}
         <Route

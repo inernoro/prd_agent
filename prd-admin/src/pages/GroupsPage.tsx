@@ -401,8 +401,8 @@ export default function GroupsPage() {
       />
 
       <GlassCard glow className="flex-1 min-h-0 flex flex-col">
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-xs">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[180px] max-w-xs">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
               value={search}
@@ -473,7 +473,7 @@ export default function GroupsPage() {
                     </div>
 
                     {/* 统计数据网格 - 4列 */}
-                    <div className="grid grid-cols-4 gap-1 my-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 my-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
                       <div className="text-center">
                         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g.memberCount}</div>
                         <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>成员</div>
@@ -558,7 +558,7 @@ export default function GroupsPage() {
           )}
         </div>
 
-        <div className="mt-4 flex items-center justify-between">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm" style={{ color: 'var(--text-muted)' }}>第 {page} 页 / 共 {Math.max(1, Math.ceil(total / 20))} 页</div>
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
@@ -602,7 +602,7 @@ export default function GroupsPage() {
                   </Button>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     variant="secondary"
                     size="sm"
@@ -711,6 +711,7 @@ export default function GroupsPage() {
 
               <div className="flex-1 min-h-0 overflow-auto rounded-[16px]" style={{ border: '1px solid var(--border-subtle)' }}>
                 {tab === 'members' ? (
+                  <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead style={{ background: 'rgba(255,255,255,0.03)' }}>
                       <tr>
@@ -775,6 +776,7 @@ export default function GroupsPage() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 ) : tab === 'gaps' ? (
                   <>
                     <div className="p-3">
@@ -798,6 +800,7 @@ export default function GroupsPage() {
                         </Button>
                       </div>
                     </div>
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                     <thead style={{ background: 'rgba(255,255,255,0.03)' }}>
                       <tr>
@@ -888,6 +891,7 @@ export default function GroupsPage() {
                       ))}
                     </tbody>
                     </table>
+                    </div>
                   </>
                 ) : (
                   <div className="p-4 space-y-3">
@@ -910,11 +914,11 @@ export default function GroupsPage() {
                       .prd-md th,.prd-md td { border: 1px solid rgba(255,255,255,0.10); padding: 6px 8px; }
                       .prd-md th { color: var(--text-primary); background: rgba(255,255,255,0.03); }
                     `}</style>
-                    <div className="flex items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
                         已加载 {messages.length} / {messagesTotal || messages.length} 条
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Button
                           variant="danger"
                           size="sm"
@@ -1037,7 +1041,7 @@ export default function GroupsPage() {
                         className="rounded-[16px] p-4"
                         style={box}
                       >
-                        <div className="flex items-start justify-between gap-4">
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
                           <div className="min-w-0">
                             <div className="text-sm font-semibold" style={{ color: titleColor }}>
                               {senderLabel} <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>{fmtDate(m.timestamp)}</span>
@@ -1046,7 +1050,7 @@ export default function GroupsPage() {
                               <MessageMarkdown content={m.content} />
                             </div>
                           </div>
-                          <div className="shrink-0 flex flex-col items-end gap-2">
+                          <div className="shrink-0 flex flex-col sm:items-end gap-2">
                             {rid ? (
                               <button
                                 type="button"

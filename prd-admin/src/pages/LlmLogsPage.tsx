@@ -13,6 +13,7 @@ import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCirc
 import { AppCallerKeyIcon } from '@/lib/appCallerUtils';
 import { glassPanel } from '@/lib/glassStyles';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -811,6 +812,7 @@ function NewsMarquee({
 }
 
 function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
+  const { isMobile } = useBreakpoint();
   const external = isExternalCurlOp(it);
   const url = inferListItemUrl(it);
 
@@ -832,7 +834,7 @@ function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
         background: 'rgba(231,206,151,0.045)',
       }}
     >
-      <div className="grid items-center gap-3" style={{ gridTemplateColumns: '2fr 3fr 1fr' }}>
+      <div className={isMobile ? "flex flex-col gap-1.5" : "grid items-center gap-3"} style={isMobile ? undefined : { gridTemplateColumns: '2fr 3fr 1fr' }}>
         <div className="min-w-0 flex items-center gap-2">
           <span className="text-[11px] font-semibold shrink-0 flex items-center gap-1" style={{ color: '#E7CE97' }}>
             <HelpCircle size={12} />
@@ -853,7 +855,7 @@ function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
           </div>
         </div>
 
-        <div className="min-w-0 text-right text-[11px] truncate" style={{ color: 'rgba(231,206,151,0.75)' }}>
+        <div className={`min-w-0 ${isMobile ? 'text-left' : 'text-right'} text-[11px] truncate`} style={{ color: 'rgba(231,206,151,0.75)' }}>
           {rightText}
         </div>
       </div>
@@ -871,6 +873,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
     getDetail?: typeof getLlmLogDetail;
   };
 } = {}) {
+  const { isMobile } = useBreakpoint();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get('tab') ?? 'llm') as 'llm' | 'system';
 
@@ -1319,7 +1322,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
       )}
 
       <GlassCard glow className="p-4">
-        <div className="grid gap-3 grid-cols-4 md:grid-cols-8">
+        <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 md:grid-cols-8">
           <SearchableSelect
             value={qModel}
             onValueChange={setQModel}
@@ -1442,10 +1445,10 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                     background: active ? 'rgba(255,255,255,0.03)' : 'transparent',
                   }}
                 >
-                  <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start justify-between gap-2 sm:gap-4">
                     <div className="min-w-0">
                       {/* 第一部分：状态 + 应用信息 + appCallerCode */}
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0 flex-wrap">
                         {statusBadge(it.status)}
                         {/* 功能描述（中文标题）- 直接使用后端返回的 displayName */}
                         <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -1472,7 +1475,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         </span>
                       </div>
                       {/* 第三部分：大模型匹配信息 */}
-                      <div className="mt-1 flex items-center gap-2 min-w-0">
+                      <div className="mt-1 flex items-center gap-2 min-w-0 flex-wrap">
                         {/* 模型池标签：专属模型池 / 默认模型池 / 直连单模型（三者互斥） */}
                         {(() => {
                           const groupName = (it.modelGroupName || '').trim();
@@ -1761,11 +1764,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
           ) : !detail ? (
             <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无详情</div>
           ) : (
-            <div className="h-full min-h-0 grid gap-3 md:grid-cols-2">
+            <div className="h-full min-h-0 grid gap-3 grid-cols-1 md:grid-cols-2 overflow-auto md:overflow-hidden">
               <GlassCard glow className="p-3 overflow-hidden flex flex-col min-h-0">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Request（密钥已隐藏）</div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     {copiedHint ? (
                       <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{copiedHint}</div>
                     ) : null}
@@ -1809,7 +1812,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                     </Button>
                   </div>
                 </div>
-                <div className="mt-1 grid gap-1.5" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+                <div className={`mt-1 grid gap-1.5 ${isMobile ? 'grid-cols-1' : ''}`} style={isMobile ? undefined : { gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
                   {[
                     { k: 'provider', v: detail.provider || '—' },
                     { k: 'model', v: detail.model || '—' },
@@ -2116,7 +2119,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         return <>Token统计来源：{label}</>;
                       })()}
                     </div>
-                    <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+                    <div className={`mt-3 grid gap-2 ${isMobile ? 'grid-cols-1' : ''}`} style={isMobile ? undefined : { gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
                       {[
                         { k: 'Input tokens（输入）', v: fmtNum(detail.inputTokens) },
                         { k: 'Output tokens（输出）', v: fmtNum(detail.outputTokens) },
@@ -2240,8 +2243,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         <div className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)' }}>
                           {(detail?.questionText ?? '').trim() || '（无提示词）'}
                         </div>
-                        {/* Input ← → Output 始终双栏 */}
-                        <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr', alignItems: 'stretch' }}>
+                        {/* Input ← → Output 双栏（移动端堆叠） */}
+                        <div className="grid gap-3 grid-cols-1 md:grid-cols-2" style={{ alignItems: 'stretch' }}>
                           {/* ===== Input 参考图（左） ===== */}
                           <div style={{ minWidth: 0 }}>
                             <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Input</div>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { createDesktopAssetKey, createDesktopAssetSkin, deleteDesktopAssetKey, getDesktopBrandingSettings, getDesktopAssetsMatrix, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset, uploadNoHeadAvatar } from '@/services';
 import type { AdminDesktopAssetMatrixRow, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -197,6 +198,7 @@ function SectionTitle({ icon, title, badge }: { icon: React.ReactNode; title: st
 }
 
 export default function AssetsManagePage() {
+  const { isMobile } = useBreakpoint();
   const [activeTab, setActiveTab] = useState<'desktop' | 'single'>('desktop');
   const [skins, setSkins] = useState<DesktopAssetSkin[]>([]);
   const [matrixData, setMatrixData] = useState<AdminDesktopAssetMatrixRow[]>([]);
@@ -547,16 +549,17 @@ export default function AssetsManagePage() {
             固定路径 <code className="font-mono text-[11px] px-1.5 py-0.5 rounded-[6px]" style={{ background: 'rgba(255,255,255,0.04)' }}>/icon/backups/head/nohead.png</code>
           </p>
 
-          <div className="flex items-start gap-5">
+          <div className={cn('flex gap-5', isMobile ? 'flex-col items-stretch' : 'items-start')}>
             {/* 预览 */}
             <div
               className={cn(
-                'relative rounded-[14px] overflow-hidden transition-all duration-200',
-                isNoHeadBroken ? 'ring-2 ring-red-500/30' : 'ring-1 ring-white/8'
+                'relative rounded-[14px] overflow-hidden transition-all duration-200 shrink-0',
+                isNoHeadBroken ? 'ring-2 ring-red-500/30' : 'ring-1 ring-white/8',
+                isMobile && 'mx-auto'
               )}
               style={{
-                width: '120px',
-                height: '120px',
+                width: isMobile ? '100px' : '120px',
+                height: isMobile ? '100px' : '120px',
                 background: isNoHeadBroken
                   ? 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.03) 100%)'
                   : 'rgba(255,255,255,0.02)',
@@ -592,7 +595,7 @@ export default function AssetsManagePage() {
                 {noHeadPreviewUrl || '-'}
               </div>
 
-              <div className="mt-4 flex items-center gap-2">
+              <div className="mt-4 flex items-center gap-2 flex-wrap">
                 <Button
                   variant="primary"
                   size="xs"
@@ -721,12 +724,12 @@ export default function AssetsManagePage() {
                   <FolderOpen size={13} style={{ color: 'var(--accent-gold)' }} />
                   <span className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>新建资源 Key</span>
                 </div>
-                <div className="flex items-end gap-2">
+                <div className="flex items-end gap-2 flex-wrap">
                   <InputField
                     value={newKey}
                     onChange={setNewKey}
                     placeholder="例如 load"
-                    className="flex-1"
+                    className={isMobile ? 'w-full' : 'flex-1'}
                     mono
                   />
                   <SelectField
@@ -744,7 +747,7 @@ export default function AssetsManagePage() {
                     value={newKeyDesc}
                     onChange={setNewKeyDesc}
                     placeholder="描述（可选）"
-                    className="flex-1"
+                    className={isMobile ? 'w-full' : 'flex-1'}
                   />
                   <Button
                     variant="secondary"
@@ -776,6 +779,7 @@ export default function AssetsManagePage() {
               }}
             >
               <div className="overflow-x-auto">
+                <div style={{ minWidth: `${180 + columns.length * 100}px` }}>
                 {/* 表头 */}
                 <div
                   className="grid"
@@ -826,6 +830,7 @@ export default function AssetsManagePage() {
                     暂无资源项
                   </div>
                 )}
+                </div>
               </div>
             </div>
           </GlassCard>

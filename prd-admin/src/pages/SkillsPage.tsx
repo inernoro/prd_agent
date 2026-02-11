@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import {
   listAdminSkills,
   createAdminSkill,
@@ -52,6 +53,7 @@ const VISIBILITY_OPTIONS = [
 // ━━━ 主组件 ━━━━━━━━
 
 export default function SkillsPage() {
+  const { isMobile } = useBreakpoint();
   const [skills, setSkills] = useState<AdminSkill[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<AdminSkill | null>(null);
@@ -234,11 +236,19 @@ export default function SkillsPage() {
   // ━━━ 渲染 ━━━
 
   const showEditor = selected || isCreating;
+  const mobileShowEditor = isMobile && showEditor;
+
+  const handleMobileBack = useCallback(() => {
+    setSelected(null);
+    setIsCreating(false);
+    setMsg(null);
+  }, []);
 
   return (
-    <div className="flex gap-4 h-[calc(100vh-6rem)]">
+    <div className={`flex gap-4 h-[calc(100vh-6rem)] ${isMobile ? 'flex-col' : ''}`}>
       {/* ━━━ 左侧列表 ━━━ */}
-      <GlassCard className="w-80 shrink-0 flex flex-col overflow-hidden">
+      {(!isMobile || !mobileShowEditor) && (
+      <GlassCard className={`${isMobile ? 'w-full' : 'w-80'} shrink-0 flex flex-col overflow-hidden`}>
         <div className="p-4 border-b border-white/10 flex items-center justify-between">
           <h2 className="text-sm font-semibold opacity-80">技能列表</h2>
           <button
@@ -285,8 +295,10 @@ export default function SkillsPage() {
           )}
         </div>
       </GlassCard>
+      )}
 
       {/* ━━━ 右侧编辑器 ━━━ */}
+      {(!isMobile || mobileShowEditor) && (
       <GlassCard className="flex-1 flex flex-col overflow-hidden">
         {!showEditor ? (
           <div className="flex-1 flex items-center justify-center text-sm opacity-30">
@@ -295,10 +307,20 @@ export default function SkillsPage() {
         ) : (
           <>
             {/* 顶栏 */}
-            <div className="p-4 border-b border-white/10 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">
-                {isCreating ? '新增技能' : `编辑：${selected?.title ?? ''}`}
-              </h2>
+            <div className="p-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                {isMobile && (
+                  <button
+                    onClick={handleMobileBack}
+                    className="text-xs px-2 py-1.5 rounded-lg bg-white/10 text-white/60 hover:bg-white/15 transition"
+                  >
+                    &larr; 返回
+                  </button>
+                )}
+                <h2 className="text-sm font-semibold">
+                  {isCreating ? '新增技能' : `编辑：${selected?.title ?? ''}`}
+                </h2>
+              </div>
               <div className="flex items-center gap-2">
                 {msg && (
                   <span className={`text-xs ${msg.type === 'ok' ? 'text-green-400' : 'text-red-400'}`}>
@@ -326,7 +348,7 @@ export default function SkillsPage() {
             <div className="flex-1 overflow-y-auto p-4 space-y-5">
               {/* 基本信息 */}
               <Section title="基本信息">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="名称 *">
                     <input value={title} onChange={e => setTitle(e.target.value)}
                       className="field-input" placeholder="技能名称" />
@@ -367,7 +389,7 @@ export default function SkillsPage() {
                 {/* 角色 */}
                 <div className="mt-3">
                   <label className="text-xs text-white/50 mb-1 block">适用角色（空 = 全部）</label>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {ROLE_OPTIONS.map(r => (
                       <button key={r} onClick={() => toggleRole(r)}
                         className={`text-xs px-3 py-1 rounded-full border transition ${
@@ -381,7 +403,7 @@ export default function SkillsPage() {
                 </div>
 
                 {/* 开关 */}
-                <div className="mt-3 flex gap-4">
+                <div className="mt-3 flex flex-wrap gap-4">
                   <label className="flex items-center gap-1.5 text-xs text-white/60">
                     <input type="checkbox" checked={isEnabled} onChange={e => setIsEnabled(e.target.checked)} />
                     启用
@@ -395,7 +417,7 @@ export default function SkillsPage() {
 
               {/* 输入配置 */}
               <Section title="输入配置">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="上下文范围">
                     <select value={contextScope} onChange={e => setContextScope(e.target.value)} className="field-input">
                       {CONTEXT_OPTIONS.map(o => (
@@ -403,7 +425,7 @@ export default function SkillsPage() {
                       ))}
                     </select>
                   </Field>
-                  <div className="flex items-end gap-4 pb-1">
+                  <div className="flex flex-wrap items-end gap-4 pb-1">
                     <label className="flex items-center gap-1.5 text-xs text-white/60">
                       <input type="checkbox" checked={acceptsUserInput} onChange={e => setAcceptsUserInput(e.target.checked)} />
                       接受用户输入
@@ -434,7 +456,7 @@ export default function SkillsPage() {
 
               {/* 输出配置 */}
               <Section title="输出配置">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="输出模式">
                     <select value={outputMode} onChange={e => setOutputMode(e.target.value)} className="field-input">
                       {OUTPUT_MODES.map(o => (
@@ -454,6 +476,7 @@ export default function SkillsPage() {
           </>
         )}
       </GlassCard>
+      )}
 
       <style>{`
         .field-input {

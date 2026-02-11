@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { glassPopoverCompact } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Switch } from '@/components/design/Switch';
@@ -84,7 +85,7 @@ function HookUrlDisplay({ hookId, onRegenerate }: { hookId: string; onRegenerate
         <Link size={14} style={{ color: 'rgba(34,197,94,0.8)', flexShrink: 0 }} />
         <code className="flex-1 text-xs break-all" style={{ color: 'rgba(34,197,94,0.9)' }}>{url}</code>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => { navigator.clipboard.writeText(url); toast.success('已复制地址'); }}
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover:bg-white/8"
@@ -232,6 +233,7 @@ function ruleToEdit(rule: RuleListItem): EditState {
 }
 
 export default function AutomationRulesPage() {
+  const { isMobile } = useBreakpoint();
   const [rules, setRules] = useState<RuleListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [eventTypes, setEventTypes] = useState<EventTypeDef[]>([]);
@@ -425,10 +427,10 @@ export default function AutomationRulesPage() {
     <div className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden">
       {/* 主从面板 */}
       <GlassCard glow className="flex-1 min-h-0 overflow-hidden">
-        <div className="grid h-full" style={{ gridTemplateColumns: '280px minmax(0, 1fr)' }}>
+        <div className="grid h-full" style={{ gridTemplateColumns: isMobile ? '1fr' : '280px minmax(0, 1fr)', gridTemplateRows: isMobile ? 'auto minmax(0, 1fr)' : undefined }}>
 
           {/* ── 左侧：规则列表 ── */}
-          <div className="h-full min-h-0 flex flex-col" style={{ borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="min-h-0 flex flex-col" style={{ borderRight: isMobile ? 'none' : '1px solid rgba(255,255,255,0.06)', borderBottom: isMobile ? '1px solid rgba(255,255,255,0.06)' : 'none', maxHeight: isMobile ? '40vh' : undefined, height: isMobile ? 'auto' : '100%' }}>
             {/* 列表头 */}
             <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
               <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
@@ -656,7 +658,7 @@ export default function AutomationRulesPage() {
                         </div>
                       ))}
                     </div>
-                    <div className="flex gap-2 mt-3">
+                    <div className="flex flex-wrap gap-2 mt-3">
                       <Button variant="secondary" size="sm" onClick={() => addAction('webhook')}>
                         <ExternalLink size={12} /> 传出 Webhook
                       </Button>
@@ -668,7 +670,7 @@ export default function AutomationRulesPage() {
                 </div>
 
                 {/* 底部操作栏 */}
-                <div className="flex items-center gap-2 px-5 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="flex flex-wrap items-center gap-2 px-5 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                   <Button size="sm" onClick={handleSave} disabled={saving}>
                     {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                     {edit.id ? '保存' : '创建'}
@@ -693,7 +695,7 @@ export default function AutomationRulesPage() {
       {triggerRuleId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}
           onClick={(e) => { if (e.target === e.currentTarget) setTriggerRuleId(null); }}>
-          <div className="w-[400px] rounded-[16px] p-5 space-y-3" style={{
+          <div className="w-[400px] max-w-[calc(100vw-2rem)] rounded-[16px] p-5 space-y-3" style={{
             ...glassPopoverCompact,
             background: 'rgba(25,25,30,0.95)', border: '1px solid rgba(255,255,255,0.1)',
             boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
