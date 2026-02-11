@@ -1,78 +1,47 @@
-import { useEffect, useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { Image, FileText, Paperclip, FolderOpen, Loader2 } from 'lucide-react';
-import { listVisualAgentWorkspaces } from '@/services';
+import { getMobileAssets } from '@/services';
+import type { MobileAssetItem } from '@/services/contracts/mobile';
 
 /* ── Tab 定义 ── */
-type AssetTab = 'all' | 'images' | 'documents' | 'attachments';
+type AssetTab = 'all' | 'image' | 'document' | 'attachment';
 
 const TABS: { key: AssetTab; label: string; icon: typeof Image }[] = [
-  { key: 'all',         label: '全部',   icon: FolderOpen },
-  { key: 'images',      label: '图片',   icon: Image },
-  { key: 'documents',   label: '文档',   icon: FileText },
-  { key: 'attachments', label: '附件',   icon: Paperclip },
+  { key: 'all',        label: '全部', icon: FolderOpen },
+  { key: 'image',      label: '图片', icon: Image },
+  { key: 'document',   label: '文档', icon: FileText },
+  { key: 'attachment', label: '附件', icon: Paperclip },
 ];
 
-/* ── 统一资产条目 ── */
-interface AssetEntry {
-  id: string;
-  title: string;
-  subtitle?: string;
-  type: 'image' | 'document' | 'attachment';
-  thumbnail?: string;
-  updatedAt?: string;
-  navigateTo?: string;
-}
-
 /**
- * 移动端「资产」页 — 聚合用户产出物。
+ * 移动端「资产」页 — 聚合用户所有产出物，支持分类过滤。
  *
- * Phase 1: 从现有 API 拉取视觉创作工作区 (作为图片类)。
- * Phase 2: 接入文学创作、PRD 文档、附件上传等。
+ * 数据来自 GET /api/mobile/assets 聚合 API。
  */
 export default function MobileAssetsPage() {
-  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<AssetTab>('all');
   const [loading, setLoading] = useState(true);
-  const [assets, setAssets] = useState<AssetEntry[]>([]);
+  const [assets, setAssets] = useState<MobileAssetItem[]>([]);
+
+  const fetchAssets = useCallback(async (category?: AssetTab) => {
+    setLoading(true);
+    const res = await getMobileAssets({
+      category: category === 'all' ? undefined : category,
+      limit: 50,
+    });
+    if (res.success) {
+      setAssets(res.data.items ?? []);
+    }
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const entries: AssetEntry[] = [];
-
-      // 拉取视觉创作工作区 → 图片类资产
-      try {
-        const res = await listVisualAgentWorkspaces();
-        if (res.success && res.data?.items) {
-          for (const ws of res.data.items) {
-            entries.push({
-              id: `va-${ws.id}`,
-              title: ws.title || '未命名工作区',
-              subtitle: '视觉创作',
-              type: 'image',
-              thumbnail: ws.coverAssets?.[0]?.url,
-              updatedAt: ws.updatedAt,
-              navigateTo: `/visual-agent/${ws.id}`,
-            });
-          }
-        }
-      } catch { /* ignore */ }
-
-      // TODO Phase 2: 文学创作工作区 → document 类
-      // TODO Phase 2: PRD 附件 → attachment 类
-      // TODO Phase 2: 用户上传附件 → attachment 类
-
-      entries.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
-      setAssets(entries);
-      setLoading(false);
-    })();
-  }, []);
+    fetchAssets(activeTab);
+  }, [activeTab, fetchAssets]);
 
   const filtered = useMemo(() => {
     if (activeTab === 'all') return assets;
-    const typeMap: Record<AssetTab, string> = { all: '', images: 'image', documents: 'document', attachments: 'attachment' };
-    return assets.filter((a) => a.type === typeMap[activeTab]);
+    return assets.filter((a) => a.type === activeTab);
   }, [assets, activeTab]);
 
   return (
@@ -119,10 +88,9 @@ export default function MobileAssetsPage() {
         ) : (
           <div className="grid grid-cols-2 gap-3 pt-2">
             {filtered.map((asset) => (
-              <button
+              <div
                 key={asset.id}
-                onClick={() => asset.navigateTo && navigate(asset.navigateTo)}
-                className="flex flex-col rounded-xl overflow-hidden text-left transition-all active:scale-[0.97]"
+                className="flex flex-col rounded-xl overflow-hidden"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
               >
                 {/* 缩略图 */}
@@ -130,15 +98,19 @@ export default function MobileAssetsPage() {
                   className="w-full aspect-[4/3] flex items-center justify-center"
                   style={{ background: 'rgba(255,255,255,0.02)' }}
                 >
-                  {asset.thumbnail ? (
+                  {asset.thumbnailUrl ? (
                     <img
-                      src={asset.thumbnail}
+                      src={asset.thumbnailUrl}
                       alt=""
                       className="w-full h-full object-cover"
                       loading="lazy"
                     />
-                  ) : (
+                  ) : asset.type === 'image' ? (
                     <Image size={24} style={{ color: 'rgba(255,255,255,0.12)' }} />
+                  ) : asset.type === 'document' ? (
+                    <FileText size={24} style={{ color: 'rgba(255,255,255,0.12)' }} />
+                  ) : (
+                    <Paperclip size={24} style={{ color: 'rgba(255,255,255,0.12)' }} />
                   )}
                 </div>
                 {/* 信息 */}
@@ -146,13 +118,26 @@ export default function MobileAssetsPage() {
                   <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                     {asset.title}
                   </div>
-                  {asset.subtitle && (
-                    <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                      {asset.subtitle}
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <span
+                      className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium"
+                      style={{
+                        background: asset.type === 'image' ? 'rgba(251,146,60,0.15)' : asset.type === 'document' ? 'rgba(129,140,248,0.15)' : 'rgba(255,255,255,0.08)',
+                        color: asset.type === 'image' ? '#FB923C' : asset.type === 'document' ? '#818CF8' : 'var(--text-muted)',
+                      }}
+                    >
+                      {asset.type === 'image' ? '图片' : asset.type === 'document' ? '文档' : '附件'}
+                    </span>
+                    {asset.sizeBytes > 0 && (
+                      <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                        {asset.sizeBytes > 1024 * 1024
+                          ? `${(asset.sizeBytes / (1024 * 1024)).toFixed(1)}MB`
+                          : `${(asset.sizeBytes / 1024).toFixed(0)}KB`}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         )}

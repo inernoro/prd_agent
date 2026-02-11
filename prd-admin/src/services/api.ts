@@ -606,6 +606,13 @@ export const api = {
     },
     prompts: () => '/api/v1/prompts',
   },
+
+  // ─── 移动端仪表盘 ───
+  mobile: {
+    feed: () => '/api/mobile/feed',
+    stats: () => '/api/mobile/stats',
+    assets: () => '/api/mobile/assets',
+  },
 } as const;
 
 export default api;

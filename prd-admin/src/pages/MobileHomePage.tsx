@@ -7,12 +7,15 @@ import {
   Bug,
   Bell,
   ChevronRight,
+  Zap,
+  MessagesSquare,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
-import { useToolboxStore } from '@/stores/toolboxStore';
-import { getAdminNotifications } from '@/services';
+import { getAdminNotifications, getMobileFeed, getMobileStats } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
+import type { FeedItem, MobileStats } from '@/services/contracts/mobile';
 import { resolveAvatarUrl } from '@/lib/avatar';
 
 /* ── 快捷 Agent 入口 ── */
@@ -32,21 +35,51 @@ const QUICK_AGENTS: QuickAgent[] = [
   { key: 'defect',   label: '缺陷',   icon: Bug,           path: '/defect-agent',   color: '#F87171', bg: 'rgba(248,113,113,0.15)' },
 ];
 
+/* ── Feed 项类型图标 ── */
+const FEED_ICON: Record<string, { icon: LucideIcon; color: string }> = {
+  'prd-session':       { icon: MessageSquare, color: '#818CF8' },
+  'visual-workspace':  { icon: Image,         color: '#FB923C' },
+  'defect':            { icon: Bug,           color: '#F87171' },
+};
+
+/* ── 统计卡片 ── */
+interface StatCard {
+  key: string;
+  label: string;
+  icon: LucideIcon;
+  color: string;
+  getValue: (s: MobileStats) => number;
+  format?: (v: number) => string;
+}
+
+const STAT_CARDS: StatCard[] = [
+  { key: 'sessions', label: '会话', icon: MessagesSquare, color: '#818CF8', getValue: (s) => s.sessions },
+  { key: 'messages', label: '消息', icon: MessageSquare,  color: '#34D399', getValue: (s) => s.messages },
+  { key: 'images',   label: '生图', icon: Sparkles,       color: '#FB923C', getValue: (s) => s.imageGenerations },
+  { key: 'tokens',   label: 'Token', icon: Zap,            color: '#60A5FA', getValue: (s) => s.totalTokens, format: (v) => v >= 10000 ? `${(v / 1000).toFixed(1)}k` : String(v) },
+];
+
 /**
- * 移动端首页 — 最近使用 + 快捷入口 + 通知摘要。
+ * 移动端首页 — 快捷入口 + 统计 + Feed + 通知。
  */
 export default function MobileHomePage() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
-  const { items: toolboxItems, loadItems } = useToolboxStore();
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
-
-  useEffect(() => { loadItems(); }, [loadItems]);
+  const [feed, setFeed] = useState<FeedItem[]>([]);
+  const [stats, setStats] = useState<MobileStats | null>(null);
 
   useEffect(() => {
+    // 并行拉取 feed + stats + notifications
     (async () => {
-      const res = await getAdminNotifications();
-      if (res.success) setNotifications(res.data.items?.filter((n) => n.status === 'open') ?? []);
+      const [feedRes, statsRes, notifRes] = await Promise.all([
+        getMobileFeed({ limit: 10 }),
+        getMobileStats({ days: 7 }),
+        getAdminNotifications(),
+      ]);
+      if (feedRes.success) setFeed(feedRes.data.items ?? []);
+      if (statsRes.success) setStats(statsRes.data);
+      if (notifRes.success) setNotifications(notifRes.data.items?.filter((n) => n.status === 'open') ?? []);
     })();
   }, []);
 
@@ -88,7 +121,7 @@ export default function MobileHomePage() {
         </div>
 
         {/* ── 快捷 Agent 入口 ── */}
-        <div className="mb-6">
+        <div className="mb-5">
           <div className="text-xs font-medium mb-3" style={{ color: 'var(--text-muted)' }}>
             快捷入口
           </div>
@@ -117,9 +150,40 @@ export default function MobileHomePage() {
           </div>
         </div>
 
+        {/* ── 统计卡片 (近 7 日) ── */}
+        {stats && (
+          <div className="mb-5">
+            <div className="text-xs font-medium mb-3" style={{ color: 'var(--text-muted)' }}>
+              近 7 日统计
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              {STAT_CARDS.map((card) => {
+                const CardIcon = card.icon;
+                const val = card.getValue(stats);
+                const display = card.format ? card.format(val) : String(val);
+                return (
+                  <div
+                    key={card.key}
+                    className="flex flex-col items-center gap-1.5 py-3 rounded-xl"
+                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
+                  >
+                    <CardIcon size={16} style={{ color: card.color }} />
+                    <div className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
+                      {display}
+                    </div>
+                    <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      {card.label}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* ── 通知摘要 ── */}
         {notifications.length > 0 && (
-          <div className="mb-6">
+          <div className="mb-5">
             <div className="flex items-center justify-between mb-3">
               <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
                 通知
@@ -152,46 +216,41 @@ export default function MobileHomePage() {
           </div>
         )}
 
-        {/* ── 最近工具 (从 toolbox 取) ── */}
-        {toolboxItems.length > 0 && (
+        {/* ── Feed 流 (最近活动) ── */}
+        {feed.length > 0 && (
           <div>
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                全部工具
-              </div>
-              <button
-                onClick={() => navigate('/ai-toolbox')}
-                className="flex items-center text-[11px] active:opacity-70"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                查看全部 <ChevronRight size={14} />
-              </button>
+            <div className="text-xs font-medium mb-3" style={{ color: 'var(--text-muted)' }}>
+              最近活动
             </div>
             <div className="space-y-2">
-              {toolboxItems.slice(0, 5).map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => navigate(item.routePath || '/ai-toolbox')}
-                  className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all active:scale-[0.98]"
-                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
-                >
-                  <div
-                    className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-sm"
-                    style={{ background: 'rgba(255,255,255,0.06)' }}
+              {feed.map((item) => {
+                const meta = FEED_ICON[item.type] ?? { icon: MessageSquare, color: '#818CF8' };
+                const FeedIcon = meta.icon;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => navigate(item.navigateTo)}
+                    className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all active:scale-[0.98]"
+                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
                   >
-                    {item.icon ? '🔧' : '🤖'}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                      {item.name}
+                    <div
+                      className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                      style={{ background: `${meta.color}20` }}
+                    >
+                      <FeedIcon size={18} style={{ color: meta.color }} />
                     </div>
-                    <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                      {item.description}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                        {item.title}
+                      </div>
+                      <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                        {item.subtitle}
+                      </div>
                     </div>
-                  </div>
-                  <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} className="shrink-0" />
-                </button>
-              ))}
+                    <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} className="shrink-0" />
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
