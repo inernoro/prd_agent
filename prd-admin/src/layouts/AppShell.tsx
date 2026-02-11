@@ -36,8 +36,6 @@ import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useNavOrderStore } from '@/stores/navOrderStore';
-import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
-import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
@@ -95,8 +93,6 @@ export default function AppShell() {
   const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
   const { navOrder, loaded: navOrderLoaded, loadFromServer: loadNavOrder } = useNavOrderStore();
-  const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
-  const backdropRunning = backdropCount > 0;
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
@@ -421,49 +417,8 @@ export default function AppShell() {
           </div>
         )
       )}
-      {/* 全局背景：覆盖侧边栏 + 主区（像背景色一样） */}
-      <RecursiveGridBackdrop
-        className="absolute inset-0"
-        // 与 thirdparty/ref/递归网络.html 一致：rot += 0.02deg @60fps => 1.2deg/s
-        speedDegPerSec={1.2}
-        shouldRun={backdropRunning}
-        stopRequestId={pendingStopId}
-        stopBrakeMs={2000}
-        onFullyStopped={(id) => {
-          if (!id) return;
-          backdropMotionController.markStopped(id);
-        }}
-        persistKey="prd-recgrid-rot"
-        persistMode="readwrite"
-        // 统一使用较淡的线条颜色，避免状态切换时的突变闪烁
-        // 刹车时内部会按 brakeStrokeFadeMs 渐变到 strokeBraking
-        strokeRunning={'rgba(231, 206, 151, 0.65)'}
-        strokeBraking={'rgba(231, 206, 151, 0.25)'}
-        // 刹车阶段按 2s 渐隐，更符合"缓慢结束"的体感
-        brakeStrokeFadeMs={2000}
-        brakeDecelerationRate={0.965}
-        brakeMinSpeedDegPerSec={0.015}
-      />
-      {/* 隔离层：阻断 backdrop-filter 对 Canvas 动画的实时采样，避免模糊重算导致卡顿 */}
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background: 'rgba(5, 5, 7, 0.15)',
-          willChange: 'transform',
-          transform: 'translateZ(0)',
-        }}
-      />
-      {/* 运行态高亮：解析/任务运行时让背景整体更"亮"一点 */}
-      <div
-        className="pointer-events-none absolute inset-0 transition-opacity duration-[2000ms] ease-out"
-        style={{
-          opacity: backdropRunning ? 0.8 : 0,
-          background:
-            'radial-gradient(900px 520px at 50% 18%, rgba(214, 178, 106, 0.12) 0%, transparent 60%), radial-gradient(820px 520px at 22% 55%, rgba(124, 252, 0, 0.04) 0%, transparent 65%), radial-gradient(1200px 700px at 60% 70%, rgba(255, 255, 255, 0.03) 0%, transparent 70%)',
-        }}
-      />
-
-      <div className="relative z-10 h-full w-full">
+      {/* 主体容器（背景动画已临时移除以消除渲染卡顿） */}
+      <div className="relative h-full w-full">
         {/* 悬浮侧边栏：不贴左边，像“挂着” */}
         <aside
           className={cn(
@@ -895,17 +850,8 @@ export default function AppShell() {
 
         <main
           className="relative h-full w-full overflow-auto flex flex-col transition-[padding-left] duration-220 ease-out"
-          // 让递归线条背景可见；前景可读性由 Card 等“实底组件”承担
-          style={{ background: 'transparent', paddingLeft: mainPadLeft }}
+          style={{ background: 'var(--bg-base)', paddingLeft: mainPadLeft }}
         >
-          {/* 主内容区背景：满屏暗角 + 轻微渐变（不随 max-width 截断） */}
-          <div
-            className="pointer-events-none absolute inset-0"
-            style={{
-              background:
-                'radial-gradient(900px 520px at 50% 18%, rgba(214, 178, 106, 0.08) 0%, transparent 60%), radial-gradient(820px 520px at 22% 55%, rgba(124, 252, 0, 0.035) 0%, transparent 65%), radial-gradient(1200px 700px at 60% 70%, rgba(255, 255, 255, 0.025) 0%, transparent 70%)',
-            }}
-          />
           <div
             className={cn(
               'relative w-full flex-1 min-h-0 flex flex-col',

@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
+import type { TabBarItem } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
-import { GripVertical, Settings, RefreshCw, RotateCcw } from 'lucide-react';
+import { GripVertical, Settings, RefreshCw, RotateCcw, Image, UserCog, Database } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { ThemeSkinEditor } from '@/pages/settings/ThemeSkinEditor';
+import AssetsManagePage from '@/pages/AssetsManagePage';
+import AuthzPage from '@/pages/AuthzPage';
+import DataManagePage from '@/pages/DataManagePage';
 
 interface NavItem {
   key: string;
@@ -24,7 +29,7 @@ function getIcon(name: string, size = 16) {
   return <LucideIcons.Circle size={size} />;
 }
 
-export default function SettingsPage() {
+function GeneralSettings() {
   const { navOrder, loaded, saving, loadFromServer, setNavOrder, reset } = useNavOrderStore();
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
 
@@ -104,23 +109,17 @@ export default function SettingsPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden overflow-y-auto">
-      {/* 页面头部 */}
-      <TabBar
-        title="系统设置"
-        icon={<Settings size={16} />}
-        actions={
-          <>
-            <Button variant="secondary" size="sm" onClick={() => void loadFromServer()} disabled={saving}>
-              <RefreshCw size={14} className={saving ? 'animate-spin' : ''} />
-              刷新
-            </Button>
-            <Button variant="secondary" size="sm" onClick={handleReset} disabled={saving}>
-              <RotateCcw size={14} />
-              重置
-            </Button>
-          </>
-        }
-      />
+      {/* 通用设置操作按钮 */}
+      <div className="flex items-center gap-2 shrink-0">
+        <Button variant="secondary" size="sm" onClick={() => void loadFromServer()} disabled={saving}>
+          <RefreshCw size={14} className={saving ? 'animate-spin' : ''} />
+          刷新
+        </Button>
+        <Button variant="secondary" size="sm" onClick={handleReset} disabled={saving}>
+          <RotateCcw size={14} />
+          重置
+        </Button>
+      </div>
 
       {/* 左右分栏布局：左侧 1/4 导航顺序，右侧 3/4 皮肤编辑 */}
       <div className="flex-1 min-h-0 grid grid-cols-4 gap-5">
@@ -243,6 +242,57 @@ export default function SettingsPage() {
         <div className="col-span-3 min-h-0 overflow-y-auto">
           <ThemeSkinEditor />
         </div>
+      </div>
+    </div>
+  );
+}
+
+export default function SettingsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const perms = useAuthStore((s) => s.permissions);
+  const isRoot = useAuthStore((s) => s.isRoot);
+
+  // 根据权限构建可见 tab 列表
+  const tabs = useMemo(() => {
+    const list: TabBarItem[] = [
+      { key: 'general', label: '通用设置', icon: <Settings size={14} /> },
+    ];
+    const hasPerm = (p: string) => isRoot || perms.includes(p) || perms.includes('super');
+    if (hasPerm('assets.read')) list.push({ key: 'assets', label: '资源管理', icon: <Image size={14} /> });
+    if (hasPerm('authz.manage')) list.push({ key: 'authz', label: '权限管理', icon: <UserCog size={14} /> });
+    if (hasPerm('data.read')) list.push({ key: 'data', label: '数据管理', icon: <Database size={14} /> });
+    return list;
+  }, [perms, isRoot]);
+
+  const tabFromUrl = searchParams.get('tab') || 'general';
+  const [activeTab, setActiveTab] = useState(tabFromUrl);
+
+  // 同步 URL 参数
+  useEffect(() => {
+    const currentTab = searchParams.get('tab');
+    if (currentTab && currentTab !== activeTab) {
+      setActiveTab(currentTab);
+    }
+  }, [searchParams, activeTab]);
+
+  const handleTabChange = (key: string) => {
+    setActiveTab(key);
+    setSearchParams({ tab: key });
+  };
+
+  return (
+    <div className="h-full min-h-0 flex flex-col gap-5">
+      <TabBar
+        items={tabs}
+        activeKey={activeTab}
+        onChange={handleTabChange}
+      />
+
+      <div className="flex-1 min-h-0">
+        {activeTab === 'general' && <GeneralSettings />}
+        {activeTab === 'assets' && <AssetsManagePage />}
+        {activeTab === 'authz' && <AuthzPage />}
+        {activeTab === 'data' && <DataManagePage />}
       </div>
     </div>
   );
