@@ -8,6 +8,7 @@ import {
 import { TabBar } from '@/components/design/TabBar';
 import { GlassCard } from '@/components/design/GlassCard';
 import { KpiCard } from '@/components/design/KpiCard';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { EChart } from '@/components/charts/EChart';
 import {
   getExecutiveOverview,
@@ -745,11 +746,11 @@ function IntegrationsTab() {
 // ─── Main Page ──────────────────────────────────────────────────────
 
 const TABS = [
-  { key: 'overview', label: '全局概览', icon: <TrendingUp size={14} /> },
-  { key: 'team', label: '团队洞察', icon: <Users size={14} /> },
-  { key: 'agents', label: 'Agent 使用', icon: <Bot size={14} /> },
-  { key: 'cost', label: '成本中心', icon: <DollarSign size={14} /> },
-  { key: 'integrations', label: '外部协作', icon: <Link2 size={14} /> },
+  { key: 'overview', label: '全局概览', mobileLabel: '全局', icon: <TrendingUp size={14} /> },
+  { key: 'team', label: '团队洞察', mobileLabel: '团队', icon: <Users size={14} /> },
+  { key: 'agents', label: 'Agent 使用', mobileLabel: 'Agent', icon: <Bot size={14} /> },
+  { key: 'cost', label: '成本中心', mobileLabel: '成本', icon: <DollarSign size={14} /> },
+  { key: 'integrations', label: '外部协作', mobileLabel: '协作', icon: <Link2 size={14} /> },
 ];
 
 const DAYS_OPTIONS = [
@@ -759,6 +760,7 @@ const DAYS_OPTIONS = [
 ];
 
 export default function ExecutiveDashboardPage() {
+  const { isMobile } = useBreakpoint();
   const [activeTab, setActiveTab] = useState('overview');
   const [days, setDays] = useState(7);
   const [loading, setLoading] = useState(true);
@@ -800,12 +802,12 @@ export default function ExecutiveDashboardPage() {
   return (
     <div className="space-y-6">
       <TabBar
-        items={TABS}
+        items={isMobile ? TABS.map(t => ({ ...t, label: t.mobileLabel })) : TABS}
         activeKey={activeTab}
         onChange={setActiveTab}
         icon={<Crown size={16} />}
         variant="gold"
-        actions={
+        actions={isMobile ? undefined : (
           <div className="flex items-center gap-2">
             <select
               value={days}
@@ -825,7 +827,7 @@ export default function ExecutiveDashboardPage() {
               {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             </button>
           </div>
-        }
+        )}
       />
 
       {activeTab === 'overview' && <OverviewTab overview={overview} trends={trends} agents={agents} loading={loading} />}
