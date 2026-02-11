@@ -44,7 +44,7 @@ export const DEFAULT_THEME_CONFIG: ThemeConfig = {
   opacity: 'default',
   enableGlow: true,
   sidebarGlass: 'always',
-  performanceMode: 'auto',
+  performanceMode: 'performance',
 };
 
 /**

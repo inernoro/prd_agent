@@ -31,6 +31,7 @@ import {
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
+import { glassPanel, glassSidebar } from '@/lib/glassStyles';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useLayoutStore } from '@/stores/layoutStore';
@@ -334,7 +335,7 @@ export default function AppShell() {
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
               border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
               boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-              backdropFilter: 'blur(18px)',
+              backdropFilter: 'blur(12px)',
             }}
             onClick={() => setToastCollapsed(false)}
             onMouseEnter={() => setToastHovering(true)}
@@ -358,7 +359,7 @@ export default function AppShell() {
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
               border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
               boxShadow: '0 12px 30px rgba(0,0,0,0.45)',
-              backdropFilter: 'blur(18px)',
+              backdropFilter: 'blur(12px)',
             }}
             onMouseEnter={() => setToastHovering(true)}
             onMouseLeave={() => setToastHovering(false)}
@@ -482,19 +483,11 @@ export default function AppShell() {
             // 强制创建持久的 GPU 合成层，避免状态变化时频繁创建/销毁合成层导致闪烁
             transform: 'translateZ(0)',
             willChange: 'transform',
-            ...(useSidebarGlass ? {
-              background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.06)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.02)) 100%)',
-              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
-              backdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
-              WebkitBackdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
-              boxShadow: '0 12px 48px -8px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.15) inset, 0 2px 0 0 rgba(255, 255, 255, 0.2) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.15) inset',
-            } : {
+            ...(useSidebarGlass ? glassSidebar : {
               backgroundColor: 'var(--bg-elevated, #121216)',
               backgroundImage: 'linear-gradient(135deg, rgba(20,20,24,1) 0%, rgba(14,14,17,1) 100%)',
               border: '1px solid var(--border-faint, rgba(255, 255, 255, 0.05))',
               boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
             }),
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
@@ -569,13 +562,7 @@ export default function AppShell() {
             <DropdownMenu.Portal>
               <DropdownMenu.Content
                 className="min-w-[220px] rounded-[16px] p-2 z-50"
-                style={{
-                  background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                  border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                  boxShadow: '0 18px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                  backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                  WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                }}
+                style={glassPanel}
                 sideOffset={8}
                 side="bottom"
                 align="start"

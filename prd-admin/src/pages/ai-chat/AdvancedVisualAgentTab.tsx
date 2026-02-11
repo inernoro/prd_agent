@@ -1,5 +1,6 @@
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
+import { glassPanel } from '@/lib/glassStyles';
 import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
@@ -6172,11 +6173,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           className="z-50 rounded-[16px] p-3"
                           style={{
                             width: 280,
-                            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                            ...glassPanel,
                           }}
                           onPointerDownOutside={(e) => e.preventDefault()}
                           onInteractOutside={(e) => e.preventDefault()}
@@ -6304,11 +6301,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           className="z-50 rounded-[18px] p-3"
                           style={{
                             minWidth: 320,
-                            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                            ...glassPanel,
                           }}
                         >
                           <div className="px-2 py-1 text-[11px] font-semibold" style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}>
@@ -7533,11 +7526,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         style={{
                           width: 360,
                           maxWidth: 'min(92vw, 360px)',
-                          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          ...glassPanel,
                         }}
                       >
                         <div className="flex items-center justify-between gap-3">

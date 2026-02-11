@@ -52,7 +52,7 @@ public class ThemeConfig
     public string SidebarGlass { get; set; } = "always";
 
     /// <summary>性能模式：auto | quality | performance</summary>
-    public string PerformanceMode { get; set; } = "auto";
+    public string PerformanceMode { get; set; } = "performance";
 }
 
 /// <summary>

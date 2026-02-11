@@ -4,6 +4,7 @@ import JSZip from 'jszip';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 import { GlassCard } from '@/components/design/GlassCard';
+import { glassPanel } from '@/lib/glassStyles';
 import { GlassSwitch } from '@/components/design/GlassSwitch';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -2869,11 +2870,7 @@ export default function LlmLabTab() {
                             className="rounded-[12px] p-1 min-w-[200px]"
                             style={{
                               zIndex: 90,
-                              background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                              boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                              backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                              WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                              ...glassPanel,
                             }}
                           >
                             {ASPECT_OPTIONS.map((opt) => {
