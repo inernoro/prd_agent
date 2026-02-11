@@ -59,7 +59,7 @@ interface FixedTab {
 }
 
 const FIXED_TABS: FixedTab[] = [
-  { key: 'home',    label: '首页', icon: Home,       path: '/',           matchPrefix: '/', exactMatch: true, alsoMatch: ['/executive'] },
+  { key: 'home',    label: '首页', icon: Home,       path: '/',           matchPrefix: '/', exactMatch: true },
   { key: 'explore', label: '浏览', icon: Compass,    path: '/ai-toolbox', matchPrefix: '/ai-toolbox' },
   { key: 'create',  label: '',     icon: Plus,        path: '',            isCenter: true },
   { key: 'assets',  label: '资产', icon: FolderOpen,  path: '/my-assets',  matchPrefix: '/my-assets' },

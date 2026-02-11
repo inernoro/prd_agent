@@ -332,14 +332,14 @@ export function DefectSubmitPanel() {
           )}
         </div>
 
-        {/* Content Area - 参考视觉创作的输入框样式 */}
+        {/* Content Area */}
         <div
           className="flex-1 min-h-0 px-5 pb-4 flex flex-col"
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
           <div
-            className="flex-1 min-h-[280px] flex flex-col rounded-xl overflow-hidden transition-all duration-200"
+            className="flex-1 min-h-[180px] flex flex-col rounded-xl overflow-hidden transition-all duration-200"
             style={{
               background: 'rgba(0,0,0,0.14)',
               border: focused
@@ -419,7 +419,7 @@ export function DefectSubmitPanel() {
 
             {/* Input Actions */}
             <div
-              className="px-4 py-3 border-t flex items-center gap-2"
+              className="px-4 py-2.5 border-t flex items-center gap-2 flex-wrap"
               style={{ borderColor: 'var(--border-subtle)' }}
             >
               <input
@@ -429,15 +429,16 @@ export function DefectSubmitPanel() {
                 className="hidden"
                 onChange={handleFileSelect}
               />
-              <button
+              <Button
+                variant="ghost"
+                size="xs"
                 onClick={() => fileInputRef.current?.click()}
-                className="p-2 rounded-lg hover:bg-white/10 transition-colors"
                 title="添加附件"
               >
-                <Paperclip size={16} style={{ color: 'var(--text-muted)' }} />
-              </button>
+                <Paperclip size={14} />
+              </Button>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                   严重性
                 </span>
@@ -449,10 +450,10 @@ export function DefectSubmitPanel() {
                         key={opt.value}
                         type="button"
                         onClick={() => setSeverity(opt.value)}
-                        className="px-2 py-1 rounded-md text-[11px] transition-colors"
+                        className="px-2 py-1 rounded-[7px] text-[11px] font-medium transition-colors"
                         style={{
-                          background: active ? 'rgba(214, 178, 106, 0.2)' : 'var(--bg-input-hover)',
-                          border: active ? '1px solid rgba(214, 178, 106, 0.4)' : '1px solid var(--border-subtle)',
+                          background: active ? 'rgba(214, 178, 106, 0.18)' : 'var(--bg-input-hover)',
+                          border: active ? '1px solid rgba(214, 178, 106, 0.35)' : '1px solid var(--border-subtle)',
                           color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                         }}
                       >
@@ -465,18 +466,11 @@ export function DefectSubmitPanel() {
 
               <div className="flex-1" />
 
-              {/* AI Polish Button */}
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={handlePolish}
                 disabled={polishing || !content.trim()}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all disabled:opacity-50"
-                style={{
-                  background: polishing
-                    ? 'rgba(168,85,247,0.2)'
-                    : 'linear-gradient(135deg, rgba(168,85,247,0.2), rgba(236,72,153,0.2))',
-                  border: '1px solid rgba(168,85,247,0.3)',
-                  color: 'rgba(216,180,254,0.9)',
-                }}
                 title="AI 润色：优化描述内容，根据模板补充信息"
               >
                 {polishing ? (
@@ -485,7 +479,7 @@ export function DefectSubmitPanel() {
                   <Sparkles size={14} />
                 )}
                 {polishing ? 'AI 润色中...' : 'AI 润色'}
-              </button>
+              </Button>
 
               <Button
                 variant="primary"

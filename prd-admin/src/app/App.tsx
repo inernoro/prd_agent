@@ -94,25 +94,18 @@ function RequirePermission({ perm, children }: { perm: string; children: React.R
   return <>{children}</>;
 }
 
-/** 首页路由：移动端渲染 MobileHomePage，桌面管理员渲染总裁面板，其余渲染 Agent 选择页。
- *  全部 inline 渲染，不使用 Navigate 重定向，避免 breakpoint 抖动引发重定向循环。 */
+/** 首页路由：移动端渲染 MobileHomePage，桌面端渲染 Agent 选择页。
+ *  首页与总裁面板是独立路由，互不干扰。 */
 function IndexPage() {
-  const perms = useAuthStore((s) => s.permissions);
   const loaded = useAuthStore((s) => s.permissionsLoaded);
   const { isMobile } = useBreakpoint();
   if (!loaded) return null;
   if (isMobile) return <MobileHomePage />;
-  if (perms.includes('executive.read') || perms.includes('super')) {
-    return <ExecutiveDashboardPage />;
-  }
   return <AgentLauncherPage />;
 }
 
-/** /executive 路由：移动端 inline 渲染 MobileHomePage，桌面端渲染总裁面板。
- *  不使用 Navigate 重定向，避免闪烁。 */
+/** /executive 路由：独立的总裁面板，不与首页绑定。 */
 function ExecutivePage() {
-  const { isMobile } = useBreakpoint();
-  if (isMobile) return <MobileHomePage />;
   return <ExecutiveDashboardPage />;
 }
 
