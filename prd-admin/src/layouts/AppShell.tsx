@@ -27,6 +27,7 @@ import {
   Crown,
   Sparkles,
   Menu,
+  ChevronDown,
   type LucideIcon,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -108,6 +109,7 @@ export default function AppShell() {
   const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(new Set());
   const [toastCollapsed, setToastCollapsed] = useState(false);
   const [toastHovering, setToastHovering] = useState(false);
+  const [mobileMoreExpanded, setMobileMoreExpanded] = useState(false);
 
   // 导航滚动状态：用于显示渐变阴影指示器
   const navRef = useRef<HTMLElement>(null);
@@ -463,9 +465,12 @@ export default function AppShell() {
             </div>
           </div>
 
-          {/* 导航列表 */}
-          <nav className="flex flex-col gap-0.5 px-2 mt-2">
-            {visibleItems.map((it) => {
+          {/* 导航列表 — 核心项 + 折叠更多 */}
+          {(() => {
+            const PRIMARY_COUNT = 5;
+            const primaryItems = visibleItems.slice(0, PRIMARY_COUNT);
+            const secondaryItems = visibleItems.slice(PRIMARY_COUNT);
+            const renderItem = (it: typeof visibleItems[number]) => {
               const active = it.key === activeKey;
               return (
                 <button
@@ -485,8 +490,34 @@ export default function AppShell() {
                   <span className="text-sm">{it.label}</span>
                 </button>
               );
-            })}
-          </nav>
+            };
+            return (
+              <nav className="flex flex-col gap-0.5 px-2 mt-2">
+                {primaryItems.map(renderItem)}
+
+                {secondaryItems.length > 0 && (
+                  <>
+                    <div className="h-px mx-3 my-1.5" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                    <button
+                      type="button"
+                      onClick={() => setMobileMoreExpanded((v) => !v)}
+                      className="flex items-center gap-3 px-3 py-2 rounded-xl min-h-[40px]"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      <ChevronDown
+                        size={16}
+                        className="transition-transform duration-200"
+                        style={{ transform: mobileMoreExpanded ? 'rotate(180deg)' : undefined }}
+                      />
+                      <span className="text-xs">更多</span>
+                      <span className="text-[10px] ml-auto opacity-40">{secondaryItems.length}</span>
+                    </button>
+                    {mobileMoreExpanded && secondaryItems.map(renderItem)}
+                  </>
+                )}
+              </nav>
+            );
+          })()}
 
           {/* 底部操作 */}
           <div className="mt-auto px-4 py-4 flex flex-col gap-2">
