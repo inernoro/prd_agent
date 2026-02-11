@@ -1239,4 +1239,10 @@ html[data-perf-mode="performance"] [style*="will-change"] {
     opacity: 1 !important;
     pointer-events: auto !important;
   }
+  /* 触控设备上确保卡片内操作按钮有足够的可点击面积 (≥36px) */
+  .mobile-show-actions button,
+  .mobile-show-actions [role="button"] {
+    min-height: 36px;
+    min-width: 36px;
+  }
 }
