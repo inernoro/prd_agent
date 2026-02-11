@@ -364,8 +364,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 记录思考过程（如果有）
             if (thinkingBuilder.Length > 0)
             {
+                var thinkingAction = request.IncludeThinking ? "已传递给调用方" : "已过滤";
                 _logger.LogDebug(
-                    "[LlmGateway] 模型思考过程已过滤（{ThinkingChars} 字符）。AppCallerCode: {AppCallerCode}, Model: {Model}",
+                    "[LlmGateway] 模型思考过程{ThinkingAction}（{ThinkingChars} 字符）。AppCallerCode: {AppCallerCode}, Model: {Model}",
+                    thinkingAction,
                     thinkingBuilder.Length,
                     request.AppCallerCode,
                     resolution?.ActualModel);
