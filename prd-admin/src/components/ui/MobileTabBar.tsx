@@ -54,11 +54,12 @@ interface FixedTab {
   path: string;
   matchPrefix?: string;
   exactMatch?: boolean;
+  alsoMatch?: string[];   // 额外精确匹配路径（如 /executive 也算首页）
   isCenter?: boolean;
 }
 
 const FIXED_TABS: FixedTab[] = [
-  { key: 'home',    label: '首页', icon: Home,       path: '/',           matchPrefix: '/', exactMatch: true },
+  { key: 'home',    label: '首页', icon: Home,       path: '/',           matchPrefix: '/', exactMatch: true, alsoMatch: ['/executive'] },
   { key: 'explore', label: '浏览', icon: Compass,    path: '/ai-toolbox', matchPrefix: '/ai-toolbox' },
   { key: 'create',  label: '',     icon: Plus,        path: '',            isCenter: true },
   { key: 'assets',  label: '资产', icon: FolderOpen,  path: '/my-assets',  matchPrefix: '/my-assets' },
@@ -256,7 +257,7 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
             const prefix = tab.matchPrefix ?? tab.path;
             const active = !tab.isCenter && (
               tab.exactMatch
-                ? location.pathname === prefix
+                ? location.pathname === prefix || (tab.alsoMatch?.includes(location.pathname) ?? false)
                 : location.pathname === prefix || location.pathname.startsWith(prefix + '/')
             );
             const Icon = tab.icon;
