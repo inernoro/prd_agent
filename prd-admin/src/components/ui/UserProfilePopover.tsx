@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import * as Popover from '@radix-ui/react-popover';
+import { glassPanel } from '@/lib/glassStyles';
 import { getUserProfile, getUserAuthz, getSystemRoles } from '@/services';
 import type { UserProfileResponse } from '@/services/contracts/adminUsers';
 import type { AdminUserAuthzSnapshot, SystemRoleDto } from '@/services/contracts/authz';
@@ -288,13 +289,7 @@ export function UserProfilePopover({
           align="start"
           sideOffset={8}
           className="rounded-[12px] p-3 w-[260px] z-[100] outline-none"
-          style={{
-            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-          }}
+          style={glassPanel}
           onMouseEnter={handleContentMouseEnter}
           onMouseLeave={handleContentMouseLeave}
         >

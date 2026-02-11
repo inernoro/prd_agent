@@ -16,52 +16,38 @@ public static class AdminMenuCatalog
     /// </summary>
     public static readonly IReadOnlyList<AdminMenuDef> All = new List<AdminMenuDef>
     {
-        // 总裁面板
-        new("executive", "/executive", "总裁面板", "团队工作与 AI 使用全景", "Crown", 5),
+        // 总裁面板（替代原仪表盘）
+        new("executive", "/executive", "总裁面板", null, "Crown", 5),
 
-        // 仪表盘：所有登录用户可见（只需 admin.access）
-        new("dashboard", "/", "仪表盘", "LLM 可观测性与数据概览", "LayoutDashboard", 10),
+        // 用户管理
+        new("users", "/users", "用户管理", null, "Users", 20),
 
-        // 用户与群组管理
-        new("users", "/users", "用户管理", "账号、角色与权限管理", "Users", 20),
-        new("groups", "/groups", "群组管理", "协作群组与成员管理", "Users2", 30),
+        // PRD 协作（群组 + PRD Agent 对话，双页签）
+        new("prd-agent", "/prd-agent", "PRD 协作", null, "MessagesSquare", 30),
 
         // 模型管理
-        new("mds", "/mds", "模型管理", "平台、模型与配置管理", "Cpu", 40),
+        new("mds", "/mds", "模型管理", null, "Cpu", 40),
 
         // 提示词管理
-        new("prompts", "/prompts", "提示词管理", "PRD 问答提示词配置", "FileText", 50),
+        new("prompts", "/prompts", "提示词管理", null, "FileText", 50),
 
-        // Agent 体验类菜单
-        new("prd-agent", "/prd-agent", "PRD Agent", "PRD 智能解读与问答", "MessagesSquare", 60),
-        new("defect-agent", "/defect-agent", "缺陷管理 Agent", "缺陷提交与跟踪", "Bug", 65),
-        new("visual-agent", "/visual-agent", "视觉创作 Agent", "高级视觉创作工作区", "Wand2", 70),
-        new("literary-agent", "/literary-agent", "文学创作 Agent", "文章配图智能生成", "PenLine", 80),
-        new("ai-toolbox", "/ai-toolbox", "AI 百宝箱", "多 Agent 协作智能助手", "Sparkles", 85),
-
-        // 资源管理
-        new("assets", "/assets", "资源管理", "Desktop 资源与品牌配置", "Image", 90),
+        // AI 百宝箱（Agent 统一入口）
+        new("ai-toolbox", "/ai-toolbox", "AI 百宝箱", null, "Sparkles", 60),
 
         // 日志
-        new("logs", "/logs", "请求日志", "LLM 请求与系统日志", "ScrollText", 100),
+        new("logs", "/logs", "请求日志", null, "ScrollText", 100),
 
-        // 数据管理
-        new("data", "/data", "数据管理", "数据概览、清理与迁移", "Database", 110),
-
-        // 系统设置
-        new("settings", "/settings", "系统设置", "系统初始化与配置", "Settings", 115),
+        // 系统设置（含资源管理、权限管理、数据管理页签，仅管理员可见）
+        new("settings", "/settings", "系统设置", null, "Settings", 115),
 
         // 开放平台
-        new("open-platform", "/open-platform", "开放平台", "API 应用与调用日志", "Plug", 120),
+        new("open-platform", "/open-platform", "开放平台", null, "Plug", 120),
 
         // 自动化
-        new("automations", "/automations", "自动化", "事件驱动的自动化规则引擎", "Zap", 125),
-
-        // 权限管理
-        new("authz", "/authz", "权限管理", "系统角色与用户权限", "UserCog", 130),
+        new("automations", "/automations", "自动化", null, "Zap", 125),
 
         // 实验室
-        new("lab", "/lab", "实验室", "模型测试与实验功能", "FlaskConical", 140),
+        new("lab", "/lab", "实验室", null, "FlaskConical", 140),
     };
 
     /// <summary>
@@ -81,8 +67,8 @@ public static class AdminMenuCatalog
 
         foreach (var menu in All)
         {
-            // 系统设置：只需要基础访问权限
-            if (menu.AppKey is "settings")
+            // AI 百宝箱 / 系统设置：只需要基础访问权限
+            if (menu.AppKey is "ai-toolbox" or "settings")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
                 {
@@ -96,22 +82,6 @@ public static class AdminMenuCatalog
             {
                 if (permSet.Contains(AdminPermissionCatalog.ExecutiveRead) ||
                     permSet.Contains(AdminPermissionCatalog.Super))
-                {
-                    result.Add(menu);
-                }
-                continue;
-            }
-
-            // 仪表盘：需要 Access + 至少一个数据查看权限（Agent 体验者看不到仪表盘）
-            if (menu.AppKey is "dashboard")
-            {
-                if (permSet.Contains(AdminPermissionCatalog.Access) &&
-                    (permSet.Contains(AdminPermissionCatalog.ModelsRead) ||
-                     permSet.Contains(AdminPermissionCatalog.LogsRead) ||
-                     permSet.Contains(AdminPermissionCatalog.DataRead) ||
-                     permSet.Contains(AdminPermissionCatalog.UsersRead) ||
-                     permSet.Contains(AdminPermissionCatalog.GroupsRead) ||
-                     permSet.Contains(AdminPermissionCatalog.Super)))
                 {
                     result.Add(menu);
                 }

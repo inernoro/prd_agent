@@ -1,5 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { Paintbrush, Eraser, RotateCcw, Check, X, Minus, Plus } from 'lucide-react';
+import { glassOverlay } from '@/lib/glassStyles';
 
 export interface MaskPaintCanvasProps {
   /** 原图 src（用作底图显示） */
@@ -224,7 +225,7 @@ export function MaskPaintCanvas({
     <div
       ref={containerRef}
       className="fixed inset-0 z-[9999] flex flex-col items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)' }}
+      style={glassOverlay}
     >
       {/* 工具栏 */}
       <div

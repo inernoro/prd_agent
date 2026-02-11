@@ -8,6 +8,7 @@ export type ThemeConfigResponse = {
   opacity?: string;
   enableGlow?: boolean;
   sidebarGlass?: string;
+  performanceMode?: string;
 };
 
 /** 视觉代理生成类型 */

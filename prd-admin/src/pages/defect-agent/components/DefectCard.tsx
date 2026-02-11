@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { glassBadge } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { useDefectStore } from '@/stores/defectStore';
@@ -283,9 +284,9 @@ export function DefectCard({ defect }: DefectCardProps) {
                 <div
                   className="flex flex-col items-center px-4 py-2.5 rounded-xl"
                   style={{
+                    ...glassBadge,
                     border: '3px solid rgba(120, 220, 180, 0.7)',
                     background: 'rgba(30, 40, 35, 0.75)',
-                    backdropFilter: 'blur(8px)',
                     boxShadow: '0 6px 20px rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(120, 220, 180, 0.15)',
                   }}
                 >
@@ -326,9 +327,9 @@ export function DefectCard({ defect }: DefectCardProps) {
                 <div
                   className="flex flex-col items-center px-4 py-2.5 rounded-xl"
                   style={{
+                    ...glassBadge,
                     border: '3px solid rgba(255, 120, 120, 0.7)',
                     background: 'rgba(45, 30, 30, 0.75)',
-                    backdropFilter: 'blur(8px)',
                     boxShadow: '0 6px 20px rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(255, 120, 120, 0.15)',
                   }}
                 >

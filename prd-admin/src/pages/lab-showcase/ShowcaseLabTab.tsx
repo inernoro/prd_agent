@@ -1,5 +1,6 @@
 import { useState, useMemo, ReactNode, Suspense, useEffect, useRef } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
+import { glassOverlay, glassPanel } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import {
   Maximize2,
@@ -478,9 +479,8 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       style={{
+        ...glassOverlay,
         background: 'rgba(0, 0, 0, 0.6)',
-        backdropFilter: 'blur(12px) saturate(150%)',
-        WebkitBackdropFilter: 'blur(12px) saturate(150%)',
       }}
       onClick={onClose}
     >
@@ -495,12 +495,12 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
         <div
           className="flex items-center justify-between px-4 py-3 rounded-t-xl"
           style={{
+            ...glassPanel,
             background: `
               radial-gradient(ellipse 80% 50% at 50% 0%, rgba(255, 255, 255, 0.15) 0%, transparent 50%),
               linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%)
             `,
-            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+            border: undefined,
             borderBottom: '1px solid rgba(255, 255, 255, 0.15)',
             boxShadow: '0 1px 0 0 rgba(255, 255, 255, 0.1) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.1) inset',
           }}
@@ -576,9 +576,9 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
           <div
             className="relative flex items-center justify-center overflow-hidden rounded-bl-xl"
             style={{
+              ...glassPanel,
               background: 'linear-gradient(180deg, rgba(30, 30, 40, 0.5) 0%, rgba(20, 20, 30, 0.6) 100%)',
-              backdropFilter: 'blur(40px) saturate(150%) brightness(0.95)',
-              WebkitBackdropFilter: 'blur(40px) saturate(150%) brightness(0.95)',
+              border: undefined,
               width: '70vw',
               height: '70vh',
               minWidth: 600,
@@ -614,12 +614,12 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
             <div
               className="w-80 overflow-y-auto rounded-br-xl"
               style={{
+                ...glassPanel,
                 background: `
                   radial-gradient(ellipse 100% 30% at 0% 0%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
                   linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.03) 100%)
                 `,
-                backdropFilter: 'blur(40px) saturate(180%) brightness(1.05)',
-                WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.05)',
+                border: undefined,
                 borderLeft: '1px solid rgba(255, 255, 255, 0.12)',
                 boxShadow: '1px 0 0 0 rgba(255, 255, 255, 0.05) inset',
               }}

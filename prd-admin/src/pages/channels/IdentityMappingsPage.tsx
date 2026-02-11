@@ -31,6 +31,7 @@ import type {
   UpdateIdentityMappingRequest,
 } from '@/services/contracts/channels';
 import { ChannelTypes, ChannelTypeDisplayNames } from '@/services/contracts/channels';
+import { glassPanel } from '@/lib/glassStyles';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 function fmtDate(v?: string | null) {
@@ -250,13 +251,7 @@ export default function IdentityMappingsPage() {
                             sideOffset={8}
                             className="z-50 rounded-[14px] p-2 min-w-[160px]"
                             style={{
-                              background:
-                                'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                              boxShadow:
-                                '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                              backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                              WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                              ...glassPanel,
                             }}
                           >
                             <DropdownMenu.Item

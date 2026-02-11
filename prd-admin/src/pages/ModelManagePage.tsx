@@ -36,6 +36,7 @@ import type { Model, Platform } from '@/types/admin';
 import { ModelHealthStatus } from '@/types/modelGroup';
 import type { ModelGroupItem } from '@/types/modelGroup';
 import { Activity, Check, ChevronLeft, ChevronRight, Clock, Database, DatabaseZap, Eye, EyeOff, ImagePlus, LayoutGrid, Link2, Loader2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
+import { glassPanel } from '@/lib/glassStyles';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
@@ -1946,11 +1947,7 @@ export default function ModelManagePage() {
                                           className="rounded-[12px] p-1 min-w-[140px]"
                                           style={{
                                             zIndex: 90,
-                                            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                                            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                                            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                                            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                                            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                                            ...glassPanel,
                                           }}
                                           onClick={(e) => e.stopPropagation()}
                                         >

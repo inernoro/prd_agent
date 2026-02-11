@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { glassToolbar } from '@/lib/glassStyles';
 import {
   Download,
   Expand,
@@ -115,11 +116,7 @@ export function ImageQuickActionBar({
     <div
       className="flex items-center gap-0.5 rounded-[10px] px-1 h-[36px]"
       style={{
-        background: 'rgba(32, 32, 38, 0.95)',
-        border: '1px solid rgba(255, 255, 255, 0.14)',
-        backdropFilter: 'blur(16px)',
-        WebkitBackdropFilter: 'blur(16px)',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.06) inset',
+        ...glassToolbar,
         pointerEvents: 'auto',
       }}
     >
