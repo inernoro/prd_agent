@@ -1,0 +1,34 @@
+# Cloudflare Tunnel 配置 (用于安全暴露后端 API)
+#
+# 前置条件:
+#   1. 安装 cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+#   2. 登录: cloudflared tunnel login
+#   3. 创建隧道: cloudflared tunnel create prdagent-api
+#   4. 创建 DNS 记录: cloudflared tunnel route dns prdagent-api api.yourdomain.com
+#
+# 启动隧道:
+#   cloudflared tunnel --config deploy/cloudflare/tunnel-config.yml run prdagent-api
+#
+# 或使用 Docker:
+#   docker run -d --name cloudflared \
+#     --network prdagent-network \
+#     -v /path/to/.cloudflared:/etc/cloudflared \
+#     cloudflare/cloudflared:latest \
+#     tunnel --config /etc/cloudflared/tunnel-config.yml run prdagent-api
+
+tunnel: <TUNNEL_ID>  # 替换为 cloudflared tunnel create 返回的 ID
+credentials-file: /root/.cloudflared/<TUNNEL_ID>.json  # 替换为实际凭证路径
+
+ingress:
+  # 将 api.yourdomain.com 流量转发到本地后端
+  - hostname: api.yourdomain.com  # 替换为你的实际域名
+    service: http://localhost:8080
+    originRequest:
+      # SSE 流式响应支持
+      noTLSVerify: false
+      connectTimeout: 10s
+      # 长连接支持 (SSE 需要)
+      keepAliveTimeout: 3600s
+
+  # 兜底规则 (必须)
+  - service: http_status:404

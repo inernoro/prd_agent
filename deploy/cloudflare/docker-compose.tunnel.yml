@@ -1,0 +1,27 @@
+# Cloudflare Tunnel Docker Compose 扩展
+#
+# 使用方式 (与主 docker-compose.yml 配合):
+#   docker compose -f docker-compose.yml -f deploy/cloudflare/docker-compose.tunnel.yml up -d
+#
+# 前置条件:
+#   1. 已创建 Cloudflare Tunnel 并获取 TUNNEL_TOKEN
+#   2. 在 .env 文件中设置 CLOUDFLARE_TUNNEL_TOKEN=<your-token>
+#      或使用 Cloudflare Dashboard 中的 Quick Tunnel 令牌
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: prdagent-cloudflared
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - prdagent-network
+    depends_on:
+      - api
+    restart: unless-stopped
+
+networks:
+  prdagent-network:
+    external: true
+    name: prd_agent_prdagent-network

@@ -1,0 +1,65 @@
+name: Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "prd-admin/**"
+      - "deploy/cloudflare/**"
+      - ".github/workflows/cloudflare-pages-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: "Override VITE_API_BASE_URL (leave empty to use Cloudflare proxy)"
+        required: false
+        default: ""
+
+concurrency:
+  group: "cloudflare-pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: prd-admin/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: prd-admin
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        working-directory: prd-admin
+        env:
+          # 空字符串 = 使用相对路径 /api (通过 Cloudflare Pages Functions 代理)
+          # 如需直连后端，设置为完整地址如 https://api.yourdomain.com
+          VITE_API_BASE_URL: ${{ github.event.inputs.api_base_url || '' }}
+        run: pnpm build
+
+      - name: Copy Cloudflare Functions
+        run: |
+          # 将 API 代理函数复制到构建产物中
+          cp -r deploy/cloudflare/functions/ prd-admin/dist/functions/ 2>/dev/null || true
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy prd-admin/dist --project-name=prdagent --commit-hash=${{ github.sha }}

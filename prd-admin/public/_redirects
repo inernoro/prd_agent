@@ -1,0 +1,8 @@
+# Cloudflare Pages 重定向与 SPA 回退规则
+# 文档: https://developers.cloudflare.com/pages/configuration/redirects/
+#
+# 规则优先级: 从上到下，先匹配先生效
+# 注意: 静态资源 (/assets/*, *.js, *.css 等) 由 Cloudflare Pages 自动处理，无需配置
+
+# SPA 回退: 所有非文件路径都返回 index.html (200 表示 rewrite, 非 redirect)
+/*  /index.html  200
