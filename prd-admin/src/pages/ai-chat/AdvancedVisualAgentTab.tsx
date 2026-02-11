@@ -7305,47 +7305,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
                         ) : null}
 
-                        {/* 参考图 + 生成图（Middle） */}
-                        {genDone.refSrc ? (
-                          <div className="flex items-stretch" style={{ borderTop: genDone.prompt ? undefined : '1px solid rgba(255,255,255,0.08)' }}>
-                            {/* 参考图缩略图 */}
-                            <button
-                              type="button"
-                              className="shrink-0"
-                              style={{ width: 64, borderRight: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.15)' }}
-                              onClick={() => setPreview({ open: true, src: genDone.refSrc!, prompt: '参照图' })}
-                              title="点击预览参照图"
-                            >
-                              <img src={genDone.refSrc} alt="参照图" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                            </button>
-                            {/* 生成图 */}
-                            <button
-                              type="button"
-                              className="flex-1 min-w-0"
-                              onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '', runId: genDone.runId })}
-                              title="点击放大"
-                            >
-                              <img
-                                src={genDone.src}
-                                alt={genDone.prompt || '生成结果'}
-                                style={{ width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block' }}
-                              />
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            className="block w-full"
-                            onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '', runId: genDone.runId })}
-                            title="点击放大"
-                          >
-                            <img
-                              src={genDone.src}
-                              alt={genDone.prompt || '生成结果'}
-                              style={{ width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block' }}
-                            />
-                          </button>
-                        )}
+                        {/* 生成图（Middle）— 只显示结果图 */}
+                        <button
+                          type="button"
+                          className="block w-full"
+                          onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '', runId: genDone.runId })}
+                          title="点击放大"
+                        >
+                          <img
+                            src={genDone.src}
+                            alt={genDone.prompt || '生成结果'}
+                            style={{ width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block' }}
+                          />
+                        </button>
 
                         {/* 元数据（Bottom） */}
                         {(() => {

@@ -1906,69 +1906,65 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
                     )}
                   </div>
                 </div>
-                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  {(() => {
-                    const s = (detail.tokenUsageSource ?? '').trim().toLowerCase();
-                    const label = s === 'reported' ? '上游上报' : (s === 'estimated' ? '估算' : '未上报');
-                    const img = typeof detail.imageSuccessCount === 'number' ? detail.imageSuccessCount : null;
-                    return (
-                      <>
-                        Token统计来源：{label}{img != null ? ` · 生图成功张数：${img}` : ''}
-                      </>
-                    );
-                  })()}
-                </div>
-                <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                  {[
-                    ...(isImageLikeLog
-                      ? []
-                      : [
-                          { k: 'Input tokens（输入）', v: fmtNum(detail.inputTokens) },
-                          { k: 'Output tokens（输出）', v: fmtNum(detail.outputTokens) },
-                          { k: 'Cache read（缓存命中读入）', v: fmtNum(detail.cacheReadInputTokens) },
-                          { k: 'Cache create（缓存写入/创建）', v: fmtNum(detail.cacheCreationInputTokens) },
-                        ]),
-                    { k: 'Assembled chars（拼接字符数）', v: fmtNum(detail.assembledTextChars) },
-                    // 这里用完整 hash，超长由 marquee 自动循环滚动
-                    { k: 'Assembled hash（拼接哈希）', v: (detail.assembledTextHash ?? '').trim() || '—' },
-                  ].map((it) => (
-                    <div
-                      key={it.k}
-                      className="rounded-[12px] px-3 py-2 min-w-0 overflow-hidden"
-                      style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', minWidth: 0 }}
-                    >
-                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        {it.k}
-                      </div>
-                      <div className="mt-1 min-w-0">
-                        <NewsMarquee
-                          text={String(it.v ?? '—')}
-                          title={String(it.v ?? '')}
-                          style={{
-                            color: 'var(--text-primary)',
-                            fontSize: 14,
-                            lineHeight: '1.2',
-                            fontWeight: 700,
-                            fontFamily:
-                              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                          }}
-                        />
-                      </div>
+                {!isImageLikeLog && (
+                  <>
+                    <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                      {(() => {
+                        const s = (detail.tokenUsageSource ?? '').trim().toLowerCase();
+                        const label = s === 'reported' ? '上游上报' : (s === 'estimated' ? '估算' : '未上报');
+                        return <>Token统计来源：{label}</>;
+                      })()}
                     </div>
-                  ))}
-                </div>
-                <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  说明：`—` 表示未上报/未知；`0` 表示真实为 0。
-                </div>
-                <div className="mt-3 flex-1 min-h-0 overflow-auto">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>回答</div>
-                    {answerHint ? (
-                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        {answerHint}
-                      </div>
-                    ) : null}
-                  </div>
+                    <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+                      {[
+                        { k: 'Input tokens（输入）', v: fmtNum(detail.inputTokens) },
+                        { k: 'Output tokens（输出）', v: fmtNum(detail.outputTokens) },
+                        { k: 'Cache read（缓存命中读入）', v: fmtNum(detail.cacheReadInputTokens) },
+                        { k: 'Cache create（缓存写入/创建）', v: fmtNum(detail.cacheCreationInputTokens) },
+                        { k: 'Assembled chars（拼接字符数）', v: fmtNum(detail.assembledTextChars) },
+                        { k: 'Assembled hash（拼接哈希）', v: (detail.assembledTextHash ?? '').trim() || '—' },
+                      ].map((it) => (
+                        <div
+                          key={it.k}
+                          className="rounded-[12px] px-3 py-2 min-w-0 overflow-hidden"
+                          style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', minWidth: 0 }}
+                        >
+                          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            {it.k}
+                          </div>
+                          <div className="mt-1 min-w-0">
+                            <NewsMarquee
+                              text={String(it.v ?? '—')}
+                              title={String(it.v ?? '')}
+                              style={{
+                                color: 'var(--text-primary)',
+                                fontSize: 14,
+                                lineHeight: '1.2',
+                                fontWeight: 700,
+                                fontFamily:
+                                  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      说明：`—` 表示未上报/未知；`0` 表示真实为 0。
+                    </div>
+                  </>
+                )}
+                <div className={`${isImageLikeLog ? 'mt-2' : 'mt-3'} flex-1 min-h-0 overflow-auto`}>
+                  {!isImageLikeLog && (
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>回答</div>
+                      {answerHint ? (
+                        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          {answerHint}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
 
                   <div className="mt-3">
                     {(() => {
@@ -1994,9 +1990,6 @@ export function LlmLogsPanel({ embedded, defaultAppKey }: { embedded?: boolean; 
 
                       return (
                     <div className="mb-3">
-                      <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-                        图片预览
-                      </div>
                       <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
                         {/* Prompt */}
                         <div className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)' }}>
