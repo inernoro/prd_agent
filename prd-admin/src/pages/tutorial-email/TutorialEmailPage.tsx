@@ -55,7 +55,7 @@ export default function TutorialEmailPage() {
       </div>
 
       <TabBar
-        tabs={tabs}
+        items={tabs}
         activeKey={activeTab}
         onChange={setActiveTab}
       />

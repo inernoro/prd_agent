@@ -93,7 +93,7 @@ function ComposeView() {
   const [sendSubject, setSendSubject] = useState('');
   const [sending, setSending] = useState(false);
   const [saveAsTemplate, setSaveAsTemplate] = useState(true);
-  const [templateName, setTemplateName] = useState('');
+  const templateName = '';
 
   // Auto-scroll on new messages
   useEffect(() => {

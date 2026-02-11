@@ -10,6 +10,7 @@ import LlmLogsPage from '@/pages/LlmLogsPage';
 import LabPage from '@/pages/LabPage';
 import PromptStagesPage from '@/pages/PromptStagesPage';
 import SkillsPage from '@/pages/SkillsPage';
+import AssetsManagePage from '@/pages/AssetsManagePage';
 import VisualAgentFullscreenPage from '@/pages/visual-agent/VisualAgentFullscreenPage';
 import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
 import { DefectAgentPage } from '@/pages/defect-agent';
