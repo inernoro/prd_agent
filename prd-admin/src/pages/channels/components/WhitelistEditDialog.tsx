@@ -197,7 +197,7 @@ export function WhitelistEditDialog({
                   <Tooltip.Portal>
                     <Tooltip.Content
                       className="px-3 py-2 text-xs rounded-lg max-w-xs"
-                      style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid rgba(255,255,255,0.1)' }}
+                      style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid var(--border-default)' }}
                       sideOffset={5}
                     >
                       支持通配符 *，例如 *@company.com 匹配该域名下所有邮箱
@@ -305,7 +305,7 @@ export function WhitelistEditDialog({
                     <Tooltip.Portal>
                       <Tooltip.Content
                         className="px-3 py-2 text-xs rounded-lg"
-                        style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid rgba(255,255,255,0.1)' }}
+                        style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid var(--border-default)' }}
                         sideOffset={5}
                       >
                         数值越大优先级越高

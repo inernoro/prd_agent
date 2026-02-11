@@ -68,7 +68,7 @@ function ArticlePreview({ markdown }: { markdown: string }) {
           .literary-preview-md ul,.literary-preview-md ol { margin: 2px 0; padding-left: 12px; }
           .literary-preview-md li { margin: 1px 0; }
           .literary-preview-md blockquote { margin: 2px 0; padding: 2px 6px; border-left: 2px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); border-radius: 4px; }
-          .literary-preview-md code { font-size: 9px; background: rgba(255,255,255,0.06); padding: 0 3px; border-radius: 3px; }
+          .literary-preview-md code { font-size: 9px; background: var(--bg-input-hover); padding: 0 3px; border-radius: 3px; }
         `}</style>
         <div className="literary-preview-md">
           <ReactMarkdown
@@ -425,7 +425,7 @@ export default function LiteraryAgentWorkspaceListPage() {
         <div className="px-2 pb-2 flex-1 min-h-0 overflow-hidden">
           <div
             className="h-full overflow-hidden border rounded-[5px] text-[12px] md:text-[10px] flex flex-col"
-            style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+            style={{ borderColor: 'var(--border-subtle)', background: 'var(--list-item-bg)' }}
           >
             <div className="p-1.5 flex-1 overflow-hidden">
               <ArticlePreview markdown={getArticlePreviewText(ws)} />

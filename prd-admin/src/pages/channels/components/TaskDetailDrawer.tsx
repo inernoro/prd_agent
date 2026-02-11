@@ -78,7 +78,7 @@ export function TaskDetailDrawer({
         style={{
           ...glassDrawer,
           background: 'linear-gradient(180deg, rgba(20,20,25,0.98) 0%, rgba(15,15,20,0.98) 100%)',
-          borderLeft: '1px solid rgba(255,255,255,0.1)',
+          borderLeft: '1px solid var(--border-default)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -265,7 +265,7 @@ export function TaskDetailDrawer({
                     src={task.result.imageUrl}
                     alt="结果图片"
                     className="mt-2 rounded-lg max-w-full"
-                    style={{ border: '1px solid rgba(255,255,255,0.1)' }}
+                    style={{ border: '1px solid var(--border-default)' }}
                   />
                 )}
               </Section>
