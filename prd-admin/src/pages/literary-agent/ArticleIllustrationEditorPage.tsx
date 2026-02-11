@@ -780,15 +780,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
         prompts.sort((a, b) => a.id.localeCompare(b.id));
         setUserPrompts(prompts);
-        // 如果有提示词但没有选中，自动选中第一个
-        if (prompts.length > 0 && !selectedPrompt) {
-          setSelectedPrompt(prompts[0]);
-        }
+        // 不再自动选中第一个提示词：未选择时使用系统推断风格
+        // 仅当用户已通过 AI 提取或手动选择了提示词时才保留选中状态
       }
     } catch (error) {
       console.error('Failed to load literary prompts:', error);
     }
-  }, [selectedPrompt]);
+  }, []);
 
   // 将 loadLiteraryPrompts 赋值给 ref 以便 handleMarketplaceFork 使用
   useEffect(() => {
@@ -910,7 +908,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
 
-    // 使用选中的风格提示词（可选，不选则仅使用系统格式约束）
+    // 使用选中的风格提示词（可选，不选则后端使用系统推断风格）
     const systemPrompt = selectedPrompt?.content ?? '';
 
     setMarkerStreaming(true);
@@ -2404,11 +2402,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   if (selectedPrompt) handleEditPrompt(selectedPrompt);
                   else setPromptPreviewOpen(true);
                 }}
-                title={selectedPrompt?.title || '未选择风格'}
+                title={selectedPrompt?.title || '系统推断风格（点击自定义）'}
               >
                 <FileText size={12} style={{ color: selectedPrompt ? '#93C5FD' : '#9CA3AF', flexShrink: 0 }} />
                 <span className={configPillTextClass} style={{ color: selectedPrompt ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {selectedPrompt?.title || '风格'}
+                  {selectedPrompt?.title || '自动风格'}
                 </span>
               </div>
               {/* 风格图 */}
@@ -3206,10 +3204,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
               {allPrompts.length === 0 ? (
                 <div className="text-xs py-4 text-center" style={{ color: 'var(--text-muted)' }}>
-                  还没有提示词模板，点击上方「新建」创建第一个模板
+                  未选择风格时系统将自动推断，点击上方「新建」可自定义风格
                 </div>
               ) : (
                 <div className="flex-1 min-h-0 overflow-auto pr-1">
+                  {!selectedPrompt && (
+                    <div className="text-[11px] mb-2 px-2 py-1.5 rounded-md" style={{ background: 'rgba(34, 197, 94, 0.06)', border: '1px solid rgba(34, 197, 94, 0.15)', color: 'rgba(34, 197, 94, 0.85)' }}>
+                      当前使用系统推断风格，可点击下方卡片选择自定义风格
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 gap-3">
                     {allPrompts.map((prompt) => {
                       const isPromptSelected = selectedPrompt?.id === prompt.id;
@@ -3242,6 +3245,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 >
                                   {prompt.title}
                                 </div>
+                                {prompt.isSystem && (
+                                  <span className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(251, 191, 36, 0.12)', color: 'rgba(251, 191, 36, 0.85)', border: '1px solid rgba(251, 191, 36, 0.2)' }}>
+                                    系统
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -3318,8 +3326,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     border: isPromptSelected ? '1px solid rgba(34, 197, 94, 0.95)' : 'none',
                                     minWidth: 40,
                                   }}
-                                  onClick={() => setSelectedPrompt(prompt)}
-                                  title={isPromptSelected ? '取消选择' : '选择'}
+                                  onClick={() => setSelectedPrompt(isPromptSelected ? null : prompt)}
+                                  title={isPromptSelected ? '取消选择（将使用系统推断风格）' : '选择此风格'}
                                 >
                                   <CheckCircle2 size={16} />
                                 </button>

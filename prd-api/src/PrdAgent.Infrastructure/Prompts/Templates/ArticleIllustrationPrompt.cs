@@ -5,9 +5,6 @@ namespace PrdAgent.Infrastructure.Prompts.Templates;
 /// </summary>
 public static class ArticleIllustrationPrompt
 {
-    // 说明：该场景的 system prompt 完全由用户在前端配置并透传（userInstruction）决定，
-    // 后端不再提供任何内置提示词，避免"看起来用了用户模板，但实际混入系统文案"的误解。
-
     /// <summary>
     /// 锚点模式的输出格式约束。当 insertionMode=anchor 时，
     /// 后端将此约束包裹在用户提示词外层，确保 LLM 输出锚点格式。
@@ -37,15 +34,34 @@ public static class ArticleIllustrationPrompt
 """;
 
     /// <summary>
+    /// 当用户未设置自定义风格提示词时，系统自动推断风格的默认指导。
+    /// LLM 将根据文章内容、主题和情感基调自动选择最合适的配图风格。
+    /// </summary>
+    public const string DefaultStyleInference = """
+【配图风格 — 系统自动推断】
+请根据文章的内容、主题、体裁和情感基调，自动推断最合适的配图风格。
+要求：
+- 分析文章属于哪种类型（如科技、文学、新闻、教育、商业等）
+- 根据文章类型和情感基调选择合适的视觉风格（如写实摄影、扁平插画、水彩手绘、科技感3D、极简线条等）
+- 在每条配图描述中明确包含风格关键词，确保生图模型能准确理解风格要求
+- 所有配图保持统一的视觉风格，形成连贯的阅读体验
+""";
+
+    /// <summary>
     /// 将用户提示词包裹为 anchor 模式的完整 system prompt。
     /// 格式约束在前（优先级高），用户创作指导在后。
-    /// 若 userInstruction 为空，则仅返回格式约束（无需用户风格也能工作）。
+    /// 若 userInstruction 为空，则使用系统默认风格推断指导（而非无风格指导）。
     /// </summary>
     public static string WrapForAnchorMode(string userInstruction)
     {
         if (string.IsNullOrWhiteSpace(userInstruction))
         {
-            return AnchorFormatConstraint;
+            return $"""
+{AnchorFormatConstraint}
+---
+
+{DefaultStyleInference}
+""";
         }
 
         return $"""
