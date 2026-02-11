@@ -94,7 +94,8 @@ function RequirePermission({ perm, children }: { perm: string; children: React.R
   return <>{children}</>;
 }
 
-/** 首页路由：移动端进 MobileHomePage，桌面管理员进总裁面板，其余进 Agent 选择页 */
+/** 首页路由：移动端渲染 MobileHomePage，桌面管理员渲染总裁面板，其余渲染 Agent 选择页。
+ *  全部 inline 渲染，不使用 Navigate 重定向，避免 breakpoint 抖动引发重定向循环。 */
 function IndexPage() {
   const perms = useAuthStore((s) => s.permissions);
   const loaded = useAuthStore((s) => s.permissionsLoaded);
@@ -102,16 +103,9 @@ function IndexPage() {
   if (!loaded) return null;
   if (isMobile) return <MobileHomePage />;
   if (perms.includes('executive.read') || perms.includes('super')) {
-    return <Navigate to="/executive" replace />;
+    return <ExecutiveDashboardPage />;
   }
   return <AgentLauncherPage />;
-}
-
-/** 桌面专属路由守卫：移动端访问时重定向回首页 */
-function DesktopOnly({ children }: { children: React.ReactNode }) {
-  const { isMobile } = useBreakpoint();
-  if (isMobile) return <Navigate to="/" replace />;
-  return <>{children}</>;
 }
 
 export default function App() {
@@ -254,7 +248,7 @@ export default function App() {
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
-        <Route path="executive" element={<DesktopOnly><RequirePermission perm="executive.read"><ExecutiveDashboardPage /></RequirePermission></DesktopOnly>} />
+        <Route path="executive" element={<RequirePermission perm="executive.read"><ExecutiveDashboardPage /></RequirePermission>} />
         {/* 移动端专属路由 */}
         <Route path="my-assets" element={<RequirePermission perm="access"><MobileAssetsPage /></RequirePermission>} />
         <Route path="profile" element={<RequirePermission perm="access"><MobileProfilePage /></RequirePermission>} />

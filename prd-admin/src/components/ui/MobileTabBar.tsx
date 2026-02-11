@@ -33,9 +33,9 @@ const AGENT_SHORTCUTS: AgentShortcut[] = [
 ];
 
 /* ── 环形布局计算 ── */
-const RADIAL_RADIUS = 110;
-const ARC_START_DEG = -150; // 从左侧开始 (度)
-const ARC_END_DEG = -30;    // 到右侧结束 (度)
+const RADIAL_RADIUS = 100;
+const ARC_START_DEG = -145; // 从左侧开始 (度)
+const ARC_END_DEG = -35;    // 到右侧结束 (度)
 
 function radialPosition(index: number, total: number) {
   const deg = ARC_START_DEG + ((ARC_END_DEG - ARC_START_DEG) / (total - 1)) * index;
@@ -120,17 +120,17 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
           className="absolute bottom-0 left-0 right-0"
           style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
         >
-          {/* 半圆形背景 */}
+          {/* 半圆形背景 — 宽高需包住所有扇形项 + 底部 × 按钮 + tab 栏区域 */}
           <div
             style={{
               position: 'absolute',
               bottom: 0,
               left: '50%',
-              width: 340,
-              height: 220,
-              borderRadius: '170px 170px 28px 28px',
-              background: 'radial-gradient(ellipse at 50% 105%, rgba(42,42,56,0.98) 0%, rgba(28,28,38,0.97) 60%, rgba(20,20,28,0.96) 100%)',
-              border: '1px solid rgba(255,255,255,0.07)',
+              width: 380,
+              height: 270,
+              borderRadius: '190px 190px 0 0',
+              background: 'radial-gradient(ellipse at 50% 100%, rgba(38,38,52,0.99) 0%, rgba(26,26,36,0.98) 50%, rgba(18,18,26,0.97) 100%)',
+              border: '1px solid rgba(255,255,255,0.06)',
               borderBottom: 'none',
               transform: `translateX(-50%) scale(${menuOpen ? 1 : 0})`,
               transformOrigin: '50% 100%',
@@ -148,7 +148,7 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
                 right: '10%',
                 height: 1,
                 borderRadius: '50%',
-                background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.12) 30%, rgba(255,255,255,0.18) 50%, rgba(255,255,255,0.12) 70%, transparent)',
+                background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.10) 30%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.10) 70%, transparent)',
               }}
             />
           </div>
@@ -163,7 +163,7 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
                 key={agent.key}
                 className="absolute flex flex-col items-center gap-1.5"
                 style={{
-                  bottom: 32,
+                  bottom: 38,
                   left: '50%',
                   transform: menuOpen
                     ? `translate(calc(-50% + ${x}px), ${y}px) scale(1)`
@@ -199,11 +199,11 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
             );
           })}
 
-          {/* × 关闭按钮 */}
+          {/* × 关闭按钮 — 居中于 tab 栏高度 */}
           <button
             className="absolute flex items-center justify-center active:scale-90 transition-transform"
             style={{
-              bottom: 10,
+              bottom: 8,
               left: '50%',
               transform: `translateX(-50%) rotate(${menuOpen ? '0deg' : '-90deg'}) scale(${menuOpen ? 1 : 0})`,
               width: 44,
