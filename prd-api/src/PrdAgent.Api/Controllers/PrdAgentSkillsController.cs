@@ -176,7 +176,7 @@ public class PrdAgentSkillsController : ControllerBase
         if (!ok)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "技能不存在或无权删除"));
 
-        return Ok(ApiResponse<object>.Ok());
+        return Ok(ApiResponse<object>.Ok(new { }));
     }
 
     /// <summary>
