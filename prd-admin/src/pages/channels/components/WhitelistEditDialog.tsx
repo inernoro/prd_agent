@@ -172,8 +172,8 @@ export function WhitelistEditDialog({
                     onClick={() => setChannelType(key)}
                     className="flex-1 px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
                     style={{
-                      background: channelType === key ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.03)',
-                      border: channelType === key ? '1px solid rgba(59,130,246,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                      background: channelType === key ? 'rgba(59,130,246,0.15)' : 'var(--nested-block-bg)',
+                      border: channelType === key ? '1px solid rgba(59,130,246,0.4)' : '1px solid var(--border-subtle)',
                       color: channelType === key ? 'rgb(96,165,250)' : 'var(--text-secondary)',
                     }}
                   >
@@ -197,7 +197,7 @@ export function WhitelistEditDialog({
                   <Tooltip.Portal>
                     <Tooltip.Content
                       className="px-3 py-2 text-xs rounded-lg max-w-xs"
-                      style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid rgba(255,255,255,0.1)' }}
+                      style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid var(--border-default)' }}
                       sideOffset={5}
                     >
                       支持通配符 *，例如 *@company.com 匹配该域名下所有邮箱
@@ -269,8 +269,8 @@ export function WhitelistEditDialog({
                   onClick={() => handleAgentToggle(agent.key)}
                   className="px-3 py-1.5 text-sm rounded-lg transition-colors flex items-center gap-1.5"
                   style={{
-                    background: allowedAgents.includes(agent.key) ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.03)',
-                    border: allowedAgents.includes(agent.key) ? '1px solid rgba(34,197,94,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                    background: allowedAgents.includes(agent.key) ? 'rgba(34,197,94,0.15)' : 'var(--nested-block-bg)',
+                    border: allowedAgents.includes(agent.key) ? '1px solid rgba(34,197,94,0.4)' : '1px solid var(--border-subtle)',
                     color: allowedAgents.includes(agent.key) ? 'rgb(34,197,94)' : 'var(--text-secondary)',
                   }}
                 >
@@ -305,7 +305,7 @@ export function WhitelistEditDialog({
                     <Tooltip.Portal>
                       <Tooltip.Content
                         className="px-3 py-2 text-xs rounded-lg"
-                        style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid rgba(255,255,255,0.1)' }}
+                        style={{ background: 'rgba(0,0,0,0.9)', border: '1px solid var(--border-default)' }}
                         sideOffset={5}
                       >
                         数值越大优先级越高

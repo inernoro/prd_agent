@@ -905,8 +905,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   onChange={(e) => setModelTypeFilter(e.target.value)}
                   className="h-9 rounded-[11px] text-[13px]"
                   style={{
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'var(--bg-input)',
+                    border: '1px solid var(--border-subtle)',
                   }}
                 >
                   {MODEL_TYPE_FILTERS.map((type) => (
@@ -925,8 +925,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full h-9 pl-9 pr-3 rounded-[11px] outline-none text-[13px]"
                   style={{
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'var(--bg-input)',
+                    border: '1px solid var(--border-subtle)',
                     color: 'var(--text-primary)',
                   }}
                 />
@@ -963,15 +963,15 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                         }
                       }}
                       className="px-3 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors"
-                      style={isSelected ? { background: 'rgba(255,255,255,0.06)' } : undefined}
+                      style={isSelected ? { background: 'var(--bg-input-hover)' } : undefined}
                     >
                       <div className="flex items-center gap-3">
                         {/* 应用图标 */}
                         <div
                           className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
                           style={{
-                            background: isSelected ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255,255,255,0.06)',
-                            border: isSelected ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid rgba(255,255,255,0.08)',
+                            background: isSelected ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input-hover)',
+                            border: isSelected ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid var(--border-subtle)',
                           }}
                         >
                           <Layers size={18} style={{ color: isSelected ? 'rgba(59, 130, 246, 0.9)' : 'var(--text-muted)' }} />
@@ -1258,12 +1258,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                               {/* 实际使用的模型 */}
                                               <div
                                                 className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors"
-                                                style={{ background: isFallback ? 'rgba(34, 197, 94, 0.05)' : 'rgba(255, 255, 255, 0.02)' }}
+                                                style={{ background: isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--list-item-bg)' }}
                                                 onMouseEnter={(e) => {
-                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.1)' : 'rgba(255, 255, 255, 0.06)';
+                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.1)' : 'var(--bg-input-hover)';
                                                 }}
                                                 onMouseLeave={(e) => {
-                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.05)' : 'rgba(255, 255, 255, 0.02)';
+                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--list-item-bg)';
                                                 }}
                                                 title={isFallback ? `降级回退：${resolvedModel.fallbackReason || ''}` : resolvedModel.source === 'legacy' ? '使用传统配置的单模型' : resolvedModel.modelGroupName ? `使用默认模型池：${resolvedModel.modelGroupName}` : '使用默认模型池'}
                                               >
@@ -1274,7 +1274,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                               {/* 平台 */}
                                               <span
                                                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] shrink-0"
-                                                style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}
+                                                style={{ background: 'var(--bg-card-hover)', color: 'var(--text-muted)' }}
                                               >
                                                 <Server size={10} />
                                                 {resolvedModel.platformName}
@@ -1683,7 +1683,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                               className="h-9 w-24 px-2 rounded-[10px] outline-none text-[12px]"
                               style={{
                                 background: 'var(--bg-input)',
-                                border: '1px solid rgba(255,255,255,0.12)',
+                                border: '1px solid var(--border-default)',
                                 color: 'var(--text-primary)',
                               }}
                               title="优先级（越小越靠前）"
@@ -1773,7 +1773,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                   style={{
                     background: 'var(--bg-input)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    border: '1px solid var(--border-default)',
                     color: 'var(--text-primary)',
                   }}
                 />
@@ -1785,7 +1785,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                 </label>
                 <div
                   className="rounded-[12px] p-2 max-h-[200px] overflow-auto"
-                  style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'var(--bg-input)' }}
+                  style={{ border: '1px solid var(--border-default)', background: 'var(--bg-input)' }}
                 >
                   {modelGroups.filter(g => g.modelType === requirementForm.modelType).map((group) => (
                     <label
@@ -1864,7 +1864,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                   style={{
                     background: 'var(--bg-input)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    border: '1px solid var(--border-default)',
                     color: 'var(--text-primary)',
                   }}
                 />
@@ -1883,7 +1883,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                   style={{
                     background: 'var(--bg-input)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    border: '1px solid var(--border-default)',
                     color: 'var(--text-primary)',
                     opacity: editingGroup ? 0.6 : 1,
                   }}
@@ -1920,7 +1920,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   className="w-full px-3 py-2 rounded-[12px] outline-none text-[13px] resize-none"
                   style={{
                     background: 'var(--bg-input)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    border: '1px solid var(--border-default)',
                     color: 'var(--text-primary)',
                   }}
                 />
@@ -1978,7 +1978,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-default)',
                       color: 'var(--text-primary)',
                     }}
                   />
@@ -1998,7 +1998,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-default)',
                       color: 'var(--text-primary)',
                     }}
                   />
@@ -2018,7 +2018,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-default)',
                       color: 'var(--text-primary)',
                     }}
                   />
@@ -2038,7 +2038,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-default)',
                       color: 'var(--text-primary)',
                     }}
                   />
@@ -2058,7 +2058,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-default)',
                       color: 'var(--text-primary)',
                     }}
                   />
@@ -2076,7 +2076,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-default)',
                       color: 'var(--text-primary)',
                     }}
                   />
@@ -2094,7 +2094,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                   style={{
                     background: 'var(--bg-input)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    border: '1px solid var(--border-default)',
                     color: 'var(--text-primary)',
                   }}
                 />
@@ -2169,7 +2169,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
                 <div
                   className="rounded-[12px] p-3 min-h-[200px] max-h-[400px] overflow-auto"
-                  style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}
+                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}
                 >
                   {filteredGroups.length === 0 ? (
                     <div className="py-12 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
@@ -2217,7 +2217,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                   ? 'rgba(59, 130, 246, 0.12)'
                                   : isMatching
                                     ? 'rgba(34, 197, 94, 0.06)'
-                                    : 'rgba(255,255,255,0.04)',
+                                    : 'var(--bg-input)',
                                 border: isSelected
                                   ? '1px solid rgba(59, 130, 246, 0.4)'
                                   : isMatching

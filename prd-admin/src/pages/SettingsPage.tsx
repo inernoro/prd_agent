@@ -176,12 +176,12 @@ function GeneralSettings() {
                             ? 'rgba(214,178,106,0.15)'
                             : isDropTarget
                               ? 'rgba(214,178,106,0.08)'
-                              : 'rgba(255,255,255,0.03)',
+                              : 'var(--nested-block-bg)',
                           border: isDragging
                             ? '2px solid rgba(214,178,106,0.5)'
                             : isDropTarget
                               ? '2px dashed rgba(214,178,106,0.5)'
-                              : '1px solid rgba(255,255,255,0.06)',
+                              : '1px solid var(--nested-block-border)',
                           opacity: isDragging ? 0.6 : 1,
                         }}
                       >
@@ -194,8 +194,8 @@ function GeneralSettings() {
                         <div
                           className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center"
                           style={{
-                            background: 'rgba(255,255,255,0.05)',
-                            border: '1px solid rgba(255,255,255,0.08)',
+                            background: 'var(--bg-card-hover)',
+                            border: '1px solid var(--border-subtle)',
                             color: 'var(--text-secondary)',
                           }}
                         >
@@ -209,7 +209,7 @@ function GeneralSettings() {
                         <div
                           className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded"
                           style={{
-                            background: 'rgba(255,255,255,0.04)',
+                            background: 'var(--bg-input)',
                             color: 'var(--text-muted)',
                           }}
                         >

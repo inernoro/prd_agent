@@ -230,7 +230,7 @@ export function DefectSubmitPanel() {
         {/* Header */}
         <div
           className="flex items-center justify-between px-5 py-4 border-b"
-          style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+          style={{ borderColor: 'var(--border-subtle)' }}
         >
           <div className="flex items-center gap-3">
             <div
@@ -270,8 +270,8 @@ export function DefectSubmitPanel() {
                 onChange={(e) => setAssigneeUserId(e.target.value)}
                 className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
                 style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'var(--bg-input-hover)',
+                  border: '1px solid var(--border-default)',
                   color: 'var(--text-primary)',
                 }}
               >
@@ -297,8 +297,8 @@ export function DefectSubmitPanel() {
                 onChange={(e) => setSelectedTemplateId(e.target.value)}
                 className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
                 style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'var(--bg-input-hover)',
+                  border: '1px solid var(--border-default)',
                   color: 'var(--text-primary)',
                 }}
               >
@@ -342,9 +342,9 @@ export function DefectSubmitPanel() {
             className="flex-1 min-h-[280px] flex flex-col rounded-xl overflow-hidden transition-all duration-200"
             style={{
               background: 'rgba(0,0,0,0.14)',
-              border: focused 
-                ? '1px solid rgba(214, 178, 106, 0.55)' 
-                : '1px solid rgba(255,255,255,0.08)',
+              border: focused
+                ? '1px solid rgba(214, 178, 106, 0.55)'
+                : '1px solid var(--border-subtle)',
               boxShadow: focused 
                 ? '0 0 0 2px rgba(214, 178, 106, 0.15)' 
                 : 'none',
@@ -370,7 +370,7 @@ export function DefectSubmitPanel() {
             {attachments.length > 0 && (
               <div
                 className="px-4 py-3 border-t flex flex-wrap gap-2"
-                style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+                style={{ borderColor: 'var(--border-subtle)' }}
               >
                 {attachments.map((file, index) => (
                   <div
@@ -381,8 +381,8 @@ export function DefectSubmitPanel() {
                       <div
                         className="w-16 h-16 rounded-lg overflow-hidden"
                         style={{
-                          background: 'rgba(255,255,255,0.06)',
-                          border: '1px solid rgba(255,255,255,0.1)',
+                          background: 'var(--bg-input-hover)',
+                          border: '1px solid var(--border-default)',
                         }}
                       >
                         <img
@@ -395,7 +395,7 @@ export function DefectSubmitPanel() {
                       <div
                         className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px]"
                         style={{
-                          background: 'rgba(255,255,255,0.06)',
+                          background: 'var(--bg-input-hover)',
                           color: 'var(--text-secondary)',
                         }}
                       >
@@ -420,7 +420,7 @@ export function DefectSubmitPanel() {
             {/* Input Actions */}
             <div
               className="px-4 py-3 border-t flex items-center gap-2"
-              style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+              style={{ borderColor: 'var(--border-subtle)' }}
             >
               <input
                 ref={fileInputRef}
@@ -451,8 +451,8 @@ export function DefectSubmitPanel() {
                         onClick={() => setSeverity(opt.value)}
                         className="px-2 py-1 rounded-md text-[11px] transition-colors"
                         style={{
-                          background: active ? 'rgba(214, 178, 106, 0.2)' : 'rgba(255,255,255,0.06)',
-                          border: active ? '1px solid rgba(214, 178, 106, 0.4)' : '1px solid rgba(255,255,255,0.08)',
+                          background: active ? 'rgba(214, 178, 106, 0.2)' : 'var(--bg-input-hover)',
+                          border: active ? '1px solid rgba(214, 178, 106, 0.4)' : '1px solid var(--border-subtle)',
                           color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                         }}
                       >

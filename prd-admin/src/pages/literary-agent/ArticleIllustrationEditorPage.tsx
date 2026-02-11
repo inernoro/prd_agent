@@ -95,15 +95,15 @@ const PRD_MD_STYLE = `
   .prd-md p { margin: 10px 0; }
   .prd-md ul,.prd-md ol { margin: 10px 0; padding-left: 18px; }
   .prd-md li { margin: 6px 0; }
-  .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 14px 0; }
+  .prd-md hr { border: 0; border-top: 1px solid var(--border-default); margin: 14px 0; }
   .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
   .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
-  .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
-  .prd-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 12px; overflow: auto; }
+  .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 6px; border-radius: 8px; }
+  .prd-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 14px; padding: 12px; overflow: auto; }
   .prd-md pre code { background: transparent; border: 0; padding: 0; }
   .prd-md table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-  .prd-md th,.prd-md td { border: 1px solid rgba(255,255,255,0.10); padding: 7px 9px; vertical-align: top; }
-  .prd-md th { color: var(--text-primary); background: rgba(255,255,255,0.03); }
+  .prd-md th,.prd-md td { border: 1px solid var(--border-default); padding: 7px 9px; vertical-align: top; }
+  .prd-md th { color: var(--text-primary); background: var(--nested-block-bg); }
   .prd-md .prd-md-marker {
     background: rgba(245, 158, 11, 0.22);
     border: 1px solid rgba(245, 158, 11, 0.32);
@@ -2428,8 +2428,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <div
                 className={configPillBaseClass}
                 style={{
-                  background: selectedPrompt ? 'rgba(147, 197, 253, 0.08)' : 'rgba(255,255,255,0.03)',
-                  border: selectedPrompt ? '1px solid rgba(147, 197, 253, 0.15)' : '1px solid rgba(255,255,255,0.08)'
+                  background: selectedPrompt ? 'rgba(147, 197, 253, 0.08)' : 'var(--nested-block-bg)',
+                  border: selectedPrompt ? '1px solid rgba(147, 197, 253, 0.15)' : '1px solid var(--border-subtle)'
                 }}
                 onClick={() => {
                   if (selectedPrompt) handleEditPrompt(selectedPrompt);
@@ -2446,8 +2446,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <div
                 className={configPillBaseClass}
                 style={{ 
-                  background: referenceImageConfigs.find(c => c.isActive) ? 'rgba(192, 132, 252, 0.08)' : 'rgba(255,255,255,0.03)', 
-                  border: referenceImageConfigs.find(c => c.isActive) ? '1px solid rgba(192, 132, 252, 0.15)' : '1px solid rgba(255,255,255,0.08)' 
+                  background: referenceImageConfigs.find(c => c.isActive) ? 'rgba(192, 132, 252, 0.08)' : 'var(--nested-block-bg)',
+                  border: referenceImageConfigs.find(c => c.isActive) ? '1px solid rgba(192, 132, 252, 0.15)' : '1px solid var(--border-subtle)' 
                 }}
                 onClick={() => {
                   const activeRefConfig = referenceImageConfigs.find(c => c.isActive);
@@ -2469,8 +2469,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <div
                 className={configPillBaseClass}
                 style={{ 
-                  background: watermarkStatus.enabled ? 'rgba(251, 191, 36, 0.08)' : 'rgba(255,255,255,0.03)', 
-                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid rgba(255,255,255,0.08)' 
+                  background: watermarkStatus.enabled ? 'rgba(251, 191, 36, 0.08)' : 'var(--nested-block-bg)',
+                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid var(--border-subtle)' 
                 }}
                 onClick={() => {
                   setPendingWatermarkEdit(true);
@@ -2505,7 +2505,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>配图标记</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
+                <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
                   {markerRunItems.filter(x => x.status === 'done').length}/{markerRunItems.length}
                 </span>
               </div>
@@ -2720,7 +2720,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 ? 'rgba(239, 68, 68, 0.12)'
                                 : it.status === 'running' || it.status === 'parsing'
                                   ? 'rgba(250, 204, 21, 0.12)'
-                                  : 'rgba(255,255,255,0.06)',
+                                  : 'var(--bg-input-hover)',
                           border:
                             it.status === 'done'
                               ? '1px solid rgba(34, 197, 94, 0.28)'
@@ -2728,7 +2728,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 ? '1px solid rgba(239, 68, 68, 0.28)'
                                 : it.status === 'running' || it.status === 'parsing'
                                   ? '1px solid rgba(250, 204, 21, 0.24)'
-                                  : '1px solid rgba(255,255,255,0.10)',
+                                  : '1px solid var(--border-default)',
                           color:
                             it.status === 'done'
                               ? 'rgba(34, 197, 94, 0.95)'
@@ -2756,7 +2756,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     style={{
                       height: 120,
                       background: 'rgba(0,0,0,0.18)',
-                      border: '1px solid rgba(255,255,255,0.10)',
+                      border: '1px solid var(--border-default)',
                       cursor: canShow ? 'pointer' : 'default',
                     }}
                     onClick={() => {
@@ -2875,7 +2875,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               style={{
                                 width: previewW,
                                 height: previewH,
-                                background: 'rgba(255,255,255,0.03)',
+                                background: 'var(--nested-block-bg)',
                                 border: '1.5px dashed rgba(99, 102, 241, 0.3)',
                                 transition: 'width 0.2s, height 0.2s',
                               }}
@@ -3026,8 +3026,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         .create-prompt-md p { margin: 6px 0; }
                         .create-prompt-md ul,.create-prompt-md ol { margin: 6px 0; padding-left: 18px; }
                         .create-prompt-md li { margin: 3px 0; }
-                        .create-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-                        .create-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
+                        .create-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 4px; border-radius: 4px; }
+                        .create-prompt-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
                         .create-prompt-md pre code { background: transparent; border: 0; padding: 0; }
                       `}</style>
                       <div className="create-prompt-md">
@@ -3143,8 +3143,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         .edit-prompt-md p { margin: 6px 0; }
                         .edit-prompt-md ul,.edit-prompt-md ol { margin: 6px 0; padding-left: 18px; }
                         .edit-prompt-md li { margin: 3px 0; }
-                        .edit-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-                        .edit-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
+                        .edit-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 4px; border-radius: 4px; }
+                        .edit-prompt-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
                         .edit-prompt-md pre code { background: transparent; border: 0; padding: 0; }
                       `}</style>
                       <div className="edit-prompt-md">
@@ -3293,7 +3293,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               className="overflow-auto border rounded-[6px]"
                               style={{
                                 borderColor: 'var(--border-subtle)',
-                                background: 'rgba(255,255,255,0.02)',
+                                background: 'var(--list-item-bg)',
                                 height: '100px',
                               }}
                             >
@@ -3306,8 +3306,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 .modal-prompt-md p { margin: 2px 0; white-space: pre-wrap; }
                                 .modal-prompt-md ul,.modal-prompt-md ol { margin: 2px 0; padding-left: 14px; }
                                 .modal-prompt-md li { margin: 1px 0; }
-                                .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 3px; border-radius: 3px; }
-                                .modal-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 4px; padding: 4px 6px; overflow: auto; margin: 2px 0; }
+                                .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 3px; border-radius: 3px; }
+                                .modal-prompt-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 4px; padding: 4px 6px; overflow: auto; margin: 2px 0; }
                                 .modal-prompt-md pre code { background: transparent; border: 0; padding: 0; }
                               `}</style>
                               <div className="modal-prompt-md">
@@ -3492,7 +3492,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 className="overflow-auto border rounded-[6px] p-2"
                                 style={{
                                   borderColor: 'var(--border-subtle)',
-                                  background: 'rgba(255,255,255,0.02)',
+                                  background: 'var(--list-item-bg)',
                                 }}
                               >
                                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -3503,8 +3503,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               <div
                                 className="flex items-center justify-center overflow-hidden rounded-[6px]"
                                 style={{
-                                  background: 'rgba(255,255,255,0.02)',
-                                  border: '1px solid rgba(255,255,255,0.08)',
+                                  background: 'var(--list-item-bg)',
+                                  border: '1px solid var(--border-subtle)',
                                   cursor: config.imageUrl ? 'zoom-in' : 'default',
                                 }}
                                 onClick={() => config.imageUrl && setEnlargedRefImageUrl(config.imageUrl)}
@@ -3893,7 +3893,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <div
                     className="flex-1 rounded-lg overflow-hidden relative group cursor-pointer"
                     style={{
-                      background: editingRefConfig.imageUrl ? 'transparent' : 'rgba(255,255,255,0.02)',
+                      background: editingRefConfig.imageUrl ? 'transparent' : 'var(--list-item-bg)',
                       border: editingRefConfig.imageUrl ? 'none' : '1px dashed var(--border-subtle)',
                       minHeight: '200px',
                     }}

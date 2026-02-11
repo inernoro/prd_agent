@@ -343,7 +343,7 @@ function CoverMosaic(props: { title: string; assets: VisualAgentWorkspace['cover
         className="h-full w-full"
         style={{
           ...p.style,
-          background: 'rgba(255,255,255,0.03)',
+          background: 'var(--nested-block-bg)',
         }}
       />
     );
@@ -439,7 +439,7 @@ function ToolbarButton(props: {
           style={{
             background: 'rgba(30, 30, 35, 0.95)',
             color: '#fff',
-            border: '1px solid rgba(255,255,255,0.1)',
+            border: '1px solid var(--border-default)',
             boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
           }}
         >
@@ -688,7 +688,7 @@ function QuickInputBox(props: {
                   borderRadius: 4,
                   overflow: 'hidden',
                   border: '1px solid rgba(255,255,255,0.22)',
-                  background: 'rgba(255,255,255,0.02)',
+                  background: 'var(--list-item-bg)',
                   color: 'rgba(255,255,255,0.82)',
                 }}
                 title={`参考图：${selectedImage.file.name}`}
@@ -725,7 +725,7 @@ function QuickInputBox(props: {
                     borderRadius: 3,
                     overflow: 'hidden',
                     border: '1px solid rgba(255,255,255,0.22)',
-                    background: 'rgba(255,255,255,0.06)',
+                    background: 'var(--bg-input-hover)',
                     display: 'inline-flex',
                     flex: '0 0 auto',
                   }}
@@ -795,7 +795,7 @@ function QuickInputBox(props: {
                           borderRadius: 4,
                           overflow: 'hidden',
                           border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'rgba(255,255,255,0.02)',
+                          background: 'var(--list-item-bg)',
                           color: 'rgba(255,255,255,0.82)',
                         }}
                         title="选择档位"
@@ -872,7 +872,7 @@ function QuickInputBox(props: {
                           borderRadius: 4,
                           overflow: 'hidden',
                           border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'rgba(255,255,255,0.02)',
+                          background: 'var(--list-item-bg)',
                           color: 'rgba(255,255,255,0.82)',
                         }}
                         title="选择比例"
@@ -1024,9 +1024,9 @@ function QuickInputBox(props: {
               onClick={openDefectDialog}
               className="h-9 w-9 rounded-xl flex items-center justify-center transition-all duration-200 hover:bg-white/10"
               style={{
-                background: 'rgba(255,255,255,0.06)',
+                background: 'var(--bg-input-hover)',
                 color: 'rgba(255,255,255,0.5)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                border: '1px solid var(--border-subtle)',
               }}
               title="提交缺陷 (Cmd/Ctrl+B)"
             >
@@ -1040,7 +1040,7 @@ function QuickInputBox(props: {
               style={{
                 background: canSubmit
                   ? 'linear-gradient(135deg, rgba(218,175,75,0.95) 0%, rgba(195,155,65,0.95) 100%)'
-                  : 'rgba(255,255,255,0.08)',
+                  : 'var(--border-subtle)',
                 color: canSubmit ? 'rgba(15,12,5,0.95)' : 'rgba(255,255,255,0.35)',
                 cursor: canSubmit ? 'pointer' : 'not-allowed',
                 boxShadow: canSubmit ? '0 4px 20px rgba(195,155,65,0.3)' : 'none',
@@ -1146,8 +1146,8 @@ function ProjectCard(props: {
         data-ws-card="1"
         data-ws-id={ws.id}
         style={{
-          background: hasCover ? 'transparent' : 'rgba(255,255,255,0.04)',
-          border: hasCover ? 'none' : '1px solid rgba(255,255,255,0.1)',
+          background: hasCover ? 'transparent' : 'var(--bg-input)',
+          border: hasCover ? 'none' : '1px solid var(--border-default)',
           boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
         }}
       >
@@ -1224,14 +1224,14 @@ function NewProjectCard(props: { onClick: () => void }) {
         className="h-[160px] rounded-xl flex flex-col items-center justify-center gap-2.5 transition-all duration-300 group-hover:scale-[1.02] group-hover:border-white/25"
         style={{
           border: '1.5px dashed rgba(255,255,255,0.2)',
-          background: 'rgba(255,255,255,0.02)',
+          background: 'var(--list-item-bg)',
         }}
       >
         <div
           className="w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 group-hover:scale-110"
           style={{
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'var(--bg-input-hover)',
+            border: '1px solid var(--border-default)',
           }}
         >
           <Plus size={22} style={{ color: 'rgba(255,255,255,0.6)' }} />
@@ -1272,7 +1272,7 @@ function ProjectCarousel(props: {
       <div className="max-w-[1340px] mx-auto px-5 mb-4">
         <div
           className="flex items-center justify-between py-3"
-          style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
+          style={{ borderTop: '1px solid var(--nested-block-border)' }}
         >
           <h2
             className="text-[14px] font-medium tracking-wide"

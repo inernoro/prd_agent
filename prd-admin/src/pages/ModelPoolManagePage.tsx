@@ -385,8 +385,8 @@ export function ModelPoolManagePage() {
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full h-9 pl-9 pr-3 rounded-[11px] outline-none text-[13px]"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-subtle)',
                   color: 'var(--text-primary)',
                 }}
               />
@@ -442,7 +442,7 @@ export function ModelPoolManagePage() {
               {!isMobile && (
                 <div
                   className="flex items-center gap-3 pl-12 pr-4 py-2 text-[11px] font-semibold select-none"
-                  style={{ color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+                  style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--nested-block-border)' }}
                 >
                   <span className="w-5 shrink-0" />
                   <span className="min-w-[120px] flex-[2]">名称</span>
@@ -473,9 +473,9 @@ export function ModelPoolManagePage() {
                     {/* ── 第一级：类型分组头 ── */}
                     <div
                       className={`flex items-center gap-3 px-4 py-2 cursor-pointer select-none ${isMobile ? 'flex-wrap gap-y-1' : ''}`}
-                      style={{ background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; }}
+                      style={{ background: 'var(--list-item-bg)', borderBottom: '1px solid var(--nested-block-border)' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-input)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'var(--list-item-bg)'; }}
                       onClick={() => setCollapsedTypes(prev => {
                         const next = new Set(prev);
                         if (next.has(group.type)) next.delete(group.type);
@@ -571,8 +571,8 @@ export function ModelPoolManagePage() {
                         <div key={pool.id}>
                           <div
                             className={`group transition-colors cursor-pointer ${isMobile ? 'flex flex-col gap-2 px-3 py-2.5' : 'flex items-center gap-3 pl-12 pr-4 py-2.5'}`}
-                            style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
-                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+                            style={{ borderBottom: '1px solid var(--nested-block-border)' }}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'var(--nested-block-bg)'; }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                             onClick={() => setExpandedPoolIds(prev => {
                               const next = new Set(prev);
@@ -591,7 +591,7 @@ export function ModelPoolManagePage() {
                                         ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
                                         : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />
                                     ) : (
-                                      <span className="w-3 h-px" style={{ background: 'rgba(255,255,255,0.1)' }} />
+                                      <span className="w-3 h-px" style={{ background: 'var(--border-default)' }} />
                                     )}
                                   </span>
                                   <span className="text-[13px] font-semibold truncate min-w-0 flex-1" style={{ color: 'var(--text-primary)' }}>
@@ -700,7 +700,7 @@ export function ModelPoolManagePage() {
                                       ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
                                       : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />
                                   ) : (
-                                    <span className="w-3 h-px" style={{ background: 'rgba(255,255,255,0.1)' }} />
+                                    <span className="w-3 h-px" style={{ background: 'var(--border-default)' }} />
                                   )}
                                 </span>
 
@@ -815,7 +815,7 @@ export function ModelPoolManagePage() {
                           {isExpanded && pool.models && pool.models.length > 0 && (
                             <div
                               className={`py-2 pr-4 ${isMobile ? 'pl-3' : 'pl-12'}`}
-                              style={{ background: 'rgba(255,255,255,0.015)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+                              style={{ background: 'var(--list-item-bg)', borderBottom: '1px solid var(--nested-block-border)' }}
                             >
                               <div className={`${isMobile ? 'ml-2' : 'ml-5'} space-y-1`}>
                                 {pool.models.map((model, idx) => {
@@ -906,7 +906,7 @@ export function ModelPoolManagePage() {
                     onChange={(e) => setPoolForm({ ...poolForm, name: e.target.value })}
                     placeholder="例如：主对话模型池"
                     className="w-full h-9 px-3 rounded-[10px] outline-none text-[13px]"
-                    style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                   />
                 </div>
                 <div>
@@ -920,7 +920,7 @@ export function ModelPoolManagePage() {
                     placeholder="例如：main-chat-pool"
                     disabled={!!editingPool}
                     className="w-full h-9 px-3 rounded-[10px] outline-none text-[13px]"
-                    style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)', opacity: editingPool ? 0.6 : 1 }}
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)', opacity: editingPool ? 0.6 : 1 }}
                   />
                 </div>
                 <div>
@@ -952,7 +952,7 @@ export function ModelPoolManagePage() {
                     min={1}
                     max={100}
                     className="w-full h-9 px-3 rounded-[10px] outline-none text-[13px] text-center"
-                    style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                     title="数字越小优先级越高"
                   />
                 </div>
@@ -999,7 +999,7 @@ export function ModelPoolManagePage() {
                   placeholder="模型池用途说明..."
                   rows={2}
                   className="w-full px-3 py-2 rounded-[10px] outline-none text-[13px] resize-none"
-                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                 />
               </div>
 
@@ -1017,7 +1017,7 @@ export function ModelPoolManagePage() {
 
                 <div
                   className="rounded-[12px] overflow-hidden"
-                  style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}
+                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}
                 >
                   {poolForm.models.length === 0 ? (
                     <div className="py-10 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
@@ -1053,7 +1053,7 @@ export function ModelPoolManagePage() {
                                     }));
                                   }}
                                   className="h-7 w-14 px-1 rounded-md outline-none text-[11px] text-center"
-                                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
+                                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                                   title="优先级（越小越优先）"
                                 />
                                 <button
@@ -1070,7 +1070,7 @@ export function ModelPoolManagePage() {
                       </div>
 
                       {/* 虚线分隔 */}
-                      <div className="mx-3" style={{ borderTop: '1px dashed rgba(255,255,255,0.10)' }} />
+                      <div className="mx-3" style={{ borderTop: '1px dashed var(--border-default)' }} />
 
                       {/* 调度预测可视化（本地计算） */}
                       <InlineDispatchPreview
@@ -1212,28 +1212,28 @@ function InlineDispatchPreview({
               return (
                 <div key={keyOfModel(m)} className="flex items-center gap-2">
                   <div className="flex flex-col items-center w-4 shrink-0 self-stretch">
-                    <div className="w-px flex-1 transition-all duration-400" style={{ background: isActive ? `${color}40` : 'rgba(255,255,255,0.06)' }} />
+                    <div className="w-px flex-1 transition-all duration-400" style={{ background: isActive ? `${color}40` : 'var(--nested-block-border)' }} />
                     <div
                       className="w-2 h-2 rounded-full border-[1.5px] shrink-0 transition-all duration-400"
                       style={{
-                        borderColor: isActive ? color : 'rgba(255,255,255,0.15)',
+                        borderColor: isActive ? color : 'var(--border-default)',
                         background: isTarget && isActive ? color : 'transparent',
                         boxShadow: isTarget && isActive ? `0 0 8px ${color}50` : 'none',
                       }}
                     />
-                    <div className="w-px flex-1" style={{ background: i < sorted.length - 1 ? 'rgba(255,255,255,0.06)' : 'transparent' }} />
+                    <div className="w-px flex-1" style={{ background: i < sorted.length - 1 ? 'var(--nested-block-border)' : 'transparent' }} />
                   </div>
                   <div
                     className="flex-1 flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all duration-400"
                     style={{
                       opacity: isActive ? 1 : 0.15,
                       transform: isActive ? 'translateX(0)' : 'translateX(-6px)',
-                      background: isTarget ? `${color}10` : 'rgba(255,255,255,0.03)',
-                      border: `1px solid ${isTarget ? `${color}25` : 'rgba(255,255,255,0.05)'}`,
+                      background: isTarget ? `${color}10` : 'var(--nested-block-bg)',
+                      border: `1px solid ${isTarget ? `${color}25` : 'var(--nested-block-border)'}`,
                     }}
                   >
                     {platformNameById.get(m.platformId) && (
-                      <span className="text-[9px] px-1 py-0.5 rounded shrink-0" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                      <span className="text-[9px] px-1 py-0.5 rounded shrink-0" style={{ background: 'var(--bg-input-hover)', color: 'var(--text-muted)' }}>
                         {platformNameById.get(m.platformId)}
                       </span>
                     )}
@@ -1241,7 +1241,7 @@ function InlineDispatchPreview({
                     <span
                       className="text-[10px] px-1.5 py-0.5 rounded-md shrink-0"
                       style={{
-                        background: isTarget ? `${color}18` : 'rgba(255,255,255,0.05)',
+                        background: isTarget ? `${color}18` : 'var(--bg-card-hover)',
                         color: isTarget ? color : 'var(--text-muted)',
                       }}
                     >
@@ -1308,12 +1308,12 @@ function InlineDispatchPreview({
                   style={{
                     opacity: isActive ? 1 : 0.15,
                     transform: isActive ? 'translateY(0) scale(1)' : 'translateY(-4px) scale(0.96)',
-                    background: isWinner ? `${color}12` : 'rgba(255,255,255,0.03)',
-                    border: `1px solid ${isWinner ? `${color}35` : 'rgba(255,255,255,0.06)'}`,
+                    background: isWinner ? `${color}12` : 'var(--nested-block-bg)',
+                    border: `1px solid ${isWinner ? `${color}35` : 'var(--nested-block-border)'}`,
                   }}
                 >
                   {platformNameById.get(m.platformId) && (
-                    <span className="text-[9px] px-1 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                    <span className="text-[9px] px-1 py-0.5 rounded" style={{ background: 'var(--bg-input-hover)', color: 'var(--text-muted)' }}>
                       {platformNameById.get(m.platformId)}
                     </span>
                   )}
@@ -1356,15 +1356,15 @@ function InlineDispatchPreview({
                   className="flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all duration-300"
                   style={{
                     opacity: isActive ? 1 : 0.15,
-                    background: isCurrent ? `${color}10` : 'rgba(255,255,255,0.03)',
-                    border: `1px solid ${isCurrent ? `${color}30` : 'rgba(255,255,255,0.05)'}`,
+                    background: isCurrent ? `${color}10` : 'var(--nested-block-bg)',
+                    border: `1px solid ${isCurrent ? `${color}30` : 'var(--nested-block-border)'}`,
                   }}
                 >
                   <div
                     className="w-5 h-5 rounded-md flex items-center justify-center shrink-0 transition-all duration-300"
                     style={{
-                      background: isCurrent ? `${color}20` : 'rgba(255,255,255,0.04)',
-                      border: `1px solid ${isCurrent ? `${color}40` : 'rgba(255,255,255,0.08)'}`,
+                      background: isCurrent ? `${color}20` : 'var(--bg-input)',
+                      border: `1px solid ${isCurrent ? `${color}40` : 'var(--border-subtle)'}`,
                     }}
                   >
                     {isCurrent ? (
@@ -1374,7 +1374,7 @@ function InlineDispatchPreview({
                     )}
                   </div>
                   {platformNameById.get(m.platformId) && (
-                    <span className="text-[9px] px-1 py-0.5 rounded shrink-0" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                    <span className="text-[9px] px-1 py-0.5 rounded shrink-0" style={{ background: 'var(--bg-input-hover)', color: 'var(--text-muted)' }}>
                       {platformNameById.get(m.platformId)}
                     </span>
                   )}

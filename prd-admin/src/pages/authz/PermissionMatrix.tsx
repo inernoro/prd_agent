@@ -162,7 +162,7 @@ export function PermissionMatrix({
                 className="text-[11px] font-medium px-2 py-1 rounded-md"
                 style={{
                   color: 'var(--text-muted)',
-                  background: 'rgba(255, 255, 255, 0.03)',
+                  background: 'var(--nested-block-bg)',
                 }}
               >
                 菜单 / 角色
@@ -179,7 +179,7 @@ export function PermissionMatrix({
                     highlightRoleKey === role.key
                       ? 'rgba(214, 178, 106, 0.12)'
                       : role.isBuiltIn
-                        ? 'rgba(255, 255, 255, 0.02)'
+                        ? 'var(--list-item-bg)'
                         : 'transparent',
                   color: highlightRoleKey === role.key ? 'rgba(214, 178, 106, 0.95)' : 'var(--text-primary)',
                   minWidth: 88,
@@ -190,7 +190,7 @@ export function PermissionMatrix({
                   <div
                     className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
                     style={{
-                      background: role.isBuiltIn ? 'rgba(214, 178, 106, 0.08)' : 'rgba(255, 255, 255, 0.04)',
+                      background: role.isBuiltIn ? 'rgba(214, 178, 106, 0.08)' : 'var(--bg-input)',
                     }}
                   >
                     {role.isBuiltIn && <ShieldCheck size={11} style={{ color: 'rgba(214, 178, 106, 0.7)' }} />}
@@ -200,7 +200,7 @@ export function PermissionMatrix({
                     className="text-[10px] px-1.5 py-0.5 rounded-md"
                     style={{
                       color: 'var(--text-muted)',
-                      background: 'rgba(255, 255, 255, 0.03)',
+                      background: 'var(--nested-block-bg)',
                     }}
                   >
                     {role.permissions?.length || 0} 项
@@ -223,7 +223,7 @@ export function PermissionMatrix({
                 onMouseEnter={() => setHoveredRow(menu.appKey)}
                 onMouseLeave={() => setHoveredRow(null)}
                 style={{
-                  background: hoveredRow === menu.appKey ? 'rgba(255, 255, 255, 0.04)' : 'transparent',
+                  background: hoveredRow === menu.appKey ? 'var(--bg-input)' : 'transparent',
                 }}
               >
                 {/* 菜单行头 - 可点击查看权限详情 */}
@@ -247,10 +247,10 @@ export function PermissionMatrix({
                     <div
                       className="w-8 h-8 rounded-[10px] flex items-center justify-center transition-all duration-250 ease-out shrink-0"
                       style={{
-                        background: hoveredRow === menu.appKey ? 'rgba(214, 178, 106, 0.18)' : 'rgba(255, 255, 255, 0.05)',
+                        background: hoveredRow === menu.appKey ? 'rgba(214, 178, 106, 0.18)' : 'var(--bg-card-hover)',
                         transform: hoveredRow === menu.appKey ? 'scale(1.08)' : 'scale(1)',
                         boxShadow: hoveredRow === menu.appKey ? '0 4px 16px rgba(214, 178, 106, 0.25)' : '0 2px 8px rgba(0, 0, 0, 0.1)',
-                        border: hoveredRow === menu.appKey ? '1px solid rgba(214, 178, 106, 0.25)' : '1px solid rgba(255, 255, 255, 0.06)',
+                        border: hoveredRow === menu.appKey ? '1px solid rgba(214, 178, 106, 0.25)' : '1px solid var(--nested-block-border)',
                       }}
                     >
                       <Icon
@@ -289,7 +289,7 @@ export function PermissionMatrix({
                         background: isHighlighted
                           ? 'rgba(214, 178, 106, 0.08)'
                           : isRowHovered
-                            ? 'rgba(255, 255, 255, 0.03)'
+                            ? 'var(--nested-block-bg)'
                             : 'transparent',
                         borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
                       }}
@@ -349,7 +349,7 @@ export function PermissionMatrix({
         <span className="flex items-center gap-2">
           <span
             className="w-5 h-5 rounded-md flex items-center justify-center"
-            style={{ background: 'rgba(255, 255, 255, 0.03)' }}
+            style={{ background: 'var(--nested-block-bg)' }}
           >
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
               <circle cx="8" cy="8" r="5" stroke="rgba(255, 255, 255, 0.25)" strokeWidth="1.5" />

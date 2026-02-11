@@ -58,7 +58,7 @@ export function MenuPermissionDialog({ open, onOpenChange, menuAppKey }: MenuPer
         {/* Header */}
         <div
           className="flex items-center justify-between px-5 py-4"
-          style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
+          style={{ borderBottom: '1px solid var(--nested-block-border)' }}
         >
           <div>
             <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -93,7 +93,7 @@ export function MenuPermissionDialog({ open, onOpenChange, menuAppKey }: MenuPer
                   <div
                     key={perm.key}
                     className="p-3 rounded-xl"
-                    style={{ background: 'rgba(255, 255, 255, 0.03)' }}
+                    style={{ background: 'var(--nested-block-bg)' }}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
@@ -135,7 +135,7 @@ export function MenuPermissionDialog({ open, onOpenChange, menuAppKey }: MenuPer
         <div
           className="px-5 py-3 text-xs"
           style={{
-            borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+            borderTop: '1px solid var(--nested-block-border)',
             color: 'var(--text-muted)',
           }}
         >

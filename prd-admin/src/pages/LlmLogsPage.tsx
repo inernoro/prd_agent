@@ -164,7 +164,7 @@ function requestTypeChipStyle(tone: RequestTypeTone): React.CSSProperties {
   if (tone === 'blue') return { background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.28)', color: 'rgba(59, 130, 246, 0.95)' };
   if (tone === 'purple') return { background: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.28)', color: 'rgba(168, 85, 247, 0.95)' };
   if (tone === 'gold') return { background: 'rgba(214, 178, 106, 0.18)', border: '1px solid rgba(214, 178, 106, 0.35)', color: 'var(--accent-gold-2)' };
-  return { background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)', color: 'var(--text-muted)' };
+  return { background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-muted)' };
 }
 
 function extractImageSizeAdjustmentHint(it: LlmRequestLogListItem): { from?: string; to?: string; ratioAdjusted?: boolean } | null {
@@ -1255,7 +1255,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
 
   const inputStyle: React.CSSProperties = {
     background: 'var(--bg-input)',
-    border: '1px solid rgba(255,255,255,0.12)',
+    border: '1px solid var(--border-default)',
     color: 'var(--text-primary)',
   };
 
@@ -1442,7 +1442,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                   }}
                   className="px-4 py-3 cursor-pointer hover:bg-white/2"
                   style={{
-                    background: active ? 'rgba(255,255,255,0.03)' : 'transparent',
+                    background: active ? 'var(--nested-block-bg)' : 'transparent',
                   }}
                 >
                   <div className="flex items-start justify-between gap-2 sm:gap-4">
@@ -1458,7 +1458,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         {it.requestPurpose && (
                           <span
                             className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0 cursor-help"
-                            style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                            style={{ background: 'var(--bg-input-hover)', color: 'var(--text-muted)' }}
                             title={it.requestPurpose}
                           >
                             <AppCallerKeyIcon size={10} className="opacity-60" />
@@ -1663,14 +1663,14 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                   {sizes.length ? (
                                     <div
                                       className="mt-2 rounded-[10px] p-2"
-                                      style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.02)', maxHeight: 220, overflow: 'auto' }}
+                                      style={{ border: '1px solid var(--border-default)', background: 'var(--list-item-bg)', maxHeight: 220, overflow: 'auto' }}
                                     >
                                       <div className="flex flex-wrap gap-1.5">
                                         {sizes.map((s, idx) => (
                                           <span
                                             key={`${s}-${idx}`}
                                             className="inline-flex items-center rounded-[10px] px-2 py-1 text-[11px] font-semibold"
-                                            style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.18)' }}
+                                            style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.18)' }}
                                             title={s}
                                           >
                                             {s}
@@ -1845,7 +1845,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         className="rounded-[12px] px-2.5 py-1.5 min-w-0"
                         style={{
                           border: '1px solid var(--border-subtle)',
-                          background: 'rgba(255,255,255,0.02)',
+                          background: 'var(--list-item-bg)',
                           minWidth: 0,
                           ...(ss?.container ?? {}),
                         }}
@@ -1978,7 +1978,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>Response</div>
                   <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                    <div className="flex items-center rounded-[8px] p-0.5" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+                    <div className="flex items-center rounded-[8px] p-0.5" style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}>
                       <button
                         type="button"
                         onClick={() => setAnswerView('preview')}
@@ -2131,7 +2131,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         <div
                           key={it.k}
                           className="rounded-[12px] px-3 py-2 min-w-0 overflow-hidden"
-                          style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', minWidth: 0 }}
+                          style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)', minWidth: 0 }}
                         >
                           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                             {it.k}
@@ -2238,7 +2238,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
 
                       return (
                     <div className="mb-3">
-                      <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+                      <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}>
                         {/* Prompt */}
                         <div className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)' }}>
                           {(detail?.questionText ?? '').trim() || '（无提示词）'}
@@ -2251,8 +2251,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                             {effInputs.length > 0 ? (
                               <div className="space-y-2">
                               {effInputs.map((img, idx) => (
-                                <div key={`in-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                <div key={`in-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                                     <div className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                                       {img.label}{effInputs.length > 1 ? ` #${idx + 1}` : ''}
                                     </div>
@@ -2269,7 +2269,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                               ))}
                               </div>
                             ) : (
-                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)', height: 120 }}>
+                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)', height: 120 }}>
                                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>（无输入）</div>
                               </div>
                             )}
@@ -2280,8 +2280,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                             {effOutputs.length > 0 ? (
                               <div className="space-y-2">
                               {effOutputs.map((img, idx) => (
-                                <div key={`out-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                <div key={`out-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)' }}>
+                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                                     <div className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                                       {img.label}{effOutputs.length > 1 ? ` #${idx + 1}` : ''}
                                     </div>
@@ -2298,7 +2298,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                               ))}
                               </div>
                             ) : (
-                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.18)', flex: 1, minHeight: 120 }}>
+                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)', flex: 1, minHeight: 120 }}>
                                 {detail?.status === 'running' ? (
                                   <div className="flex flex-col items-center gap-2">
                                     <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} />

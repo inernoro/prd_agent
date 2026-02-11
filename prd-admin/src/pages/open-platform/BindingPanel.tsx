@@ -106,7 +106,7 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
     <div className="h-full overflow-auto p-1">
       <GlassCard glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <div className="p-4 border-b border-white/10" style={{ background: 'var(--list-item-bg)' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Users size={18} className="text-muted-foreground" />
@@ -147,7 +147,7 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
                   <div
                     key={mapping.id}
                     className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/[0.03]"
-                    style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+                    style={{ border: '1px solid var(--nested-block-border)' }}
                   >
                     <div className="flex items-center gap-4">
                       <div

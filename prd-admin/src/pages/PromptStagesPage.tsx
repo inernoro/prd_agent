@@ -38,9 +38,9 @@ function SegmentedTabs<T extends string>(props: {
   return (
     <div
       className="inline-flex items-center max-w-full p-1 rounded-[14px] overflow-x-auto"
-      style={{ 
-        background: 'rgba(0,0,0,0.20)', 
-        border: '1px solid rgba(255,255,255,0.08)',
+      style={{
+        background: 'var(--nested-block-bg)',
+        border: '1px solid var(--border-subtle)',
         boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.3) inset',
       }}
       aria-label={ariaLabel}
@@ -860,14 +860,14 @@ export default function PromptStagesPage() {
       />
 
       {uiErr && (
-        <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'rgba(255,120,120,0.95)' }}>
+        <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)', color: 'rgba(255,120,120,0.95)' }}>
           {uiErr}
         </div>
       )}
       {uiMsg && (
         <div
           className="rounded-[14px] px-4 py-3 text-sm relative overflow-hidden"
-          style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'rgba(34,197,94,0.95)' }}
+          style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)', color: 'rgba(34,197,94,0.95)' }}
         >
           {uiMsg}
           {uiMsg === '已保存' && saveAnimKey ? (
@@ -948,8 +948,8 @@ export default function PromptStagesPage() {
                       : 'var(--bg-input)',
                     border: active
                       ? '1px solid rgba(214, 178, 106, 0.40)'
-                      : '1px solid rgba(255, 255, 255, 0.08)',
-                    boxShadow: active 
+                      : '1px solid var(--border-subtle)',
+                    boxShadow: active
                       ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
                       : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
                   }}
@@ -1013,8 +1013,8 @@ export default function PromptStagesPage() {
                             height: 28,
                             borderRadius: 10,
                             color: active ? '#1a1206' : 'var(--text-secondary)',
-                            background: active ? 'var(--gold-gradient)' : 'rgba(255,255,255,0.06)',
-                            border: active ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.10)',
+                            background: active ? 'var(--gold-gradient)' : 'var(--bg-input-hover)',
+                            border: active ? '1px solid rgba(0,0,0,0.08)' : '1px solid var(--border-default)',
                             boxShadow: active ? 'var(--shadow-gold)' : 'none',
                             cursor: 'grab',
                           }}
@@ -1030,7 +1030,7 @@ export default function PromptStagesPage() {
                       <button
                         type="button"
                         className="h-[28px] px-2.5 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0"
-                        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                        style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                         onClick={(e) => {
                           e.stopPropagation();
                           goTest({ role: roleEnum, promptKey: s.promptKey });
@@ -1208,7 +1208,7 @@ export default function PromptStagesPage() {
                   className="h-full w-full rounded-[14px] px-3 py-3 pr-12 text-sm outline-none resize-none"
                   style={{
                     border: '1px solid var(--border-subtle)',
-                    background: 'linear-gradient(180deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.03) 100%)',
+                    background: 'var(--nested-block-bg)',
                     color: 'var(--text-primary)',
                     lineHeight: 1.6,
                     fontFamily:
@@ -1227,8 +1227,8 @@ export default function PromptStagesPage() {
                   }}
                   className="absolute bottom-2 right-2 h-9 w-9 inline-flex items-center justify-center rounded-[12px] transition-colors"
                   style={{
-                    background: optBusy ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)',
-                    border: optBusy ? '1px solid rgba(239,68,68,0.28)' : '1px solid rgba(255,255,255,0.12)',
+                    background: optBusy ? 'rgba(239,68,68,0.12)' : 'var(--bg-input-hover)',
+                    border: optBusy ? '1px solid rgba(239,68,68,0.28)' : '1px solid var(--border-default)',
                     color: optBusy ? 'rgba(239,68,68,0.95)' : 'var(--text-secondary)',
                   }}
                   title={optBusy ? '停止优化' : '魔法棒：优化提示词（大模型）'}
@@ -1287,7 +1287,7 @@ export default function PromptStagesPage() {
                         : 'var(--bg-input)',
                       border: active
                         ? '1px solid rgba(214, 178, 106, 0.40)'
-                        : '1px solid rgba(255, 255, 255, 0.08)',
+                        : '1px solid var(--border-subtle)',
                       boxShadow: active
                         ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
                         : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
@@ -1311,7 +1311,7 @@ export default function PromptStagesPage() {
                       <button
                         type="button"
                         className="h-[28px] px-2.5 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0"
-                        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                        style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                         onClick={(e) => {
                           e.stopPropagation();
                           goTest({ role: r, promptKey: null });
@@ -1382,7 +1382,7 @@ export default function PromptStagesPage() {
                       disabled={sysLoading || sysSaving || !sysSettings}
                       className="flex-1 min-h-0 w-full rounded-[14px] px-3 py-2.5 text-[13px] outline-none resize-none transition-all duration-200 focus:ring-2 focus:ring-offset-0"
                       style={{
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        border: '1px solid var(--border-subtle)',
                         background: 'linear-gradient(135deg, var(--bg-input) 0%, rgba(20, 20, 22, 0.98) 100%)',
                         color: 'var(--text-primary)',
                         lineHeight: 1.6,
@@ -1393,7 +1393,7 @@ export default function PromptStagesPage() {
                         e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(214, 178, 106, 0.2) inset, 0 0 0 2px rgba(214, 178, 106, 0.1)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+                        e.currentTarget.style.borderColor = 'var(--border-subtle)';
                         e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(255, 255, 255, 0.02) inset';
                       }}
                     />
@@ -1410,7 +1410,7 @@ export default function PromptStagesPage() {
                   className="h-full w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
                   style={{
                     border: '1px solid var(--border-subtle)',
-                    background: 'linear-gradient(180deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.03) 100%)',
+                    background: 'var(--nested-block-bg)',
                     color: 'var(--text-primary)',
                     lineHeight: 1.6,
                     fontFamily:
@@ -1431,7 +1431,7 @@ export default function PromptStagesPage() {
       {showLiterary && (
         <div className="flex-1 min-h-0 flex flex-col gap-4">
           {literaryError && (
-            <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'rgba(255,120,120,0.95)' }}>
+            <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)', color: 'rgba(255,120,120,0.95)' }}>
               {literaryError}
             </div>
           )}
@@ -1582,8 +1582,8 @@ export default function PromptStagesPage() {
               <div
                 className="rounded-[14px] px-4 py-3 text-sm"
                 style={{
-                  border: '1px solid rgba(255,255,255,0.10)',
-                  background: 'rgba(0,0,0,0.20)',
+                  border: '1px solid var(--border-default)',
+                  background: 'var(--nested-block-bg)',
                   color: 'rgba(255,120,120,0.95)',
                 }}
               >
@@ -1638,7 +1638,7 @@ export default function PromptStagesPage() {
                   className="mt-3 flex-1 min-h-[360px] w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
                   style={{
                     border: '1px solid var(--border-subtle)',
-                    background: 'rgba(255,255,255,0.03)',
+                    background: 'var(--nested-block-bg)',
                     color: 'var(--text-primary)',
                     lineHeight: 1.6,
                     fontFamily:
@@ -1660,7 +1660,7 @@ export default function PromptStagesPage() {
                   className="mt-3 flex-1 min-h-[360px] w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
                   style={{
                     border: '1px solid var(--border-subtle)',
-                    background: 'linear-gradient(180deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.03) 100%)',
+                    background: 'var(--nested-block-bg)',
                     color: 'var(--text-primary)',
                     lineHeight: 1.6,
                     fontFamily:

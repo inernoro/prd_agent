@@ -527,8 +527,8 @@ export function DefectCard({ defect }: DefectCardProps) {
                         key={att.id}
                         className="w-10 h-10 rounded overflow-hidden flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-white/30 transition-all"
                         style={{
-                          background: 'rgba(0,0,0,0.3)',
-                          border: '1px solid rgba(255,255,255,0.1)',
+                          background: 'var(--nested-block-bg)',
+                          border: '1px solid var(--border-default)',
                         }}
                         onClick={(e) => att.url && handleImageClick(e, att.url)}
                         title="点击查看大图"
@@ -550,7 +550,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                       <div
                         className="w-10 h-10 rounded flex-shrink-0 flex items-center justify-center text-[10px]"
                         style={{
-                          background: 'rgba(255,255,255,0.06)',
+                          background: 'var(--bg-input-hover)',
                           color: 'var(--text-muted)',
                         }}
                       >
@@ -567,9 +567,9 @@ export function DefectCard({ defect }: DefectCardProps) {
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] hover:ring-2 hover:ring-white/30 transition-all"
                       style={{
-                        background: 'rgba(255,255,255,0.06)',
+                        background: 'var(--bg-input-hover)',
                         color: 'var(--text-muted)',
-                        border: '1px solid rgba(255,255,255,0.1)',
+                        border: '1px solid var(--border-default)',
                       }}
                       title={`打开附件 ${otherAttachments[0].fileName}`}
                       onClick={(e) => e.stopPropagation()}
@@ -582,9 +582,9 @@ export function DefectCard({ defect }: DefectCardProps) {
                       type="button"
                       className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] hover:ring-2 hover:ring-white/30 transition-all"
                       style={{
-                        background: 'rgba(255,255,255,0.06)',
+                        background: 'var(--bg-input-hover)',
                         color: 'var(--text-muted)',
-                        border: '1px solid rgba(255,255,255,0.1)',
+                        border: '1px solid var(--border-default)',
                       }}
                       title={`查看附件 ${otherAttachments.length} 个`}
                       onClick={(e) => {
@@ -603,7 +603,7 @@ export function DefectCard({ defect }: DefectCardProps) {
             {/* 底部：严重性 + 状态 + 人员 + 时间 + 操作 */}
             <div
               className="px-3 py-2 flex items-center border-t text-[11px]"
-              style={{ borderColor: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+              style={{ borderColor: 'var(--nested-block-border)', color: 'var(--text-muted)' }}
             >
               {/* 严重性标签 - 左下角 */}
               <div
@@ -618,11 +618,11 @@ export function DefectCard({ defect }: DefectCardProps) {
               <div
                 className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded mr-2 flex-shrink-0 text-[10px]"
                 style={{
-                  background: 'rgba(255,255,255,0.06)',
+                  background: 'var(--bg-input-hover)',
                   color: 'var(--text-muted)',
                   border: isReporterMe
                     ? '1px solid rgba(255, 255, 255, 0.5)'
-                    : '1px solid rgba(255,255,255,0.08)',
+                    : '1px solid var(--border-subtle)',
                 }}
                 title={reporterDisplayName}
               >
@@ -644,11 +644,11 @@ export function DefectCard({ defect }: DefectCardProps) {
               <div
                 className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded flex-shrink-0 text-[10px]"
                 style={{
-                  background: 'rgba(255,255,255,0.06)',
+                  background: 'var(--bg-input-hover)',
                   color: 'var(--text-muted)',
                   border: isAssigneeMe
                     ? '1px solid rgba(255, 255, 255, 0.5)'
-                    : '1px solid rgba(255,255,255,0.08)',
+                    : '1px solid var(--border-subtle)',
                 }}
                 title={assigneeDisplayName}
               >

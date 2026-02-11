@@ -667,7 +667,7 @@ export default function UsersPage() {
                     setPage(1);
                   }}
                   className="h-[36px] w-full rounded-[10px] pl-9 pr-4 text-[13px] outline-none transition-all duration-200 focus:ring-2 focus:ring-[var(--accent-gold)]/20"
-                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
+                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
                   placeholder="搜索用户名或昵称"
                 />
               </div>
@@ -718,8 +718,8 @@ export default function UsersPage() {
         <div
           className="mt-4 flex-1 min-h-0 overflow-auto rounded-[14px] p-4"
           style={{
-            background: 'rgba(255,255,255,0.015)',
-            border: '1px solid rgba(255,255,255,0.05)',
+            background: 'var(--list-item-bg)',
+            border: '1px solid var(--bg-card-hover)',
           }}
         >
           {loading ? (
@@ -747,16 +747,16 @@ export default function UsersPage() {
                     key={u.userId}
                     className="group relative rounded-[10px] p-2.5 transition-all duration-150"
                     style={{
-                      background: isBot ? 'rgba(34,197,94,0.03)' : 'rgba(255,255,255,0.02)',
-                      border: isBot ? '1px solid rgba(34,197,94,0.15)' : '1px solid rgba(255,255,255,0.06)',
+                      background: isBot ? 'rgba(34,197,94,0.03)' : 'var(--list-item-bg)',
+                      border: isBot ? '1px solid rgba(34,197,94,0.15)' : '1px solid var(--nested-block-border)',
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.06)' : 'rgba(255,255,255,0.04)';
-                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.1)';
+                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.06)' : 'var(--bg-input)';
+                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.25)' : 'var(--border-default)';
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.03)' : 'rgba(255,255,255,0.02)';
-                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.06)';
+                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.03)' : 'var(--list-item-bg)';
+                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.15)' : 'var(--nested-block-border)';
                     }}
                   >
                     {/* 操作按钮：悬浮显示 */}
@@ -766,7 +766,7 @@ export default function UsersPage() {
                           <button
                             type="button"
                             className="inline-flex items-center justify-center h-6 w-6 rounded-[6px] transition-colors hover:bg-white/10"
-                            style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)' }}
+                            style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}
                             aria-label="更多操作"
                           >
                             <MoreVertical size={14} />
@@ -796,7 +796,7 @@ export default function UsersPage() {
                               {statusUpdatingUserId === u.userId ? '处理中...' : u.status === 'Active' ? '停用账户' : '启用账户'}
                             </DropdownMenu.Item>
 
-                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
 
                             {/* 角色切换子菜单 */}
                             <DropdownMenu.Sub>
@@ -837,7 +837,7 @@ export default function UsersPage() {
                               </DropdownMenu.Portal>
                             </DropdownMenu.Sub>
 
-                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
 
                             {isLockedUser(u) && (
                               <DropdownMenu.Item
@@ -920,7 +920,7 @@ export default function UsersPage() {
                               限流配置
                             </DropdownMenu.Item>
 
-                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
 
                             <DropdownMenu.Item
                               className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
@@ -935,7 +935,7 @@ export default function UsersPage() {
                               {switchingUserId === u.userId ? '切换中...' : '切换登录'}
                             </DropdownMenu.Item>
 
-                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
 
                             <DropdownMenu.Item
                               className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
@@ -1139,7 +1139,7 @@ export default function UsersPage() {
               <div className="shrink-0">
                 <div
                   className="h-16 w-16 rounded-[12px] overflow-hidden flex items-center justify-center relative group cursor-pointer"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)' }}
                   title="创建成功后可设置头像"
                   onClick={() => toast.info('提示', '请先完成用户创建，创建成功后将自动弹出头像设置')}
                 >
@@ -1174,7 +1174,7 @@ export default function UsersPage() {
                       }
                     }}
                     className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                     placeholder="4-32位"
                     autoComplete="off"
                   />
@@ -1189,7 +1189,7 @@ export default function UsersPage() {
                       setCreateError(null);
                     }}
                     className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                     placeholder="自动同步"
                     autoComplete="off"
                   />
@@ -1208,7 +1208,7 @@ export default function UsersPage() {
                 }}
                 type="password"
                 className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                 placeholder="设置登录密码"
                 autoComplete="new-password"
               />
@@ -1221,7 +1221,7 @@ export default function UsersPage() {
                 <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>角色</div>
                 <div
                   className="rounded-[10px] p-2 space-y-1 flex-1"
-                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
                 >
                   {([
                     { key: 'PM', label: 'PM', desc: '产品经理' },
@@ -1253,7 +1253,7 @@ export default function UsersPage() {
                 <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>权限</div>
                 <div
                   className="rounded-[10px] p-2 space-y-1 flex-1"
-                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
                 >
                   {(createSystemRoles.length > 0 ? createSystemRoles : [
                     { key: 'admin', name: '管理员' },
@@ -1359,7 +1359,7 @@ export default function UsersPage() {
                   setNameError(null);
                 }}
                 className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                 placeholder="请输入姓名（1-50 字符）"
                 autoComplete="off"
               />
@@ -1411,7 +1411,7 @@ export default function UsersPage() {
                 }}
                 type="password"
                 className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                 placeholder="设置登录密码"
                 autoComplete="new-password"
               />
@@ -1549,7 +1549,7 @@ export default function UsersPage() {
               <div className="min-w-0">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>额外允许（勾选 permission）</div>
                 <div className="mt-2 rounded-[14px] p-2 overflow-auto min-h-[160px] max-h-[220px]"
-                     style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)' }}>
+                     style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}>
                   {authzCatalog.map((p) => {
                     const k = String(p.key || '').trim();
                     const checked = authzAllowSet.has(k);
@@ -1580,7 +1580,7 @@ export default function UsersPage() {
               <div className="min-w-0">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>禁止（勾选 permission）</div>
                 <div className="mt-2 rounded-[14px] p-2 overflow-auto min-h-[160px] max-h-[220px]"
-                     style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)' }}>
+                     style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}>
                   {authzCatalog.map((p) => {
                     const k = String(p.key || '').trim();
                     const checked = authzDenySet.has(k);
@@ -1649,7 +1649,7 @@ export default function UsersPage() {
                 {/* 豁免开关 */}
                 <div
                   className="rounded-[14px] p-4"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
                 >
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input
@@ -1674,7 +1674,7 @@ export default function UsersPage() {
                 {!rateLimitIsExempt && (
                   <div
                     className="rounded-[14px] p-4"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)' }}
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
                   >
                     <label className="flex items-center gap-3 cursor-pointer">
                       <input
@@ -1708,7 +1708,7 @@ export default function UsersPage() {
                             min={1}
                             max={100000}
                             className="mt-1 h-10 w-full rounded-[10px] px-3 text-sm outline-none"
-                            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                            style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                           />
                         </div>
                         <div>
@@ -1723,7 +1723,7 @@ export default function UsersPage() {
                             min={1}
                             max={10000}
                             className="mt-1 h-10 w-full rounded-[10px] px-3 text-sm outline-none"
-                            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                            style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                           />
                         </div>
                       </div>
