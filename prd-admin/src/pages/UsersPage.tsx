@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Dialog } from '@/components/ui/Dialog';
 import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit } from '@/services';
 import { MoreVertical, Pencil, Search, UserCog, Users, Gauge } from 'lucide-react';
@@ -61,6 +62,7 @@ function fmtRelativeTime(v?: string | null) {
 void fmtRelativeTime;
 
 export default function UsersPage() {
+  const { isMobile } = useBreakpoint();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<UserRow[]>([]);
@@ -653,9 +655,9 @@ export default function UsersPage() {
       />
 
       <GlassCard glow className="flex-1 min-h-0 flex flex-col">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex items-center gap-2.5 flex-nowrap min-w-0">
-            <div className="flex-1 min-w-[200px] max-w-[320px]">
+        <div className={`flex ${isMobile ? 'flex-col gap-2.5' : 'flex-wrap items-center gap-2.5'}`}>
+          <div className={`flex items-center gap-2.5 ${isMobile ? 'w-full' : 'min-w-0'}`}>
+            <div className={`${isMobile ? 'flex-1 min-w-0' : 'flex-1 min-w-[200px] max-w-[320px]'}`}>
               <div className="relative">
                 <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
                 <input
@@ -678,7 +680,7 @@ export default function UsersPage() {
                 setPage(1);
               }}
               uiSize="sm"
-              className="min-w-[88px] font-medium"
+              className="min-w-[72px] font-medium"
             >
               <option value="">角色</option>
               <option value="PM">PM</option>
@@ -694,7 +696,7 @@ export default function UsersPage() {
                 setPage(1);
               }}
               uiSize="sm"
-              className="min-w-[88px] font-medium"
+              className="min-w-[72px] font-medium"
             >
               <option value="">状态</option>
               <option value="Active">正常</option>
@@ -702,7 +704,7 @@ export default function UsersPage() {
             </Select>
           </div>
 
-          <div className="ml-auto flex items-center gap-2 shrink-0 flex-wrap justify-end">
+          <div className={`${isMobile ? '' : 'ml-auto'} flex items-center gap-2 shrink-0 flex-wrap justify-end`}>
             <Button variant="secondary" size="xs" onClick={openCreateUser}>
               创建用户
             </Button>

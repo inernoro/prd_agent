@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { useToolboxStore, type ToolboxCategory, type ToolboxPageTab } from '@/stores/toolboxStore';
 import { Package, Search, Plus, Loader2, Sparkles, Boxes, User, Wrench } from 'lucide-react';
 import { Button } from '@/components/design/Button';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { ToolCard } from './components/ToolCard';
 import { ToolDetail } from './components/ToolDetail';
 import { ToolEditor } from './components/ToolEditor';
@@ -28,6 +29,7 @@ const pageContainerStyle: React.CSSProperties = {
 };
 
 export default function AiToolboxPage() {
+  const { isMobile } = useBreakpoint();
   const {
     view,
     pageTab,
@@ -95,7 +97,7 @@ export default function AiToolboxPage() {
     <div className="h-full min-h-0 flex flex-col gap-3" style={pageContainerStyle}>
       {/* Header */}
       <div className="px-4 pt-3">
-        <div className="flex items-center justify-between">
+        <div className={`flex ${isMobile ? 'flex-col gap-2.5' : 'items-center justify-between'}`}>
           {/* Page Tab Switcher */}
           <div
             className="flex items-center gap-0.5 p-0.5 rounded-xl"
@@ -108,7 +110,7 @@ export default function AiToolboxPage() {
               <button
                 key={tab.key}
                 onClick={() => setPageTab(tab.key)}
-                className="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-2"
+                className={`${isMobile ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm'} rounded-lg font-medium transition-all duration-200 flex items-center gap-1.5`}
                 style={{
                   background: pageTab === tab.key
                     ? 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
@@ -126,7 +128,7 @@ export default function AiToolboxPage() {
           </div>
 
           {/* Actions */}
-          <Button variant="primary" size="sm" onClick={startCreate}>
+          <Button variant="primary" size="sm" onClick={startCreate} className={isMobile ? 'self-end' : ''}>
             <Plus size={13} />
             创建智能体
           </Button>
@@ -136,43 +138,57 @@ export default function AiToolboxPage() {
       {/* Filters */}
       <div className="px-4">
         <div
-          className="flex items-center gap-3 px-3 py-2 rounded-xl"
+          className={`${isMobile ? 'flex flex-col gap-2' : 'flex items-center gap-3'} px-3 py-2 rounded-xl`}
           style={{
             background: 'rgba(255, 255, 255, 0.02)',
             border: '1px solid rgba(255, 255, 255, 0.05)',
           }}
         >
-          {/* Category tabs */}
-          <div
-            className="flex items-center gap-0.5 p-0.5 rounded-lg"
-            style={{
-              background: 'rgba(255, 255, 255, 0.03)',
-              border: '1px solid rgba(255, 255, 255, 0.04)',
-            }}
-          >
-            {CATEGORY_OPTIONS.map((opt) => (
-              <button
-                key={opt.key}
-                onClick={() => setCategory(opt.key)}
-                className="px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 flex items-center gap-1.5"
-                style={{
-                  background: category === opt.key
-                    ? 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
-                    : 'transparent',
-                  color: category === opt.key ? 'white' : 'rgba(255, 255, 255, 0.6)',
-                  boxShadow: category === opt.key
-                    ? '0 2px 8px -2px rgba(var(--accent-primary-rgb, 99, 102, 241), 0.4)'
-                    : 'none',
-                }}
-              >
-                {opt.icon}
-                {opt.label}
-              </button>
-            ))}
+          {/* Category tabs + Count badge */}
+          <div className="flex items-center gap-2">
+            <div
+              className="flex items-center gap-0.5 p-0.5 rounded-lg"
+              style={{
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid rgba(255, 255, 255, 0.04)',
+              }}
+            >
+              {CATEGORY_OPTIONS.map((opt) => (
+                <button
+                  key={opt.key}
+                  onClick={() => setCategory(opt.key)}
+                  className={`${isMobile ? 'px-2 py-1' : 'px-3 py-1.5'} rounded-md text-xs font-medium transition-all duration-200 flex items-center gap-1.5 whitespace-nowrap`}
+                  style={{
+                    background: category === opt.key
+                      ? 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
+                      : 'transparent',
+                    color: category === opt.key ? 'white' : 'rgba(255, 255, 255, 0.6)',
+                    boxShadow: category === opt.key
+                      ? '0 2px 8px -2px rgba(var(--accent-primary-rgb, 99, 102, 241), 0.4)'
+                      : 'none',
+                  }}
+                >
+                  {opt.icon}
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Count badge */}
+            <div
+              className="px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap shrink-0"
+              style={{
+                background: 'rgba(255, 255, 255, 0.04)',
+                color: 'rgba(255, 255, 255, 0.6)',
+                border: '1px solid rgba(255, 255, 255, 0.05)',
+              }}
+            >
+              {filteredItems.length} 个工具
+            </div>
           </div>
 
           {/* Search */}
-          <div className="flex-1 max-w-sm relative">
+          <div className={`${isMobile ? 'w-full' : 'flex-1 max-w-sm'} relative`}>
             <Search
               size={14}
               className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -180,7 +196,7 @@ export default function AiToolboxPage() {
             />
             <input
               type="text"
-              placeholder="搜索工具名称、描述或标签..."
+              placeholder={isMobile ? '搜索工具...' : '搜索工具名称、描述或标签...'}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-8 pr-3 py-1.5 rounded-lg text-xs outline-none transition-all duration-200 focus:ring-1 focus:ring-[var(--accent-primary)]/30"
@@ -190,18 +206,6 @@ export default function AiToolboxPage() {
                 color: 'rgba(255, 255, 255, 0.9)',
               }}
             />
-          </div>
-
-          {/* Count badge */}
-          <div
-            className="px-2.5 py-1 rounded-full text-xs font-medium"
-            style={{
-              background: 'rgba(255, 255, 255, 0.04)',
-              color: 'rgba(255, 255, 255, 0.6)',
-              border: '1px solid rgba(255, 255, 255, 0.05)',
-            }}
-          >
-            {filteredItems.length} 个工具
           </div>
         </div>
       </div>
