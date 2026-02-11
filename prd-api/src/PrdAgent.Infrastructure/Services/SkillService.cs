@@ -8,42 +8,56 @@ namespace PrdAgent.Infrastructure.Services;
 public class SkillService : ISkillService
 {
     private readonly MongoDbContext _db;
+    private readonly IPromptService _promptService;
 
-    public SkillService(MongoDbContext db)
+    public SkillService(MongoDbContext db, IPromptService promptService)
     {
         _db = db;
+        _promptService = promptService;
     }
 
     public async Task<List<Skill>> GetVisibleSkillsAsync(string userId, UserRole? roleFilter = null, CancellationToken ct = default)
     {
-        // 系统/公共技能 + 当前用户的个人技能
-        var filter = Builders<Skill>.Filter.And(
+        // 1) 从 prompt_stages 读取系统技能（实时，admin 修改即刻生效）
+        var systemSkills = await GetSystemSkillsFromPromptsAsync(roleFilter, ct);
+
+        // 2) 从 skills 集合读取个人技能
+        var personalFilter = Builders<Skill>.Filter.And(
             Builders<Skill>.Filter.Eq(x => x.IsEnabled, true),
-            Builders<Skill>.Filter.Or(
-                Builders<Skill>.Filter.In(x => x.Visibility, new[] { SkillVisibility.System, SkillVisibility.Public }),
-                Builders<Skill>.Filter.And(
-                    Builders<Skill>.Filter.Eq(x => x.Visibility, SkillVisibility.Personal),
-                    Builders<Skill>.Filter.Eq(x => x.OwnerUserId, userId)
-                )
-            )
+            Builders<Skill>.Filter.Eq(x => x.Visibility, SkillVisibility.Personal),
+            Builders<Skill>.Filter.Eq(x => x.OwnerUserId, userId)
         );
+        var personalSkills = await _db.Skills.Find(personalFilter).SortBy(x => x.Order).ToListAsync(ct);
 
-        var skills = await _db.Skills.Find(filter).SortBy(x => x.Order).ToListAsync(ct);
-
-        // 角色过滤
         if (roleFilter.HasValue)
         {
-            skills = skills
+            personalSkills = personalSkills
                 .Where(s => s.Roles.Count == 0 || s.Roles.Contains(roleFilter.Value))
                 .ToList();
         }
 
-        return skills;
+        // 系统技能在前，个人技能在后
+        var result = new List<Skill>(systemSkills.Count + personalSkills.Count);
+        result.AddRange(systemSkills);
+        result.AddRange(personalSkills);
+        return result;
     }
 
     public async Task<Skill?> GetByKeyAsync(string skillKey, CancellationToken ct = default)
     {
-        return await _db.Skills.Find(x => x.SkillKey == skillKey).FirstOrDefaultAsync(ct);
+        // 先查 skills 集合（个人技能）
+        var personal = await _db.Skills.Find(x => x.SkillKey == skillKey).FirstOrDefaultAsync(ct);
+        if (personal != null) return personal;
+
+        // 再查 prompt_stages（系统技能 = promptKey 匹配）
+        var settings = await _promptService.GetEffectiveSettingsAsync(ct);
+        var prompt = settings.Prompts.FirstOrDefault(p =>
+            string.Equals(p.PromptKey, skillKey, StringComparison.Ordinal));
+
+        if (prompt != null)
+            return PromptEntryToSkill(prompt);
+
+        return null;
     }
 
     public async Task<Skill> CreatePersonalSkillAsync(string userId, Skill skill, CancellationToken ct = default)
@@ -55,7 +69,6 @@ public class SkillService : ISkillService
         skill.CreatedAt = DateTime.UtcNow;
         skill.UpdatedAt = DateTime.UtcNow;
 
-        // 自动生成 skillKey（如果未提供）
         if (string.IsNullOrWhiteSpace(skill.SkillKey))
         {
             skill.SkillKey = $"personal-{skill.Id}";
@@ -106,63 +119,68 @@ public class SkillService : ISkillService
 
     public async Task IncrementUsageAsync(string skillKey, CancellationToken ct = default)
     {
+        // 仅对 skills 集合中的个人技能计数；系统技能来自 prompt_stages，不计数
         var filter = Builders<Skill>.Filter.Eq(x => x.SkillKey, skillKey);
         var update = Builders<Skill>.Update.Inc(x => x.UsageCount, 1);
         await _db.Skills.UpdateOneAsync(filter, update, cancellationToken: ct);
     }
 
-    /// <summary>
-    /// 从 prompt_stages 迁移到 skills 集合（幂等：已存在的 skillKey 不会重复插入）
-    /// </summary>
-    public async Task<int> MigrateFromPromptsAsync(CancellationToken ct = default)
+    public Task<int> MigrateFromPromptsAsync(CancellationToken ct = default)
     {
-        var promptSettings = await _db.Prompts.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
-        if (promptSettings == null || promptSettings.Prompts.Count == 0) return 0;
+        // 不再需要迁移：系统技能直接从 prompt_stages 实时读取
+        return Task.FromResult(0);
+    }
 
-        var migrated = 0;
-        foreach (var prompt in promptSettings.Prompts)
+    // ━━━ 内部：prompt_stages → Skill 转换 ━━━━━━━━
+
+    private async Task<List<Skill>> GetSystemSkillsFromPromptsAsync(UserRole? roleFilter, CancellationToken ct)
+    {
+        var settings = await _promptService.GetEffectiveSettingsAsync(ct);
+
+        var prompts = settings.Prompts.AsEnumerable();
+
+        if (roleFilter.HasValue)
         {
-            // 检查是否已迁移
-            var existing = await _db.Skills.Find(x => x.SkillKey == prompt.PromptKey).FirstOrDefaultAsync(ct);
-            if (existing != null) continue;
-
-            var skill = new Skill
-            {
-                Id = Guid.NewGuid().ToString("N"),
-                SkillKey = prompt.PromptKey,
-                Title = prompt.Title,
-                Description = $"由提示词阶段迁移: {prompt.Title}",
-                Icon = GetDefaultIconForRole(prompt.Role),
-                Category = "analysis",
-                Visibility = SkillVisibility.System,
-                IsBuiltIn = true,
-                IsEnabled = true,
-                Roles = new List<UserRole> { prompt.Role },
-                Order = prompt.Order,
-                Input = new SkillInputConfig
-                {
-                    ContextScope = "prd",
-                    AcceptsUserInput = false,
-                    AcceptsAttachments = false,
-                },
-                Execution = new SkillExecutionConfig
-                {
-                    PromptTemplate = prompt.PromptTemplate,
-                    ModelType = "chat",
-                },
-                Output = new SkillOutputConfig
-                {
-                    Mode = "chat",
-                },
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow,
-            };
-
-            await _db.Skills.InsertOneAsync(skill, cancellationToken: ct);
-            migrated++;
+            prompts = prompts.Where(p => p.Role == roleFilter.Value);
         }
 
-        return migrated;
+        return prompts
+            .OrderBy(p => p.Order)
+            .Select(PromptEntryToSkill)
+            .ToList();
+    }
+
+    private static Skill PromptEntryToSkill(PromptEntry prompt)
+    {
+        return new Skill
+        {
+            Id = prompt.PromptKey,
+            SkillKey = prompt.PromptKey,
+            Title = prompt.Title,
+            Description = prompt.Title,
+            Icon = GetDefaultIconForRole(prompt.Role),
+            Category = "analysis",
+            Visibility = SkillVisibility.System,
+            IsBuiltIn = true,
+            IsEnabled = true,
+            Roles = new List<UserRole> { prompt.Role },
+            Order = prompt.Order,
+            Input = new SkillInputConfig
+            {
+                ContextScope = "prd",
+                AcceptsUserInput = false,
+                AcceptsAttachments = false,
+            },
+            Execution = new SkillExecutionConfig
+            {
+                PromptTemplate = prompt.PromptTemplate,
+                ModelType = "chat",
+            },
+            Output = new SkillOutputConfig
+            {
+                Mode = "chat",
+            },
+        };
     }
 
     private static string GetDefaultIconForRole(UserRole role)
