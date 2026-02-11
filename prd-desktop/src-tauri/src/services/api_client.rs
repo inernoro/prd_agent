@@ -48,6 +48,11 @@ pub fn get_api_base_url() -> String {
     API_BASE_URL.read().unwrap().clone()
 }
 
+/// 获取当前 client id（用于附件上传等手动拼 header 的场景）
+pub fn get_client_id_pub() -> Option<String> {
+    CLIENT_ID.read().unwrap().clone()
+}
+
 /// 获取默认 API 地址
 pub fn get_default_api_url() -> String {
     DEFAULT_API_URL.to_string()

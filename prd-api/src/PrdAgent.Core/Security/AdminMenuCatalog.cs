@@ -31,6 +31,9 @@ public static class AdminMenuCatalog
         // 提示词管理
         new("prompts", "/prompts", "提示词管理", null, "FileText", 50),
 
+        // 技能管理
+        new("skills", "/skills", "技能管理", null, "Zap", 55),
+
         // AI 百宝箱（Agent 统一入口）
         new("ai-toolbox", "/ai-toolbox", "AI 百宝箱", null, "Sparkles", 60),
 

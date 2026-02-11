@@ -126,6 +126,12 @@ public class MongoDbContext
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
     public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
 
+    // 技能设置（公共技能定义）
+    public IMongoCollection<SkillSettings> SkillSettings => _database.GetCollection<SkillSettings>("skill_settings");
+
+    // 统一技能集合（替代 prompt_stages + skill_settings）
+    public IMongoCollection<Skill> Skills => _database.GetCollection<Skill>("skills");
+
     // Webhook 通知
     public IMongoCollection<WebhookDeliveryLog> WebhookDeliveryLogs => _database.GetCollection<WebhookDeliveryLog>("webhook_delivery_logs");
 
@@ -797,6 +803,26 @@ public class MongoDbContext
         ToolboxItems.Indexes.CreateOne(new CreateIndexModel<ToolboxItem>(
             Builders<ToolboxItem>.IndexKeys.Ascending(x => x.CreatedByUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_toolbox_items_user_created" }));
+
+        // Skills：SkillKey 唯一索引
+        try
+        {
+            Skills.Indexes.CreateOne(new CreateIndexModel<Skill>(
+                Builders<Skill>.IndexKeys.Ascending(x => x.SkillKey),
+                new CreateIndexOptions { Name = "uniq_skills_skill_key", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // Skills：按可见性 + 角色 + 启用状态查询
+        Skills.Indexes.CreateOne(new CreateIndexModel<Skill>(
+            Builders<Skill>.IndexKeys.Ascending(x => x.Visibility).Ascending(x => x.IsEnabled).Ascending(x => x.Order),
+            new CreateIndexOptions { Name = "idx_skills_visibility_enabled_order" }));
+        // Skills：个人技能按用户查询
+        Skills.Indexes.CreateOne(new CreateIndexModel<Skill>(
+            Builders<Skill>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_skills_owner_updated" }));
 
         // ModelExchanges：按 ModelAlias 唯一索引
         try

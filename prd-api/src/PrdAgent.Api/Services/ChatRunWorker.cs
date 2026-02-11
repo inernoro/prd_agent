@@ -30,7 +30,9 @@ public sealed class ChatRunWorker : BackgroundService
         string? PromptKey,
         string? UserId,
         List<string>? AttachmentIds,
-        UserRole? AnswerAsRole);
+        UserRole? AnswerAsRole,
+        string? ResolvedPromptTemplate = null,
+        string? SystemPromptOverride = null);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -124,6 +126,10 @@ public sealed class ChatRunWorker : BackgroundService
                     if (!string.IsNullOrWhiteSpace(s)) atts.Add(s);
                 }
             }
+            // 技能执行：解析已解析的提示词模板和系统提示词覆盖
+            var resolvedPrompt = root.TryGetProperty("resolvedPromptTemplate", out var rpt) ? rpt.GetString() : null;
+            var sysOverride = root.TryGetProperty("systemPromptOverride", out var spo) ? spo.GetString() : null;
+
             sessionId = sessionId.Trim();
             content = content.Trim();
             if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(content)) return null;
@@ -133,7 +139,9 @@ public sealed class ChatRunWorker : BackgroundService
                 string.IsNullOrWhiteSpace(promptKey) ? null : promptKey.Trim(),
                 string.IsNullOrWhiteSpace(userId) ? null : userId.Trim(),
                 atts,
-                answerRole);
+                answerRole,
+                string.IsNullOrWhiteSpace(resolvedPrompt) ? null : resolvedPrompt.Trim(),
+                string.IsNullOrWhiteSpace(sysOverride) ? null : sysOverride.Trim());
         }
         catch
         {
@@ -152,6 +160,25 @@ public sealed class ChatRunWorker : BackgroundService
         if (s == "QA") return UserRole.QA;
         if (s == "ADMIN") return UserRole.ADMIN;
         return null;
+    }
+
+    /// <summary>
+    /// 构建有效的系统提示词覆盖：技能执行时优先使用已解析的模板
+    /// </summary>
+    private static string? BuildEffectiveSystemOverride(ChatRunInput input)
+    {
+        if (input.ResolvedPromptTemplate == null && input.SystemPromptOverride == null)
+            return null;
+
+        var parts = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(input.SystemPromptOverride))
+            parts.Add(input.SystemPromptOverride);
+
+        if (!string.IsNullOrWhiteSpace(input.ResolvedPromptTemplate))
+            parts.Add($"## 技能指令\n\n{input.ResolvedPromptTemplate}");
+
+        return string.Join("\n\n", parts);
     }
 
     private async Task ProcessRunAsync(string runId, CancellationToken stoppingToken)
@@ -211,6 +238,9 @@ public sealed class ChatRunWorker : BackgroundService
 
         try
         {
+            // 构建系统提示词覆盖（技能模式：resolvedPromptTemplate + systemPromptOverride）
+            var effectiveSystemOverride = BuildEffectiveSystemOverride(input);
+
             await foreach (var ev in chat.SendMessageAsync(
                                input.SessionId,
                                input.Content,
@@ -221,6 +251,7 @@ public sealed class ChatRunWorker : BackgroundService
                                runId: runId,
                                fixedUserMessageId: meta.UserMessageId,
                                fixedAssistantMessageId: meta.AssistantMessageId,
+                               systemPromptOverride: effectiveSystemOverride,
                                answerAsRole: input.AnswerAsRole,
                                cancellationToken: cts.Token))
             {
