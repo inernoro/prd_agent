@@ -387,7 +387,7 @@ describe('imageReferences 渲染逻辑测试', () => {
   describe('genType 判断逻辑', () => {
 
     it('无图片 → text2img', () => {
-      const imageRefCount = 0;
+      const imageRefCount: number = 0;
       const genType = imageRefCount > 1 ? 'vision' : (imageRefCount === 1 ? 'img2img' : 'text2img');
       expect(genType).toBe('text2img');
     });
@@ -399,7 +399,7 @@ describe('imageReferences 渲染逻辑测试', () => {
     });
 
     it('多图 → vision', () => {
-      const imageRefCount = 3;
+      const imageRefCount: number = 3;
       const genType = imageRefCount > 1 ? 'vision' : (imageRefCount === 1 ? 'img2img' : 'text2img');
       expect(genType).toBe('vision');
     });
