@@ -933,7 +933,7 @@ function AssetRowBlock(props: {
                   ? 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.02) 100%)'
                   : isFallback
                     ? 'linear-gradient(135deg, rgba(234,179,8,0.06) 0%, rgba(234,179,8,0.02) 100%)'
-                    : 'linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)',
+                    : 'linear-gradient(135deg, var(--nested-block-bg) 0%, var(--list-item-bg) 100%)',
               }}
               title={isUploading ? '上传中...' : (url ? `点击替换\n${url}` : '点击上传')}
               onClick={() => !isUploading && onUpload(skin, row.key)}

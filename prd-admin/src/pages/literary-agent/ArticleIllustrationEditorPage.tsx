@@ -2875,7 +2875,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               style={{
                                 width: previewW,
                                 height: previewH,
-                                background: 'rgba(255,255,255,0.03)',
+                                background: 'var(--nested-block-bg)',
                                 border: '1.5px dashed rgba(99, 102, 241, 0.3)',
                                 transition: 'width 0.2s, height 0.2s',
                               }}
@@ -3026,8 +3026,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         .create-prompt-md p { margin: 6px 0; }
                         .create-prompt-md ul,.create-prompt-md ol { margin: 6px 0; padding-left: 18px; }
                         .create-prompt-md li { margin: 3px 0; }
-                        .create-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-                        .create-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
+                        .create-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 4px; border-radius: 4px; }
+                        .create-prompt-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
                         .create-prompt-md pre code { background: transparent; border: 0; padding: 0; }
                       `}</style>
                       <div className="create-prompt-md">
@@ -3143,8 +3143,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         .edit-prompt-md p { margin: 6px 0; }
                         .edit-prompt-md ul,.edit-prompt-md ol { margin: 6px 0; padding-left: 18px; }
                         .edit-prompt-md li { margin: 3px 0; }
-                        .edit-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-                        .edit-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
+                        .edit-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 4px; border-radius: 4px; }
+                        .edit-prompt-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
                         .edit-prompt-md pre code { background: transparent; border: 0; padding: 0; }
                       `}</style>
                       <div className="edit-prompt-md">
@@ -3293,7 +3293,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               className="overflow-auto border rounded-[6px]"
                               style={{
                                 borderColor: 'var(--border-subtle)',
-                                background: 'rgba(255,255,255,0.02)',
+                                background: 'var(--list-item-bg)',
                                 height: '100px',
                               }}
                             >
@@ -3306,8 +3306,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 .modal-prompt-md p { margin: 2px 0; white-space: pre-wrap; }
                                 .modal-prompt-md ul,.modal-prompt-md ol { margin: 2px 0; padding-left: 14px; }
                                 .modal-prompt-md li { margin: 1px 0; }
-                                .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 3px; border-radius: 3px; }
-                                .modal-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 4px; padding: 4px 6px; overflow: auto; margin: 2px 0; }
+                                .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 3px; border-radius: 3px; }
+                                .modal-prompt-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 4px; padding: 4px 6px; overflow: auto; margin: 2px 0; }
                                 .modal-prompt-md pre code { background: transparent; border: 0; padding: 0; }
                               `}</style>
                               <div className="modal-prompt-md">
@@ -3492,7 +3492,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 className="overflow-auto border rounded-[6px] p-2"
                                 style={{
                                   borderColor: 'var(--border-subtle)',
-                                  background: 'rgba(255,255,255,0.02)',
+                                  background: 'var(--list-item-bg)',
                                 }}
                               >
                                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -3503,8 +3503,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               <div
                                 className="flex items-center justify-center overflow-hidden rounded-[6px]"
                                 style={{
-                                  background: 'rgba(255,255,255,0.02)',
-                                  border: '1px solid rgba(255,255,255,0.08)',
+                                  background: 'var(--list-item-bg)',
+                                  border: '1px solid var(--border-subtle)',
                                   cursor: config.imageUrl ? 'zoom-in' : 'default',
                                 }}
                                 onClick={() => config.imageUrl && setEnlargedRefImageUrl(config.imageUrl)}
@@ -3893,7 +3893,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <div
                     className="flex-1 rounded-lg overflow-hidden relative group cursor-pointer"
                     style={{
-                      background: editingRefConfig.imageUrl ? 'transparent' : 'rgba(255,255,255,0.02)',
+                      background: editingRefConfig.imageUrl ? 'transparent' : 'var(--list-item-bg)',
                       border: editingRefConfig.imageUrl ? 'none' : '1px dashed var(--border-subtle)',
                       minHeight: '200px',
                     }}
