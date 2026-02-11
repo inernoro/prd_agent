@@ -179,6 +179,12 @@ export const api = {
     },
   },
 
+  // ============ Skills 技能管理 ============
+  skills: {
+    list: () => '/api/skills',
+    byKey: (skillKey: string) => `/api/skills/${encodeURIComponent(skillKey)}`,
+  },
+
   // ============ Prompts 提示词 ============
   prompts: {
     list: () => '/api/prompts',

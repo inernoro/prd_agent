@@ -18,28 +18,33 @@ public class SkillService : ISkillService
 
     public async Task<List<Skill>> GetVisibleSkillsAsync(string userId, UserRole? roleFilter = null, CancellationToken ct = default)
     {
-        // 1) 从 prompt_stages 读取系统技能（实时，admin 修改即刻生效）
-        var systemSkills = await GetSystemSkillsFromPromptsAsync(roleFilter, ct);
+        // 1) 从 prompt_stages 读取提示词技能（兼容现有 admin 提示词管理）
+        var promptSkills = await GetSystemSkillsFromPromptsAsync(roleFilter, ct);
 
-        // 2) 从 skills 集合读取个人技能
-        var personalFilter = Builders<Skill>.Filter.And(
+        // 2) 从 skills 集合读取 admin 创建的技能（system/public）+ 用户个人技能
+        var dbFilter = Builders<Skill>.Filter.And(
             Builders<Skill>.Filter.Eq(x => x.IsEnabled, true),
-            Builders<Skill>.Filter.Eq(x => x.Visibility, SkillVisibility.Personal),
-            Builders<Skill>.Filter.Eq(x => x.OwnerUserId, userId)
+            Builders<Skill>.Filter.Or(
+                Builders<Skill>.Filter.In(x => x.Visibility, new[] { SkillVisibility.System, SkillVisibility.Public }),
+                Builders<Skill>.Filter.And(
+                    Builders<Skill>.Filter.Eq(x => x.Visibility, SkillVisibility.Personal),
+                    Builders<Skill>.Filter.Eq(x => x.OwnerUserId, userId)
+                )
+            )
         );
-        var personalSkills = await _db.Skills.Find(personalFilter).SortBy(x => x.Order).ToListAsync(ct);
+        var dbSkills = await _db.Skills.Find(dbFilter).SortBy(x => x.Order).ToListAsync(ct);
 
         if (roleFilter.HasValue)
         {
-            personalSkills = personalSkills
+            dbSkills = dbSkills
                 .Where(s => s.Roles.Count == 0 || s.Roles.Contains(roleFilter.Value))
                 .ToList();
         }
 
-        // 系统技能在前，个人技能在后
-        var result = new List<Skill>(systemSkills.Count + personalSkills.Count);
-        result.AddRange(systemSkills);
-        result.AddRange(personalSkills);
+        // 提示词技能在前，admin 技能在中，个人技能在后
+        var result = new List<Skill>(promptSkills.Count + dbSkills.Count);
+        result.AddRange(promptSkills);
+        result.AddRange(dbSkills);
         return result;
     }
 

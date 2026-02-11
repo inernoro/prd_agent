@@ -43,6 +43,9 @@ public static class AdminPermissionCatalog
     public const string PromptsRead = "prompts.read";
     public const string PromptsWrite = "prompts.write";
 
+    public const string SkillsRead = "skills.read";
+    public const string SkillsWrite = "skills.write";
+
     public const string LabRead = "lab.read";
     public const string LabWrite = "lab.write";
 
@@ -141,6 +144,9 @@ public static class AdminPermissionCatalog
 
         new(PromptsRead, "提示词-读", "查看提示词配置"),
         new(PromptsWrite, "提示词-写", "编辑提示词配置"),
+
+        new(SkillsRead, "技能-读", "查看技能配置"),
+        new(SkillsWrite, "技能-写", "创建/编辑/删除技能"),
 
         new(LabRead, "实验室-读", "查看实验室功能"),
         new(LabWrite, "实验室-写", "使用实验室功能"),

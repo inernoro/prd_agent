@@ -32,6 +32,9 @@ public static class AdminMenuCatalog
         // 提示词管理
         new("prompts", "/prompts", "提示词管理", "PRD 问答提示词配置", "FileText", 50),
 
+        // 技能管理
+        new("skills", "/skills", "技能管理", "技能创建与配置管理", "Zap", 55),
+
         // Agent 体验类菜单
         new("prd-agent", "/prd-agent", "PRD Agent", "PRD 智能解读与问答", "MessagesSquare", 60),
         new("defect-agent", "/defect-agent", "缺陷管理 Agent", "缺陷提交与跟踪", "Bug", 65),
