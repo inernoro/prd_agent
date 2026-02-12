@@ -7,6 +7,11 @@ export class BuilderService {
     private readonly config: BtConfig,
   ) {}
 
+  /** Merge stdout + stderr — Docker BuildKit / pnpm may write to either stream */
+  private static combinedOutput(result: { stdout: string; stderr: string }): string {
+    return [result.stdout, result.stderr].filter(Boolean).join('\n');
+  }
+
   async buildApiImage(worktreePath: string, imageName: string): Promise<string> {
     const dockerfile = path.join(worktreePath, this.config.docker.apiDockerfile);
     const context = path.join(worktreePath, 'prd-api');
@@ -15,9 +20,9 @@ export class BuilderService {
     const result = await this.shell.exec(cmd, { timeout: 600_000 });
 
     if (result.exitCode !== 0) {
-      throw new Error(`API image build failed: ${result.stderr}`);
+      throw new Error(`API image build failed:\n${BuilderService.combinedOutput(result)}`);
     }
-    return result.stdout;
+    return BuilderService.combinedOutput(result);
   }
 
   async buildAdminStatic(worktreePath: string, outputDir: string): Promise<string> {
@@ -28,7 +33,7 @@ export class BuilderService {
       timeout: 120_000,
     });
     if (installResult.exitCode !== 0) {
-      throw new Error(`pnpm install failed: ${installResult.stderr}`);
+      throw new Error(`pnpm install failed:\n${BuilderService.combinedOutput(installResult)}`);
     }
 
     const buildResult = await this.shell.exec('pnpm build', {
@@ -36,7 +41,7 @@ export class BuilderService {
       timeout: 300_000,
     });
     if (buildResult.exitCode !== 0) {
-      throw new Error(`pnpm build failed: ${buildResult.stderr}`);
+      throw new Error(`pnpm build failed:\n${BuilderService.combinedOutput(buildResult)}`);
     }
 
     // Copy dist to output directory
@@ -46,9 +51,9 @@ export class BuilderService {
       `cp -r "${distDir}/"* "${outputDir}/"`,
     );
     if (copyResult.exitCode !== 0) {
-      throw new Error(`Failed to copy admin build output: ${copyResult.stderr}`);
+      throw new Error(`Failed to copy admin build output:\n${BuilderService.combinedOutput(copyResult)}`);
     }
 
-    return buildResult.stdout;
+    return BuilderService.combinedOutput(buildResult);
   }
 }

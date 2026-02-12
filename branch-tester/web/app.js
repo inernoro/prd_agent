@@ -47,7 +47,6 @@ function esc(str) {
 
 function setBusy(v) {
   busy = v;
-  document.querySelectorAll('button').forEach((b) => (b.disabled = v));
   if (!v) refresh();
 }
 
@@ -452,4 +451,3 @@ document.getElementById('activeSwitcher').addEventListener('change', async (e) =
 // Init
 loadRemoteBranches();
 refresh();
-setInterval(refresh, 5000);
