@@ -3,11 +3,12 @@ import {
   Play, History, Loader2, CheckCircle2, AlertCircle,
   ArrowDown, Download, ChevronDown, ChevronRight, FileText,
   ExternalLink, Settings2, XCircle, RefreshCw, HelpCircle, Zap,
+  FlaskConical, Box,
 } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import {
   createWorkflow, executeWorkflow, getExecution, getNodeLogs,
-  listWorkflows, listExecutions, cancelExecution,
+  listWorkflows, listExecutions, cancelExecution, testRunCapsule,
 } from '@/services';
 import { ExecutionListPanel } from './ExecutionListPanel';
 import { ExecutionDetailPanel } from './ExecutionDetailPanel';
@@ -20,9 +21,14 @@ import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { glassTooltip } from '@/lib/glassStyles';
+import {
+  getCapsuleType, getCapsuleTypesByCategory,
+  CAPSULE_CATEGORIES,
+  type CapsuleCategory,
+} from './capsuleRegistry';
 
 // ═══════════════════════════════════════════════════════════════
-// 流水线步骤元数据
+// 流水线步骤元数据（使用舱注册表）
 // ═══════════════════════════════════════════════════════════════
 
 interface StepMeta {
@@ -36,11 +42,13 @@ interface StepMeta {
   outputLabel: string;
   feedsToLabel?: string;
   accentHue: number;
+  capsuleType?: string;
 }
 
 const STEPS: StepMeta[] = [
   {
     nodeId: 'n1', step: 1, icon: '🐛', accentHue: 30,
+    capsuleType: 'tapd-collector',
     name: 'Bug 数据采集',
     desc: '通过 TAPD Open API 自动拉取指定月份的所有缺陷记录',
     helpTip: '缺陷（Bug）是 TAPD 中记录的软件问题，包含严重程度、状态、所属模块、负责人等字段。此步骤通过 TAPD 提供的开放接口（Open API）批量拉取原始数据。',
@@ -50,6 +58,7 @@ const STEPS: StepMeta[] = [
   },
   {
     nodeId: 'n2', step: 2, icon: '📋', accentHue: 210,
+    capsuleType: 'tapd-collector',
     name: '需求数据采集',
     desc: '通过 TAPD Open API 自动拉取指定月份的所有需求记录',
     helpTip: '需求（Story）是 TAPD 中描述产品功能的用户故事，包含优先级、状态、所属迭代、预估工时等。此步骤和 Bug 采集并行执行。',
@@ -59,6 +68,7 @@ const STEPS: StepMeta[] = [
   },
   {
     nodeId: 'n3', step: 3, icon: '🧠', accentHue: 270,
+    capsuleType: 'llm-analyzer',
     name: '智能分析',
     desc: 'AI 综合分析缺陷和需求数据，自动生成多维度统计',
     helpTip: '使用大语言模型（LLM）对步骤 ① 和 ② 采集的原始数据进行自动分析。会生成：缺陷趋势、严重程度分布、模块缺陷热点、需求完成率、迭代健康度等多个统计维度。',
@@ -68,6 +78,7 @@ const STEPS: StepMeta[] = [
   },
   {
     nodeId: 'n4', step: 4, icon: '📄', accentHue: 150,
+    capsuleType: 'report-generator',
     name: '生成报告',
     desc: '将分析结果整理渲染为结构化的月度质量报告',
     helpTip: '将上一步产出的 JSON 统计数据，转换为可阅读的 Markdown 格式报告。包含数据汇总表格、趋势描述和改进建议，可直接用于月度质量会议。',
@@ -341,8 +352,26 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
           </div>
         </div>
 
-        {/* 接收 / 产出 标签 */}
+        {/* 舱类型 + 接收 / 产出 标签 */}
         <div className="ml-10 mt-3 flex flex-wrap gap-2">
+          {meta.capsuleType && (() => {
+            const ct = getCapsuleType(meta.capsuleType);
+            if (!ct) return null;
+            const CIcon = ct.Icon;
+            return (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  color: 'var(--text-muted)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                <CIcon className="w-2.5 h-2.5" />
+                {ct.name}
+              </span>
+            );
+          })()}
           <span
             className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
             style={{
@@ -449,6 +478,132 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
 }
 
 // ═══════════════════════════════════════════════════════════════
+// 舱目录面板
+// ═══════════════════════════════════════════════════════════════
+
+function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
+  const grouped = getCapsuleTypesByCategory();
+  const [testingType, setTestingType] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<string | null>(null);
+
+  async function handleTestRun(typeKey: string) {
+    setTestingType(typeKey);
+    setTestResult(null);
+    try {
+      const res = await testRunCapsule({ typeKey, config: {}, mockInput: { _test: true } });
+      if (res.success && res.data) {
+        const r = res.data.result;
+        setTestResult(`${r.typeName}: ${r.status} (${r.durationMs}ms)`);
+      } else {
+        setTestResult(`测试失败: ${res.error?.message || '未知错误'}`);
+      }
+    } catch (e: unknown) {
+      setTestResult(`出错: ${e instanceof Error ? e.message : '未知'}`);
+    }
+    setTestingType(null);
+  }
+
+  return (
+    <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
+      <TabBar
+        title="舱目录"
+        icon={<Box size={16} />}
+        actions={
+          <Button variant="ghost" size="xs" onClick={onBack}>
+            返回流水线
+          </Button>
+        }
+      />
+      <div className="px-5 pb-6 space-y-6 max-w-3xl mx-auto w-full">
+        <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+          舱是流水线的基本单元。每个舱负责一个独立的处理步骤，可以单独测试调试，然后组装成完整流水线。
+        </p>
+
+        {CAPSULE_CATEGORIES.map((cat) => {
+          const types = grouped[cat.key as CapsuleCategory] || [];
+          if (types.length === 0) return null;
+
+          return (
+            <section key={cat.key}>
+              <h2 className="text-[14px] font-semibold flex items-center gap-2 mb-3" style={{ color: 'var(--text-primary)' }}>
+                <span>{cat.emoji}</span>
+                {cat.label}舱
+                <span className="text-[11px] font-normal" style={{ color: 'var(--text-muted)' }}> — {cat.description}</span>
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {types.map((def) => {
+                  const Icon = def.Icon;
+                  return (
+                    <GlassCard key={def.typeKey} accentHue={def.accentHue} padding="sm">
+                      <div className="flex items-start gap-3">
+                        <div
+                          className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
+                          style={{
+                            background: `hsla(${def.accentHue}, 60%, 55%, 0.12)`,
+                            color: `hsla(${def.accentHue}, 60%, 65%, 0.95)`,
+                          }}
+                        >
+                          <Icon className="w-4.5 h-4.5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-base">{def.emoji}</span>
+                            <h3 className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                              {def.name}
+                            </h3>
+                          </div>
+                          <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                            {def.description}
+                          </p>
+                          {def.testable && (
+                            <button
+                              onClick={() => handleTestRun(def.typeKey)}
+                              disabled={testingType === def.typeKey}
+                              className="mt-2 inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-[6px] font-medium transition-all"
+                              style={{
+                                background: `hsla(${def.accentHue}, 60%, 55%, 0.08)`,
+                                color: `hsla(${def.accentHue}, 60%, 65%, 0.9)`,
+                                border: `1px solid hsla(${def.accentHue}, 60%, 55%, 0.15)`,
+                              }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = `hsla(${def.accentHue}, 60%, 55%, 0.16)`)}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = `hsla(${def.accentHue}, 60%, 55%, 0.08)`)}
+                            >
+                              {testingType === def.typeKey
+                                ? <><Loader2 className="w-3 h-3 animate-spin" />测试中...</>
+                                : <><FlaskConical className="w-3 h-3" />单舱测试</>
+                              }
+                            </button>
+                          )}
+                        </div>
+                        <Badge
+                          variant="subtle"
+                          size="sm"
+                        >
+                          {cat.label}
+                        </Badge>
+                      </div>
+                    </GlassCard>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
+
+        {testResult && (
+          <GlassCard accentHue={150} padding="sm">
+            <div className="flex items-center gap-2">
+              <FlaskConical className="w-4 h-4" style={{ color: 'rgba(34,197,94,0.9)' }} />
+              <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>{testResult}</span>
+            </div>
+          </GlassCard>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 主页面
 // ═══════════════════════════════════════════════════════════════
 
@@ -471,6 +626,7 @@ export function WorkflowAgentPage() {
   const [isExecuting, setIsExecuting] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Set<string>>(new Set());
+  const [showCatalog, setShowCatalog] = useState(false);
 
   // 轮询
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -480,6 +636,7 @@ export function WorkflowAgentPage() {
   if (viewMode === 'execution-list') return <ExecutionListPanel />;
   if (viewMode === 'execution-detail') return <ExecutionDetailPanel />;
   if (viewMode === 'shares') return <SharePanel />;
+  if (showCatalog) return <CapsuleCatalogPanel onBack={() => setShowCatalog(false)} />;
 
   // ── 初始化 ──
 
@@ -663,6 +820,14 @@ export function WorkflowAgentPage() {
         icon={<Zap size={16} />}
         actions={
           <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => setShowCatalog(true)}
+            >
+              <Box className="w-3.5 h-3.5" />
+              舱目录
+            </Button>
             {latestExec && (
               <Button
                 variant="ghost"

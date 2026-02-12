@@ -166,11 +166,27 @@ export const WorkflowNodeTypes = {
 } as const;
 
 export const NodeTypeLabels: Record<string, string> = {
+  // 旧类型（兼容）
   'data-collector': '数据采集',
-  'script-executor': '脚本执行',
+  'script-executor': '代码脚本',
   'llm-analyzer': 'LLM 分析',
   'llm-code-executor': 'LLM 代码执行',
   'renderer': '渲染输出',
+  // 舱类型 — 触发
+  'timer': '定时器',
+  'webhook-receiver': 'Webhook 接收',
+  'manual-trigger': '手动触发',
+  'file-upload': '文件上传',
+  // 舱类型 — 处理
+  'tapd-collector': 'TAPD 采集',
+  'http-request': 'HTTP 请求',
+  'data-extractor': '数据提取',
+  'data-merger': '数据合并',
+  // 舱类型 — 输出
+  'report-generator': '报告生成',
+  'file-exporter': '文件导出',
+  'webhook-sender': 'Webhook 发送',
+  'notification-sender': '站内通知',
 };
 
 export const ExecutionStatus = {
@@ -277,3 +293,78 @@ export type CreateShareLinkContract = (input: {
 export type ListShareLinksContract = () => Promise<ApiResponse<{ items: ShareLink[] }>>;
 
 export type RevokeShareContract = (shareId: string) => Promise<ApiResponse<{ revoked: boolean }>>;
+
+// ─────────────────────────────────────────────
+// 舱类型注册表 Models
+// ─────────────────────────────────────────────
+
+export interface CapsuleConfigField {
+  key: string;
+  label: string;
+  fieldType: string;
+  placeholder?: string;
+  helpTip?: string;
+  required: boolean;
+  defaultValue?: string;
+  options?: { value: string; label: string }[];
+}
+
+export interface CapsuleTypeMeta {
+  typeKey: string;
+  name: string;
+  description: string;
+  icon: string;
+  category: string;
+  accentHue: number;
+  configSchema: CapsuleConfigField[];
+  defaultInputSlots: ArtifactSlot[];
+  defaultOutputSlots: ArtifactSlot[];
+  testable: boolean;
+}
+
+export interface CapsuleCategoryInfo {
+  key: string;
+  label: string;
+  description: string;
+}
+
+export interface CapsuleTestRunResult {
+  typeKey: string;
+  typeName: string;
+  status: string;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  configValidation: {
+    key: string;
+    label: string;
+    provided: boolean;
+    required: boolean;
+    valid: boolean;
+  }[];
+  mockOutput: Record<string, unknown>;
+  errorMessage?: string;
+}
+
+// ─────────────────────────────────────────────
+// 舱类型 Contracts
+// ─────────────────────────────────────────────
+
+export type ListCapsuleTypesContract = (input?: {
+  category?: string;
+}) => Promise<ApiResponse<{
+  items: CapsuleTypeMeta[];
+  categories: CapsuleCategoryInfo[];
+}>>;
+
+export type GetCapsuleTypeContract = (typeKey: string) => Promise<ApiResponse<{
+  capsuleType: CapsuleTypeMeta;
+}>>;
+
+export type TestRunCapsuleContract = (input: {
+  typeKey: string;
+  config?: Record<string, unknown>;
+  mockInput?: unknown;
+}) => Promise<ApiResponse<{
+  result: CapsuleTestRunResult;
+}>>;

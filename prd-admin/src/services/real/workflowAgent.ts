@@ -15,10 +15,16 @@ import type {
   CreateShareLinkContract,
   ListShareLinksContract,
   RevokeShareContract,
+  ListCapsuleTypesContract,
+  GetCapsuleTypeContract,
+  TestRunCapsuleContract,
   Workflow,
   WorkflowExecution,
   ShareLink,
   ExecutionArtifact,
+  CapsuleTypeMeta,
+  CapsuleCategoryInfo,
+  CapsuleTestRunResult,
 } from '../contracts/workflowAgent';
 
 // ========== Workflows ==========
@@ -143,5 +149,31 @@ export const revokeShareReal: RevokeShareContract = async (shareId) => {
   return await apiRequest<{ revoked: boolean }>(
     api.workflowAgent.shares.revoke(shareId),
     { method: 'DELETE' }
+  );
+};
+
+// ========== Capsule Types (舱类型) ==========
+
+export const listCapsuleTypesReal: ListCapsuleTypesContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.category) qs.set('category', input.category);
+  const query = qs.toString();
+  return await apiRequest<{ items: CapsuleTypeMeta[]; categories: CapsuleCategoryInfo[] }>(
+    api.workflowAgent.capsules.types() + (query ? `?${query}` : ''),
+    { method: 'GET' }
+  );
+};
+
+export const getCapsuleTypeReal: GetCapsuleTypeContract = async (typeKey) => {
+  return await apiRequest<{ capsuleType: CapsuleTypeMeta }>(
+    api.workflowAgent.capsules.typeByKey(typeKey),
+    { method: 'GET' }
+  );
+};
+
+export const testRunCapsuleReal: TestRunCapsuleContract = async (input) => {
+  return await apiRequest<{ result: CapsuleTestRunResult }>(
+    api.workflowAgent.capsules.testRun(),
+    { method: 'POST', body: input }
   );
 };

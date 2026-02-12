@@ -628,6 +628,11 @@ export const api = {
       create: (executionId: string) => `/api/workflow-agent/executions/${executionId}/share`,
       revoke: (shareId: string) => `/api/workflow-agent/shares/${shareId}`,
     },
+    capsules: {
+      types: () => '/api/workflow-agent/capsule-types',
+      typeByKey: (typeKey: string) => `/api/workflow-agent/capsule-types/${typeKey}`,
+      testRun: () => '/api/workflow-agent/capsules/test-run',
+    },
   },
 
   // ─── 移动端仪表盘 ───

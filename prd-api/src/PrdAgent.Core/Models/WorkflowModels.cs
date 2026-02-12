@@ -378,7 +378,7 @@ public class WorkflowSecret
 }
 
 // ─────────────────────────────────────────────────────────────
-// 节点类型常量
+// 节点类型常量（保留旧名称兼容）
 // ─────────────────────────────────────────────────────────────
 
 public static class WorkflowNodeTypes
@@ -392,6 +392,50 @@ public static class WorkflowNodeTypes
     public static readonly string[] All =
     {
         DataCollector, ScriptExecutor, LlmAnalyzer, LlmCodeExecutor, Renderer
+    };
+}
+
+// ─────────────────────────────────────────────────────────────
+// 舱类型常量（新架构，替代 WorkflowNodeTypes）
+// ─────────────────────────────────────────────────────────────
+
+public static class CapsuleTypes
+{
+    // 触发类
+    public const string Timer = "timer";
+    public const string WebhookReceiver = "webhook-receiver";
+    public const string ManualTrigger = "manual-trigger";
+    public const string FileUpload = "file-upload";
+
+    // 处理类
+    public const string TapdCollector = "tapd-collector";
+    public const string HttpRequest = "http-request";
+    public const string LlmAnalyzer = "llm-analyzer";
+    public const string ScriptExecutor = "script-executor";
+    public const string DataExtractor = "data-extractor";
+    public const string DataMerger = "data-merger";
+
+    // 输出类
+    public const string ReportGenerator = "report-generator";
+    public const string FileExporter = "file-exporter";
+    public const string WebhookSender = "webhook-sender";
+    public const string NotificationSender = "notification-sender";
+
+    // 兼容旧类型映射
+    public const string DataCollectorLegacy = "data-collector";
+    public const string LlmCodeExecutorLegacy = "llm-code-executor";
+    public const string RendererLegacy = "renderer";
+
+    public static readonly string[] All =
+    {
+        // 触发类
+        Timer, WebhookReceiver, ManualTrigger, FileUpload,
+        // 处理类
+        TapdCollector, HttpRequest, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger,
+        // 输出类
+        ReportGenerator, FileExporter, WebhookSender, NotificationSender,
+        // 旧类型兼容
+        DataCollectorLegacy, LlmCodeExecutorLegacy, RendererLegacy,
     };
 }
 

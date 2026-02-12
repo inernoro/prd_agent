@@ -28,6 +28,100 @@ public class WorkflowAgentController : ControllerBase
     }
 
     // ─────────────────────────────────────────────────────────
+    // 舱类型注册表
+    // ─────────────────────────────────────────────────────────
+
+    /// <summary>获取所有可用的舱类型（含元数据、配置 Schema、默认插槽）</summary>
+    [HttpGet("capsule-types")]
+    public IActionResult ListCapsuleTypes([FromQuery] string? category)
+    {
+        IEnumerable<CapsuleTypeMeta> types = CapsuleTypeRegistry.All;
+
+        if (!string.IsNullOrWhiteSpace(category))
+            types = types.Where(t => t.Category == category);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = types,
+            categories = new[]
+            {
+                new { key = CapsuleCategory.Trigger, label = "触发", description = "流水线的起点，负责产生触发信号" },
+                new { key = CapsuleCategory.Processor, label = "处理", description = "数据采集、分析、转换" },
+                new { key = CapsuleCategory.Output, label = "输出", description = "结果输出、通知、导出" },
+            }
+        }));
+    }
+
+    /// <summary>获取单个舱类型详情</summary>
+    [HttpGet("capsule-types/{typeKey}")]
+    public IActionResult GetCapsuleType(string typeKey)
+    {
+        var meta = CapsuleTypeRegistry.Get(typeKey);
+        if (meta == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, $"未知的舱类型: {typeKey}"));
+
+        return Ok(ApiResponse<object>.Ok(new { capsuleType = meta }));
+    }
+
+    /// <summary>
+    /// 单舱测试运行：传入舱类型 + 配置 + 模拟输入，返回测试结果。
+    /// 每个舱可以独立调试，无需组装完整流水线。
+    /// </summary>
+    [HttpPost("capsules/test-run")]
+    public async Task<IActionResult> TestRunCapsule(
+        [FromBody] CapsuleTestRunRequest request,
+        CancellationToken ct = default)
+    {
+        var meta = CapsuleTypeRegistry.Get(request.TypeKey);
+        if (meta == null)
+            return BadRequest(ApiResponse<object>.Fail("UNKNOWN_CAPSULE_TYPE", $"未知的舱类型: {request.TypeKey}"));
+
+        if (!meta.Testable)
+            return BadRequest(ApiResponse<object>.Fail("NOT_TESTABLE", $"舱类型 '{meta.Name}' 不支持单独测试运行"));
+
+        // 校验必填配置字段
+        foreach (var field in meta.ConfigSchema.Where(f => f.Required))
+        {
+            if (request.Config == null || !request.Config.ContainsKey(field.Key) || string.IsNullOrWhiteSpace(request.Config[field.Key]?.ToString()))
+                return BadRequest(ApiResponse<object>.Fail("MISSING_CONFIG", $"缺少必填配置: {field.Label} ({field.Key})"));
+        }
+
+        var startedAt = DateTime.UtcNow;
+
+        // TODO: 接入实际执行引擎后按 typeKey 分派执行
+        // 当前返回测试桩响应，验证配置合法性
+        var testResult = new CapsuleTestRunResult
+        {
+            TypeKey = request.TypeKey,
+            TypeName = meta.Name,
+            Status = "completed",
+            StartedAt = startedAt,
+            CompletedAt = DateTime.UtcNow,
+            DurationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds,
+            ConfigValidation = meta.ConfigSchema.Select(f => new ConfigFieldValidation
+            {
+                Key = f.Key,
+                Label = f.Label,
+                Provided = request.Config?.ContainsKey(f.Key) == true,
+                Required = f.Required,
+                Valid = !f.Required || (request.Config?.ContainsKey(f.Key) == true && !string.IsNullOrWhiteSpace(request.Config[f.Key]?.ToString())),
+            }).ToList(),
+            MockOutput = new Dictionary<string, object?>
+            {
+                ["_testMode"] = true,
+                ["_capsuleType"] = request.TypeKey,
+                ["_message"] = $"舱 '{meta.Name}' 配置验证通过，执行引擎尚未接入实际处理逻辑",
+                ["_inputPreview"] = request.MockInput,
+            },
+        };
+
+        _logger.LogInformation("[{AppKey}] Capsule test-run: type={TypeKey} by {UserId}",
+            AppKey, request.TypeKey, GetUserId());
+
+        return Ok(ApiResponse<object>.Ok(new { result = testResult }));
+    }
+
+    // ─────────────────────────────────────────────────────────
     // Workflow CRUD
     // ─────────────────────────────────────────────────────────
 
@@ -80,11 +174,11 @@ public class WorkflowAgentController : ControllerBase
             OwnerUserId = userId,
         };
 
-        // 校验节点类型
+        // 校验舱类型（兼容旧 NodeType 和新 CapsuleType）
         foreach (var node in workflow.Nodes)
         {
-            if (!WorkflowNodeTypes.All.Contains(node.NodeType))
-                return BadRequest(ApiResponse<object>.Fail("INVALID_NODE_TYPE", $"不支持的节点类型: {node.NodeType}"));
+            if (!CapsuleTypes.All.Contains(node.NodeType) && !WorkflowNodeTypes.All.Contains(node.NodeType))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_NODE_TYPE", $"不支持的舱类型: {node.NodeType}"));
         }
 
         // 校验边的引用合法性
@@ -618,6 +712,42 @@ public class CreateShareRequest
     /// <summary>public | authenticated</summary>
     public string? AccessLevel { get; set; }
     public int? ExpiresInDays { get; set; }
+}
+
+// ─────────────────────── 舱测试运行 ───────────────────────
+
+public class CapsuleTestRunRequest
+{
+    /// <summary>舱类型 Key</summary>
+    public string TypeKey { get; set; } = string.Empty;
+
+    /// <summary>舱配置（字段由 ConfigSchema 定义）</summary>
+    public Dictionary<string, object?>? Config { get; set; }
+
+    /// <summary>模拟输入数据（用于测试）</summary>
+    public object? MockInput { get; set; }
+}
+
+public class CapsuleTestRunResult
+{
+    public string TypeKey { get; set; } = string.Empty;
+    public string TypeName { get; set; } = string.Empty;
+    public string Status { get; set; } = "completed";
+    public DateTime StartedAt { get; set; }
+    public DateTime CompletedAt { get; set; }
+    public long DurationMs { get; set; }
+    public List<ConfigFieldValidation> ConfigValidation { get; set; } = new();
+    public Dictionary<string, object?> MockOutput { get; set; } = new();
+    public string? ErrorMessage { get; set; }
+}
+
+public class ConfigFieldValidation
+{
+    public string Key { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public bool Provided { get; set; }
+    public bool Required { get; set; }
+    public bool Valid { get; set; }
 }
 
 #endregion

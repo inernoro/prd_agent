@@ -928,6 +928,9 @@ import type {
   CreateShareLinkContract,
   ListShareLinksContract,
   RevokeShareContract,
+  ListCapsuleTypesContract,
+  GetCapsuleTypeContract,
+  TestRunCapsuleContract,
 } from '@/services/contracts/workflowAgent';
 import {
   listWorkflowsReal,
@@ -944,6 +947,9 @@ import {
   createShareLinkReal,
   listShareLinksReal,
   revokeShareReal,
+  listCapsuleTypesReal,
+  getCapsuleTypeReal,
+  testRunCapsuleReal,
 } from '@/services/real/workflowAgent';
 
 export const listWorkflows: ListWorkflowsContract = withAuth(listWorkflowsReal);
@@ -960,6 +966,9 @@ export const getNodeLogs: GetNodeLogsContract = withAuth(getNodeLogsReal);
 export const createShareLink: CreateShareLinkContract = withAuth(createShareLinkReal);
 export const listShareLinks: ListShareLinksContract = withAuth(listShareLinksReal);
 export const revokeShare: RevokeShareContract = withAuth(revokeShareReal);
+export const listCapsuleTypes: ListCapsuleTypesContract = withAuth(listCapsuleTypesReal);
+export const getCapsuleType: GetCapsuleTypeContract = withAuth(getCapsuleTypeReal);
+export const testRunCapsule: TestRunCapsuleContract = withAuth(testRunCapsuleReal);
 
 // 数据迁移服务
 import type {
