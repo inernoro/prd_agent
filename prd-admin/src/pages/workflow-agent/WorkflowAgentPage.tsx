@@ -3,7 +3,7 @@ import {
   Play, History, Loader2, CheckCircle2, AlertCircle,
   ArrowDown, Download, ChevronDown, ChevronRight, FileText,
   ExternalLink, Settings2, XCircle, RefreshCw, HelpCircle, Zap,
-  FlaskConical, Box,
+  FlaskConical, Box, PenLine,
 } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import {
@@ -14,6 +14,7 @@ import {
 import { ExecutionListPanel } from './ExecutionListPanel';
 import { ExecutionDetailPanel } from './ExecutionDetailPanel';
 import { SharePanel } from './SharePanel';
+import { WorkflowCanvas } from './WorkflowCanvas';
 import type {
   Workflow, WorkflowExecution, ExecutionArtifact, NodeExecution,
   CapsuleTypeMeta, CapsuleCategoryInfo, CapsuleTestRunResult,
@@ -699,6 +700,7 @@ export function WorkflowAgentPage() {
   const [pageLoading, setPageLoading] = useState(true);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Set<string>>(new Set());
   const [showCatalog, setShowCatalog] = useState(false);
+  const [showCanvas, setShowCanvas] = useState(false);
 
   // 轮询
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -708,6 +710,14 @@ export function WorkflowAgentPage() {
   if (viewMode === 'execution-list') return <ExecutionListPanel />;
   if (viewMode === 'execution-detail') return <ExecutionDetailPanel />;
   if (viewMode === 'shares') return <SharePanel />;
+  if (showCanvas && tapdWorkflow) return (
+    <WorkflowCanvas
+      workflow={tapdWorkflow}
+      execution={latestExec}
+      onBack={() => setShowCanvas(false)}
+      onSaved={(wf) => setTapdWorkflow(wf)}
+    />
+  );
   if (showCatalog) return <CapsuleCatalogPanel onBack={() => setShowCatalog(false)} />;
 
   // ── 初始化 ──
@@ -892,6 +902,16 @@ export function WorkflowAgentPage() {
         icon={<Zap size={16} />}
         actions={
           <div className="flex items-center gap-2">
+            {tapdWorkflow && (
+              <Button
+                variant="primary"
+                size="xs"
+                onClick={() => setShowCanvas(true)}
+              >
+                <PenLine className="w-3.5 h-3.5" />
+                编排画布
+              </Button>
+            )}
             <Button
               variant="secondary"
               size="xs"
