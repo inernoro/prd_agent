@@ -10,6 +10,9 @@ export class ContainerService {
   async start(entry: BranchEntry): Promise<void> {
     const { mongodb, redis, jwt, docker } = this.config;
 
+    // Ensure Docker network exists
+    await this.ensureNetwork(docker.network);
+
     const envVars = [
       `ASPNETCORE_ENVIRONMENT=Production`,
       `ASPNETCORE_URLS=http://+:8080`,
@@ -35,6 +38,16 @@ export class ContainerService {
     const result = await this.shell.exec(cmd);
     if (result.exitCode !== 0) {
       throw new Error(`Failed to start container "${entry.containerName}":\n${combinedOutput(result)}`);
+    }
+  }
+
+  private async ensureNetwork(network: string): Promise<void> {
+    const inspect = await this.shell.exec(`docker network inspect ${network}`);
+    if (inspect.exitCode !== 0) {
+      const create = await this.shell.exec(`docker network create ${network}`);
+      if (create.exitCode !== 0) {
+        throw new Error(`Failed to create Docker network "${network}":\n${combinedOutput(create)}`);
+      }
     }
   }
 
