@@ -33,23 +33,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // GET /remote-branches — list remote branches available to add
   router.get('/remote-branches', async (_req, res) => {
     try {
-      // Fetch latest remote refs — timeout + no credential prompt to prevent hanging
-      await shell.exec('GIT_TERMINAL_PROMPT=0 git fetch --prune', {
-        cwd: config.repoRoot,
-        timeout: 15_000,
-      });
-
+      // Use git ls-remote to query all remote branches directly.
+      // This works regardless of shallow clone or --single-branch refspec,
+      // unlike "git branch -r" which only shows locally-tracked refs.
       const result = await shell.exec(
-        'git branch -r --format=%(refname:short)',
-        { cwd: config.repoRoot },
+        'GIT_TERMINAL_PROMPT=0 git ls-remote --heads origin',
+        { cwd: config.repoRoot, timeout: 15_000 },
       );
+
+      if (result.exitCode !== 0) {
+        res.status(502).json({ error: `git ls-remote failed: ${result.stderr}` });
+        return;
+      }
+
       const existing = new Set(
         Object.values(stateService.getState().branches).map((b) => b.branch),
       );
+      // Output format: "<sha>\trefs/heads/<branch-name>"
       const branches = result.stdout
         .split('\n')
-        .map((b) => b.trim().replace(/^origin\//, ''))
-        .filter((b) => b && !b.includes('HEAD') && !existing.has(b));
+        .map((line) => line.replace(/^[0-9a-f]+\trefs\/heads\//, '').trim())
+        .filter((b) => b && !existing.has(b));
 
       res.json({ branches });
     } catch (err) {

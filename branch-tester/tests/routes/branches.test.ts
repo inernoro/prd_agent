@@ -149,8 +149,8 @@ describe('Branch Routes', () => {
 
   describe('GET /api/remote-branches', () => {
     it('should return list of remote branches', async () => {
-      mock.addResponse('git branch -r --format=%(refname:short)', {
-        stdout: 'origin/main\norigin/feature/new-ui\norigin/hotfix/bug-123\n',
+      mock.addResponse('GIT_TERMINAL_PROMPT=0 git ls-remote --heads origin', {
+        stdout: 'aaa111\trefs/heads/main\nbbb222\trefs/heads/feature/new-ui\nccc333\trefs/heads/hotfix/bug-123\n',
         stderr: '',
         exitCode: 0,
       });
@@ -162,8 +162,8 @@ describe('Branch Routes', () => {
     });
 
     it('should exclude already-added branches', async () => {
-      mock.addResponse('git branch -r --format=%(refname:short)', {
-        stdout: 'origin/main\norigin/feature/test\n',
+      mock.addResponse('GIT_TERMINAL_PROMPT=0 git ls-remote --heads origin', {
+        stdout: 'aaa111\trefs/heads/main\nbbb222\trefs/heads/feature/test\n',
         stderr: '',
         exitCode: 0,
       });
@@ -172,6 +172,17 @@ describe('Branch Routes', () => {
       const res = await request(server, 'GET', '/api/remote-branches');
       const body = res.body as { branches: string[] };
       expect(body.branches).toEqual(['main']);
+    });
+
+    it('should return 502 when git ls-remote fails', async () => {
+      mock.addResponse('GIT_TERMINAL_PROMPT=0 git ls-remote --heads origin', {
+        stdout: '',
+        stderr: 'fatal: repository not found',
+        exitCode: 128,
+      });
+
+      const res = await request(server, 'GET', '/api/remote-branches');
+      expect(res.status).toBe(502);
     });
   });
 
