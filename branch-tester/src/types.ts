@@ -5,7 +5,7 @@ export interface BranchEntry {
   containerName: string;
   imageName: string;
   dbName: string;
-  status: 'idle' | 'building' | 'running' | 'stopped' | 'error';
+  status: 'idle' | 'building' | 'built' | 'running' | 'stopped' | 'error';
   buildLog?: string;
   createdAt: string;
   lastActivatedAt?: string;

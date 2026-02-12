@@ -149,7 +149,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         builderService.buildAdminStatic(entry.worktreePath, buildsDir),
       ]);
 
-      stateService.updateStatus(id, 'idle');
+      stateService.updateStatus(id, 'built');
       stateService.getBranch(id)!.buildLog = `API: ${apiLog}\nAdmin: ${adminLog}`;
       stateService.save();
 
@@ -251,12 +251,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // POST /rollback — rollback to previous branch
   router.post('/rollback', async (_req, res) => {
     try {
-      const previousId = stateService.rollback();
-      if (!previousId) {
+      // Peek at history without modifying state yet (atomic: only mutate after nginx succeeds)
+      const history = stateService.getState().history;
+      if (history.length <= 1) {
         res.status(400).json({ error: 'No history to rollback to' });
         return;
       }
 
+      const previousId = history[history.length - 2];
       const entry = stateService.getBranch(previousId);
       if (!entry) {
         res.status(500).json({ error: `Previous branch "${previousId}" no longer exists` });
@@ -270,7 +272,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.updateStatus(previousId, 'running');
       }
 
-      // Switch nginx
+      // Switch nginx FIRST — if this fails, state stays untouched
       switcherService.backup();
       const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', previousId);
       const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
@@ -278,6 +280,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       const newConf = switcherService.generateConfig(entry.containerName);
       await switcherService.applyConfig(newConf);
+
+      // Nginx succeeded — NOW commit the state change
+      stateService.rollback();
       stateService.save();
 
       res.json({

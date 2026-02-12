@@ -139,6 +139,7 @@ button.activate:hover { background: #388bfd; }
 
 .status-dot.running { background: #3fb950; }
 .status-dot.building { background: #d29922; }
+.status-dot.built { background: #58a6ff; }
 .status-dot.idle { background: #8b949e; }
 .status-dot.stopped { background: #6e7681; }
 .status-dot.error { background: #f85149; }

@@ -17,7 +17,7 @@ function showToast(msg, type = 'info') {
 }
 
 function statusLabel(s) {
-  const map = { running: '运行中', building: '构建中', idle: '待命', stopped: '已停止', error: '异常' };
+  const map = { running: '运行中', building: '构建中', built: '已构建', idle: '待构建', stopped: '已停止', error: '异常' };
   return map[s] || s;
 }
 
@@ -42,8 +42,8 @@ function renderBranches(branches, activeBranchId) {
           </div>
         </div>
         <div class="branch-actions">
-          ${b.status === 'idle' || b.status === 'error' ? `<button class="primary" onclick="buildBranch('${b.id}')">构建</button>` : ''}
-          ${b.status === 'idle' || b.status === 'stopped' ? `<button class="primary" onclick="startBranch('${b.id}')">启动</button>` : ''}
+          ${b.status === 'idle' || b.status === 'error' || b.status === 'built' ? `<button class="primary" onclick="buildBranch('${b.id}')">${b.status === 'built' ? '重新构建' : '构建'}</button>` : ''}
+          ${b.status === 'built' || b.status === 'stopped' ? `<button class="primary" onclick="startBranch('${b.id}')">启动</button>` : ''}
           ${b.status === 'running' && !isActive ? `<button class="activate" onclick="activateBranch('${b.id}')">切换到此分支</button>` : ''}
           ${b.status === 'running' ? `<button onclick="stopBranch('${b.id}')">停止</button>` : ''}
           ${!isActive ? `<button class="danger" onclick="removeBranch('${b.id}')">删除</button>` : ''}

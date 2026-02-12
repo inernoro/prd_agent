@@ -179,6 +179,19 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('POST /api/branches/:id/build', () => {
+    it('should build and set status to built', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      const res = await request(server, 'POST', '/api/branches/feature-test/build');
+      expect(res.status).toBe(200);
+
+      // Verify status is 'built', not 'idle'
+      const listRes = await request(server, 'GET', '/api/branches');
+      const body = listRes.body as { branches: Record<string, { status: string }> };
+      expect(body.branches['feature-test'].status).toBe('built');
+    });
+  });
+
   describe('POST /api/branches/:id/start', () => {
     it('should start a branch container', async () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
@@ -189,6 +202,33 @@ describe('Branch Routes', () => {
     it('should return 404 for unknown branch', async () => {
       const res = await request(server, 'POST', '/api/branches/nope/start');
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe('full lifecycle: add → build → start → activate', () => {
+    it('should go through idle → built → running → active', async () => {
+      // Step 1: Add — status = idle
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      let list = await request(server, 'GET', '/api/branches');
+      let branches = (list.body as any).branches;
+      expect(branches['feature-test'].status).toBe('idle');
+
+      // Step 2: Build — status = built
+      await request(server, 'POST', '/api/branches/feature-test/build');
+      list = await request(server, 'GET', '/api/branches');
+      branches = (list.body as any).branches;
+      expect(branches['feature-test'].status).toBe('built');
+
+      // Step 3: Start — status = running
+      await request(server, 'POST', '/api/branches/feature-test/start');
+      list = await request(server, 'GET', '/api/branches');
+      branches = (list.body as any).branches;
+      expect(branches['feature-test'].status).toBe('running');
+
+      // Step 4: Activate — becomes active
+      await request(server, 'POST', '/api/branches/feature-test/activate');
+      list = await request(server, 'GET', '/api/branches');
+      expect((list.body as any).activeBranchId).toBe('feature-test');
     });
   });
 
