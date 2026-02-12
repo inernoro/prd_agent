@@ -110,6 +110,16 @@ public static class AdminPermissionCatalog
     public const string TutorialEmailWrite = "tutorial-email.write";
 
     /// <summary>
+    /// 工作流引擎权限：使用工作流（创建、执行、查看自己的）
+    /// </summary>
+    public const string WorkflowAgentUse = "workflow-agent.use";
+
+    /// <summary>
+    /// 工作流引擎管理权限：管理所有工作流 + 查看所有执行记录
+    /// </summary>
+    public const string WorkflowAgentManage = "workflow-agent.manage";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -165,6 +175,9 @@ public static class AdminPermissionCatalog
 
         new(TutorialEmailRead, "教程邮件-读", "查看教程邮件序列、模板与发送记录"),
         new(TutorialEmailWrite, "教程邮件-写", "编辑序列、模板、触发发送"),
+
+        new(WorkflowAgentUse, "工作流引擎", "创建和执行自动化工作流"),
+        new(WorkflowAgentManage, "工作流引擎-管理", "管理所有工作流与执行记录"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };
