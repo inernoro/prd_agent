@@ -42,6 +42,18 @@
     <div id="toast" class="toast hidden"></div>
   </div>
 
+  <!-- Deploy log modal -->
+  <div id="deployModal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeDeployModal()"></div>
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2 id="deployModalTitle">部署日志</h2>
+        <button class="modal-close" onclick="closeDeployModal()">✕</button>
+      </div>
+      <div id="deployModalBody" class="modal-body"></div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

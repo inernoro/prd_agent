@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import fs from 'node:fs';
 import path from 'node:path';
 import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
@@ -327,56 +328,165 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  // POST /branches/:id/deploy — ONE-CLICK: build (if needed) + start (if needed) + activate
+  // POST /branches/:id/deploy — SSE stream: build + start + activate + health check
   router.post('/branches/:id/deploy', async (req, res) => {
-    try {
-      const { id } = req.params;
-      const entry = stateService.getBranch(id);
-      if (!entry) {
-        res.status(404).json({ error: `Branch "${id}" not found` });
-        return;
-      }
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `Branch "${id}" not found` });
+      return;
+    }
+    if (entry.status === 'building') {
+      res.status(409).json({ error: 'Build already in progress' });
+      return;
+    }
 
-      // Step 1: Build if not yet built
+    // Switch to SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (data: Record<string, unknown>) => {
+      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+    };
+
+    const tail = (s: string, n = 3000) =>
+      s.length > n ? `...[truncated]\n${s.slice(-n)}` : s;
+
+    try {
+      // ---- env info ----
+      const commitResult = await shell.exec(
+        'git log --oneline -1', { cwd: entry.worktreePath },
+      );
+      const shaResult = await shell.exec(
+        'git rev-parse --short HEAD', { cwd: entry.worktreePath },
+      );
+      const commit = shaResult.stdout.trim();
+      const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
+
+      send({
+        step: 'env', status: 'done', title: '环境信息',
+        detail: {
+          branch: entry.branch,
+          commit,
+          commitLog: commitResult.stdout.trim(),
+          worktreePath: entry.worktreePath,
+          containerName: entry.containerName,
+          imageName: entry.imageName,
+          dbName: entry.dbName,
+          network: config.docker.network,
+          gatewayPort: config.gateway.port,
+        },
+      });
+
+      // ---- build ----
       if (entry.status === 'idle' || entry.status === 'error') {
         stateService.updateStatus(id, 'building');
         stateService.save();
 
-        const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
-        const [apiLog, adminLog] = await Promise.all([
-          builderService.buildApiImage(entry.worktreePath, entry.imageName),
-          builderService.buildAdminStatic(entry.worktreePath, buildsDir),
-        ]);
+        // API image
+        send({ step: 'build_api', status: 'running', title: '构建 API 镜像' });
+        const apiLog = await builderService.buildApiImage(entry.worktreePath, entry.imageName);
+        send({ step: 'build_api', status: 'done', title: '构建 API 镜像', log: tail(apiLog) });
+
+        // Admin static
+        send({ step: 'build_admin', status: 'running', title: '构建前端静态文件' });
+        const adminLog = await builderService.buildAdminStatic(entry.worktreePath, buildsDir);
+        send({ step: 'build_admin', status: 'done', title: '构建前端静态文件', log: tail(adminLog) });
+
+        // Write version file for health check
+        const versionInfo = { commit, branch: entry.branch, builtAt: new Date().toISOString() };
+        fs.mkdirSync(buildsDir, { recursive: true });
+        fs.writeFileSync(path.join(buildsDir, 'bt-version.json'), JSON.stringify(versionInfo));
 
         stateService.updateStatus(id, 'built');
-        stateService.getBranch(id)!.buildLog = `API: ${apiLog}\nAdmin: ${adminLog}`;
+        stateService.getBranch(id)!.buildLog = `API:\n${apiLog}\nAdmin:\n${adminLog}`;
         stateService.save();
+      } else {
+        send({ step: 'build_api', status: 'skip', title: '构建 API 镜像 (已构建，跳过)' });
+        send({ step: 'build_admin', status: 'skip', title: '构建前端静态文件 (已构建，跳过)' });
       }
 
-      // Step 2: Start if not running
+      // ---- start ----
       if (stateService.getBranch(id)!.status !== 'running') {
+        send({ step: 'start', status: 'running', title: '启动容器' });
         await containerService.start(stateService.getBranch(id)!);
         stateService.updateStatus(id, 'running');
         stateService.save();
+        send({
+          step: 'start', status: 'done', title: '启动容器',
+          detail: { containerName: entry.containerName, network: config.docker.network },
+        });
+      } else {
+        send({ step: 'start', status: 'skip', title: '启动容器 (已运行，跳过)' });
       }
 
-      // Step 3: Activate
-      await doActivate(id);
+      // ---- activate nginx ----
+      send({ step: 'activate', status: 'running', title: '切换 Nginx 网关' });
 
-      res.json({
-        success: true,
-        activeBranchId: id,
-        url: `http://localhost:${config.gateway.port}`,
+      switcherService.backup();
+      const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
+      await switcherService.syncStaticFiles(buildsDir, distDir);
+      const nginxConf = switcherService.generateConfig(entry.containerName);
+      await switcherService.applyConfig(nginxConf);
+      stateService.activate(id);
+      stateService.save();
+
+      send({
+        step: 'activate', status: 'done', title: '切换 Nginx 网关',
+        detail: {
+          upstream: `${entry.containerName}:8080`,
+          gateway: `http://localhost:${config.gateway.port}`,
+          nginxConf,
+        },
       });
+
+      // ---- health check ----
+      send({ step: 'health', status: 'running', title: '健康检查' });
+      await new Promise((r) => setTimeout(r, 3000));
+
+      const versionUrl = `http://localhost:${config.gateway.port}/bt-version.json`;
+      const healthResult = await shell.exec(`curl -sf -m 5 "${versionUrl}"`, { timeout: 10_000 });
+
+      let healthStatus: string;
+      let healthDetail: Record<string, unknown>;
+      if (healthResult.exitCode === 0) {
+        try {
+          const actual = JSON.parse(healthResult.stdout);
+          const match = actual.commit === commit;
+          healthStatus = match ? 'done' : 'warn';
+          healthDetail = {
+            url: versionUrl, expected: commit, actual: actual.commit,
+            match, builtAt: actual.builtAt,
+            hint: match ? '' : '版本不匹配 — 可能需要重新构建',
+          };
+        } catch {
+          healthStatus = 'warn';
+          healthDetail = { url: versionUrl, expected: commit, actual: '响应解析失败', match: false };
+        }
+      } else {
+        healthStatus = 'warn';
+        healthDetail = {
+          url: versionUrl, expected: commit, actual: '无法连接',
+          match: false, error: healthResult.stderr.slice(0, 300),
+          hint: '容器可能仍在启动，稍后可手动刷新检查',
+        };
+      }
+      send({ step: 'health', status: healthStatus, title: '健康检查', detail: healthDetail });
+
+      // ---- done ----
+      send({ step: 'complete', status: 'done' });
     } catch (err) {
-      const { id } = req.params;
-      const entry = stateService.getBranch(id);
-      if (entry && entry.status === 'building') {
+      const e = stateService.getBranch(id);
+      if (e && e.status === 'building') {
         stateService.updateStatus(id, 'error');
-        entry.buildLog = (err as Error).message;
+        e.buildLog = (err as Error).message;
         stateService.save();
       }
-      res.status(500).json({ error: (err as Error).message });
+      send({ step: 'error', status: 'error', title: '部署失败', log: (err as Error).message });
+    } finally {
+      res.end();
     }
   });
 
