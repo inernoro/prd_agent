@@ -20,15 +20,18 @@ public sealed class AuthzController : ControllerBase
     private readonly IAdminPermissionService _permissionService;
     private readonly IAdminControllerScanner _scanner;
     private readonly MongoDbContext _db;
+    private readonly IConfiguration _cfg;
 
     public AuthzController(
         IAdminPermissionService permissionService,
         IAdminControllerScanner scanner,
-        MongoDbContext db)
+        MongoDbContext db,
+        IConfiguration cfg)
     {
         _permissionService = permissionService;
         _scanner = scanner;
         _db = db;
+        _cfg = cfg;
     }
 
     private bool IsRoot()
@@ -36,6 +39,12 @@ public sealed class AuthzController : ControllerBase
 
     private string GetUserId()
         => User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value ?? string.Empty;
+
+    private string? GetCdnBaseUrl()
+    {
+        var raw = (_cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
+        return string.IsNullOrWhiteSpace(raw) ? null : raw;
+    }
 
     [HttpGet("me")]
     public async Task<IActionResult> Me(CancellationToken ct)
@@ -53,7 +62,8 @@ public sealed class AuthzController : ControllerBase
                 Role = UserRole.ADMIN,
                 IsRoot = true,
                 SystemRoleKey = "root",
-                EffectivePermissions = AdminPermissionCatalog.All.Select(x => x.Key).ToList()
+                EffectivePermissions = AdminPermissionCatalog.All.Select(x => x.Key).ToList(),
+                CdnBaseUrl = GetCdnBaseUrl()
             }));
         }
 
@@ -79,7 +89,8 @@ public sealed class AuthzController : ControllerBase
             Role = user.Role,
             IsRoot = false,
             SystemRoleKey = roleKey,
-            EffectivePermissions = perms.ToList()
+            EffectivePermissions = perms.ToList(),
+            CdnBaseUrl = GetCdnBaseUrl()
         }));
     }
 

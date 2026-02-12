@@ -18,14 +18,22 @@ import {
   AGENT_DEFINITIONS,
   type AgentDefinition,
 } from '@/stores/agentSwitcherStore';
+import { useAuthStore } from '@/stores/authStore';
 
-/** 图标 URL 映射 */
-const ICON_URLS: Record<string, string> = {
-  'prd-agent': 'https://i.pa.759800.com/icon/backups/agent/prd-agent.png',
-  'visual-agent': 'https://i.pa.759800.com/icon/backups/agent/visual-agent.png',
-  'literary-agent': 'https://i.pa.759800.com/icon/backups/agent/literary-agent.png',
-  'defect-agent': 'https://i.pa.759800.com/icon/backups/agent/defect-agent.png',
+/** 图标相对路径映射（CDN 前缀从 authStore.cdnBaseUrl 获取） */
+const ICON_PATHS: Record<string, string> = {
+  'prd-agent': 'icon/backups/agent/prd-agent.png',
+  'visual-agent': 'icon/backups/agent/visual-agent.png',
+  'literary-agent': 'icon/backups/agent/literary-agent.png',
+  'defect-agent': 'icon/backups/agent/defect-agent.png',
 };
+
+function getAgentIconUrl(appKey: string): string {
+  const path = ICON_PATHS[appKey];
+  if (!path) return '';
+  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
+  return base ? `${base}/${path}` : `/${path}`;
+}
 
 /** Agent 功能描述 */
 const AGENT_DESCRIPTIONS: Record<string, string> = {
@@ -65,7 +73,7 @@ function AgentCard({
   cardRef?: React.Ref<HTMLButtonElement>;
   convergeOffset?: { x: number; y: number };
 }) {
-  const iconUrl = ICON_URLS[agent.key];
+  const iconUrl = getAgentIconUrl(agent.key);
   const description = AGENT_DESCRIPTIONS[agent.key];
   const direction = ENTRY_DIRECTIONS[index];
 

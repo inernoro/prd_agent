@@ -51,7 +51,7 @@ function appendCacheBust(url: string, cacheBust: number): string {
 const HIDDEN_ASSET_KEYS = new Set<string>([]);
 
 function getBaseAssetsUrl() {
-  return getAvatarBaseUrl() || 'https://i.pa.759800.com';
+  return getAvatarBaseUrl();
 }
 
 function labelForSkin(name: string) {

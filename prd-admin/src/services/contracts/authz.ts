@@ -8,6 +8,8 @@ export type AdminAuthzMe = {
   isRoot: boolean;
   systemRoleKey: string;
   effectivePermissions: string[];
+  /** CDN 基础地址，用于拼接静态资源 URL */
+  cdnBaseUrl?: string | null;
 };
 
 export type AdminPermissionDef = { key: string; name: string; description?: string | null };

@@ -115,6 +115,7 @@ export default function App() {
   const permissionsLoaded = useAuthStore((s) => s.permissionsLoaded);
   const setPermissionsLoaded = useAuthStore((s) => s.setPermissionsLoaded);
   const setIsRoot = useAuthStore((s) => s.setIsRoot);
+  const setCdnBaseUrl = useAuthStore((s) => s.setCdnBaseUrl);
   const setMenuCatalog = useAuthStore((s) => s.setMenuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const logout = useAuthStore((s) => s.logout);
@@ -136,9 +137,10 @@ export default function App() {
       }
       setPermissions(res.data.effectivePermissions || []);
       setIsRoot(res.data.isRoot ?? false);
+      if (res.data.cdnBaseUrl) setCdnBaseUrl(res.data.cdnBaseUrl);
       setPermissionsLoaded(true);
     })();
-  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, logout]);
+  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, setCdnBaseUrl, logout]);
 
   // 加载菜单目录
   useEffect(() => {
