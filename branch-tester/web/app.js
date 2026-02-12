@@ -110,40 +110,86 @@ function renderActiveSwitcher(branches, activeBranchId) {
   } else link.classList.add('hidden');
 }
 
-// ---- Remote branch list ----
+// ---- Branch picker (combobox dropdown) ----
 
 const BRANCH_ICON = `<svg class="branch-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>`;
 
-function renderRemoteBranches(branches) {
-  const list = document.getElementById('remoteBranchList');
-  if (!branches.length) {
-    list.innerHTML = '<div class="empty-state">所有远程分支已添加</div>';
+let remoteBranches = []; // cached from server
+
+function renderDropdown(keyword) {
+  const dd = document.getElementById('branchDropdown');
+  const kw = (keyword || '').toLowerCase();
+  const filtered = kw
+    ? remoteBranches.filter((b) =>
+        b.name.toLowerCase().includes(kw) ||
+        (b.author && b.author.toLowerCase().includes(kw)) ||
+        (b.message && b.message.toLowerCase().includes(kw)))
+    : remoteBranches;
+
+  if (!filtered.length) {
+    dd.innerHTML = `<div class="branch-dropdown-empty">${remoteBranches.length ? '无匹配分支' : '暂无可添加的分支'}</div>`;
+    dd.classList.remove('hidden');
     return;
   }
-  list.innerHTML = branches.map((b) => `
-    <div class="remote-branch-item">
-      <div class="remote-branch-main">
-        <div class="remote-branch-row1">
+
+  dd.innerHTML = filtered.map((b) => `
+    <div class="branch-dropdown-item" data-branch="${esc(b.name)}">
+      <div class="branch-dropdown-item-info">
+        <div class="branch-dropdown-item-row1">
           ${BRANCH_ICON}
-          <span class="remote-branch-name">${esc(b.name)}</span>
-          <span class="remote-branch-time">${relativeTime(b.date)}</span>
+          <span class="branch-dropdown-item-name">${esc(b.name)}</span>
+          <span class="branch-dropdown-item-time">${relativeTime(b.date)}</span>
         </div>
-        <div class="remote-branch-row2">${esc(b.author)} · ${esc(b.message)}</div>
+        <div class="branch-dropdown-item-row2">${esc(b.author || '')}${b.message ? ' · ' + esc(b.message) : ''}</div>
       </div>
-      <button class="primary" onclick="addBranch('${esc(b.name)}')">添加</button>
     </div>`).join('');
+  dd.classList.remove('hidden');
 }
 
+function hideDropdown() {
+  document.getElementById('branchDropdown').classList.add('hidden');
+}
+
+// Input events
+document.getElementById('branchSearch').addEventListener('focus', () => {
+  renderDropdown(document.getElementById('branchSearch').value);
+});
+
+document.getElementById('branchSearch').addEventListener('input', (e) => {
+  renderDropdown(e.target.value);
+});
+
+// Click on dropdown item → add branch
+document.getElementById('branchDropdown').addEventListener('click', (e) => {
+  const item = e.target.closest('.branch-dropdown-item');
+  if (!item) return;
+  const name = item.dataset.branch;
+  if (name) {
+    hideDropdown();
+    document.getElementById('branchSearch').value = '';
+    addBranch(name);
+  }
+});
+
+// Click outside → close dropdown
+document.addEventListener('mousedown', (e) => {
+  const picker = document.querySelector('.branch-picker');
+  if (picker && !picker.contains(e.target)) hideDropdown();
+});
+
 async function loadRemoteBranches() {
-  const list = document.getElementById('remoteBranchList');
   const btn = document.getElementById('refreshRemoteBtn');
+  const dd = document.getElementById('branchDropdown');
   try {
-    list.innerHTML = '<div class="empty-state"><span class="loading"></span> 正在获取远程分支...</div>';
     btn.disabled = true;
+    dd.innerHTML = '<div class="branch-dropdown-empty"><span class="loading"></span> 正在获取...</div>';
+    dd.classList.remove('hidden');
     const data = await api('GET', '/remote-branches');
-    renderRemoteBranches(data.branches);
+    remoteBranches = data.branches || [];
+    renderDropdown(document.getElementById('branchSearch').value);
   } catch (err) {
-    list.innerHTML = '<div class="empty-state">加载失败</div>';
+    remoteBranches = [];
+    dd.innerHTML = '<div class="branch-dropdown-empty">加载失败</div>';
     showToast('加载远程分支失败: ' + err.message, 'error');
   } finally {
     btn.disabled = false;
