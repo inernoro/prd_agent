@@ -19,12 +19,14 @@
       </div>
     </header>
 
-    <section class="add-section">
-      <select id="branchSelect">
-        <option value="">加载远程分支中...</option>
-      </select>
-      <button id="addBtn" onclick="addBranch()" disabled>+ 添加分支</button>
-      <button id="refreshRemoteBtn" onclick="loadRemoteBranches()" title="刷新远程分支列表">↻</button>
+    <section class="remote-section">
+      <div class="remote-header">
+        <h2>远程分支</h2>
+        <button id="refreshRemoteBtn" onclick="loadRemoteBranches()">↻ 刷新</button>
+      </div>
+      <div id="remoteBranchList" class="remote-branch-list">
+        <div class="empty-state">加载中...</div>
+      </div>
     </section>
 
     <section id="branchList" class="branch-list">

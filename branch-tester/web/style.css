@@ -53,6 +53,100 @@ h2 {
 
 .active-info a:hover { text-decoration: underline; }
 
+/* ---- Remote branch section ---- */
+
+.remote-section {
+  margin-bottom: 24px;
+}
+
+.remote-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.remote-header button {
+  font-size: 12px;
+  padding: 4px 12px;
+}
+
+.remote-branch-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid #2d333b;
+  border-radius: 8px;
+  background: #161b22;
+}
+
+.remote-branch-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #21262d;
+}
+
+.remote-branch-item:last-child {
+  border-bottom: none;
+}
+
+.remote-branch-item:hover {
+  background: #1c2128;
+}
+
+.remote-branch-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.remote-branch-row1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.branch-icon {
+  width: 16px;
+  height: 16px;
+  color: #8b949e;
+  flex-shrink: 0;
+}
+
+.remote-branch-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #58a6ff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-branch-time {
+  font-size: 12px;
+  color: #6e7681;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.remote-branch-row2 {
+  font-size: 12px;
+  color: #8b949e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 22px;
+}
+
+.remote-branch-item button {
+  padding: 4px 12px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* ---- Legacy add section (removed, keeping for compat) ---- */
+
 .add-section {
   display: flex;
   gap: 8px;

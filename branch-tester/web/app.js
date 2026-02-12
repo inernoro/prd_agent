@@ -31,6 +31,29 @@ function statusLabel(s) {
   return map[s] || s;
 }
 
+function relativeTime(isoDate) {
+  if (!isoDate) return '';
+  const now = Date.now();
+  const then = new Date(isoDate).getTime();
+  const diff = Math.max(0, now - then);
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return '刚刚';
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} 天前`;
+  const months = Math.floor(days / 30);
+  return `${months} 个月前`;
+}
+
+// Escape HTML to prevent XSS in commit messages / author names
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = str || '';
+  return d.innerHTML;
+}
+
 function setBusy(isBusy) {
   busy = isBusy;
   document.querySelectorAll('button').forEach((btn) => {
@@ -39,7 +62,8 @@ function setBusy(isBusy) {
   if (!isBusy) refresh(); // re-render so buttons get correct enabled/disabled state
 }
 
-// Build the action buttons for each branch based on current state
+// ---- Branch card (tracked branches) ----
+
 function branchActions(b, isActive) {
   const btns = [];
 
@@ -57,12 +81,10 @@ function branchActions(b, isActive) {
     );
   }
 
-  // Stop: only when running
   if (b.status === 'running') {
     btns.push(`<button onclick="stopBranch('${b.id}')">停止</button>`);
   }
 
-  // Delete: never on active branch
   if (!isActive) {
     btns.push(`<button class="danger" onclick="removeBranch('${b.id}')">删除</button>`);
   }
@@ -75,7 +97,7 @@ function renderBranches(branches, activeBranchId) {
   const entries = Object.values(branches);
 
   if (entries.length === 0) {
-    list.innerHTML = '<div class="empty-state">暂无分支，请从下拉框选择添加</div>';
+    list.innerHTML = '<div class="empty-state">暂无分支，请从远程分支列表添加</div>';
     return;
   }
 
@@ -86,7 +108,7 @@ function renderBranches(branches, activeBranchId) {
       <div class="branch-card ${isActive ? 'active' : ''}">
         <div class="status-dot ${b.status}"></div>
         <div class="branch-info">
-          <div class="branch-name">${b.branch} ${isActive ? '(当前激活)' : ''}</div>
+          <div class="branch-name">${esc(b.branch)} ${isActive ? '(当前激活)' : ''}</div>
           <div class="branch-meta">${statusLabel(b.status)} · DB: ${b.dbName}</div>
         </div>
         <div class="branch-actions">
@@ -110,13 +132,11 @@ function renderHistory(history) {
   }
 }
 
-// Render the top-level active branch switcher dropdown
 function renderActiveSwitcher(branches, activeBranchId) {
   const sel = document.getElementById('activeSwitcher');
   const link = document.getElementById('activeLink');
   const entries = Object.values(branches).filter((b) => b.status === 'running');
 
-  // Build options
   let html = '<option value="">无</option>';
   entries.forEach((b) => {
     const selected = b.id === activeBranchId ? 'selected' : '';
@@ -133,27 +153,52 @@ function renderActiveSwitcher(branches, activeBranchId) {
   }
 }
 
+// ---- Remote branch list (rich display) ----
+
+const BRANCH_ICON = `<svg class="branch-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>`;
+
+function renderRemoteBranches(branches) {
+  const list = document.getElementById('remoteBranchList');
+
+  if (branches.length === 0) {
+    list.innerHTML = '<div class="empty-state">所有远程分支已添加</div>';
+    return;
+  }
+
+  list.innerHTML = branches
+    .map(
+      (b) => `
+      <div class="remote-branch-item">
+        <div class="remote-branch-main">
+          <div class="remote-branch-row1">
+            ${BRANCH_ICON}
+            <span class="remote-branch-name">${esc(b.name)}</span>
+            <span class="remote-branch-time">${relativeTime(b.date)}</span>
+          </div>
+          <div class="remote-branch-row2">
+            ${esc(b.author)} · ${esc(b.message)}
+          </div>
+        </div>
+        <button class="primary" onclick="addBranch('${esc(b.name)}')">添加</button>
+      </div>`,
+    )
+    .join('');
+}
+
 async function loadRemoteBranches() {
-  const sel = document.getElementById('branchSelect');
-  const addBtn = document.getElementById('addBtn');
+  const list = document.getElementById('remoteBranchList');
+  const btn = document.getElementById('refreshRemoteBtn');
   try {
-    sel.innerHTML = '<option value="">加载中...</option>';
-    addBtn.disabled = true;
+    list.innerHTML = '<div class="empty-state"><span class="loading"></span> 正在获取远程分支...</div>';
+    btn.disabled = true;
 
     const data = await api('GET', '/remote-branches');
-    if (data.branches.length === 0) {
-      sel.innerHTML = '<option value="">无可用远程分支</option>';
-      addBtn.disabled = true;
-    } else {
-      sel.innerHTML =
-        '<option value="">选择分支...</option>' +
-        data.branches.map((b) => `<option value="${b}">${b}</option>`).join('');
-      addBtn.disabled = false;
-    }
+    renderRemoteBranches(data.branches);
   } catch (err) {
-    sel.innerHTML = '<option value="">加载失败</option>';
-    addBtn.disabled = true;
+    list.innerHTML = '<div class="empty-state">加载失败</div>';
     showToast('加载远程分支失败: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -174,17 +219,13 @@ async function refresh() {
 
 // --- User actions ---
 
-async function addBranch() {
-  const sel = document.getElementById('branchSelect');
-  const branch = sel.value;
-  if (!branch) return showToast('请先从下拉框选择分支', 'error');
-  if (busy) return;
-
+async function addBranch(branchName) {
+  if (!branchName || busy) return;
   setBusy(true);
   try {
-    await api('POST', '/branches', { branch });
-    showToast(`分支 ${branch} 已添加`, 'success');
-    await loadRemoteBranches(); // refresh dropdown to remove the added branch
+    await api('POST', '/branches', { branch: branchName });
+    showToast(`分支 ${branchName} 已添加`, 'success');
+    await loadRemoteBranches();
   } catch (err) {
     showToast(err.message, 'error');
   } finally {
@@ -262,7 +303,7 @@ async function doRollback() {
   }
 }
 
-// Top switcher: when user picks a different running branch from the dropdown
+// Top switcher
 document.getElementById('activeSwitcher').addEventListener('change', async (e) => {
   const id = e.target.value;
   if (!id || busy) return;
@@ -276,11 +317,6 @@ document.getElementById('activeSwitcher').addEventListener('change', async (e) =
   } finally {
     setBusy(false);
   }
-});
-
-// Enable add button only when a branch is selected
-document.getElementById('branchSelect').addEventListener('change', (e) => {
-  document.getElementById('addBtn').disabled = !e.target.value;
 });
 
 // Init

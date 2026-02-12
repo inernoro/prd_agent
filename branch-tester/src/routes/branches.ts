@@ -30,30 +30,51 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   const router = Router();
 
-  // GET /remote-branches — list remote branches available to add
+  // GET /remote-branches — list remote branches with latest commit info
   router.get('/remote-branches', async (_req, res) => {
     try {
-      // Use git ls-remote to query all remote branches directly.
-      // This works regardless of shallow clone or --single-branch refspec,
-      // unlike "git branch -r" which only shows locally-tracked refs.
+      // Fetch latest refs from remote so for-each-ref has up-to-date data
+      await shell.exec(
+        'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
+        { cwd: config.repoRoot, timeout: 30_000 },
+      );
+
+      // Get rich branch info from remote-tracking refs
+      const SEP = '<SEP>';
+      const format = [
+        '%(refname:lstrip=3)',
+        '%(committerdate:iso8601)',
+        '%(authorname)',
+        '%(subject)',
+      ].join(SEP);
+
       const result = await shell.exec(
-        'GIT_TERMINAL_PROMPT=0 git ls-remote --heads origin',
+        `git for-each-ref --sort=-committerdate "refs/remotes/origin/" --format="${format}"`,
         { cwd: config.repoRoot, timeout: 15_000 },
       );
 
       if (result.exitCode !== 0) {
-        res.status(502).json({ error: `git ls-remote failed: ${result.stderr}` });
+        res.status(502).json({ error: `git for-each-ref failed: ${result.stderr}` });
         return;
       }
 
       const existing = new Set(
         Object.values(stateService.getState().branches).map((b) => b.branch),
       );
-      // Output format: "<sha>\trefs/heads/<branch-name>"
+
       const branches = result.stdout
         .split('\n')
-        .map((line) => line.replace(/^[0-9a-f]+\trefs\/heads\//, '').trim())
-        .filter((b) => b && !existing.has(b));
+        .filter((line) => line.trim())
+        .map((line) => {
+          const parts = line.split(SEP);
+          return {
+            name: parts[0]?.trim(),
+            date: parts[1]?.trim(),
+            author: parts[2]?.trim(),
+            message: parts.slice(3).join(SEP).trim(),
+          };
+        })
+        .filter((b) => b.name && b.name !== 'HEAD' && !existing.has(b.name));
 
       res.json({ branches });
     } catch (err) {
