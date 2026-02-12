@@ -21,6 +21,13 @@ interface ApiTestResult {
 const DEFAULT_API_URL_NON_DEV = 'https://pa.759800.com';
 const DEFAULT_API_URL_DEV = 'http://localhost:5000';
 
+/** 预设服务器列表（用户可直接选择，无需手动输入） */
+const PRESET_SERVERS = [
+  { label: 'pa.759800.com', url: 'https://pa.759800.com' },
+  { label: 'miduo.org', url: 'https://miduo.org' },
+  { label: 'sassagent.com', url: 'https://sassagent.com' },
+];
+
 function getDefaultApiUrl(isDeveloper: boolean) {
   return isDeveloper ? DEFAULT_API_URL_DEV : DEFAULT_API_URL_NON_DEV;
 }
@@ -637,10 +644,10 @@ export default function SettingsModal() {
               API 服务地址
             </label>
 
-            {/* 地址输入框（始终可编辑） */}
+            {/* 预设服务器选择 + 自定义输入 */}
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <label className="block text-xs text-text-secondary">API 地址</label>
+                <label className="block text-xs text-text-secondary">选择服务器</label>
                 <button
                   type="button"
                   onClick={() => {
@@ -652,6 +659,25 @@ export default function SettingsModal() {
                   恢复默认
                 </button>
               </div>
+              {!isDeveloper && (
+                <select
+                  value={PRESET_SERVERS.some((s) => s.url === apiUrl.trim()) ? apiUrl.trim() : '__custom__'}
+                  onChange={(e) => {
+                    if (e.target.value !== '__custom__') {
+                      setApiUrl(e.target.value);
+                      setTestResult(null);
+                    }
+                  }}
+                  className="w-full px-4 py-3 ui-control transition-colors"
+                >
+                  {PRESET_SERVERS.map((s) => (
+                    <option key={s.url} value={s.url}>{s.label}</option>
+                  ))}
+                  {!PRESET_SERVERS.some((s) => s.url === apiUrl.trim()) && (
+                    <option value="__custom__">自定义: {apiUrl.trim()}</option>
+                  )}
+                </select>
+              )}
               <input
                 type="url"
                 value={apiUrl}
@@ -661,6 +687,7 @@ export default function SettingsModal() {
                 }}
                 placeholder={getDefaultApiUrl(isDeveloper)}
                 className="w-full px-4 py-3 ui-control transition-colors"
+                style={!isDeveloper && PRESET_SERVERS.some((s) => s.url === apiUrl.trim()) ? { display: 'none' } : undefined}
               />
             </div>
           </div>
