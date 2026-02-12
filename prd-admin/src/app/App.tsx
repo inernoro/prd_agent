@@ -14,6 +14,7 @@ import AssetsManagePage from '@/pages/AssetsManagePage';
 import VisualAgentFullscreenPage from '@/pages/visual-agent/VisualAgentFullscreenPage';
 import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
 import { DefectAgentPage } from '@/pages/defect-agent';
+import { WorkflowAgentPage } from '@/pages/workflow-agent';
 import { MarketplacePage } from '@/pages/marketplace';
 import { AiToolboxPage } from '@/pages/ai-toolbox';
 import { LandingPage } from '@/pages/home';
@@ -240,6 +241,7 @@ export default function App() {
         <Route path="literary-agent" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentWorkspaceListPage /></RequirePermission>} />
         <Route path="literary-agent/:workspaceId" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentEditorPageWrapper /></RequirePermission>} />
         <Route path="defect-agent" element={<RequirePermission perm="defect-agent.use"><DefectAgentPage /></RequirePermission>} />
+        <Route path="workflow-agent" element={<RequirePermission perm="workflow-agent.use"><WorkflowAgentPage /></RequirePermission>} />
         <Route path="ai-toolbox" element={<RequirePermission perm="access"><AiToolboxPage /></RequirePermission>} />
         <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />
         <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
