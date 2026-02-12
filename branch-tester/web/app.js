@@ -209,7 +209,7 @@ async function pullBranch(id) {
 async function deployBranch(id) {
   if (busy) return;
   setBusy(true);
-  showToast(`正在部署 ${id}...（拉取+构建+启动+激活）`, 'info');
+  showToast(`正在部署 ${id}...（构建+启动+激活）`, 'info');
   try {
     const data = await api('POST', `/branches/${id}/deploy`);
     showToast(`${id} 已部署并激活`, 'success');
@@ -287,4 +287,3 @@ document.getElementById('branchSelect').addEventListener('change', (e) => {
 loadRemoteBranches();
 refresh();
 setInterval(refresh, 5000);
-setInterval(loadRemoteBranches, 30_000); // auto-refresh remote branches every 30s

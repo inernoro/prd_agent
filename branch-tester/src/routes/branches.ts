@@ -316,32 +316,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
-      // Step 0: Always pull latest code before deploy
-      await worktreeService.pull(entry.branch, entry.worktreePath);
+      // Step 1: Build if not yet built
+      if (entry.status === 'idle' || entry.status === 'error') {
+        stateService.updateStatus(id, 'building');
+        stateService.save();
 
-      // Step 0.5: Stop running container (will be rebuilt with new code)
-      if (entry.status === 'running') {
-        await containerService.stop(entry.containerName);
+        const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
+        const [apiLog, adminLog] = await Promise.all([
+          builderService.buildApiImage(entry.worktreePath, entry.imageName),
+          builderService.buildAdminStatic(entry.worktreePath, buildsDir),
+        ]);
+
+        stateService.updateStatus(id, 'built');
+        stateService.getBranch(id)!.buildLog = `API: ${apiLog}\nAdmin: ${adminLog}`;
+        stateService.save();
       }
 
-      // Step 1: Always rebuild to pick up pulled changes
-      stateService.updateStatus(id, 'building');
-      stateService.save();
-
-      const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
-      const [apiLog, adminLog] = await Promise.all([
-        builderService.buildApiImage(entry.worktreePath, entry.imageName),
-        builderService.buildAdminStatic(entry.worktreePath, buildsDir),
-      ]);
-
-      stateService.updateStatus(id, 'built');
-      stateService.getBranch(id)!.buildLog = `API: ${apiLog}\nAdmin: ${adminLog}`;
-      stateService.save();
-
-      // Step 2: Start container with new image
-      await containerService.start(stateService.getBranch(id)!);
-      stateService.updateStatus(id, 'running');
-      stateService.save();
+      // Step 2: Start if not running
+      if (stateService.getBranch(id)!.status !== 'running') {
+        await containerService.start(stateService.getBranch(id)!);
+        stateService.updateStatus(id, 'running');
+        stateService.save();
+      }
 
       // Step 3: Activate
       await doActivate(id);
