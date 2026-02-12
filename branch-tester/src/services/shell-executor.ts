@@ -20,6 +20,11 @@ export class ShellExecutor implements IShellExecutor {
         },
       );
 
+      if (options?.onData) {
+        cp.stdout?.on('data', (d: Buffer) => options.onData!(d.toString()));
+        cp.stderr?.on('data', (d: Buffer) => options.onData!(d.toString()));
+      }
+
       cp.on('error', () => {
         resolve({ stdout: '', stderr: 'Process error', exitCode: 1 });
       });

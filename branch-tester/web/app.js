@@ -176,23 +176,28 @@ document.addEventListener('mousedown', (e) => {
   if (picker && !picker.contains(e.target)) hideDropdown();
 });
 
+// Silent data fetch — no UI side effects
 async function loadRemoteBranches() {
   const btn = document.getElementById('refreshRemoteBtn');
-  const dd = document.getElementById('branchDropdown');
   try {
     btn.disabled = true;
-    dd.innerHTML = '<div class="branch-dropdown-empty"><span class="loading"></span> 正在获取...</div>';
-    dd.classList.remove('hidden');
     const data = await api('GET', '/remote-branches');
     remoteBranches = data.branches || [];
-    renderDropdown(document.getElementById('branchSearch').value);
   } catch (err) {
     remoteBranches = [];
-    dd.innerHTML = '<div class="branch-dropdown-empty">加载失败</div>';
     showToast('加载远程分支失败: ' + err.message, 'error');
   } finally {
     btn.disabled = false;
   }
+}
+
+// Manual refresh — show loading state in dropdown
+async function refreshRemoteBranches() {
+  const dd = document.getElementById('branchDropdown');
+  dd.innerHTML = '<div class="branch-dropdown-empty"><span class="loading"></span> 正在获取...</div>';
+  dd.classList.remove('hidden');
+  await loadRemoteBranches();
+  renderDropdown(document.getElementById('branchSearch').value);
 }
 
 async function refresh() {
@@ -248,8 +253,13 @@ function appendDeployEvent(data) {
     return;
   }
 
-  // ---- fatal error ----
+  // ---- fatal error — also mark any running steps as failed ----
   if (data.step === 'error') {
+    body.querySelectorAll('.deploy-step.is-running').forEach((el) => {
+      el.className = 'deploy-step is-error';
+      const hdr = el.querySelector('.deploy-step-hdr');
+      if (hdr) hdr.innerHTML = `${STEP_ICONS.error} ${hdr.querySelector('span')?.outerHTML || ''}`;
+    });
     body.insertAdjacentHTML('beforeend', `
       <div class="deploy-step is-error">
         <div class="deploy-step-hdr">${STEP_ICONS.error} <span>${esc(data.title)}</span></div>
@@ -262,11 +272,22 @@ function appendDeployEvent(data) {
   const el = document.getElementById(`ds-${data.step}`);
 
   if (data.status === 'running') {
-    // Create new running step
-    body.insertAdjacentHTML('beforeend', `
-      <div class="deploy-step is-running" id="ds-${data.step}">
-        <div class="deploy-step-hdr">${STEP_ICONS.running} <span>${esc(data.title)}</span></div>
-      </div>`);
+    if (!el) {
+      // First running event — create step with streaming log area
+      body.insertAdjacentHTML('beforeend', `
+        <div class="deploy-step is-running" id="ds-${data.step}">
+          <div class="deploy-step-hdr">${STEP_ICONS.running} <span>${esc(data.title)}</span></div>
+          <pre class="deploy-stream-log"></pre>
+        </div>`);
+    }
+    // Append streaming chunk if present
+    if (data.chunk) {
+      const logEl = document.querySelector(`#ds-${data.step} .deploy-stream-log`);
+      if (logEl) {
+        logEl.textContent += data.chunk;
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+    }
     body.scrollTop = body.scrollHeight;
     return;
   }
@@ -284,41 +305,50 @@ function appendDeployEvent(data) {
     const icon = STEP_ICONS[data.status] || STEP_ICONS.done;
     el.className = `deploy-step is-${data.status}`;
 
-    let html = `<div class="deploy-step-hdr">${icon} <span>${esc(data.title)}</span></div>`;
+    // Update header icon
+    const hdr = el.querySelector('.deploy-step-hdr');
+    if (hdr) hdr.innerHTML = `${icon} <span>${esc(data.title)}</span>`;
 
-    // Log (collapsible)
-    if (data.log) {
-      html += `<details class="deploy-log-wrap"><summary>查看日志</summary><pre class="deploy-log">${esc(data.log)}</pre></details>`;
+    // If streaming log has content, keep it visible; otherwise hide empty pre
+    const streamLog = el.querySelector('.deploy-stream-log');
+    if (streamLog && !streamLog.textContent.trim()) {
+      streamLog.style.display = 'none';
+      // Non-streaming step: show collapsible log if provided
+      if (data.log) {
+        el.insertAdjacentHTML('beforeend',
+          `<details class="deploy-log-wrap"><summary>查看日志</summary><pre class="deploy-log">${esc(data.log)}</pre></details>`);
+      }
     }
 
     // Nginx config detail
     if (data.detail && data.step === 'activate') {
       const d = data.detail;
-      html += `<div class="deploy-detail">upstream: <code>${esc(String(d.upstream))}</code> → gateway: <code>${esc(String(d.gateway))}</code></div>`;
-      html += `<details class="deploy-log-wrap"><summary>查看 Nginx 配置</summary><pre class="deploy-log">${esc(d.nginxConf || '')}</pre></details>`;
+      el.insertAdjacentHTML('beforeend',
+        `<div class="deploy-detail">upstream: <code>${esc(String(d.upstream))}</code> → gateway: <code>${esc(String(d.gateway))}</code></div>`);
+      el.insertAdjacentHTML('beforeend',
+        `<details class="deploy-log-wrap"><summary>查看 Nginx 配置</summary><pre class="deploy-log">${esc(d.nginxConf || '')}</pre></details>`);
     }
 
     // Health check detail
     if (data.detail && data.step === 'health') {
       const d = data.detail;
       const mark = d.match ? '<span class="health-ok">✓ 匹配</span>' : '<span class="health-fail">✗ 不匹配</span>';
-      html += `<div class="deploy-detail">
+      el.insertAdjacentHTML('beforeend', `<div class="deploy-detail">
         URL: <code>${esc(String(d.url))}</code><br>
         期望 commit: <code>${esc(String(d.expected))}</code><br>
         实际 commit: <code>${esc(String(d.actual))}</code> ${mark}
         ${d.builtAt ? `<br>构建时间: ${esc(d.builtAt)}` : ''}
         ${d.hint ? `<br><span class="health-hint">${esc(d.hint)}</span>` : ''}
         ${d.error ? `<br><span class="health-fail">${esc(d.error)}</span>` : ''}
-      </div>`;
+      </div>`);
     }
 
     // Start container detail
     if (data.detail && data.step === 'start') {
       const d = data.detail;
-      html += `<div class="deploy-detail">容器: <code>${esc(d.containerName)}</code> · 网络: <code>${esc(d.network)}</code></div>`;
+      el.insertAdjacentHTML('beforeend',
+        `<div class="deploy-detail">容器: <code>${esc(d.containerName)}</code> · 网络: <code>${esc(d.network)}</code></div>`);
     }
-
-    el.innerHTML = html;
   }
 
   body.scrollTop = body.scrollHeight;

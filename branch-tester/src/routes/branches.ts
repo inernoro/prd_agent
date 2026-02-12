@@ -386,15 +386,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.updateStatus(id, 'building');
         stateService.save();
 
-        // API image
+        // API image (stream build output in real-time)
         send({ step: 'build_api', status: 'running', title: '构建 API 镜像' });
-        const apiLog = await builderService.buildApiImage(entry.worktreePath, entry.imageName);
-        send({ step: 'build_api', status: 'done', title: '构建 API 镜像', log: tail(apiLog) });
+        const apiLog = await builderService.buildApiImage(
+          entry.worktreePath, entry.imageName,
+          (chunk) => send({ step: 'build_api', status: 'running', title: '构建 API 镜像', chunk }),
+        );
+        send({ step: 'build_api', status: 'done', title: '构建 API 镜像' });
 
-        // Admin static
+        // Admin static (stream build output in real-time)
         send({ step: 'build_admin', status: 'running', title: '构建前端静态文件' });
-        const adminLog = await builderService.buildAdminStatic(entry.worktreePath, buildsDir);
-        send({ step: 'build_admin', status: 'done', title: '构建前端静态文件', log: tail(adminLog) });
+        const adminLog = await builderService.buildAdminStatic(
+          entry.worktreePath, buildsDir,
+          (chunk) => send({ step: 'build_admin', status: 'running', title: '构建前端静态文件', chunk }),
+        );
+        send({ step: 'build_admin', status: 'done', title: '构建前端静态文件' });
 
         // Write version file for health check
         const versionInfo = { commit, branch: entry.branch, builtAt: new Date().toISOString() };

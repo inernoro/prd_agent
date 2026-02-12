@@ -8,12 +8,16 @@ export class BuilderService {
     private readonly config: BtConfig,
   ) {}
 
-  async buildApiImage(worktreePath: string, imageName: string): Promise<string> {
+  async buildApiImage(
+    worktreePath: string,
+    imageName: string,
+    onOutput?: (chunk: string) => void,
+  ): Promise<string> {
     const dockerfile = path.join(worktreePath, this.config.docker.apiDockerfile);
     const context = path.join(worktreePath, 'prd-api');
 
     const cmd = `docker build -f "${dockerfile}" -t ${imageName} "${context}"`;
-    const result = await this.shell.exec(cmd, { timeout: 600_000 });
+    const result = await this.shell.exec(cmd, { timeout: 600_000, onData: onOutput });
 
     if (result.exitCode !== 0) {
       throw new Error(`API image build failed:\n${combinedOutput(result)}`);
@@ -21,14 +25,20 @@ export class BuilderService {
     return combinedOutput(result);
   }
 
-  async buildAdminStatic(worktreePath: string, outputDir: string): Promise<string> {
+  async buildAdminStatic(
+    worktreePath: string,
+    outputDir: string,
+    onOutput?: (chunk: string) => void,
+  ): Promise<string> {
     const adminDir = path.join(worktreePath, 'prd-admin');
     const logs: string[] = [];
 
     // pnpm install
+    onOutput?.('── pnpm install ──\n');
     const installResult = await this.shell.exec('pnpm install --frozen-lockfile', {
       cwd: adminDir,
       timeout: 120_000,
+      onData: onOutput,
     });
     if (installResult.exitCode !== 0) {
       throw new Error(`pnpm install failed:\n${combinedOutput(installResult)}`);
@@ -36,9 +46,11 @@ export class BuilderService {
     logs.push(combinedOutput(installResult));
 
     // pnpm build
+    onOutput?.('\n── pnpm build ──\n');
     const buildResult = await this.shell.exec('pnpm build', {
       cwd: adminDir,
       timeout: 300_000,
+      onData: onOutput,
     });
     if (buildResult.exitCode !== 0) {
       throw new Error(`pnpm build failed:\n${combinedOutput(buildResult)}`);

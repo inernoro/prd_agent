@@ -63,6 +63,8 @@ export function combinedOutput(result: { stdout: string; stderr: string }): stri
 export interface ExecOptions {
   cwd?: string;
   timeout?: number;
+  /** Called with each chunk of stdout/stderr output in real-time */
+  onData?: (chunk: string) => void;
 }
 
 export interface IShellExecutor {

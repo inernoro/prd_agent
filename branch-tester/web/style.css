@@ -507,6 +507,28 @@ button.activate:hover { background: #388bfd; }
   color: #6e7681;
 }
 
+/* ---- Streaming log (real-time build output) ---- */
+
+.deploy-stream-log {
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: #8b949e;
+  background: #010409;
+  border: 1px solid #21262d;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-top: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+.deploy-stream-log:empty {
+  display: none;
+}
+
 /* ---- Log blocks ---- */
 
 .deploy-log-wrap {
