@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -22,7 +23,7 @@ public class WatermarkRendererTests
             ContentRootPath = contentRootPath,
             ContentRootFileProvider = new NullFileProvider()
         };
-        var registry = new WatermarkFontRegistry(env, new EmptyWatermarkFontAssetSource(), new NullAssetStorage(), new NullLogger<WatermarkFontRegistry>());
+        var registry = new WatermarkFontRegistry(env, new EmptyWatermarkFontAssetSource(), new NullAssetStorage(), new ConfigurationBuilder().Build(), new NullLogger<WatermarkFontRegistry>());
         var services = new ServiceCollection();
         services.AddHttpClient();
         var provider = services.BuildServiceProvider();
