@@ -10,8 +10,9 @@ set -eu
 # 依赖：curl + unzip（或 busybox unzip），以及 docker-compose
 #
 # 用法：
-#   ./deploy.sh          # 一键部署 latest（唯一支持的版本）
-#   ./deploy.sh anything # 为兼容旧用法：任何参数都会按 latest 处理
+#   ./exec_dep.sh                # 一键部署 latest（唯一支持的版本）
+#   ./exec_dep.sh --skip-verify  # 跳过 sha256 校验（CDN 缓存不一致时使用）
+#   SKIP_VERIFY=1 ./exec_dep.sh  # 同上，环境变量方式
 #
 # 可选环境变量：
 #   - PRD_AGENT_API_IMAGE：覆盖后端镜像（默认按 REPO 组装 :latest）
@@ -91,15 +92,39 @@ echo "Downloading: $asset_url"
 curl -fL "$asset_url" -o "$zip_path"
 
 sha_path="$tmp_dir/prd-admin-dist.zip.sha256"
-if [ -n "$sha_url" ] && command -v sha256sum >/dev/null 2>&1; then
+SKIP_VERIFY="${SKIP_VERIFY:-}"
+if [ "${1:-}" = "--skip-verify" ]; then SKIP_VERIFY=1; fi
+
+if [ -n "$SKIP_VERIFY" ]; then
+  echo "跳过 sha256 校验（SKIP_VERIFY=1 或 --skip-verify）"
+elif [ -n "$sha_url" ] && command -v sha256sum >/dev/null 2>&1; then
   if curl -fL "$sha_url" -o "$sha_path" 2>/dev/null; then
     echo "Verifying sha256..."
     # 兼容 sha256 文件内容为："<hash>  <filename>"
     expected="$(awk '{print $1}' "$sha_path" | head -n 1)"
     actual="$(sha256sum "$zip_path" | awk '{print $1}')"
     if [ -n "$expected" ] && [ "$expected" != "$actual" ]; then
-      echo "ERROR: sha256 校验失败（expected=$expected actual=$actual）" >&2
-      exit 1
+      echo "WARN: sha256 不匹配，可能是 CDN 缓存不一致，等待 5 秒后重新下载..."
+      sleep 5
+      curl -fL -H "Cache-Control: no-cache" "$asset_url" -o "$zip_path"
+      curl -fL -H "Cache-Control: no-cache" "$sha_url" -o "$sha_path" 2>/dev/null || true
+      expected="$(awk '{print $1}' "$sha_path" | head -n 1)"
+      actual="$(sha256sum "$zip_path" | awk '{print $1}')"
+      if [ -n "$expected" ] && [ "$expected" != "$actual" ]; then
+        echo "" >&2
+        echo "ERROR: sha256 校验失败（expected=$expected actual=$actual）" >&2
+        echo "" >&2
+        echo "可能原因：" >&2
+        echo "  1. GitHub Pages CDN 缓存了不同版本的 zip 和 sha256 文件" >&2
+        echo "  2. 下载过程中文件被截断或损坏" >&2
+        echo "" >&2
+        echo "解决办法：" >&2
+        echo "  - 等待几分钟后重试（等待 CDN 缓存刷新）" >&2
+        echo "  - 跳过校验：SKIP_VERIFY=1 ./exec_dep.sh" >&2
+        echo "  - 或使用 --skip-verify 参数：./exec_dep.sh --skip-verify" >&2
+        exit 1
+      fi
+      echo "重试成功，sha256 校验通过"
     fi
   fi
 fi
