@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.Core.Models;
 
@@ -10,9 +9,7 @@ namespace PrdAgent.Core.Models;
 
 public class Workflow
 {
-    [BsonId]
-    [BsonRepresentation(BsonType.ObjectId)]
-    public string Id { get; set; } = ObjectId.GenerateNewId().ToString();
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
@@ -66,7 +63,6 @@ public class WorkflowNode
     /// <summary>
     /// 节点特定配置（JSON 对象，根据 NodeType 结构不同）
     /// </summary>
-    [BsonExtraElements]
     public BsonDocument Config { get; set; } = new();
 
     public List<ArtifactSlot> InputSlots { get; set; } = new();
@@ -172,9 +168,7 @@ public class WorkflowVariable
 
 public class WorkflowExecution
 {
-    [BsonId]
-    [BsonRepresentation(BsonType.ObjectId)]
-    public string Id { get; set; } = ObjectId.GenerateNewId().ToString();
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string WorkflowId { get; set; } = string.Empty;
     public string WorkflowName { get; set; } = string.Empty;
@@ -304,9 +298,7 @@ public class ExecutionArtifact
 
 public class WorkflowSchedule
 {
-    [BsonId]
-    [BsonRepresentation(BsonType.ObjectId)]
-    public string Id { get; set; } = ObjectId.GenerateNewId().ToString();
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string WorkflowId { get; set; } = string.Empty;
     public string CronExpression { get; set; } = string.Empty;
@@ -329,7 +321,6 @@ public class WorkflowSchedule
 
 public class ShareLink
 {
-    [BsonId]
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Token { get; set; } = GenerateToken();
 
@@ -373,7 +364,6 @@ public class ShareArtifactRef
 
 public class WorkflowSecret
 {
-    [BsonId]
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string WorkflowId { get; set; } = string.Empty;
     public string Key { get; set; } = string.Empty;
