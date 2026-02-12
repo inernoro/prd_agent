@@ -33,8 +33,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // GET /remote-branches — list remote branches available to add
   router.get('/remote-branches', async (_req, res) => {
     try {
-      // Fetch latest remote refs first, prune stale ones
-      await shell.exec('git fetch --prune', { cwd: config.repoRoot });
+      // Fetch latest remote refs — timeout + no credential prompt to prevent hanging
+      await shell.exec('GIT_TERMINAL_PROMPT=0 git fetch --prune', {
+        cwd: config.repoRoot,
+        timeout: 15_000,
+      });
 
       const result = await shell.exec(
         'git branch -r --format=%(refname:short)',
