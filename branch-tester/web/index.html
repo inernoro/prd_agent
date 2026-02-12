@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Branch Tester</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Branch Tester</h1>
+      <div class="active-info" id="activeInfo">
+        当前激活: <span id="activeBranch">-</span>
+        <a id="activeLink" href="#" target="_blank" class="hidden">打开 :5500</a>
+      </div>
+    </header>
+
+    <section class="add-section">
+      <input type="text" id="branchInput" placeholder="输入分支名，如 feature/new-ui" />
+      <button id="addBtn" onclick="addBranch()">+ 添加分支</button>
+    </section>
+
+    <section id="branchList" class="branch-list">
+      <div class="empty-state">暂无分支，请添加</div>
+    </section>
+
+    <section class="history-section">
+      <h2>操作历史</h2>
+      <div id="historyList" class="history-list">-</div>
+      <button id="rollbackBtn" onclick="doRollback()" disabled>回滚到上一个</button>
+    </section>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

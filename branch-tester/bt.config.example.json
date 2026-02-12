@@ -1,0 +1,30 @@
+{
+  "repoRoot": "/home/user/prd_agent",
+  "worktreeBase": "/home/user/.bt-worktrees",
+  "deployDir": "deploy",
+  "gateway": {
+    "containerName": "prdagent-gateway",
+    "port": 5500
+  },
+  "docker": {
+    "network": "prdagent-network",
+    "apiDockerfile": "prd-api/Dockerfile",
+    "apiImagePrefix": "prdagent-server",
+    "containerPrefix": "prdagent-api"
+  },
+  "mongodb": {
+    "containerHost": "mongodb",
+    "port": 27017,
+    "defaultDbName": "prdagent"
+  },
+  "redis": {
+    "connectionString": "redis:6379"
+  },
+  "jwt": {
+    "secret": "${JWT_SECRET}",
+    "issuer": "prdagent"
+  },
+  "dashboard": {
+    "port": 9900
+  }
+}
