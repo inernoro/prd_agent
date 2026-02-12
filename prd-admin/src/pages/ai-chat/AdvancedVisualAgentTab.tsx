@@ -5105,6 +5105,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
               const isMod = e.metaKey || e.ctrlKey;
               if (!isMod) return;
+
+              // Ctrl/Cmd + C：复制选中图片到剪贴板
+              if (e.key === 'c' || e.key === 'C') {
+                if (selectedKeys.length === 1) {
+                  const it = canvas.find((x) => x.key === selectedKeys[0]);
+                  if (it && (it.kind ?? 'image') === 'image' && it.src) {
+                    e.preventDefault();
+                    void copyImageToClipboard(it.src);
+                  }
+                }
+                return;
+              }
+
               if (e.key === '+' || e.key === '=') {
                 e.preventDefault();
                 const c = stageCenterClient();
