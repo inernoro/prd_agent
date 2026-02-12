@@ -100,6 +100,7 @@ export interface ArtifactRef {
 
 export interface ExecutionArtifact {
   artifactId: string;
+  slotId?: string;
   name: string;
   mimeType: string;
   inlineContent?: string;
@@ -341,6 +342,7 @@ export interface CapsuleTestRunResult {
     provided: boolean;
     required: boolean;
     valid: boolean;
+    validationMessage?: string;
   }[];
   mockOutput: Record<string, unknown>;
   errorMessage?: string;

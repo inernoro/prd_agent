@@ -1,7 +1,7 @@
 import {
   Timer, Webhook, Hand, Upload,
   Database, Globe, Brain, Code2, Filter, Merge,
-  FileText, Download, Send, Bell,
+  FileText, Download, Send, Bell, Box,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -224,4 +224,63 @@ export function getAllCapsuleTypes(): CapsuleTypeDef[] {
   return Object.values(CAPSULE_TYPE_REGISTRY).sort(
     (a, b) => order.indexOf(a.category) - order.indexOf(b.category)
   );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 后端 icon 字符串 → Lucide 组件映射（UI 层职责）
+// ═══════════════════════════════════════════════════════════════
+
+const ICON_MAP: Record<string, LucideIcon> = {
+  'timer': Timer,
+  'webhook': Webhook,
+  'hand': Hand,
+  'upload': Upload,
+  'database': Database,
+  'globe': Globe,
+  'brain': Brain,
+  'code': Code2,
+  'filter': Filter,
+  'merge': Merge,
+  'file-text': FileText,
+  'download': Download,
+  'send': Send,
+  'bell': Bell,
+};
+
+const EMOJI_MAP: Record<string, string> = {
+  'timer': '⏰',
+  'webhook-receiver': '🔗',
+  'manual-trigger': '👆',
+  'file-upload': '📂',
+  'tapd-collector': '🐛',
+  'http-request': '🌐',
+  'llm-analyzer': '🧠',
+  'script-executor': '💻',
+  'data-extractor': '🔍',
+  'data-merger': '🔀',
+  'report-generator': '📝',
+  'file-exporter': '💾',
+  'webhook-sender': '📡',
+  'notification-sender': '🔔',
+};
+
+const CATEGORY_EMOJI: Record<string, string> = {
+  'trigger': '⚡',
+  'processor': '⚙️',
+  'output': '📤',
+};
+
+/** 根据后端 icon 字符串获取 Lucide 图标组件 */
+export function getIconForCapsule(iconName: string): LucideIcon {
+  return ICON_MAP[iconName] || Box;
+}
+
+/** 根据 typeKey 获取 emoji */
+export function getEmojiForCapsule(typeKey: string): string {
+  return EMOJI_MAP[typeKey] || '📦';
+}
+
+/** 根据 category 获取 emoji */
+export function getCategoryEmoji(category: string): string {
+  return CATEGORY_EMOJI[category] || '📦';
 }

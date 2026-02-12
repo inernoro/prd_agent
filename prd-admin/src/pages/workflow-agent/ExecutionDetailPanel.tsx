@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   ArrowLeft, RefreshCw, RotateCcw, Share2, XCircle,
   CheckCircle2, Clock, AlertCircle, Loader2, MinusCircle,
@@ -6,8 +6,9 @@ import {
 } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import { getNodeLogs, resumeFromNode, cancelExecution, createShareLink } from '@/services';
-import { ExecutionStatusLabels, NodeTypeLabels } from '@/services/contracts/workflowAgent';
+import { ExecutionStatusLabels } from '@/services/contracts/workflowAgent';
 import type { ExecutionArtifact } from '@/services/contracts/workflowAgent';
+import { getCapsuleType } from './capsuleRegistry';
 
 const nodeStatusIcons: Record<string, React.ReactNode> = {
   pending: <Clock className="w-4 h-4 text-gray-400" />,
@@ -153,7 +154,7 @@ export function ExecutionDetailPanel() {
 
       {/* Node list */}
       <section className="space-y-2">
-        <h2 className="text-sm font-medium">节点执行详情</h2>
+        <h2 className="text-sm font-medium">舱执行详情</h2>
         {exec.nodeExecutions.map((ne) => {
           const isExpanded = expandedNodeId === ne.nodeId;
           return (
@@ -167,7 +168,7 @@ export function ExecutionDetailPanel() {
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium">{ne.nodeName}</span>
                     <span className="px-1.5 py-0.5 rounded text-[10px] bg-muted text-muted-foreground">
-                      {NodeTypeLabels[ne.nodeType] || ne.nodeType}
+                      {getCapsuleType(ne.nodeType)?.name || ne.nodeType}
                     </span>
                   </div>
                   {ne.errorMessage && (

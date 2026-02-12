@@ -79,40 +79,98 @@ public class WorkflowAgentController : ControllerBase
         if (!meta.Testable)
             return BadRequest(ApiResponse<object>.Fail("NOT_TESTABLE", $"舱类型 '{meta.Name}' 不支持单独测试运行"));
 
-        // 校验必填配置字段
-        foreach (var field in meta.ConfigSchema.Where(f => f.Required))
-        {
-            if (request.Config == null || !request.Config.ContainsKey(field.Key) || string.IsNullOrWhiteSpace(request.Config[field.Key]?.ToString()))
-                return BadRequest(ApiResponse<object>.Fail("MISSING_CONFIG", $"缺少必填配置: {field.Label} ({field.Key})"));
-        }
-
         var startedAt = DateTime.UtcNow;
 
-        // TODO: 接入实际执行引擎后按 typeKey 分派执行
-        // 当前返回测试桩响应，验证配置合法性
+        // 逐字段校验：必填 + 类型格式
+        var configValidation = new List<ConfigFieldValidation>();
+        var hasErrors = false;
+
+        foreach (var field in meta.ConfigSchema)
+        {
+            var provided = request.Config?.ContainsKey(field.Key) == true
+                           && !string.IsNullOrWhiteSpace(request.Config[field.Key]?.ToString());
+            var value = provided ? request.Config![field.Key]?.ToString() : null;
+            var valid = true;
+            string? message = null;
+
+            if (field.Required && !provided)
+            {
+                valid = false;
+                message = "必填字段";
+                hasErrors = true;
+            }
+            else if (provided && value != null)
+            {
+                switch (field.FieldType)
+                {
+                    case "number":
+                        if (!double.TryParse(value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out _))
+                        {
+                            valid = false;
+                            message = "需要填写数字";
+                            hasErrors = true;
+                        }
+                        break;
+                    case "cron":
+                        var parts = value.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length != 5)
+                        {
+                            valid = false;
+                            message = "Cron 表达式需要 5 个部分（分 时 日 月 周）";
+                            hasErrors = true;
+                        }
+                        break;
+                    case "json":
+                        try { System.Text.Json.JsonDocument.Parse(value); }
+                        catch
+                        {
+                            valid = false;
+                            message = "JSON 格式无效";
+                            hasErrors = true;
+                        }
+                        break;
+                    case "select":
+                        if (field.Options?.Count > 0 && !field.Options.Any(o => o.Value == value))
+                        {
+                            valid = false;
+                            message = $"无效选项，可选值: {string.Join(", ", field.Options.Select(o => o.Value))}";
+                            hasErrors = true;
+                        }
+                        break;
+                }
+            }
+
+            configValidation.Add(new ConfigFieldValidation
+            {
+                Key = field.Key,
+                Label = field.Label,
+                Provided = provided,
+                Required = field.Required,
+                Valid = valid,
+                ValidationMessage = message,
+            });
+        }
+
+        // 返回完整校验结果（不提前 400，让前端看到所有字段的校验状态）
         var testResult = new CapsuleTestRunResult
         {
             TypeKey = request.TypeKey,
             TypeName = meta.Name,
-            Status = "completed",
+            Status = hasErrors ? "validation_failed" : "completed",
             StartedAt = startedAt,
             CompletedAt = DateTime.UtcNow,
             DurationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds,
-            ConfigValidation = meta.ConfigSchema.Select(f => new ConfigFieldValidation
-            {
-                Key = f.Key,
-                Label = f.Label,
-                Provided = request.Config?.ContainsKey(f.Key) == true,
-                Required = f.Required,
-                Valid = !f.Required || (request.Config?.ContainsKey(f.Key) == true && !string.IsNullOrWhiteSpace(request.Config[f.Key]?.ToString())),
-            }).ToList(),
-            MockOutput = new Dictionary<string, object?>
-            {
-                ["_testMode"] = true,
-                ["_capsuleType"] = request.TypeKey,
-                ["_message"] = $"舱 '{meta.Name}' 配置验证通过，执行引擎尚未接入实际处理逻辑",
-                ["_inputPreview"] = request.MockInput,
-            },
+            ConfigValidation = configValidation,
+            MockOutput = hasErrors
+                ? new Dictionary<string, object?>()
+                : new Dictionary<string, object?>
+                {
+                    ["_testMode"] = true,
+                    ["_capsuleType"] = request.TypeKey,
+                    ["_message"] = $"舱 '{meta.Name}' 配置验证通过，执行引擎尚未接入实际处理逻辑",
+                    ["_inputPreview"] = request.MockInput,
+                },
+            ErrorMessage = hasErrors ? "配置验证未通过，请检查标红字段" : null,
         };
 
         _logger.LogInformation("[{AppKey}] Capsule test-run: type={TypeKey} by {UserId}",
@@ -224,6 +282,34 @@ public class WorkflowAgentController : ControllerBase
 
         if (workflow.CreatedBy != GetUserId() && !HasManagePermission())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        // 校验舱类型（与 Create 保持一致）
+        if (request.Nodes != null)
+        {
+            foreach (var node in request.Nodes)
+            {
+                if (!CapsuleTypes.All.Contains(node.NodeType) && !WorkflowNodeTypes.All.Contains(node.NodeType))
+                    return BadRequest(ApiResponse<object>.Fail("INVALID_NODE_TYPE", $"不支持的舱类型: {node.NodeType}"));
+            }
+
+            // 校验边引用合法性
+            var nodeIds = request.Nodes.Select(n => n.NodeId).ToHashSet();
+            var edgesToCheck = request.Edges ?? workflow.Edges;
+            foreach (var edge in edgesToCheck)
+            {
+                if (!nodeIds.Contains(edge.SourceNodeId) || !nodeIds.Contains(edge.TargetNodeId))
+                    return BadRequest(ApiResponse<object>.Fail("INVALID_EDGE", "边引用了不存在的节点"));
+            }
+        }
+        else if (request.Edges != null)
+        {
+            var nodeIds = workflow.Nodes.Select(n => n.NodeId).ToHashSet();
+            foreach (var edge in request.Edges)
+            {
+                if (!nodeIds.Contains(edge.SourceNodeId) || !nodeIds.Contains(edge.TargetNodeId))
+                    return BadRequest(ApiResponse<object>.Fail("INVALID_EDGE", "边引用了不存在的节点"));
+            }
+        }
 
         if (request.Name != null) workflow.Name = request.Name.Trim();
         if (request.Description != null) workflow.Description = request.Description;
@@ -345,6 +431,9 @@ public class WorkflowAgentController : ControllerBase
         if (original == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "执行记录不存在"));
 
+        if (original.TriggeredBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限操作此执行记录"));
+
         // 验证节点存在
         if (original.NodeSnapshot.All(n => n.NodeId != nodeId))
             return BadRequest(ApiResponse<object>.Fail("INVALID_NODE", "节点不存在"));
@@ -415,6 +504,9 @@ public class WorkflowAgentController : ControllerBase
         if (execution == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "执行记录不存在"));
 
+        if (execution.TriggeredBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限取消此执行"));
+
         if (execution.Status is WorkflowExecutionStatus.Completed or WorkflowExecutionStatus.Failed or WorkflowExecutionStatus.Cancelled)
             return BadRequest(ApiResponse<object>.Fail("ALREADY_TERMINAL", "执行已结束，无法取消"));
 
@@ -474,6 +566,9 @@ public class WorkflowAgentController : ControllerBase
         if (execution == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "执行记录不存在"));
 
+        if (execution.TriggeredBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看此执行记录"));
+
         return Ok(ApiResponse<object>.Ok(new { execution }));
     }
 
@@ -485,6 +580,9 @@ public class WorkflowAgentController : ControllerBase
         var execution = await _db.WorkflowExecutions.Find(e => e.Id == executionId).FirstOrDefaultAsync(ct);
         if (execution == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "执行记录不存在"));
+
+        if (execution.TriggeredBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看此执行日志"));
 
         var nodeExec = execution.NodeExecutions.FirstOrDefault(n => n.NodeId == nodeId);
         if (nodeExec == null)
@@ -515,6 +613,9 @@ public class WorkflowAgentController : ControllerBase
         var execution = await _db.WorkflowExecutions.Find(e => e.Id == executionId).FirstOrDefaultAsync(ct);
         if (execution == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "执行记录不存在"));
+
+        if (execution.TriggeredBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限分享此执行记录"));
 
         var link = new ShareLink
         {
@@ -748,6 +849,7 @@ public class ConfigFieldValidation
     public bool Provided { get; set; }
     public bool Required { get; set; }
     public bool Valid { get; set; }
+    public string? ValidationMessage { get; set; }
 }
 
 #endregion

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { ArrowLeft, Link2, Copy, Trash2, Eye, RefreshCw } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import { revokeShare } from '@/services';

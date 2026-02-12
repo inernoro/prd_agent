@@ -9,12 +9,14 @@ import { useWorkflowStore } from '@/stores/workflowStore';
 import {
   createWorkflow, executeWorkflow, getExecution, getNodeLogs,
   listWorkflows, listExecutions, cancelExecution, testRunCapsule,
+  listCapsuleTypes,
 } from '@/services';
 import { ExecutionListPanel } from './ExecutionListPanel';
 import { ExecutionDetailPanel } from './ExecutionDetailPanel';
 import { SharePanel } from './SharePanel';
 import type {
   Workflow, WorkflowExecution, ExecutionArtifact, NodeExecution,
+  CapsuleTypeMeta, CapsuleCategoryInfo, CapsuleTestRunResult,
 } from '@/services/contracts/workflowAgent';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Badge } from '@/components/design/Badge';
@@ -22,9 +24,8 @@ import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { glassTooltip } from '@/lib/glassStyles';
 import {
-  getCapsuleType, getCapsuleTypesByCategory,
-  CAPSULE_CATEGORIES,
-  type CapsuleCategory,
+  getCapsuleType,
+  getIconForCapsule, getEmojiForCapsule, getCategoryEmoji,
 } from './capsuleRegistry';
 
 // ═══════════════════════════════════════════════════════════════
@@ -142,10 +143,10 @@ const TAPD_TEMPLATE = {
     { key: 'TARGET_MONTH', label: '目标月份', type: 'string', required: false, isSecret: false },
   ],
   nodes: [
-    { nodeId: 'n1', name: 'Bug 数据采集', nodeType: 'data-collector', config: {}, inputSlots: [], outputSlots: [{ slotId: 's1o', name: 'bugs', dataType: 'json', required: true }] },
-    { nodeId: 'n2', name: '需求数据采集', nodeType: 'data-collector', config: {}, inputSlots: [], outputSlots: [{ slotId: 's2o', name: 'stories', dataType: 'json', required: true }] },
-    { nodeId: 'n3', name: '智能分析', nodeType: 'llm-code-executor', config: {}, inputSlots: [{ slotId: 's3i1', name: 'bugs', dataType: 'json', required: true }, { slotId: 's3i2', name: 'stories', dataType: 'json', required: true }], outputSlots: [{ slotId: 's3o', name: 'stats', dataType: 'json', required: true }] },
-    { nodeId: 'n4', name: '生成报告', nodeType: 'renderer', config: {}, inputSlots: [{ slotId: 's4i', name: 'stats', dataType: 'json', required: true }], outputSlots: [{ slotId: 's4o', name: 'report', dataType: 'text', required: true }] },
+    { nodeId: 'n1', name: 'Bug 数据采集', nodeType: 'tapd-collector', config: {}, inputSlots: [], outputSlots: [{ slotId: 's1o', name: 'bugs', dataType: 'json', required: true }] },
+    { nodeId: 'n2', name: '需求数据采集', nodeType: 'tapd-collector', config: {}, inputSlots: [], outputSlots: [{ slotId: 's2o', name: 'stories', dataType: 'json', required: true }] },
+    { nodeId: 'n3', name: '智能分析', nodeType: 'llm-analyzer', config: {}, inputSlots: [{ slotId: 's3i1', name: 'bugs', dataType: 'json', required: true }, { slotId: 's3i2', name: 'stories', dataType: 'json', required: true }], outputSlots: [{ slotId: 's3o', name: 'stats', dataType: 'json', required: true }] },
+    { nodeId: 'n4', name: '生成报告', nodeType: 'report-generator', config: {}, inputSlots: [{ slotId: 's4i', name: 'stats', dataType: 'json', required: true }], outputSlots: [{ slotId: 's4o', name: 'report', dataType: 'text', required: true }] },
   ],
   edges: [
     { edgeId: 'e1', sourceNodeId: 'n1', sourceSlotId: 's1o', targetNodeId: 'n3', targetSlotId: 's3i1' },
@@ -482,23 +483,55 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
 // ═══════════════════════════════════════════════════════════════
 
 function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
-  const grouped = getCapsuleTypesByCategory();
+  const [capsuleTypes, setCapsuleTypes] = useState<CapsuleTypeMeta[]>([]);
+  const [categories, setCategories] = useState<CapsuleCategoryInfo[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
   const [testingType, setTestingType] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<CapsuleTestRunResult | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      setCatalogLoading(true);
+      try {
+        const res = await listCapsuleTypes();
+        if (res.success && res.data) {
+          setCapsuleTypes(res.data.items);
+          setCategories(res.data.categories);
+        }
+      } catch { /* ignore */ }
+      setCatalogLoading(false);
+    })();
+  }, []);
+
+  // 按 category 分组
+  const grouped = categories.reduce<Record<string, CapsuleTypeMeta[]>>((acc, cat) => {
+    acc[cat.key] = capsuleTypes.filter(t => t.category === cat.key);
+    return acc;
+  }, {});
 
   async function handleTestRun(typeKey: string) {
     setTestingType(typeKey);
     setTestResult(null);
+    setTestError(null);
     try {
-      const res = await testRunCapsule({ typeKey, config: {}, mockInput: { _test: true } });
+      // 从 configSchema 提取默认值作为测试配置
+      const meta = capsuleTypes.find(t => t.typeKey === typeKey);
+      const defaultConfig: Record<string, string> = {};
+      if (meta) {
+        for (const field of meta.configSchema) {
+          if (field.defaultValue) defaultConfig[field.key] = field.defaultValue;
+        }
+      }
+
+      const res = await testRunCapsule({ typeKey, config: defaultConfig, mockInput: { _test: true } });
       if (res.success && res.data) {
-        const r = res.data.result;
-        setTestResult(`${r.typeName}: ${r.status} (${r.durationMs}ms)`);
+        setTestResult(res.data.result);
       } else {
-        setTestResult(`测试失败: ${res.error?.message || '未知错误'}`);
+        setTestError(res.error?.message || '未知错误');
       }
     } catch (e: unknown) {
-      setTestResult(`出错: ${e instanceof Error ? e.message : '未知'}`);
+      setTestError(e instanceof Error ? e.message : '未知错误');
     }
     setTestingType(null);
   }
@@ -519,66 +552,72 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
           舱是流水线的基本单元。每个舱负责一个独立的处理步骤，可以单独测试调试，然后组装成完整流水线。
         </p>
 
-        {CAPSULE_CATEGORIES.map((cat) => {
-          const types = grouped[cat.key as CapsuleCategory] || [];
+        {catalogLoading && (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--text-muted)' }} />
+            <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载舱类型...</span>
+          </div>
+        )}
+
+        {!catalogLoading && categories.map((cat) => {
+          const types = grouped[cat.key] || [];
           if (types.length === 0) return null;
+          const catEmoji = getCategoryEmoji(cat.key);
 
           return (
             <section key={cat.key}>
               <h2 className="text-[14px] font-semibold flex items-center gap-2 mb-3" style={{ color: 'var(--text-primary)' }}>
-                <span>{cat.emoji}</span>
+                <span>{catEmoji}</span>
                 {cat.label}舱
                 <span className="text-[11px] font-normal" style={{ color: 'var(--text-muted)' }}> — {cat.description}</span>
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {types.map((def) => {
-                  const Icon = def.Icon;
+                {types.map((meta) => {
+                  const Icon = getIconForCapsule(meta.icon);
+                  const emoji = getEmojiForCapsule(meta.typeKey);
                   return (
-                    <GlassCard key={def.typeKey} accentHue={def.accentHue} padding="sm">
+                    <GlassCard key={meta.typeKey} accentHue={meta.accentHue} padding="sm">
                       <div className="flex items-start gap-3">
                         <div
                           className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
                           style={{
-                            background: `hsla(${def.accentHue}, 60%, 55%, 0.12)`,
-                            color: `hsla(${def.accentHue}, 60%, 65%, 0.95)`,
+                            background: `hsla(${meta.accentHue}, 60%, 55%, 0.12)`,
+                            color: `hsla(${meta.accentHue}, 60%, 65%, 0.95)`,
                           }}
                         >
                           <Icon className="w-4.5 h-4.5" />
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
-                            <span className="text-base">{def.emoji}</span>
+                            <span className="text-base">{emoji}</span>
                             <h3 className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                              {def.name}
+                              {meta.name}
                             </h3>
                           </div>
                           <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                            {def.description}
+                            {meta.description}
                           </p>
-                          {def.testable && (
+                          {meta.testable && (
                             <button
-                              onClick={() => handleTestRun(def.typeKey)}
-                              disabled={testingType === def.typeKey}
+                              onClick={() => handleTestRun(meta.typeKey)}
+                              disabled={testingType === meta.typeKey}
                               className="mt-2 inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-[6px] font-medium transition-all"
                               style={{
-                                background: `hsla(${def.accentHue}, 60%, 55%, 0.08)`,
-                                color: `hsla(${def.accentHue}, 60%, 65%, 0.9)`,
-                                border: `1px solid hsla(${def.accentHue}, 60%, 55%, 0.15)`,
+                                background: `hsla(${meta.accentHue}, 60%, 55%, 0.08)`,
+                                color: `hsla(${meta.accentHue}, 60%, 65%, 0.9)`,
+                                border: `1px solid hsla(${meta.accentHue}, 60%, 55%, 0.15)`,
                               }}
-                              onMouseEnter={(e) => (e.currentTarget.style.background = `hsla(${def.accentHue}, 60%, 55%, 0.16)`)}
-                              onMouseLeave={(e) => (e.currentTarget.style.background = `hsla(${def.accentHue}, 60%, 55%, 0.08)`)}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = `hsla(${meta.accentHue}, 60%, 55%, 0.16)`)}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = `hsla(${meta.accentHue}, 60%, 55%, 0.08)`)}
                             >
-                              {testingType === def.typeKey
+                              {testingType === meta.typeKey
                                 ? <><Loader2 className="w-3 h-3 animate-spin" />测试中...</>
                                 : <><FlaskConical className="w-3 h-3" />单舱测试</>
                               }
                             </button>
                           )}
                         </div>
-                        <Badge
-                          variant="subtle"
-                          size="sm"
-                        >
+                        <Badge variant="subtle" size="sm">
                           {cat.label}
                         </Badge>
                       </div>
@@ -590,11 +629,44 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
           );
         })}
 
+        {/* 测试结果：逐字段校验详情 */}
         {testResult && (
-          <GlassCard accentHue={150} padding="sm">
+          <GlassCard accentHue={testResult.status === 'completed' ? 150 : 0} padding="sm">
+            <div className="flex items-center gap-2 mb-2">
+              <FlaskConical className="w-4 h-4" style={{ color: testResult.status === 'completed' ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)' }} />
+              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                {testResult.typeName}: {testResult.status === 'completed' ? '验证通过' : '验证未通过'}
+              </span>
+              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                {testResult.durationMs}ms
+              </span>
+            </div>
+            {testResult.configValidation.length > 0 && (
+              <div className="space-y-1 ml-6">
+                {testResult.configValidation.map((cv) => (
+                  <div key={cv.key} className="flex items-center gap-2 text-[11px]">
+                    {cv.valid
+                      ? <CheckCircle2 className="w-3 h-3 flex-shrink-0" style={{ color: 'rgba(34,197,94,0.8)' }} />
+                      : <AlertCircle className="w-3 h-3 flex-shrink-0" style={{ color: 'rgba(239,68,68,0.8)' }} />
+                    }
+                    <span style={{ color: cv.valid ? 'var(--text-secondary)' : 'rgba(239,68,68,0.9)' }}>
+                      {cv.label}
+                      {!cv.valid && cv.validationMessage && ` — ${cv.validationMessage}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {testResult.errorMessage && (
+              <p className="text-[11px] mt-2 ml-6" style={{ color: 'rgba(239,68,68,0.85)' }}>{testResult.errorMessage}</p>
+            )}
+          </GlassCard>
+        )}
+        {testError && (
+          <GlassCard accentHue={0} padding="sm">
             <div className="flex items-center gap-2">
-              <FlaskConical className="w-4 h-4" style={{ color: 'rgba(34,197,94,0.9)' }} />
-              <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>{testResult}</span>
+              <AlertCircle className="w-4 h-4" style={{ color: 'rgba(239,68,68,0.9)' }} />
+              <span className="text-[12px]" style={{ color: 'rgba(239,68,68,0.9)' }}>测试失败: {testError}</span>
             </div>
           </GlassCard>
         )}

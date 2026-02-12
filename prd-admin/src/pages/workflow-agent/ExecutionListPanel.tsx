@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ArrowLeft, Play, RefreshCw, XCircle, Eye } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import { executeWorkflow, cancelExecution } from '@/services';
-import { ExecutionStatusLabels, NodeTypeLabels } from '@/services/contracts/workflowAgent';
+import { ExecutionStatusLabels } from '@/services/contracts/workflowAgent';
 
 const statusColors: Record<string, string> = {
   queued: 'bg-yellow-500/10 text-yellow-600',
