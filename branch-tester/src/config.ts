@@ -34,11 +34,22 @@ const DEFAULT_CONFIG: BtConfig = {
 };
 
 export function loadConfig(configPath?: string): BtConfig {
-  if (configPath && fs.existsSync(configPath)) {
-    const raw = fs.readFileSync(configPath, 'utf-8');
-    const override = JSON.parse(raw) as Partial<BtConfig>;
-    return deepMerge(DEFAULT_CONFIG, override);
+  // Priority: explicit arg → bt.config.json in cwd → defaults
+  const candidates = [
+    configPath,
+    path.resolve(process.cwd(), 'bt.config.json'),
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      const raw = fs.readFileSync(candidate, 'utf-8');
+      const override = JSON.parse(raw) as Partial<BtConfig>;
+      console.log(`  Config loaded from: ${candidate}`);
+      return deepMerge(DEFAULT_CONFIG, override);
+    }
   }
+
+  console.log('  Config: using defaults (no bt.config.json found)');
   return { ...DEFAULT_CONFIG };
 }
 
