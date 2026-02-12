@@ -32,6 +32,7 @@ const app = createServer({
   containerService,
   switcherService,
   builderService,
+  shell,
   config,
 });
 

@@ -11,18 +11,24 @@
     <header>
       <h1>Branch Tester</h1>
       <div class="active-info" id="activeInfo">
-        当前激活: <span id="activeBranch">-</span>
+        当前激活:
+        <select id="activeSwitcher" disabled>
+          <option value="">无</option>
+        </select>
         <a id="activeLink" href="#" target="_blank" class="hidden">打开 :5500</a>
       </div>
     </header>
 
     <section class="add-section">
-      <input type="text" id="branchInput" placeholder="输入分支名，如 feature/new-ui" />
-      <button id="addBtn" onclick="addBranch()">+ 添加分支</button>
+      <select id="branchSelect">
+        <option value="">加载远程分支中...</option>
+      </select>
+      <button id="addBtn" onclick="addBranch()" disabled>+ 添加分支</button>
+      <button id="refreshRemoteBtn" onclick="loadRemoteBranches()" title="刷新远程分支列表">↻</button>
     </section>
 
     <section id="branchList" class="branch-list">
-      <div class="empty-state">暂无分支，请添加</div>
+      <div class="empty-state">暂无分支，请从下拉框选择添加</div>
     </section>
 
     <section class="history-section">

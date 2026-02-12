@@ -132,6 +132,7 @@ describe('Branch Routes', () => {
         containerService,
         switcherService,
         builderService,
+        shell: mock,
         config,
       }),
     );
@@ -144,6 +145,99 @@ describe('Branch Routes', () => {
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  describe('GET /api/remote-branches', () => {
+    it('should return list of remote branches', async () => {
+      mock.addResponse('git branch -r --format=%(refname:short)', {
+        stdout: 'origin/main\norigin/feature/new-ui\norigin/hotfix/bug-123\n',
+        stderr: '',
+        exitCode: 0,
+      });
+
+      const res = await request(server, 'GET', '/api/remote-branches');
+      expect(res.status).toBe(200);
+      const body = res.body as { branches: string[] };
+      expect(body.branches).toEqual(['main', 'feature/new-ui', 'hotfix/bug-123']);
+    });
+
+    it('should exclude already-added branches', async () => {
+      mock.addResponse('git branch -r --format=%(refname:short)', {
+        stdout: 'origin/main\norigin/feature/test\n',
+        stderr: '',
+        exitCode: 0,
+      });
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+
+      const res = await request(server, 'GET', '/api/remote-branches');
+      const body = res.body as { branches: string[] };
+      expect(body.branches).toEqual(['main']);
+    });
+  });
+
+  describe('POST /api/branches/:id/deploy (one-click)', () => {
+    it('should build + start + activate in one call', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      const res = await request(server, 'POST', '/api/branches/feature-test/deploy');
+      expect(res.status).toBe(200);
+
+      const list = await request(server, 'GET', '/api/branches');
+      const body = list.body as any;
+      expect(body.branches['feature-test'].status).toBe('running');
+      expect(body.activeBranchId).toBe('feature-test');
+    });
+
+    it('should skip build if already built, just start + activate', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      await request(server, 'POST', '/api/branches/feature-test/build');
+
+      const res = await request(server, 'POST', '/api/branches/feature-test/deploy');
+      expect(res.status).toBe(200);
+
+      // docker build should NOT be called again (only once from the explicit build)
+      const buildCalls = mock.commands.filter(c => c.includes('docker build'));
+      expect(buildCalls).toHaveLength(1);
+    });
+
+    it('should skip build+start if already running, just activate', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      await request(server, 'POST', '/api/branches/feature-test/build');
+      await request(server, 'POST', '/api/branches/feature-test/start');
+
+      const res = await request(server, 'POST', '/api/branches/feature-test/deploy');
+      expect(res.status).toBe(200);
+      const body = res.body as any;
+      expect(body.activeBranchId).toBe('feature-test');
+    });
+  });
+
+  describe('operation guards', () => {
+    it('should reject build if already building', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      stateService.updateStatus('feature-test', 'building');
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/branches/feature-test/build');
+      expect(res.status).toBe(409);
+    });
+
+    it('should reject start if already running', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      stateService.updateStatus('feature-test', 'running');
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/branches/feature-test/start');
+      expect(res.status).toBe(409);
+    });
+
+    it('should reject delete on active branch', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      await request(server, 'POST', '/api/branches/feature-test/start');
+      await request(server, 'POST', '/api/branches/feature-test/activate');
+
+      const res = await request(server, 'DELETE', '/api/branches/feature-test');
+      expect(res.status).toBe(400);
+    });
   });
 
   describe('GET /api/branches', () => {

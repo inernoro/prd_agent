@@ -7,7 +7,7 @@ import type { WorktreeService } from './services/worktree.js';
 import type { ContainerService } from './services/container.js';
 import type { SwitcherService } from './services/switcher.js';
 import type { BuilderService } from './services/builder.js';
-import type { BtConfig } from './types.js';
+import type { BtConfig, IShellExecutor } from './types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -17,6 +17,7 @@ export interface ServerDeps {
   containerService: ContainerService;
   switcherService: SwitcherService;
   builderService: BuilderService;
+  shell: IShellExecutor;
   config: BtConfig;
 }
 
