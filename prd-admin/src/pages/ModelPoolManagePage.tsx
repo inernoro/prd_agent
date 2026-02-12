@@ -1024,61 +1024,21 @@ export function ModelPoolManagePage() {
                       暂无模型，点击"添加模型"按钮选择
                     </div>
                   ) : (
-                    <>
-                      {/* 模型列表（可编辑） */}
-                      <div className="p-2 space-y-1 max-h-[180px] overflow-auto">
-                        {poolForm.models.map((m, idx) => (
-                          <ModelListItem
-                            key={keyOfModel(m)}
-                            model={{
-                              platformId: m.platformId,
-                              platformName: platformNameById.get(m.platformId),
-                              modelId: m.modelId,
-                            }}
-                            index={idx + 1}
-                            total={poolForm.models.length}
-                            size="sm"
-                            suffix={
-                              <div className="flex items-center gap-1.5">
-                                <input
-                                  type="number"
-                                  value={Number(m.priority ?? 0)}
-                                  onChange={(e) => {
-                                    const v = parseInt(e.target.value) || 0;
-                                    setPoolForm((prev) => ({
-                                      ...prev,
-                                      models: prev.models.map((x) =>
-                                        keyOfModel(x) === keyOfModel(m) ? { ...x, priority: v } : x
-                                      ),
-                                    }));
-                                  }}
-                                  className="h-7 w-14 px-1 rounded-md outline-none text-[11px] text-center"
-                                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-                                  title="优先级（越小越优先）"
-                                />
-                                <button
-                                  className="p-1 rounded-md hover:bg-white/10 transition-colors"
-                                  onClick={() => toggleModel(m.platformId, m.modelId)}
-                                  title="移除"
-                                >
-                                  <Trash2 size={13} style={{ color: 'var(--text-muted)' }} />
-                                </button>
-                              </div>
-                            }
-                          />
-                        ))}
-                      </div>
-
-                      {/* 虚线分隔 */}
-                      <div className="mx-3" style={{ borderTop: '1px dashed var(--border-default)' }} />
-
-                      {/* 调度预测可视化（本地计算） */}
-                      <InlineDispatchPreview
-                        models={poolForm.models}
-                        strategyType={poolForm.strategyType ?? PoolStrategyType.FailFast}
-                        platformNameById={platformNameById}
-                      />
-                    </>
+                    <InlineDispatchPreview
+                      models={poolForm.models}
+                      strategyType={poolForm.strategyType ?? PoolStrategyType.FailFast}
+                      platformNameById={platformNameById}
+                      editable
+                      onUpdatePriority={(platformId, modelId, priority) => {
+                        setPoolForm((prev) => ({
+                          ...prev,
+                          models: prev.models.map((x) =>
+                            x.platformId === platformId && x.modelId === modelId ? { ...x, priority } : x
+                          ),
+                        }));
+                      }}
+                      onRemoveModel={(platformId, modelId) => toggleModel(platformId, modelId)}
+                    />
                   )}
                 </div>
               </div>
@@ -1137,10 +1097,16 @@ function InlineDispatchPreview({
   models,
   strategyType,
   platformNameById,
+  editable,
+  onUpdatePriority,
+  onRemoveModel,
 }: {
   models: ModelGroupItem[];
   strategyType: PoolStrategyType;
   platformNameById: Map<string, string>;
+  editable?: boolean;
+  onUpdatePriority?: (platformId: string, modelId: string, priority: number) => void;
+  onRemoveModel?: (platformId: string, modelId: string) => void;
 }) {
   const sorted = useMemo(
     () => [...models].sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99)),
@@ -1238,16 +1204,39 @@ function InlineDispatchPreview({
                       </span>
                     )}
                     <span className="text-[11px] font-mono truncate flex-1" style={{ color: 'var(--text-primary)' }}>{m.modelId}</span>
-                    <span
-                      className="text-[10px] px-1.5 py-0.5 rounded-md shrink-0"
-                      style={{
-                        background: isTarget ? `${color}18` : 'var(--bg-card-hover)',
-                        color: isTarget ? color : 'var(--text-muted)',
-                      }}
-                    >
-                      {isTarget ? '发送请求' : `第${i + 1}备选`}
-                    </span>
-                    {isTarget && isActive && <Check size={12} style={{ color }} className="shrink-0" />}
+                    {editable ? (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <input
+                          type="number"
+                          value={Number(m.priority ?? 0)}
+                          onChange={(e) => onUpdatePriority?.(m.platformId, m.modelId, parseInt(e.target.value) || 0)}
+                          className="h-6 w-12 px-1 rounded-md outline-none text-[10px] text-center"
+                          style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                          title="优先级（越小越优先）"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <button
+                          className="p-0.5 rounded-md hover:bg-white/10 transition-colors"
+                          onClick={(e) => { e.stopPropagation(); onRemoveModel?.(m.platformId, m.modelId); }}
+                          title="移除"
+                        >
+                          <Trash2 size={11} style={{ color: 'var(--text-muted)' }} />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded-md shrink-0"
+                          style={{
+                            background: isTarget ? `${color}18` : 'var(--bg-card-hover)',
+                            color: isTarget ? color : 'var(--text-muted)',
+                          }}
+                        >
+                          {isTarget ? '发送请求' : `第${i + 1}备选`}
+                        </span>
+                        {isTarget && isActive && <Check size={12} style={{ color }} className="shrink-0" />}
+                      </>
+                    )}
                   </div>
                 </div>
               );
@@ -1320,7 +1309,26 @@ function InlineDispatchPreview({
                   <span className="font-mono text-[10px] truncate max-w-full text-center" style={{ color: 'var(--text-primary)' }}>
                     {m.modelId}
                   </span>
-                  {isWinner ? (
+                  {editable ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        value={Number(m.priority ?? 0)}
+                        onChange={(e) => onUpdatePriority?.(m.platformId, m.modelId, parseInt(e.target.value) || 0)}
+                        className="h-6 w-12 px-1 rounded-md outline-none text-[10px] text-center"
+                        style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                        title="优先级（越小越优先）"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <button
+                        className="p-0.5 rounded-md hover:bg-white/10 transition-colors"
+                        onClick={(e) => { e.stopPropagation(); onRemoveModel?.(m.platformId, m.modelId); }}
+                        title="移除"
+                      >
+                        <Trash2 size={11} style={{ color: 'var(--text-muted)' }} />
+                      </button>
+                    </div>
+                  ) : isWinner ? (
                     <span className="text-[9px] px-1.5 py-0.5 rounded-md flex items-center gap-0.5" style={{ background: `${color}18`, color }}>
                       <Check size={9} /> 最快返回
                     </span>
@@ -1379,11 +1387,30 @@ function InlineDispatchPreview({
                     </span>
                   )}
                   <span className="font-mono text-[11px] truncate flex-1" style={{ color: 'var(--text-primary)' }}>{m.modelId}</span>
-                  {isCurrent && (
+                  {editable ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <input
+                        type="number"
+                        value={Number(m.priority ?? 0)}
+                        onChange={(e) => onUpdatePriority?.(m.platformId, m.modelId, parseInt(e.target.value) || 0)}
+                        className="h-6 w-12 px-1 rounded-md outline-none text-[10px] text-center"
+                        style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                        title="优先级（越小越优先）"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <button
+                        className="p-0.5 rounded-md hover:bg-white/10 transition-colors"
+                        onClick={(e) => { e.stopPropagation(); onRemoveModel?.(m.platformId, m.modelId); }}
+                        title="移除"
+                      >
+                        <Trash2 size={11} style={{ color: 'var(--text-muted)' }} />
+                      </button>
+                    </div>
+                  ) : isCurrent ? (
                     <span className="text-[9px] px-1.5 py-0.5 rounded-md shrink-0" style={{ background: `${color}18`, color }}>
                       当前
                     </span>
-                  )}
+                  ) : null}
                 </div>
               );
             })}
