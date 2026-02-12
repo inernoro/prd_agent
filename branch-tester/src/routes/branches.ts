@@ -153,6 +153,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // POST /branches/:id/pull — pull latest code for a branch worktree
+  router.post('/branches/:id/pull', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+
+      if (entry.status === 'building') {
+        res.status(409).json({ error: 'Branch is currently building, cannot pull' });
+        return;
+      }
+
+      const headInfo = await worktreeService.pull(entry.branch, entry.worktreePath);
+      res.json({ success: true, head: headInfo });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // POST /branches/:id/build — build branch (guarded: rejects if already building)
   router.post('/branches/:id/build', async (req, res) => {
     try {
@@ -294,28 +316,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
-      // Step 1: Build if not yet built
-      if (entry.status === 'idle' || entry.status === 'error') {
-        stateService.updateStatus(id, 'building');
-        stateService.save();
+      // Step 0: Always pull latest code before deploy
+      await worktreeService.pull(entry.branch, entry.worktreePath);
 
-        const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
-        const [apiLog, adminLog] = await Promise.all([
-          builderService.buildApiImage(entry.worktreePath, entry.imageName),
-          builderService.buildAdminStatic(entry.worktreePath, buildsDir),
-        ]);
-
-        stateService.updateStatus(id, 'built');
-        stateService.getBranch(id)!.buildLog = `API: ${apiLog}\nAdmin: ${adminLog}`;
-        stateService.save();
+      // Step 0.5: Stop running container (will be rebuilt with new code)
+      if (entry.status === 'running') {
+        await containerService.stop(entry.containerName);
       }
 
-      // Step 2: Start if not running
-      if (stateService.getBranch(id)!.status !== 'running') {
-        await containerService.start(stateService.getBranch(id)!);
-        stateService.updateStatus(id, 'running');
-        stateService.save();
-      }
+      // Step 1: Always rebuild to pick up pulled changes
+      stateService.updateStatus(id, 'building');
+      stateService.save();
+
+      const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
+      const [apiLog, adminLog] = await Promise.all([
+        builderService.buildApiImage(entry.worktreePath, entry.imageName),
+        builderService.buildAdminStatic(entry.worktreePath, buildsDir),
+      ]);
+
+      stateService.updateStatus(id, 'built');
+      stateService.getBranch(id)!.buildLog = `API: ${apiLog}\nAdmin: ${adminLog}`;
+      stateService.save();
+
+      // Step 2: Start container with new image
+      await containerService.start(stateService.getBranch(id)!);
+      stateService.updateStatus(id, 'running');
+      stateService.save();
 
       // Step 3: Activate
       await doActivate(id);
