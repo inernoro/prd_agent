@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Play, History, Loader2, CheckCircle2, AlertCircle,
   ArrowDown, Download, ChevronDown, ChevronRight, FileText,
-  ExternalLink, Settings2, XCircle, RefreshCw,
+  ExternalLink, Settings2, XCircle, RefreshCw, HelpCircle, Zap,
 } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import {
@@ -15,9 +15,14 @@ import { SharePanel } from './SharePanel';
 import type {
   Workflow, WorkflowExecution, ExecutionArtifact, NodeExecution,
 } from '@/services/contracts/workflowAgent';
+import { GlassCard } from '@/components/design/GlassCard';
+import { Badge } from '@/components/design/Badge';
+import { Button } from '@/components/design/Button';
+import { TabBar } from '@/components/design/TabBar';
+import { glassTooltip } from '@/lib/glassStyles';
 
 // ═══════════════════════════════════════════════════════════════
-// 流水线步骤元数据 —— 每一步是什么、做什么、接收什么、产出什么
+// 流水线步骤元数据
 // ═══════════════════════════════════════════════════════════════
 
 interface StepMeta {
@@ -30,11 +35,12 @@ interface StepMeta {
   inputLabel: string;
   outputLabel: string;
   feedsToLabel?: string;
+  accentHue: number;
 }
 
 const STEPS: StepMeta[] = [
   {
-    nodeId: 'n1', step: 1, icon: '🐛',
+    nodeId: 'n1', step: 1, icon: '🐛', accentHue: 30,
     name: 'Bug 数据采集',
     desc: '通过 TAPD Open API 自动拉取指定月份的所有缺陷记录',
     helpTip: '缺陷（Bug）是 TAPD 中记录的软件问题，包含严重程度、状态、所属模块、负责人等字段。此步骤通过 TAPD 提供的开放接口（Open API）批量拉取原始数据。',
@@ -43,7 +49,7 @@ const STEPS: StepMeta[] = [
     feedsToLabel: '传递给步骤 ③「智能分析」',
   },
   {
-    nodeId: 'n2', step: 2, icon: '📋',
+    nodeId: 'n2', step: 2, icon: '📋', accentHue: 210,
     name: '需求数据采集',
     desc: '通过 TAPD Open API 自动拉取指定月份的所有需求记录',
     helpTip: '需求（Story）是 TAPD 中描述产品功能的用户故事，包含优先级、状态、所属迭代、预估工时等。此步骤和 Bug 采集并行执行。',
@@ -52,7 +58,7 @@ const STEPS: StepMeta[] = [
     feedsToLabel: '传递给步骤 ③「智能分析」',
   },
   {
-    nodeId: 'n3', step: 3, icon: '🧠',
+    nodeId: 'n3', step: 3, icon: '🧠', accentHue: 270,
     name: '智能分析',
     desc: 'AI 综合分析缺陷和需求数据，自动生成多维度统计',
     helpTip: '使用大语言模型（LLM）对步骤 ① 和 ② 采集的原始数据进行自动分析。会生成：缺陷趋势、严重程度分布、模块缺陷热点、需求完成率、迭代健康度等多个统计维度。',
@@ -61,7 +67,7 @@ const STEPS: StepMeta[] = [
     feedsToLabel: '传递给步骤 ④「生成报告」',
   },
   {
-    nodeId: 'n4', step: 4, icon: '📄',
+    nodeId: 'n4', step: 4, icon: '📄', accentHue: 150,
     name: '生成报告',
     desc: '将分析结果整理渲染为结构化的月度质量报告',
     helpTip: '将上一步产出的 JSON 统计数据，转换为可阅读的 Markdown 格式报告。包含数据汇总表格、趋势描述和改进建议，可直接用于月度质量会议。',
@@ -71,7 +77,7 @@ const STEPS: StepMeta[] = [
 ];
 
 // ═══════════════════════════════════════════════════════════════
-// 配置项定义 —— 每个参数是什么、怎么填、为什么需要
+// 配置项定义
 // ═══════════════════════════════════════════════════════════════
 
 interface VarConfig {
@@ -111,7 +117,7 @@ const VAR_CONFIGS: VarConfig[] = [
 ];
 
 // ═══════════════════════════════════════════════════════════════
-// 后端工作流模板 —— 自动创建时使用
+// 后端工作流模板
 // ═══════════════════════════════════════════════════════════════
 
 const TAPD_TEMPLATE = {
@@ -146,20 +152,23 @@ function getDefaultMonth() {
 // 小组件
 // ═══════════════════════════════════════════════════════════════
 
-/** 术语解释气泡 — 鼠标悬停 (?) 显示解释 */
 function HelpTip({ text }: { text: string }) {
   const [show, setShow] = useState(false);
   return (
     <span className="relative inline-flex ml-1">
       <span
-        className="w-4 h-4 rounded-full bg-muted text-muted-foreground text-[10px] inline-flex items-center justify-center cursor-help hover:bg-primary/10 hover:text-primary transition-colors select-none"
+        className="w-4 h-4 rounded-full inline-flex items-center justify-center cursor-help transition-colors select-none"
+        style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
         onMouseEnter={() => setShow(true)}
         onMouseLeave={() => setShow(false)}
       >
-        ?
+        <HelpCircle className="w-3 h-3" />
       </span>
       {show && (
-        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2.5 text-xs rounded-lg bg-popover text-popover-foreground border border-border shadow-lg w-72 z-50 leading-relaxed pointer-events-none">
+        <span
+          className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2.5 text-[11px] rounded-[10px] w-72 z-50 leading-relaxed pointer-events-none"
+          style={{ ...glassTooltip, color: 'var(--text-secondary)' }}
+        >
           {text}
         </span>
       )}
@@ -167,43 +176,26 @@ function HelpTip({ text }: { text: string }) {
   );
 }
 
-/** 步骤状态指示器 */
-function StepStatus({ status, durationMs }: { status: string; durationMs?: number }) {
+function StepStatusBadge({ status, durationMs }: { status: string; durationMs?: number }) {
   if (status === 'completed') return (
-    <div className="flex items-center gap-1.5">
-      <CheckCircle2 className="w-4 h-4 text-green-500" />
-      <span className="text-xs text-green-600 font-medium">
-        完成{durationMs != null ? ` · ${(durationMs / 1000).toFixed(1)}s` : ''}
-      </span>
-    </div>
+    <Badge variant="success" size="sm" icon={<CheckCircle2 className="w-3 h-3" />}>
+      完成{durationMs != null ? ` · ${(durationMs / 1000).toFixed(1)}s` : ''}
+    </Badge>
   );
   if (status === 'running') return (
-    <div className="flex items-center gap-1.5">
-      <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
-      <span className="text-xs text-blue-500 font-medium">执行中</span>
-    </div>
+    <Badge variant="featured" size="sm" icon={<Loader2 className="w-3 h-3 animate-spin" />}>
+      执行中
+    </Badge>
   );
   if (status === 'failed') return (
-    <div className="flex items-center gap-1.5">
-      <AlertCircle className="w-4 h-4 text-red-500" />
-      <span className="text-xs text-red-500 font-medium">失败</span>
-    </div>
+    <Badge variant="danger" size="sm" icon={<AlertCircle className="w-3 h-3" />}>
+      失败
+    </Badge>
   );
   if (status === 'skipped') return (
-    <span className="text-xs text-muted-foreground">已跳过</span>
+    <Badge variant="subtle" size="sm">已跳过</Badge>
   );
-  return <span className="text-xs text-muted-foreground/50">等待执行</span>;
-}
-
-/** 执行记录小圆点 */
-function StatusDot({ status }: { status: string }) {
-  const c =
-    status === 'completed' ? 'bg-green-500' :
-    status === 'failed' ? 'bg-red-500' :
-    status === 'running' ? 'bg-blue-500 animate-pulse' :
-    status === 'cancelled' ? 'bg-gray-400' :
-    'bg-yellow-500';
-  return <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${c}`} />;
+  return <Badge variant="subtle" size="sm">等待执行</Badge>;
 }
 
 function formatBytes(bytes: number): string {
@@ -214,12 +206,16 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  queued: '排队中', running: '执行中', completed: '已完成', failed: '失败', cancelled: '已取消',
+const EXEC_STATUS_MAP: Record<string, { label: string; variant: 'success' | 'danger' | 'warning' | 'featured' | 'subtle' }> = {
+  queued: { label: '排队中', variant: 'warning' },
+  running: { label: '执行中', variant: 'featured' },
+  completed: { label: '已完成', variant: 'success' },
+  failed: { label: '失败', variant: 'danger' },
+  cancelled: { label: '已取消', variant: 'subtle' },
 };
 
 // ═══════════════════════════════════════════════════════════════
-// 产物预览 —— 每个步骤执行完后的可见产出
+// 产物预览
 // ═══════════════════════════════════════════════════════════════
 
 function ArtifactCard({ artifact, isExpanded, onToggle }: {
@@ -229,35 +225,58 @@ function ArtifactCard({ artifact, isExpanded, onToggle }: {
 }) {
   const hasInline = !!artifact.inlineContent;
   return (
-    <div className="rounded-md border border-border bg-background overflow-hidden">
+    <div
+      className="rounded-[10px] overflow-hidden"
+      style={{
+        background: 'var(--nested-block-bg, rgba(255,255,255,0.03))',
+        border: '1px solid var(--nested-block-border, rgba(255,255,255,0.08))',
+      }}
+    >
       <div
-        className={`flex items-center gap-2 px-3 py-2 ${hasInline ? 'cursor-pointer hover:bg-accent/30' : ''}`}
+        className={`flex items-center gap-2 px-3 py-2 ${hasInline ? 'cursor-pointer' : ''}`}
         onClick={hasInline ? onToggle : undefined}
+        style={hasInline ? { transition: 'background 0.15s' } : undefined}
+        onMouseEnter={(e) => hasInline && (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+        onMouseLeave={(e) => hasInline && (e.currentTarget.style.background = 'transparent')}
       >
-        <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-        <span className="text-xs font-medium flex-1 truncate">{artifact.name}</span>
-        <span className="text-[10px] text-muted-foreground flex-shrink-0">{formatBytes(artifact.sizeBytes)}</span>
+        <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+        <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
+          {artifact.name}
+        </span>
+        <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+          {formatBytes(artifact.sizeBytes)}
+        </span>
         {artifact.cosUrl && (
           <a
             href={artifact.cosUrl}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="p-1 rounded hover:bg-accent text-primary flex-shrink-0"
+            className="p-1 rounded-[6px] flex-shrink-0 transition-colors"
             title="下载文件"
+            style={{ color: 'var(--accent-gold)' }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(214,178,106,0.12)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           >
             <Download className="w-3 h-3" />
           </a>
         )}
         {hasInline && (
           isExpanded
-            ? <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-            : <ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+            ? <ChevronDown className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+            : <ChevronRight className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
         )}
       </div>
       {isExpanded && artifact.inlineContent && (
-        <div className="border-t border-border/50 px-3 pb-2.5">
-          <pre className="text-[11px] bg-muted/30 rounded p-2.5 mt-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono leading-relaxed">
+        <div className="px-3 pb-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <pre
+            className="text-[11px] rounded-[8px] p-2.5 mt-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
+            style={{
+              background: 'rgba(0,0,0,0.25)',
+              color: 'var(--text-secondary)',
+              border: '1px solid rgba(255,255,255,0.06)',
+            }}
+          >
             {artifact.inlineContent}
           </pre>
         </div>
@@ -267,7 +286,7 @@ function ArtifactCard({ artifact, isExpanded, onToggle }: {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 步骤卡片 —— 展示单个步骤的完整信息
+// 步骤卡片
 // ═══════════════════════════════════════════════════════════════
 
 function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact, isLast }: {
@@ -279,69 +298,89 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
   isLast: boolean;
 }) {
   const status = nodeExec?.status || 'idle';
-
-  const borderColor =
-    status === 'running' ? 'border-blue-500/40' :
-    status === 'completed' ? 'border-green-500/30' :
-    status === 'failed' ? 'border-red-500/30' :
-    'border-border';
-
-  const bgColor =
-    status === 'running' ? 'bg-blue-500/[0.03]' :
-    status === 'completed' ? 'bg-green-500/[0.03]' :
-    status === 'failed' ? 'bg-red-500/[0.03]' :
-    'bg-card';
+  const isActive = status === 'running';
 
   return (
     <div>
-      <div className={`rounded-xl border ${borderColor} ${bgColor} p-4 transition-all`}>
-        {/* —— 头部：序号 + 图标 + 名称 + 状态 —— */}
+      <GlassCard
+        accentHue={meta.accentHue}
+        glow={isActive}
+        padding="md"
+        className={isActive ? 'ring-1 ring-white/10' : ''}
+      >
+        {/* 头部：序号 + 图标 + 名称 + 状态 */}
         <div className="flex items-start gap-3">
-          <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5 ${
-            status === 'completed' ? 'bg-green-500 text-white' :
-            status === 'running' ? 'bg-blue-500 text-white' :
-            status === 'failed' ? 'bg-red-500 text-white' :
-            'bg-muted text-muted-foreground'
-          }`}>
+          <span
+            className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 mt-0.5"
+            style={
+              status === 'completed'
+                ? { background: 'rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.95)' }
+                : status === 'running'
+                  ? { background: 'rgba(214,178,106,0.18)', color: 'var(--accent-gold)' }
+                  : status === 'failed'
+                    ? { background: 'rgba(239,68,68,0.15)', color: 'rgba(239,68,68,0.9)' }
+                    : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }
+            }
+          >
             {status === 'completed' ? '✓' : meta.step}
           </span>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-base">{meta.icon}</span>
-              <h3 className="text-sm font-semibold">{meta.name}</h3>
+              <h3 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {meta.name}
+              </h3>
               <HelpTip text={meta.helpTip} />
             </div>
-            <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{meta.desc}</p>
+            <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              {meta.desc}
+            </p>
           </div>
           <div className="flex-shrink-0">
-            <StepStatus status={status} durationMs={nodeExec?.durationMs} />
+            <StepStatusBadge status={status} durationMs={nodeExec?.durationMs} />
           </div>
         </div>
 
-        {/* —— 接收 / 产出标签 —— */}
+        {/* 接收 / 产出 标签 */}
         <div className="ml-10 mt-3 flex flex-wrap gap-2">
-          <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600">
+          <span
+            className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
+            style={{
+              background: `hsla(${meta.accentHue}, 60%, 55%, 0.1)`,
+              color: `hsla(${meta.accentHue}, 60%, 65%, 0.9)`,
+              border: `1px solid hsla(${meta.accentHue}, 60%, 55%, 0.15)`,
+            }}
+          >
             接收: {meta.inputLabel}
           </span>
-          <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600">
+          <span
+            className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
+            style={{
+              background: 'rgba(34,197,94,0.08)',
+              color: 'rgba(34,197,94,0.85)',
+              border: '1px solid rgba(34,197,94,0.15)',
+            }}
+          >
             产出: {meta.outputLabel}
           </span>
         </div>
 
-        {/* —— 执行中提示 —— */}
+        {/* 执行中进度条 */}
         {status === 'running' && (
           <div className="ml-10 mt-3 flex items-center gap-2">
-            <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-              <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: '60%' }} />
+            <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+              <div
+                className="h-full rounded-full animate-pulse"
+                style={{ width: '60%', background: 'var(--gold-gradient, linear-gradient(90deg, rgba(214,178,106,0.6), rgba(214,178,106,0.3)))' }}
+              />
             </div>
-            <span className="text-[10px] text-blue-500">处理中...</span>
+            <span className="text-[10px]" style={{ color: 'var(--accent-gold)' }}>处理中...</span>
           </div>
         )}
 
-        {/* —— 步骤产出展示 —— */}
+        {/* 步骤产出展示 */}
         {(status === 'completed' || status === 'failed') && output && (
           <div className="ml-10 mt-3 space-y-2">
-            {/* 产物文件 */}
             {output.artifacts.length > 0 && (
               <div className="space-y-1.5">
                 {output.artifacts.map((art) => (
@@ -355,39 +394,52 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
               </div>
             )}
 
-            {/* 执行日志（仅当无产物文件时展示） */}
             {output.logs && output.artifacts.length === 0 && (
               <div>
-                <span className="text-[10px] text-muted-foreground font-medium">执行日志</span>
-                <pre className="text-[10px] bg-muted/40 rounded-md p-2.5 mt-1 max-h-28 overflow-auto whitespace-pre-wrap font-mono leading-relaxed">
+                <span className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>执行日志</span>
+                <pre
+                  className="text-[10px] rounded-[8px] p-2.5 mt-1 max-h-28 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
+                  style={{
+                    background: 'rgba(0,0,0,0.25)',
+                    color: 'var(--text-secondary)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                  }}
+                >
                   {output.logs.slice(0, 800)}
                   {output.logs.length > 800 ? '\n...(更多日志请查看完整详情)' : ''}
                 </pre>
               </div>
             )}
 
-            {/* 无产出 */}
             {!output.logs && output.artifacts.length === 0 && (
-              <span className="text-[10px] text-muted-foreground">处理完成，无附加产出</span>
+              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>处理完成，无附加产出</span>
             )}
 
-            {/* 错误信息 */}
             {nodeExec?.errorMessage && (
-              <div className="text-xs text-red-500 bg-red-500/5 rounded-md px-3 py-2 leading-relaxed">
+              <div
+                className="text-[11px] rounded-[8px] px-3 py-2 leading-relaxed"
+                style={{
+                  background: 'rgba(239,68,68,0.08)',
+                  color: 'rgba(239,68,68,0.9)',
+                  border: '1px solid rgba(239,68,68,0.15)',
+                }}
+              >
                 {nodeExec.errorMessage}
               </div>
             )}
           </div>
         )}
-      </div>
+      </GlassCard>
 
-      {/* —— 步骤间连接箭头 + 数据流向说明 —— */}
+      {/* 步骤间连接箭头 */}
       {!isLast && (
         <div className="flex justify-center py-2">
           <div className="flex flex-col items-center gap-0.5">
-            <ArrowDown className="w-4 h-4 text-muted-foreground/40" />
+            <ArrowDown className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.15)' }} />
             {meta.feedsToLabel && (
-              <span className="text-[10px] text-muted-foreground/50">{meta.feedsToLabel}</span>
+              <span className="text-[10px]" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+                {meta.feedsToLabel}
+              </span>
             )}
           </div>
         </div>
@@ -408,23 +460,23 @@ interface NodeOutput {
 export function WorkflowAgentPage() {
   const { viewMode, setViewMode, setSelectedWorkflow, setSelectedExecution } = useWorkflowStore();
 
-  // —— 数据状态 ——
+  // 数据状态
   const [tapdWorkflow, setTapdWorkflow] = useState<Workflow | null>(null);
   const [latestExec, setLatestExec] = useState<WorkflowExecution | null>(null);
   const [recentRuns, setRecentRuns] = useState<WorkflowExecution[]>([]);
   const [nodeOutputs, setNodeOutputs] = useState<Record<string, NodeOutput>>({});
 
-  // —— UI 状态 ——
+  // UI 状态
   const [vars, setVars] = useState<Record<string, string>>({ TARGET_MONTH: getDefaultMonth() });
   const [isExecuting, setIsExecuting] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Set<string>>(new Set());
 
-  // —— 轮询 ——
+  // 轮询
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fetchedNodesRef = useRef(new Set<string>());
 
-  // —— 子视图路由 ——
+  // 子视图路由
   if (viewMode === 'execution-list') return <ExecutionListPanel />;
   if (viewMode === 'execution-detail') return <ExecutionDetailPanel />;
   if (viewMode === 'shares') return <SharePanel />;
@@ -459,7 +511,7 @@ export function WorkflowAgentPage() {
           }
         }
       }
-    } catch { /* init fail, show empty state */ }
+    } catch { /* init fail */ }
     setPageLoading(false);
   }
 
@@ -485,7 +537,7 @@ export function WorkflowAgentPage() {
             stopPolling();
           }
         }
-      } catch { /* ignore poll errors */ }
+      } catch { /* ignore */ }
     }, 2500);
   }
 
@@ -588,7 +640,6 @@ export function WorkflowAgentPage() {
 
   const isRunning = latestExec && ['queued', 'running'].includes(latestExec.status);
   const isTerminal = latestExec && ['completed', 'failed', 'cancelled'].includes(latestExec.status);
-
   const runningNode = latestExec?.nodeExecutions.find((ne) => ne.status === 'running');
   const completedCount = latestExec?.nodeExecutions.filter((ne) => ne.status === 'completed').length || 0;
 
@@ -600,226 +651,258 @@ export function WorkflowAgentPage() {
     });
   }
 
+  const execStatusInfo = latestExec ? EXEC_STATUS_MAP[latestExec.status] : null;
+
   // ═══ 渲染 ═══
 
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-6">
-      {/* ──── 标题 ──── */}
-      <div>
-        <h1 className="text-xl font-semibold flex items-center gap-2">
-          📊 TAPD 数据自动化
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
+    <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
+      {/* ──── 标题栏 ──── */}
+      <TabBar
+        title="TAPD 数据自动化"
+        icon={<Zap size={16} />}
+        actions={
+          <div className="flex items-center gap-2">
+            {latestExec && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={handleRefresh}
+                title="刷新状态"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </Button>
+            )}
+            {recentRuns.length > 0 && (
+              <Button
+                variant="secondary"
+                size="xs"
+                onClick={() => {
+                  if (tapdWorkflow) setSelectedWorkflow(tapdWorkflow);
+                  setViewMode('execution-list');
+                }}
+              >
+                <History className="w-3.5 h-3.5" />
+                执行历史
+              </Button>
+            )}
+          </div>
+        }
+      />
+
+      <div className="px-5 pb-6 space-y-5 max-w-3xl mx-auto w-full">
+        {/* ──── 描述 ──── */}
+        <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
           填写数据源配置 → 一键执行 → 查看每个步骤的产出 → 获得月度质量报告
         </p>
-      </div>
 
-      {/* ──── 加载中 ──── */}
-      {pageLoading && (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-          <span className="ml-2 text-sm text-muted-foreground">加载中...</span>
-        </div>
-      )}
+        {/* ──── 加载中 ──── */}
+        {pageLoading && (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--text-muted)' }} />
+            <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</span>
+          </div>
+        )}
 
-      {!pageLoading && (
-        <>
-          {/* ──── 数据源配置 ──── */}
-          <section className="rounded-xl border border-border p-5 bg-card space-y-4">
-            <h2 className="text-sm font-semibold flex items-center gap-2">
-              <Settings2 className="w-4 h-4" />
-              数据源配置
-            </h2>
-            {VAR_CONFIGS.map((vc) => (
-              <div key={vc.key}>
-                <label className="flex items-center text-sm mb-1.5">
-                  {vc.label}
-                  {vc.required && <span className="text-red-500 ml-0.5">*</span>}
-                  <HelpTip text={vc.helpTip} />
-                </label>
-                <input
-                  type={vc.type === 'month' ? 'month' : vc.type}
-                  value={vars[vc.key] || ''}
-                  onChange={(e) => setVars((prev) => ({ ...prev, [vc.key]: e.target.value }))}
-                  placeholder={vc.placeholder}
-                  disabled={!!isRunning}
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50 transition-colors"
-                />
+        {!pageLoading && (
+          <>
+            {/* ──── 数据源配置 ──── */}
+            <GlassCard>
+              <h2 className="text-[14px] font-semibold flex items-center gap-2 mb-4" style={{ color: 'var(--text-primary)' }}>
+                <Settings2 className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                数据源配置
+              </h2>
+              <div className="space-y-4">
+                {VAR_CONFIGS.map((vc) => (
+                  <div key={vc.key}>
+                    <label className="flex items-center text-[12px] mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                      {vc.label}
+                      {vc.required && <span style={{ color: 'rgba(239,68,68,0.8)' }} className="ml-0.5">*</span>}
+                      <HelpTip text={vc.helpTip} />
+                    </label>
+                    <input
+                      type={vc.type === 'month' ? 'month' : vc.type}
+                      value={vars[vc.key] || ''}
+                      onChange={(e) => setVars((prev) => ({ ...prev, [vc.key]: e.target.value }))}
+                      placeholder={vc.placeholder}
+                      disabled={!!isRunning}
+                      className="prd-field w-full h-[36px] px-3 rounded-[10px] text-[12px] outline-none disabled:opacity-50 transition-all"
+                    />
+                  </div>
+                ))}
               </div>
-            ))}
-          </section>
+            </GlassCard>
 
-          {/* ──── 操作按钮 ──── */}
-          <div className="flex items-center gap-2">
-            {isRunning ? (
-              <>
-                <div className="flex-1 flex items-center gap-3 px-4 py-3.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                  <Loader2 className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" />
-                  <span className="text-sm text-blue-600 font-medium">
-                    执行中 — {completedCount}/{STEPS.length}
-                    {runningNode ? ` ${runningNode.nodeName}...` : ''}
-                  </span>
-                </div>
-                <button
-                  onClick={handleCancel}
-                  className="inline-flex items-center gap-1.5 px-4 py-3.5 text-sm rounded-lg border border-border hover:bg-destructive/10 hover:text-destructive transition-colors"
-                >
-                  <XCircle className="w-4 h-4" />
-                  取消
-                </button>
-              </>
-            ) : (
-              <>
-                <button
+            {/* ──── 操作按钮 ──── */}
+            <div className="flex items-center gap-3">
+              {isRunning ? (
+                <>
+                  <GlassCard padding="none" className="flex-1" accentHue={40} glow>
+                    <div className="flex items-center gap-3 px-4 py-3">
+                      <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" style={{ color: 'var(--accent-gold)' }} />
+                      <span className="text-[12px] font-medium" style={{ color: 'var(--accent-gold)' }}>
+                        执行中 — {completedCount}/{STEPS.length}
+                        {runningNode ? ` ${runningNode.nodeName}...` : ''}
+                      </span>
+                    </div>
+                  </GlassCard>
+                  <Button variant="danger" size="sm" onClick={handleCancel}>
+                    <XCircle className="w-3.5 h-3.5" />
+                    取消
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="primary"
+                  size="md"
+                  className="w-full"
                   onClick={handleExecute}
                   disabled={isExecuting}
-                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3.5 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
                 >
                   {isExecuting
                     ? <><Loader2 className="w-4 h-4 animate-spin" />提交中...</>
                     : <><Play className="w-4 h-4" />{latestExec ? '重新执行' : '开始执行'}</>
                   }
-                </button>
-                {latestExec && (
-                  <button
-                    onClick={handleRefresh}
-                    className="inline-flex items-center gap-1.5 px-4 py-3.5 text-sm rounded-lg border border-border hover:bg-accent transition-colors"
-                    title="刷新状态"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* ──── 执行流水线 ──── */}
-          <section>
-            <h2 className="text-sm font-semibold mb-3">
-              执行流水线
-              {latestExec && (
-                <span className={`ml-2 text-xs font-normal px-2 py-0.5 rounded-full ${
-                  latestExec.status === 'completed' ? 'bg-green-500/10 text-green-600' :
-                  latestExec.status === 'failed' ? 'bg-red-500/10 text-red-600' :
-                  latestExec.status === 'running' ? 'bg-blue-500/10 text-blue-600' :
-                  latestExec.status === 'cancelled' ? 'bg-gray-500/10 text-gray-500' :
-                  'bg-yellow-500/10 text-yellow-600'
-                }`}>
-                  {STATUS_LABELS[latestExec.status] || latestExec.status}
-                </span>
+                </Button>
               )}
-            </h2>
-            <div className="space-y-0">
-              {STEPS.map((meta, idx) => (
-                <StepCard
-                  key={meta.nodeId}
-                  meta={meta}
-                  nodeExec={latestExec?.nodeExecutions.find((ne) => ne.nodeId === meta.nodeId)}
-                  output={nodeOutputs[meta.nodeId]}
-                  expandedArtifacts={expandedArtifacts}
-                  onToggleArtifact={toggleArtifact}
-                  isLast={idx === STEPS.length - 1}
-                />
-              ))}
             </div>
-          </section>
 
-          {/* ──── 执行完成总结 ──── */}
-          {isTerminal && latestExec && (
-            <div className={`rounded-xl border p-4 ${
-              latestExec.status === 'completed'
-                ? 'border-green-500/30 bg-green-500/5'
-                : 'border-red-500/30 bg-red-500/5'
-            }`}>
-              <div className="flex items-center gap-2">
-                {latestExec.status === 'completed'
-                  ? <CheckCircle2 className="w-5 h-5 text-green-500" />
-                  : <AlertCircle className="w-5 h-5 text-red-500" />
-                }
-                <span className="text-sm font-semibold">
-                  {latestExec.status === 'completed' ? '全部步骤执行完成' :
-                   latestExec.status === 'failed' ? '执行过程中出现错误' : '执行已取消'}
-                </span>
-                {latestExec.completedAt && latestExec.startedAt && (
-                  <span className="text-xs text-muted-foreground ml-auto">
-                    总耗时 {((new Date(latestExec.completedAt).getTime() - new Date(latestExec.startedAt).getTime()) / 1000).toFixed(1)}s
-                  </span>
-                )}
-              </div>
-              {latestExec.errorMessage && (
-                <p className="text-xs text-red-500 mt-2 leading-relaxed">{latestExec.errorMessage}</p>
-              )}
-              {latestExec.finalArtifacts.length > 0 && (
-                <div className="mt-3 space-y-1.5">
-                  <span className="text-xs font-medium text-muted-foreground">最终产物</span>
-                  {latestExec.finalArtifacts.map((art) => (
-                    <ArtifactCard
-                      key={art.artifactId}
-                      artifact={art}
-                      isExpanded={expandedArtifacts.has(art.artifactId)}
-                      onToggle={() => toggleArtifact(art.artifactId)}
-                    />
-                  ))}
-                </div>
-              )}
-              <button
-                onClick={() => {
-                  setSelectedExecution(latestExec);
-                  setViewMode('execution-detail');
-                }}
-                className="mt-3 text-xs text-primary hover:underline inline-flex items-center gap-1"
-              >
-                查看完整执行详情 <ExternalLink className="w-3 h-3" />
-              </button>
-            </div>
-          )}
-
-          {/* ──── 最近执行记录 ──── */}
-          {recentRuns.length > 0 && (
+            {/* ──── 执行流水线 ──── */}
             <section>
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-sm font-semibold">最近执行</h2>
-                <button
-                  onClick={() => {
-                    if (tapdWorkflow) setSelectedWorkflow(tapdWorkflow);
-                    setViewMode('execution-list');
-                  }}
-                  className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-                >
-                  查看全部 <History className="w-3 h-3" />
-                </button>
+              <div className="flex items-center gap-2 mb-3">
+                <h2 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  执行流水线
+                </h2>
+                {execStatusInfo && (
+                  <Badge variant={execStatusInfo.variant} size="sm">
+                    {execStatusInfo.label}
+                  </Badge>
+                )}
               </div>
-              <div className="space-y-1.5">
-                {recentRuns.slice(0, 3).map((run) => (
-                  <div
-                    key={run.id}
-                    onClick={() => {
-                      setSelectedExecution(run);
-                      setViewMode('execution-detail');
-                    }}
-                    className="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5 hover:bg-accent/30 cursor-pointer transition-colors"
-                  >
-                    <StatusDot status={run.status} />
-                    <span className="text-xs font-medium">
-                      {STATUS_LABELS[run.status] || run.status}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(run.createdAt).toLocaleString('zh-CN')}
-                    </span>
-                    <span className="flex-1" />
-                    {run.completedAt && run.startedAt && (
-                      <span className="text-[10px] text-muted-foreground">
-                        {((new Date(run.completedAt).getTime() - new Date(run.startedAt).getTime()) / 1000).toFixed(0)}s
-                      </span>
-                    )}
-                    <ExternalLink className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-                  </div>
+              <div className="space-y-0">
+                {STEPS.map((meta, idx) => (
+                  <StepCard
+                    key={meta.nodeId}
+                    meta={meta}
+                    nodeExec={latestExec?.nodeExecutions.find((ne) => ne.nodeId === meta.nodeId)}
+                    output={nodeOutputs[meta.nodeId]}
+                    expandedArtifacts={expandedArtifacts}
+                    onToggleArtifact={toggleArtifact}
+                    isLast={idx === STEPS.length - 1}
+                  />
                 ))}
               </div>
             </section>
-          )}
-        </>
-      )}
+
+            {/* ──── 执行完成总结 ──── */}
+            {isTerminal && latestExec && (
+              <GlassCard
+                accentHue={latestExec.status === 'completed' ? 150 : 0}
+                glow={latestExec.status === 'completed'}
+              >
+                <div className="flex items-center gap-2">
+                  {latestExec.status === 'completed'
+                    ? <CheckCircle2 className="w-5 h-5" style={{ color: 'rgba(34,197,94,0.9)' }} />
+                    : <AlertCircle className="w-5 h-5" style={{ color: 'rgba(239,68,68,0.9)' }} />
+                  }
+                  <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    {latestExec.status === 'completed' ? '全部步骤执行完成' :
+                     latestExec.status === 'failed' ? '执行过程中出现错误' : '执行已取消'}
+                  </span>
+                  {latestExec.completedAt && latestExec.startedAt && (
+                    <span className="text-[11px] ml-auto" style={{ color: 'var(--text-muted)' }}>
+                      总耗时 {((new Date(latestExec.completedAt).getTime() - new Date(latestExec.startedAt).getTime()) / 1000).toFixed(1)}s
+                    </span>
+                  )}
+                </div>
+                {latestExec.errorMessage && (
+                  <p
+                    className="text-[11px] mt-2 leading-relaxed"
+                    style={{ color: 'rgba(239,68,68,0.85)' }}
+                  >
+                    {latestExec.errorMessage}
+                  </p>
+                )}
+                {latestExec.finalArtifacts.length > 0 && (
+                  <div className="mt-3 space-y-1.5">
+                    <span className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>最终产物</span>
+                    {latestExec.finalArtifacts.map((art) => (
+                      <ArtifactCard
+                        key={art.artifactId}
+                        artifact={art}
+                        isExpanded={expandedArtifacts.has(art.artifactId)}
+                        onToggle={() => toggleArtifact(art.artifactId)}
+                      />
+                    ))}
+                  </div>
+                )}
+                <button
+                  onClick={() => {
+                    setSelectedExecution(latestExec);
+                    setViewMode('execution-detail');
+                  }}
+                  className="mt-3 text-[11px] inline-flex items-center gap-1 transition-colors"
+                  style={{ color: 'var(--accent-gold)' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.textDecoration = 'underline')}
+                  onMouseLeave={(e) => (e.currentTarget.style.textDecoration = 'none')}
+                >
+                  查看完整执行详情 <ExternalLink className="w-3 h-3" />
+                </button>
+              </GlassCard>
+            )}
+
+            {/* ──── 最近执行记录 ──── */}
+            {recentRuns.length > 0 && (
+              <section>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    最近执行
+                  </h2>
+                </div>
+                <div className="space-y-1.5">
+                  {recentRuns.slice(0, 3).map((run) => {
+                    const si = EXEC_STATUS_MAP[run.status];
+                    return (
+                      <div
+                        key={run.id}
+                        onClick={() => {
+                          setSelectedExecution(run);
+                          setViewMode('execution-detail');
+                        }}
+                        className="flex items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer transition-all"
+                        style={{
+                          background: 'var(--list-item-bg, rgba(255,255,255,0.03))',
+                          border: '1px solid rgba(255,255,255,0.06)',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'var(--list-item-hover-bg, rgba(255,255,255,0.06))';
+                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'var(--list-item-bg, rgba(255,255,255,0.03))';
+                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
+                        }}
+                      >
+                        {si && <Badge variant={si.variant} size="sm">{si.label}</Badge>}
+                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          {new Date(run.createdAt).toLocaleString('zh-CN')}
+                        </span>
+                        <span className="flex-1" />
+                        {run.completedAt && run.startedAt && (
+                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                            {((new Date(run.completedAt).getTime() - new Date(run.startedAt).getTime()) / 1000).toFixed(0)}s
+                          </span>
+                        )}
+                        <ExternalLink className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
