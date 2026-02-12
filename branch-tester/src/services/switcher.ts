@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import type { IShellExecutor } from '../types.js';
+import { combinedOutput } from '../types.js';
 
 export interface SwitcherOptions {
   nginxConfPath: string;
@@ -84,7 +85,7 @@ export class SwitcherService {
     );
     if (testResult.exitCode !== 0) {
       this.rollbackConfig();
-      throw new Error(`Nginx syntax validation failed: ${testResult.stderr}`);
+      throw new Error(`Nginx syntax validation failed:\n${combinedOutput(testResult)}`);
     }
 
     const reloadResult = await this.shell.exec(
@@ -92,7 +93,7 @@ export class SwitcherService {
     );
     if (reloadResult.exitCode !== 0) {
       this.rollbackConfig();
-      throw new Error(`Nginx reload failed: ${reloadResult.stderr}`);
+      throw new Error(`Nginx reload failed:\n${combinedOutput(reloadResult)}`);
     }
   }
 
@@ -106,7 +107,7 @@ export class SwitcherService {
         `rm -rf "${targetDir}"/* && cp -r "${sourceDir}/"* "${targetDir}/"`,
       );
       if (cpResult.exitCode !== 0) {
-        throw new Error(`Failed to sync static files: ${cpResult.stderr}`);
+        throw new Error(`Failed to sync static files:\n${combinedOutput(cpResult)}`);
       }
     }
   }

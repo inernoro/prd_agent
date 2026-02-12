@@ -1,4 +1,5 @@
 import type { IShellExecutor, BranchEntry, BtConfig } from '../types.js';
+import { combinedOutput } from '../types.js';
 
 export class ContainerService {
   constructor(
@@ -33,7 +34,7 @@ export class ContainerService {
 
     const result = await this.shell.exec(cmd);
     if (result.exitCode !== 0) {
-      throw new Error(`Failed to start container "${entry.containerName}": ${result.stderr}`);
+      throw new Error(`Failed to start container "${entry.containerName}":\n${combinedOutput(result)}`);
     }
   }
 

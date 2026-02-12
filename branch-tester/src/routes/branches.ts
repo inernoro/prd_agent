@@ -7,6 +7,7 @@ import type { ContainerService } from '../services/container.js';
 import type { SwitcherService } from '../services/switcher.js';
 import type { BuilderService } from '../services/builder.js';
 import type { BtConfig, IShellExecutor } from '../types.js';
+import { combinedOutput } from '../types.js';
 
 export interface RouterDeps {
   stateService: StateService;
@@ -55,7 +56,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
 
       if (result.exitCode !== 0) {
-        res.status(502).json({ error: `git for-each-ref failed: ${result.stderr}` });
+        res.status(502).json({ error: `git for-each-ref failed: ${combinedOutput(result)}` });
         return;
       }
 
@@ -469,7 +470,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         healthStatus = 'warn';
         healthDetail = {
           url: versionUrl, expected: commit, actual: '无法连接',
-          match: false, error: healthResult.stderr.slice(0, 300),
+          match: false, error: combinedOutput(healthResult).slice(0, 300),
           hint: '容器可能仍在启动，稍后可手动刷新检查',
         };
       }

@@ -1,16 +1,12 @@
 import path from 'node:path';
 import type { IShellExecutor, BtConfig } from '../types.js';
+import { combinedOutput } from '../types.js';
 
 export class BuilderService {
   constructor(
     private readonly shell: IShellExecutor,
     private readonly config: BtConfig,
   ) {}
-
-  /** Merge stdout + stderr — Docker BuildKit / pnpm may write to either stream */
-  private static combinedOutput(result: { stdout: string; stderr: string }): string {
-    return [result.stdout, result.stderr].filter(Boolean).join('\n');
-  }
 
   async buildApiImage(worktreePath: string, imageName: string): Promise<string> {
     const dockerfile = path.join(worktreePath, this.config.docker.apiDockerfile);
@@ -20,29 +16,34 @@ export class BuilderService {
     const result = await this.shell.exec(cmd, { timeout: 600_000 });
 
     if (result.exitCode !== 0) {
-      throw new Error(`API image build failed:\n${BuilderService.combinedOutput(result)}`);
+      throw new Error(`API image build failed:\n${combinedOutput(result)}`);
     }
-    return BuilderService.combinedOutput(result);
+    return combinedOutput(result);
   }
 
   async buildAdminStatic(worktreePath: string, outputDir: string): Promise<string> {
     const adminDir = path.join(worktreePath, 'prd-admin');
+    const logs: string[] = [];
 
+    // pnpm install
     const installResult = await this.shell.exec('pnpm install --frozen-lockfile', {
       cwd: adminDir,
       timeout: 120_000,
     });
     if (installResult.exitCode !== 0) {
-      throw new Error(`pnpm install failed:\n${BuilderService.combinedOutput(installResult)}`);
+      throw new Error(`pnpm install failed:\n${combinedOutput(installResult)}`);
     }
+    logs.push(combinedOutput(installResult));
 
+    // pnpm build
     const buildResult = await this.shell.exec('pnpm build', {
       cwd: adminDir,
       timeout: 300_000,
     });
     if (buildResult.exitCode !== 0) {
-      throw new Error(`pnpm build failed:\n${BuilderService.combinedOutput(buildResult)}`);
+      throw new Error(`pnpm build failed:\n${combinedOutput(buildResult)}`);
     }
+    logs.push(combinedOutput(buildResult));
 
     // Copy dist to output directory
     await this.shell.exec(`mkdir -p "${outputDir}"`);
@@ -51,9 +52,9 @@ export class BuilderService {
       `cp -r "${distDir}/"* "${outputDir}/"`,
     );
     if (copyResult.exitCode !== 0) {
-      throw new Error(`Failed to copy admin build output:\n${BuilderService.combinedOutput(copyResult)}`);
+      throw new Error(`Failed to copy admin build output:\n${combinedOutput(copyResult)}`);
     }
 
-    return BuilderService.combinedOutput(buildResult);
+    return logs.filter(Boolean).join('\n');
   }
 }

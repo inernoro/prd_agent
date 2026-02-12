@@ -55,6 +55,11 @@ export interface ExecResult {
   exitCode: number;
 }
 
+/** Merge stdout + stderr — many CLI tools write to either stream unpredictably */
+export function combinedOutput(result: { stdout: string; stderr: string }): string {
+  return [result.stdout, result.stderr].filter(Boolean).join('\n');
+}
+
 export interface ExecOptions {
   cwd?: string;
   timeout?: number;

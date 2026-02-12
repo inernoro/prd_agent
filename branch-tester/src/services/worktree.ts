@@ -1,4 +1,5 @@
 import type { IShellExecutor } from '../types.js';
+import { combinedOutput } from '../types.js';
 
 export class WorktreeService {
   constructor(
@@ -12,7 +13,7 @@ export class WorktreeService {
       { cwd: this.repoRoot },
     );
     if (fetchResult.exitCode !== 0) {
-      throw new Error(`Failed to fetch branch "${branch}": ${fetchResult.stderr}`);
+      throw new Error(`Failed to fetch branch "${branch}":\n${combinedOutput(fetchResult)}`);
     }
 
     const addResult = await this.shell.exec(
@@ -20,7 +21,7 @@ export class WorktreeService {
       { cwd: this.repoRoot },
     );
     if (addResult.exitCode !== 0) {
-      throw new Error(`Failed to create worktree for "${branch}": ${addResult.stderr}`);
+      throw new Error(`Failed to create worktree for "${branch}":\n${combinedOutput(addResult)}`);
     }
   }
 
@@ -32,7 +33,7 @@ export class WorktreeService {
       { cwd: targetDir },
     );
     if (fetchResult.exitCode !== 0) {
-      throw new Error(`Failed to fetch: ${fetchResult.stderr}`);
+      throw new Error(`Failed to fetch:\n${combinedOutput(fetchResult)}`);
     }
 
     // Hard reset worktree to latest remote HEAD
@@ -41,7 +42,7 @@ export class WorktreeService {
       { cwd: targetDir },
     );
     if (resetResult.exitCode !== 0) {
-      throw new Error(`Failed to reset: ${resetResult.stderr}`);
+      throw new Error(`Failed to reset:\n${combinedOutput(resetResult)}`);
     }
 
     // Return short log of HEAD for confirmation
@@ -58,7 +59,7 @@ export class WorktreeService {
       { cwd: this.repoRoot },
     );
     if (result.exitCode !== 0) {
-      throw new Error(`Failed to remove worktree "${targetDir}": ${result.stderr}`);
+      throw new Error(`Failed to remove worktree "${targetDir}":\n${combinedOutput(result)}`);
     }
   }
 
