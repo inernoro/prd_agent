@@ -15,7 +15,7 @@ import type { BtConfig } from '../../src/types.js';
 
 function makeConfig(tmpDir: string): BtConfig {
   return {
-    repoRoot: '/repo',
+    repoRoot: tmpDir,
     worktreeBase: path.join(tmpDir, 'worktrees'),
     deployDir: 'deploy',
     gateway: { containerName: 'prdagent-gateway', port: 5500 },
@@ -90,6 +90,8 @@ describe('Branch Routes', () => {
       stderr: '',
       exitCode: 0,
     }));
+    mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network create/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid123', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker rm/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -103,6 +105,13 @@ describe('Branch Routes', () => {
     mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/cp -r/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/rsync/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/git log --oneline/, () => ({ stdout: 'abc1234 some commit', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/git rev-parse/, () => ({ stdout: 'abc1234', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/curl/, () => ({
+      stdout: '{"commit":"abc1234","branch":"feature/test","builtAt":"2026-02-12T00:00:00Z"}',
+      stderr: '',
+      exitCode: 0,
+    }));
 
     const stateFile = path.join(tmpDir, 'state.json');
     stateService = new StateService(stateFile);
@@ -148,38 +157,47 @@ describe('Branch Routes', () => {
   });
 
   describe('GET /api/remote-branches', () => {
+    const SEP = '<SEP>';
+    const makeRefLine = (name: string, author = 'Dev') =>
+      `${name}${SEP}2026-02-12 10:00:00 +0800${SEP}${author}${SEP}commit msg`;
+
     it('should return list of remote branches', async () => {
-      mock.addResponse('GIT_TERMINAL_PROMPT=0 git ls-remote --heads origin', {
-        stdout: 'aaa111\trefs/heads/main\nbbb222\trefs/heads/feature/new-ui\nccc333\trefs/heads/hotfix/bug-123\n',
+      mock.addResponsePattern(/git for-each-ref/, () => ({
+        stdout: [
+          makeRefLine('main'),
+          makeRefLine('feature/new-ui'),
+          makeRefLine('hotfix/bug-123'),
+        ].join('\n'),
         stderr: '',
         exitCode: 0,
-      });
+      }));
 
       const res = await request(server, 'GET', '/api/remote-branches');
       expect(res.status).toBe(200);
-      const body = res.body as { branches: string[] };
-      expect(body.branches).toEqual(['main', 'feature/new-ui', 'hotfix/bug-123']);
+      const body = res.body as { branches: Array<{ name: string }> };
+      const names = body.branches.map((b) => b.name);
+      expect(names).toEqual(['main', 'feature/new-ui', 'hotfix/bug-123']);
     });
 
     it('should exclude already-added branches', async () => {
-      mock.addResponse('GIT_TERMINAL_PROMPT=0 git ls-remote --heads origin', {
-        stdout: 'aaa111\trefs/heads/main\nbbb222\trefs/heads/feature/test\n',
+      mock.addResponsePattern(/git for-each-ref/, () => ({
+        stdout: [makeRefLine('main'), makeRefLine('feature/test')].join('\n'),
         stderr: '',
         exitCode: 0,
-      });
+      }));
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
 
       const res = await request(server, 'GET', '/api/remote-branches');
-      const body = res.body as { branches: string[] };
-      expect(body.branches).toEqual(['main']);
+      const body = res.body as { branches: Array<{ name: string }> };
+      expect(body.branches.map((b) => b.name)).toEqual(['main']);
     });
 
-    it('should return 502 when git ls-remote fails', async () => {
-      mock.addResponse('GIT_TERMINAL_PROMPT=0 git ls-remote --heads origin', {
+    it('should return 502 when git for-each-ref fails', async () => {
+      mock.addResponsePattern(/git for-each-ref/, () => ({
         stdout: '',
-        stderr: 'fatal: repository not found',
+        stderr: 'fatal: not a git repository',
         exitCode: 128,
-      });
+      }));
 
       const res = await request(server, 'GET', '/api/remote-branches');
       expect(res.status).toBe(502);
@@ -217,8 +235,44 @@ describe('Branch Routes', () => {
 
       const res = await request(server, 'POST', '/api/branches/feature-test/deploy');
       expect(res.status).toBe(200);
-      const body = res.body as any;
-      expect(body.activeBranchId).toBe('feature-test');
+
+      // SSE response is not JSON — verify state via GET
+      const list = await request(server, 'GET', '/api/branches');
+      expect((list.body as any).activeBranchId).toBe('feature-test');
+    });
+  });
+
+  describe('POST /api/branches/:id/deploy (SSE streaming)', () => {
+    it('should stream build log chunks during deploy', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+
+      // Perform deploy and collect raw SSE text
+      const addr = server.address() as { port: number };
+      const raw: string = await new Promise((resolve, reject) => {
+        const req = http.request(
+          { hostname: '127.0.0.1', port: addr.port, path: '/api/branches/feature-test/deploy', method: 'POST',
+            headers: { 'Content-Type': 'application/json' } },
+          (res) => { let buf = ''; res.on('data', (c: Buffer) => buf += c.toString()); res.on('end', () => resolve(buf)); },
+        );
+        req.on('error', reject);
+        req.end();
+      });
+
+      // Parse SSE events
+      const events = raw.split('\n')
+        .filter((l) => l.startsWith('data: '))
+        .map((l) => { try { return JSON.parse(l.slice(6)); } catch { return null; } })
+        .filter(Boolean);
+
+      // Should have env, build_api running, build_api done, build_admin running, build_admin done, etc.
+      const buildApiEvents = events.filter((e: any) => e.step === 'build_api');
+      expect(buildApiEvents.length).toBeGreaterThanOrEqual(2); // at least running + done
+      expect(buildApiEvents[0].status).toBe('running');
+      expect(buildApiEvents[buildApiEvents.length - 1].status).toBe('done');
+
+      // Should have a complete event
+      const complete = events.find((e: any) => e.step === 'complete');
+      expect(complete).toBeDefined();
     });
   });
 

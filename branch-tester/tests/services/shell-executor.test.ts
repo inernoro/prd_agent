@@ -33,6 +33,30 @@ describe('ShellExecutor', () => {
     const result = await executor.exec('sleep 10', { timeout: 500 });
     expect(result.exitCode).not.toBe(0);
   });
+
+  it('should stream stdout chunks via onData callback', async () => {
+    const executor = new ShellExecutor();
+    const chunks: string[] = [];
+    const result = await executor.exec(
+      'echo line1 && echo line2',
+      { onData: (chunk) => chunks.push(chunk) },
+    );
+    expect(result.exitCode).toBe(0);
+    const combined = chunks.join('');
+    expect(combined).toContain('line1');
+    expect(combined).toContain('line2');
+  });
+
+  it('should stream stderr chunks via onData callback', async () => {
+    const executor = new ShellExecutor();
+    const chunks: string[] = [];
+    await executor.exec(
+      'echo err_output >&2',
+      { onData: (chunk) => chunks.push(chunk) },
+    );
+    const combined = chunks.join('');
+    expect(combined).toContain('err_output');
+  });
 });
 
 describe('MockShellExecutor', () => {

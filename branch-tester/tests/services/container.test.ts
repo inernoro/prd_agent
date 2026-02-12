@@ -44,23 +44,28 @@ describe('ContainerService', () => {
 
   describe('start', () => {
     it('should run docker container with correct env vars', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker network create/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'abc123', stderr: '', exitCode: 0 }));
 
       const entry = makeEntry();
       await service.start(entry);
 
-      const cmd = mock.commands[0];
-      expect(cmd).toContain('docker run -d');
-      expect(cmd).toContain('--name prdagent-api-feature-a');
-      expect(cmd).toContain('--network prdagent-network');
-      expect(cmd).toContain('MongoDB__DatabaseName=prdagent_1');
-      expect(cmd).toContain('MongoDB__ConnectionString=mongodb://mongodb:27017');
-      expect(cmd).toContain('Redis__ConnectionString=redis:6379');
-      expect(cmd).toContain('Jwt__Secret=test-secret');
-      expect(cmd).toContain('prdagent-server:feature-a');
+      const runCmd = mock.commands.find((c) => c.includes('docker run'));
+      expect(runCmd).toBeDefined();
+      expect(runCmd).toContain('docker run -d');
+      expect(runCmd).toContain('--name prdagent-api-feature-a');
+      expect(runCmd).toContain('--network prdagent-network');
+      expect(runCmd).toContain('MongoDB__DatabaseName=prdagent_1');
+      expect(runCmd).toContain('MongoDB__ConnectionString=mongodb://mongodb:27017');
+      expect(runCmd).toContain('Redis__ConnectionString=redis:6379');
+      expect(runCmd).toContain('Jwt__Secret=test-secret');
+      expect(runCmd).toContain('prdagent-server:feature-a');
     });
 
     it('should throw if docker run fails', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker network create/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({
         stdout: '',
         stderr: 'name already in use',
