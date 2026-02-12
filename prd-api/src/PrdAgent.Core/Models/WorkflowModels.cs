@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using MongoDB.Bson;
 
 namespace PrdAgent.Core.Models;
 
@@ -63,7 +62,7 @@ public class WorkflowNode
     /// <summary>
     /// 节点特定配置（JSON 对象，根据 NodeType 结构不同）
     /// </summary>
-    public BsonDocument Config { get; set; } = new();
+    public Dictionary<string, object?> Config { get; set; } = new();
 
     public List<ArtifactSlot> InputSlots { get; set; } = new();
     public List<ArtifactSlot> OutputSlots { get; set; } = new();
