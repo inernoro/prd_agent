@@ -45,13 +45,16 @@ public class MultiImageComposeIntegrationTests
     // 测试用 Workspace 数据（从真实环境获取）
     private const string TestWorkspaceId = "9d48e9b61f634ce5a5137ca0470be756";
 
+    // 测试用 CDN 基础地址（与生产环境 TENCENT_COS_PUBLIC_BASE_URL 对应）
+    private const string TestCdnBaseUrl = "https://i.pa.759800.com";
+
     // 测试用图片资产（来自 workspace 的 coverAssets）
     private static readonly TestImageAsset[] TestAssets = new[]
     {
         new TestImageAsset
         {
             Id = "417849bc127c45ada8c5ec0687d39679",
-            Url = "https://i.pa.759800.com/visual-agent/img/s4kazw6vyngzemeijgjx72epve.jpg",
+            Url = $"{TestCdnBaseUrl}/visual-agent/img/s4kazw6vyngzemeijgjx72epve.jpg",
             Name = "可爱小猫",
             Width = 1024,
             Height = 1024
@@ -59,7 +62,7 @@ public class MultiImageComposeIntegrationTests
         new TestImageAsset
         {
             Id = "05bd15a695a341ec89f2525313c5ef30",
-            Url = "https://i.pa.759800.com/visual-agent/img/pgiq7lh7w5r53lhr3dwmwepeg4.jpg",
+            Url = $"{TestCdnBaseUrl}/visual-agent/img/pgiq7lh7w5r53lhr3dwmwepeg4.jpg",
             Name = "场景图2",
             Width = 1024,
             Height = 1024
@@ -67,7 +70,7 @@ public class MultiImageComposeIntegrationTests
         new TestImageAsset
         {
             Id = "c79b14d5028f45449d58975296b04c79",
-            Url = "https://i.pa.759800.com/visual-agent/img/bxiiju255eibrplott7vsfj7wa.jpg",
+            Url = $"{TestCdnBaseUrl}/visual-agent/img/bxiiju255eibrplott7vsfj7wa.jpg",
             Name = "场景图3",
             Width = 1024,
             Height = 1024
@@ -75,7 +78,7 @@ public class MultiImageComposeIntegrationTests
         new TestImageAsset
         {
             Id = "5d95831a6d9b432795ab2ba7702763de",
-            Url = "https://i.pa.759800.com/visual-agent/img/etabgunimdtprxp6v6qhphdodi.jpg",
+            Url = $"{TestCdnBaseUrl}/visual-agent/img/etabgunimdtprxp6v6qhphdodi.jpg",
             Name = "高清大图",
             Width = 2048,
             Height = 2048

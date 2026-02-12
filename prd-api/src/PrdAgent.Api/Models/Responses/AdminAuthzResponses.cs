@@ -13,6 +13,11 @@ public sealed class AdminAuthzMeResponse
     public bool IsRoot { get; set; }
     public string SystemRoleKey { get; set; } = string.Empty;
     public List<string> EffectivePermissions { get; set; } = new();
+
+    /// <summary>
+    /// CDN 基础地址，前端用于拼接静态资源 URL（如头像、图标等）
+    /// </summary>
+    public string? CdnBaseUrl { get; set; }
 }
 
 public sealed class SystemRoleDto

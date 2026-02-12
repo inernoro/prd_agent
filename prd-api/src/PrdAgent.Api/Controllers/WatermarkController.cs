@@ -493,7 +493,7 @@ public class WatermarkController : ControllerBase
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         }
 
-        var defaultFonts = _fontRegistry.BuildDefaultFontInfos(_ => "https://i.pa.759800.com/watermark/font/default.ttf");
+        var defaultFonts = _fontRegistry.BuildDefaultFontInfos(_ => _fontRegistry.DefaultFontUrl ?? string.Empty);
         var assets = await _db.WatermarkFontAssets
             .Find(Builders<WatermarkFontAsset>.Filter.Empty)
             .SortByDescending(x => x.UpdatedAt)

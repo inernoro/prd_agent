@@ -300,8 +300,8 @@ public class ImageGenPlatformAdapterTests
     [InlineData("https://gateway.example.com/api/v1", "https://gateway.example.com/api/v1/images/generations", "自定义网关 /api/v1")]
     [InlineData("https://gateway.example.com/api/v1/", "https://gateway.example.com/api/v1/images/generations", "自定义网关 /api/v1/")]
     // === 开放平台风格 URL ===
-    [InlineData("https://pa.759800.com/api/v1/open-platform", "https://pa.759800.com/api/v1/open-platform/images/generations", "开放平台风格")]
-    [InlineData("https://pa.759800.com/api", "https://pa.759800.com/api/v1/images/generations", "仅 /api 路径")]
+    [InlineData("https://open-platform.example.com/api/v1/open-platform", "https://open-platform.example.com/api/v1/open-platform/images/generations", "开放平台风格")]
+    [InlineData("https://open-platform.example.com/api", "https://open-platform.example.com/api/v1/images/generations", "仅 /api 路径")]
     // === 自定义端口 ===
     [InlineData("https://api.openai.com:8443", "https://api.openai.com:8443/v1/images/generations", "自定义端口")]
     [InlineData("https://api.openai.com:8443/v1", "https://api.openai.com:8443/v1/images/generations", "自定义端口+路径")]
@@ -357,7 +357,7 @@ public class ImageGenPlatformAdapterTests
             ("https://api.openai.com/v1/images/generations#", "# 强制完整端点"),
             ("https://api.openai.com/v1/v1", "重复路径"),
             ("https://gateway.example.com/api/v1/open-platform", "开放平台风格"),
-            ("https://pa.759800.com/api", "仅 /api 路径"),
+            ("https://open-platform.example.com/api", "仅 /api 路径"),
             ("http://localhost:5000/v1", "本地开发"),
         };
 

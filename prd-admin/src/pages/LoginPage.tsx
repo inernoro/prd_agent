@@ -18,6 +18,7 @@ export default function LoginPage() {
   const setTokens = useAuthStore((s) => s.setTokens);
   const setPermissions = useAuthStore((s) => s.setPermissions);
   const setPermissionsLoaded = useAuthStore((s) => s.setPermissionsLoaded);
+  const setCdnBaseUrl = useAuthStore((s) => s.setCdnBaseUrl);
   const logout = useAuthStore((s) => s.logout);
   const isAuthed = useAuthStore((s) => s.isAuthenticated);
   const [loading, setLoading] = useState(false);
@@ -98,6 +99,7 @@ export default function LoginPage() {
       return;
     }
     setPermissions(authz.data.effectivePermissions || []);
+    if (authz.data.cdnBaseUrl) setCdnBaseUrl(authz.data.cdnBaseUrl);
     setPermissionsLoaded(true);
     // 让主页面承接登录页背景：动 2 秒后冻结
     try {
