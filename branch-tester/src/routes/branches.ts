@@ -388,7 +388,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       await switcherService.syncStaticFiles(buildsDir, distDir);
     }
 
-    const newConf = switcherService.generateConfig(resolved.upstream);
+    const modeLabel = resolved.mode === 'run' ? '源码' : '制品';
+    const branchLabel = `${entry.branch} (${modeLabel})`;
+    const newConf = switcherService.generateConfig(resolved.upstream, branchLabel);
     await switcherService.applyConfig(newConf);
 
     stateService.activate(id);
@@ -769,7 +771,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       switcherService.backup();
       const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
       await switcherService.syncStaticFiles(buildsDir, distDir);
-      const nginxConf = switcherService.generateConfig(entry.containerName);
+      const deployLabel = `${entry.branch} (制品)`;
+      const nginxConf = switcherService.generateConfig(entry.containerName, deployLabel);
       await switcherService.applyConfig(nginxConf);
       stateService.activate(id);
       stateService.save();
@@ -869,7 +872,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
       await switcherService.syncStaticFiles(buildsDir, distDir);
 
-      const newConf = switcherService.generateConfig(entry.containerName);
+      const rollbackLabel = `${entry.branch} (回滚)`;
+      const newConf = switcherService.generateConfig(entry.containerName, rollbackLabel);
       await switcherService.applyConfig(newConf);
 
       // Nginx succeeded — NOW commit the state change

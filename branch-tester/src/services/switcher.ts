@@ -14,7 +14,7 @@ export class SwitcherService {
     private readonly options: SwitcherOptions,
   ) {}
 
-  generateConfig(upstream: string): string {
+  generateConfig(upstream: string, branchLabel?: string): string {
     // When upstream is null/sentinel, produce a config that returns 502 for API
     // without referencing any upstream host (avoids DNS resolution failure).
     const apiBlock =
@@ -40,6 +40,15 @@ export class SwitcherService {
         proxy_read_timeout 3600s;
     }`;
 
+    // Inject a floating branch indicator badge via sub_filter when branchLabel is provided
+    const subFilterBlock = branchLabel
+      ? `
+    # Branch indicator badge — injected by branch-tester
+    sub_filter_once on;
+    sub_filter_types text/html;
+    sub_filter '</body>' '<div id="bt-branch-badge" style="position:fixed;bottom:12px;left:12px;z-index:99999;display:flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(22,27,34,0.88);border:1px solid rgba(48,54,61,0.6);border-radius:6px;font:12px/1 -apple-system,sans-serif;color:#c9d1d9;pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,0.3);backdrop-filter:blur(8px)"><span style="width:7px;height:7px;border-radius:50%;background:#3fb950;display:inline-block"></span>${branchLabel}</div></body>';`
+      : '';
+
     return `server {
     listen 80;
     server_name _;
@@ -48,7 +57,7 @@ export class SwitcherService {
     port_in_redirect off;
 
     root /usr/share/nginx/html;
-    index index.html;
+    index index.html;${subFilterBlock}
 
 ${apiBlock}
 

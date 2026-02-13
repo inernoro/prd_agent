@@ -46,6 +46,21 @@ describe('SwitcherService', () => {
       expect(conf).toContain('return 502');
       expect(conf).toContain('root /usr/share/nginx/html');
     });
+
+    it('should inject branch badge via sub_filter when branchLabel is provided', () => {
+      const conf = service.generateConfig('prdagent-api-feature-a', 'feature/login (源码)');
+      expect(conf).toContain('sub_filter_once on');
+      expect(conf).toContain('sub_filter_types text/html');
+      expect(conf).toContain('bt-branch-badge');
+      expect(conf).toContain('feature/login (源码)');
+      expect(conf).toContain("sub_filter '</body>'");
+    });
+
+    it('should not inject sub_filter when branchLabel is omitted', () => {
+      const conf = service.generateConfig('prdagent-api-feature-a');
+      expect(conf).not.toContain('sub_filter');
+      expect(conf).not.toContain('bt-branch-badge');
+    });
   });
 
   describe('backup & rollbackConfig', () => {
