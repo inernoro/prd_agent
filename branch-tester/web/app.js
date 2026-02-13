@@ -59,46 +59,63 @@ function setBusy(v) {
 
 function branchActions(b, isActive) {
   const groups = [];
+  const srcRunning = b.runStatus === 'running';
+  const depRunning = b.status === 'running';
+  const isBuilding = b.status === 'building';
+  const isMainDb = b.dbName === mainDbName;
+  const hasError = b.status === 'error' || b.runStatus === 'error';
 
   // ── Source mode (run) ──
-  const runBtns = [];
-  if (!b.runStatus || b.runStatus === 'stopped' || b.runStatus === 'error') {
-    runBtns.push(`<button class="run" onclick="runBranch('${b.id}')" title="挂载源码运行 (dotnet run)">运行</button>`);
-  }
-  if (b.runStatus === 'running') {
-    runBtns.push(`<button class="run-active" onclick="rerunBranch('${b.id}')" title="拉取最新代码并重新运行">重运行</button>`);
-    runBtns.push(`<button onclick="stopRunBranch('${b.id}')" title="停止源码容器">停止</button>`);
-  }
-  if (runBtns.length) groups.push(runBtns.join(''));
+  const srcBtns = [];
+  srcBtns.push(!srcRunning
+    ? `<button class="run" onclick="runBranch('${b.id}')" title="挂载源码运行 (dotnet run)">运行</button>`
+    : `<button class="run" disabled title="源码容器已在运行">运行</button>`);
+  srcBtns.push(srcRunning
+    ? `<button class="run-active" onclick="rerunBranch('${b.id}')" title="拉取最新代码并重新运行">重运行</button>`
+    : `<button disabled title="源码容器未运行，无法重运行">重运行</button>`);
+  srcBtns.push(srcRunning
+    ? `<button onclick="stopRunBranch('${b.id}')" title="停止源码容器">停止</button>`
+    : `<button disabled title="源码容器未运行">停止</button>`);
+  groups.push(srcBtns.join(''));
 
   // ── Deploy mode (artifact) ──
-  const deployBtns = [];
-  if (b.status !== 'building')
-    deployBtns.push(`<button onclick="pullBranch('${b.id}')">拉取</button>`);
-  if (['idle', 'error', 'built', 'stopped'].includes(b.status) || (b.status === 'running' && !isActive))
-    deployBtns.push(`<button class="primary" onclick="deployBranch('${b.id}')">${b.status === 'running' ? '激活' : '部署'}</button>`);
-  if (b.status === 'running')
-    deployBtns.push(`<button onclick="stopBranch('${b.id}')">停止</button>`);
-  if (deployBtns.length) groups.push(deployBtns.join(''));
+  const depBtns = [];
+  depBtns.push(!isBuilding
+    ? `<button onclick="pullBranch('${b.id}')" title="拉取最新代码">拉取</button>`
+    : `<button disabled title="正在构建中，请等待完成">拉取</button>`);
+  const canDeploy = ['idle', 'error', 'built', 'stopped'].includes(b.status) || (depRunning && !isActive);
+  depBtns.push(canDeploy
+    ? `<button class="primary" onclick="deployBranch('${b.id}')">${depRunning ? '激活' : '部署'}</button>`
+    : `<button class="primary" disabled title="${isBuilding ? '正在构建中' : isActive ? '当前分支已激活' : '请先拉取或构建'}">部署</button>`);
+  depBtns.push(depRunning
+    ? `<button onclick="stopBranch('${b.id}')" title="停止部署容器">停止</button>`
+    : `<button disabled title="部署容器未运行">停止</button>`);
+  groups.push(depBtns.join(''));
 
   // ── Database ──
   const dbBtns = [];
-  const isMainDb = b.dbName === mainDbName;
-  if (!isMainDb) {
-    dbBtns.push(`<button onclick="cloneDb('${b.id}')" title="将主库数据克隆到分支库">克隆主库</button>`);
-    dbBtns.push(`<button onclick="useMainDb('${b.id}')" title="切换到主库（共享数据）">用主库</button>`);
-  } else if (b.originalDbName) {
-    dbBtns.push(`<button onclick="useOwnDb('${b.id}')" title="切换回独立数据库">用独立库</button>`);
+  dbBtns.push(!isMainDb
+    ? `<button onclick="cloneDb('${b.id}')" title="将主库数据克隆到分支库">克隆主库</button>`
+    : `<button disabled title="已在使用主库">克隆主库</button>`);
+  dbBtns.push(!isMainDb
+    ? `<button onclick="useMainDb('${b.id}')" title="切换到主库（共享数据）">用主库</button>`
+    : `<button disabled title="已在使用主库">用主库</button>`);
+  if (b.originalDbName) {
+    dbBtns.push(isMainDb
+      ? `<button onclick="useOwnDb('${b.id}')" title="切换回独立数据库">用独立库</button>`
+      : `<button disabled title="已在使用独立库">用独立库</button>`);
   }
-  if (dbBtns.length) groups.push(dbBtns.join(''));
+  groups.push(dbBtns.join(''));
 
   // ── Management ──
   const mgmtBtns = [];
   mgmtBtns.push(`<button onclick="viewLogs('${b.id}')" title="查看操作历史日志">日志</button>`);
-  if (b.status === 'error' || b.runStatus === 'error')
-    mgmtBtns.push(`<button class="warn" onclick="resetBranch('${b.id}')" title="重置错误状态">重置</button>`);
-  if (!isActive)
-    mgmtBtns.push(`<button class="danger" onclick="removeBranch('${b.id}')">删除</button>`);
+  mgmtBtns.push(hasError
+    ? `<button class="warn" onclick="resetBranch('${b.id}')" title="重置错误状态">重置</button>`
+    : `<button disabled title="无异常状态需要重置">重置</button>`);
+  mgmtBtns.push(!isActive
+    ? `<button class="danger" onclick="removeBranch('${b.id}')">删除</button>`
+    : `<button class="danger" disabled title="当前激活的分支不能删除">删除</button>`);
   groups.push(mgmtBtns.join(''));
 
   return groups.join('<span class="action-divider">|</span>');
@@ -151,16 +168,18 @@ function renderBranches(branches, activeBranchId) {
 
     return `
     <div class="branch-card ${a ? 'active' : ''} ${b.status === 'error' || b.runStatus === 'error' ? 'has-error' : ''}">
-      <div class="branch-card-left">
-        <div class="status-dot ${b.status}"></div>
-        <div class="branch-info">
-          <div class="branch-name">${esc(b.branch)} ${a ? '<span class="active-badge">当前激活</span>' : ''}</div>
-          <div class="branch-meta">部署: ${deployStatus}${runStatus} · DB: <span class="${b.originalDbName ? 'db-shared' : ''}" title="${b.originalDbName ? '正在使用主库（原始库: ' + esc(b.originalDbName) + '）' : ''}">${b.dbName}${b.originalDbName ? ' (主库)' : ''}</span></div>
-          ${timeLine ? `<div class="branch-time">${timeLine}</div>` : ''}
-          ${portInfo ? `<div class="branch-ports">${portInfo}</div>` : ''}
-          ${activateHtml}
-          ${errorHtml}
+      <div class="branch-card-header">
+        <div class="branch-card-left">
+          <div class="status-dot ${b.status}"></div>
+          <div class="branch-info">
+            <div class="branch-name">${esc(b.branch)} ${a ? '<span class="active-badge">当前激活</span>' : ''}</div>
+            <div class="branch-meta">部署: ${deployStatus}${runStatus} · DB: <span class="${b.originalDbName ? 'db-shared' : ''}" title="${b.originalDbName ? '正在使用主库（原始库: ' + esc(b.originalDbName) + '）' : ''}">${b.dbName}${b.originalDbName ? ' (主库)' : ''}</span></div>
+            ${timeLine ? `<div class="branch-time">${timeLine}</div>` : ''}
+            ${portInfo ? `<div class="branch-ports">${portInfo}</div>` : ''}
+            ${errorHtml}
+          </div>
         </div>
+        ${activateHtml}
       </div>
       <div class="branch-actions">${branchActions(b, a)}</div>
     </div>`;
