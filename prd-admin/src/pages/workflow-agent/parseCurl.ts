@@ -12,33 +12,64 @@ export interface ParsedCurl {
   body: string;
 }
 
+// ── 已知 flag 分类 ──
+
+/** 不带值的 flag（纯开关） */
+const NO_ARG_FLAGS = new Set([
+  '--compressed', '--insecure', '-k', '-s', '--silent', '-S', '--show-error',
+  '-L', '--location', '-v', '--verbose', '-i', '--include', '-O', '--remote-name',
+  '-f', '--fail', '-g', '--globoff', '-n', '--netrc', '-N', '--no-buffer',
+  '-q', '--disable', '--raw', '--tr-encoding', '-4', '--ipv4', '-6', '--ipv6',
+  '--ssl', '--ssl-reqd', '--tcp-nodelay', '--tcp-fastopen', '--path-as-is',
+  '--http1.0', '--http1.1', '--http2', '--http2-prior-knowledge', '--http3',
+  '--no-keepalive', '--no-sessionid', '--no-alpn', '--no-npn',
+  '--junk-session-cookies', '--create-dirs',
+]);
+
+/** 带一个值参数的 flag（flag + value） */
+const ONE_ARG_FLAGS = new Set([
+  '-o', '--output', '-m', '--max-time', '--connect-timeout',
+  '-b', '--cookie', '-c', '--cookie-jar',
+  '-e', '--referer', '-A', '--user-agent',
+  '-x', '--proxy', '--proxy-user', '--noproxy',
+  '-w', '--write-out', '-T', '--upload-file',
+  '--cert', '--cert-type', '--key', '--key-type', '--cacert', '--capath',
+  '--resolve', '--retry', '--retry-delay', '--retry-max-time',
+  '--max-redirs', '--limit-rate', '--interface', '--local-port',
+  '-E', '-t', '--telnet-option', '--dns-servers', '--dns-interface',
+  '--trace', '--trace-ascii', '--stderr', '--keepalive-time',
+  '--expect100-timeout', '--happy-eyeballs-timeout-ms',
+  '--socks4', '--socks4a', '--socks5', '--socks5-hostname',
+  '-r', '--range', '-Y', '--speed-limit', '-y', '--speed-time',
+  '-z', '--time-cond', '--ciphers', '--tls-max', '--tls13-ciphers',
+  '--unix-socket', '--abstract-unix-socket', '-K', '--config',
+]);
+
 /**
  * 解析 curl 命令字符串为结构化请求参数
  *
  * 支持格式：
- * - 单行 / 多行 (\ 续行)
- * - 单引号 / 双引号
- * - Chrome / Firefox / Safari 复制的格式
- * - --compressed / --insecure 等无关 flag 自动忽略
+ * - 单行 / 多行 (\ 续行、^ 续行 Windows)
+ * - 单引号 / 双引号 / $'...' ANSI-C 引号
+ * - Chrome / Firefox / Safari / Postman 复制的格式
+ * - 未知 flag 自动跳过
  */
 export function parseCurl(raw: string): ParsedCurl | null {
   if (!raw || !raw.trim()) return null;
 
   // 规范化：去掉续行符，合并为一行
   let cmd = raw
-    .replace(/\\\r?\n/g, ' ')   // 续行
-    .replace(/\r?\n/g, ' ')     // 换行
+    .replace(/\\\r?\n/g, ' ')   // Unix 续行 (\)
+    .replace(/\^\r?\n/g, ' ')   // Windows 续行 (^)
+    .replace(/`\r?\n/g, ' ')    // PowerShell 续行 (`)
+    .replace(/\r?\n/g, ' ')     // 剩余换行
     .replace(/\s+/g, ' ')       // 多余空格
     .trim();
 
-  // 去掉开头的 curl
-  if (cmd.startsWith('curl ')) {
-    cmd = cmd.slice(5).trim();
-  } else if (cmd.startsWith('curl\t')) {
-    cmd = cmd.slice(5).trim();
-  } else {
-    return null; // 不是 curl 命令
-  }
+  // 去掉开头的 curl (忽略大小写，兼容 Windows 的 curl.exe)
+  const curlMatch = cmd.match(/^curl(?:\.exe)?\s+/i);
+  if (!curlMatch) return null;
+  cmd = cmd.slice(curlMatch[0].length).trim();
 
   const result: ParsedCurl = {
     url: '',
@@ -49,6 +80,9 @@ export function parseCurl(raw: string): ParsedCurl | null {
 
   // 分词：处理引号内的内容
   const tokens = tokenize(cmd);
+
+  // 收集所有可能的 URL 候选（非 flag 的裸值）
+  const urlCandidates: string[] = [];
 
   let i = 0;
   while (i < tokens.length) {
@@ -68,46 +102,61 @@ export function parseCurl(raw: string): ParsedCurl | null {
           result.headers[key] = val;
         }
       }
-    } else if (token === '-d' || token === '--data' || token === '--data-raw' || token === '--data-binary' || token === '--data-urlencode') {
+    } else if (token === '-d' || token === '--data' || token === '--data-raw' || token === '--data-binary' || token === '--data-urlencode' || token === '--json') {
       i++;
       if (i < tokens.length) {
         result.body = tokens[i];
-        // 有 body 且未显式指定 method → POST
         if (result.method === 'GET') result.method = 'POST';
       }
     } else if (token === '-u' || token === '--user') {
       i++;
       if (i < tokens.length) {
-        // Basic auth: user:password → Base64
         const encoded = btoa(tokens[i]);
         result.headers['Authorization'] = `Basic ${encoded}`;
       }
-    } else if (
-      token === '--compressed' || token === '--insecure' || token === '-k' ||
-      token === '-s' || token === '--silent' || token === '-S' || token === '--show-error' ||
-      token === '-L' || token === '--location' || token === '-v' || token === '--verbose' ||
-      token === '-i' || token === '--include' || token === '-o' || token === '-O'
-    ) {
-      // 忽略这些无关 flag
-      // -o / -O 后面跟一个值参数，跳过
-      if (token === '-o') i++;
-    } else if (token === '--connect-timeout' || token === '--max-time' || token === '-m') {
-      i++; // 跳过值
+    } else if (token === '--url') {
+      // 显式 --url flag
+      i++;
+      if (i < tokens.length) result.url = tokens[i];
+    } else if (token === '-F' || token === '--form') {
+      i++; // multipart form data — skip value
+      if (result.method === 'GET') result.method = 'POST';
+    } else if (NO_ARG_FLAGS.has(token)) {
+      // 纯开关，不跳值
+    } else if (ONE_ARG_FLAGS.has(token)) {
+      i++; // 跳过值参数
     } else if (token.startsWith('-')) {
-      // 未知 flag，忽略
-    } else {
-      // 没有 flag 的裸值 → URL
-      if (!result.url) {
-        result.url = token;
+      // 未知 flag：尝试判断下一个 token 是否为其值
+      // 如果下一个 token 不像 URL 也不像 flag，就跳过它
+      if (i + 1 < tokens.length) {
+        const next = tokens[i + 1];
+        if (!next.startsWith('-') && !looksLikeUrl(next)) {
+          i++; // 跳过值
+        }
       }
+    } else {
+      // 没有 flag 的裸值 → URL 候选
+      urlCandidates.push(token);
     }
 
     i++;
   }
 
+  // 从候选中选择 URL：优先选择看起来像 URL 的
+  if (!result.url) {
+    result.url = urlCandidates.find(c => looksLikeUrl(c))
+      || urlCandidates[0]
+      || '';
+  }
+
   if (!result.url) return null;
 
   return result;
+}
+
+/** 判断字符串是否看起来像一个 URL */
+function looksLikeUrl(s: string): boolean {
+  return /^https?:\/\//i.test(s) || /^[a-z0-9][-a-z0-9]*(\.[a-z0-9][-a-z0-9]*)+/i.test(s);
 }
 
 /** 将 curl 命令分词，正确处理引号 */
