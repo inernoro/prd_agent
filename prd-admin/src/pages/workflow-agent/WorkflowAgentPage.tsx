@@ -706,6 +706,14 @@ export function WorkflowAgentPage() {
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fetchedNodesRef = useRef(new Set<string>());
 
+  // ── 初始化（必须在所有 early return 之前调用 hooks）──
+
+  useEffect(() => {
+    init();
+    return () => stopPolling();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 子视图路由
   if (viewMode === 'execution-list') return <ExecutionListPanel />;
   if (viewMode === 'execution-detail') return <ExecutionDetailPanel />;
@@ -719,14 +727,6 @@ export function WorkflowAgentPage() {
     />
   );
   if (showCatalog) return <CapsuleCatalogPanel onBack={() => setShowCatalog(false)} />;
-
-  // ── 初始化 ──
-
-  useEffect(() => {
-    init();
-    return () => stopPolling();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   async function init() {
     setPageLoading(true);
