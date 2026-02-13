@@ -886,6 +886,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // POST /gateway/disconnect — clear active branch, nginx returns 502 for API calls
+  router.post('/gateway/disconnect', async (_req, res) => {
+    try {
+      const state = stateService.getState();
+      if (!state.activeBranchId) {
+        res.json({ success: true, message: '网关已处于断开状态' });
+        return;
+      }
+
+      // Generate nginx config pointing to a non-existent upstream
+      // This makes API calls return 502 while static files still work
+      switcherService.backup();
+      const disconnectedConf = switcherService.generateConfig('_disconnected_upstream_');
+      await switcherService.applyConfig(disconnectedConf);
+
+      state.activeBranchId = null;
+      stateService.save();
+
+      res.json({ success: true, message: '网关已断开' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ================================================================
   // Database management
   // ================================================================

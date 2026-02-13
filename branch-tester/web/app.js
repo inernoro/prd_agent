@@ -176,12 +176,18 @@ function renderHistory(history) {
 function renderActiveSwitcher(branches, activeBranchId) {
   const sel = document.getElementById('activeSwitcher');
   const link = document.getElementById('activeLink');
-  // Include both deploy-running and source-running branches
-  const entries = Object.values(branches).filter((b) => b.status === 'running' || b.runStatus === 'running');
+  const entries = Object.values(branches);
+
   let html = '<option value="">未指向任何分支</option>';
+  if (activeBranchId) {
+    html += '<option value="__disconnect__">断开网关</option>';
+  }
   entries.forEach((b) => {
-    const mode = b.status === 'running' ? '制品' : '源码';
-    html += `<option value="${b.id}" ${b.id === activeBranchId ? 'selected' : ''}>${b.branch} (${mode})</option>`;
+    const isRunning = b.status === 'running' || b.runStatus === 'running';
+    const mode = b.status === 'running' ? '制品' : b.runStatus === 'running' ? '源码' : '';
+    const tag = isRunning ? ` (${mode})` : ` [${statusLabel(b.status)}]`;
+    const selected = b.id === activeBranchId ? 'selected' : '';
+    html += `<option value="${b.id}" ${selected}>${b.branch}${tag}</option>`;
   });
   sel.innerHTML = html;
   sel.disabled = !entries.length;
@@ -787,10 +793,16 @@ document.getElementById('activeSwitcher').addEventListener('change', async (e) =
   const id = e.target.value;
   if (!id || busy) return;
   setBusy(true);
-  showToast(`正在切换到 ${id}...`, 'info');
   try {
-    await api('POST', `/branches/${id}/activate`);
-    showToast(`已切换到 ${id}`, 'success');
+    if (id === '__disconnect__') {
+      showToast('正在断开网关...', 'info');
+      await api('POST', '/gateway/disconnect');
+      showToast('网关已断开', 'success');
+    } else {
+      showToast(`正在切换到 ${id}...`, 'info');
+      await api('POST', `/branches/${id}/activate`);
+      showToast(`已切换到 ${id}`, 'success');
+    }
   } catch (err) { showToast(err.message, 'error'); }
   finally { setBusy(false); }
 });
