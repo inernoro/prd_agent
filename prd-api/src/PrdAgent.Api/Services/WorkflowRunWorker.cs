@@ -494,18 +494,39 @@ public sealed class WorkflowRunWorker : BackgroundService
     private async Task<CapsuleResult> ExecuteTapdCollectorAsync(
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables)
     {
-        var url = ReplaceVariables(GetConfigString(node, "api_url") ?? GetConfigString(node, "apiUrl") ?? "", variables);
-        var authToken = ReplaceVariables(GetConfigString(node, "auth_token") ?? GetConfigString(node, "authToken") ?? "", variables);
-        var dataType = GetConfigString(node, "data_type") ?? GetConfigString(node, "dataType") ?? "stories";
+        var baseUrl = ReplaceVariables(
+            GetConfigString(node, "api_url") ?? GetConfigString(node, "apiUrl") ?? "", variables);
+        var authToken = ReplaceVariables(
+            GetConfigString(node, "auth_token") ?? GetConfigString(node, "authToken")
+            ?? GetConfigString(node, "apiToken") ?? "", variables);
+        var dataType = GetConfigString(node, "data_type") ?? GetConfigString(node, "dataType") ?? "bugs";
+        var workspaceId = GetConfigString(node, "workspaceId") ?? GetConfigString(node, "workspace_id") ?? "";
+        var dateRange = GetConfigString(node, "dateRange") ?? GetConfigString(node, "date_range") ?? "";
 
-        if (string.IsNullOrWhiteSpace(url))
-            throw new InvalidOperationException("TAPD API URL 未配置");
+        // 如果未直接提供完整 URL，则从 baseUrl + workspaceId + dataType 自动构造
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            baseUrl = "https://api.tapd.cn";
+
+        var url = baseUrl.TrimEnd('/');
+        if (!url.Contains('?') && !string.IsNullOrWhiteSpace(workspaceId))
+        {
+            // 构造 TAPD Open API URL: https://api.tapd.cn/{dataType}?workspace_id={id}
+            url = $"{url}/{dataType}?workspace_id={workspaceId}";
+            if (!string.IsNullOrWhiteSpace(dateRange))
+                url += $"&created=>={dateRange}-01&created=<={dateRange}-31";
+        }
+
+        if (string.IsNullOrWhiteSpace(workspaceId) && !url.Contains("workspace_id"))
+            throw new InvalidOperationException("TAPD 工作空间 ID 未配置");
 
         var factory = sp.GetRequiredService<IHttpClientFactory>();
         using var client = factory.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(30);
+
+        // TAPD Open API 使用 Basic Auth (Base64 of api_user:api_password)
         if (!string.IsNullOrWhiteSpace(authToken))
-            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", authToken);
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", authToken);
 
         var response = await client.GetAsync(url, CancellationToken.None);
         var body = await response.Content.ReadAsStringAsync(CancellationToken.None);

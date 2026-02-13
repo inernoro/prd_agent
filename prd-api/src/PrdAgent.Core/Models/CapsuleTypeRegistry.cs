@@ -165,8 +165,9 @@ public static class CapsuleTypeRegistry
         AccentHue = 30,
         ConfigSchema = new()
         {
+            new() { Key = "apiUrl", Label = "TAPD API 地址", FieldType = "text", Required = false, Placeholder = "https://api.tapd.cn", DefaultValue = "https://api.tapd.cn", HelpTip = "TAPD Open API 地址，一般不需要修改。留空或使用默认值即可" },
             new() { Key = "workspaceId", Label = "工作空间 ID", FieldType = "text", Required = true, Placeholder = "20000001", HelpTip = "TAPD 项目首页地址栏中的数字 ID" },
-            new() { Key = "apiToken", Label = "API 访问凭证", FieldType = "password", Required = true, Placeholder = "dXNlcjpwYXNzd29yZA==", HelpTip = "在 TAPD「公司管理 → API」中创建的 Base64 Token" },
+            new() { Key = "authToken", Label = "API 访问凭证", FieldType = "password", Required = true, Placeholder = "dXNlcjpwYXNzd29yZA==", HelpTip = "在 TAPD「公司管理 → API」中创建，格式为 Base64(api_user:api_password)" },
             new() { Key = "dataType", Label = "数据类型", FieldType = "select", Required = true, DefaultValue = "bugs", Options = new() {
                 new() { Value = "bugs", Label = "缺陷 (Bugs)" },
                 new() { Value = "stories", Label = "需求 (Stories)" },
