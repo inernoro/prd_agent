@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -251,6 +252,9 @@ public class WorkflowAgentController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail("INVALID_EDGE", "边引用了不存在的节点"));
         }
 
+        // JsonElement → 原生类型（防止 MongoDB BSON 序列化失败）
+        SanitizeNodeConfigs(workflow.Nodes);
+
         await _db.Workflows.InsertOneAsync(workflow, cancellationToken: ct);
 
         _logger.LogInformation("[{AppKey}] Workflow created: {WorkflowId} by {UserId}", AppKey, workflow.Id, userId);
@@ -325,6 +329,9 @@ public class WorkflowAgentController : ControllerBase
         if (request.Triggers != null) workflow.Triggers = request.Triggers;
         if (request.IsEnabled.HasValue) workflow.IsEnabled = request.IsEnabled.Value;
         workflow.UpdatedAt = DateTime.UtcNow;
+
+        // JsonElement → 原生类型（防止 MongoDB BSON 序列化失败）
+        SanitizeNodeConfigs(workflow.Nodes);
 
         await _db.Workflows.ReplaceOneAsync(w => w.Id == id, workflow, cancellationToken: ct);
 
@@ -775,6 +782,41 @@ public class WorkflowAgentController : ControllerBase
             .Replace("{{now.year}}", now.Year.ToString())
             .Replace("{{now.month}}", now.Month.ToString("D2"))
             .Replace("{{now.date}}", now.ToString("yyyy-MM-dd"));
+    }
+
+    /// <summary>
+    /// 将节点 Config 中的 JsonElement 值转换为原生 .NET 类型，
+    /// 解决 System.Text.Json 反序列化 Dictionary&lt;string, object?&gt; 时
+    /// 值类型为 JsonElement 导致 MongoDB BSON 序列化失败的问题。
+    /// </summary>
+    private static void SanitizeNodeConfigs(IEnumerable<WorkflowNode> nodes)
+    {
+        foreach (var node in nodes)
+        {
+            if (node.Config == null) continue;
+            var sanitized = new Dictionary<string, object?>();
+            foreach (var kv in node.Config)
+                sanitized[kv.Key] = ConvertJsonElement(kv.Value);
+            node.Config = sanitized;
+        }
+    }
+
+    private static object? ConvertJsonElement(object? value)
+    {
+        if (value is not JsonElement je) return value;
+
+        return je.ValueKind switch
+        {
+            JsonValueKind.String => je.GetString(),
+            JsonValueKind.Number => je.TryGetInt64(out var l) ? (object)l : je.GetDouble(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => null,
+            JsonValueKind.Undefined => null,
+            JsonValueKind.Array => je.EnumerateArray().Select(e => ConvertJsonElement((object)e)).ToList(),
+            JsonValueKind.Object => je.EnumerateObject().ToDictionary(p => p.Name, p => ConvertJsonElement((object)p.Value)),
+            _ => je.GetRawText(),
+        };
     }
 }
 
