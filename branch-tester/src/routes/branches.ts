@@ -895,8 +895,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
-      // Generate nginx config pointing to a non-existent upstream
-      // This makes API calls return 502 while static files still work
+      // Generate nginx config that returns 502 directly for /api/ calls
+      // (no upstream reference, so nginx -t won't fail on DNS resolution)
       switcherService.backup();
       const disconnectedConf = switcherService.generateConfig('_disconnected_upstream_');
       await switcherService.applyConfig(disconnectedConf);

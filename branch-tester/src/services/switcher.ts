@@ -15,17 +15,16 @@ export class SwitcherService {
   ) {}
 
   generateConfig(upstream: string): string {
-    return `server {
-    listen 80;
-    server_name _;
-    client_max_body_size 30m;
-    absolute_redirect off;
-    port_in_redirect off;
-
-    root /usr/share/nginx/html;
-    index index.html;
-
-    # API reverse proxy — managed by branch-tester
+    // When upstream is null/sentinel, produce a config that returns 502 for API
+    // without referencing any upstream host (avoids DNS resolution failure).
+    const apiBlock =
+      upstream === '_disconnected_upstream_'
+        ? `    # API disconnected — no active branch
+    location ^~ /api/ {
+        default_type application/json;
+        return 502 '{"error":"No active branch connected"}';
+    }`
+        : `    # API reverse proxy — managed by branch-tester
     # Active upstream: ${upstream}
     location ^~ /api/ {
         proxy_pass http://${upstream}:8080;
@@ -39,7 +38,19 @@ export class SwitcherService {
         proxy_buffering off;
         proxy_cache off;
         proxy_read_timeout 3600s;
-    }
+    }`;
+
+    return `server {
+    listen 80;
+    server_name _;
+    client_max_body_size 30m;
+    absolute_redirect off;
+    port_in_redirect off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+${apiBlock}
 
     location ^~ /assets/ {
         try_files $uri =404;

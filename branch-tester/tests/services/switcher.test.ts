@@ -39,6 +39,13 @@ describe('SwitcherService', () => {
       expect(conf).toContain('proxy_buffering off');
       expect(conf).toContain('root /usr/share/nginx/html');
     });
+
+    it('should render disconnected config with return 502 (no upstream)', () => {
+      const conf = service.generateConfig('_disconnected_upstream_');
+      expect(conf).not.toContain('proxy_pass');
+      expect(conf).toContain('return 502');
+      expect(conf).toContain('root /usr/share/nginx/html');
+    });
   });
 
   describe('backup & rollbackConfig', () => {
