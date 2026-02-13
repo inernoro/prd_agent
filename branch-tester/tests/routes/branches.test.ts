@@ -422,7 +422,7 @@ describe('Branch Routes', () => {
     });
   });
 
-  // ─── Quick Run / Re-run ─────────────────────────────────────
+  // ─── Run / Re-run (source-based, separate container) ───────
 
   /** Helper: make SSE request and parse events */
   async function sseRequest(
@@ -454,85 +454,76 @@ describe('Branch Routes', () => {
     });
   }
 
-  describe('POST /api/branches/:id/run (Quick Run)', () => {
-    it('should build + start with exposed port, no nginx switch', async () => {
+  describe('POST /api/branches/:id/run (source-based)', () => {
+    it('should run from source with exposed port, no build, no nginx', async () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
 
       const { status, events } = await sseRequest(server, '/api/branches/feature-test/run');
       expect(status).toBe(200);
 
-      // Verify env step includes hostPort
+      // Verify env step — source mode
       const env = events.find((e) => e.step === 'env');
       expect(env).toBeDefined();
+      expect(env!.detail.mode).toBe('source');
       expect(env!.detail.hostPort).toBeGreaterThanOrEqual(9001);
-      expect(env!.detail.url).toContain(String(env!.detail.hostPort));
+      expect(env!.detail.runContainerName).toBe('prdagent-run-feature-test');
+      expect(env!.detail.baseImage).toContain('dotnet/sdk');
 
-      // Verify build happened (status was idle)
-      const buildApi = events.filter((e) => e.step === 'build_api');
-      expect(buildApi.length).toBeGreaterThanOrEqual(2);
-      expect(buildApi[0].status).toBe('running');
+      // Verify NO build step (source-based, not artifact-based)
+      const buildApi = events.find((e) => e.step === 'build_api');
+      expect(buildApi).toBeUndefined();
 
-      // Verify start happened with port info
+      // Verify start happened — uses run container name
       const start = events.find((e) => e.step === 'start' && e.status === 'done');
       expect(start).toBeDefined();
-      expect(start!.detail.hostPort).toBeGreaterThanOrEqual(9001);
+      expect(start!.detail.runContainerName).toBe('prdagent-run-feature-test');
+      expect(start!.detail.sourceMount).toContain('prd-api');
 
-      // Verify no activate step (this is run, not deploy)
+      // Verify no activate step
       const activate = events.find((e) => e.step === 'activate');
       expect(activate).toBeUndefined();
 
-      // Verify complete has URL
-      const complete = events.find((e) => e.step === 'complete');
-      expect(complete).toBeDefined();
-      expect(complete!.detail.url).toBeDefined();
-      expect(complete!.detail.apiUrl).toBeDefined();
-
-      // Container command should include -p and -v flags
-      const runCmd = mock.commands.find((c) => c.includes('docker run') && c.includes('-p'));
+      // Docker run command: -p port, -v source mount, SDK image
+      const runCmd = mock.commands.find(
+        (c) => c.includes('docker run') && c.includes('prdagent-run-'),
+      );
       expect(runCmd).toBeDefined();
+      expect(runCmd).toContain('-p');
       expect(runCmd).toContain('-v');
+      expect(runCmd).toContain('dotnet/sdk');
+      expect(runCmd).toContain('dotnet run');
 
-      // State should be running
+      // State: runStatus = running, deploy status unchanged
       const list = await request(server, 'GET', '/api/branches');
-      expect((list.body as any).branches['feature-test'].status).toBe('running');
-      expect((list.body as any).branches['feature-test'].hostPort).toBeGreaterThanOrEqual(9001);
-
-      // activeBranchId should NOT be set (no activation)
+      const br = (list.body as any).branches['feature-test'];
+      expect(br.runStatus).toBe('running');
+      expect(br.runContainerName).toBe('prdagent-run-feature-test');
+      expect(br.status).toBe('idle'); // deploy status NOT changed
       expect((list.body as any).activeBranchId).toBeNull();
     });
 
-    it('should skip build if already built', async () => {
+    it('should return 409 if branch already running (isolation guard)', async () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
-      await request(server, 'POST', '/api/branches/feature-test/build');
+      await sseRequest(server, '/api/branches/feature-test/run');
 
-      const { events } = await sseRequest(server, '/api/branches/feature-test/run');
-
-      const buildApi = events.find((e) => e.step === 'build_api');
-      expect(buildApi!.status).toBe('skip');
+      // Second run → 409
+      const res = await request(server, 'POST', '/api/branches/feature-test/run');
+      expect(res.status).toBe(409);
     });
 
     it('should return 404 for unknown branch', async () => {
       const res = await request(server, 'POST', '/api/branches/nope/run');
       expect(res.status).toBe(404);
     });
-
-    it('should return 409 if branch is building', async () => {
-      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
-      stateService.updateStatus('feature-test', 'building');
-      stateService.save();
-
-      const res = await request(server, 'POST', '/api/branches/feature-test/run');
-      expect(res.status).toBe(409);
-    });
   });
 
-  describe('POST /api/branches/:id/rerun (Re-run)', () => {
-    it('should pull + force rebuild + restart', async () => {
-      // First, add and build the branch
+  describe('POST /api/branches/:id/rerun', () => {
+    it('should pull latest code + restart source container', async () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
-      await request(server, 'POST', '/api/branches/feature-test/build');
+      // First run
+      await sseRequest(server, '/api/branches/feature-test/run');
 
-      // Add git diff/log mocks for the pull step
+      // Mock pull-related commands
       mock.addResponsePattern(/git diff --stat/, () => ({
         stdout: ' src/main.ts | 5 +++--\n 1 file changed\n', stderr: '', exitCode: 0,
       }));
@@ -543,20 +534,43 @@ describe('Branch Routes', () => {
       const { status, events } = await sseRequest(server, '/api/branches/feature-test/rerun');
       expect(status).toBe(200);
 
-      // Verify pull step happened
+      // Verify pull step
       const pull = events.find((e) => e.step === 'pull' && e.status === 'done');
       expect(pull).toBeDefined();
       expect(pull!.detail.changes).toBeDefined();
-      expect(pull!.detail.newCommits).toBeDefined();
 
-      // Verify rebuild happened (forced even though was 'built')
-      const buildApi = events.filter((e) => e.step === 'build_api');
-      expect(buildApi.some((e) => e.status === 'running')).toBe(true);
-      expect(buildApi.some((e) => e.status === 'done')).toBe(true);
+      // Verify stop step (old container stopped)
+      const stop = events.find((e) => e.step === 'stop' && e.status === 'done');
+      expect(stop).toBeDefined();
 
-      // Verify complete
-      const complete = events.find((e) => e.step === 'complete');
-      expect(complete).toBeDefined();
+      // Verify start step (new container)
+      const start = events.find((e) => e.step === 'start' && e.status === 'done');
+      expect(start).toBeDefined();
+
+      // Still NO build step
+      expect(events.find((e) => e.step === 'build_api')).toBeUndefined();
+
+      // Complete
+      expect(events.find((e) => e.step === 'complete')).toBeDefined();
+    });
+  });
+
+  describe('POST /api/branches/:id/stop-run', () => {
+    it('should stop the run container', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      await sseRequest(server, '/api/branches/feature-test/run');
+
+      const res = await request(server, 'POST', '/api/branches/feature-test/stop-run');
+      expect(res.status).toBe(200);
+
+      const list = await request(server, 'GET', '/api/branches');
+      expect((list.body as any).branches['feature-test'].runStatus).toBe('stopped');
+    });
+
+    it('should return 400 if no run container active', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      const res = await request(server, 'POST', '/api/branches/feature-test/stop-run');
+      expect(res.status).toBe(400);
     });
   });
 

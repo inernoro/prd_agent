@@ -1,4 +1,5 @@
-import type { IShellExecutor, BranchEntry, BtConfig, StartOptions } from '../types.js';
+import path from 'node:path';
+import type { IShellExecutor, BranchEntry, BtConfig, RunFromSourceOptions } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 export class ContainerService {
@@ -7,10 +8,10 @@ export class ContainerService {
     private readonly config: BtConfig,
   ) {}
 
-  async start(entry: BranchEntry, options?: StartOptions): Promise<void> {
+  /** Start a deploy container from a pre-built Docker image */
+  async start(entry: BranchEntry): Promise<void> {
     const { mongodb, redis, jwt, docker } = this.config;
 
-    // Ensure Docker network exists
     await this.ensureNetwork(docker.network);
 
     const envVars = [
@@ -25,31 +26,59 @@ export class ContainerService {
 
     const envFlags = envVars.map((e) => `-e ${e}`).join(' ');
 
-    const parts = [
+    const cmd = [
       'docker run -d',
       `--name ${entry.containerName}`,
       `--network ${docker.network}`,
       envFlags,
-    ];
+      '--read-only',
+      '--tmpfs /tmp',
+      entry.imageName,
+    ].join(' ');
 
-    // Quick-run: expose port to host
-    if (options?.exposePort) {
-      parts.push(`-p ${options.exposePort}:8080`);
-    }
-
-    // Quick-run: mount admin static files as wwwroot
-    if (options?.volumes) {
-      for (const vol of options.volumes) {
-        parts.push(`-v ${vol}`);
-      }
-    }
-
-    parts.push('--read-only', '--tmpfs /tmp', entry.imageName);
-
-    const cmd = parts.join(' ');
     const result = await this.shell.exec(cmd);
     if (result.exitCode !== 0) {
       throw new Error(`Failed to start container "${entry.containerName}":\n${combinedOutput(result)}`);
+    }
+  }
+
+  /** Run a container from source code (mount worktree + SDK image + dotnet run) */
+  async runFromSource(entry: BranchEntry, options: RunFromSourceOptions): Promise<void> {
+    const { mongodb, redis, jwt, docker } = this.config;
+    const containerName = entry.runContainerName!;
+
+    await this.ensureNetwork(docker.network);
+
+    const srcMount = path.join(entry.worktreePath, options.sourceDir);
+
+    const envVars = [
+      `ASPNETCORE_ENVIRONMENT=Development`,
+      `ASPNETCORE_URLS=http://+:8080`,
+      `MongoDB__ConnectionString=mongodb://${mongodb.containerHost}:${mongodb.port}`,
+      `MongoDB__DatabaseName=${entry.dbName}`,
+      `Redis__ConnectionString=${redis.connectionString}`,
+      `Jwt__Secret=${jwt.secret}`,
+      `Jwt__Issuer=${jwt.issuer}`,
+    ];
+
+    const envFlags = envVars.map((e) => `-e ${e}`).join(' ');
+
+    const cmd = [
+      'docker run -d',
+      `--name ${containerName}`,
+      `--network ${docker.network}`,
+      `-p ${options.hostPort}:8080`,
+      `-v ${srcMount}:/src`,
+      `-w /src`,
+      envFlags,
+      '--tmpfs /tmp',
+      options.baseImage,
+      options.command,
+    ].join(' ');
+
+    const result = await this.shell.exec(cmd);
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to run container "${containerName}":\n${combinedOutput(result)}`);
     }
   }
 

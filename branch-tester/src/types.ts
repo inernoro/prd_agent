@@ -2,15 +2,21 @@ export interface BranchEntry {
   id: string;
   branch: string;
   worktreePath: string;
+
+  // ── Deploy mode (artifact-based, via nginx gateway) ──
   containerName: string;
   imageName: string;
   dbName: string;
   status: 'idle' | 'building' | 'built' | 'running' | 'stopped' | 'error';
   buildLog?: string;
-  createdAt: string;
   lastActivatedAt?: string;
-  /** Host port allocated for quick-run (direct access without nginx gateway) */
+
+  // ── Run mode (source-based, direct port access) ──
+  runContainerName?: string;
+  runStatus?: 'idle' | 'running' | 'stopped';
   hostPort?: number;
+
+  createdAt: string;
 }
 
 export interface BtState {
@@ -49,21 +55,25 @@ export interface BtConfig {
   dashboard: {
     port: number;
   };
-  /** Quick-run settings (optional, defaults applied if omitted) */
+  /** Run mode settings (source-based running, optional, defaults applied if omitted) */
   run?: {
-    /** First host port to allocate for quick-run containers (default: 9001) */
+    /** First host port to allocate (default: 9001) */
     portStart?: number;
-    /** Mount path inside container for admin static files (default: /app/wwwroot) */
-    adminMount?: string;
+    /** SDK base image for running from source (default: mcr.microsoft.com/dotnet/sdk:8.0) */
+    baseImage?: string;
+    /** Command to run inside the container (default: dotnet run --project src/PrdAgent.Api) */
+    command?: string;
+    /** Subdirectory of worktree to mount as /src (default: prd-api) */
+    sourceDir?: string;
   };
 }
 
-/** Options for starting a container with extra Docker flags */
-export interface StartOptions {
-  /** Expose container port 8080 on this host port (-p flag) */
-  exposePort?: number;
-  /** Volume mounts (-v flag), e.g. ["/host/path:/container/path:ro"] */
-  volumes?: string[];
+/** Options for running a container from source code */
+export interface RunFromSourceOptions {
+  hostPort: number;
+  baseImage: string;
+  command: string;
+  sourceDir: string;
 }
 
 export interface ExecResult {
