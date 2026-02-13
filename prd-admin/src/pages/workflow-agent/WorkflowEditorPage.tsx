@@ -229,7 +229,7 @@ function CapsuleConfigForm({ fields, values, onChange, disabled }: {
 
 // ──── 右侧舱卡片 ────
 
-function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, capsuleMeta, isRunning }: {
+function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning }: {
   node: WorkflowNode;
   index: number;
   nodeExec?: NodeExecution;
@@ -238,6 +238,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   onToggle: () => void;
   onRemove: () => void;
   onTestRun: () => void;
+  onConfigChange: (nodeId: string, config: Record<string, unknown>) => void;
   capsuleMeta?: CapsuleTypeMeta;
   isRunning: boolean;
 }) {
@@ -248,16 +249,18 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   const CIcon = typeDef?.Icon;
   const emoji = typeDef?.emoji ?? '📦';
 
-  // 舱配置状态
-  const [configValues, setConfigValues] = useState<Record<string, string>>(() => {
-    const initial: Record<string, string> = {};
-    if (node.config) {
-      for (const [k, v] of Object.entries(node.config)) {
-        initial[k] = String(v ?? '');
-      }
+  // 配置值直接从 node.config 读取（由父组件管理状态）
+  const configValues: Record<string, string> = {};
+  if (node.config) {
+    for (const [k, v] of Object.entries(node.config)) {
+      configValues[k] = String(v ?? '');
     }
-    return initial;
-  });
+  }
+
+  function handleConfigFieldChange(key: string, val: string) {
+    const updated = { ...node.config, [key]: val };
+    onConfigChange(node.nodeId, updated);
+  }
 
   const [expandedArtifacts, setExpandedArtifacts] = useState<Set<string>>(new Set());
 
@@ -391,7 +394,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                 <CapsuleConfigForm
                   fields={capsuleMeta.configSchema}
                   values={configValues}
-                  onChange={(key, val) => setConfigValues((prev) => ({ ...prev, [key]: val }))}
+                  onChange={handleConfigFieldChange}
                   disabled={isRunning}
                 />
               </div>
@@ -712,6 +715,16 @@ export function WorkflowEditorPage() {
     setExpandedNodeId(nodeId);
   }
 
+  // ── 舱配置变更 ──
+
+  function handleNodeConfigChange(nodeId: string, config: Record<string, unknown>) {
+    setWorkflow((prev) => prev ? {
+      ...prev,
+      nodes: prev.nodes.map(n => n.nodeId === nodeId ? { ...n, config } : n),
+    } : prev);
+    setDirty(true);
+  }
+
   // ── 移除舱 ──
 
   function handleRemoveNode(nodeId: string) {
@@ -943,6 +956,7 @@ export function WorkflowEditorPage() {
                     onToggle={() => setExpandedNodeId(expandedNodeId === node.nodeId ? null : node.nodeId)}
                     onRemove={() => handleRemoveNode(node.nodeId)}
                     onTestRun={() => handleTestRun(node.nodeId)}
+                    onConfigChange={handleNodeConfigChange}
                     capsuleMeta={capsuleTypes.find(ct => ct.typeKey === node.nodeType)}
                     isRunning={isRunning}
                   />
