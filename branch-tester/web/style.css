@@ -881,3 +881,82 @@ button.warn:hover { background: #8a5900; color: #fff; }
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* ---- Log modal tabs ---- */
+
+.log-tabs {
+  display: flex;
+  gap: 2px;
+  background: #0d1117;
+  border-radius: 6px;
+  padding: 2px;
+  margin-left: auto;
+  margin-right: 12px;
+}
+
+.log-tabs.hidden {
+  display: none;
+}
+
+.log-tab {
+  padding: 4px 14px;
+  font-size: 12px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #8b949e;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.log-tab:hover {
+  background: #161b22;
+  color: #e1e4e8;
+}
+
+.log-tab.active {
+  background: #21262d;
+  color: #e1e4e8;
+  font-weight: 500;
+}
+
+/* ---- Live log output ---- */
+
+.live-log-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 13px;
+  color: #8b949e;
+  margin-bottom: 8px;
+}
+
+.live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3fb950;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.live-log-output {
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: #8b949e;
+  background: #010409;
+  border: 1px solid #21262d;
+  border-radius: 6px;
+  padding: 12px 14px;
+  max-height: 60vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+}

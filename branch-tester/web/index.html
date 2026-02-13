@@ -54,6 +54,10 @@
     <div class="modal-dialog">
       <div class="modal-header">
         <h2 id="logModalTitle">操作日志</h2>
+        <div class="log-tabs hidden" id="logTabs">
+          <button class="log-tab active" data-tab="live" onclick="switchLogTab('live')">实时日志</button>
+          <button class="log-tab" data-tab="history" onclick="switchLogTab('history')">操作历史</button>
+        </div>
         <button class="modal-close" onclick="closeLogModal()">✕</button>
       </div>
       <div id="logModalBody" class="modal-body"></div>

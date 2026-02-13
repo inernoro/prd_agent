@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
 import type { ContainerService } from '../services/container.js';
@@ -198,6 +199,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       try { await worktreeService.remove(entry.worktreePath); } catch { /* may not exist */ }
       try { await containerService.removeImage(entry.imageName); } catch { /* may not exist */ }
+
+      // Drop branch database (strict safety checks — request 5)
+      const mainDb = config.mongodb.defaultDbName;
+      const branchDb = entry.originalDbName || entry.dbName;
+
+      if (
+        branchDb
+        && branchDb !== mainDb
+        && branchDb.startsWith(`${mainDb}_`)
+      ) {
+        // Ensure no other branch references this DB
+        const otherBranches = Object.values(stateService.getState().branches)
+          .filter((b) => b.id !== id);
+        const dbInUse = otherBranches.some(
+          (b) => b.dbName === branchDb || b.originalDbName === branchDb,
+        );
+
+        if (!dbInUse) {
+          try {
+            const mongoContainer = 'prdagent-mongodb';
+            const dropCmd = `docker exec ${mongoContainer} mongosh --quiet --eval "db.getMongo().getDB('${branchDb}').dropDatabase()"`;
+            await shell.exec(dropCmd, { timeout: 30_000 });
+          } catch { /* best effort — don't fail the delete if drop fails */ }
+        }
+      }
 
       stateService.removeBranch(id);
       stateService.removeLogs(id);
@@ -590,6 +616,52 @@ export function createBranchRouter(deps: RouterDeps): Router {
         },
       });
 
+      // ---- stream container startup logs (request 7) ----
+      send({ step: 'logs', status: 'running', title: '容器启动日志' });
+
+      const logStreamResult = await new Promise<'ready' | 'exited' | 'timeout'>((resolve) => {
+        const proc = spawn('docker', ['logs', '-f', '--tail', '0', entry.runContainerName!]);
+        let resolved = false;
+        const finish = (reason: 'ready' | 'exited' | 'timeout') => {
+          if (!resolved) { resolved = true; proc.kill(); resolve(reason); }
+        };
+
+        const timer = setTimeout(() => finish('timeout'), 120_000);
+
+        const handleData = (data: Buffer) => {
+          const text = data.toString();
+          send({ step: 'logs', status: 'running', title: '容器启动日志', chunk: text });
+          // Detect ASP.NET ready signal
+          if (text.includes('Now listening on')) {
+            clearTimeout(timer);
+            // Brief delay to capture remaining startup output
+            setTimeout(() => finish('ready'), 1500);
+          }
+        };
+
+        proc.stdout?.on('data', handleData);
+        proc.stderr?.on('data', handleData);
+        proc.on('close', () => { clearTimeout(timer); finish('exited'); });
+        req.on('close', () => { clearTimeout(timer); finish('exited'); });
+      });
+
+      if (logStreamResult === 'ready') {
+        send({ step: 'logs', status: 'done', title: '应用启动完成' });
+      } else if (logStreamResult === 'exited') {
+        // Container may have crashed during startup
+        const alive = await containerService.isRunning(entry.runContainerName!);
+        if (!alive) {
+          entry.runStatus = 'error';
+          entry.runErrorMessage = '容器在启动过程中退出';
+          stateService.save();
+          throw new Error('容器在启动过程中退出，请查看日志了解原因');
+        }
+        send({ step: 'logs', status: 'done', title: '容器启动日志' });
+      } else {
+        // Timeout — app might still be starting
+        send({ step: 'logs', status: 'warn', title: '容器启动日志（等待超时，应用可能仍在启动）' });
+      }
+
       // ---- done ----
       send({
         step: 'complete', status: 'done',
@@ -912,6 +984,59 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // ================================================================
+  // Real-time container logs (SSE stream)
+  // ================================================================
+
+  router.post('/branches/:id/container-logs', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `Branch "${id}" not found` });
+      return;
+    }
+
+    // Determine which container to tail (prefer source-run, fallback to deploy)
+    const containerName =
+      entry.runContainerName && entry.runStatus === 'running'
+        ? entry.runContainerName
+        : entry.status === 'running'
+          ? entry.containerName
+          : null;
+
+    if (!containerName) {
+      res.status(400).json({ error: '没有运行中的容器' });
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const proc = spawn('docker', ['logs', '-f', '--tail', '200', containerName]);
+
+    const sendChunk = (data: Buffer) => {
+      try {
+        res.write(`data: ${JSON.stringify({ type: 'log', text: data.toString() })}\n\n`);
+      } catch { /* client gone */ }
+    };
+
+    proc.stdout?.on('data', sendChunk);
+    proc.stderr?.on('data', sendChunk);
+
+    proc.on('close', () => {
+      try {
+        res.write(`data: ${JSON.stringify({ type: 'end' })}\n\n`);
+        res.end();
+      } catch { /* client gone */ }
+    });
+
+    req.on('close', () => {
+      proc.kill();
+    });
   });
 
   // ================================================================
