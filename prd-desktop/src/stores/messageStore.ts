@@ -49,6 +49,7 @@ interface MessageState {
   startStreamingBlock: (block: { id: string; kind: MessageBlockKind; language?: string | null }) => void;
   appendToStreamingBlock: (blockId: string, content: string) => void;
   endStreamingBlock: (blockId: string) => void;
+  appendToStreamingThinking: (content: string) => void;
   setMessageCitations: (messageId: string, citations: DocCitation[]) => void;
   setStreamingMessageCitations: (citations: DocCitation[]) => void;
   setStreamingPhase: (phase: StreamingPhase) => void;
@@ -724,6 +725,18 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
       nextBlocks[idx] = { ...nextBlocks[idx], isComplete: true };
       const isCode = nextBlocks[idx].kind === 'codeBlock';
       return { ...m, blocks: nextBlocks, content: isCode ? (m.content ?? '') + '```\n' : (m.content ?? '') };
+    });
+    return { messages: next };
+  }),
+
+  // 追加思考过程内容（thinking delta）：直接 set，不走平滑缓冲（思考过程允许快速追加）
+  appendToStreamingThinking: (content) => set((state) => {
+    if (!state.streamingMessageId) return state;
+    const txt = String(content ?? '');
+    if (!txt) return state;
+    const next = state.messages.map((m) => {
+      if (m.id !== state.streamingMessageId) return m;
+      return { ...m, thinking: (m.thinking ?? '') + txt };
     });
     return { messages: next };
   }),

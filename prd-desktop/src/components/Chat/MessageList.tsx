@@ -96,6 +96,63 @@ function ThinkingIndicator({ label }: { label?: string }) {
   );
 }
 
+/**
+ * 思考过程展示区：在正文输出前实时展示 AI 的推理过程，正文开始后自动折叠。
+ * - thinkingText: 累积的思考文本
+ * - isThinkingPhase: 是否仍在思考阶段（正文未开始）
+ * - hasContent: 消息是否已有正文内容
+ */
+function ThinkingSection({ thinkingText, isThinkingPhase, hasContent }: {
+  thinkingText: string;
+  isThinkingPhase: boolean;
+  hasContent: boolean;
+}) {
+  const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
+  // 自动折叠逻辑：正文开始后自动折叠，但用户手动展开后不再自动折叠
+  const isExpanded = manualExpanded !== null ? manualExpanded : isThinkingPhase;
+
+  // 正文开始输出时，重置手动状态（让自动折叠生效）
+  const prevHasContentRef = useRef(hasContent);
+  useEffect(() => {
+    if (hasContent && !prevHasContentRef.current) {
+      setManualExpanded(null);
+    }
+    prevHasContentRef.current = hasContent;
+  }, [hasContent]);
+
+  if (!thinkingText) return null;
+
+  return (
+    <div className="mb-2">
+      <button
+        type="button"
+        onClick={() => setManualExpanded(isExpanded ? false : true)}
+        className="inline-flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-secondary transition-colors select-none"
+      >
+        <svg
+          className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        <span>{isThinkingPhase ? '思考中...' : '查看思考过程'}</span>
+        {isThinkingPhase ? (
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+        ) : null}
+      </button>
+      {isExpanded ? (
+        <div className="mt-1.5 pl-4 border-l-2 border-amber-400/30 dark:border-amber-500/20">
+          <p className="text-xs leading-relaxed text-text-tertiary whitespace-pre-wrap break-words">
+            {thinkingText}
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function StreamingIndicator() {
   const getAssetUrl = useDesktopBrandingStore((s) => s.getAssetUrl);
   const loadUrl = getAssetUrl('load');
@@ -730,6 +787,7 @@ function MessageListInner() {
     isMessageStreaming,
     showThinking,
     thinkingLabel,
+    isThinkingPhase,
     activeGroupId,
     prdDocumentId,
     openCitationDrawer,
@@ -739,6 +797,8 @@ function MessageListInner() {
     isMessageStreaming: boolean;
     showThinking: boolean;
     thinkingLabel: string;
+    /** 是否仍在思考阶段（正文未开始输出） */
+    isThinkingPhase: boolean;
     activeGroupId: string | null;
     prdDocumentId: string | null;
     openCitationDrawer: (args: any) => void;
@@ -923,7 +983,14 @@ function MessageListInner() {
                 </p>
               ) : (
                 <div>
-            {showThinking ? (
+            {/* 思考过程：有实际思考内容时用 ThinkingSection（可折叠），否则用加载动画 */}
+            {message.thinking ? (
+              <ThinkingSection
+                thinkingText={message.thinking}
+                isThinkingPhase={isThinkingPhase}
+                hasContent={!!message.content}
+              />
+            ) : showThinking ? (
                   <div className="mb-2">
                 <ThinkingIndicator label={thinkingLabel} />
                   </div>
@@ -1377,6 +1444,7 @@ function MessageListInner() {
                 isMessageStreaming={false}
                 showThinking={true}
                 thinkingLabel=""
+                isThinkingPhase={true}
                 activeGroupId={activeGroupId}
                 prdDocumentId={prdDocument?.id ?? null}
                 openCitationDrawer={openCitationDrawer as any}
@@ -1392,12 +1460,16 @@ function MessageListInner() {
         // 2. 阶段不是 'typing'（即还在请求中/等待首字）
         // 3. 消息内容为空（还没收到第一个 chunk）
         // 4. 消息的 isStreaming 标志不为 true（收到第一个 chunk 后会设置为 true）
-        const showThinking = isMessageStreaming 
-          && !!streamingPhase 
-          && streamingPhase !== 'typing' 
-          && !message.content 
-          && !message.isStreaming;
+        // 5. 没有收到 thinking 内容（有 thinking 时由 ThinkingSection 替代）
+        const showThinking = isMessageStreaming
+          && !!streamingPhase
+          && streamingPhase !== 'typing'
+          && !message.content
+          && !message.isStreaming
+          && !message.thinking;
         const thinkingLabel = '思考中...';
+        // 是否仍在思考阶段（正文未开始输出）：用于 ThinkingSection 的自动折叠
+        const isThinkingPhase = isMessageStreaming && !message.content && !message.isStreaming;
 
         return (
           <MessageBubble
@@ -1406,6 +1478,7 @@ function MessageListInner() {
             isMessageStreaming={isMessageStreaming}
             showThinking={showThinking}
             thinkingLabel={thinkingLabel}
+            isThinkingPhase={isThinkingPhase}
             activeGroupId={activeGroupId}
             prdDocumentId={prdDocument?.id ?? null}
             openCitationDrawer={openCitationDrawer as any}

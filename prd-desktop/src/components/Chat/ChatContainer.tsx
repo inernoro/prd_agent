@@ -113,6 +113,16 @@ function ChatContainerInner() {
         return;
       }
       
+      // 处理 AI 思考过程的增量内容（thinking）
+      if (p?.type === 'thinking' && p?.messageId && p?.thinkingContent) {
+        const store = useMessageStore.getState();
+        // 只在当前 streaming 消息上追加思考内容
+        if (store.streamingMessageId === String(p.messageId)) {
+          store.appendToStreamingThinking(String(p.thinkingContent));
+        }
+        return;
+      }
+
       // 处理 AI 流式输出的增量内容（delta）
       if (p?.type === 'delta' && p?.messageId && p?.deltaContent) {
         const messageId = String(p.messageId);

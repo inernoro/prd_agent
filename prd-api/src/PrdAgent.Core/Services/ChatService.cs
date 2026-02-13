@@ -228,7 +228,8 @@ public class ChatService : IChatService
         var isFirstDelta = true; // 标记是否为第一个 delta（用于隐藏加载动画）
 
         // 通过 Gateway 创建 LLM 客户端（Gateway 内部处理模型调度和日志）
-        var llmClient = _gateway.CreateClient(AppCallerCode, ModelType);
+        // includeThinking: true → 让 DeepSeek 等模型的 reasoning_content 透传，前端可在正文输出前展示思考过程
+        var llmClient = _gateway.CreateClient(AppCallerCode, ModelType, includeThinking: true);
 
         var llmRequestId = Guid.NewGuid().ToString();
         using var scope = _llmRequestContext.BeginScope(new LlmRequestContext(
@@ -419,6 +420,14 @@ public class ChatService : IChatService
                                 _groupMessageStreamHub.PublishBlockEnd(gidForSeq, messageId, bt.BlockId);
                             }
                         }
+                    }
+                }
+                else if (chunk.Type == "thinking" && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    // 思考过程（DeepSeek reasoning_content）：广播到群组流，前端在正文输出前展示
+                    if (!string.IsNullOrEmpty(gidForSeq))
+                    {
+                        _groupMessageStreamHub.PublishThinking(gidForSeq, messageId, chunk.Content);
                     }
                 }
                 else if (chunk.Type == "done")

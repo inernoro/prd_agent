@@ -1075,6 +1075,21 @@ public class GroupsController : ControllerBase
                     continue;
                 }
 
+                // thinking：AI 思考过程的增量内容（不参与 seq 排序，直接推送）
+                if (string.Equals(ev.Type, "thinking", StringComparison.OrdinalIgnoreCase))
+                {
+                    var thinkingEvent = new GroupMessageStreamEventDto
+                    {
+                        Type = "thinking",
+                        MessageId = ev.MessageId,
+                        ThinkingContent = ev.ThinkingContent
+                    };
+                    var json = JsonSerializer.Serialize(thinkingEvent, AppJsonContext.Default.GroupMessageStreamEventDto);
+                    await WriteSseAsync(id: null, eventName: "message", dataJson: json, ct: cancellationToken);
+                    lastKeepAliveAt = DateTime.UtcNow;
+                    continue;
+                }
+
                 // blockEnd：Block 结束事件（不参与 seq 排序，直接推送）
                 if (string.Equals(ev.Type, "blockEnd", StringComparison.OrdinalIgnoreCase))
                 {
