@@ -333,19 +333,20 @@ export interface CapsuleCategoryInfo {
 export interface CapsuleTestRunResult {
   typeKey: string;
   typeName: string;
+  /** completed | failed */
   status: string;
   startedAt: string;
   completedAt: string;
   durationMs: number;
-  configValidation: {
-    key: string;
-    label: string;
-    provided: boolean;
-    required: boolean;
-    valid: boolean;
-    validationMessage?: string;
+  /** 执行日志 */
+  logs?: string;
+  /** 执行产物 */
+  artifacts?: {
+    name: string;
+    mimeType: string;
+    sizeBytes: number;
+    inlineContent?: string;
   }[];
-  mockOutput: Record<string, unknown>;
   errorMessage?: string;
 }
 

@@ -630,30 +630,44 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
           );
         })}
 
-        {/* 测试结果：逐字段校验详情 */}
+        {/* 测试结果：执行结果 */}
         {testResult && (
           <GlassCard accentHue={testResult.status === 'completed' ? 150 : 0} padding="sm">
             <div className="flex items-center gap-2 mb-2">
               <FlaskConical className="w-4 h-4" style={{ color: testResult.status === 'completed' ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)' }} />
               <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                {testResult.typeName}: {testResult.status === 'completed' ? '验证通过' : '验证未通过'}
+                {testResult.typeName}: {testResult.status === 'completed' ? '执行成功' : '执行失败'}
               </span>
               <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                 {testResult.durationMs}ms
               </span>
             </div>
-            {testResult.configValidation.length > 0 && (
-              <div className="space-y-1 ml-6">
-                {testResult.configValidation.map((cv) => (
-                  <div key={cv.key} className="flex items-center gap-2 text-[11px]">
-                    {cv.valid
-                      ? <CheckCircle2 className="w-3 h-3 flex-shrink-0" style={{ color: 'rgba(34,197,94,0.8)' }} />
-                      : <AlertCircle className="w-3 h-3 flex-shrink-0" style={{ color: 'rgba(239,68,68,0.8)' }} />
-                    }
-                    <span style={{ color: cv.valid ? 'var(--text-secondary)' : 'rgba(239,68,68,0.9)' }}>
-                      {cv.label}
-                      {!cv.valid && cv.validationMessage && ` — ${cv.validationMessage}`}
-                    </span>
+            {testResult.logs && (
+              <pre
+                className="text-[10px] rounded-[8px] p-2 ml-6 max-h-28 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
+                style={{
+                  background: 'rgba(0,0,0,0.25)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                }}
+              >
+                {testResult.logs}
+              </pre>
+            )}
+            {testResult.artifacts && testResult.artifacts.length > 0 && (
+              <div className="space-y-1 ml-6 mt-2">
+                {testResult.artifacts.map((art, idx) => (
+                  <div key={idx} className="rounded-[8px] overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <div className="flex items-center gap-2 px-3 py-1.5 text-[11px]">
+                      <span style={{ color: 'var(--text-primary)' }}>{art.name}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{art.sizeBytes} bytes</span>
+                    </div>
+                    {art.inlineContent && (
+                      <pre className="text-[10px] px-3 pb-2 max-h-48 overflow-auto whitespace-pre-wrap font-mono" style={{ color: 'var(--text-secondary)' }}>
+                        {art.inlineContent.slice(0, 2000)}
+                        {art.inlineContent.length > 2000 ? '\n...' : ''}
+                      </pre>
+                    )}
                   </div>
                 ))}
               </div>

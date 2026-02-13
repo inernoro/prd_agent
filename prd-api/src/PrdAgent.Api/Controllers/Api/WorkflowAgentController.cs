@@ -7,6 +7,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Api.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -69,8 +70,8 @@ public class WorkflowAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 单舱测试运行：传入舱类型 + 配置 + 模拟输入，返回测试结果。
-    /// 每个舱可以独立调试，无需组装完整流水线。
+    /// 单舱测试运行：传入舱类型 + 配置，直接执行舱逻辑，返回实际运行结果。
+    /// 不做必填校验——填了什么就用什么，让执行引擎自然报错。
     /// </summary>
     [HttpPost("capsules/test-run")]
     public async Task<IActionResult> TestRunCapsule(
@@ -86,100 +87,90 @@ public class WorkflowAgentController : ControllerBase
 
         var startedAt = DateTime.UtcNow;
 
-        // 逐字段校验：必填 + 类型格式
-        var configValidation = new List<ConfigFieldValidation>();
-        var hasErrors = false;
-
-        foreach (var field in meta.ConfigSchema)
+        // 构造临时 WorkflowNode，用于执行
+        var testNode = new WorkflowNode
         {
-            var provided = request.Config?.ContainsKey(field.Key) == true
-                           && !string.IsNullOrWhiteSpace(request.Config[field.Key]?.ToString());
-            var value = provided ? request.Config![field.Key]?.ToString() : null;
-            var valid = true;
-            string? message = null;
+            NodeId = "test-" + Guid.NewGuid().ToString("N")[..8],
+            Name = $"[测试] {meta.Name}",
+            NodeType = request.TypeKey,
+            Config = new Dictionary<string, object?>(),
+            OutputSlots = meta.DefaultOutputSlots?.Select(s => new ArtifactSlot
+            {
+                SlotId = s.SlotId,
+                Name = s.Name,
+                DataType = s.DataType,
+            }).ToList() ?? new List<ArtifactSlot>(),
+        };
 
-            if (field.Required && !provided)
-            {
-                valid = false;
-                message = "必填字段";
-                hasErrors = true;
-            }
-            else if (provided && value != null)
-            {
-                switch (field.FieldType)
-                {
-                    case "number":
-                        if (!double.TryParse(value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out _))
-                        {
-                            valid = false;
-                            message = "需要填写数字";
-                            hasErrors = true;
-                        }
-                        break;
-                    case "cron":
-                        var parts = value.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                        if (parts.Length != 5)
-                        {
-                            valid = false;
-                            message = "Cron 表达式需要 5 个部分（分 时 日 月 周）";
-                            hasErrors = true;
-                        }
-                        break;
-                    case "json":
-                        try { System.Text.Json.JsonDocument.Parse(value); }
-                        catch
-                        {
-                            valid = false;
-                            message = "JSON 格式无效";
-                            hasErrors = true;
-                        }
-                        break;
-                    case "select":
-                        if (field.Options?.Count > 0 && !field.Options.Any(o => o.Value == value))
-                        {
-                            valid = false;
-                            message = $"无效选项，可选值: {string.Join(", ", field.Options.Select(o => o.Value))}";
-                            hasErrors = true;
-                        }
-                        break;
-                }
-            }
+        // 将请求配置填入节点
+        if (request.Config != null)
+        {
+            foreach (var (k, v) in request.Config)
+                testNode.Config[k] = v;
+        }
 
-            configValidation.Add(new ConfigFieldValidation
+        // 构造模拟输入产物（如果前端提供了 mockInput）
+        var mockInputArtifacts = new List<ExecutionArtifact>();
+        if (request.MockInput != null)
+        {
+            var inputJson = request.MockInput is string s ? s : System.Text.Json.JsonSerializer.Serialize(request.MockInput);
+            mockInputArtifacts.Add(new ExecutionArtifact
             {
-                Key = field.Key,
-                Label = field.Label,
-                Provided = provided,
-                Required = field.Required,
-                Valid = valid,
-                ValidationMessage = message,
+                Name = "测试输入",
+                MimeType = "application/json",
+                SlotId = "mock-input",
+                InlineContent = inputJson,
+                SizeBytes = System.Text.Encoding.UTF8.GetByteCount(inputJson),
             });
         }
 
-        // 返回完整校验结果（不提前 400，让前端看到所有字段的校验状态）
-        var testResult = new CapsuleTestRunResult
-        {
-            TypeKey = request.TypeKey,
-            TypeName = meta.Name,
-            Status = hasErrors ? "validation_failed" : "completed",
-            StartedAt = startedAt,
-            CompletedAt = DateTime.UtcNow,
-            DurationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds,
-            ConfigValidation = configValidation,
-            MockOutput = hasErrors
-                ? new Dictionary<string, object?>()
-                : new Dictionary<string, object?>
-                {
-                    ["_testMode"] = true,
-                    ["_capsuleType"] = request.TypeKey,
-                    ["_message"] = $"舱 '{meta.Name}' 配置验证通过，执行引擎尚未接入实际处理逻辑",
-                    ["_inputPreview"] = request.MockInput,
-                },
-            ErrorMessage = hasErrors ? "配置验证未通过，请检查标红字段" : null,
-        };
-
         _logger.LogInformation("[{AppKey}] Capsule test-run: type={TypeKey} by {UserId}",
             AppKey, request.TypeKey, GetUserId());
+
+        // 直接执行舱逻辑
+        CapsuleTestRunResult testResult;
+        try
+        {
+            var execResult = await CapsuleExecutor.ExecuteAsync(
+                HttpContext.RequestServices, _logger, testNode,
+                new Dictionary<string, string>(), mockInputArtifacts);
+
+            var completedAt = DateTime.UtcNow;
+            testResult = new CapsuleTestRunResult
+            {
+                TypeKey = request.TypeKey,
+                TypeName = meta.Name,
+                Status = "completed",
+                StartedAt = startedAt,
+                CompletedAt = completedAt,
+                DurationMs = (long)(completedAt - startedAt).TotalMilliseconds,
+                Logs = execResult.Logs,
+                Artifacts = execResult.Artifacts.Select(a => new TestRunArtifact
+                {
+                    Name = a.Name,
+                    MimeType = a.MimeType,
+                    SizeBytes = a.SizeBytes,
+                    InlineContent = a.InlineContent?.Length > 50_000
+                        ? a.InlineContent[..50_000] + "\n...[truncated]"
+                        : a.InlineContent,
+                }).ToList(),
+            };
+        }
+        catch (Exception ex)
+        {
+            var completedAt = DateTime.UtcNow;
+            testResult = new CapsuleTestRunResult
+            {
+                TypeKey = request.TypeKey,
+                TypeName = meta.Name,
+                Status = "failed",
+                StartedAt = startedAt,
+                CompletedAt = completedAt,
+                DurationMs = (long)(completedAt - startedAt).TotalMilliseconds,
+                ErrorMessage = ex.Message,
+                Logs = $"[ERROR] {ex.Message}",
+            };
+        }
 
         return Ok(ApiResponse<object>.Ok(new { result = testResult }));
     }
@@ -881,23 +872,29 @@ public class CapsuleTestRunResult
 {
     public string TypeKey { get; set; } = string.Empty;
     public string TypeName { get; set; } = string.Empty;
+
+    /// <summary>completed | failed</summary>
     public string Status { get; set; } = "completed";
+
     public DateTime StartedAt { get; set; }
     public DateTime CompletedAt { get; set; }
     public long DurationMs { get; set; }
-    public List<ConfigFieldValidation> ConfigValidation { get; set; } = new();
-    public Dictionary<string, object?> MockOutput { get; set; } = new();
+
+    /// <summary>执行日志</summary>
+    public string? Logs { get; set; }
+
+    /// <summary>执行产物</summary>
+    public List<TestRunArtifact> Artifacts { get; set; } = new();
+
     public string? ErrorMessage { get; set; }
 }
 
-public class ConfigFieldValidation
+public class TestRunArtifact
 {
-    public string Key { get; set; } = string.Empty;
-    public string Label { get; set; } = string.Empty;
-    public bool Provided { get; set; }
-    public bool Required { get; set; }
-    public bool Valid { get; set; }
-    public string? ValidationMessage { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string MimeType { get; set; } = string.Empty;
+    public long SizeBytes { get; set; }
+    public string? InlineContent { get; set; }
 }
 
 #endregion

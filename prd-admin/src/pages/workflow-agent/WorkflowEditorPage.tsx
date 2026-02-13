@@ -298,7 +298,6 @@ function CapsuleConfigForm({ fields, values, onChange, disabled, nodeType }: {
         <div key={field.key}>
           <label className="flex items-center text-[11px] mb-1" style={{ color: 'var(--text-secondary)' }}>
             {field.label}
-            {field.required && <span style={{ color: 'rgba(239,68,68,0.8)' }} className="ml-0.5">*</span>}
           </label>
           {field.fieldType === 'textarea' || field.fieldType === 'code' ? (
             <textarea
@@ -351,7 +350,7 @@ function CapsuleConfigForm({ fields, values, onChange, disabled, nodeType }: {
 
 // ──── 右侧舱卡片 ────
 
-function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning }: {
+function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning, testRunResult, isTestRunning }: {
   node: WorkflowNode;
   index: number;
   nodeExec?: NodeExecution;
@@ -363,6 +362,8 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   onConfigChange: (nodeId: string, config: Record<string, unknown>) => void;
   capsuleMeta?: CapsuleTypeMeta;
   isRunning: boolean;
+  testRunResult?: import('@/services/contracts/workflowAgent').CapsuleTestRunResult | null;
+  isTestRunning?: boolean;
 }) {
   const typeDef = getCapsuleType(node.nodeType);
   const status = nodeExec?.status || 'idle';
@@ -511,7 +512,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                           >
                             {s.dataType}
                           </span>
-                          {s.required && <span style={{ color: 'rgba(239,68,68,0.6)', fontSize: 9 }}>必需</span>}
+                          {s.required && <span style={{ color: 'var(--text-muted)', fontSize: 9 }}>必需</span>}
                           {s.description && (
                             <span style={{ color: 'var(--text-muted)' }} className="truncate">{s.description}</span>
                           )}
@@ -579,10 +580,10 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                   size="xs"
                   variant="secondary"
                   onClick={(e) => { e.stopPropagation(); onTestRun(); }}
-                  disabled={isRunning}
+                  disabled={isRunning || isTestRunning}
                 >
-                  <FlaskConical className="w-3 h-3" />
-                  单舱测试
+                  {isTestRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />}
+                  {isTestRunning ? '执行中...' : '单舱测试'}
                 </Button>
               )}
               <Button
@@ -595,6 +596,93 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                 移除
               </Button>
             </div>
+
+            {/* 单舱测试结果 */}
+            {testRunResult && (
+              <div className="space-y-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 12 }}>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>测试结果</span>
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded-full"
+                    style={
+                      testRunResult.status === 'completed'
+                        ? { background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.9)', border: '1px solid rgba(34,197,94,0.2)' }
+                        : { background: 'rgba(239,68,68,0.1)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.2)' }
+                    }
+                  >
+                    {testRunResult.status === 'completed' ? `完成 (${testRunResult.durationMs}ms)` : '失败'}
+                  </span>
+                </div>
+
+                {/* 执行日志 */}
+                {testRunResult.logs && (
+                  <pre
+                    className="text-[10px] rounded-[8px] p-2.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
+                    style={{
+                      background: 'rgba(0,0,0,0.25)',
+                      color: 'var(--text-secondary)',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                    }}
+                  >
+                    {testRunResult.logs}
+                  </pre>
+                )}
+
+                {/* 产物 */}
+                {testRunResult.artifacts && testRunResult.artifacts.length > 0 && (
+                  <div className="space-y-1.5">
+                    {testRunResult.artifacts.map((art, idx) => (
+                      <div
+                        key={idx}
+                        className="rounded-[10px] overflow-hidden"
+                        style={{
+                          background: 'var(--nested-block-bg, rgba(255,255,255,0.03))',
+                          border: '1px solid var(--nested-block-border, rgba(255,255,255,0.08))',
+                        }}
+                      >
+                        <div className="flex items-center gap-2 px-3 py-2">
+                          <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                          <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
+                            {art.name}
+                          </span>
+                          <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                            {formatBytes(art.sizeBytes)}
+                          </span>
+                        </div>
+                        {art.inlineContent && (
+                          <div className="px-3 pb-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                            <pre
+                              className="text-[11px] rounded-[8px] p-2.5 mt-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
+                              style={{
+                                background: 'rgba(0,0,0,0.25)',
+                                color: 'var(--text-secondary)',
+                                border: '1px solid rgba(255,255,255,0.06)',
+                              }}
+                            >
+                              {art.inlineContent}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 错误 */}
+                {testRunResult.errorMessage && (
+                  <div
+                    className="text-[11px] rounded-[8px] px-3 py-2 leading-relaxed"
+                    style={{
+                      background: 'rgba(239,68,68,0.08)',
+                      color: 'rgba(239,68,68,0.9)',
+                      border: '1px solid rgba(239,68,68,0.15)',
+                    }}
+                  >
+                    {testRunResult.errorMessage}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* 执行结果：日志 + 产物 */}
             {nodeOutput && (status === 'completed' || status === 'failed') && (
@@ -957,10 +1045,15 @@ export function WorkflowEditorPage() {
 
   // ── 单舱测试 ──
 
+  const [testRunResult, setTestRunResult] = useState<{ nodeId: string; result: import('@/services/contracts/workflowAgent').CapsuleTestRunResult } | null>(null);
+  const [testRunning, setTestRunning] = useState<string | null>(null);
+
   async function handleTestRun(nodeId: string) {
     const node = workflow?.nodes.find(n => n.nodeId === nodeId);
     if (!node) return;
 
+    setTestRunning(nodeId);
+    setTestRunResult(null);
     try {
       const res = await testRunCapsule({
         typeKey: node.nodeType,
@@ -968,17 +1061,28 @@ export function WorkflowEditorPage() {
         mockInput: { _test: true },
       });
       if (res.success && res.data?.result) {
-        const r = res.data.result;
-        alert(
-          r.status === 'completed'
-            ? `${r.typeName}: 验证通过 (${r.durationMs}ms)`
-            : `${r.typeName}: 验证未通过\n${r.errorMessage || ''}`
-        );
+        setTestRunResult({ nodeId, result: res.data.result });
       } else {
-        alert('测试失败: ' + (res.error?.message || '未知错误'));
+        setTestRunResult({
+          nodeId,
+          result: {
+            typeKey: node.nodeType, typeName: node.name,
+            status: 'failed', startedAt: '', completedAt: '', durationMs: 0,
+            errorMessage: res.error?.message || '未知错误',
+          },
+        });
       }
     } catch (e: unknown) {
-      alert('测试出错: ' + (e instanceof Error ? e.message : ''));
+      setTestRunResult({
+        nodeId,
+        result: {
+          typeKey: node.nodeType, typeName: node.name,
+          status: 'failed', startedAt: '', completedAt: '', durationMs: 0,
+          errorMessage: e instanceof Error ? e.message : '请求失败',
+        },
+      });
+    } finally {
+      setTestRunning(null);
     }
   }
 
@@ -1131,6 +1235,8 @@ export function WorkflowEditorPage() {
                     onConfigChange={handleNodeConfigChange}
                     capsuleMeta={capsuleTypes.find(ct => ct.typeKey === node.nodeType)}
                     isRunning={isRunning}
+                    testRunResult={testRunResult?.nodeId === node.nodeId ? testRunResult.result : null}
+                    isTestRunning={testRunning === node.nodeId}
                   />
                 ))}
               </div>
@@ -1220,7 +1326,6 @@ function VariablesSection({ variables, values, onChange, disabled }: {
             <div key={v.key}>
               <label className="flex items-center text-[11px] mb-1" style={{ color: 'var(--text-secondary)' }}>
                 {v.label}
-                {v.required && <span style={{ color: 'rgba(239,68,68,0.8)' }} className="ml-0.5">*</span>}
               </label>
               <input
                 type={v.isSecret ? 'password' : v.type === 'month' ? 'month' : 'text'}
