@@ -436,6 +436,24 @@ button.warn:hover { background: #8a5900; color: #fff; }
   border: 1px solid rgba(139, 148, 158, 0.2);
 }
 
+.activate-inline {
+  margin-top: 6px;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #3fb950;
+  background: rgba(35, 134, 54, 0.15);
+  border: 1px solid rgba(35, 134, 54, 0.4);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.activate-inline:hover {
+  background: rgba(35, 134, 54, 0.3);
+  border-color: #3fb950;
+}
+
 .branch-error {
   font-size: 11px;
   color: #f85149;
@@ -452,24 +470,17 @@ button.warn:hover { background: #8a5900; color: #fff; }
 
 .branch-actions {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 4px;
   flex-shrink: 0;
-  align-items: flex-end;
-}
-
-.action-group {
-  display: flex;
-  gap: 4px;
   align-items: center;
 }
 
-.action-label {
-  font-size: 10px;
-  color: #6e7681;
-  min-width: 22px;
-  text-align: right;
-  flex-shrink: 0;
+.action-divider {
+  color: #30363d;
+  font-size: 14px;
+  margin: 0 2px;
+  user-select: none;
 }
 
 .branch-actions button {

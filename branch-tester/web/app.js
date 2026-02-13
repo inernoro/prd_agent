@@ -60,7 +60,7 @@ function setBusy(v) {
 function branchActions(b, isActive) {
   const groups = [];
 
-  // ── Row 1: Run mode (source-based) ──
+  // ── Source mode (run) ──
   const runBtns = [];
   if (!b.runStatus || b.runStatus === 'stopped' || b.runStatus === 'error') {
     runBtns.push(`<button class="run" onclick="runBranch('${b.id}')" title="挂载源码运行 (dotnet run)">运行</button>`);
@@ -69,11 +69,9 @@ function branchActions(b, isActive) {
     runBtns.push(`<button class="run-active" onclick="rerunBranch('${b.id}')" title="拉取最新代码并重新运行">重运行</button>`);
     runBtns.push(`<button onclick="stopRunBranch('${b.id}')" title="停止源码容器">停止</button>`);
   }
-  if (runBtns.length) {
-    groups.push(`<div class="action-group"><span class="action-label">源码</span>${runBtns.join('')}</div>`);
-  }
+  if (runBtns.length) groups.push(runBtns.join(''));
 
-  // ── Row 2: Deploy mode (artifact-based) ──
+  // ── Deploy mode (artifact) ──
   const deployBtns = [];
   if (b.status !== 'building')
     deployBtns.push(`<button onclick="pullBranch('${b.id}')">拉取</button>`);
@@ -81,11 +79,9 @@ function branchActions(b, isActive) {
     deployBtns.push(`<button class="primary" onclick="deployBranch('${b.id}')">${b.status === 'running' ? '激活' : '部署'}</button>`);
   if (b.status === 'running')
     deployBtns.push(`<button onclick="stopBranch('${b.id}')">停止</button>`);
-  if (deployBtns.length) {
-    groups.push(`<div class="action-group"><span class="action-label">制品</span>${deployBtns.join('')}</div>`);
-  }
+  if (deployBtns.length) groups.push(deployBtns.join(''));
 
-  // ── Row 3: Database ──
+  // ── Database ──
   const dbBtns = [];
   const isMainDb = b.dbName === mainDbName;
   if (!isMainDb) {
@@ -94,20 +90,18 @@ function branchActions(b, isActive) {
   } else if (b.originalDbName) {
     dbBtns.push(`<button onclick="useOwnDb('${b.id}')" title="切换回独立数据库">用独立库</button>`);
   }
-  if (dbBtns.length) {
-    groups.push(`<div class="action-group"><span class="action-label">数据</span>${dbBtns.join('')}</div>`);
-  }
+  if (dbBtns.length) groups.push(dbBtns.join(''));
 
-  // ── Row 4: Management ──
+  // ── Management ──
   const mgmtBtns = [];
   mgmtBtns.push(`<button onclick="viewLogs('${b.id}')" title="查看操作历史日志">日志</button>`);
   if (b.status === 'error' || b.runStatus === 'error')
     mgmtBtns.push(`<button class="warn" onclick="resetBranch('${b.id}')" title="重置错误状态">重置</button>`);
   if (!isActive)
     mgmtBtns.push(`<button class="danger" onclick="removeBranch('${b.id}')">删除</button>`);
-  groups.push(`<div class="action-group">${mgmtBtns.join('')}</div>`);
+  groups.push(mgmtBtns.join(''));
 
-  return groups.join('');
+  return groups.join('<span class="action-divider">|</span>');
 }
 
 function renderBranches(branches, activeBranchId) {
@@ -129,6 +123,12 @@ function renderBranches(branches, activeBranchId) {
     if (a) {
       portInfo += `<span class="port-badge deploy-port" title="部署网关端口">:5500 → 网关 (部署)</span>`;
     }
+
+    // Activate button (show when branch has a running container but is not the active one)
+    const canActivate = !a && (b.status === 'running' || b.runStatus === 'running');
+    const activateHtml = canActivate
+      ? `<button class="activate-inline" onclick="activateBranch('${b.id}')" title="切换 Nginx 网关指向此分支">切换到此分支</button>`
+      : '';
 
     // Error message
     let errorHtml = '';
@@ -158,6 +158,7 @@ function renderBranches(branches, activeBranchId) {
           <div class="branch-meta">部署: ${deployStatus}${runStatus} · DB: <span class="${b.originalDbName ? 'db-shared' : ''}" title="${b.originalDbName ? '正在使用主库（原始库: ' + esc(b.originalDbName) + '）' : ''}">${b.dbName}${b.originalDbName ? ' (主库)' : ''}</span></div>
           ${timeLine ? `<div class="branch-time">${timeLine}</div>` : ''}
           ${portInfo ? `<div class="branch-ports">${portInfo}</div>` : ''}
+          ${activateHtml}
           ${errorHtml}
         </div>
       </div>
@@ -784,6 +785,17 @@ async function doRollback() {
   try {
     const data = await api('POST', '/rollback');
     showToast(`已回滚到 ${data.activeBranchId}`, 'success');
+  } catch (err) { showToast(err.message, 'error'); }
+  finally { setBusy(false); }
+}
+
+async function activateBranch(id) {
+  if (busy) return;
+  setBusy(true);
+  showToast(`正在切换到 ${id}...`, 'info');
+  try {
+    await api('POST', `/branches/${id}/activate`);
+    showToast(`已切换到 ${id}`, 'success');
   } catch (err) { showToast(err.message, 'error'); }
   finally { setBusy(false); }
 }
