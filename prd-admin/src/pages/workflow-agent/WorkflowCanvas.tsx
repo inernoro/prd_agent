@@ -16,6 +16,7 @@ import {
   BackgroundVariant,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import './workflow-canvas.css';
 
 import {
   ArrowLeft, Save, Loader2, GripVertical,
@@ -393,9 +394,9 @@ function CanvasInner({
           >
             <Background
               variant={BackgroundVariant.Dots}
-              gap={20}
-              size={1}
-              color="rgba(255,255,255,0.05)"
+              gap={24}
+              size={0.8}
+              color="rgba(255,255,255,0.04)"
             />
             <Controls
               showInteractive={false}

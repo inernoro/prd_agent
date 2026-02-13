@@ -45,6 +45,13 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
   const emoji = useMemo(() => getEmojiForCapsule(data.capsuleType), [data.capsuleType]);
   const sc = statusColor(data.execStatus);
 
+  // CSS class 映射 — 驱动 workflow-canvas.css 中的呼吸/脉冲动画
+  const statusClass =
+    data.execStatus === 'running' ? 'capsule-node-body--running'
+    : data.execStatus === 'completed' ? 'capsule-node-body--completed'
+    : data.execStatus === 'failed' ? 'capsule-node-body--failed'
+    : '';
+
   return (
     <div
       className="relative group transition-all duration-200"
@@ -89,14 +96,14 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
         />
       )}
 
-      {/* 节点主体 */}
+      {/* 节点主体 — 应用呼吸动画 CSS class */}
       <div
-        className="rounded-[14px] px-4 py-3 backdrop-blur-xl transition-all duration-200"
+        className={`capsule-node-body ${statusClass} rounded-[14px] px-4 py-3 backdrop-blur-xl transition-all duration-200`}
         style={{
+          '--node-glow-color': `hsla(${data.accentHue}, 50%, 60%, 0.08)`,
           background: sc.bg,
           border: `1.5px solid ${selected ? `hsla(${data.accentHue}, 70%, 60%, 0.6)` : sc.border}`,
-          boxShadow: `0 0 ${selected ? '20px' : '12px'} ${selected ? `hsla(${data.accentHue}, 70%, 60%, 0.2)` : sc.glow}, 0 4px 16px rgba(0,0,0,0.3)`,
-        }}
+        } as React.CSSProperties}
       >
         {/* 头部：图标 + 名称 */}
         <div className="flex items-center gap-2.5">
@@ -184,12 +191,12 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
           ) : null}
         </div>
 
-        {/* 运行态脉冲条 */}
+        {/* 运行态脉冲条 — 带水波光效 */}
         {data.execStatus === 'running' && (
-          <div className="mt-2 h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+          <div className="capsule-progress-bar mt-2 h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
             <div
-              className="h-full rounded-full animate-pulse"
-              style={{ width: '60%', background: 'rgba(59,130,246,0.5)' }}
+              className="h-full rounded-full"
+              style={{ width: '60%', background: 'rgba(59,130,246,0.5)', transition: 'width 0.5s ease' }}
             />
           </div>
         )}
