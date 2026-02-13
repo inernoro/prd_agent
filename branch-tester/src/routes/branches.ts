@@ -197,8 +197,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
-      const headInfo = await worktreeService.pull(entry.branch, entry.worktreePath);
-      res.json({ success: true, head: headInfo });
+      const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
+      res.json({ success: true, ...pullResult });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -747,9 +747,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const msg = (err as Error).message;
       const e = stateService.getBranch(id);
       if (e) {
-        if (e.status === 'building') {
-          stateService.updateStatus(id, 'error');
-        }
+        // Always set error status on deploy failure, regardless of current status
+        stateService.updateStatus(id, 'error');
         e.errorMessage = msg;
         e.buildLog = msg;
         stateService.save();

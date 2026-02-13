@@ -14,6 +14,9 @@ export class ContainerService {
 
     await this.ensureNetwork(docker.network);
 
+    // Remove any existing container with the same name (avoids "name already in use")
+    await this.shell.exec(`docker rm -f ${entry.containerName}`);
+
     const envVars = [
       `ASPNETCORE_ENVIRONMENT=Production`,
       `ASPNETCORE_URLS=http://+:8080`,
@@ -48,6 +51,9 @@ export class ContainerService {
     const containerName = entry.runContainerName!;
 
     await this.ensureNetwork(docker.network);
+
+    // Remove any existing container with the same name (avoids "name already in use")
+    await this.shell.exec(`docker rm -f ${containerName}`);
 
     const srcMount = path.join(entry.worktreePath, options.sourceDir);
 

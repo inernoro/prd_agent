@@ -25,8 +25,16 @@ export class WorktreeService {
     }
   }
 
-  /** Pull latest code for an existing worktree */
-  async pull(branch: string, targetDir: string): Promise<string> {
+  /** Pull latest code for an existing worktree.
+   *  Returns { head, before, after, updated } so caller can detect "already up to date". */
+  async pull(branch: string, targetDir: string): Promise<{ head: string; before: string; after: string; updated: boolean }> {
+    // Get current SHA before pull
+    const beforeResult = await this.shell.exec(
+      'git rev-parse --short HEAD',
+      { cwd: targetDir },
+    );
+    const before = beforeResult.stdout.trim();
+
     // Fetch latest from remote
     const fetchResult = await this.shell.exec(
       `git fetch origin ${branch}`,
@@ -45,12 +53,19 @@ export class WorktreeService {
       throw new Error(`Failed to reset:\n${combinedOutput(resetResult)}`);
     }
 
+    // Get new SHA after pull
+    const afterResult = await this.shell.exec(
+      'git rev-parse --short HEAD',
+      { cwd: targetDir },
+    );
+    const after = afterResult.stdout.trim();
+
     // Return short log of HEAD for confirmation
     const logResult = await this.shell.exec(
       'git log --oneline -1',
       { cwd: targetDir },
     );
-    return logResult.stdout.trim();
+    return { head: logResult.stdout.trim(), before, after, updated: before !== after };
   }
 
   async remove(targetDir: string): Promise<void> {

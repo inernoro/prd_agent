@@ -45,7 +45,7 @@ describe('ContainerService', () => {
   describe('start', () => {
     it('should run docker container with correct env vars', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-      mock.addResponsePattern(/docker network create/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'abc123', stderr: '', exitCode: 0 }));
 
       const entry = makeEntry();
@@ -63,12 +63,27 @@ describe('ContainerService', () => {
       expect(runCmd).toContain('prdagent-server:feature-a');
     });
 
+    it('should remove existing container before starting', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'abc123', stderr: '', exitCode: 0 }));
+
+      await service.start(makeEntry());
+
+      const rmCmd = mock.commands.find((c) => c.includes('docker rm -f'));
+      expect(rmCmd).toContain('docker rm -f prdagent-api-feature-a');
+      // rm -f should come before docker run
+      const rmIdx = mock.commands.indexOf(rmCmd!);
+      const runIdx = mock.commands.findIndex((c) => c.includes('docker run'));
+      expect(rmIdx).toBeLessThan(runIdx);
+    });
+
     it('should throw if docker run fails', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-      mock.addResponsePattern(/docker network create/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({
         stdout: '',
-        stderr: 'name already in use',
+        stderr: 'error starting container',
         exitCode: 125,
       }));
 
@@ -86,6 +101,7 @@ describe('ContainerService', () => {
 
     it('should mount source and expose port', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'run123', stderr: '', exitCode: 0 }));
 
       const entry = makeEntry({ runContainerName: 'prdagent-run-feature-a' });
@@ -100,8 +116,21 @@ describe('ContainerService', () => {
       expect(runCmd).toContain('dotnet run --project src/PrdAgent.Api');
     });
 
+    it('should remove existing container before starting', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'run123', stderr: '', exitCode: 0 }));
+
+      const entry = makeEntry({ runContainerName: 'prdagent-run-feature-a' });
+      await service.runFromSource(entry, runOpts);
+
+      const rmCmd = mock.commands.find((c) => c.includes('docker rm -f'));
+      expect(rmCmd).toContain('docker rm -f prdagent-run-feature-a');
+    });
+
     it('should use Development environment', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'run123', stderr: '', exitCode: 0 }));
 
       const entry = makeEntry({ runContainerName: 'prdagent-run-feature-a' });
@@ -113,6 +142,7 @@ describe('ContainerService', () => {
 
     it('should use different container name than deploy', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'run123', stderr: '', exitCode: 0 }));
 
       const entry = makeEntry({
@@ -128,6 +158,7 @@ describe('ContainerService', () => {
 
     it('should NOT use --read-only (source needs write access)', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'run123', stderr: '', exitCode: 0 }));
 
       const entry = makeEntry({ runContainerName: 'prdagent-run-feature-a' });
@@ -139,6 +170,7 @@ describe('ContainerService', () => {
 
     it('should throw if docker run fails', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({
         stdout: '', stderr: 'port in use', exitCode: 125,
       }));

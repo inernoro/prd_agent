@@ -123,6 +123,12 @@ function renderBranches(branches, activeBranchId) {
     const deployStatus = statusLabel(b.status);
     const runStatus = b.runStatus ? ` · 运行: ${runStatusLabel(b.runStatus)}` : '';
 
+    // Time info
+    const timeInfo = [];
+    if (b.createdAt) timeInfo.push(`添加于 ${relativeTime(b.createdAt)}`);
+    if (b.lastActivatedAt) timeInfo.push(`激活于 ${relativeTime(b.lastActivatedAt)}`);
+    const timeLine = timeInfo.length ? timeInfo.join(' · ') : '';
+
     return `
     <div class="branch-card ${a ? 'active' : ''} ${b.status === 'error' || b.runStatus === 'error' ? 'has-error' : ''}">
       <div class="branch-card-left">
@@ -130,6 +136,7 @@ function renderBranches(branches, activeBranchId) {
         <div class="branch-info">
           <div class="branch-name">${esc(b.branch)} ${a ? '<span class="active-badge">当前激活</span>' : ''}</div>
           <div class="branch-meta">部署: ${deployStatus}${runStatus} · DB: ${b.dbName}</div>
+          ${timeLine ? `<div class="branch-time">${timeLine}</div>` : ''}
           ${portInfo ? `<div class="branch-ports">${portInfo}</div>` : ''}
           ${errorHtml}
         </div>
@@ -327,7 +334,12 @@ function appendLogEvent(data) {
     body.querySelectorAll('.deploy-step.is-running').forEach((el) => {
       el.className = 'deploy-step is-error';
       const hdr = el.querySelector('.deploy-step-hdr');
-      if (hdr) hdr.innerHTML = `${STEP_ICONS.error} ${hdr.querySelector('span')?.outerHTML || ''}`;
+      if (hdr) {
+        // Get title text from the non-loading span (skip spinner span)
+        const titleSpan = hdr.querySelector('span:not(.loading)');
+        const titleText = titleSpan ? titleSpan.textContent : '';
+        hdr.innerHTML = `${STEP_ICONS.error} <span>${esc(titleText)}</span>`;
+      }
     });
     body.insertAdjacentHTML('beforeend', `
       <div class="deploy-step is-error">
@@ -493,7 +505,11 @@ async function pullBranch(id) {
   showToast(`正在拉取 ${id} 最新代码...`, 'info');
   try {
     const data = await api('POST', `/branches/${id}/pull`);
-    showToast(`${id} 已更新: ${data.head}`, 'success');
+    if (data.updated) {
+      showToast(`${id} 已更新: ${data.before} → ${data.after}`, 'success');
+    } else {
+      showToast(`${id} 已是最新 (${data.after})`, 'info');
+    }
   } catch (err) { showToast(`拉取失败: ${err.message}`, 'error'); }
   finally { setBusy(false); }
 }

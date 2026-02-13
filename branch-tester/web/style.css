@@ -387,6 +387,12 @@ button.warn:hover { background: #8a5900; color: #fff; }
   color: #8b949e;
 }
 
+.branch-time {
+  font-size: 11px;
+  color: #6e7681;
+  margin-top: 2px;
+}
+
 .branch-ports {
   display: flex;
   flex-wrap: wrap;

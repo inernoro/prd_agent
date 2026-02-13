@@ -66,6 +66,61 @@ describe('WorktreeService', () => {
     });
   });
 
+  describe('pull', () => {
+    it('should return updated=true when new commits are pulled', async () => {
+      let callCount = 0;
+      mock.addResponsePattern(/git rev-parse --short HEAD/, () => {
+        callCount++;
+        // First call: before SHA, Second call: after SHA (different)
+        return callCount === 1
+          ? { stdout: 'abc1234\n', stderr: '', exitCode: 0 }
+          : { stdout: 'def5678\n', stderr: '', exitCode: 0 };
+      });
+      mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git reset --hard/, () => ({ stdout: 'HEAD is now at def5678', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git log --oneline/, () => ({ stdout: 'def5678 new feature\n', stderr: '', exitCode: 0 }));
+
+      const result = await service.pull('main', '/tmp/wt/main');
+      expect(result.updated).toBe(true);
+      expect(result.before).toBe('abc1234');
+      expect(result.after).toBe('def5678');
+      expect(result.head).toBe('def5678 new feature');
+    });
+
+    it('should return updated=false when already at latest', async () => {
+      mock.addResponsePattern(/git rev-parse --short HEAD/, () => ({
+        stdout: 'abc1234\n', stderr: '', exitCode: 0,
+      }));
+      mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git reset --hard/, () => ({ stdout: 'HEAD is now at abc1234', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git log --oneline/, () => ({ stdout: 'abc1234 existing commit\n', stderr: '', exitCode: 0 }));
+
+      const result = await service.pull('main', '/tmp/wt/main');
+      expect(result.updated).toBe(false);
+      expect(result.before).toBe('abc1234');
+      expect(result.after).toBe('abc1234');
+    });
+
+    it('should throw if fetch fails', async () => {
+      mock.addResponsePattern(/git rev-parse/, () => ({ stdout: 'abc\n', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git fetch/, () => ({
+        stdout: '', stderr: 'fatal: network error', exitCode: 128,
+      }));
+
+      await expect(service.pull('bad', '/tmp/wt/bad')).rejects.toThrow('fetch');
+    });
+
+    it('should throw if reset fails', async () => {
+      mock.addResponsePattern(/git rev-parse/, () => ({ stdout: 'abc\n', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git reset --hard/, () => ({
+        stdout: '', stderr: 'fatal: ambiguous argument', exitCode: 1,
+      }));
+
+      await expect(service.pull('bad', '/tmp/wt/bad')).rejects.toThrow('reset');
+    });
+  });
+
   describe('branchExists', () => {
     it('should return true if remote branch exists', async () => {
       mock.addResponsePattern(/git ls-remote/, () => ({
