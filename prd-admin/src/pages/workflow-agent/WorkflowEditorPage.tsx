@@ -23,7 +23,7 @@ import { TabBar } from '@/components/design/TabBar';
 import {
   getCapsuleType, getIconForCapsule, getEmojiForCapsule, getCategoryEmoji,
 } from './capsuleRegistry';
-import { parseCurl, toCurl, headersToJson, prettyBody } from './parseCurl';
+import { parseCurl, toCurl, headersToJson, prettyBody, type ParsedCurl } from './parseCurl';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流直接编辑页
@@ -303,10 +303,11 @@ function CurlExportButton({ values }: { values: Record<string, string> }) {
 
 // ──── 舱配置表单 ────
 
-function CapsuleConfigForm({ fields, values, onChange, disabled, nodeType }: {
+function CapsuleConfigForm({ fields, values, onChange, onBatchChange, disabled, nodeType }: {
   fields: CapsuleConfigField[];
   values: Record<string, string>;
   onChange: (key: string, value: string) => void;
+  onBatchChange: (changes: Record<string, string>) => void;
   disabled?: boolean;
   nodeType?: string;
 }) {
@@ -316,15 +317,31 @@ function CapsuleConfigForm({ fields, values, onChange, disabled, nodeType }: {
     <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>此舱无需额外配置</p>
   );
 
+  // 将 parseCurl 结果一次性写入所有配置字段（避免多次 onChange 导致 stale state 覆盖）
+  function applyCurlParsed(parsed: ParsedCurl, rawText?: string) {
+    const batch: Record<string, string> = {};
+    batch.url = parsed.url;
+    batch.method = parsed.method;
+    const h = headersToJson(parsed.headers);
+    if (h) batch.headers = h;
+    const b = prettyBody(parsed.body);
+    if (b) batch.body = b;
+    if (nodeType === 'smart-http' && rawText) batch.curlCommand = rawText;
+    onBatchChange(batch);
+    setCurlParsed(true);
+    setTimeout(() => setCurlParsed(false), 2500);
+  }
+
   function handleCurlImport(parsed: { url: string; method: string; headers: string; body: string }) {
-    if (parsed.url) onChange('url', parsed.url);
-    if (parsed.method) onChange('method', parsed.method);
-    if (parsed.headers) onChange('headers', parsed.headers);
-    if (parsed.body) onChange('body', parsed.body);
-    // smart-http: 也写入 curlCommand
+    const batch: Record<string, string> = {};
+    if (parsed.url) batch.url = parsed.url;
+    if (parsed.method) batch.method = parsed.method;
+    if (parsed.headers) batch.headers = parsed.headers;
+    if (parsed.body) batch.body = parsed.body;
     if (nodeType === 'smart-http') {
-      onChange('curlCommand', `curl '${parsed.url}' -X ${parsed.method}${parsed.headers ? ` -H '...'` : ''}${parsed.body ? ` -d '...'` : ''}`);
+      batch.curlCommand = `curl '${parsed.url}' -X ${parsed.method}${parsed.headers ? ` -H '...'` : ''}${parsed.body ? ` -d '...'` : ''}`;
     }
+    onBatchChange(batch);
   }
 
   // curlCommand 文本框自动解析：粘贴 cURL 命令后自动填充 url/method/headers/body
@@ -335,15 +352,7 @@ function CapsuleConfigForm({ fields, values, onChange, disabled, nodeType }: {
     const parsed = parseCurl(text);
     if (parsed) {
       e.preventDefault();
-      onChange('curlCommand', text);
-      onChange('url', parsed.url);
-      onChange('method', parsed.method);
-      const h = headersToJson(parsed.headers);
-      if (h) onChange('headers', h);
-      const b = prettyBody(parsed.body);
-      if (b) onChange('body', b);
-      setCurlParsed(true);
-      setTimeout(() => setCurlParsed(false), 2500);
+      applyCurlParsed(parsed, text);
     }
   }
 
@@ -409,14 +418,7 @@ function CapsuleConfigForm({ fields, values, onChange, disabled, nodeType }: {
                   const parsed = parseCurl(text);
                   if (parsed) {
                     e.preventDefault();
-                    onChange('url', parsed.url);
-                    onChange('method', parsed.method);
-                    const h = headersToJson(parsed.headers);
-                    if (h) onChange('headers', h);
-                    const b = prettyBody(parsed.body);
-                    if (b) onChange('body', b);
-                    setCurlParsed(true);
-                    setTimeout(() => setCurlParsed(false), 2500);
+                    applyCurlParsed(parsed);
                   }
                 }
               } : undefined}
@@ -468,6 +470,11 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
 
   function handleConfigFieldChange(key: string, val: string) {
     const updated = { ...node.config, [key]: val };
+    onConfigChange(node.nodeId, updated);
+  }
+
+  function handleConfigBatchChange(changes: Record<string, string>) {
+    const updated = { ...node.config, ...changes };
     onConfigChange(node.nodeId, updated);
   }
 
@@ -653,6 +660,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                   fields={capsuleMeta.configSchema}
                   values={configValues}
                   onChange={handleConfigFieldChange}
+                  onBatchChange={handleConfigBatchChange}
                   disabled={isRunning}
                   nodeType={node.nodeType}
                 />
