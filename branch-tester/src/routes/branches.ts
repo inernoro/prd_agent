@@ -84,9 +84,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  // GET /branches — list all
-  router.get('/branches', (_req, res) => {
+  // GET /branches — list all (with live container status reconciliation)
+  router.get('/branches', async (_req, res) => {
     const state = stateService.getState();
+    let dirty = false;
+
+    // Reconcile persisted status with actual Docker container state
+    for (const entry of Object.values(state.branches)) {
+      // Deploy mode: status says "running" but container is dead?
+      if (entry.status === 'running') {
+        const alive = await containerService.isRunning(entry.containerName);
+        if (!alive) {
+          entry.status = 'stopped';
+          entry.errorMessage = '容器已退出（自动检测）';
+          dirty = true;
+        }
+      }
+      // Run mode: runStatus says "running" but container is dead?
+      if (entry.runStatus === 'running' && entry.runContainerName) {
+        const alive = await containerService.isRunning(entry.runContainerName);
+        if (!alive) {
+          entry.runStatus = 'stopped';
+          entry.runErrorMessage = '容器已退出（自动检测）';
+          dirty = true;
+        }
+      }
+    }
+
+    if (dirty) stateService.save();
+
     res.json({
       branches: state.branches,
       activeBranchId: state.activeBranchId,
