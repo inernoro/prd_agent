@@ -225,6 +225,7 @@ function ChatContainerInner() {
         id: String(m.id || ''),
         role: (m.role === 'User' ? 'User' : 'Assistant') as 'User' | 'Assistant',
         content: String(m.content || ''),
+        thinking: (m as any).thinkingContent ? String((m as any).thinkingContent) : undefined,
         timestamp: new Date(m.timestamp || Date.now()),
         viewRole: (m.viewRole as any) || undefined,
         runId: (m as any).runId ? String((m as any).runId) : undefined,

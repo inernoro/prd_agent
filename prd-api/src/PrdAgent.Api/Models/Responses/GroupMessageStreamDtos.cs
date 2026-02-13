@@ -46,6 +46,8 @@ public class GroupMessageStreamMessageDto
     public List<GroupMemberTag>? SenderTags { get; set; }
     public MessageRole Role { get; set; }
     public string Content { get; set; } = string.Empty;
+    /// <summary>AI 思考过程（DeepSeek reasoning_content 等）</summary>
+    public string? ThinkingContent { get; set; }
     public string? ReplyToMessageId { get; set; }
     public string? ResendOfMessageId { get; set; }
     public UserRole? ViewRole { get; set; }

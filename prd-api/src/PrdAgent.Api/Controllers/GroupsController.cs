@@ -1176,6 +1176,7 @@ public class GroupsController : ControllerBase
                 SenderTags = senderTags,
                 Role = m.Role,
                 Content = shouldHideContent ? string.Empty : m.Content,
+                ThinkingContent = shouldHideContent ? null : m.ThinkingContent,
                 ReplyToMessageId = m.ReplyToMessageId,
                 ResendOfMessageId = m.ResendOfMessageId,
                 ViewRole = m.ViewRole,

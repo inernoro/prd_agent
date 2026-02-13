@@ -98,9 +98,7 @@ function ThinkingIndicator({ label }: { label?: string }) {
 
 /**
  * 思考过程展示区：在正文输出前实时展示 AI 的推理过程，正文开始后自动折叠。
- * - thinkingText: 累积的思考文本
- * - isThinkingPhase: 是否仍在思考阶段（正文未开始）
- * - hasContent: 消息是否已有正文内容
+ * 参考 DeepSeek 设计：「已深度思考（用时 X 秒）」可折叠，内容区带左侧线
  */
 function ThinkingSection({ thinkingText, isThinkingPhase, hasContent }: {
   thinkingText: string;
@@ -111,10 +109,25 @@ function ThinkingSection({ thinkingText, isThinkingPhase, hasContent }: {
   // 自动折叠逻辑：正文开始后自动折叠，但用户手动展开后不再自动折叠
   const isExpanded = manualExpanded !== null ? manualExpanded : isThinkingPhase;
 
-  // 正文开始输出时，重置手动状态（让自动折叠生效）
+  // 计时器：记录思考耗时
+  const thinkingStartRef = useRef<number>(Date.now());
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!isThinkingPhase) return;
+    thinkingStartRef.current = Date.now();
+    const timer = setInterval(() => {
+      setElapsed(Math.round((Date.now() - thinkingStartRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isThinkingPhase]);
+
+  // 正文开始输出时，冻结耗时并重置手动状态（让自动折叠生效）
+  const frozenElapsedRef = useRef(0);
   const prevHasContentRef = useRef(hasContent);
   useEffect(() => {
     if (hasContent && !prevHasContentRef.current) {
+      frozenElapsedRef.current = Math.round((Date.now() - thinkingStartRef.current) / 1000);
       setManualExpanded(null);
     }
     prevHasContentRef.current = hasContent;
@@ -122,29 +135,37 @@ function ThinkingSection({ thinkingText, isThinkingPhase, hasContent }: {
 
   if (!thinkingText) return null;
 
+  const displaySeconds = isThinkingPhase ? elapsed : frozenElapsedRef.current;
+
   return (
     <div className="mb-2">
       <button
         type="button"
         onClick={() => setManualExpanded(isExpanded ? false : true)}
-        className="inline-flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-secondary transition-colors select-none"
+        className="inline-flex items-center gap-1.5 text-xs transition-colors select-none"
+        style={{ color: 'rgba(245,158,11,0.75)' }}
       >
         <svg
-          className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+          className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        <span>{isThinkingPhase ? '思考中...' : '查看思考过程'}</span>
+        <span>
+          {isThinkingPhase
+            ? `思考中...${displaySeconds > 0 ? `（${displaySeconds} 秒）` : ''}`
+            : `已深度思考${displaySeconds > 0 ? `（用时 ${displaySeconds} 秒）` : ''}`
+          }
+        </span>
         {isThinkingPhase ? (
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
         ) : null}
       </button>
       {isExpanded ? (
         <div className="mt-1.5 pl-4 border-l-2 border-amber-400/30 dark:border-amber-500/20">
-          <p className="text-xs leading-relaxed text-text-tertiary whitespace-pre-wrap break-words">
+          <p className="text-xs leading-relaxed whitespace-pre-wrap break-words" style={{ color: 'rgba(150,150,150,0.8)' }}>
             {thinkingText}
           </p>
         </div>

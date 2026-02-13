@@ -100,6 +100,10 @@ public class LlmRequestLog
     // - 单条上限 200k 字符（超出会被截断；并记录 hash/长度用于对照）
     public string? QuestionText { get; set; }
     public string? AnswerText { get; set; }
+    /// <summary>
+    /// AI 思考过程文本（DeepSeek reasoning_content / &lt;think&gt; 标签内容），与 AnswerText 分开存储。
+    /// </summary>
+    public string? ThinkingText { get; set; }
     public int? AnswerTextChars { get; set; }
     public string? AnswerTextHash { get; set; }
 

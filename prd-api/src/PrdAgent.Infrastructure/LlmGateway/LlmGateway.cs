@@ -398,7 +398,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     resolution?.ActualModel);
             }
 
-            await FinishStreamLogAsync(logId, assembledText, tokenUsage, durationMs, ct);
+            var assembledThinking = thinkingBuilder.ToString();
+            await FinishStreamLogAsync(logId, assembledText, assembledThinking, tokenUsage, durationMs, ct);
         }
         finally
         {
@@ -938,6 +939,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     TokenUsageSource: tokenUsage?.Source ?? "missing",
                     ImageSuccessCount: null,
                     AnswerText: answerText,
+                    ThinkingText: null,
                     AssembledTextChars: responseBody.Length,
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(responseBody),
                     Status: status,
@@ -953,6 +955,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private async Task FinishStreamLogAsync(
         string? logId,
         string assembledText,
+        string assembledThinking,
         GatewayTokenUsage? tokenUsage,
         long durationMs,
         CancellationToken ct)
@@ -976,6 +979,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     TokenUsageSource: tokenUsage?.Source ?? "missing",
                     ImageSuccessCount: null,
                     AnswerText: assembledText.Length > 5000 ? assembledText.Substring(0, 5000) + "..." : assembledText,
+                    ThinkingText: string.IsNullOrEmpty(assembledThinking) ? null : assembledThinking,
                     AssembledTextChars: assembledText.Length,
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(assembledText),
                     Status: "succeeded",
@@ -1086,6 +1090,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     TokenUsageSource: "missing",
                     ImageSuccessCount: null,
                     AnswerText: answerText,
+                    ThinkingText: null,
                     AssembledTextChars: responseBody.Length,
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(responseBody),
                     Status: status,

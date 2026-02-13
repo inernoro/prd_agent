@@ -891,6 +891,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
   const [pageSize] = useState(30);
   const [answerView, setAnswerView] = useState<'preview' | 'raw'>('preview');
   const [answerVisibleChars, setAnswerVisibleChars] = useState(false);
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const [answerHint, setAnswerHint] = useState<string>('');
   const [jsonCheckPhase, setJsonCheckPhase] = useState<'idle' | 'scanning' | 'passed' | 'failed'>('idle');
   const jsonCheckLastRef = useRef<{ ok: boolean; reason?: string } | null>(null);
@@ -1183,6 +1184,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
   }, []);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
+  const thinkingText = useMemo(() => (detail?.thinkingText ?? '').trim(), [detail]);
   const answerText = useMemo(() => (detail?.answerText ?? '').trim(), [detail]);
   const answerHasUnicodeEscapes = useMemo(() => /\\u[0-9a-fA-F]{4}/.test(answerText), [answerText]);
   const answerDisplayText = useMemo(
@@ -2332,6 +2334,30 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           说明：此处来自 Answer 中的 <code>upstreamBodyPreview</code> 字段（上游 HTTP 响应的脱敏预览），用于排查问题；并不代表模型返回了两次数据。
                         </div>
                         <pre style={codeBoxStyle()}>{imageGenUpstream.preview}</pre>
+                      </div>
+                    ) : null}
+                    {/* 思考过程折叠区（仅 DeepSeek 等模型有 thinkingText 时显示） */}
+                    {thinkingText ? (
+                      <div className="mb-3 rounded-[12px]" style={{ border: '1px solid rgba(245,158,11,0.2)', background: 'rgba(245,158,11,0.04)' }}>
+                        <button
+                          type="button"
+                          className="w-full flex items-center gap-2 px-3 py-2 text-left"
+                          onClick={() => setThinkingExpanded(!thinkingExpanded)}
+                        >
+                          <svg className={`w-3 h-3 transition-transform ${thinkingExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: 'rgba(245,158,11,0.7)' }}>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                          <span className="text-xs" style={{ color: 'rgba(245,158,11,0.85)' }}>
+                            {thinkingExpanded ? '收起思考过程' : `已深度思考（${thinkingText.length} 字符）`}
+                          </span>
+                        </button>
+                        {thinkingExpanded ? (
+                          <div className="px-3 pb-3">
+                            <pre style={{ ...codeBoxStyle(), maxHeight: 400, overflow: 'auto', fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'rgba(0,0,0,0.18)' }}>
+                              {thinkingText}
+                            </pre>
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
                     {answerView === 'raw' ? (

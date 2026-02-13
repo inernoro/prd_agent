@@ -55,6 +55,8 @@ public record LlmLogDone(
     string? TokenUsageSource,
     int? ImageSuccessCount,
     string? AnswerText,
+    /// <summary>AI 思考过程文本（reasoning_content / &lt;think&gt; 标签内容）</summary>
+    string? ThinkingText,
     int? AssembledTextChars,
     string? AssembledTextHash,
     string Status,

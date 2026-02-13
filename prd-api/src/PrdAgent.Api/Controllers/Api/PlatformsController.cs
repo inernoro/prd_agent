@@ -762,6 +762,7 @@ public class PlatformsController : ControllerBase
                 TokenUsageSource: "missing",
                 ImageSuccessCount: null,
                 AnswerText: prettyBody,
+                ThinkingText: null,
                 AssembledTextChars: assembledChars,
                 AssembledTextHash: assembledHash,
                 Status: "succeeded",
