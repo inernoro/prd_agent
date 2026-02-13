@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -17,13 +18,16 @@ public class WorkflowAgentController : ControllerBase
     private const string AppKey = "workflow-agent";
 
     private readonly MongoDbContext _db;
+    private readonly IRunQueue _runQueue;
     private readonly ILogger<WorkflowAgentController> _logger;
 
     public WorkflowAgentController(
         MongoDbContext db,
+        IRunQueue runQueue,
         ILogger<WorkflowAgentController> logger)
     {
         _db = db;
+        _runQueue = runQueue;
         _logger = logger;
     }
 
@@ -411,8 +415,7 @@ public class WorkflowAgentController : ControllerBase
             cancellationToken: ct);
 
         // 入队（WorkflowRunWorker 会消费）
-        // TODO: 接入 IRunQueue 后取消注释
-        // await _runQueue.EnqueueAsync("workflow", execution.Id);
+        await _runQueue.EnqueueAsync("workflow", execution.Id, ct);
 
         _logger.LogInformation("[{AppKey}] Workflow execution queued: {ExecutionId} for {WorkflowId} by {UserId}",
             AppKey, execution.Id, id, userId);
@@ -489,6 +492,9 @@ public class WorkflowAgentController : ControllerBase
         }
 
         await _db.WorkflowExecutions.InsertOneAsync(newExecution, cancellationToken: ct);
+
+        // 入队
+        await _runQueue.EnqueueAsync("workflow", newExecution.Id, ct);
 
         _logger.LogInformation("[{AppKey}] Execution resumed from node {NodeId}: new={NewExecId} original={OriginalExecId}",
             AppKey, nodeId, newExecution.Id, executionId);

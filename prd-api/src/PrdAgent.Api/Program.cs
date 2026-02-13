@@ -186,6 +186,9 @@ builder.Services.AddHostedService<ImageGenRunWorker>();
 // 对话 Run 后台任务执行器（断线不影响服务端闭环）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 
+// 工作流后台执行器（DAG 拓扑排序 → 逐节点推进）
+builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
+
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
 
