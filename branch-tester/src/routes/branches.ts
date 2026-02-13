@@ -329,6 +329,184 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ──────────────────────────────────────────────────────────
+  //  Quick Run / Re-run  (SSE stream, no nginx activation)
+  // ──────────────────────────────────────────────────────────
+
+  /** Shared logic for run / rerun SSE endpoints */
+  async function doRun(
+    req: import('express').Request,
+    res: import('express').Response,
+    opts: { forcePull: boolean; forceRebuild: boolean },
+  ) {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `Branch "${id}" not found` });
+      return;
+    }
+    if (entry.status === 'building') {
+      res.status(409).json({ error: 'Build already in progress' });
+      return;
+    }
+
+    // Switch to SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (data: Record<string, unknown>) => {
+      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+    };
+
+    const portStart = config.run?.portStart ?? 9001;
+    const adminMount = config.run?.adminMount ?? '/app/wwwroot';
+
+    try {
+      // ---- pull (rerun only) ----
+      if (opts.forcePull) {
+        send({ step: 'pull', status: 'running', title: '拉取最新代码' });
+
+        // Get current HEAD before pull for diff
+        const beforeSha = await shell.exec('git rev-parse --short HEAD', { cwd: entry.worktreePath });
+
+        const headInfo = await worktreeService.pull(entry.branch, entry.worktreePath);
+
+        // Show what changed
+        const diffStat = await shell.exec(
+          `git diff --stat ${beforeSha.stdout.trim()}..HEAD`,
+          { cwd: entry.worktreePath },
+        );
+        const diffLog = await shell.exec(
+          `git log --oneline ${beforeSha.stdout.trim()}..HEAD`,
+          { cwd: entry.worktreePath },
+        );
+
+        send({
+          step: 'pull', status: 'done', title: '拉取最新代码',
+          detail: {
+            head: headInfo,
+            changes: diffStat.stdout.trim(),
+            newCommits: diffLog.stdout.trim(),
+          },
+        });
+      }
+
+      // ---- env info ----
+      const commitResult = await shell.exec('git log --oneline -1', { cwd: entry.worktreePath });
+      const shaResult = await shell.exec('git rev-parse --short HEAD', { cwd: entry.worktreePath });
+      const commit = shaResult.stdout.trim();
+      const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
+
+      // Allocate host port if not yet assigned
+      if (!entry.hostPort) {
+        entry.hostPort = stateService.allocatePort(portStart);
+        stateService.save();
+      }
+
+      send({
+        step: 'env', status: 'done', title: '环境信息',
+        detail: {
+          branch: entry.branch,
+          commit,
+          commitLog: commitResult.stdout.trim(),
+          containerName: entry.containerName,
+          imageName: entry.imageName,
+          dbName: entry.dbName,
+          hostPort: entry.hostPort,
+          url: `http://localhost:${entry.hostPort}`,
+        },
+      });
+
+      // ---- build ----
+      const needsBuild = opts.forceRebuild || entry.status === 'idle' || entry.status === 'error';
+
+      if (needsBuild) {
+        // If rerunning from built/running/stopped state, force rebuild
+        stateService.updateStatus(id, 'building');
+        stateService.save();
+
+        send({ step: 'build_api', status: 'running', title: '构建 API 镜像' });
+        const apiLog = await builderService.buildApiImage(
+          entry.worktreePath, entry.imageName,
+          (chunk) => send({ step: 'build_api', status: 'running', title: '构建 API 镜像', chunk }),
+        );
+        send({ step: 'build_api', status: 'done', title: '构建 API 镜像' });
+
+        send({ step: 'build_admin', status: 'running', title: '构建前端静态文件' });
+        const adminLog = await builderService.buildAdminStatic(
+          entry.worktreePath, buildsDir,
+          (chunk) => send({ step: 'build_admin', status: 'running', title: '构建前端静态文件', chunk }),
+        );
+        send({ step: 'build_admin', status: 'done', title: '构建前端静态文件' });
+
+        stateService.updateStatus(id, 'built');
+        stateService.getBranch(id)!.buildLog = `API:\n${apiLog}\nAdmin:\n${adminLog}`;
+        stateService.save();
+      } else {
+        send({ step: 'build_api', status: 'skip', title: '构建 API 镜像 (已构建，跳过)' });
+        send({ step: 'build_admin', status: 'skip', title: '构建前端静态文件 (已构建，跳过)' });
+      }
+
+      // ---- stop old container if running ----
+      if (stateService.getBranch(id)!.status === 'running' || await containerService.isRunning(entry.containerName)) {
+        send({ step: 'stop', status: 'running', title: '停止旧容器' });
+        await containerService.stop(entry.containerName);
+        send({ step: 'stop', status: 'done', title: '停止旧容器' });
+      }
+
+      // ---- start with exposed port + admin mount ----
+      send({ step: 'start', status: 'running', title: '启动容器 (端口直连)' });
+
+      await containerService.start(stateService.getBranch(id)!, {
+        exposePort: entry.hostPort,
+        volumes: [`${buildsDir}:${adminMount}:ro`],
+      });
+      stateService.updateStatus(id, 'running');
+      stateService.save();
+
+      send({
+        step: 'start', status: 'done', title: '启动容器 (端口直连)',
+        detail: {
+          containerName: entry.containerName,
+          hostPort: entry.hostPort,
+          adminMount,
+          url: `http://localhost:${entry.hostPort}`,
+        },
+      });
+
+      // ---- done ----
+      send({
+        step: 'complete', status: 'done',
+        detail: {
+          url: `http://localhost:${entry.hostPort}`,
+          apiUrl: `http://localhost:${entry.hostPort}/api`,
+        },
+      });
+    } catch (err) {
+      const e = stateService.getBranch(id);
+      if (e && e.status === 'building') {
+        stateService.updateStatus(id, 'error');
+        e.buildLog = (err as Error).message;
+        stateService.save();
+      }
+      send({ step: 'error', status: 'error', title: '运行失败', log: (err as Error).message });
+    } finally {
+      res.end();
+    }
+  }
+
+  // POST /branches/:id/run — Quick Run: build if needed + start with exposed port (no nginx)
+  router.post('/branches/:id/run', (req, res) => {
+    doRun(req, res, { forcePull: false, forceRebuild: false });
+  });
+
+  // POST /branches/:id/rerun — Re-run: pull latest + force rebuild + restart
+  router.post('/branches/:id/rerun', (req, res) => {
+    doRun(req, res, { forcePull: true, forceRebuild: true });
+  });
+
   // POST /branches/:id/deploy — SSE stream: build + start + activate + health check
   router.post('/branches/:id/deploy', async (req, res) => {
     const { id } = req.params;

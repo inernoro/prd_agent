@@ -76,6 +76,55 @@ describe('ContainerService', () => {
     });
   });
 
+  describe('start with options', () => {
+    it('should add -p flag when exposePort is set', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'abc123', stderr: '', exitCode: 0 }));
+
+      await service.start(makeEntry(), { exposePort: 9001 });
+
+      const runCmd = mock.commands.find((c) => c.includes('docker run'));
+      expect(runCmd).toContain('-p 9001:8080');
+    });
+
+    it('should add -v flags when volumes are set', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'abc123', stderr: '', exitCode: 0 }));
+
+      await service.start(makeEntry(), {
+        volumes: ['/host/dist:/app/wwwroot:ro'],
+      });
+
+      const runCmd = mock.commands.find((c) => c.includes('docker run'));
+      expect(runCmd).toContain('-v /host/dist:/app/wwwroot:ro');
+    });
+
+    it('should add both -p and -v for combined quick-run', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'abc123', stderr: '', exitCode: 0 }));
+
+      await service.start(makeEntry(), {
+        exposePort: 9002,
+        volumes: ['/builds/a:/app/wwwroot:ro'],
+      });
+
+      const runCmd = mock.commands.find((c) => c.includes('docker run'));
+      expect(runCmd).toContain('-p 9002:8080');
+      expect(runCmd).toContain('-v /builds/a:/app/wwwroot:ro');
+    });
+
+    it('should work without options (backward compatible)', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'abc123', stderr: '', exitCode: 0 }));
+
+      await service.start(makeEntry());
+
+      const runCmd = mock.commands.find((c) => c.includes('docker run'));
+      expect(runCmd).not.toContain('-p ');
+      expect(runCmd).not.toContain('-v ');
+    });
+  });
+
   describe('stop', () => {
     it('should stop and remove container', async () => {
       mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

@@ -96,6 +96,18 @@ export class StateService {
     return previousId;
   }
 
+  /** Allocate the next available host port, skipping any already in use */
+  allocatePort(portStart: number): number {
+    const usedPorts = new Set(
+      Object.values(this.state.branches)
+        .map((b) => b.hostPort)
+        .filter((p): p is number => p != null),
+    );
+    let port = portStart;
+    while (usedPorts.has(port)) port++;
+    return port;
+  }
+
   allocateDbName(id: string, defaultDbName: string): string {
     if (id === 'main' || id === 'master') {
       return defaultDbName;

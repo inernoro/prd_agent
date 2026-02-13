@@ -422,6 +422,144 @@ describe('Branch Routes', () => {
     });
   });
 
+  // ─── Quick Run / Re-run ─────────────────────────────────────
+
+  /** Helper: make SSE request and parse events */
+  async function sseRequest(
+    srv: http.Server,
+    urlPath: string,
+  ): Promise<{ status: number; events: Array<Record<string, any>> }> {
+    const addr = srv.address() as { port: number };
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1', port: addr.port, path: urlPath,
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+        },
+        (res) => {
+          let buf = '';
+          res.on('data', (c: Buffer) => (buf += c.toString()));
+          res.on('end', () => {
+            const events = buf
+              .split('\n')
+              .filter((l) => l.startsWith('data: '))
+              .map((l) => { try { return JSON.parse(l.slice(6)); } catch { return null; } })
+              .filter(Boolean);
+            resolve({ status: res.statusCode!, events });
+          });
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  describe('POST /api/branches/:id/run (Quick Run)', () => {
+    it('should build + start with exposed port, no nginx switch', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+
+      const { status, events } = await sseRequest(server, '/api/branches/feature-test/run');
+      expect(status).toBe(200);
+
+      // Verify env step includes hostPort
+      const env = events.find((e) => e.step === 'env');
+      expect(env).toBeDefined();
+      expect(env!.detail.hostPort).toBeGreaterThanOrEqual(9001);
+      expect(env!.detail.url).toContain(String(env!.detail.hostPort));
+
+      // Verify build happened (status was idle)
+      const buildApi = events.filter((e) => e.step === 'build_api');
+      expect(buildApi.length).toBeGreaterThanOrEqual(2);
+      expect(buildApi[0].status).toBe('running');
+
+      // Verify start happened with port info
+      const start = events.find((e) => e.step === 'start' && e.status === 'done');
+      expect(start).toBeDefined();
+      expect(start!.detail.hostPort).toBeGreaterThanOrEqual(9001);
+
+      // Verify no activate step (this is run, not deploy)
+      const activate = events.find((e) => e.step === 'activate');
+      expect(activate).toBeUndefined();
+
+      // Verify complete has URL
+      const complete = events.find((e) => e.step === 'complete');
+      expect(complete).toBeDefined();
+      expect(complete!.detail.url).toBeDefined();
+      expect(complete!.detail.apiUrl).toBeDefined();
+
+      // Container command should include -p and -v flags
+      const runCmd = mock.commands.find((c) => c.includes('docker run') && c.includes('-p'));
+      expect(runCmd).toBeDefined();
+      expect(runCmd).toContain('-v');
+
+      // State should be running
+      const list = await request(server, 'GET', '/api/branches');
+      expect((list.body as any).branches['feature-test'].status).toBe('running');
+      expect((list.body as any).branches['feature-test'].hostPort).toBeGreaterThanOrEqual(9001);
+
+      // activeBranchId should NOT be set (no activation)
+      expect((list.body as any).activeBranchId).toBeNull();
+    });
+
+    it('should skip build if already built', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      await request(server, 'POST', '/api/branches/feature-test/build');
+
+      const { events } = await sseRequest(server, '/api/branches/feature-test/run');
+
+      const buildApi = events.find((e) => e.step === 'build_api');
+      expect(buildApi!.status).toBe('skip');
+    });
+
+    it('should return 404 for unknown branch', async () => {
+      const res = await request(server, 'POST', '/api/branches/nope/run');
+      expect(res.status).toBe(404);
+    });
+
+    it('should return 409 if branch is building', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      stateService.updateStatus('feature-test', 'building');
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/branches/feature-test/run');
+      expect(res.status).toBe(409);
+    });
+  });
+
+  describe('POST /api/branches/:id/rerun (Re-run)', () => {
+    it('should pull + force rebuild + restart', async () => {
+      // First, add and build the branch
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      await request(server, 'POST', '/api/branches/feature-test/build');
+
+      // Add git diff/log mocks for the pull step
+      mock.addResponsePattern(/git diff --stat/, () => ({
+        stdout: ' src/main.ts | 5 +++--\n 1 file changed\n', stderr: '', exitCode: 0,
+      }));
+      mock.addResponsePattern(/git reset --hard/, () => ({
+        stdout: 'HEAD is now at abc1234', stderr: '', exitCode: 0,
+      }));
+
+      const { status, events } = await sseRequest(server, '/api/branches/feature-test/rerun');
+      expect(status).toBe(200);
+
+      // Verify pull step happened
+      const pull = events.find((e) => e.step === 'pull' && e.status === 'done');
+      expect(pull).toBeDefined();
+      expect(pull!.detail.changes).toBeDefined();
+      expect(pull!.detail.newCommits).toBeDefined();
+
+      // Verify rebuild happened (forced even though was 'built')
+      const buildApi = events.filter((e) => e.step === 'build_api');
+      expect(buildApi.some((e) => e.status === 'running')).toBe(true);
+      expect(buildApi.some((e) => e.status === 'done')).toBe(true);
+
+      // Verify complete
+      const complete = events.find((e) => e.step === 'complete');
+      expect(complete).toBeDefined();
+    });
+  });
+
   describe('POST /api/rollback', () => {
     it('should rollback to previous branch', async () => {
       // Setup two branches

@@ -267,6 +267,62 @@ describe('StateService', () => {
     });
   });
 
+  describe('allocatePort', () => {
+    beforeEach(() => {
+      service.load();
+    });
+
+    it('should return portStart when no branches have ports', () => {
+      const port = service.allocatePort(9001);
+      expect(port).toBe(9001);
+    });
+
+    it('should skip ports already in use', () => {
+      service.addBranch({
+        id: 'a', branch: 'a', worktreePath: '/a', containerName: 'c-a',
+        imageName: 'i-a', dbName: 'db_a', status: 'idle',
+        createdAt: '2026-02-12T00:00:00Z', hostPort: 9001,
+      });
+      service.addBranch({
+        id: 'b', branch: 'b', worktreePath: '/b', containerName: 'c-b',
+        imageName: 'i-b', dbName: 'db_b', status: 'idle',
+        createdAt: '2026-02-12T00:00:00Z', hostPort: 9002,
+      });
+
+      const port = service.allocatePort(9001);
+      expect(port).toBe(9003);
+    });
+
+    it('should fill gaps from removed branches', () => {
+      service.addBranch({
+        id: 'a', branch: 'a', worktreePath: '/a', containerName: 'c-a',
+        imageName: 'i-a', dbName: 'db_a', status: 'idle',
+        createdAt: '2026-02-12T00:00:00Z', hostPort: 9001,
+      });
+      service.addBranch({
+        id: 'c', branch: 'c', worktreePath: '/c', containerName: 'c-c',
+        imageName: 'i-c', dbName: 'db_c', status: 'idle',
+        createdAt: '2026-02-12T00:00:00Z', hostPort: 9003,
+      });
+
+      // port 9002 is free (branch 'b' was removed or never existed)
+      const port = service.allocatePort(9001);
+      expect(port).toBe(9002);
+    });
+
+    it('should ignore branches without hostPort', () => {
+      service.addBranch({
+        id: 'noport', branch: 'noport', worktreePath: '/np', containerName: 'c-np',
+        imageName: 'i-np', dbName: 'db_np', status: 'idle',
+        createdAt: '2026-02-12T00:00:00Z',
+        // no hostPort
+      });
+
+      const port = service.allocatePort(9001);
+      expect(port).toBe(9001);
+    });
+  });
+
   describe('persistence', () => {
     it('should save and reload state correctly', () => {
       service.load();
