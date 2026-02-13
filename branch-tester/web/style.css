@@ -38,13 +38,29 @@ h2 {
   color: #8b949e;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+}
+
+.gateway-label {
+  font-weight: 600;
+  color: #e1e4e8;
+  font-size: 13px;
+}
+
+.active-info select.gateway-active {
+  border-color: #238636;
+  color: #3fb950;
+}
+
+.active-info select.gateway-none {
+  border-color: #f0883e;
+  color: #f0883e;
 }
 
 .active-info a {
   color: #58a6ff;
   text-decoration: none;
-  margin-left: 12px;
+  margin-left: 8px;
   font-size: 13px;
 }
 
@@ -375,6 +391,11 @@ button.warn:hover { background: #8a5900; color: #fff; }
 .branch-meta {
   font-size: 12px;
   color: #8b949e;
+}
+
+.db-shared {
+  color: #f0883e;
+  font-weight: 600;
 }
 
 .branch-time {

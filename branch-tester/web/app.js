@@ -85,7 +85,20 @@ function branchActions(b, isActive) {
     groups.push(`<div class="action-group"><span class="action-label">制品</span>${deployBtns.join('')}</div>`);
   }
 
-  // ── Row 3: Management ──
+  // ── Row 3: Database ──
+  const dbBtns = [];
+  const isMainDb = b.dbName === mainDbName;
+  if (!isMainDb) {
+    dbBtns.push(`<button onclick="cloneDb('${b.id}')" title="将主库数据克隆到分支库">克隆主库</button>`);
+    dbBtns.push(`<button onclick="useMainDb('${b.id}')" title="切换到主库（共享数据）">用主库</button>`);
+  } else if (b.originalDbName) {
+    dbBtns.push(`<button onclick="useOwnDb('${b.id}')" title="切换回独立数据库">用独立库</button>`);
+  }
+  if (dbBtns.length) {
+    groups.push(`<div class="action-group"><span class="action-label">数据</span>${dbBtns.join('')}</div>`);
+  }
+
+  // ── Row 4: Management ──
   const mgmtBtns = [];
   mgmtBtns.push(`<button onclick="viewLogs('${b.id}')" title="查看操作历史日志">日志</button>`);
   if (b.status === 'error' || b.runStatus === 'error')
@@ -142,7 +155,7 @@ function renderBranches(branches, activeBranchId) {
         <div class="status-dot ${b.status}"></div>
         <div class="branch-info">
           <div class="branch-name">${esc(b.branch)} ${a ? '<span class="active-badge">当前激活</span>' : ''}</div>
-          <div class="branch-meta">部署: ${deployStatus}${runStatus} · DB: ${b.dbName}</div>
+          <div class="branch-meta">部署: ${deployStatus}${runStatus} · DB: <span class="${b.originalDbName ? 'db-shared' : ''}" title="${b.originalDbName ? '正在使用主库（原始库: ' + esc(b.originalDbName) + '）' : ''}">${b.dbName}${b.originalDbName ? ' (主库)' : ''}</span></div>
           ${timeLine ? `<div class="branch-time">${timeLine}</div>` : ''}
           ${portInfo ? `<div class="branch-ports">${portInfo}</div>` : ''}
           ${errorHtml}
@@ -164,16 +177,23 @@ function renderActiveSwitcher(branches, activeBranchId) {
   const sel = document.getElementById('activeSwitcher');
   const link = document.getElementById('activeLink');
   const entries = Object.values(branches).filter((b) => b.status === 'running');
-  let html = '<option value="">无</option>';
+  let html = '<option value="">未指向任何分支</option>';
   entries.forEach((b) => {
     html += `<option value="${b.id}" ${b.id === activeBranchId ? 'selected' : ''}>${b.branch}</option>`;
   });
   sel.innerHTML = html;
   sel.disabled = !entries.length;
-  if (activeBranchId && branches[activeBranchId]) {
+  const active = activeBranchId && branches[activeBranchId];
+  if (active) {
     link.classList.remove('hidden');
     link.href = `http://${location.hostname}:5500`;
-  } else link.classList.add('hidden');
+    sel.classList.remove('gateway-none');
+    sel.classList.add('gateway-active');
+  } else {
+    link.classList.add('hidden');
+    sel.classList.remove('gateway-active');
+    sel.classList.add('gateway-none');
+  }
 }
 
 // ---- Branch picker (combobox dropdown) ----
@@ -181,6 +201,7 @@ function renderActiveSwitcher(branches, activeBranchId) {
 const BRANCH_ICON = `<svg class="branch-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>`;
 
 let remoteBranches = []; // cached from server
+let mainDbName = 'prdagent'; // updated from API
 
 function renderDropdown(keyword) {
   const dd = document.getElementById('branchDropdown');
@@ -270,6 +291,7 @@ async function refreshRemoteBranches() {
 async function refresh() {
   try {
     const [bd, hd] = await Promise.all([api('GET', '/branches'), api('GET', '/history')]);
+    if (bd.mainDbName) mainDbName = bd.mainDbName;
     renderBranches(bd.branches, bd.activeBranchId);
     renderHistory(hd.history);
     renderActiveSwitcher(bd.branches, bd.activeBranchId);
@@ -707,6 +729,42 @@ async function removeBranch(id) {
     await api('DELETE', `/branches/${id}`);
     showToast(`${id} 已删除`, 'success');
     await loadRemoteBranches();
+  } catch (err) { showToast(err.message, 'error'); }
+  finally { setBusy(false); }
+}
+
+// ---- Database management ----
+
+async function cloneDb(id) {
+  if (!confirm(`将主库数据克隆到 ${id} 的分支库？\n（会覆盖分支库现有数据）`)) return;
+  if (busy) return;
+  setBusy(true);
+  showToast('正在克隆数据库...', 'info');
+  try {
+    const data = await api('POST', `/branches/${id}/db/clone`);
+    showToast(data.message, 'success');
+  } catch (err) { showToast(err.message, 'error'); }
+  finally { setBusy(false); }
+}
+
+async function useMainDb(id) {
+  if (!confirm(`将 ${id} 切换到主库？\n（共享主库数据，需要重启容器生效）`)) return;
+  if (busy) return;
+  setBusy(true);
+  try {
+    const data = await api('POST', `/branches/${id}/db/use-main`);
+    showToast(data.message, 'success');
+  } catch (err) { showToast(err.message, 'error'); }
+  finally { setBusy(false); }
+}
+
+async function useOwnDb(id) {
+  if (!confirm(`将 ${id} 切换回独立数据库？\n（需要重启容器生效）`)) return;
+  if (busy) return;
+  setBusy(true);
+  try {
+    const data = await api('POST', `/branches/${id}/db/use-own`);
+    showToast(data.message, 'success');
   } catch (err) { showToast(err.message, 'error'); }
   finally { setBusy(false); }
 }

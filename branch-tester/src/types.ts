@@ -7,6 +7,8 @@ export interface BranchEntry {
   containerName: string;
   imageName: string;
   dbName: string;
+  /** Original isolated DB name (saved when switching to main DB, for switching back) */
+  originalDbName?: string;
   status: 'idle' | 'building' | 'built' | 'running' | 'stopped' | 'error';
   buildLog?: string;
   lastActivatedAt?: string;

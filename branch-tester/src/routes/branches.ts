@@ -116,6 +116,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({
       branches: state.branches,
       activeBranchId: state.activeBranchId,
+      mainDbName: config.mongodb.defaultDbName,
     });
   });
 
@@ -846,6 +847,117 @@ export function createBranchRouter(deps: RouterDeps): Router {
         success: true,
         activeBranchId: previousId,
         url: `http://localhost:${config.gateway.port}`,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ================================================================
+  // Database management
+  // ================================================================
+
+  // POST /branches/:id/db/clone — clone main DB into branch DB
+  router.post('/branches/:id/db/clone', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) { res.status(404).json({ error: `Branch "${id}" not found` }); return; }
+
+      const mainDbName = config.mongodb.defaultDbName;
+      const targetDb = entry.dbName;
+
+      if (targetDb === mainDbName) {
+        res.status(400).json({ error: '当前分支已在使用主库，无需克隆' });
+        return;
+      }
+
+      // Use mongodump/mongorestore inside the MongoDB container to clone
+      const mongoContainer = 'prdagent-mongodb';
+      const cmd = [
+        `docker exec ${mongoContainer} mongosh --quiet --eval`,
+        `"db.getMongo().getDB('${mainDbName}').getCollectionNames().forEach(function(c) {`,
+        `  if (!c.startsWith('system.')) {`,
+        `    const docs = db.getMongo().getDB('${mainDbName}').getCollection(c).find().toArray();`,
+        `    if (docs.length > 0) {`,
+        `      db.getMongo().getDB('${targetDb}').getCollection(c).drop();`,
+        `      db.getMongo().getDB('${targetDb}').getCollection(c).insertMany(docs);`,
+        `    }`,
+        `  }`,
+        `});"`,
+      ].join(' ');
+
+      const result = await shell.exec(cmd, { timeout: 120_000 });
+      if (result.exitCode !== 0) {
+        throw new Error(`数据库克隆失败: ${combinedOutput(result)}`);
+      }
+
+      res.json({
+        success: true,
+        message: `已将 ${mainDbName} 的数据克隆到 ${targetDb}`,
+        sourceDb: mainDbName,
+        targetDb,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /branches/:id/db/use-main — switch branch to use main DB
+  router.post('/branches/:id/db/use-main', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) { res.status(404).json({ error: `Branch "${id}" not found` }); return; }
+
+      const mainDbName = config.mongodb.defaultDbName;
+      if (entry.dbName === mainDbName) {
+        res.status(400).json({ error: '已在使用主库' });
+        return;
+      }
+
+      // Save the original DB name so we can switch back
+      if (!entry.originalDbName) {
+        entry.originalDbName = entry.dbName;
+      }
+      entry.dbName = mainDbName;
+      stateService.save();
+
+      res.json({
+        success: true,
+        message: `分支已切换到主库 ${mainDbName}（需要重启容器生效）`,
+        dbName: mainDbName,
+        hint: '请重新运行或部署以使用新数据库',
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /branches/:id/db/use-own — switch branch back to its own isolated DB
+  router.post('/branches/:id/db/use-own', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) { res.status(404).json({ error: `Branch "${id}" not found` }); return; }
+
+      const mainDbName = config.mongodb.defaultDbName;
+      const own = entry.originalDbName;
+
+      if (!own || entry.dbName !== mainDbName) {
+        res.status(400).json({ error: '当前未使用主库，无需切换' });
+        return;
+      }
+
+      entry.dbName = own;
+      delete entry.originalDbName;
+      stateService.save();
+
+      res.json({
+        success: true,
+        message: `分支已切换回独立数据库 ${own}（需要重启容器生效）`,
+        dbName: own,
+        hint: '请重新运行或部署以使用新数据库',
       });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
