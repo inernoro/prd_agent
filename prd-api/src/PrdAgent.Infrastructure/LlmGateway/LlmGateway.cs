@@ -290,7 +290,18 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
 
                 // 解析 SSE 数据
-                var chunk = adapter.ParseStreamChunk(data);
+                GatewayStreamChunk? chunk;
+                try
+                {
+                    chunk = adapter.ParseStreamChunk(data);
+                }
+                catch (Exception parseEx)
+                {
+                    // Adapter 解析失败（JSON 异常等），记录错误但不中断流
+                    var dataPreview = data.Length > 200 ? data[..200] + "..." : data;
+                    _logger.LogWarning(parseEx, "[LlmGateway] ParseStreamChunk 异常, data: {DataPreview}", dataPreview);
+                    continue;
+                }
                 if (chunk == null)
                 {
                     // 调试：记录无法解析的 SSE 数据（仅记录前 200 字符）

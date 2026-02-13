@@ -166,22 +166,27 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
                 };
             }
 
-            if (!string.IsNullOrEmpty(content))
-            {
-                return GatewayStreamChunk.Text(content);
-            }
-
-            // reasoning_content 单独作为 Thinking 类型返回
+            // reasoning_content 优先返回为 Thinking（独立于 content）
+            // DeepSeek R1 等模型：thinking 阶段 content=null, reasoning_content 有值；
+            // content 阶段 reasoning_content=null, content 有值。两者不重叠。
             if (!string.IsNullOrEmpty(thinkingContent))
             {
                 return GatewayStreamChunk.Thinking(thinkingContent);
             }
 
+            if (!string.IsNullOrEmpty(content))
+            {
+                return GatewayStreamChunk.Text(content);
+            }
+
             return null;
         }
-        catch
+        catch (Exception ex)
         {
-            return null;
+            // 不再静默吞掉异常，保留异常信息供 Gateway 层日志使用
+            throw new InvalidOperationException(
+                $"[OpenAIAdapter] ParseStreamChunk failed: {sseData?[..Math.Min(sseData.Length, 120)]}",
+                ex);
         }
     }
 
