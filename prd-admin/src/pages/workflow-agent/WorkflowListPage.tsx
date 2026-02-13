@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { listWorkflows, createWorkflow, deleteWorkflow } from '@/services';
 import type { Workflow, WorkflowNode, WorkflowEdge } from '@/services/contracts/workflowAgent';
 import { GlassCard } from '@/components/design/GlassCard';
-import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
-import { getEmojiForCapsule } from './capsuleRegistry';
+import { getEmojiForCapsule, getCapsuleType } from './capsuleRegistry';
+import { NodeTypeLabels } from '@/services/contracts/workflowAgent';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流列表页 — 卡片网格 + 统计总览 + Mini DAG 预览
@@ -167,18 +167,23 @@ function MiniDag({ nodes, edges }: { nodes: WorkflowNode[]; edges: WorkflowEdge[
 function NodeChips({ nodes }: { nodes: WorkflowNode[] }) {
   // 去重 + 保持顺序
   const seen = new Set<string>();
-  const types: { type: string; emoji: string }[] = [];
+  const types: { type: string; emoji: string; label: string }[] = [];
   for (const n of nodes) {
     if (!seen.has(n.nodeType)) {
       seen.add(n.nodeType);
-      types.push({ type: n.nodeType, emoji: getEmojiForCapsule(n.nodeType) });
+      const def = getCapsuleType(n.nodeType);
+      types.push({
+        type: n.nodeType,
+        emoji: getEmojiForCapsule(n.nodeType),
+        label: def?.name ?? NodeTypeLabels[n.nodeType] ?? n.nodeType,
+      });
     }
   }
   if (types.length === 0) return null;
 
   return (
     <div className="flex flex-wrap gap-1.5">
-      {types.map(({ type, emoji }) => (
+      {types.map(({ type, emoji, label }) => (
         <span
           key={type}
           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium"
@@ -189,7 +194,7 @@ function NodeChips({ nodes }: { nodes: WorkflowNode[] }) {
           }}
         >
           <span>{emoji}</span>
-          <span>{type.split('-').map(w => w[0]?.toUpperCase()).join('')}</span>
+          <span>{label}</span>
         </span>
       ))}
     </div>
@@ -209,10 +214,11 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
       interactive
       padding="none"
       onClick={onEdit}
-      className="group"
+      className="group flex flex-col h-full"
       style={{ overflow: 'hidden' }}
     >
-      <div className="p-4 pb-3">
+      {/* 主体内容 — flex-1 撑满剩余高度 */}
+      <div className="p-4 pb-3 flex-1 flex flex-col">
         {/* 头部：emoji + 名称 + 状态 */}
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -225,33 +231,24 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
             >
               {workflow.icon || '⚡'}
             </div>
-            <div className="min-w-0">
-              <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                {workflow.name || '未命名工作流'}
-              </h3>
-              {workflow.description ? (
-                <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                  {workflow.description}
-                </p>
-              ) : (
-                <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                  {workflow.nodes.length} 个节点 · {workflow.edges.length} 条连线
-                </p>
-              )}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                  {workflow.name || '未命名工作流'}
+                </h3>
+                <span
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{
+                    background: workflow.isEnabled ? 'rgba(34,197,94,0.7)' : 'rgba(255,255,255,0.15)',
+                    boxShadow: workflow.isEnabled ? '0 0 6px rgba(34,197,94,0.4)' : 'none',
+                  }}
+                  title={workflow.isEnabled ? '已启用' : '已禁用'}
+                />
+              </div>
+              <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                {workflow.description || `${workflow.nodes.length} 个节点 · ${workflow.edges.length} 条连线`}
+              </p>
             </div>
-          </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            {workflow.tags.map((tag) => (
-              <Badge key={tag} variant="subtle" size="sm">{tag}</Badge>
-            ))}
-            <span
-              className="w-2 h-2 rounded-full flex-shrink-0"
-              style={{
-                background: workflow.isEnabled ? 'rgba(34,197,94,0.7)' : 'rgba(255,255,255,0.15)',
-                boxShadow: workflow.isEnabled ? '0 0 6px rgba(34,197,94,0.4)' : 'none',
-              }}
-              title={workflow.isEnabled ? '已启用' : '已禁用'}
-            />
           </div>
         </div>
 
@@ -263,7 +260,8 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
           <NodeChips nodes={workflow.nodes} />
         </div>
 
-        {/* 统计行 */}
+        {/* 弹性间距 + 统计行固定在底部 */}
+        <div className="flex-1" />
         <div className="flex items-center justify-between mt-3 pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
           <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
             <span>
@@ -281,13 +279,12 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
         </div>
       </div>
 
-      {/* 悬浮操作栏 */}
+      {/* 操作栏 — 始终贴底 */}
       <div
-        className="flex items-center gap-1.5 px-4 py-2.5 transition-all duration-200"
+        className="flex items-center gap-1.5 px-4 py-2.5 mt-auto"
         style={{
           background: 'rgba(255,255,255,0.03)',
           borderTop: '1px solid rgba(255,255,255,0.05)',
-          opacity: 1,
         }}
       >
         <button
@@ -469,7 +466,7 @@ export function WorkflowListPage() {
 
         {/* 卡片网格 */}
         {!loading && workflows.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 items-stretch">
             {workflows.map((wf) => (
               <WorkflowCard
                 key={wf.id}
