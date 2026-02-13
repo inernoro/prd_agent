@@ -9,18 +9,19 @@ HOST="${SMOKE_TEST_HOST:-http://localhost:5000}"
 KEY="${AI_ACCESS_KEY:?请设置环境变量 AI_ACCESS_KEY}"
 AUTH=(-H "X-AI-Access-Key: $KEY" -H "X-AI-Impersonate: admin" -H "Content-Type: application/json")
 
-# 封装 curl：失败时打印响应体再退出
+# 封装 curl：用临时文件分离 body 与 status code，失败时打印错误
 api() {
-  local RESP HTTP_CODE
-  RESP=$(curl -s -w "\n%{http_code}" "$@")
-  HTTP_CODE=$(echo "$RESP" | tail -n1)
-  BODY=$(echo "$RESP" | sed '$d')
-  if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-    echo "❌ HTTP $HTTP_CODE"
-    echo "$BODY" | jq . 2>/dev/null || echo "$BODY"
+  local _TMPOUT _HTTP_CODE
+  _TMPOUT=$(mktemp)
+  _HTTP_CODE=$(curl -s -o "$_TMPOUT" -w "%{http_code}" "$@")
+  if [ "$_HTTP_CODE" -lt 200 ] || [ "$_HTTP_CODE" -ge 300 ]; then
+    echo "❌ HTTP $_HTTP_CODE" >&2
+    jq . "$_TMPOUT" 2>/dev/null || cat "$_TMPOUT" >&2
+    rm -f "$_TMPOUT"
     exit 1
   fi
-  echo "$BODY"
+  cat "$_TMPOUT"
+  rm -f "$_TMPOUT"
 }
 
 echo "=========================================="
