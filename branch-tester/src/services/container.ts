@@ -2,6 +2,35 @@ import path from 'node:path';
 import type { IShellExecutor, BranchEntry, BtConfig, RunFromSourceOptions } from '../types.js';
 import { combinedOutput } from '../types.js';
 
+/**
+ * Environment variable names to forward from the host process into
+ * every branch container. Only variables that are actually set on the
+ * host will be included (empty/undefined are skipped).
+ */
+const HOST_FORWARD_ENV_KEYS = [
+  'ASSETS_PROVIDER',
+  'TENCENT_COS_BUCKET',
+  'TENCENT_COS_REGION',
+  'TENCENT_COS_SECRET_ID',
+  'TENCENT_COS_SECRET_KEY',
+  'TENCENT_COS_PUBLIC_BASE_URL',
+  'TENCENT_COS_PREFIX',
+  'ROOT_ACCESS_USERNAME',
+  'ROOT_ACCESS_PASSWORD',
+];
+
+/** Collect host env vars that are set and return as `KEY=VALUE` pairs */
+function hostForwardedEnv(): string[] {
+  const result: string[] = [];
+  for (const key of HOST_FORWARD_ENV_KEYS) {
+    const val = process.env[key];
+    if (val !== undefined && val !== '') {
+      result.push(`${key}=${val}`);
+    }
+  }
+  return result;
+}
+
 export class ContainerService {
   constructor(
     private readonly shell: IShellExecutor,
@@ -25,6 +54,7 @@ export class ContainerService {
       `Redis__ConnectionString=${redis.connectionString}`,
       `Jwt__Secret=${jwt.secret}`,
       `Jwt__Issuer=${jwt.issuer}`,
+      ...hostForwardedEnv(),
     ];
 
     const envFlags = envVars.map((e) => `-e ${e}`).join(' ');
@@ -65,6 +95,7 @@ export class ContainerService {
       `Redis__ConnectionString=${redis.connectionString}`,
       `Jwt__Secret=${jwt.secret}`,
       `Jwt__Issuer=${jwt.issuer}`,
+      ...hostForwardedEnv(),
     ];
 
     const envFlags = envVars.map((e) => `-e ${e}`).join(' ');
