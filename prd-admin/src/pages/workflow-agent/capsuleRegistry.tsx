@@ -1,6 +1,6 @@
 import {
   Timer, Webhook, Hand, Upload,
-  Database, Globe, Brain, Code2, Filter, Merge,
+  Database, Globe, Brain, Code2, Filter, Merge, Repeat,
   FileText, Download, Send, Bell, Box,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -158,6 +158,17 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     testable: true,
   },
 
+  'format-converter': {
+    typeKey: 'format-converter',
+    name: '格式转换',
+    description: 'JSON / XML / CSV / YAML 相互转换',
+    Icon: Repeat,
+    emoji: '🔄',
+    category: 'processor',
+    accentHue: 45,
+    testable: true,
+  },
+
   // ──────── 输出类 ────────
   'report-generator': {
     typeKey: 'report-generator',
@@ -269,6 +280,7 @@ const EMOJI_MAP: Record<string, string> = {
   'script-executor': '💻',
   'data-extractor': '🔍',
   'data-merger': '🔀',
+  'format-converter': '🔄',
   'report-generator': '📝',
   'file-exporter': '💾',
   'webhook-sender': '📡',

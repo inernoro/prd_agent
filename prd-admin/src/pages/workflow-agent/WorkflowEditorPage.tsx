@@ -438,7 +438,7 @@ function CapsuleConfigForm({ fields, values, onChange, onBatchChange, disabled, 
 
 // ──── 右侧舱卡片 ────
 
-function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning, testRunResult, isTestRunning }: {
+function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings }: {
   node: WorkflowNode;
   index: number;
   nodeExec?: NodeExecution;
@@ -446,12 +446,13 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   isExpanded: boolean;
   onToggle: () => void;
   onRemove: () => void;
-  onTestRun: () => void;
+  onTestRun: (testInput?: string) => void;
   onConfigChange: (nodeId: string, config: Record<string, unknown>) => void;
   capsuleMeta?: CapsuleTypeMeta;
   isRunning: boolean;
   testRunResult?: import('@/services/contracts/workflowAgent').CapsuleTestRunResult | null;
   isTestRunning?: boolean;
+  formatWarnings?: { nodeId: string; message: string }[];
 }) {
   const typeDef = getCapsuleType(node.nodeType);
   const status = nodeExec?.status || 'idle';
@@ -479,6 +480,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   }
 
   const [expandedArtifacts, setExpandedArtifacts] = useState<Set<string>>(new Set());
+  const [testInput, setTestInput] = useState('');
 
   function toggleArtifact(id: string) {
     setExpandedArtifacts((prev) => {
@@ -487,6 +489,33 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
       return next;
     });
   }
+
+  // 判断此舱是否需要输入（有 required 输入插槽）
+  const hasRequiredInput = node.inputSlots.some(s => s.required);
+  const hasAnyInputSlot = node.inputSlots.length > 0;
+  const hasOutputSlot = node.outputSlots.length > 0;
+  const isTrigger = capsuleMeta?.category === 'trigger';
+
+  // 统一结果：合并测试结果和执行结果为同一面板
+  const unifiedResult = testRunResult || (
+    nodeOutput && (status === 'completed' || status === 'failed')
+      ? {
+          status: status === 'completed' ? 'completed' as const : 'failed' as const,
+          durationMs: nodeExec?.durationMs ?? 0,
+          logs: nodeOutput.logs,
+          artifacts: nodeOutput.artifacts.map(a => ({
+            name: a.name,
+            mimeType: a.mimeType,
+            sizeBytes: a.sizeBytes,
+            inlineContent: a.inlineContent,
+            cosUrl: a.cosUrl,
+            artifactId: a.artifactId,
+          })),
+          errorMessage: nodeExec?.errorMessage,
+        }
+      : null
+  );
+  const resultSource = testRunResult ? 'test' : (nodeOutput ? 'exec' : null);
 
   return (
     <div>
@@ -569,93 +598,117 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
           </div>
         )}
 
-        {/* 展开区域：配置 + 调试 + 产物 */}
+        {/* ════════ 展开区域：输入 → 处理 → 输出 ════════ */}
         {isExpanded && (
-          <div className="mt-3 ml-[68px] space-y-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 12 }}>
-            {/* 输入/输出插槽详情 */}
-            {(node.inputSlots.length > 0 || node.outputSlots.length > 0) && (
-              <div
-                className="rounded-[10px] p-2.5 space-y-2"
-                style={{
-                  background: 'rgba(255,255,255,0.02)',
-                  border: '1px solid rgba(255,255,255,0.06)',
-                }}
-              >
-                {node.inputSlots.length > 0 && (
-                  <div>
-                    <div className="text-[10px] font-semibold mb-1" style={{ color: `hsla(${accentHue}, 55%, 65%, 0.8)` }}>
-                      ← 输入
-                    </div>
-                    <div className="space-y-1">
-                      {node.inputSlots.map(s => (
-                        <div key={s.slotId} className="flex items-center gap-2 text-[10px]">
-                          <span
-                            className="px-1.5 py-0.5 rounded font-mono"
-                            style={{
-                              background: `hsla(${accentHue}, 50%, 50%, 0.08)`,
-                              color: `hsla(${accentHue}, 55%, 70%, 0.85)`,
-                              border: `1px solid hsla(${accentHue}, 50%, 50%, 0.12)`,
-                            }}
-                          >
-                            {s.name}
-                          </span>
-                          <span
-                            className="px-1 py-0.5 rounded"
-                            style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', fontSize: 9 }}
-                          >
-                            {s.dataType}
-                          </span>
-                          {s.required && <span style={{ color: 'var(--text-muted)', fontSize: 9 }}>必需</span>}
-                          {s.description && (
-                            <span style={{ color: 'var(--text-muted)' }} className="truncate">{s.description}</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+          <div className="mt-3 ml-[68px] space-y-0" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 12 }}>
+
+            {/* 格式兼容性警告 */}
+            {formatWarnings && formatWarnings.length > 0 && (
+              <div className="mb-3">
+                {formatWarnings.map((w, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center gap-1.5 text-[10px] px-3 py-1.5 rounded-[8px] mb-1"
+                    style={{
+                      background: 'rgba(245,158,11,0.08)',
+                      color: 'rgba(245,158,11,0.9)',
+                      border: '1px solid rgba(245,158,11,0.15)',
+                    }}
+                  >
+                    ⚠ {w.message}
                   </div>
-                )}
-                {node.outputSlots.length > 0 && (
-                  <div>
-                    <div className="text-[10px] font-semibold mb-1" style={{ color: 'rgba(34,197,94,0.8)' }}>
-                      → 输出
-                    </div>
-                    <div className="space-y-1">
-                      {node.outputSlots.map(s => (
-                        <div key={s.slotId} className="flex items-center gap-2 text-[10px]">
-                          <span
-                            className="px-1.5 py-0.5 rounded font-mono"
-                            style={{
-                              background: 'rgba(34,197,94,0.06)',
-                              color: 'rgba(34,197,94,0.8)',
-                              border: '1px solid rgba(34,197,94,0.1)',
-                            }}
-                          >
-                            {s.name}
-                          </span>
-                          <span
-                            className="px-1 py-0.5 rounded"
-                            style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', fontSize: 9 }}
-                          >
-                            {s.dataType}
-                          </span>
-                          {s.description && (
-                            <span style={{ color: 'var(--text-muted)' }} className="truncate">{s.description}</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                ))}
               </div>
             )}
 
-            {/* 舱配置表单 */}
-            {capsuleMeta && capsuleMeta.configSchema.length > 0 && (
-              <div>
-                <div className="flex items-center gap-1.5 mb-2">
-                  <Settings2 className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
-                  <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>舱配置</span>
+            {/* ──── ① 输入区 ──── */}
+            {hasAnyInputSlot && (
+              <CapsuleSection emoji="📥" title="输入" accentHue={accentHue}>
+                {/* 输入插槽列表 */}
+                <div className="space-y-1 mb-2">
+                  {node.inputSlots.map(s => (
+                    <div key={s.slotId} className="flex items-center gap-2 text-[10px]">
+                      <span
+                        className="px-1.5 py-0.5 rounded font-mono"
+                        style={{
+                          background: `hsla(${accentHue}, 50%, 50%, 0.08)`,
+                          color: `hsla(${accentHue}, 55%, 70%, 0.85)`,
+                          border: `1px solid hsla(${accentHue}, 50%, 50%, 0.12)`,
+                        }}
+                      >
+                        {s.name}
+                      </span>
+                      <span className="px-1 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', fontSize: 9 }}>
+                        {s.dataType}
+                      </span>
+                      {s.required && <span style={{ color: 'var(--text-muted)', fontSize: 9 }}>必需</span>}
+                      {s.description && <span style={{ color: 'var(--text-muted)' }} className="truncate">{s.description}</span>}
+                    </div>
+                  ))}
                 </div>
+
+                {/* 测试输入区：粘贴/上传 */}
+                {capsuleMeta?.testable && (
+                  <div>
+                    <label className="text-[10px] mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                      {hasRequiredInput ? '⚠ 此舱需要输入数据才能测试' : '测试输入（可选）'}
+                    </label>
+                    <textarea
+                      value={testInput}
+                      onChange={(e) => setTestInput(e.target.value)}
+                      placeholder={hasRequiredInput
+                        ? '粘贴 JSON 数据或上传文件内容…'
+                        : '空则使用默认模拟数据'}
+                      rows={3}
+                      className="prd-field w-full px-3 py-2 rounded-[8px] text-[11px] outline-none resize-y font-mono"
+                    />
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <label
+                        className="text-[10px] px-2 py-1 rounded-[6px] cursor-pointer transition-colors"
+                        style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      >
+                        📎 上传文件
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept=".json,.csv,.txt,.xml"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = () => setTestInput(reader.result as string);
+                            reader.readAsText(file);
+                            e.target.value = '';
+                          }}
+                        />
+                      </label>
+                      <button
+                        className="text-[10px] px-2 py-1 rounded-[6px] transition-colors"
+                        style={{ color: 'var(--text-muted)' }}
+                        onClick={() => {
+                          try {
+                            setTestInput(JSON.stringify(JSON.parse(testInput), null, 2));
+                          } catch { /* not json */ }
+                        }}
+                      >
+                        格式化
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </CapsuleSection>
+            )}
+
+            {/* 触发器舱：无输入插槽但标注 "仅触发" */}
+            {isTrigger && !hasAnyInputSlot && (
+              <CapsuleSection emoji="⚡" title="触发" accentHue={accentHue}>
+                <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>此舱为触发器，无需输入数据</p>
+              </CapsuleSection>
+            )}
+
+            {/* ──── ② 处理区（配置） ──── */}
+            {capsuleMeta && capsuleMeta.configSchema.length > 0 && (
+              <CapsuleSection emoji="⚙" title="处理配置" accentHue={accentHue}>
                 <CapsuleConfigForm
                   fields={capsuleMeta.configSchema}
                   values={configValues}
@@ -664,20 +717,50 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                   disabled={isRunning}
                   nodeType={node.nodeType}
                 />
-              </div>
+              </CapsuleSection>
             )}
 
-            {/* 操作按钮 */}
-            <div className="flex items-center gap-2">
+            {/* ──── ③ 输出区 ──── */}
+            {hasOutputSlot && (
+              <CapsuleSection emoji="📤" title="输出" accentHue={120}>
+                {/* 输出插槽列表 */}
+                <div className="space-y-1">
+                  {node.outputSlots.map(s => (
+                    <div key={s.slotId} className="flex items-center gap-2 text-[10px]">
+                      <span
+                        className="px-1.5 py-0.5 rounded font-mono"
+                        style={{
+                          background: 'rgba(34,197,94,0.06)',
+                          color: 'rgba(34,197,94,0.8)',
+                          border: '1px solid rgba(34,197,94,0.1)',
+                        }}
+                      >
+                        {s.name}
+                      </span>
+                      <span className="px-1 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', fontSize: 9 }}>
+                        {s.dataType}
+                      </span>
+                      {s.description && <span style={{ color: 'var(--text-muted)' }} className="truncate">{s.description}</span>}
+                    </div>
+                  ))}
+                </div>
+              </CapsuleSection>
+            )}
+
+            {/* ──── 操作栏 ──── */}
+            <div className="flex items-center gap-2 pt-3">
               {capsuleMeta?.testable && (
                 <Button
                   size="xs"
                   variant="secondary"
-                  onClick={(e) => { e.stopPropagation(); onTestRun(); }}
-                  disabled={isRunning || isTestRunning}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTestRun(testInput || undefined);
+                  }}
+                  disabled={isRunning || isTestRunning || (hasRequiredInput && !testInput.trim())}
                 >
                   {isTestRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />}
-                  {isTestRunning ? '执行中...' : '单舱测试'}
+                  {isTestRunning ? '执行中...' : '▶ 单舱测试'}
                 </Button>
               )}
               <Button
@@ -691,194 +774,251 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
               </Button>
             </div>
 
-            {/* 单舱测试结果 */}
-            {testRunResult && (
-              <div className="space-y-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 12 }}>
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>测试结果</span>
-                  <span
-                    className="text-[10px] px-1.5 py-0.5 rounded-full"
-                    style={
-                      testRunResult.status === 'completed'
-                        ? { background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.9)', border: '1px solid rgba(34,197,94,0.2)' }
-                        : { background: 'rgba(239,68,68,0.1)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.2)' }
-                    }
-                  >
-                    {testRunResult.status === 'completed' ? `完成 (${testRunResult.durationMs}ms)` : '失败'}
-                  </span>
-                </div>
-
-                {/* 执行日志 */}
-                {testRunResult.logs && (
-                  <pre
-                    className="text-[10px] rounded-[8px] p-2.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
-                    style={{
-                      background: 'rgba(0,0,0,0.25)',
-                      color: 'var(--text-secondary)',
-                      border: '1px solid rgba(255,255,255,0.06)',
-                    }}
-                  >
-                    {testRunResult.logs}
-                  </pre>
-                )}
-
-                {/* 产物 */}
-                {testRunResult.artifacts && testRunResult.artifacts.length > 0 && (
-                  <div className="space-y-1.5">
-                    {testRunResult.artifacts.map((art, idx) => (
-                      <div
-                        key={idx}
-                        className="rounded-[10px] overflow-hidden"
-                        style={{
-                          background: 'var(--nested-block-bg, rgba(255,255,255,0.03))',
-                          border: '1px solid var(--nested-block-border, rgba(255,255,255,0.08))',
-                        }}
-                      >
-                        <div className="flex items-center gap-2 px-3 py-2">
-                          <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
-                          <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
-                            {art.name}
-                          </span>
-                          <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                            {formatBytes(art.sizeBytes)}
-                          </span>
-                        </div>
-                        {art.inlineContent && (
-                          <div className="px-3 pb-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                            <pre
-                              className="text-[11px] rounded-[8px] p-2.5 mt-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
-                              style={{
-                                background: 'rgba(0,0,0,0.25)',
-                                color: 'var(--text-secondary)',
-                                border: '1px solid rgba(255,255,255,0.06)',
-                              }}
-                            >
-                              {art.inlineContent}
-                            </pre>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* 错误 */}
-                {testRunResult.errorMessage && (
-                  <div
-                    className="text-[11px] rounded-[8px] px-3 py-2 leading-relaxed"
-                    style={{
-                      background: 'rgba(239,68,68,0.08)',
-                      color: 'rgba(239,68,68,0.9)',
-                      border: '1px solid rgba(239,68,68,0.15)',
-                    }}
-                  >
-                    {testRunResult.errorMessage}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* 执行结果：日志 + 产物 */}
-            {nodeOutput && (status === 'completed' || status === 'failed') && (
-              <div className="space-y-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 12 }}>
-                <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>执行结果</span>
-
-                {/* 产物 */}
-                {nodeOutput.artifacts.length > 0 && (
-                  <div className="space-y-1.5">
-                    {nodeOutput.artifacts.map((art) => (
-                      <div
-                        key={art.artifactId}
-                        className="rounded-[10px] overflow-hidden"
-                        style={{
-                          background: 'var(--nested-block-bg, rgba(255,255,255,0.03))',
-                          border: '1px solid var(--nested-block-border, rgba(255,255,255,0.08))',
-                        }}
-                      >
-                        <div
-                          className={`flex items-center gap-2 px-3 py-2 ${art.inlineContent ? 'cursor-pointer' : ''}`}
-                          onClick={art.inlineContent ? () => toggleArtifact(art.artifactId) : undefined}
-                        >
-                          <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
-                          <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
-                            {art.name}
-                          </span>
-                          <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                            {formatBytes(art.sizeBytes)}
-                          </span>
-                          {art.cosUrl && (
-                            <a
-                              href={art.cosUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="p-1 rounded-[6px] flex-shrink-0 transition-colors"
-                              title="下载文件"
-                              style={{ color: 'var(--accent-gold)' }}
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                            </a>
-                          )}
-                          {art.inlineContent && (
-                            expandedArtifacts.has(art.artifactId)
-                              ? <ChevronDown className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
-                              : <ChevronRight className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
-                          )}
-                        </div>
-                        {expandedArtifacts.has(art.artifactId) && art.inlineContent && (
-                          <div className="px-3 pb-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                            <pre
-                              className="text-[11px] rounded-[8px] p-2.5 mt-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
-                              style={{
-                                background: 'rgba(0,0,0,0.25)',
-                                color: 'var(--text-secondary)',
-                                border: '1px solid rgba(255,255,255,0.06)',
-                              }}
-                            >
-                              {art.inlineContent}
-                            </pre>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* 日志 */}
-                {nodeOutput.logs && nodeOutput.artifacts.length === 0 && (
-                  <pre
-                    className="text-[10px] rounded-[8px] p-2.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
-                    style={{
-                      background: 'rgba(0,0,0,0.25)',
-                      color: 'var(--text-secondary)',
-                      border: '1px solid rgba(255,255,255,0.06)',
-                    }}
-                  >
-                    {nodeOutput.logs.slice(0, 800)}
-                    {nodeOutput.logs.length > 800 ? '\n...(更多日志请查看完整详情)' : ''}
-                  </pre>
-                )}
-
-                {/* 错误信息 */}
-                {nodeExec?.errorMessage && (
-                  <div
-                    className="text-[11px] rounded-[8px] px-3 py-2 leading-relaxed"
-                    style={{
-                      background: 'rgba(239,68,68,0.08)',
-                      color: 'rgba(239,68,68,0.9)',
-                      border: '1px solid rgba(239,68,68,0.15)',
-                    }}
-                  >
-                    {nodeExec.errorMessage}
-                  </div>
-                )}
-              </div>
+            {/* ──── 统一结果面板（测试+执行共用） ──── */}
+            {unifiedResult && (
+              <UnifiedResultPanel
+                result={unifiedResult}
+                source={resultSource!}
+                expandedArtifacts={expandedArtifacts}
+                toggleArtifact={toggleArtifact}
+              />
             )}
           </div>
         )}
       </GlassCard>
     </div>
   );
+}
+
+// ──── 舱段落分割线组件 ────
+
+function CapsuleSection({ emoji, title, accentHue, children }: {
+  emoji: string;
+  title: string;
+  accentHue: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="rounded-[10px] p-3 mb-3"
+      style={{
+        background: 'rgba(255,255,255,0.02)',
+        border: '1px solid rgba(255,255,255,0.06)',
+      }}
+    >
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="text-[12px]">{emoji}</span>
+        <span className="text-[11px] font-semibold" style={{ color: `hsla(${accentHue}, 55%, 65%, 0.8)` }}>
+          {title}
+        </span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ──── 统一结果面板（测试结果 + 执行结果 合并为单窗口） ────
+
+function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact }: {
+  result: {
+    status: string;
+    durationMs?: number;
+    logs?: string;
+    artifacts?: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string; artifactId?: string }[];
+    errorMessage?: string;
+  };
+  source: 'test' | 'exec';
+  expandedArtifacts: Set<string>;
+  toggleArtifact: (id: string) => void;
+}) {
+  const isOk = result.status === 'completed';
+  const label = source === 'test' ? '单舱测试结果' : '执行结果';
+  const artifacts = result.artifacts || [];
+
+  return (
+    <div
+      className="rounded-[10px] overflow-hidden"
+      style={{
+        border: `1px solid ${isOk ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}`,
+        background: isOk ? 'rgba(34,197,94,0.03)' : 'rgba(239,68,68,0.03)',
+      }}
+    >
+      {/* 结果头部 */}
+      <div
+        className="flex items-center gap-2 px-3 py-2"
+        style={{
+          background: isOk ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+        }}
+      >
+        <span className="text-[12px]">{isOk ? '✅' : '❌'}</span>
+        <span className="text-[11px] font-semibold flex-1" style={{ color: isOk ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)' }}>
+          {label}
+        </span>
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          {isOk ? `完成` : '失败'}
+          {result.durationMs ? ` · ${result.durationMs}ms` : ''}
+        </span>
+      </div>
+
+      <div className="p-3 space-y-2">
+        {/* 错误信息 */}
+        {result.errorMessage && (
+          <div
+            className="text-[11px] rounded-[8px] px-3 py-2 leading-relaxed"
+            style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
+          >
+            {result.errorMessage}
+          </div>
+        )}
+
+        {/* 执行日志 */}
+        {result.logs && (
+          <div>
+            <div className="text-[10px] mb-1 font-medium" style={{ color: 'var(--text-muted)' }}>日志</div>
+            <pre
+              className="text-[10px] rounded-[8px] p-2.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
+              style={{ background: 'rgba(0,0,0,0.25)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}
+            >
+              {result.logs.slice(0, 800)}
+              {result.logs.length > 800 ? '\n...(更多日志请查看完整详情)' : ''}
+            </pre>
+          </div>
+        )}
+
+        {/* 产物列表 */}
+        {artifacts.length > 0 && (
+          <div>
+            <div className="text-[10px] mb-1 font-medium" style={{ color: 'var(--text-muted)' }}>
+              产物 ({artifacts.length})
+            </div>
+            <div className="space-y-1.5">
+              {artifacts.map((art, idx) => {
+                const artKey = art.artifactId || `art-${idx}`;
+                const isExpanded = expandedArtifacts.has(artKey);
+                return (
+                  <div
+                    key={artKey}
+                    className="rounded-[8px] overflow-hidden"
+                    style={{
+                      background: 'var(--nested-block-bg, rgba(255,255,255,0.03))',
+                      border: '1px solid var(--nested-block-border, rgba(255,255,255,0.08))',
+                    }}
+                  >
+                    <div
+                      className={`flex items-center gap-2 px-3 py-2 ${art.inlineContent ? 'cursor-pointer' : ''}`}
+                      onClick={art.inlineContent ? () => toggleArtifact(artKey) : undefined}
+                    >
+                      <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                      <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
+                        {art.name}
+                      </span>
+                      <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        {formatBytes(art.sizeBytes)}
+                      </span>
+                      {/* 下载按钮 */}
+                      {art.cosUrl && (
+                        <a
+                          href={art.cosUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="p-1 rounded-[6px] flex-shrink-0 transition-colors"
+                          title="下载文件"
+                          style={{ color: 'var(--accent-gold)' }}
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                        </a>
+                      )}
+                      {/* 内联内容下载 (无 cosUrl 时) */}
+                      {!art.cosUrl && art.inlineContent && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const blob = new Blob([art.inlineContent!], { type: art.mimeType || 'text/plain' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = art.name || 'output';
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="p-1 rounded-[6px] flex-shrink-0 transition-colors"
+                          title="下载"
+                          style={{ color: 'var(--text-muted)' }}
+                        >
+                          <Download className="w-3 h-3" />
+                        </button>
+                      )}
+                      {art.inlineContent && (
+                        isExpanded
+                          ? <ChevronDown className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                          : <ChevronRight className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                      )}
+                    </div>
+                    {isExpanded && art.inlineContent && (
+                      <div className="px-3 pb-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                        <pre
+                          className="text-[11px] rounded-[8px] p-2.5 mt-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
+                          style={{ background: 'rgba(0,0,0,0.25)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}
+                        >
+                          {art.inlineContent}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ──── 格式兼容性检查 ────
+
+/** DataType 兼容矩阵：输出 → 输入 是否可直连 */
+const FORMAT_COMPAT: Record<string, string[]> = {
+  json: ['json', 'text'],
+  text: ['text', 'json'],   // text 可以被 json 输入尝试解析
+  image: ['image', 'binary'],
+  binary: ['binary'],
+};
+
+function checkSlotCompatibility(
+  nodes: import('@/services/contracts/workflowAgent').WorkflowNode[],
+  edges: import('@/services/contracts/workflowAgent').WorkflowEdge[],
+): { nodeId: string; message: string }[] {
+  const warnings: { nodeId: string; message: string }[] = [];
+
+  for (const edge of edges) {
+    const srcNode = nodes.find(n => n.nodeId === edge.sourceNodeId);
+    const tgtNode = nodes.find(n => n.nodeId === edge.targetNodeId);
+    if (!srcNode || !tgtNode) continue;
+
+    // 找到对应的输出/输入插槽
+    const srcSlot = srcNode.outputSlots.find(s => s.slotId === edge.sourceSlotId)
+      ?? srcNode.outputSlots[0]; // fallback 到第一个
+    const tgtSlot = tgtNode.inputSlots.find(s => s.slotId === edge.targetSlotId)
+      ?? tgtNode.inputSlots[0];
+
+    if (!srcSlot || !tgtSlot) continue;
+
+    const srcType = srcSlot.dataType || 'text';
+    const tgtType = tgtSlot.dataType || 'text';
+    const compatibles = FORMAT_COMPAT[srcType] || [srcType];
+
+    if (!compatibles.includes(tgtType)) {
+      warnings.push({
+        nodeId: tgtNode.nodeId,
+        message: `输入格式不匹配：上游「${srcNode.name}」输出 ${srcType}，但此舱期望 ${tgtType}`,
+      });
+    }
+  }
+
+  return warnings;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1142,9 +1282,20 @@ export function WorkflowEditorPage() {
   const [testRunResult, setTestRunResult] = useState<{ nodeId: string; result: import('@/services/contracts/workflowAgent').CapsuleTestRunResult } | null>(null);
   const [testRunning, setTestRunning] = useState<string | null>(null);
 
-  async function handleTestRun(nodeId: string) {
+  async function handleTestRun(nodeId: string, testInput?: string) {
     const node = workflow?.nodes.find(n => n.nodeId === nodeId);
     if (!node) return;
+
+    // 构造 mockInput：优先使用用户提供的测试输入
+    let mockInput: unknown = { _test: true };
+    if (testInput?.trim()) {
+      try {
+        mockInput = JSON.parse(testInput);
+      } catch {
+        // 非 JSON 输入作为纯文本传递
+        mockInput = testInput;
+      }
+    }
 
     setTestRunning(nodeId);
     setTestRunResult(null);
@@ -1152,7 +1303,7 @@ export function WorkflowEditorPage() {
       const res = await testRunCapsule({
         typeKey: node.nodeType,
         config: node.config as Record<string, unknown>,
-        mockInput: { _test: true },
+        mockInput,
       });
       if (res.success && res.data?.result) {
         setTestRunResult({ nodeId, result: res.data.result });
@@ -1315,24 +1466,31 @@ export function WorkflowEditorPage() {
               </GlassCard>
             ) : (
               <div className="space-y-2">
-                {workflow.nodes.map((node, idx) => (
-                  <CapsuleCard
-                    key={node.nodeId}
-                    node={node}
-                    index={idx}
-                    nodeExec={latestExec?.nodeExecutions.find(ne => ne.nodeId === node.nodeId)}
-                    nodeOutput={nodeOutputs[node.nodeId]}
-                    isExpanded={expandedNodeId === node.nodeId}
-                    onToggle={() => setExpandedNodeId(expandedNodeId === node.nodeId ? null : node.nodeId)}
-                    onRemove={() => handleRemoveNode(node.nodeId)}
-                    onTestRun={() => handleTestRun(node.nodeId)}
-                    onConfigChange={handleNodeConfigChange}
-                    capsuleMeta={capsuleTypes.find(ct => ct.typeKey === node.nodeType)}
-                    isRunning={isRunning}
-                    testRunResult={testRunResult?.nodeId === node.nodeId ? testRunResult.result : null}
-                    isTestRunning={testRunning === node.nodeId}
-                  />
-                ))}
+                {(() => {
+                  const slotWarnings = checkSlotCompatibility(workflow.nodes, workflow.edges);
+                  return workflow.nodes.map((node, idx) => {
+                    const warnings = slotWarnings.filter(w => w.nodeId === node.nodeId);
+                    return (
+                      <CapsuleCard
+                        key={node.nodeId}
+                        node={node}
+                        index={idx}
+                        nodeExec={latestExec?.nodeExecutions.find(ne => ne.nodeId === node.nodeId)}
+                        nodeOutput={nodeOutputs[node.nodeId]}
+                        isExpanded={expandedNodeId === node.nodeId}
+                        onToggle={() => setExpandedNodeId(expandedNodeId === node.nodeId ? null : node.nodeId)}
+                        onRemove={() => handleRemoveNode(node.nodeId)}
+                        onTestRun={(testInput) => handleTestRun(node.nodeId, testInput)}
+                        onConfigChange={handleNodeConfigChange}
+                        capsuleMeta={capsuleTypes.find(ct => ct.typeKey === node.nodeType)}
+                        isRunning={isRunning}
+                        testRunResult={testRunResult?.nodeId === node.nodeId ? testRunResult.result : null}
+                        isTestRunning={testRunning === node.nodeId}
+                        formatWarnings={warnings}
+                      />
+                    );
+                  });
+                })()}
               </div>
             )}
 

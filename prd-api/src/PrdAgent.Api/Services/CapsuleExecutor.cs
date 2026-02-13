@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Models;
@@ -41,6 +42,7 @@ public static class CapsuleExecutor
             CapsuleTypes.TapdCollector => await ExecuteTapdCollectorAsync(sp, node, variables),
             CapsuleTypes.DataExtractor => ExecuteDataExtractor(node, inputArtifacts),
             CapsuleTypes.DataMerger => ExecuteDataMerger(node, inputArtifacts),
+            CapsuleTypes.FormatConverter => ExecuteFormatConverter(node, inputArtifacts),
 
             // ── 输出类 ──
             CapsuleTypes.ReportGenerator => await ExecuteReportGeneratorAsync(sp, node, variables, inputArtifacts),
@@ -448,6 +450,303 @@ public static class CapsuleExecutor
         var logs = $"Data merger: strategy={strategy}, sources={inputArtifacts.Count}\n";
         var artifact = MakeTextArtifact(node, "merged-data", "合并结果", merged);
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs);
+    }
+
+    // ── 格式转换 ──────────────────────────────────────────────
+
+    public static CapsuleResult ExecuteFormatConverter(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
+    {
+        var sourceFormat = GetConfigString(node, "sourceFormat") ?? "json";
+        var targetFormat = GetConfigString(node, "targetFormat") ?? "csv";
+        var csvDelimiter = GetConfigString(node, "csvDelimiter") ?? ",";
+        var xmlRootTag = GetConfigString(node, "xmlRootTag") ?? "root";
+        var prettyPrint = GetConfigString(node, "prettyPrint") != "false";
+
+        var inputText = string.Join("\n", inputArtifacts
+            .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
+            .Select(a => a.InlineContent));
+
+        if (string.IsNullOrWhiteSpace(inputText))
+            throw new InvalidOperationException("格式转换器未收到输入数据");
+
+        var logs = $"Format converter: {sourceFormat} → {targetFormat}\n";
+
+        // 1. 先将源格式解析为统一的内部结构（JSON element）
+        JsonElement? jsonData = null;
+        try
+        {
+            if (sourceFormat == "json")
+            {
+                jsonData = JsonSerializer.Deserialize<JsonElement>(inputText);
+            }
+            else if (sourceFormat == "csv" || sourceFormat == "tsv")
+            {
+                var delim = sourceFormat == "tsv" ? '\t' : csvDelimiter[0];
+                jsonData = CsvToJson(inputText, delim);
+            }
+            else if (sourceFormat == "xml")
+            {
+                jsonData = XmlToJson(inputText);
+            }
+            else
+            {
+                // yaml / text → 尝试 JSON 解析，失败则包装为字符串
+                try { jsonData = JsonSerializer.Deserialize<JsonElement>(inputText); }
+                catch { jsonData = JsonSerializer.Deserialize<JsonElement>($"\"{EscapeJsonString(inputText)}\""); }
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"源格式 '{sourceFormat}' 解析失败: {ex.Message}");
+        }
+
+        logs += $"Parsed {sourceFormat}: OK\n";
+
+        // 2. 将内部结构序列化为目标格式
+        string output;
+        string mimeType;
+
+        if (targetFormat == "json")
+        {
+            output = prettyPrint
+                ? JsonSerializer.Serialize(jsonData, new JsonSerializerOptions { WriteIndented = true })
+                : JsonSerializer.Serialize(jsonData);
+            mimeType = "application/json";
+        }
+        else if (targetFormat == "csv" || targetFormat == "tsv")
+        {
+            var delim = targetFormat == "tsv" ? '\t' : csvDelimiter[0];
+            output = JsonToCsv(jsonData!.Value, delim);
+            mimeType = "text/csv";
+        }
+        else if (targetFormat == "xml")
+        {
+            output = JsonToXml(jsonData!.Value, xmlRootTag, prettyPrint);
+            mimeType = "application/xml";
+        }
+        else if (targetFormat == "markdown-table")
+        {
+            output = JsonToMarkdownTable(jsonData!.Value);
+            mimeType = "text/markdown";
+        }
+        else
+        {
+            output = jsonData.HasValue ? jsonData.Value.ToString() : inputText;
+            mimeType = "text/plain";
+        }
+
+        logs += $"Output {targetFormat}: {Encoding.UTF8.GetByteCount(output)} bytes\n";
+
+        var artifact = MakeTextArtifact(node, "convert-out", $"转换结果 ({targetFormat})", output, mimeType);
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs);
+    }
+
+    // ── 格式转换辅助方法 ──
+
+    private static JsonElement CsvToJson(string csv, char delimiter)
+    {
+        var lines = csv.Split('\n').Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
+        if (lines.Length == 0) return JsonSerializer.Deserialize<JsonElement>("[]");
+
+        var headers = ParseCsvLine(lines[0], delimiter);
+        var rows = new List<Dictionary<string, string>>();
+
+        for (var i = 1; i < lines.Length; i++)
+        {
+            var values = ParseCsvLine(lines[i], delimiter);
+            var row = new Dictionary<string, string>();
+            for (var j = 0; j < headers.Count; j++)
+                row[headers[j]] = j < values.Count ? values[j] : "";
+            rows.Add(row);
+        }
+
+        return JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(rows));
+    }
+
+    private static List<string> ParseCsvLine(string line, char delimiter)
+    {
+        var fields = new List<string>();
+        var inQuotes = false;
+        var field = new System.Text.StringBuilder();
+
+        foreach (var ch in line)
+        {
+            if (ch == '"') { inQuotes = !inQuotes; continue; }
+            if (ch == delimiter && !inQuotes) { fields.Add(field.ToString().Trim()); field.Clear(); continue; }
+            field.Append(ch);
+        }
+        fields.Add(field.ToString().Trim());
+        return fields;
+    }
+
+    private static string JsonToCsv(JsonElement json, char delimiter)
+    {
+        if (json.ValueKind != JsonValueKind.Array) return json.ToString();
+
+        var rows = json.EnumerateArray().ToList();
+        if (rows.Count == 0) return "";
+
+        // 收集所有列
+        var columns = new List<string>();
+        foreach (var row in rows)
+        {
+            if (row.ValueKind == JsonValueKind.Object)
+                foreach (var prop in row.EnumerateObject())
+                    if (!columns.Contains(prop.Name)) columns.Add(prop.Name);
+        }
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(string.Join(delimiter, columns.Select(c => CsvQuote(c, delimiter))));
+
+        foreach (var row in rows)
+        {
+            var values = columns.Select(col =>
+            {
+                if (row.ValueKind == JsonValueKind.Object && row.TryGetProperty(col, out var val))
+                    return CsvQuote(val.ToString(), delimiter);
+                return "";
+            });
+            sb.AppendLine(string.Join(delimiter, values));
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string CsvQuote(string value, char delimiter)
+    {
+        if (value.Contains(delimiter) || value.Contains('"') || value.Contains('\n'))
+            return $"\"{value.Replace("\"", "\"\"")}\"";
+        return value;
+    }
+
+    private static JsonElement XmlToJson(string xml)
+    {
+        // 简易 XML → JSON：用 XDocument 解析后递归转换
+        var doc = System.Xml.Linq.XDocument.Parse(xml);
+        var json = XmlElementToJson(doc.Root!);
+        return JsonSerializer.Deserialize<JsonElement>(json);
+    }
+
+    private static string XmlElementToJson(System.Xml.Linq.XElement el)
+    {
+        if (!el.HasElements)
+            return JsonSerializer.Serialize(el.Value);
+
+        // 检查是否有重复子元素名（数组）
+        var groups = el.Elements().GroupBy(e => e.Name.LocalName).ToList();
+        var dict = new Dictionary<string, object>();
+
+        foreach (var g in groups)
+        {
+            if (g.Count() > 1)
+            {
+                var arr = g.Select(e => JsonSerializer.Deserialize<object>(XmlElementToJson(e))).ToList();
+                dict[g.Key] = arr;
+            }
+            else
+            {
+                dict[g.Key] = JsonSerializer.Deserialize<object>(XmlElementToJson(g.First()))!;
+            }
+        }
+
+        return JsonSerializer.Serialize(dict);
+    }
+
+    private static string JsonToXml(JsonElement json, string rootTag, bool indent)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+        if (indent) sb.AppendLine();
+        sb.Append($"<{rootTag}>");
+        if (indent) sb.AppendLine();
+        WriteJsonToXml(sb, json, 1, indent);
+        sb.Append($"</{rootTag}>");
+        return sb.ToString();
+    }
+
+    private static void WriteJsonToXml(System.Text.StringBuilder sb, JsonElement el, int depth, bool indent)
+    {
+        var pad = indent ? new string(' ', depth * 2) : "";
+        var nl = indent ? "\n" : "";
+
+        switch (el.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var prop in el.EnumerateObject())
+                {
+                    sb.Append($"{pad}<{prop.Name}>");
+                    if (prop.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                    {
+                        sb.Append(nl);
+                        WriteJsonToXml(sb, prop.Value, depth + 1, indent);
+                        sb.Append($"{pad}</{prop.Name}>{nl}");
+                    }
+                    else
+                    {
+                        sb.Append(System.Security.SecurityElement.Escape(prop.Value.ToString()));
+                        sb.Append($"</{prop.Name}>{nl}");
+                    }
+                }
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in el.EnumerateArray())
+                {
+                    sb.Append($"{pad}<item>");
+                    if (item.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                    {
+                        sb.Append(nl);
+                        WriteJsonToXml(sb, item, depth + 1, indent);
+                        sb.Append($"{pad}</item>{nl}");
+                    }
+                    else
+                    {
+                        sb.Append(System.Security.SecurityElement.Escape(item.ToString()));
+                        sb.Append($"</item>{nl}");
+                    }
+                }
+                break;
+            default:
+                sb.Append($"{pad}{System.Security.SecurityElement.Escape(el.ToString())}{nl}");
+                break;
+        }
+    }
+
+    private static string JsonToMarkdownTable(JsonElement json)
+    {
+        if (json.ValueKind != JsonValueKind.Array) return $"```\n{json}\n```";
+
+        var rows = json.EnumerateArray().ToList();
+        if (rows.Count == 0) return "*空数据*";
+
+        var columns = new List<string>();
+        foreach (var row in rows)
+        {
+            if (row.ValueKind == JsonValueKind.Object)
+                foreach (var prop in row.EnumerateObject())
+                    if (!columns.Contains(prop.Name)) columns.Add(prop.Name);
+        }
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("| " + string.Join(" | ", columns) + " |");
+        sb.AppendLine("| " + string.Join(" | ", columns.Select(_ => "---")) + " |");
+
+        foreach (var row in rows)
+        {
+            var values = columns.Select(col =>
+            {
+                if (row.ValueKind == JsonValueKind.Object && row.TryGetProperty(col, out var val))
+                    return val.ToString().Replace("|", "\\|");
+                return "";
+            });
+            sb.AppendLine("| " + string.Join(" | ", values) + " |");
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string EscapeJsonString(string s)
+    {
+        return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r").Replace("\t", "\\t");
     }
 
     // ── 输出类 ──────────────────────────────────────────────

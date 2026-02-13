@@ -368,6 +368,53 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta FormatConverter = new()
+    {
+        TypeKey = CapsuleTypes.FormatConverter,
+        Name = "格式转换",
+        Description = "在 JSON / XML / CSV / YAML 等格式之间相互转换",
+        Icon = "repeat",
+        Category = CapsuleCategory.Processor,
+        AccentHue = 45,
+        Testable = true,
+        ConfigSchema = new()
+        {
+            new() { Key = "sourceFormat", Label = "源格式", FieldType = "select", Required = true, DefaultValue = "json", Options = new() {
+                new() { Value = "json", Label = "JSON" },
+                new() { Value = "csv", Label = "CSV" },
+                new() { Value = "xml", Label = "XML" },
+                new() { Value = "yaml", Label = "YAML" },
+                new() { Value = "tsv", Label = "TSV (Tab 分隔)" },
+                new() { Value = "text", Label = "纯文本" },
+            }},
+            new() { Key = "targetFormat", Label = "目标格式", FieldType = "select", Required = true, DefaultValue = "csv", Options = new() {
+                new() { Value = "json", Label = "JSON" },
+                new() { Value = "csv", Label = "CSV" },
+                new() { Value = "xml", Label = "XML" },
+                new() { Value = "yaml", Label = "YAML" },
+                new() { Value = "tsv", Label = "TSV (Tab 分隔)" },
+                new() { Value = "markdown-table", Label = "Markdown 表格" },
+                new() { Value = "text", Label = "纯文本" },
+            }},
+            new() { Key = "csvDelimiter", Label = "CSV 分隔符", FieldType = "text", Required = false, DefaultValue = ",",
+                HelpTip = "仅在源/目标格式为 CSV 时生效" },
+            new() { Key = "xmlRootTag", Label = "XML 根标签", FieldType = "text", Required = false, DefaultValue = "root",
+                HelpTip = "仅在目标格式为 XML 时生效" },
+            new() { Key = "prettyPrint", Label = "美化输出", FieldType = "select", Required = false, DefaultValue = "true", Options = new() {
+                new() { Value = "true", Label = "是" },
+                new() { Value = "false", Label = "否" },
+            }},
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "convert-in", Name = "input", DataType = "text", Required = true, Description = "待转换的源数据" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "convert-out", Name = "converted", DataType = "text", Required = true, Description = "转换后的数据" },
+        },
+    };
+
     // ──────────── 输出类 ────────────
 
     public static readonly CapsuleTypeMeta ReportGenerator = new()
@@ -485,7 +532,7 @@ public static class CapsuleTypeRegistry
         // 触发类
         Timer, WebhookReceiver, ManualTrigger, FileUpload,
         // 处理类
-        TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger,
+        TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter,
         // 输出类
         ReportGenerator, FileExporter, WebhookSender, NotificationSender,
     };
