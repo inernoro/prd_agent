@@ -7,11 +7,19 @@ import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { SwitcherService } from './services/switcher.js';
 import { BuilderService } from './services/builder.js';
+import { InfraService } from './services/infra.js';
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
 
 const shell = new ShellExecutor();
+
+// ── Ensure infrastructure (MongoDB, Redis, Gateway) is running ──
+const infraService = new InfraService(shell, config);
+console.log('\n  Checking infrastructure...');
+const infraLog = await infraService.ensure();
+infraLog.forEach((line) => console.log(line));
+console.log('');
 
 const stateFile = path.join(config.repoRoot, '.bt', 'state.json');
 const stateService = new StateService(stateFile);
