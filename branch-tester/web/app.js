@@ -176,10 +176,12 @@ function renderHistory(history) {
 function renderActiveSwitcher(branches, activeBranchId) {
   const sel = document.getElementById('activeSwitcher');
   const link = document.getElementById('activeLink');
-  const entries = Object.values(branches).filter((b) => b.status === 'running');
+  // Include both deploy-running and source-running branches
+  const entries = Object.values(branches).filter((b) => b.status === 'running' || b.runStatus === 'running');
   let html = '<option value="">未指向任何分支</option>';
   entries.forEach((b) => {
-    html += `<option value="${b.id}" ${b.id === activeBranchId ? 'selected' : ''}>${b.branch}</option>`;
+    const mode = b.status === 'running' ? '制品' : '源码';
+    html += `<option value="${b.id}" ${b.id === activeBranchId ? 'selected' : ''}>${b.branch} (${mode})</option>`;
   });
   sel.innerHTML = html;
   sel.disabled = !entries.length;

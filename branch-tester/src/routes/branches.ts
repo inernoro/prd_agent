@@ -6,7 +6,7 @@ import type { WorktreeService } from '../services/worktree.js';
 import type { ContainerService } from '../services/container.js';
 import type { SwitcherService } from '../services/switcher.js';
 import type { BuilderService } from '../services/builder.js';
-import type { BtConfig, IShellExecutor, OperationLog, OperationLogEvent } from '../types.js';
+import type { BranchEntry, BtConfig, IShellExecutor, OperationLog, OperationLogEvent } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 export interface RouterDeps {
@@ -358,17 +358,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // Helper: determine which container name to use as nginx upstream
+  function resolveUpstream(entry: BranchEntry): { upstream: string; mode: 'deploy' | 'run' } | null {
+    // Prefer deploy container if running
+    if (entry.status === 'running') {
+      return { upstream: entry.containerName, mode: 'deploy' };
+    }
+    // Fallback to source-run container if running
+    if (entry.runStatus === 'running' && entry.runContainerName) {
+      return { upstream: entry.runContainerName, mode: 'run' };
+    }
+    return null;
+  }
+
   // Helper: perform the activate sequence (sync + nginx switch)
   async function doActivate(id: string): Promise<void> {
     const entry = stateService.getBranch(id)!;
+    const resolved = resolveUpstream(entry);
+    if (!resolved) {
+      throw new Error(`Branch "${id}" has no running container (deploy or source-run)`);
+    }
 
     switcherService.backup();
 
+    // Sync static files: prefer branch-specific build, fallback to main dist
     const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
     const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
-    await switcherService.syncStaticFiles(buildsDir, distDir);
+    if (fs.existsSync(buildsDir)) {
+      await switcherService.syncStaticFiles(buildsDir, distDir);
+    }
 
-    const newConf = switcherService.generateConfig(entry.containerName);
+    const newConf = switcherService.generateConfig(resolved.upstream);
     await switcherService.applyConfig(newConf);
 
     stateService.activate(id);
@@ -385,12 +405,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
-      const running = await containerService.isRunning(entry.containerName);
-      if (!running) {
-        res.status(400).json({
-          error: `Branch "${id}" is not running. Start it first.`,
-        });
-        return;
+      // Check if any container (deploy or source-run) is actually running
+      const resolved = resolveUpstream(entry);
+      if (!resolved) {
+        // Double-check with Docker in case state is stale
+        const deployAlive = await containerService.isRunning(entry.containerName);
+        const runAlive = entry.runContainerName
+          ? await containerService.isRunning(entry.runContainerName)
+          : false;
+
+        if (!deployAlive && !runAlive) {
+          res.status(400).json({
+            error: `分支 "${entry.branch}" 没有运行中的容器（部署和源码都未运行）`,
+          });
+          return;
+        }
+        // State was stale, update it
+        if (deployAlive) entry.status = 'running';
+        if (runAlive) entry.runStatus = 'running';
+        stateService.save();
       }
 
       await doActivate(id);
