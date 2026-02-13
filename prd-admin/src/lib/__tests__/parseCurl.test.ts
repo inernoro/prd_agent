@@ -161,6 +161,54 @@ describe('parseCurl — Chrome CMD 格式 (TAPD Windows)', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// 用户反馈的 GET cURL（无 body，纯 header + cookie）
+// ═══════════════════════════════════════════════════════════════
+
+const USER_GET_CURL = `curl 'https://www.tapd.cn/api/basic/onboarding/can_show_recommend_template_user_task_guide?workspace_id=66590626' \\
+  -H 'Accept: application/json, text/plain, */*' \\
+  -H 'Accept-Language: zh-CN,zh;q=0.9' \\
+  -H 'Connection: keep-alive' \\
+  -b 'tapdsession=abc123; app_locale_name=zh_CN; __root_domain_v=.tapd.cn' \\
+  -H 'DNT: 1' \\
+  -H 'Referer: https://www.tapd.cn/tapd_fe/66590626/bug/list?confId=1166590626001043504' \\
+  -H 'Sec-Fetch-Dest: empty' \\
+  -H 'Sec-Fetch-Mode: cors' \\
+  -H 'Sec-Fetch-Site: same-origin' \\
+  -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36' \\
+  -H 'sec-ch-ua: "Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"' \\
+  -H 'sec-ch-ua-mobile: ?0' \\
+  -H 'sec-ch-ua-platform: "Windows"'`;
+
+describe('parseCurl — 用户 GET cURL（header+cookie，无 body）', () => {
+  const result = parseCurl(USER_GET_CURL);
+
+  it('解析不为 null', () => {
+    expect(result).not.toBeNull();
+  });
+
+  it('URL 正确', () => {
+    expect(result!.url).toBe('https://www.tapd.cn/api/basic/onboarding/can_show_recommend_template_user_task_guide?workspace_id=66590626');
+  });
+
+  it('方法为 GET', () => {
+    expect(result!.method).toBe('GET');
+  });
+
+  it('Cookie 被识别', () => {
+    expect(result!.headers['Cookie']).toContain('tapdsession=abc123');
+    expect(result!.headers['Cookie']).toContain('app_locale_name=zh_CN');
+  });
+
+  it('共 13 个 header（12 -H + 1 -b Cookie）', () => {
+    expect(Object.keys(result!.headers).length).toBe(13);
+  });
+
+  it('body 为空', () => {
+    expect(result!.body).toBe('');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
 // 测试：简单格式
 // ═══════════════════════════════════════════════════════════════
 
@@ -182,6 +230,15 @@ describe('parseCurl — 基础格式', () => {
     const r = parseCurl('curl "https://api.example.com/data"');
     expect(r).not.toBeNull();
     expect(r!.url).toBe('https://api.example.com/data');
+  });
+
+  it('bash 续行反斜杠后有尾随空格', () => {
+    // 有些编辑器/粘贴板会在 \ 后面添加空格
+    const r = parseCurl("curl 'https://api.example.com/data' \\   \n  -H 'Accept: text/html' \\  \n  -H 'X-Token: abc'");
+    expect(r).not.toBeNull();
+    expect(r!.url).toBe('https://api.example.com/data');
+    expect(r!.headers['Accept']).toBe('text/html');
+    expect(r!.headers['X-Token']).toBe('abc');
   });
 
   it('显式 -X POST', () => {

@@ -258,9 +258,9 @@ function preprocessRaw(raw: string): string {
     // 转义字符还原：^X → X（CMD 的 ^ 可以转义任意字符）
     s = s.replace(/\^(.)/g, '$1');
   } else {
-    // bash / PowerShell
-    s = s.replace(/\\\r?\n/g, ' ');   // bash 续行
-    s = s.replace(/`\r?\n/g, ' ');    // PowerShell 续行
+    // bash / PowerShell（兼容 \ 后有尾随空格的情况）
+    s = s.replace(/\\[ \t]*\r?\n/g, ' ');   // bash 续行
+    s = s.replace(/`[ \t]*\r?\n/g, ' ');    // PowerShell 续行
   }
 
   // 统一换行和空白

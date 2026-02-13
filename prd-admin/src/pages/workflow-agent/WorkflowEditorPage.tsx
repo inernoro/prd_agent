@@ -327,6 +327,26 @@ function CapsuleConfigForm({ fields, values, onChange, disabled, nodeType }: {
     }
   }
 
+  // curlCommand 文本框自动解析：粘贴 cURL 命令后自动填充 url/method/headers/body
+  const [curlParsed, setCurlParsed] = useState(false);
+  function handleCurlCommandPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const text = e.clipboardData.getData('text/plain');
+    if (!text) return;
+    const parsed = parseCurl(text);
+    if (parsed) {
+      e.preventDefault();
+      onChange('curlCommand', text);
+      onChange('url', parsed.url);
+      onChange('method', parsed.method);
+      const h = headersToJson(parsed.headers);
+      if (h) onChange('headers', h);
+      const b = prettyBody(parsed.body);
+      if (b) onChange('body', b);
+      setCurlParsed(true);
+      setTimeout(() => setCurlParsed(false), 2500);
+    }
+  }
+
   return (
     <div className="space-y-3">
       {/* cURL 导入 + 导出（仅 http-request / smart-http） */}
@@ -339,13 +359,19 @@ function CapsuleConfigForm({ fields, values, onChange, disabled, nodeType }: {
 
       {fields.map((field) => (
         <div key={field.key}>
-          <label className="flex items-center text-[11px] mb-1" style={{ color: 'var(--text-secondary)' }}>
+          <label className="flex items-center gap-1.5 text-[11px] mb-1" style={{ color: 'var(--text-secondary)' }}>
             {field.label}
+            {field.key === 'curlCommand' && curlParsed && (
+              <span className="text-[10px] font-medium" style={{ color: 'rgba(34,197,94,0.9)' }}>
+                ✓ 已解析并填入下方字段
+              </span>
+            )}
           </label>
           {field.fieldType === 'textarea' || field.fieldType === 'code' ? (
             <textarea
               value={values[field.key] || field.defaultValue || ''}
               onChange={(e) => onChange(field.key, e.target.value)}
+              onPaste={field.key === 'curlCommand' && supportssCurl ? handleCurlCommandPaste : undefined}
               placeholder={field.placeholder}
               disabled={disabled}
               rows={field.fieldType === 'code' ? 8 : 4}
@@ -377,6 +403,23 @@ function CapsuleConfigForm({ fields, values, onChange, disabled, nodeType }: {
               type={field.fieldType === 'password' ? 'password' : field.fieldType === 'number' ? 'number' : 'text'}
               value={values[field.key] || field.defaultValue || ''}
               onChange={(e) => onChange(field.key, e.target.value)}
+              onPaste={field.key === 'url' && supportssCurl ? (e) => {
+                const text = e.clipboardData.getData('text/plain');
+                if (text && /^\s*curl[\s.]/i.test(text)) {
+                  const parsed = parseCurl(text);
+                  if (parsed) {
+                    e.preventDefault();
+                    onChange('url', parsed.url);
+                    onChange('method', parsed.method);
+                    const h = headersToJson(parsed.headers);
+                    if (h) onChange('headers', h);
+                    const b = prettyBody(parsed.body);
+                    if (b) onChange('body', b);
+                    setCurlParsed(true);
+                    setTimeout(() => setCurlParsed(false), 2500);
+                  }
+                }
+              } : undefined}
               placeholder={field.placeholder}
               disabled={disabled}
               className="prd-field w-full h-[32px] px-3 rounded-[8px] text-[12px] outline-none disabled:opacity-50 transition-all"
