@@ -438,7 +438,7 @@ function CapsuleConfigForm({ fields, values, onChange, onBatchChange, disabled, 
 
 // ──── 右侧舱卡片 ────
 
-function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings }: {
+function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, isCurrentExec }: {
   node: WorkflowNode;
   index: number;
   nodeExec?: NodeExecution;
@@ -453,6 +453,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   testRunResult?: import('@/services/contracts/workflowAgent').CapsuleTestRunResult | null;
   isTestRunning?: boolean;
   formatWarnings?: { nodeId: string; message: string }[];
+  isCurrentExec?: boolean;
 }) {
   const typeDef = getCapsuleType(node.nodeType);
   const status = nodeExec?.status || 'idle';
@@ -493,29 +494,28 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   // 判断此舱是否需要输入（有 required 输入插槽）
   const hasRequiredInput = node.inputSlots.some(s => s.required);
   const hasAnyInputSlot = node.inputSlots.length > 0;
-  const hasOutputSlot = node.outputSlots.length > 0;
-  const isTrigger = capsuleMeta?.category === 'trigger';
 
   // 统一结果：合并测试结果和执行结果为同一面板
-  const unifiedResult = testRunResult || (
-    nodeOutput && (status === 'completed' || status === 'failed')
-      ? {
-          status: status === 'completed' ? 'completed' as const : 'failed' as const,
-          durationMs: nodeExec?.durationMs ?? 0,
-          logs: nodeOutput.logs,
-          artifacts: nodeOutput.artifacts.map(a => ({
-            name: a.name,
-            mimeType: a.mimeType,
-            sizeBytes: a.sizeBytes,
-            inlineContent: a.inlineContent,
-            cosUrl: a.cosUrl,
-            artifactId: a.artifactId,
-          })),
-          errorMessage: nodeExec?.errorMessage,
-        }
-      : null
-  );
-  const resultSource = testRunResult ? 'test' : (nodeOutput ? 'exec' : null);
+  // 仅显示「本次会话」触发的执行结果，不显示历史执行的陈旧结果
+  const currentExecOutput = (nodeOutput && nodeExec && isCurrentExec && (status === 'completed' || status === 'failed'))
+    ? {
+        status: status === 'completed' ? 'completed' as const : 'failed' as const,
+        durationMs: nodeExec.durationMs ?? 0,
+        logs: nodeOutput.logs,
+        artifacts: nodeOutput.artifacts.map(a => ({
+          name: a.name,
+          mimeType: a.mimeType,
+          sizeBytes: a.sizeBytes,
+          inlineContent: a.inlineContent,
+          cosUrl: a.cosUrl,
+          artifactId: a.artifactId,
+        })),
+        errorMessage: nodeExec.errorMessage,
+      }
+    : null;
+
+  const unifiedResult = testRunResult || currentExecOutput;
+  const resultSource: 'test' | 'exec' | null = testRunResult ? 'test' : currentExecOutput ? 'exec' : null;
 
   return (
     <div>
@@ -572,6 +572,31 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
               >
                 {typeDef?.name ?? node.nodeType}
               </span>
+              {/* 紧凑插槽标识：蓝圈=输入  绿圈=输出  悬浮显示详情 */}
+              {node.inputSlots.length > 0 && (
+                <span
+                  className="relative group px-1 py-0.5 rounded text-[9px] font-mono cursor-default"
+                  style={{ background: `hsla(${accentHue}, 50%, 50%, 0.1)`, color: `hsla(${accentHue}, 55%, 70%, 0.85)`, border: `1px solid hsla(${accentHue}, 50%, 50%, 0.15)` }}
+                >
+                  ← {node.inputSlots.length}
+                  <span className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block whitespace-nowrap rounded-[8px] px-2.5 py-1.5 text-[10px] leading-relaxed"
+                    style={{ background: 'rgba(0,0,0,0.85)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.12)', backdropFilter: 'blur(12px)' }}>
+                    {node.inputSlots.map(s => `${s.name} (${s.dataType})${s.required ? ' *' : ''}`).join('\n')}
+                  </span>
+                </span>
+              )}
+              {node.outputSlots.length > 0 && (
+                <span
+                  className="relative group px-1 py-0.5 rounded text-[9px] font-mono cursor-default"
+                  style={{ background: 'rgba(34,197,94,0.08)', color: 'rgba(34,197,94,0.8)', border: '1px solid rgba(34,197,94,0.12)' }}
+                >
+                  → {node.outputSlots.length}
+                  <span className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block whitespace-nowrap rounded-[8px] px-2.5 py-1.5 text-[10px] leading-relaxed"
+                    style={{ background: 'rgba(0,0,0,0.85)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.12)', backdropFilter: 'blur(12px)' }}>
+                    {node.outputSlots.map(s => `${s.name} (${s.dataType})`).join('\n')}
+                  </span>
+                </span>
+              )}
             </div>
           </div>
 
@@ -600,11 +625,11 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
 
         {/* ════════ 展开区域：输入 → 处理 → 输出 ════════ */}
         {isExpanded && (
-          <div className="mt-3 ml-[68px] space-y-0" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 12 }}>
+          <div className="mt-4 ml-[68px] space-y-4" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 16 }}>
 
             {/* 格式兼容性警告 */}
             {formatWarnings && formatWarnings.length > 0 && (
-              <div className="mb-3">
+              <div>
                 {formatWarnings.map((w, i) => (
                   <div
                     key={i}
@@ -621,94 +646,57 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
               </div>
             )}
 
-            {/* ──── ① 输入区 ──── */}
-            {hasAnyInputSlot && (
-              <CapsuleSection emoji="📥" title="输入" accentHue={accentHue}>
-                {/* 输入插槽列表 */}
-                <div className="space-y-1 mb-2">
-                  {node.inputSlots.map(s => (
-                    <div key={s.slotId} className="flex items-center gap-2 text-[10px]">
-                      <span
-                        className="px-1.5 py-0.5 rounded font-mono"
-                        style={{
-                          background: `hsla(${accentHue}, 50%, 50%, 0.08)`,
-                          color: `hsla(${accentHue}, 55%, 70%, 0.85)`,
-                          border: `1px solid hsla(${accentHue}, 50%, 50%, 0.12)`,
-                        }}
-                      >
-                        {s.name}
-                      </span>
-                      <span className="px-1 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', fontSize: 9 }}>
-                        {s.dataType}
-                      </span>
-                      {s.required && <span style={{ color: 'var(--text-muted)', fontSize: 9 }}>必需</span>}
-                      {s.description && <span style={{ color: 'var(--text-muted)' }} className="truncate">{s.description}</span>}
-                    </div>
-                  ))}
-                </div>
-
-                {/* 测试输入区：粘贴/上传 */}
-                {capsuleMeta?.testable && (
-                  <div>
-                    <label className="text-[10px] mb-1 block" style={{ color: 'var(--text-muted)' }}>
-                      {hasRequiredInput ? '⚠ 此舱需要输入数据才能测试' : '测试输入（可选）'}
-                    </label>
-                    <textarea
-                      value={testInput}
-                      onChange={(e) => setTestInput(e.target.value)}
-                      placeholder={hasRequiredInput
-                        ? '粘贴 JSON 数据或上传文件内容…'
-                        : '空则使用默认模拟数据'}
-                      rows={3}
-                      className="prd-field w-full px-3 py-2 rounded-[8px] text-[11px] outline-none resize-y font-mono"
+            {/* ──── 测试输入区（有输入插槽 + 可测试时显示） ──── */}
+            {hasAnyInputSlot && capsuleMeta?.testable && (
+              <div>
+                <label className="text-[10px] mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                  {hasRequiredInput ? '⚠ 此舱需要输入数据才能测试' : '测试输入（可选）'}
+                </label>
+                <textarea
+                  value={testInput}
+                  onChange={(e) => setTestInput(e.target.value)}
+                  placeholder={hasRequiredInput
+                    ? '粘贴 JSON 数据或上传文件内容…'
+                    : '空则使用默认模拟数据'}
+                  rows={2}
+                  className="prd-field w-full px-3 py-2 rounded-[8px] text-[11px] outline-none resize-y font-mono"
+                />
+                <div className="flex items-center gap-2 mt-1">
+                  <label
+                    className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer transition-colors"
+                    style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  >
+                    📎 上传
+                    <input
+                      type="file"
+                      className="hidden"
+                      accept=".json,.csv,.txt,.xml"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = () => setTestInput(reader.result as string);
+                        reader.readAsText(file);
+                        e.target.value = '';
+                      }}
                     />
-                    <div className="flex items-center gap-2 mt-1.5">
-                      <label
-                        className="text-[10px] px-2 py-1 rounded-[6px] cursor-pointer transition-colors"
-                        style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
-                      >
-                        📎 上传文件
-                        <input
-                          type="file"
-                          className="hidden"
-                          accept=".json,.csv,.txt,.xml"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            const reader = new FileReader();
-                            reader.onload = () => setTestInput(reader.result as string);
-                            reader.readAsText(file);
-                            e.target.value = '';
-                          }}
-                        />
-                      </label>
-                      <button
-                        className="text-[10px] px-2 py-1 rounded-[6px] transition-colors"
-                        style={{ color: 'var(--text-muted)' }}
-                        onClick={() => {
-                          try {
-                            setTestInput(JSON.stringify(JSON.parse(testInput), null, 2));
-                          } catch { /* not json */ }
-                        }}
-                      >
-                        格式化
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </CapsuleSection>
+                  </label>
+                  <button
+                    className="text-[10px] px-2 py-0.5 rounded-[6px] transition-colors"
+                    style={{ color: 'var(--text-muted)' }}
+                    onClick={() => {
+                      try { setTestInput(JSON.stringify(JSON.parse(testInput), null, 2)); } catch { /* not json */ }
+                    }}
+                  >
+                    格式化
+                  </button>
+                </div>
+              </div>
             )}
 
-            {/* 触发器舱：无输入插槽但标注 "仅触发" */}
-            {isTrigger && !hasAnyInputSlot && (
-              <CapsuleSection emoji="⚡" title="触发" accentHue={accentHue}>
-                <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>此舱为触发器，无需输入数据</p>
-              </CapsuleSection>
-            )}
-
-            {/* ──── ② 处理区（配置） ──── */}
+            {/* ──── 舱配置 ──── */}
             {capsuleMeta && capsuleMeta.configSchema.length > 0 && (
-              <CapsuleSection emoji="⚙" title="处理配置" accentHue={accentHue}>
+              <div>
                 <CapsuleConfigForm
                   fields={capsuleMeta.configSchema}
                   values={configValues}
@@ -717,38 +705,11 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                   disabled={isRunning}
                   nodeType={node.nodeType}
                 />
-              </CapsuleSection>
-            )}
-
-            {/* ──── ③ 输出区 ──── */}
-            {hasOutputSlot && (
-              <CapsuleSection emoji="📤" title="输出" accentHue={120}>
-                {/* 输出插槽列表 */}
-                <div className="space-y-1">
-                  {node.outputSlots.map(s => (
-                    <div key={s.slotId} className="flex items-center gap-2 text-[10px]">
-                      <span
-                        className="px-1.5 py-0.5 rounded font-mono"
-                        style={{
-                          background: 'rgba(34,197,94,0.06)',
-                          color: 'rgba(34,197,94,0.8)',
-                          border: '1px solid rgba(34,197,94,0.1)',
-                        }}
-                      >
-                        {s.name}
-                      </span>
-                      <span className="px-1 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', fontSize: 9 }}>
-                        {s.dataType}
-                      </span>
-                      {s.description && <span style={{ color: 'var(--text-muted)' }} className="truncate">{s.description}</span>}
-                    </div>
-                  ))}
-                </div>
-              </CapsuleSection>
+              </div>
             )}
 
             {/* ──── 操作栏 ──── */}
-            <div className="flex items-center gap-2 pt-3">
+            <div className="flex items-center gap-2">
               {capsuleMeta?.testable && (
                 <Button
                   size="xs"
@@ -786,33 +747,6 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
           </div>
         )}
       </GlassCard>
-    </div>
-  );
-}
-
-// ──── 舱段落分割线组件 ────
-
-function CapsuleSection({ emoji, title, accentHue, children }: {
-  emoji: string;
-  title: string;
-  accentHue: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className="rounded-[10px] p-3 mb-3"
-      style={{
-        background: 'rgba(255,255,255,0.02)',
-        border: '1px solid rgba(255,255,255,0.06)',
-      }}
-    >
-      <div className="flex items-center gap-1.5 mb-2">
-        <span className="text-[12px]">{emoji}</span>
-        <span className="text-[11px] font-semibold" style={{ color: `hsla(${accentHue}, 55%, 65%, 0.8)` }}>
-          {title}
-        </span>
-      </div>
-      {children}
     </div>
   );
 }
@@ -1053,6 +987,9 @@ export function WorkflowEditorPage() {
   // 变量
   const [vars, setVars] = useState<Record<string, string>>({});
 
+  // 当前会话触发的执行 ID（区分「本次操作」vs「历史执行」）
+  const [currentSessionExecId, setCurrentSessionExecId] = useState<string | null>(null);
+
   // 轮询
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fetchedNodesRef = useRef(new Set<string>());
@@ -1257,6 +1194,7 @@ export function WorkflowEditorPage() {
       if (res.success && res.data) {
         const exec = res.data.execution;
         setLatestExec(exec);
+        setCurrentSessionExecId(exec.id);
         startPolling(exec.id);
       } else {
         alert('执行失败: ' + (res.error?.message || '未知错误'));
@@ -1487,6 +1425,7 @@ export function WorkflowEditorPage() {
                         testRunResult={testRunResult?.nodeId === node.nodeId ? testRunResult.result : null}
                         isTestRunning={testRunning === node.nodeId}
                         formatWarnings={warnings}
+                        isCurrentExec={!!currentSessionExecId && latestExec?.id === currentSessionExecId}
                       />
                     );
                   });
