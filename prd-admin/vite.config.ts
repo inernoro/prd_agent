@@ -2,9 +2,21 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
+import { execSync } from 'child_process';
+
+function getGitBranch(): string {
+  try {
+    return execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim();
+  } catch {
+    return '';
+  }
+}
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
+  define: {
+    __GIT_BRANCH__: JSON.stringify(process.env.VITE_GIT_BRANCH || getGitBranch()),
+  },
   // 默认 Vite 只暴露 VITE_ 前缀；这里额外暴露 TENCENT_ 前缀，便于前端拼接 COS 公网资源地址（如头像）
   envPrefix: ['VITE_', 'TENCENT_'],
   server: {
