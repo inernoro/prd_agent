@@ -84,8 +84,7 @@ volumes:
 
 networks:
   prdagent-network:
-    name: prdagent-network
-    driver: bridge
+    external: true
 
 
 

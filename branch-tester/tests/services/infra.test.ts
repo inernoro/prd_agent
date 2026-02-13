@@ -27,6 +27,10 @@ describe('InfraService', () => {
   beforeEach(() => {
     mock = new MockShellExecutor();
     service = new InfraService(mock, makeConfig());
+    // Network already exists by default
+    mock.addResponsePattern(/docker network inspect prdagent-network/, () => ({
+      stdout: '[]', stderr: '', exitCode: 0,
+    }));
   });
 
   it('should report all containers running when they are', async () => {
@@ -117,6 +121,35 @@ describe('InfraService', () => {
 
     expect(text).toContain('Stopping production API');
     expect(mock.commands.some((c) => c.includes('docker stop prdagent-api'))).toBe(true);
+  });
+
+  it('should create Docker network if it does not exist', async () => {
+    // Override: network does NOT exist
+    mock.clearPatterns();
+    mock.addResponsePattern(/docker network inspect prdagent-network/, () => ({
+      stdout: '', stderr: 'No such network', exitCode: 1,
+    }));
+    mock.addResponsePattern(/docker network create prdagent-network/, () => ({
+      stdout: 'abc123', stderr: '', exitCode: 0,
+    }));
+    // All infra running
+    mock.addResponsePattern(/docker inspect.*"prdagent-mongodb"/, () => ({
+      stdout: 'true', stderr: '', exitCode: 0,
+    }));
+    mock.addResponsePattern(/docker inspect.*"prdagent-redis"/, () => ({
+      stdout: 'true', stderr: '', exitCode: 0,
+    }));
+    mock.addResponsePattern(/docker inspect.*"prdagent-gateway"/, () => ({
+      stdout: 'true', stderr: '', exitCode: 0,
+    }));
+    mock.addResponsePattern(/docker inspect.*"prdagent-api"/, () => ({
+      stdout: 'false', stderr: '', exitCode: 0,
+    }));
+
+    const log = await service.ensure();
+    const text = log.join('\n');
+    expect(text).toContain('created');
+    expect(mock.commands.some((c) => c.includes('docker network create'))).toBe(true);
   });
 
   it('should fall back to docker-compose v1 if v2 fails', async () => {

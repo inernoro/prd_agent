@@ -47,6 +47,10 @@ export class MockShellExecutor implements IShellExecutor {
     this.patterns.push({ regex, handler });
   }
 
+  clearPatterns(): void {
+    this.patterns = [];
+  }
+
   async exec(command: string, _options?: ExecOptions): Promise<ExecResult> {
     this.commands.push(command);
 

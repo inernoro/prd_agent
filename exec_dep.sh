@@ -138,6 +138,9 @@ echo "Static dist extracted to: deploy/web/dist"
 echo "Pulling latest api image..."
 $COMPOSE pull api
 
+echo "Ensuring Docker network exists..."
+docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
+
 echo "Starting compose (force recreate to ensure new image is used)..."
 $COMPOSE up -d --force-recreate
 

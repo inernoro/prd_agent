@@ -35,8 +35,24 @@ export class InfraService {
    * Ensure all infrastructure containers are running.
    * Returns a summary of what was done.
    */
+  private async ensureNetwork(): Promise<string[]> {
+    const network = this.config.docker.network;
+    const inspect = await this.shell.exec(`docker network inspect ${network}`);
+    if (inspect.exitCode !== 0) {
+      const create = await this.shell.exec(`docker network create ${network}`);
+      if (create.exitCode !== 0) {
+        return [`  ✗ Failed to create Docker network "${network}"`];
+      }
+      return [`  ✓ Docker network "${network}" — created`];
+    }
+    return [`  ✓ Docker network "${network}" — exists`];
+  }
+
   async ensure(): Promise<string[]> {
     const log: string[] = [];
+
+    // Step 0: Ensure Docker network exists (needed before docker compose with external network)
+    log.push(...await this.ensureNetwork());
 
     // Step 1: Check which infra containers are running
     const missing: typeof this.infraContainers = [];
