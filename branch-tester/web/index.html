@@ -30,6 +30,11 @@
       </div>
     </section>
 
+    <section class="legend-bar">
+      <span class="legend-item"><span class="legend-dot run-dot"></span> 运行 = 源码 (dotnet run)</span>
+      <span class="legend-item"><span class="legend-dot deploy-dot"></span> 部署 = 制品 (Docker image + Nginx)</span>
+    </section>
+
     <section id="branchList" class="branch-list">
       <div class="empty-state">暂无分支，请从下拉框选择添加</div>
     </section>
@@ -43,15 +48,15 @@
     <div id="toast" class="toast hidden"></div>
   </div>
 
-  <!-- Deploy log modal -->
-  <div id="deployModal" class="modal hidden">
-    <div class="modal-backdrop" onclick="closeDeployModal()"></div>
+  <!-- Unified log modal (deploy / run / history) -->
+  <div id="logModal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeLogModal()"></div>
     <div class="modal-dialog">
       <div class="modal-header">
-        <h2 id="deployModalTitle">部署日志</h2>
-        <button class="modal-close" onclick="closeDeployModal()">✕</button>
+        <h2 id="logModalTitle">操作日志</h2>
+        <button class="modal-close" onclick="closeLogModal()">✕</button>
       </div>
-      <div id="deployModalBody" class="modal-body"></div>
+      <div id="logModalBody" class="modal-body"></div>
     </div>
   </div>
 

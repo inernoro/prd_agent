@@ -574,6 +574,81 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('GET /api/branches/:id/logs', () => {
+    it('should return empty logs for new branch', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      const res = await request(server, 'GET', '/api/branches/feature-test/logs');
+      expect(res.status).toBe(200);
+      expect((res.body as any).logs).toEqual([]);
+    });
+
+    it('should return 404 for unknown branch', async () => {
+      const res = await request(server, 'GET', '/api/branches/nope/logs');
+      expect(res.status).toBe(404);
+    });
+
+    it('should contain deploy log after deploy', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      await sseRequest(server, '/api/branches/feature-test/deploy');
+
+      const res = await request(server, 'GET', '/api/branches/feature-test/logs');
+      const logs = (res.body as any).logs;
+      expect(logs.length).toBeGreaterThanOrEqual(1);
+      expect(logs[0].type).toBe('deploy');
+      expect(logs[0].status).toBe('completed');
+      expect(logs[0].events.length).toBeGreaterThan(0);
+    });
+
+    it('should contain run log after run', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      await sseRequest(server, '/api/branches/feature-test/run');
+
+      const res = await request(server, 'GET', '/api/branches/feature-test/logs');
+      const logs = (res.body as any).logs;
+      expect(logs.length).toBeGreaterThanOrEqual(1);
+      expect(logs[0].type).toBe('run');
+      expect(logs[0].status).toBe('completed');
+    });
+  });
+
+  describe('POST /api/branches/:id/reset', () => {
+    it('should reset error status to idle', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      stateService.updateStatus('feature-test', 'error');
+      stateService.getBranch('feature-test')!.errorMessage = 'build failed';
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/branches/feature-test/reset');
+      expect(res.status).toBe(200);
+
+      const list = await request(server, 'GET', '/api/branches');
+      const br = (list.body as any).branches['feature-test'];
+      expect(br.status).toBe('idle');
+      expect(br.errorMessage).toBeUndefined();
+    });
+
+    it('should stop running containers on reset', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      stateService.updateStatus('feature-test', 'running');
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/branches/feature-test/reset');
+      expect(res.status).toBe(200);
+
+      // docker stop should have been called
+      const stopCmds = mock.commands.filter((c) => c.includes('docker stop'));
+      expect(stopCmds.length).toBeGreaterThan(0);
+
+      const list = await request(server, 'GET', '/api/branches');
+      expect((list.body as any).branches['feature-test'].status).toBe('idle');
+    });
+
+    it('should return 404 for unknown branch', async () => {
+      const res = await request(server, 'POST', '/api/branches/nope/reset');
+      expect(res.status).toBe(404);
+    });
+  });
+
   describe('POST /api/rollback', () => {
     it('should rollback to previous branch', async () => {
       // Setup two branches

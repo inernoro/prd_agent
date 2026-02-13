@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { BtState, BranchEntry } from '../types.js';
+import type { BtState, BranchEntry, OperationLog } from '../types.js';
+
+const MAX_LOGS_PER_BRANCH = 10;
 
 function emptyState(): BtState {
   return {
@@ -8,6 +10,7 @@ function emptyState(): BtState {
     history: [],
     branches: {},
     nextPortIndex: 1,
+    logs: {},
   };
 }
 
@@ -31,6 +34,8 @@ export class StateService {
     if (fs.existsSync(this.filePath)) {
       const raw = fs.readFileSync(this.filePath, 'utf-8');
       this.state = JSON.parse(raw) as BtState;
+      // Migrate: ensure logs field exists for older state files
+      if (!this.state.logs) this.state.logs = {};
     } else {
       this.state = emptyState();
     }
@@ -115,5 +120,27 @@ export class StateService {
     const index = this.state.nextPortIndex;
     this.state.nextPortIndex++;
     return `${defaultDbName}_${index}`;
+  }
+
+  /** Append an operation log for a branch (keeps last MAX_LOGS_PER_BRANCH) */
+  appendLog(branchId: string, log: OperationLog): void {
+    if (!this.state.logs[branchId]) {
+      this.state.logs[branchId] = [];
+    }
+    this.state.logs[branchId].push(log);
+    // Trim old logs
+    if (this.state.logs[branchId].length > MAX_LOGS_PER_BRANCH) {
+      this.state.logs[branchId] = this.state.logs[branchId].slice(-MAX_LOGS_PER_BRANCH);
+    }
+  }
+
+  /** Get all operation logs for a branch */
+  getLogs(branchId: string): OperationLog[] {
+    return this.state.logs[branchId] || [];
+  }
+
+  /** Remove logs for a branch */
+  removeLogs(branchId: string): void {
+    delete this.state.logs[branchId];
   }
 }

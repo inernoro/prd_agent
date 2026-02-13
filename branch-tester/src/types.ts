@@ -10,13 +10,37 @@ export interface BranchEntry {
   status: 'idle' | 'building' | 'built' | 'running' | 'stopped' | 'error';
   buildLog?: string;
   lastActivatedAt?: string;
+  /** Human-readable error message when status === 'error' */
+  errorMessage?: string;
 
   // ── Run mode (source-based, direct port access) ──
   runContainerName?: string;
-  runStatus?: 'idle' | 'running' | 'stopped';
+  runStatus?: 'idle' | 'running' | 'stopped' | 'error';
   hostPort?: number;
+  /** Human-readable error message when runStatus === 'error' */
+  runErrorMessage?: string;
 
   createdAt: string;
+}
+
+/** A single event recorded during an operation (deploy/run/rerun) */
+export interface OperationLogEvent {
+  step: string;
+  status: string;
+  title?: string;
+  detail?: Record<string, unknown>;
+  log?: string;
+  chunk?: string;
+  timestamp: string;
+}
+
+/** A complete operation log (one deploy or run session) */
+export interface OperationLog {
+  type: 'deploy' | 'run' | 'rerun';
+  startedAt: string;
+  finishedAt?: string;
+  status: 'running' | 'completed' | 'error';
+  events: OperationLogEvent[];
 }
 
 export interface BtState {
@@ -24,6 +48,8 @@ export interface BtState {
   history: string[];
   branches: Record<string, BranchEntry>;
   nextPortIndex: number;
+  /** Per-branch operation logs (keyed by branch id, most recent last, max 10 per branch) */
+  logs: Record<string, OperationLog[]>;
 }
 
 export interface BtConfig {

@@ -323,6 +323,67 @@ describe('StateService', () => {
     });
   });
 
+  describe('logs', () => {
+    beforeEach(() => {
+      service.load();
+      service.addBranch({
+        id: 'log-test', branch: 'log/test', worktreePath: '/tmp/lt',
+        containerName: 'c-lt', imageName: 'i-lt', dbName: 'db_lt',
+        status: 'idle', createdAt: '2026-02-12T00:00:00Z',
+      });
+    });
+
+    it('should append and retrieve logs', () => {
+      service.appendLog('log-test', {
+        type: 'deploy', startedAt: '2026-02-12T10:00:00Z',
+        status: 'completed', events: [{ step: 'env', status: 'done', timestamp: '2026-02-12T10:00:00Z' }],
+      });
+      const logs = service.getLogs('log-test');
+      expect(logs).toHaveLength(1);
+      expect(logs[0].type).toBe('deploy');
+      expect(logs[0].events).toHaveLength(1);
+    });
+
+    it('should return empty array for branch with no logs', () => {
+      expect(service.getLogs('log-test')).toEqual([]);
+    });
+
+    it('should trim logs to max 10 per branch', () => {
+      for (let i = 0; i < 15; i++) {
+        service.appendLog('log-test', {
+          type: 'run', startedAt: `2026-02-12T${String(i).padStart(2, '0')}:00:00Z`,
+          status: 'completed', events: [],
+        });
+      }
+      expect(service.getLogs('log-test')).toHaveLength(10);
+      // Oldest should be trimmed — first remaining entry should start at i=5
+      expect(service.getLogs('log-test')[0].startedAt).toBe('2026-02-12T05:00:00Z');
+    });
+
+    it('should remove logs for a branch', () => {
+      service.appendLog('log-test', {
+        type: 'deploy', startedAt: '2026-02-12T10:00:00Z',
+        status: 'completed', events: [],
+      });
+      service.removeLogs('log-test');
+      expect(service.getLogs('log-test')).toEqual([]);
+    });
+
+    it('should migrate old state without logs field', () => {
+      const oldState = {
+        activeBranchId: null,
+        history: [],
+        branches: {},
+        nextPortIndex: 1,
+        // no 'logs' field
+      };
+      fs.writeFileSync(stateFile, JSON.stringify(oldState));
+      service.load();
+      // Should not throw, logs should be initialized
+      expect(service.getLogs('anything')).toEqual([]);
+    });
+  });
+
   describe('persistence', () => {
     it('should save and reload state correctly', () => {
       service.load();

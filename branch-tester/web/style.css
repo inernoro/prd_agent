@@ -8,7 +8,7 @@ body {
 }
 
 .container {
-  max-width: 800px;
+  max-width: 900px;
   margin: 0 auto;
   padding: 24px 16px;
 }
@@ -36,9 +36,6 @@ h2 {
 .active-info {
   font-size: 14px;
   color: #8b949e;
-}
-
-.active-info {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -52,6 +49,35 @@ h2 {
 }
 
 .active-info a:hover { text-decoration: underline; }
+
+/* ---- Legend bar ---- */
+
+.legend-bar {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  background: #161b22;
+  border: 1px solid #21262d;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #8b949e;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.legend-dot.run-dot { background: #da8b45; }
+.legend-dot.deploy-dot { background: #238636; }
 
 /* ---- Branch picker (combobox dropdown) ---- */
 
@@ -179,13 +205,7 @@ h2 {
   flex-shrink: 0;
 }
 
-/* ---- Legacy add section (removed, keeping for compat) ---- */
-
-.add-section {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 24px;
-}
+/* ---- Form elements ---- */
 
 select {
   padding: 8px 12px;
@@ -211,10 +231,6 @@ select:focus {
 select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.add-section select {
-  flex: 1;
 }
 
 .active-info select {
@@ -258,6 +274,43 @@ button.activate {
 
 button.activate:hover { background: #388bfd; }
 
+/* Run buttons — orange theme to distinguish from deploy (green) */
+button.run {
+  background: #8a5900;
+  border-color: #da8b45;
+  color: #fff;
+}
+
+button.run:hover { background: #a66b00; }
+
+button.run-active {
+  background: #6e4600;
+  border-color: #da8b45;
+  color: #da8b45;
+}
+
+button.run-active:hover { background: #8a5900; color: #fff; }
+
+button.warn {
+  background: #6e4600;
+  border-color: #d29922;
+  color: #d29922;
+}
+
+button.warn:hover { background: #8a5900; color: #fff; }
+
+/* Action separator */
+.action-sep {
+  display: inline-flex;
+  align-items: center;
+  color: #30363d;
+  font-size: 14px;
+  padding: 0 2px;
+  user-select: none;
+}
+
+/* ---- Branch cards ---- */
+
 .branch-list {
   display: flex;
   flex-direction: column;
@@ -267,7 +320,7 @@ button.activate:hover { background: #388bfd; }
 
 .branch-card {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   padding: 14px 16px;
   background: #161b22;
@@ -280,11 +333,24 @@ button.activate:hover { background: #388bfd; }
   background: #0d1117;
 }
 
+.branch-card.has-error {
+  border-color: #da3633;
+}
+
+.branch-card-left {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  align-items: flex-start;
+}
+
 .status-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
+  margin-top: 5px;
 }
 
 .status-dot.running { background: #3fb950; }
@@ -305,15 +371,75 @@ button.activate:hover { background: #388bfd; }
   margin-bottom: 2px;
 }
 
+.active-badge {
+  font-size: 10px;
+  font-weight: 500;
+  background: rgba(35, 134, 54, 0.2);
+  color: #3fb950;
+  padding: 1px 6px;
+  border-radius: 10px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
 .branch-meta {
   font-size: 12px;
   color: #8b949e;
+}
+
+.branch-ports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.port-badge {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+}
+
+.port-badge.run-port {
+  background: rgba(218, 139, 69, 0.15);
+  color: #da8b45;
+  border: 1px solid rgba(218, 139, 69, 0.3);
+}
+
+.port-badge.deploy-port {
+  background: rgba(35, 134, 54, 0.15);
+  color: #3fb950;
+  border: 1px solid rgba(35, 134, 54, 0.3);
+}
+
+.port-badge.port-idle {
+  background: rgba(139, 148, 158, 0.1);
+  color: #6e7681;
+  border: 1px solid rgba(139, 148, 158, 0.2);
+}
+
+.branch-error {
+  font-size: 11px;
+  color: #f85149;
+  margin-top: 4px;
+  padding: 4px 8px;
+  background: rgba(248, 81, 73, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 400px;
+  cursor: help;
 }
 
 .branch-actions {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
 }
 
 .branch-actions button {
@@ -349,6 +475,8 @@ button.activate:hover { background: #388bfd; }
   font-size: 13px;
   z-index: 999;
   transition: opacity 0.3s;
+  max-width: 400px;
+  word-break: break-word;
 }
 
 .toast.success { background: #238636; color: #fff; }
@@ -357,7 +485,7 @@ button.activate:hover { background: #388bfd; }
 .hidden { display: none; }
 
 /* ============================================================
-   Deploy Modal
+   Log Modal (unified: deploy / run / history)
    ============================================================ */
 
 .modal {
@@ -460,7 +588,14 @@ button.activate:hover { background: #388bfd; }
   word-break: break-all;
 }
 
-/* ---- Deploy steps ---- */
+.deploy-env-table a {
+  color: #58a6ff;
+  text-decoration: none;
+}
+
+.deploy-env-table a:hover { text-decoration: underline; }
+
+/* ---- Deploy / run steps ---- */
 
 .deploy-step {
   margin-bottom: 12px;
@@ -576,6 +711,13 @@ button.activate:hover { background: #388bfd; }
   font-size: 11px;
 }
 
+.deploy-detail a {
+  color: #58a6ff;
+  text-decoration: none;
+}
+
+.deploy-detail a:hover { text-decoration: underline; }
+
 .health-ok {
   color: #3fb950;
   font-weight: 600;
@@ -590,7 +732,7 @@ button.activate:hover { background: #388bfd; }
   color: #d29922;
 }
 
-/* ---- Deploy complete banner ---- */
+/* ---- Deploy/run complete banner ---- */
 
 .deploy-complete {
   margin-top: 16px;
@@ -603,6 +745,73 @@ button.activate:hover { background: #388bfd; }
   border: 1px solid rgba(35, 134, 54, 0.3);
   border-radius: 8px;
 }
+
+.deploy-complete a {
+  color: #58a6ff;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.deploy-complete a:hover { text-decoration: underline; }
+
+/* ---- Operation log history ---- */
+
+.log-entry {
+  margin-bottom: 8px;
+  border: 1px solid #21262d;
+  border-radius: 6px;
+  background: #0d1117;
+}
+
+.log-entry.error {
+  border-color: rgba(218, 54, 51, 0.4);
+}
+
+.log-entry.completed {
+  border-color: rgba(35, 134, 54, 0.3);
+}
+
+.log-entry-header {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+
+.log-entry-header:hover {
+  background: #161b22;
+}
+
+.log-entry-time {
+  color: #6e7681;
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.log-entry-duration {
+  color: #8b949e;
+  font-size: 11px;
+  background: #21262d;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.log-entry-events {
+  padding: 8px 14px 14px;
+  border-top: 1px solid #21262d;
+}
+
+.log-event-line {
+  font-size: 12px;
+  color: #8b949e;
+  padding: 2px 0;
+  line-height: 1.6;
+}
+
+/* ---- Spinner ---- */
 
 .loading {
   display: inline-block;

@@ -35,7 +35,7 @@ export class BuilderService {
 
     // pnpm install
     onOutput?.('── pnpm install ──\n');
-    const installResult = await this.shell.exec('pnpm install --frozen-lockfile', {
+    const installResult = await this.shell.exec('pnpm install --no-frozen-lockfile', {
       cwd: adminDir,
       timeout: 120_000,
       onData: onOutput,

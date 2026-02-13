@@ -75,7 +75,7 @@ describe('BuilderService', () => {
   });
 
   describe('buildAdminStatic', () => {
-    it('should run pnpm install and pnpm build', async () => {
+    it('should run pnpm install (no-frozen-lockfile) and pnpm build', async () => {
       mock.addResponsePattern(/pnpm install/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/pnpm build/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -83,7 +83,7 @@ describe('BuilderService', () => {
 
       await service.buildAdminStatic('/wt/feature-a', '/repo/deploy/web/builds/feature-a');
 
-      expect(mock.commands.some((c) => c.includes('pnpm install'))).toBe(true);
+      expect(mock.commands.some((c) => c.includes('pnpm install --no-frozen-lockfile'))).toBe(true);
       expect(mock.commands.some((c) => c.includes('pnpm build'))).toBe(true);
     });
 

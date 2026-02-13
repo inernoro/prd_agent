@@ -6,7 +6,7 @@ import type { WorktreeService } from '../services/worktree.js';
 import type { ContainerService } from '../services/container.js';
 import type { SwitcherService } from '../services/switcher.js';
 import type { BuilderService } from '../services/builder.js';
-import type { BtConfig, IShellExecutor } from '../types.js';
+import type { BtConfig, IShellExecutor, OperationLog, OperationLogEvent } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 export interface RouterDeps {
@@ -173,6 +173,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       try { await containerService.removeImage(entry.imageName); } catch { /* may not exist */ }
 
       stateService.removeBranch(id);
+      stateService.removeLogs(id);
       stateService.save();
 
       res.json({ success: true });
@@ -198,6 +199,49 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       const headInfo = await worktreeService.pull(entry.branch, entry.worktreePath);
       res.json({ success: true, head: headInfo });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // GET /branches/:id/logs — get operation logs for a branch
+  router.get('/branches/:id/logs', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `Branch "${id}" not found` });
+      return;
+    }
+    res.json({ logs: stateService.getLogs(id) });
+  });
+
+  // POST /branches/:id/reset — reset a stuck/error branch status back to idle
+  router.post('/branches/:id/reset', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+
+      // Stop any running containers (best-effort)
+      if (entry.status === 'running') {
+        try { await containerService.stop(entry.containerName); } catch { /* ok */ }
+      }
+      if (entry.runStatus === 'running' && entry.runContainerName) {
+        try { await containerService.stop(entry.runContainerName); } catch { /* ok */ }
+      }
+
+      // Reset statuses
+      entry.status = 'idle';
+      entry.errorMessage = undefined;
+      entry.buildLog = undefined;
+      entry.runStatus = undefined;
+      entry.runErrorMessage = undefined;
+      stateService.save();
+
+      res.json({ success: true, message: 'Branch status reset to idle' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -365,7 +409,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
+    const logType = opts.forcePull ? 'rerun' : 'run' as const;
+    const opLog: OperationLog = {
+      type: logType,
+      startedAt: new Date().toISOString(),
+      status: 'running',
+      events: [],
+    };
+
     const send = (data: Record<string, unknown>) => {
+      // Persist event (skip streaming chunks to keep logs lean)
+      if (!data.chunk) {
+        opLog.events.push({ ...data, timestamp: new Date().toISOString() } as OperationLogEvent);
+      }
       try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
     };
 
@@ -450,6 +506,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         sourceDir,
       });
       entry.runStatus = 'running';
+      entry.runErrorMessage = undefined;
       stateService.save();
 
       send({
@@ -467,9 +524,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         step: 'complete', status: 'done',
         detail: { url: `http://localhost:${entry.hostPort}` },
       });
+
+      opLog.status = 'completed';
     } catch (err) {
-      send({ step: 'error', status: 'error', title: '运行失败', log: (err as Error).message });
+      const msg = (err as Error).message;
+      send({ step: 'error', status: 'error', title: '运行失败', log: msg });
+      entry.runStatus = 'error';
+      entry.runErrorMessage = msg;
+      stateService.save();
+      opLog.status = 'error';
     } finally {
+      opLog.finishedAt = new Date().toISOString();
+      stateService.appendLog(id, opLog);
+      stateService.save();
       res.end();
     }
   }
@@ -527,12 +594,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
-    const send = (data: Record<string, unknown>) => {
-      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+    const opLog: OperationLog = {
+      type: 'deploy',
+      startedAt: new Date().toISOString(),
+      status: 'running',
+      events: [],
     };
 
-    const tail = (s: string, n = 3000) =>
-      s.length > n ? `...[truncated]\n${s.slice(-n)}` : s;
+    const send = (data: Record<string, unknown>) => {
+      // Persist event (skip streaming chunks to keep logs lean)
+      if (!data.chunk) {
+        opLog.events.push({ ...data, timestamp: new Date().toISOString() } as OperationLogEvent);
+      }
+      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+    };
 
     try {
       // ---- env info ----
@@ -548,6 +623,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       send({
         step: 'env', status: 'done', title: '环境信息',
         detail: {
+          mode: 'deploy',
           branch: entry.branch,
           commit,
           commitLog: commitResult.stdout.trim(),
@@ -563,6 +639,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // ---- build ----
       if (entry.status === 'idle' || entry.status === 'error') {
         stateService.updateStatus(id, 'building');
+        entry.errorMessage = undefined;
         stateService.save();
 
         // API image (stream build output in real-time)
@@ -663,15 +740,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // ---- done ----
       send({ step: 'complete', status: 'done' });
+      entry.errorMessage = undefined;
+      stateService.save();
+      opLog.status = 'completed';
     } catch (err) {
+      const msg = (err as Error).message;
       const e = stateService.getBranch(id);
-      if (e && e.status === 'building') {
-        stateService.updateStatus(id, 'error');
-        e.buildLog = (err as Error).message;
+      if (e) {
+        if (e.status === 'building') {
+          stateService.updateStatus(id, 'error');
+        }
+        e.errorMessage = msg;
+        e.buildLog = msg;
         stateService.save();
       }
-      send({ step: 'error', status: 'error', title: '部署失败', log: (err as Error).message });
+      send({ step: 'error', status: 'error', title: '部署失败', log: msg });
+      opLog.status = 'error';
     } finally {
+      opLog.finishedAt = new Date().toISOString();
+      stateService.appendLog(id, opLog);
+      stateService.save();
       res.end();
     }
   });
