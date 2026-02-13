@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { listWorkflows, createWorkflow, deleteWorkflow } from '@/services';
 import type { Workflow, WorkflowNode, WorkflowEdge } from '@/services/contracts/workflowAgent';
@@ -192,33 +192,6 @@ function NodeChips({ nodes }: { nodes: WorkflowNode[] }) {
           <span>{type.split('-').map(w => w[0]?.toUpperCase()).join('')}</span>
         </span>
       ))}
-    </div>
-  );
-}
-
-// ── 统计卡片 ─────────────────────────────────────────────────
-
-function StatCard({ emoji, label, value, sub }: {
-  emoji: string; label: string; value: string | number; sub?: string;
-}) {
-  return (
-    <div
-      className="flex-1 min-w-[120px] rounded-[12px] px-4 py-3"
-      style={{
-        background: 'rgba(255,255,255,0.02)',
-        border: '1px solid rgba(255,255,255,0.06)',
-      }}
-    >
-      <div className="flex items-center gap-2 mb-1.5">
-        <span className="text-[14px]">{emoji}</span>
-        <span className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>{label}</span>
-      </div>
-      <div className="text-[20px] font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
-        {value}
-      </div>
-      {sub && (
-        <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{sub}</div>
-      )}
     </div>
   );
 }
@@ -462,17 +435,6 @@ export function WorkflowListPage() {
     } catch { /* ignore */ }
   }
 
-  // 统计
-  const stats = useMemo(() => {
-    const total = workflows.length;
-    const totalExec = workflows.reduce((s, w) => s + w.executionCount, 0);
-    const withNodes = workflows.filter(w => w.nodes.length > 0).length;
-    const lastActive = workflows
-      .filter(w => w.lastExecutedAt)
-      .sort((a, b) => new Date(b.lastExecutedAt!).getTime() - new Date(a.lastExecutedAt!).getTime())[0];
-    return { total, totalExec, withNodes, lastActive: lastActive?.lastExecutedAt };
-  }, [workflows]);
-
   return (
     <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
       <TabBar
@@ -490,7 +452,7 @@ export function WorkflowListPage() {
         }
       />
 
-      <div className="px-5 pb-6 space-y-4 w-full max-w-5xl mx-auto">
+      <div className="px-5 pb-6 w-full">
 
         {/* 加载态 */}
         {loading && (
@@ -505,34 +467,19 @@ export function WorkflowListPage() {
           <EmptyState onCreate={handleCreate} creating={creating} />
         )}
 
-        {/* 有数据 */}
+        {/* 卡片网格 */}
         {!loading && workflows.length > 0 && (
-          <>
-            {/* 统计总览 */}
-            <div className="flex gap-3 flex-wrap">
-              <StatCard emoji="📊" label="工作流" value={stats.total} sub={`${stats.withNodes} 个已配置节点`} />
-              <StatCard emoji="🔄" label="总执行" value={stats.totalExec} />
-              <StatCard
-                emoji="🔥"
-                label="最近活跃"
-                value={stats.lastActive ? timeAgo(stats.lastActive) : '–'}
-                sub={stats.lastActive ? formatDate(stats.lastActive) : undefined}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {workflows.map((wf) => (
+              <WorkflowCard
+                key={wf.id}
+                workflow={wf}
+                onEdit={() => navigate(`/workflow-agent/${wf.id}`)}
+                onCanvas={() => navigate(`/workflow-agent/${wf.id}/canvas`)}
+                onDelete={() => handleDelete(wf)}
               />
-            </div>
-
-            {/* 卡片网格 */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {workflows.map((wf) => (
-                <WorkflowCard
-                  key={wf.id}
-                  workflow={wf}
-                  onEdit={() => navigate(`/workflow-agent/${wf.id}`)}
-                  onCanvas={() => navigate(`/workflow-agent/${wf.id}/canvas`)}
-                  onDelete={() => handleDelete(wf)}
-                />
-              ))}
-            </div>
-          </>
+            ))}
+          </div>
         )}
       </div>
     </div>
