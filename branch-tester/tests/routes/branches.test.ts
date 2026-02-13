@@ -25,8 +25,8 @@ function makeConfig(tmpDir: string): BtConfig {
       apiImagePrefix: 'prdagent-server',
       containerPrefix: 'prdagent-api',
     },
-    mongodb: { containerHost: 'mongodb', port: 27017, defaultDbName: 'prdagent' },
-    redis: { connectionString: 'redis:6379' },
+    mongodb: { containerHost: 'prdagent-mongodb', port: 27017, defaultDbName: 'prdagent' },
+    redis: { connectionString: 'prdagent-redis:6379' },
     jwt: { secret: 'test-secret', issuer: 'prdagent' },
     dashboard: { port: 9900 },
   };

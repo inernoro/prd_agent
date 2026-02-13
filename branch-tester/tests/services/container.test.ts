@@ -14,8 +14,8 @@ const makeConfig = (): BtConfig => ({
     apiImagePrefix: 'prdagent-server',
     containerPrefix: 'prdagent-api',
   },
-  mongodb: { containerHost: 'mongodb', port: 27017, defaultDbName: 'prdagent' },
-  redis: { connectionString: 'redis:6379' },
+  mongodb: { containerHost: 'prdagent-mongodb', port: 27017, defaultDbName: 'prdagent' },
+  redis: { connectionString: 'prdagent-redis:6379' },
   jwt: { secret: 'test-secret', issuer: 'prdagent' },
   dashboard: { port: 9900 },
 });
@@ -57,8 +57,8 @@ describe('ContainerService', () => {
       expect(runCmd).toContain('--name prdagent-api-feature-a');
       expect(runCmd).toContain('--network prdagent-network');
       expect(runCmd).toContain('MongoDB__DatabaseName=prdagent_1');
-      expect(runCmd).toContain('MongoDB__ConnectionString=mongodb://mongodb:27017');
-      expect(runCmd).toContain('Redis__ConnectionString=redis:6379');
+      expect(runCmd).toContain('MongoDB__ConnectionString=mongodb://prdagent-mongodb:27017');
+      expect(runCmd).toContain('Redis__ConnectionString=prdagent-redis:6379');
       expect(runCmd).toContain('Jwt__Secret=test-secret');
       expect(runCmd).toContain('prdagent-server:feature-a');
     });

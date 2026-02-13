@@ -17,12 +17,12 @@ const DEFAULT_CONFIG: BtConfig = {
     containerPrefix: 'prdagent-api',
   },
   mongodb: {
-    containerHost: 'mongodb',
+    containerHost: 'prdagent-mongodb',
     port: 27017,
     defaultDbName: 'prdagent',
   },
   redis: {
-    connectionString: 'redis:6379',
+    connectionString: 'prdagent-redis:6379',
   },
   jwt: {
     secret: process.env.JWT_SECRET ?? 'dev-only-change-me-32bytes-minimum!!',
