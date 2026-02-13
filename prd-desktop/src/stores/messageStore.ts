@@ -136,6 +136,7 @@ type MessageHistoryItem = {
   groupSeq?: number;
   role: string;
   content: string;
+  thinkingContent?: string | null;
   senderId?: string;
   senderName?: string;
   senderRole?: string;
@@ -424,6 +425,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
         id: m.id,
         role: (m.role === 'User' ? 'User' : 'Assistant') as any,
         content: m.content,
+        thinking: m.thinkingContent ? String(m.thinkingContent) : undefined,
         timestamp: new Date(m.timestamp),
         viewRole: (m.viewRole as any) || undefined,
         groupSeq: typeof (m as any).groupSeq === 'number' ? (m as any).groupSeq : undefined,
@@ -477,6 +479,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
         id: m.id,
         role: (m.role === 'User' ? 'User' : 'Assistant') as any,
         content: m.content,
+        thinking: m.thinkingContent ? String(m.thinkingContent) : undefined,
         timestamp: new Date(m.timestamp),
         viewRole: (m.viewRole as any) || undefined,
         groupSeq: typeof (m as any).groupSeq === 'number' ? (m as any).groupSeq : undefined,

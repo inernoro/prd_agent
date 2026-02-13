@@ -818,6 +818,7 @@ public class GroupsController : ControllerBase
                 SenderTags = senderTags,
             Role = m.Role,
             Content = m.Content,
+            ThinkingContent = m.ThinkingContent,
             ReplyToMessageId = m.ReplyToMessageId,
             ResendOfMessageId = m.ResendOfMessageId,
             ViewRole = m.ViewRole,
