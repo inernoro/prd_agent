@@ -1,8 +1,12 @@
 // ═══════════════════════════════════════════════════════════════
-// cURL 命令反解析器
+// cURL 命令解析 / 导出
 //
-// 支持从浏览器 DevTools 复制的 curl 命令，解析为结构化字段：
-//   URL / Method / Headers / Body
+// 支持：
+//   - Chrome "Copy as cURL (bash)" 格式
+//   - Chrome "Copy as cURL (cmd)"  格式 (^" 转义)
+//   - PowerShell 格式 (` 续行)
+//   - Firefox / Safari / Postman 格式
+//   - 导出：从配置字段生成 curl 命令
 // ═══════════════════════════════════════════════════════════════
 
 export interface ParsedCurl {
@@ -12,7 +16,9 @@ export interface ParsedCurl {
   body: string;
 }
 
-// ── 已知 flag 分类 ──
+// ═══════════════════════════════════════════════════════════════
+// 解析
+// ═══════════════════════════════════════════════════════════════
 
 /** 不带值的 flag（纯开关） */
 const NO_ARG_FLAGS = new Set([
@@ -26,10 +32,10 @@ const NO_ARG_FLAGS = new Set([
   '--junk-session-cookies', '--create-dirs',
 ]);
 
-/** 带一个值参数的 flag（flag + value） */
+/** 带一个值参数的 flag（flag + value）— 解析时跳过其值 */
 const ONE_ARG_FLAGS = new Set([
   '-o', '--output', '-m', '--max-time', '--connect-timeout',
-  '-b', '--cookie', '-c', '--cookie-jar',
+  '-c', '--cookie-jar',
   '-e', '--referer', '-A', '--user-agent',
   '-x', '--proxy', '--proxy-user', '--noproxy',
   '-w', '--write-out', '-T', '--upload-file',
@@ -46,27 +52,17 @@ const ONE_ARG_FLAGS = new Set([
 ]);
 
 /**
- * 解析 curl 命令字符串为结构化请求参数
+ * 解析 curl 命令字符串为结构化请求参数。
  *
- * 支持格式：
- * - 单行 / 多行 (\ 续行、^ 续行 Windows)
- * - 单引号 / 双引号 / $'...' ANSI-C 引号
- * - Chrome / Firefox / Safari / Postman 复制的格式
- * - 未知 flag 自动跳过
+ * 全量保留所有 header（包括浏览器自动添加的），-b cookie 转为 Cookie header。
  */
 export function parseCurl(raw: string): ParsedCurl | null {
   if (!raw || !raw.trim()) return null;
 
-  // 规范化：去掉续行符，合并为一行
-  let cmd = raw
-    .replace(/\\\r?\n/g, ' ')   // Unix 续行 (\)
-    .replace(/\^\r?\n/g, ' ')   // Windows 续行 (^)
-    .replace(/`\r?\n/g, ' ')    // PowerShell 续行 (`)
-    .replace(/\r?\n/g, ' ')     // 剩余换行
-    .replace(/\s+/g, ' ')       // 多余空格
-    .trim();
+  // 1. 预处理：检测 Windows CMD 格式并标准化
+  let cmd = preprocessRaw(raw);
 
-  // 去掉开头的 curl (忽略大小写，兼容 Windows 的 curl.exe)
+  // 2. 去掉开头的 curl (兼容 curl.exe)
   const curlMatch = cmd.match(/^curl(?:\.exe)?\s+/i);
   if (!curlMatch) return null;
   cmd = cmd.slice(curlMatch[0].length).trim();
@@ -78,10 +74,10 @@ export function parseCurl(raw: string): ParsedCurl | null {
     body: '',
   };
 
-  // 分词：处理引号内的内容
+  // 3. 分词
   const tokens = tokenize(cmd);
 
-  // 收集所有可能的 URL 候选（非 flag 的裸值）
+  // 4. 收集 URL 候选
   const urlCandidates: string[] = [];
 
   let i = 0;
@@ -89,60 +85,71 @@ export function parseCurl(raw: string): ParsedCurl | null {
     const token = tokens[i];
 
     if (token === '-X' || token === '--request') {
+      // 请求方法
       i++;
       if (i < tokens.length) result.method = tokens[i].toUpperCase();
     } else if (token === '-H' || token === '--header') {
+      // 请求头
       i++;
       if (i < tokens.length) {
-        const header = tokens[i];
-        const colonIdx = header.indexOf(':');
+        const colonIdx = tokens[i].indexOf(':');
         if (colonIdx > 0) {
-          const key = header.slice(0, colonIdx).trim();
-          const val = header.slice(colonIdx + 1).trim();
+          const key = tokens[i].slice(0, colonIdx).trim();
+          const val = tokens[i].slice(colonIdx + 1).trim();
           result.headers[key] = val;
         }
       }
-    } else if (token === '-d' || token === '--data' || token === '--data-raw' || token === '--data-binary' || token === '--data-urlencode' || token === '--json') {
+    } else if (
+      token === '-d' || token === '--data' || token === '--data-raw' ||
+      token === '--data-binary' || token === '--data-urlencode' || token === '--json'
+    ) {
+      // 请求体
       i++;
       if (i < tokens.length) {
         result.body = tokens[i];
         if (result.method === 'GET') result.method = 'POST';
       }
+    } else if (token === '-b' || token === '--cookie') {
+      // Cookie → 作为 Cookie header 保留
+      i++;
+      if (i < tokens.length) {
+        result.headers['Cookie'] = tokens[i];
+      }
     } else if (token === '-u' || token === '--user') {
+      // Basic Auth
       i++;
       if (i < tokens.length) {
         const encoded = btoa(tokens[i]);
         result.headers['Authorization'] = `Basic ${encoded}`;
       }
     } else if (token === '--url') {
-      // 显式 --url flag
+      // 显式 URL
       i++;
       if (i < tokens.length) result.url = tokens[i];
     } else if (token === '-F' || token === '--form') {
-      i++; // multipart form data — skip value
+      i++;
       if (result.method === 'GET') result.method = 'POST';
     } else if (NO_ARG_FLAGS.has(token)) {
       // 纯开关，不跳值
     } else if (ONE_ARG_FLAGS.has(token)) {
-      i++; // 跳过值参数
+      i++; // 跳过值
     } else if (token.startsWith('-')) {
-      // 未知 flag：尝试判断下一个 token 是否为其值
-      // 如果下一个 token 不像 URL 也不像 flag，就跳过它
+      // 未知 flag：启发式判断下一个 token 是否为其值
       if (i + 1 < tokens.length) {
         const next = tokens[i + 1];
         if (!next.startsWith('-') && !looksLikeUrl(next)) {
-          i++; // 跳过值
+          i++;
         }
       }
     } else {
-      // 没有 flag 的裸值 → URL 候选
+      // 裸值 → URL 候选
       urlCandidates.push(token);
     }
 
     i++;
   }
 
-  // 从候选中选择 URL：优先选择看起来像 URL 的
+  // 5. 从候选中选 URL：优先选 http(s):// 开头的
   if (!result.url) {
     result.url = urlCandidates.find(c => looksLikeUrl(c))
       || urlCandidates[0]
@@ -150,16 +157,126 @@ export function parseCurl(raw: string): ParsedCurl | null {
   }
 
   if (!result.url) return null;
-
   return result;
 }
 
-/** 判断字符串是否看起来像一个 URL */
+// ═══════════════════════════════════════════════════════════════
+// 导出
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 从配置字段生成 curl 命令字符串（可直接在终端执行）。
+ */
+export function toCurl(opts: {
+  url: string;
+  method?: string;
+  headers?: Record<string, string> | string;
+  body?: string;
+}): string {
+  const lines: string[] = [];
+  const method = (opts.method || 'GET').toUpperCase();
+
+  // URL
+  lines.push(`curl ${shellQuote(opts.url)}`);
+
+  // Method（如果不是默认的 GET 或隐式 POST）
+  if (method !== 'GET' && !(method === 'POST' && opts.body)) {
+    lines.push(`-X ${method}`);
+  }
+
+  // Headers
+  let headerObj: Record<string, string> = {};
+  if (typeof opts.headers === 'string' && opts.headers.trim()) {
+    try {
+      headerObj = JSON.parse(opts.headers);
+    } catch { /* ignore */ }
+  } else if (typeof opts.headers === 'object' && opts.headers) {
+    headerObj = opts.headers;
+  }
+
+  for (const [k, v] of Object.entries(headerObj)) {
+    lines.push(`-H ${shellQuote(`${k}: ${v}`)}`);
+  }
+
+  // Body
+  if (opts.body) {
+    lines.push(`--data-raw ${shellQuote(opts.body)}`);
+  }
+
+  return lines.join(' \\\n  ');
+}
+
+/** Shell-safe 单引号包裹 */
+function shellQuote(s: string): string {
+  // 如果不含单引号，直接用单引号包裹
+  if (!s.includes("'")) return `'${s}'`;
+  // 否则用双引号，转义其中的特殊字符
+  return `"${s.replace(/[\\"$`]/g, '\\$&')}"`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 工具函数（供 UI 层调用）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 将 headers Record 序列化为 JSON 字符串。
+ * 全量保留所有 header，不做过滤。
+ */
+export function headersToJson(headers: Record<string, string>): string {
+  return Object.keys(headers).length > 0
+    ? JSON.stringify(headers, null, 2)
+    : '';
+}
+
+/** 尝试美化 JSON body */
+export function prettyBody(body: string): string {
+  if (!body) return '';
+  try {
+    return JSON.stringify(JSON.parse(body), null, 2);
+  } catch {
+    return body;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 内部：预处理
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 检测并规范化原始输入：
+ * - Windows CMD: ^" → ", ^% → %, ^\ → \, ^^ → ^, ^ 续行
+ * - PowerShell: ` 续行
+ * - bash: \ 续行
+ */
+function preprocessRaw(raw: string): string {
+  let s = raw.trim();
+
+  // 检测 Windows CMD 格式：含 ^" 或行尾 ^
+  if (/\^"/.test(s) || /\^\s*$/m.test(s)) {
+    // Windows CMD: 先处理续行 (行尾 ^)
+    s = s.replace(/\^\s*\r?\n/g, ' ');
+    // 转义字符还原：^X → X（CMD 的 ^ 可以转义任意字符）
+    s = s.replace(/\^(.)/g, '$1');
+  } else {
+    // bash / PowerShell
+    s = s.replace(/\\\r?\n/g, ' ');   // bash 续行
+    s = s.replace(/`\r?\n/g, ' ');    // PowerShell 续行
+  }
+
+  // 统一换行和空白
+  s = s.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim();
+  return s;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 内部：分词器
+// ═══════════════════════════════════════════════════════════════
+
 function looksLikeUrl(s: string): boolean {
   return /^https?:\/\//i.test(s) || /^[a-z0-9][-a-z0-9]*(\.[a-z0-9][-a-z0-9]*)+/i.test(s);
 }
 
-/** 将 curl 命令分词，正确处理引号 */
+/** 将命令字符串分词，正确处理引号 */
 function tokenize(cmd: string): string[] {
   const tokens: string[] = [];
   let i = 0;
@@ -174,11 +291,11 @@ function tokenize(cmd: string): string[] {
     if (ch === "'" || ch === '"') {
       // 引号字符串
       const quote = ch;
-      i++; // 跳过开头引号
+      i++;
       let value = '';
       while (i < cmd.length && cmd[i] !== quote) {
         if (cmd[i] === '\\' && quote === '"' && i + 1 < cmd.length) {
-          // 双引号内的转义
+          // 双引号内转义
           i++;
           value += cmd[i];
         } else {
@@ -189,7 +306,7 @@ function tokenize(cmd: string): string[] {
       if (i < cmd.length) i++; // 跳过结尾引号
       tokens.push(value);
     } else if (ch === '$' && i + 1 < cmd.length && cmd[i + 1] === "'") {
-      // $'...' ANSI-C 引号 (Chrome 复制格式)
+      // $'...' ANSI-C 引号 (Chrome bash 格式)
       i += 2;
       let value = '';
       while (i < cmd.length && cmd[i] !== "'") {
@@ -209,7 +326,7 @@ function tokenize(cmd: string): string[] {
       if (i < cmd.length) i++;
       tokens.push(value);
     } else {
-      // 普通 token
+      // 普通 token（无引号）
       let value = '';
       while (i < cmd.length && cmd[i] !== ' ' && cmd[i] !== '\t') {
         value += cmd[i];
@@ -220,36 +337,4 @@ function tokenize(cmd: string): string[] {
   }
 
   return tokens;
-}
-
-/** 将 ParsedCurl 格式化为可读的 Headers JSON 字符串 */
-export function headersToJson(headers: Record<string, string>): string {
-  // 过滤掉浏览器自动添加的不重要 header
-  const skip = new Set([
-    'accept-encoding', 'accept-language', 'sec-ch-ua', 'sec-ch-ua-mobile',
-    'sec-ch-ua-platform', 'sec-fetch-dest', 'sec-fetch-mode', 'sec-fetch-site',
-    'sec-fetch-user', 'upgrade-insecure-requests', 'connection', 'host',
-    'user-agent', 'dnt', 'cache-control', 'pragma',
-  ]);
-
-  const filtered: Record<string, string> = {};
-  for (const [k, v] of Object.entries(headers)) {
-    if (!skip.has(k.toLowerCase())) {
-      filtered[k] = v;
-    }
-  }
-
-  return Object.keys(filtered).length > 0
-    ? JSON.stringify(filtered, null, 2)
-    : '';
-}
-
-/** 尝试美化 JSON body */
-export function prettyBody(body: string): string {
-  if (!body) return '';
-  try {
-    return JSON.stringify(JSON.parse(body), null, 2);
-  } catch {
-    return body;
-  }
 }

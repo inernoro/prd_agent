@@ -23,7 +23,7 @@ import { TabBar } from '@/components/design/TabBar';
 import {
   getCapsuleType, getIconForCapsule, getEmojiForCapsule, getCategoryEmoji,
 } from './capsuleRegistry';
-import { parseCurl, headersToJson, prettyBody } from './parseCurl';
+import { parseCurl, toCurl, headersToJson, prettyBody } from './parseCurl';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流直接编辑页
@@ -261,6 +261,46 @@ function CurlImportPanel({ onImport, disabled }: {
   );
 }
 
+// ──── cURL 导出按钮 ────
+
+function CurlExportButton({ values }: { values: Record<string, string> }) {
+  const [copied, setCopied] = useState(false);
+
+  function handleExport() {
+    const url = values.url || values.curlCommand || '';
+    if (!url) return;
+    const cmd = toCurl({
+      url,
+      method: values.method,
+      headers: values.headers,
+      body: values.body,
+    });
+    navigator.clipboard.writeText(cmd).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  const hasUrl = !!(values.url || values.curlCommand);
+
+  return (
+    <button
+      onClick={handleExport}
+      disabled={!hasUrl}
+      className="w-full flex items-center justify-center gap-1.5 h-7 rounded-[8px] text-[11px] font-medium transition-all duration-150 disabled:opacity-30"
+      style={{
+        background: copied ? 'rgba(34,197,94,0.08)' : 'rgba(168,85,247,0.06)',
+        border: `1px dashed ${copied ? 'rgba(34,197,94,0.25)' : 'rgba(168,85,247,0.2)'}`,
+        color: copied ? 'rgba(34,197,94,0.9)' : 'rgba(168,85,247,0.8)',
+      }}
+      onMouseEnter={e => { if (!copied) e.currentTarget.style.background = 'rgba(168,85,247,0.12)'; }}
+      onMouseLeave={e => { if (!copied) e.currentTarget.style.background = 'rgba(168,85,247,0.06)'; }}
+    >
+      {copied ? '✓ 已复制到剪贴板' : '⬆ 导出为 cURL 命令'}
+    </button>
+  );
+}
+
 // ──── 舱配置表单 ────
 
 function CapsuleConfigForm({ fields, values, onChange, disabled, nodeType }: {
@@ -289,9 +329,12 @@ function CapsuleConfigForm({ fields, values, onChange, disabled, nodeType }: {
 
   return (
     <div className="space-y-3">
-      {/* cURL 导入（仅 http-request / smart-http） */}
+      {/* cURL 导入 + 导出（仅 http-request / smart-http） */}
       {supportssCurl && (
-        <CurlImportPanel onImport={handleCurlImport} disabled={disabled} />
+        <>
+          <CurlImportPanel onImport={handleCurlImport} disabled={disabled} />
+          <CurlExportButton values={values} />
+        </>
       )}
 
       {fields.map((field) => (
