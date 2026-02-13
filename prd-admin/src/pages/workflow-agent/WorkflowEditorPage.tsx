@@ -23,6 +23,7 @@ import { TabBar } from '@/components/design/TabBar';
 import {
   getCapsuleType, getIconForCapsule, getEmojiForCapsule, getCategoryEmoji,
 } from './capsuleRegistry';
+import { parseCurl, headersToJson, prettyBody } from './parseCurl';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流直接编辑页
@@ -167,33 +168,154 @@ function CapsuleSidebar({ capsuleTypes, categories, onAddCapsule }: {
   );
 }
 
+// ──── cURL 导入面板 ────
+
+function CurlImportPanel({ onImport, disabled }: {
+  onImport: (parsed: { url: string; method: string; headers: string; body: string }) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [raw, setRaw] = useState('');
+  const [error, setError] = useState('');
+
+  function handleParse() {
+    setError('');
+    const parsed = parseCurl(raw);
+    if (!parsed) {
+      setError('无法解析，请粘贴有效的 curl 命令');
+      return;
+    }
+    onImport({
+      url: parsed.url,
+      method: parsed.method,
+      headers: headersToJson(parsed.headers),
+      body: prettyBody(parsed.body),
+    });
+    setOpen(false);
+    setRaw('');
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        disabled={disabled}
+        className="w-full flex items-center justify-center gap-1.5 h-8 rounded-[8px] text-[11px] font-semibold transition-all duration-150 mb-2"
+        style={{
+          background: 'rgba(59,130,246,0.06)',
+          border: '1px dashed rgba(59,130,246,0.2)',
+          color: 'rgba(59,130,246,0.8)',
+        }}
+        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.12)'; }}
+        onMouseLeave={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.06)'; }}
+      >
+        ⌘ 从浏览器粘贴 cURL
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className="rounded-[10px] p-3 mb-3 space-y-2"
+      style={{
+        background: 'rgba(59,130,246,0.04)',
+        border: '1px solid rgba(59,130,246,0.12)',
+      }}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-semibold" style={{ color: 'rgba(59,130,246,0.85)' }}>
+          粘贴 cURL 命令
+        </span>
+        <button
+          onClick={() => { setOpen(false); setRaw(''); setError(''); }}
+          className="text-[10px] px-2 py-0.5 rounded-full"
+          style={{ color: 'var(--text-muted)', background: 'rgba(255,255,255,0.05)' }}
+        >
+          取消
+        </button>
+      </div>
+      <textarea
+        value={raw}
+        onChange={e => setRaw(e.target.value)}
+        placeholder={"curl 'https://api.example.com/data' \\\n  -H 'Authorization: Bearer token' \\\n  -X POST \\\n  -d '{\"key\":\"value\"}'"}
+        rows={5}
+        className="prd-field w-full px-3 py-2 rounded-[8px] text-[11px] outline-none resize-y font-mono"
+        autoFocus
+      />
+      {error && (
+        <p className="text-[10px]" style={{ color: 'rgba(239,68,68,0.85)' }}>{error}</p>
+      )}
+      <button
+        onClick={handleParse}
+        disabled={!raw.trim()}
+        className="w-full h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150 disabled:opacity-40"
+        style={{
+          background: 'rgba(59,130,246,0.12)',
+          border: '1px solid rgba(59,130,246,0.2)',
+          color: 'rgba(59,130,246,0.9)',
+        }}
+      >
+        ⚡ 解析并填入
+      </button>
+    </div>
+  );
+}
+
 // ──── 舱配置表单 ────
 
-function CapsuleConfigForm({ fields, values, onChange, disabled }: {
+function CapsuleConfigForm({ fields, values, onChange, disabled, nodeType }: {
   fields: CapsuleConfigField[];
   values: Record<string, string>;
   onChange: (key: string, value: string) => void;
   disabled?: boolean;
+  nodeType?: string;
 }) {
-  if (fields.length === 0) return (
+  const supportssCurl = nodeType === 'http-request' || nodeType === 'smart-http';
+
+  if (fields.length === 0 && !supportssCurl) return (
     <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>此舱无需额外配置</p>
   );
 
+  function handleCurlImport(parsed: { url: string; method: string; headers: string; body: string }) {
+    if (parsed.url) onChange('url', parsed.url);
+    if (parsed.method) onChange('method', parsed.method);
+    if (parsed.headers) onChange('headers', parsed.headers);
+    if (parsed.body) onChange('body', parsed.body);
+    // smart-http: 也写入 curlCommand
+    if (nodeType === 'smart-http') {
+      onChange('curlCommand', `curl '${parsed.url}' -X ${parsed.method}${parsed.headers ? ` -H '...'` : ''}${parsed.body ? ` -d '...'` : ''}`);
+    }
+  }
+
   return (
     <div className="space-y-3">
+      {/* cURL 导入（仅 http-request / smart-http） */}
+      {supportssCurl && (
+        <CurlImportPanel onImport={handleCurlImport} disabled={disabled} />
+      )}
+
       {fields.map((field) => (
         <div key={field.key}>
           <label className="flex items-center text-[11px] mb-1" style={{ color: 'var(--text-secondary)' }}>
             {field.label}
             {field.required && <span style={{ color: 'rgba(239,68,68,0.8)' }} className="ml-0.5">*</span>}
           </label>
-          {field.fieldType === 'textarea' ? (
+          {field.fieldType === 'textarea' || field.fieldType === 'code' ? (
             <textarea
               value={values[field.key] || field.defaultValue || ''}
               onChange={(e) => onChange(field.key, e.target.value)}
               placeholder={field.placeholder}
               disabled={disabled}
-              rows={4}
+              rows={field.fieldType === 'code' ? 8 : 4}
+              className="prd-field w-full px-3 py-2 rounded-[8px] text-[12px] outline-none disabled:opacity-50 transition-all resize-y font-mono"
+            />
+          ) : field.fieldType === 'json' ? (
+            <textarea
+              value={values[field.key] || field.defaultValue || ''}
+              onChange={(e) => onChange(field.key, e.target.value)}
+              placeholder={field.placeholder}
+              disabled={disabled}
+              rows={3}
               className="prd-field w-full px-3 py-2 rounded-[8px] text-[12px] outline-none disabled:opacity-50 transition-all resize-y font-mono"
             />
           ) : field.fieldType === 'select' && field.options ? (
@@ -356,33 +478,82 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
         {/* 展开区域：配置 + 调试 + 产物 */}
         {isExpanded && (
           <div className="mt-3 ml-[68px] space-y-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 12 }}>
-            {/* 输入/输出标签 */}
-            <div className="flex flex-wrap gap-2">
-              {node.inputSlots.length > 0 && (
-                <span
-                  className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
-                  style={{
-                    background: `hsla(${accentHue}, 60%, 55%, 0.1)`,
-                    color: `hsla(${accentHue}, 60%, 65%, 0.9)`,
-                    border: `1px solid hsla(${accentHue}, 60%, 55%, 0.15)`,
-                  }}
-                >
-                  输入: {node.inputSlots.map(s => s.name).join(', ')}
-                </span>
-              )}
-              {node.outputSlots.length > 0 && (
-                <span
-                  className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
-                  style={{
-                    background: 'rgba(34,197,94,0.08)',
-                    color: 'rgba(34,197,94,0.85)',
-                    border: '1px solid rgba(34,197,94,0.15)',
-                  }}
-                >
-                  输出: {node.outputSlots.map(s => s.name).join(', ')}
-                </span>
-              )}
-            </div>
+            {/* 输入/输出插槽详情 */}
+            {(node.inputSlots.length > 0 || node.outputSlots.length > 0) && (
+              <div
+                className="rounded-[10px] p-2.5 space-y-2"
+                style={{
+                  background: 'rgba(255,255,255,0.02)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                }}
+              >
+                {node.inputSlots.length > 0 && (
+                  <div>
+                    <div className="text-[10px] font-semibold mb-1" style={{ color: `hsla(${accentHue}, 55%, 65%, 0.8)` }}>
+                      ← 输入
+                    </div>
+                    <div className="space-y-1">
+                      {node.inputSlots.map(s => (
+                        <div key={s.slotId} className="flex items-center gap-2 text-[10px]">
+                          <span
+                            className="px-1.5 py-0.5 rounded font-mono"
+                            style={{
+                              background: `hsla(${accentHue}, 50%, 50%, 0.08)`,
+                              color: `hsla(${accentHue}, 55%, 70%, 0.85)`,
+                              border: `1px solid hsla(${accentHue}, 50%, 50%, 0.12)`,
+                            }}
+                          >
+                            {s.name}
+                          </span>
+                          <span
+                            className="px-1 py-0.5 rounded"
+                            style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', fontSize: 9 }}
+                          >
+                            {s.dataType}
+                          </span>
+                          {s.required && <span style={{ color: 'rgba(239,68,68,0.6)', fontSize: 9 }}>必需</span>}
+                          {s.description && (
+                            <span style={{ color: 'var(--text-muted)' }} className="truncate">{s.description}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {node.outputSlots.length > 0 && (
+                  <div>
+                    <div className="text-[10px] font-semibold mb-1" style={{ color: 'rgba(34,197,94,0.8)' }}>
+                      → 输出
+                    </div>
+                    <div className="space-y-1">
+                      {node.outputSlots.map(s => (
+                        <div key={s.slotId} className="flex items-center gap-2 text-[10px]">
+                          <span
+                            className="px-1.5 py-0.5 rounded font-mono"
+                            style={{
+                              background: 'rgba(34,197,94,0.06)',
+                              color: 'rgba(34,197,94,0.8)',
+                              border: '1px solid rgba(34,197,94,0.1)',
+                            }}
+                          >
+                            {s.name}
+                          </span>
+                          <span
+                            className="px-1 py-0.5 rounded"
+                            style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', fontSize: 9 }}
+                          >
+                            {s.dataType}
+                          </span>
+                          {s.description && (
+                            <span style={{ color: 'var(--text-muted)' }} className="truncate">{s.description}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* 舱配置表单 */}
             {capsuleMeta && capsuleMeta.configSchema.length > 0 && (
@@ -396,6 +567,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                   values={configValues}
                   onChange={handleConfigFieldChange}
                   disabled={isRunning}
+                  nodeType={node.nodeType}
                 />
               </div>
             )}

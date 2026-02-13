@@ -217,6 +217,48 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta SmartHttp = new()
+    {
+        TypeKey = CapsuleTypes.SmartHttp,
+        Name = "智能 HTTP",
+        Description = "粘贴 cURL 命令，AI 自动识别分页参数并拉取全量数据",
+        Icon = "globe",
+        Category = CapsuleCategory.Processor,
+        AccentHue = 250,
+        ConfigSchema = new()
+        {
+            new() { Key = "curlCommand", Label = "cURL 命令", FieldType = "textarea", Required = true,
+                Placeholder = "curl 'https://api.tapd.cn/bugs?workspace_id=123&page=1&limit=200' -H 'Authorization: Basic dXNlcjpwYXNz'",
+                HelpTip = "从浏览器 DevTools → Network → 右键请求 → Copy as cURL，也可点击上方「从浏览器粘贴 cURL」按钮自动填入" },
+            new() { Key = "url", Label = "请求 URL", FieldType = "text", Required = false, HelpTip = "从 cURL 自动解析，也可手动修改" },
+            new() { Key = "method", Label = "请求方法", FieldType = "select", Required = false, DefaultValue = "GET", Options = new() {
+                new() { Value = "GET", Label = "GET" },
+                new() { Value = "POST", Label = "POST" },
+            }},
+            new() { Key = "headers", Label = "请求头", FieldType = "json", Required = false },
+            new() { Key = "body", Label = "请求体", FieldType = "json", Required = false },
+            new() { Key = "paginationType", Label = "分页策略", FieldType = "select", Required = false, DefaultValue = "auto",
+                HelpTip = "auto = AI 自动检测分页参数；也可手动指定",
+                Options = new() {
+                    new() { Value = "auto", Label = "AI 自动检测" },
+                    new() { Value = "offset", Label = "offset/limit 偏移分页" },
+                    new() { Value = "page", Label = "page/pageSize 页码分页" },
+                    new() { Value = "cursor", Label = "cursor 游标分页" },
+                    new() { Value = "none", Label = "不分页（单次请求）" },
+                }},
+            new() { Key = "maxPages", Label = "最大页数", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "防止无限请求，最大抓取页数上限" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "smart-in", Name = "context", DataType = "json", Required = false, Description = "上游上下文（可选，用于变量替换）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "smart-out", Name = "data", DataType = "json", Required = true, Description = "合并后的全量 API 数据 (JSON Array)" },
+            new() { SlotId = "smart-meta", Name = "meta", DataType = "json", Required = false, Description = "分页元信息（总页数、总条数、分页策略）" },
+        },
+    };
+
     public static readonly CapsuleTypeMeta LlmAnalyzer = new()
     {
         TypeKey = CapsuleTypes.LlmAnalyzer,
@@ -443,7 +485,7 @@ public static class CapsuleTypeRegistry
         // 触发类
         Timer, WebhookReceiver, ManualTrigger, FileUpload,
         // 处理类
-        TapdCollector, HttpRequest, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger,
+        TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger,
         // 输出类
         ReportGenerator, FileExporter, WebhookSender, NotificationSender,
     };

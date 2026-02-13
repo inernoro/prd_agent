@@ -181,6 +181,7 @@ export const NodeTypeLabels: Record<string, string> = {
   // 舱类型 — 处理
   'tapd-collector': 'TAPD 采集',
   'http-request': 'HTTP 请求',
+  'smart-http': '智能 HTTP',
   'data-extractor': '数据提取',
   'data-merger': '数据合并',
   // 舱类型 — 输出

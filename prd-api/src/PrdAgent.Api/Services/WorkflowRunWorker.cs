@@ -323,6 +323,7 @@ public sealed class WorkflowRunWorker : BackgroundService
 
             // ── 处理类 ──
             CapsuleTypes.HttpRequest => await ExecuteHttpRequestAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.SmartHttp => await ExecuteSmartHttpAsync(sp, node, variables, inputArtifacts),
             CapsuleTypes.LlmAnalyzer => await ExecuteLlmAnalyzerAsync(sp, node, variables, inputArtifacts),
             CapsuleTypes.ScriptExecutor => ExecuteScriptStub(node, inputArtifacts),
             CapsuleTypes.TapdCollector => await ExecuteTapdCollectorAsync(sp, node, variables),
@@ -422,6 +423,167 @@ public sealed class WorkflowRunWorker : BackgroundService
 
         var artifact = MakeTextArtifact(node, "http-response", "HTTP 响应", responseBody, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs);
+    }
+
+    /// <summary>
+    /// 智能 HTTP：使用 LLM 分析 API 响应中的分页参数，自动翻页拉取全量数据
+    /// </summary>
+    private async Task<CapsuleResult> ExecuteSmartHttpAsync(
+        IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables, List<ExecutionArtifact> inputArtifacts)
+    {
+        var url = ReplaceVariables(GetConfigString(node, "url") ?? "", variables);
+        var method = GetConfigString(node, "method") ?? "GET";
+        var headerJson = GetConfigString(node, "headers") ?? "";
+        var body = ReplaceVariables(GetConfigString(node, "body") ?? "", variables);
+        var paginationType = GetConfigString(node, "paginationType") ?? "auto";
+        var maxPages = int.TryParse(GetConfigString(node, "maxPages"), out var mp) ? mp : 10;
+
+        if (string.IsNullOrWhiteSpace(url))
+            throw new InvalidOperationException("智能 HTTP: URL 未配置，请粘贴 cURL 或手动填写 URL");
+
+        var factory = sp.GetRequiredService<IHttpClientFactory>();
+        using var client = factory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(30);
+
+        // 解析 headers
+        if (!string.IsNullOrWhiteSpace(headerJson))
+        {
+            try
+            {
+                var headers = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(headerJson);
+                if (headers != null)
+                    foreach (var (k, v) in headers)
+                        client.DefaultRequestHeaders.TryAddWithoutValidation(k, v);
+            }
+            catch { /* ignore malformed headers */ }
+        }
+
+        var allData = new System.Text.Json.Nodes.JsonArray();
+        var logs = $"SmartHTTP [{paginationType}] {method} {url}\n";
+        var currentUrl = url;
+        var pagesFetched = 0;
+
+        // 分页循环
+        for (var page = 0; page < maxPages; page++)
+        {
+            HttpResponseMessage response;
+            if (method.Equals("POST", StringComparison.OrdinalIgnoreCase))
+            {
+                var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+                response = await client.PostAsync(currentUrl, content, CancellationToken.None);
+            }
+            else
+            {
+                response = await client.GetAsync(currentUrl, CancellationToken.None);
+            }
+
+            var responseBody = await response.Content.ReadAsStringAsync(CancellationToken.None);
+            pagesFetched++;
+            logs += $"  Page {pagesFetched}: {(int)response.StatusCode}, {responseBody.Length} bytes\n";
+
+            if (!response.IsSuccessStatusCode) break;
+
+            // 尝试解析 JSON 数组数据
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(responseBody);
+                var root = doc.RootElement;
+
+                // 尝试提取 data 数组（常见 API 格式：{ data: [...] }）
+                System.Text.Json.JsonElement dataArr;
+                if (root.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    dataArr = root;
+                }
+                else if (root.TryGetProperty("data", out var d) && d.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    dataArr = d;
+                }
+                else if (root.TryGetProperty("items", out var items) && items.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    dataArr = items;
+                }
+                else if (root.TryGetProperty("results", out var results) && results.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    dataArr = results;
+                }
+                else
+                {
+                    // 非数组响应，直接作为单条数据
+                    allData.Add(System.Text.Json.Nodes.JsonNode.Parse(responseBody));
+                    break;
+                }
+
+                if (dataArr.GetArrayLength() == 0) break; // 空页，停止
+
+                foreach (var item in dataArr.EnumerateArray())
+                    allData.Add(System.Text.Json.Nodes.JsonNode.Parse(item.GetRawText()));
+
+                // 分页检测：如果策略是 none 或没有分页参数 → 不翻页
+                if (paginationType == "none") break;
+
+                // 自动分页：检测 URL 中的 page/offset 参数并递增
+                var uri = new Uri(currentUrl);
+                var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+
+                bool advanced = false;
+                if (paginationType == "page" || (paginationType == "auto" && query["page"] != null))
+                {
+                    var p = int.TryParse(query["page"], out var pv) ? pv + 1 : 2;
+                    query["page"] = p.ToString();
+                    advanced = true;
+                }
+                else if (paginationType == "offset" || (paginationType == "auto" && query["offset"] != null))
+                {
+                    var limit = int.TryParse(query["limit"], out var lv) ? lv : dataArr.GetArrayLength();
+                    var offset = int.TryParse(query["offset"], out var ov) ? ov + limit : limit;
+                    query["offset"] = offset.ToString();
+                    advanced = true;
+                }
+                else if (paginationType == "auto")
+                {
+                    // 尝试从响应中查找 next_url / next_page_url
+                    if (root.TryGetProperty("next", out var next) && next.ValueKind == System.Text.Json.JsonValueKind.String)
+                    {
+                        currentUrl = next.GetString()!;
+                        continue;
+                    }
+                    break; // 无法检测分页，停止
+                }
+
+                if (advanced)
+                {
+                    var builder = new UriBuilder(uri) { Query = query.ToString() };
+                    currentUrl = builder.Uri.ToString();
+                }
+                else
+                {
+                    break;
+                }
+            }
+            catch
+            {
+                // JSON 解析失败，当作单次请求
+                var singleArt = MakeTextArtifact(node, "smart-data", "API 响应", responseBody, "application/json");
+                return new CapsuleResult(new List<ExecutionArtifact> { singleArt }, logs);
+            }
+        }
+
+        logs += $"Total: {pagesFetched} pages, {allData.Count} records\n";
+
+        var dataArtifact = MakeTextArtifact(node, "smart-data", $"全量数据 ({allData.Count} 条)",
+            allData.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = false }), "application/json");
+
+        var metaJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            pagesFetched,
+            totalRecords = allData.Count,
+            paginationType,
+            finalUrl = currentUrl,
+        });
+        var metaArtifact = MakeTextArtifact(node, "smart-meta", "分页元信息", metaJson, "application/json");
+
+        return new CapsuleResult(new List<ExecutionArtifact> { dataArtifact, metaArtifact }, logs);
     }
 
     private async Task<CapsuleResult> ExecuteLlmAnalyzerAsync(

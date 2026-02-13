@@ -410,6 +410,7 @@ public static class CapsuleTypes
     // 处理类
     public const string TapdCollector = "tapd-collector";
     public const string HttpRequest = "http-request";
+    public const string SmartHttp = "smart-http";
     public const string LlmAnalyzer = "llm-analyzer";
     public const string ScriptExecutor = "script-executor";
     public const string DataExtractor = "data-extractor";
@@ -431,7 +432,7 @@ public static class CapsuleTypes
         // 触发类
         Timer, WebhookReceiver, ManualTrigger, FileUpload,
         // 处理类
-        TapdCollector, HttpRequest, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger,
+        TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger,
         // 输出类
         ReportGenerator, FileExporter, WebhookSender, NotificationSender,
         // 旧类型兼容
