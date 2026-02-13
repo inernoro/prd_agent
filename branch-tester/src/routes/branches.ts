@@ -420,7 +420,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const send = (data: Record<string, unknown>) => {
       // Persist event (skip streaming chunks to keep logs lean)
       if (!data.chunk) {
-        opLog.events.push({ ...data, timestamp: new Date().toISOString() } as OperationLogEvent);
+        const event = { ...data, timestamp: new Date().toISOString() } as OperationLogEvent;
+        // Deduplicate: if same step already logged, replace with latest state
+        const existingIdx = data.step
+          ? opLog.events.findIndex((e) => e.step === data.step)
+          : -1;
+        if (existingIdx >= 0) {
+          opLog.events[existingIdx] = event;
+        } else {
+          opLog.events.push(event);
+        }
       }
       try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
     };
@@ -604,7 +613,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const send = (data: Record<string, unknown>) => {
       // Persist event (skip streaming chunks to keep logs lean)
       if (!data.chunk) {
-        opLog.events.push({ ...data, timestamp: new Date().toISOString() } as OperationLogEvent);
+        const event = { ...data, timestamp: new Date().toISOString() } as OperationLogEvent;
+        // Deduplicate: if same step already logged, replace with latest state
+        const existingIdx = data.step
+          ? opLog.events.findIndex((e) => e.step === data.step)
+          : -1;
+        if (existingIdx >= 0) {
+          opLog.events[existingIdx] = event;
+        } else {
+          opLog.events.push(event);
+        }
       }
       try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
     };
