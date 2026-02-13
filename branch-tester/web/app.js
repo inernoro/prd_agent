@@ -58,36 +58,43 @@ function setBusy(v) {
 // ---- Tracked branch cards ----
 
 function branchActions(b, isActive) {
-  const btns = [];
+  const groups = [];
 
-  // ── Run mode (source-based) ──
+  // ── Row 1: Run mode (source-based) ──
+  const runBtns = [];
   if (!b.runStatus || b.runStatus === 'stopped' || b.runStatus === 'error') {
-    btns.push(`<button class="run" onclick="runBranch('${b.id}')" title="挂载源码运行 (dotnet run)">运行</button>`);
+    runBtns.push(`<button class="run" onclick="runBranch('${b.id}')" title="挂载源码运行 (dotnet run)">运行</button>`);
   }
   if (b.runStatus === 'running') {
-    btns.push(`<button class="run-active" onclick="rerunBranch('${b.id}')" title="拉取最新代码并重新运行">重运行</button>`);
-    btns.push(`<button onclick="stopRunBranch('${b.id}')" title="停止源码容器">停止运行</button>`);
+    runBtns.push(`<button class="run-active" onclick="rerunBranch('${b.id}')" title="拉取最新代码并重新运行">重运行</button>`);
+    runBtns.push(`<button onclick="stopRunBranch('${b.id}')" title="停止源码容器">停止</button>`);
+  }
+  if (runBtns.length) {
+    groups.push(`<div class="action-group"><span class="action-label">源码</span>${runBtns.join('')}</div>`);
   }
 
-  // Separator between Run and Deploy
-  if (btns.length > 0) btns.push('<span class="action-sep">|</span>');
-
-  // ── Deploy mode (artifact-based) ──
+  // ── Row 2: Deploy mode (artifact-based) ──
+  const deployBtns = [];
   if (b.status !== 'building')
-    btns.push(`<button onclick="pullBranch('${b.id}')">拉取</button>`);
+    deployBtns.push(`<button onclick="pullBranch('${b.id}')">拉取</button>`);
   if (['idle', 'error', 'built', 'stopped'].includes(b.status) || (b.status === 'running' && !isActive))
-    btns.push(`<button class="primary" onclick="deployBranch('${b.id}')">${b.status === 'running' ? '激活' : '部署'}</button>`);
+    deployBtns.push(`<button class="primary" onclick="deployBranch('${b.id}')">${b.status === 'running' ? '激活' : '部署'}</button>`);
   if (b.status === 'running')
-    btns.push(`<button onclick="stopBranch('${b.id}')">停止部署</button>`);
+    deployBtns.push(`<button onclick="stopBranch('${b.id}')">停止</button>`);
+  if (deployBtns.length) {
+    groups.push(`<div class="action-group"><span class="action-label">制品</span>${deployBtns.join('')}</div>`);
+  }
 
-  // ── Common actions ──
-  btns.push(`<button onclick="viewLogs('${b.id}')" title="查看操作历史日志">日志</button>`);
+  // ── Row 3: Management ──
+  const mgmtBtns = [];
+  mgmtBtns.push(`<button onclick="viewLogs('${b.id}')" title="查看操作历史日志">日志</button>`);
   if (b.status === 'error' || b.runStatus === 'error')
-    btns.push(`<button class="warn" onclick="resetBranch('${b.id}')" title="重置错误状态">重置</button>`);
+    mgmtBtns.push(`<button class="warn" onclick="resetBranch('${b.id}')" title="重置错误状态">重置</button>`);
   if (!isActive)
-    btns.push(`<button class="danger" onclick="removeBranch('${b.id}')">删除</button>`);
+    mgmtBtns.push(`<button class="danger" onclick="removeBranch('${b.id}')">删除</button>`);
+  groups.push(`<div class="action-group">${mgmtBtns.join('')}</div>`);
 
-  return btns.join('');
+  return groups.join('');
 }
 
 function renderBranches(branches, activeBranchId) {
@@ -274,6 +281,7 @@ async function refresh() {
 // ============================================================
 
 let currentLogModalBranchId = null;
+let activeSSEBranchId = null; // branch with ongoing SSE stream
 
 function openLogModal(title) {
   document.getElementById('logModalTitle').textContent = title;
@@ -281,9 +289,14 @@ function openLogModal(title) {
   document.getElementById('logModal').classList.remove('hidden');
 }
 
+function showLogModal() {
+  // Re-show without clearing content
+  document.getElementById('logModal').classList.remove('hidden');
+}
+
 function closeLogModal() {
   document.getElementById('logModal').classList.add('hidden');
-  currentLogModalBranchId = null;
+  // Keep currentLogModalBranchId so we can reopen during active SSE
 }
 
 const STEP_ICONS = { running: '<span class="loading"></span>', done: '✅', skip: '⏭️', warn: '⚠️', error: '❌' };
@@ -526,6 +539,7 @@ async function deployBranch(id) {
   } catch { /* use id */ }
 
   currentLogModalBranchId = id;
+  activeSSEBranchId = id;
   openLogModal(`部署日志 — ${branchName}`);
 
   try {
@@ -537,6 +551,7 @@ async function deployBranch(id) {
     appendLogEvent({ step: 'error', status: 'error', title: '连接失败', log: err.message });
     showToast(`部署失败: ${err.message}`, 'error');
   } finally {
+    activeSSEBranchId = null;
     setBusy(false);
   }
 }
@@ -552,6 +567,7 @@ async function runBranch(id) {
   } catch { /* use id */ }
 
   currentLogModalBranchId = id;
+  activeSSEBranchId = id;
   openLogModal(`运行日志 — ${branchName}`);
 
   try {
@@ -563,6 +579,7 @@ async function runBranch(id) {
     appendLogEvent({ step: 'error', status: 'error', title: '连接失败', log: err.message });
     showToast(`运行失败: ${err.message}`, 'error');
   } finally {
+    activeSSEBranchId = null;
     setBusy(false);
   }
 }
@@ -578,6 +595,7 @@ async function rerunBranch(id) {
   } catch { /* use id */ }
 
   currentLogModalBranchId = id;
+  activeSSEBranchId = id;
   openLogModal(`重运行日志 — ${branchName}`);
 
   try {
@@ -589,6 +607,7 @@ async function rerunBranch(id) {
     appendLogEvent({ step: 'error', status: 'error', title: '连接失败', log: err.message });
     showToast(`重运行失败: ${err.message}`, 'error');
   } finally {
+    activeSSEBranchId = null;
     setBusy(false);
   }
 }
@@ -625,12 +644,19 @@ async function resetBranch(id) {
 }
 
 async function viewLogs(id) {
+  // If an SSE stream is active for this branch, just re-show the modal
+  if (activeSSEBranchId === id && currentLogModalBranchId === id) {
+    showLogModal();
+    return;
+  }
+
   let branchName = id;
   try {
     const bd = await api('GET', '/branches');
     branchName = bd.branches[id]?.branch || id;
   } catch { /* use id */ }
 
+  currentLogModalBranchId = id;
   openLogModal(`操作历史 — ${branchName}`);
   const body = document.getElementById('logModalBody');
 

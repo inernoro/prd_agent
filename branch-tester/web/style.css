@@ -299,16 +299,6 @@ button.warn {
 
 button.warn:hover { background: #8a5900; color: #fff; }
 
-/* Action separator */
-.action-sep {
-  display: inline-flex;
-  align-items: center;
-  color: #30363d;
-  font-size: 14px;
-  padding: 0 2px;
-  user-select: none;
-}
-
 /* ---- Branch cards ---- */
 
 .branch-list {
@@ -441,11 +431,24 @@ button.warn:hover { background: #8a5900; color: #fff; }
 
 .branch-actions {
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
   flex-shrink: 0;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  align-items: flex-end;
+}
+
+.action-group {
+  display: flex;
+  gap: 4px;
   align-items: center;
+}
+
+.action-label {
+  font-size: 10px;
+  color: #6e7681;
+  min-width: 22px;
+  text-align: right;
+  flex-shrink: 0;
 }
 
 .branch-actions button {
