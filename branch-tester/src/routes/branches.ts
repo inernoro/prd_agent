@@ -730,11 +730,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const webPort = config.run?.webPort ?? 8000;
       const apiUpstream = entry.runContainerName!;
       // Vite dev server command: install deps + start with host binding so it's accessible from nginx.
-      // --allowedHosts all: Vite 6+ blocks requests whose Host header doesn't match; since the
-      // container sits behind our nginx reverse-proxy the Host will be the external domain, so we
-      // must allow all hosts here (security is handled at the nginx layer).
+      // allowedHosts is configured in vite.config.ts (not a CLI flag in Vite 6.x).
       const webCommand = config.run?.webCommand
-        ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && VITE_API_BASE_URL=http://${apiUpstream}:8080 pnpm dev --host 0.0.0.0 --allowedHosts all"`;
+        ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && VITE_API_BASE_URL=http://${apiUpstream}:8080 pnpm dev --host 0.0.0.0"`;
 
       await containerService.runWebFromSource(entry, {
         webBaseImage,
@@ -908,7 +906,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const webPort = config.run?.webPort ?? 8000;
         const apiUpstream = entry.runContainerName!;
         const webCommand = config.run?.webCommand
-          ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && VITE_API_BASE_URL=http://${apiUpstream}:8080 pnpm dev --host 0.0.0.0 --allowedHosts all"`;
+          ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && VITE_API_BASE_URL=http://${apiUpstream}:8080 pnpm dev --host 0.0.0.0"`;
 
         await containerService.runWebFromSource(entry, {
           webBaseImage,

@@ -24,6 +24,9 @@ export default defineConfig({
     // 默认 8000（与后端 5000 端口区分开，便于联调）
     port: Number.parseInt(process.env.PORT || '', 10) || 8000,
     strictPort: false,
+    // Allow all hosts — the dev server runs behind nginx reverse-proxy whose Host header
+    // won't match the container hostname. Security is enforced at the nginx layer.
+    allowedHosts: true,
     // 本地联调：通过同源 /api 反代到后端，彻底避免 CORS/OPTIONS 预检 403
     proxy: {
       '/api': {
