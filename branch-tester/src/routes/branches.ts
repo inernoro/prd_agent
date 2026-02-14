@@ -688,51 +688,51 @@ export function createBranchRouter(deps: RouterDeps): Router {
         },
       });
 
-      // ---- stream container startup logs (request 7) ----
-      send({ step: 'logs', status: 'running', title: '容器启动日志' });
+      // ---- stream container startup logs (non-blocking background monitor) ----
+      send({ step: 'logs', status: 'running', title: '容器启动日志（监听中）' });
 
-      const logStreamResult = await new Promise<'ready' | 'exited' | 'timeout'>((resolve) => {
-        const proc = spawn('docker', ['logs', '-f', '--tail', '0', entry.runContainerName!]);
-        let resolved = false;
-        const finish = (reason: 'ready' | 'exited' | 'timeout') => {
-          if (!resolved) { resolved = true; proc.kill(); resolve(reason); }
-        };
+      const logProc = spawn('docker', ['logs', '-f', '--tail', '0', entry.runContainerName!]);
+      let logDone = false;
 
-        const timer = setTimeout(() => finish('timeout'), 120_000);
+      const finishLog = (status: 'done' | 'warn' | 'error', title: string) => {
+        if (logDone) return;
+        logDone = true;
+        logProc.kill();
+        send({ step: 'logs', status, title });
+      };
 
-        const handleData = (data: Buffer) => {
-          const text = data.toString();
-          send({ step: 'logs', status: 'running', title: '容器启动日志', chunk: text });
-          // Detect ASP.NET ready signal
-          if (text.includes('Now listening on')) {
-            clearTimeout(timer);
-            // Brief delay to capture remaining startup output
-            setTimeout(() => finish('ready'), 1500);
-          }
-        };
+      const logTimeout = setTimeout(
+        () => finishLog('warn', '容器启动日志（等待超时，应用可能仍在启动）'),
+        120_000,
+      );
 
-        proc.stdout?.on('data', handleData);
-        proc.stderr?.on('data', handleData);
-        proc.on('close', () => { clearTimeout(timer); finish('exited'); });
-        req.on('close', () => { clearTimeout(timer); finish('exited'); });
-      });
+      const handleLogData = (data: Buffer) => {
+        if (logDone) return;
+        const text = data.toString();
+        send({ step: 'logs', status: 'running', title: '容器启动日志（监听中）', chunk: text });
+        if (text.includes('Now listening on')) {
+          clearTimeout(logTimeout);
+          // Brief delay to capture remaining startup output
+          setTimeout(() => finishLog('done', '应用启动完成'), 1500);
+        }
+      };
 
-      if (logStreamResult === 'ready') {
-        send({ step: 'logs', status: 'done', title: '应用启动完成' });
-      } else if (logStreamResult === 'exited') {
-        // Container may have crashed during startup
+      logProc.stdout?.on('data', handleLogData);
+      logProc.stderr?.on('data', handleLogData);
+      logProc.on('close', async () => {
+        clearTimeout(logTimeout);
+        if (logDone) return;
         const alive = await containerService.isRunning(entry.runContainerName!);
         if (!alive) {
           entry.runStatus = 'error';
           entry.runErrorMessage = '容器在启动过程中退出';
           stateService.save();
-          throw new Error('容器在启动过程中退出，请查看日志了解原因');
+          finishLog('error', '容器在启动过程中退出');
+        } else {
+          finishLog('done', '容器启动日志');
         }
-        send({ step: 'logs', status: 'done', title: '容器启动日志' });
-      } else {
-        // Timeout — app might still be starting
-        send({ step: 'logs', status: 'warn', title: '容器启动日志（等待超时，应用可能仍在启动）' });
-      }
+      });
+      req.on('close', () => { clearTimeout(logTimeout); if (!logDone) { logDone = true; logProc.kill(); } });
 
       // ---- start Vite dev server container for frontend ----
       send({ step: 'frontend', status: 'running', title: '启动前端开发服务器' });

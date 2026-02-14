@@ -866,11 +866,14 @@ button.warn:hover { background: #8a5900; color: #fff; }
 
 .loading {
   display: inline-block;
+  box-sizing: border-box;
   width: 14px;
   height: 14px;
   border: 2px solid rgba(255,255,255,0.3);
   border-top-color: #fff;
   border-radius: 50%;
+  flex-shrink: 0;
+  vertical-align: middle;
   animation: spin 0.6s linear infinite;
 }
 
