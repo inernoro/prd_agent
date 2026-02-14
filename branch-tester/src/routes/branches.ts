@@ -879,7 +879,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  // POST /branches/:id/run-restart-web — Restart only the Vite dev server container
+  // POST /branches/:id/run-restart-web — Restart (or recreate) the Vite dev server container
   router.post('/branches/:id/run-restart-web', async (req, res) => {
     try {
       const { id } = req.params;
@@ -893,11 +893,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
-      const result = await shell.exec(`docker restart ${entry.runWebContainerName}`);
-      if (result.exitCode !== 0) {
-        throw new Error(`Failed to restart web container: ${combinedOutput(result)}`);
+      const exists = await containerService.isRunning(entry.runWebContainerName);
+      if (exists) {
+        // Container exists → simple restart
+        const result = await shell.exec(`docker restart ${entry.runWebContainerName}`);
+        if (result.exitCode !== 0) {
+          throw new Error(`Failed to restart web container: ${combinedOutput(result)}`);
+        }
+        res.json({ success: true, action: 'restarted', container: entry.runWebContainerName });
+      } else {
+        // Container was removed → recreate it with the same config as run-from-source
+        const webBaseImage = config.run?.webBaseImage ?? 'node:20-slim';
+        const webSourceDir = config.run?.webSourceDir ?? 'prd-admin';
+        const webPort = config.run?.webPort ?? 8000;
+        const apiUpstream = entry.runContainerName!;
+        const webCommand = config.run?.webCommand
+          ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && VITE_API_BASE_URL=http://${apiUpstream}:8080 pnpm dev --host 0.0.0.0 --allowedHosts all"`;
+
+        await containerService.runWebFromSource(entry, {
+          webBaseImage,
+          webCommand,
+          webSourceDir,
+          webPort,
+        });
+        stateService.save();
+        res.json({ success: true, action: 'recreated', container: entry.runWebContainerName });
       }
-      res.json({ success: true, container: entry.runWebContainerName });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
