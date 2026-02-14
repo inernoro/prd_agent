@@ -266,6 +266,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             string? finishReason = null;
             var thinkingBuilder = new StringBuilder(); // 记录思考过程（用于日志）
             var thinkTagStripper = new ThinkTagStripper(captureThinking: true); // 始终捕获 <think> 内容
+            var thinkingStarted = false; // 调试：标记思考是否已开始
+            var contentStarted = false;  // 调试：标记正文是否已开始
 
             await foreach (var data in sseReader.ReadEventsAsync(ct))
             {
@@ -301,6 +303,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 // Gateway 始终透传，由消费层 (GatewayLLMClient) 决定是否暴露给调用方
                 if (chunk.Type == GatewayChunkType.Thinking)
                 {
+                    if (!thinkingStarted)
+                    {
+                        thinkingStarted = true;
+                        _logger.LogInformation("[LlmGateway] ✦ 思考开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
+                    }
                     if (!string.IsNullOrEmpty(chunk.Content))
                     {
                         thinkingBuilder.Append(chunk.Content);
@@ -311,6 +318,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 if (!string.IsNullOrEmpty(chunk.Content) && chunk.Type == GatewayChunkType.Text)
                 {
+                    if (!contentStarted)
+                    {
+                        contentStarted = true;
+                        _logger.LogInformation("[LlmGateway] ✦ 正文开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
+                    }
                     // 通过 ThinkTagStripper 过滤 <think>...</think> 标签
                     var stripped = thinkTagStripper.Process(chunk.Content);
 

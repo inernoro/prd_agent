@@ -72,17 +72,12 @@ function App() {
   });
   const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(null);
 
-  // 全局拉取 Desktop 品牌配置：覆盖"自动登录直达主界面"场景，确保 desktopName/logo/bg 能及时更新
+  // 全局拉取 Desktop 品牌配置：仅启动时拉取一次，不再每次聚焦窗口都请求
   useEffect(() => {
     const skin = isDark ? 'dark' : 'white';
     void refreshBranding('app-start', skin);
-    const onFocus = () => {
-      const currentSkin = isDark ? 'dark' : 'white';
-      void refreshBranding('focus', currentSkin);
-    };
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, [refreshBranding, isDark]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 将窗口标题与服务器下发配置对齐（若未下发则由 store 默认值兜底）
   useEffect(() => {
@@ -177,13 +172,6 @@ function App() {
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
-  }, [isDark]);
-
-  // 主题切换时重新获取对应皮肤的资源
-  useEffect(() => {
-    const skin = isDark ? 'dark' : 'white';
-    const refreshBranding = useDesktopBrandingStore.getState().refresh;
-    void refreshBranding('theme_change', skin);
   }, [isDark]);
 
   const applyTheme = (nextIsDark: boolean) => {
