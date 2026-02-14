@@ -54,7 +54,10 @@ export class SwitcherService {
 
     // Source-run mode: dual-container dev (Vite dev server + dotnet API)
     if (mode === 'run') {
-      // When a web container is available, route /api/ to dotnet and everything else to Vite
+      // When a web container is available, route /api/ to dotnet and everything else to Vite.
+      // We use Docker's embedded DNS resolver (127.0.0.11) with nginx variables so that
+      // upstream hostnames are resolved at REQUEST time, not config-load time. This prevents
+      // `nginx -t` from failing when a container hasn't started yet or was removed.
       const webTarget = webUpstream ?? upstream;
       const webPort = webUpstream ? 8000 : 8080;
       return `server {
@@ -64,19 +67,24 @@ export class SwitcherService {
     absolute_redirect off;
     port_in_redirect off;
 
+    # Docker embedded DNS — enables runtime resolution of container hostnames
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
     # Source-run mode — dual dev containers
     # API upstream: ${upstream}
     # Web upstream: ${webTarget}
 
     # API requests → dotnet container
     location ^~ /api/ {
-        proxy_pass http://${upstream}:8080;
+        set $api_backend http://${upstream}:8080;
+        proxy_pass $api_backend;
 ${proxyHeaders}
     }
 
     # Everything else → Vite dev server (with HMR WebSocket support)
     location / {
-        proxy_pass http://${webTarget}:${webPort};
+        set $web_backend http://${webTarget}:${webPort};
+        proxy_pass $web_backend;
 ${proxyHeaders}
         # WebSocket support for Vite HMR
         proxy_set_header Upgrade $http_upgrade;

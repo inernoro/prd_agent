@@ -55,10 +55,20 @@ describe('SwitcherService', () => {
 
     it('should generate run-mode config proxying all requests', () => {
       const conf = service.generateConfig('prdagent-api-feature-a', 'run');
-      expect(conf).toContain('proxy_pass http://prdagent-api-feature-a:8080');
+      // Run mode uses nginx variables for deferred DNS resolution (Docker resolver)
+      expect(conf).toContain('resolver 127.0.0.11');
+      expect(conf).toContain('set $api_backend http://prdagent-api-feature-a:8080');
+      expect(conf).toContain('proxy_pass $api_backend');
       expect(conf).toContain('Source-run mode');
       expect(conf).toContain('WebSocket support');
       expect(conf).not.toContain('root /usr/share/nginx/html');
+    });
+
+    it('should generate run-mode config with separate web upstream', () => {
+      const conf = service.generateConfig('prdagent-api-feature-a', 'run', 'prdagent-web-feature-a');
+      expect(conf).toContain('set $api_backend http://prdagent-api-feature-a:8080');
+      expect(conf).toContain('set $web_backend http://prdagent-web-feature-a:8000');
+      expect(conf).toContain('proxy_pass $web_backend');
     });
   });
 

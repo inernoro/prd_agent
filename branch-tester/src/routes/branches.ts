@@ -998,11 +998,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const nginxConfPath = path.join(config.repoRoot, config.deployDir, 'nginx', 'nginx.conf');
     if (fs.existsSync(nginxConfPath)) {
       const nginxConf = fs.readFileSync(nginxConfPath, 'utf-8');
-      // Extract upstream targets from config
-      const apiMatch = nginxConf.match(/location \^~ \/api\/[\s\S]*?proxy_pass\s+http:\/\/([^;]+);/);
-      const webMatch = nginxConf.match(/location \/[\s\S]*?proxy_pass\s+http:\/\/([^;]+);/);
-      const apiTarget = apiMatch?.[1] ?? '(not found)';
-      const webTarget = webMatch?.[1] ?? '(not found)';
+      // Extract upstream targets from config.
+      // Supports both direct proxy_pass and variable-based (set $var + proxy_pass $var) patterns.
+      const apiSection = nginxConf.match(/location \^~ \/api\/([\s\S]*?)}/)?.[1] ?? '';
+      const webSection = nginxConf.match(/location \/ \{([\s\S]*?)}/)?.[1]
+        ?? nginxConf.match(/location \/[\s\S]*?{([\s\S]*?)}/)?.[1] ?? '';
+
+      const extractTarget = (section: string): string => {
+        // Try variable-based: set $xxx http://host:port; ... proxy_pass $xxx;
+        const varMatch = section.match(/set\s+\$\w+\s+http:\/\/([^;]+);/);
+        if (varMatch) return varMatch[1];
+        // Try direct: proxy_pass http://host:port;
+        const directMatch = section.match(/proxy_pass\s+http:\/\/([^;]+);/);
+        return directMatch?.[1] ?? '(not found)';
+      };
+
+      const apiTarget = extractTarget(apiSection);
+      const webTarget = extractTarget(webSection);
       const isSameTarget = apiTarget === webTarget;
       const expectedWebTarget = entry.runWebContainerName
         ? `${entry.runWebContainerName}:8000`
