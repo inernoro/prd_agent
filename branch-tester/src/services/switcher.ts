@@ -14,31 +14,32 @@ export class SwitcherService {
     private readonly options: SwitcherOptions,
   ) {}
 
-  generateConfig(upstream: string, branchLabel?: string): string {
+  generateConfig(upstream: string, branchLabel?: string, mode: 'deploy' | 'run' = 'deploy'): string {
     // When upstream is null/sentinel, produce a config that returns 502 for API
     // without referencing any upstream host (avoids DNS resolution failure).
-    const apiBlock =
-      upstream === '_disconnected_upstream_'
-        ? `    # API disconnected — no active branch
+    if (upstream === '_disconnected_upstream_') {
+      return `server {
+    listen 80;
+    server_name _;
+    client_max_body_size 30m;
+    absolute_redirect off;
+    port_in_redirect off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # API disconnected — no active branch
     location ^~ /api/ {
         default_type application/json;
         return 502 '{"error":"No active branch connected"}';
-    }`
-        : `    # API reverse proxy — managed by branch-tester
-    # Active upstream: ${upstream}
-    location ^~ /api/ {
-        proxy_pass http://${upstream}:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 3s;
-        proxy_send_timeout 60s;
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_read_timeout 3600s;
-    }`;
+    }
+
+    location / {
+        try_files $uri /index.html;
+    }
+}
+`;
+    }
 
     // Inject a floating branch indicator badge via sub_filter when branchLabel is provided
     const subFilterBlock = branchLabel
@@ -49,6 +50,40 @@ export class SwitcherService {
     sub_filter '</body>' '<div id="bt-branch-badge" style="position:fixed;bottom:12px;left:12px;z-index:99999;display:flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(22,27,34,0.88);border:1px solid rgba(48,54,61,0.6);border-radius:6px;font:12px/1 -apple-system,sans-serif;color:#c9d1d9;pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,0.3);backdrop-filter:blur(8px)"><span style="width:7px;height:7px;border-radius:50%;background:#3fb950;display:inline-block"></span>${branchLabel}</div></body>';`
       : '';
 
+    const proxyHeaders = `        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_send_timeout 60s;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;`;
+
+    // Source-run mode: proxy ALL requests to the container (Vite dev server handles frontend + API)
+    if (mode === 'run') {
+      return `server {
+    listen 80;
+    server_name _;
+    client_max_body_size 30m;
+    absolute_redirect off;
+    port_in_redirect off;${subFilterBlock}
+
+    # Source-run mode — ALL requests proxied to container (Vite dev + ASP.NET)
+    # Active upstream: ${upstream}
+    location / {
+        proxy_pass http://${upstream}:8080;
+${proxyHeaders}
+        # WebSocket support for Vite HMR
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+`;
+    }
+
+    // Deploy mode: serve pre-built static files from dist, proxy API to container
     return `server {
     listen 80;
     server_name _;
@@ -59,7 +94,12 @@ export class SwitcherService {
     root /usr/share/nginx/html;
     index index.html;${subFilterBlock}
 
-${apiBlock}
+    # API reverse proxy — managed by branch-tester
+    # Active upstream: ${upstream}
+    location ^~ /api/ {
+        proxy_pass http://${upstream}:8080;
+${proxyHeaders}
+    }
 
     location ^~ /assets/ {
         try_files $uri =404;

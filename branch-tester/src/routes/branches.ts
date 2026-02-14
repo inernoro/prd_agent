@@ -429,16 +429,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     switcherService.backup();
 
-    // Sync static files: prefer branch-specific build, fallback to main dist
-    const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
-    const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
-    if (fs.existsSync(buildsDir)) {
-      await switcherService.syncStaticFiles(buildsDir, distDir);
+    // In deploy mode: sync pre-built static files to dist/ (nginx serves them)
+    // In run mode: skip sync — nginx proxies everything to the container
+    if (resolved.mode === 'deploy') {
+      const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
+      const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
+      if (fs.existsSync(buildsDir)) {
+        await switcherService.syncStaticFiles(buildsDir, distDir);
+      }
     }
 
     const modeLabel = resolved.mode === 'run' ? '源码' : '制品';
     const branchLabel = `${entry.branch} (${modeLabel})`;
-    const newConf = switcherService.generateConfig(resolved.upstream, branchLabel);
+    const newConf = switcherService.generateConfig(resolved.upstream, branchLabel, resolved.mode);
     await switcherService.applyConfig(newConf);
 
     stateService.activate(id);
@@ -884,7 +887,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
       await switcherService.syncStaticFiles(buildsDir, distDir);
       const deployLabel = `${entry.branch} (制品)`;
-      const nginxConf = switcherService.generateConfig(entry.containerName, deployLabel);
+      const nginxConf = switcherService.generateConfig(entry.containerName, deployLabel, 'deploy');
       await switcherService.applyConfig(nginxConf);
       stateService.activate(id);
       stateService.save();
@@ -1037,20 +1040,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
-      const running = await containerService.isRunning(entry.containerName);
-      if (!running) {
-        await containerService.start(entry);
-        stateService.updateStatus(previousId, 'running');
+      // Determine which container to route to
+      const resolved = resolveUpstream(entry);
+      if (!resolved) {
+        // No container running — try starting the deploy container
+        const running = await containerService.isRunning(entry.containerName);
+        if (!running) {
+          await containerService.start(entry);
+          stateService.updateStatus(previousId, 'running');
+        }
       }
+
+      const upstream = resolved ?? { upstream: entry.containerName, mode: 'deploy' as const };
 
       // Switch nginx FIRST — if this fails, state stays untouched
       switcherService.backup();
-      const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', previousId);
-      const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
-      await switcherService.syncStaticFiles(buildsDir, distDir);
 
-      const rollbackLabel = `${entry.branch} (回滚)`;
-      const newConf = switcherService.generateConfig(entry.containerName, rollbackLabel);
+      if (upstream.mode === 'deploy') {
+        const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', previousId);
+        const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
+        if (fs.existsSync(buildsDir)) {
+          await switcherService.syncStaticFiles(buildsDir, distDir);
+        }
+      }
+
+      const modeLabel = upstream.mode === 'run' ? '源码' : '制品';
+      const rollbackLabel = `${entry.branch} (回滚·${modeLabel})`;
+      const newConf = switcherService.generateConfig(upstream.upstream, rollbackLabel, upstream.mode);
       await switcherService.applyConfig(newConf);
 
       // Nginx succeeded — NOW commit the state change
