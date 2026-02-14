@@ -429,7 +429,12 @@ public class ChatService : IChatService
                     fullThinking.Append(chunk.Content);
                     if (!string.IsNullOrEmpty(gidForSeq))
                     {
+                        Console.Error.WriteLine($"[ChatService] ✦ 广播 thinking: groupId={gidForSeq}, messageId={messageId}, contentLen={chunk.Content.Length}");
                         _groupMessageStreamHub.PublishThinking(gidForSeq, messageId, chunk.Content);
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"[ChatService] ✦ thinking 未广播: gidForSeq 为空, messageId={messageId}");
                     }
                 }
                 else if (chunk.Type == "done")

@@ -116,9 +116,25 @@ function ChatContainerInner() {
       // 处理 AI 思考过程的增量内容（thinking）
       if (p?.type === 'thinking' && p?.messageId && p?.thinkingContent) {
         const store = useMessageStore.getState();
-        // 只在当前 streaming 消息上追加思考内容
-        if (store.streamingMessageId === String(p.messageId)) {
+        const mid = String(p.messageId);
+        console.log('[ChatContainer] ✦ thinking event received:', {
+          messageId: mid,
+          streamingMessageId: store.streamingMessageId,
+          match: store.streamingMessageId === mid,
+          contentLen: String(p.thinkingContent).length,
+        });
+        if (store.streamingMessageId === mid) {
           store.appendToStreamingThinking(String(p.thinkingContent));
+        } else {
+          // 容错：thinking 先于占位消息到达时，尝试找到消息并启动流式
+          const existingMsg = store.messages.find(m => m.id === mid);
+          if (existingMsg) {
+            console.log('[ChatContainer] ✦ thinking fallback: found message, starting streaming');
+            store.startStreaming(existingMsg);
+            store.appendToStreamingThinking(String(p.thinkingContent));
+          } else {
+            console.warn('[ChatContainer] ✦ thinking dropped: no matching message in store for', mid);
+          }
         }
         return;
       }
@@ -307,6 +323,7 @@ function ChatContainerInner() {
 
       // 检测 AI 占位消息（空内容的 Assistant 消息）
       if (message.role === 'Assistant' && message.content === '') {
+        console.log('[ChatContainer] ✦ AI placeholder arrived, calling startStreaming:', message.id);
         startStreaming(message);
       } else if (message.role === 'Assistant' && message.content !== '') {
         // AI 完整消息：检查是否已存在（更新而不是新增）

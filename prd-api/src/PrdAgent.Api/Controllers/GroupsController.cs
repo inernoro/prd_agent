@@ -1086,6 +1086,8 @@ public class GroupsController : ControllerBase
                         ThinkingContent = ev.ThinkingContent
                     };
                     var json = JsonSerializer.Serialize(thinkingEvent, AppJsonContext.Default.GroupMessageStreamEventDto);
+                    _logger.LogInformation("[GroupsController] ✦ SSE thinking: messageId={MessageId}, contentLen={Len}, json={Json}",
+                        ev.MessageId, ev.ThinkingContent?.Length ?? 0, json.Length > 200 ? json[..200] + "..." : json);
                     await WriteSseAsync(id: null, eventName: "message", dataJson: json, ct: cancellationToken);
                     lastKeepAliveAt = DateTime.UtcNow;
                     continue;
