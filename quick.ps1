@@ -223,7 +223,7 @@ function Ensure-PnpmInstalled {
 # Start backend server
 function Start-Backend {
     Write-Info "Starting backend server..."
-    dotnet run --project "$ScriptDir\prd-api\src\PrdAgent.Api\PrdAgent.Api.csproj"
+    dotnet watch run --project "$ScriptDir\prd-api\src\PrdAgent.Api\PrdAgent.Api.csproj"
 }
 
 # Start admin panel
@@ -318,7 +318,7 @@ function Start-All {
             $OutputEncoding = $utf8NoBom
         } catch {}
 
-        dotnet run --project $projectPath 2>&1 | ForEach-Object { "[api] $_" }
+        dotnet watch run --project $projectPath 2>&1 | ForEach-Object { "[api] $_" }
     } -ArgumentList "$ScriptDir\prd-api\src\PrdAgent.Api\PrdAgent.Api.csproj"
 
     # Start admin in background
