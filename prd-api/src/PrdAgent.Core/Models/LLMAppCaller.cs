@@ -86,36 +86,45 @@ public class AppModelRequirement
 
 /// <summary>
 /// 模型类型常量
+///
+/// 思考内容（Thinking）输出合约：
+/// - Intent：绝不输出思考内容（Gateway 硬性保障，无论 IncludeThinking 如何设置）
+/// - Chat：默认不输出，调用方可通过 IncludeThinking=true 显式启用
+/// - Vision / Generation / Embedding / Rerank / Code / LongContext：默认不输出，理论上可 opt-in
+///
+/// 注册 AppCallerCode 时可依据此合约放心选择 ModelType：
+///   选 Intent → 保证不会收到思考内容，适合快速 JSON 结构化返回
+///   选 Chat   → 可能收到思考内容（仅当显式 opt-in），适合对话推理场景
 /// </summary>
 public static class ModelTypes
 {
-    /// <summary>通用对话</summary>
+    /// <summary>通用对话（思考：默认关闭，可 opt-in）</summary>
     public const string Chat = "chat";
-    
-    /// <summary>快速意图识别</summary>
+
+    /// <summary>快速意图识别（思考：强制关闭，Gateway 硬性保障）</summary>
     public const string Intent = "intent";
-    
+
     /// <summary>图片识别</summary>
     public const string Vision = "vision";
-    
+
     /// <summary>图片生成</summary>
     public const string ImageGen = "generation";
-    
+
     /// <summary>代码生成（预留）</summary>
     public const string Code = "code";
-    
+
     /// <summary>长文本处理（预留）</summary>
     public const string LongContext = "long-context";
-    
+
     /// <summary>向量嵌入（预留）</summary>
     public const string Embedding = "embedding";
-    
+
     /// <summary>重排序（预留）</summary>
     public const string Rerank = "rerank";
-    
+
     /// <summary>获取所有基础类型</summary>
     public static readonly string[] BaseTypes = { Chat, Intent, Vision, ImageGen };
-    
+
     /// <summary>获取所有类型（包括扩展）</summary>
     public static readonly string[] AllTypes = { Chat, Intent, Vision, ImageGen, Code, LongContext, Embedding, Rerank };
 }
