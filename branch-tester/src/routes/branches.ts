@@ -435,7 +435,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   // Helper: perform the activate sequence (sync + nginx switch)
-  async function doActivate(id: string): Promise<void> {
+  interface ActivateResult {
+    upstream: string;
+    gateway: string;
+    nginxConf: string;
+  }
+
+  async function doActivate(id: string): Promise<ActivateResult> {
     const entry = stateService.getBranch(id)!;
     const resolved = resolveUpstream(entry);
     if (!resolved) {
@@ -444,6 +450,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     switcherService.backup();
 
+    let nginxConf: string;
     if (resolved.mode === 'deploy') {
       // Deploy mode: sync pre-built static files to dist/ (nginx serves them)
       const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
@@ -451,17 +458,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (fs.existsSync(buildsDir)) {
         await switcherService.syncStaticFiles(buildsDir, distDir);
       }
-      const newConf = switcherService.generateConfig(resolved.upstream, 'deploy');
-      await switcherService.applyConfig(newConf);
+      nginxConf = switcherService.generateConfig(resolved.upstream, 'deploy');
     } else {
       // Run mode: dual-container dev — Vite dev + dotnet run
       const webContainer = entry.runWebContainerName;
-      const newConf = switcherService.generateConfig(resolved.upstream, 'run', webContainer);
-      await switcherService.applyConfig(newConf);
+      nginxConf = switcherService.generateConfig(resolved.upstream, 'run', webContainer);
     }
 
+    await switcherService.applyConfig(nginxConf);
     stateService.activate(id);
     stateService.save();
+
+    return {
+      upstream: `${resolved.upstream}:8080`,
+      gateway: `http://localhost:${config.gateway.port}`,
+      nginxConf,
+    };
   }
 
   // POST /branches/:id/activate — switch active branch
@@ -756,14 +768,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // ---- activate nginx (route /api → dotnet, / → Vite) ----
       send({ step: 'activate', status: 'running', title: '切换 Nginx 网关' });
       try {
-        await doActivate(id);
-        const resolved = resolveUpstream(entry);
+        const activateResult = await doActivate(id);
         send({
           step: 'activate', status: 'done', title: '切换 Nginx 网关',
-          detail: {
-            upstream: resolved ? `${resolved.upstream}:8080` : entry.runContainerName,
-            gateway: `http://localhost:${config.gateway.port}`,
-          },
+          detail: activateResult,
         });
       } catch (activateErr) {
         // Non-fatal: containers are running, just nginx switch failed
@@ -1226,22 +1234,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // ---- activate nginx ----
       send({ step: 'activate', status: 'running', title: '切换 Nginx 网关' });
-
-      switcherService.backup();
-      const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
-      await switcherService.syncStaticFiles(buildsDir, distDir);
-      const nginxConf = switcherService.generateConfig(entry.containerName, 'deploy');
-      await switcherService.applyConfig(nginxConf);
-      stateService.activate(id);
-      stateService.save();
-
+      const activateResult = await doActivate(id);
       send({
         step: 'activate', status: 'done', title: '切换 Nginx 网关',
-        detail: {
-          upstream: `${entry.containerName}:8080`,
-          gateway: `http://localhost:${config.gateway.port}`,
-          nginxConf,
-        },
+        detail: activateResult,
       });
 
       // ---- health check ----
