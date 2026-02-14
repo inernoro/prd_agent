@@ -757,9 +757,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       send({ step: 'activate', status: 'running', title: '切换 Nginx 网关' });
       try {
         await doActivate(id);
+        const resolved = resolveUpstream(entry);
         send({
           step: 'activate', status: 'done', title: '切换 Nginx 网关',
-          detail: { url: `http://localhost:${config.gateway.port}` },
+          detail: {
+            upstream: resolved ? `${resolved.upstream}:8080` : entry.runContainerName,
+            gateway: `http://localhost:${config.gateway.port}`,
+          },
         });
       } catch (activateErr) {
         // Non-fatal: containers are running, just nginx switch failed
