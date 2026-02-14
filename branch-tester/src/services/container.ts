@@ -138,6 +138,8 @@ export class ContainerService {
       `-v ${srcMount}:/src`,
       `-w /src`,
       '--tmpfs /tmp',
+      // Store pnpm cache outside /src to avoid Vite watching thousands of store files (ENOSPC)
+      '-e npm_config_store_dir=/tmp/.pnpm-store',
       options.webBaseImage,
       options.webCommand,
     ].join(' ');

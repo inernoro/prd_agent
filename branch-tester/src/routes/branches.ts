@@ -1077,15 +1077,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const gatewayPort = config.gateway.port;
     const gatewayContainer = config.gateway.containerName;
 
-    // Test /api/ route → should reach dotnet
+    // Test /api/ route → should reach dotnet (any non-502/000 response means API is reachable)
     const apiTest = await shell.exec(
       `docker exec ${gatewayContainer} curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:80/api/health 2>&1`,
     );
+    const apiCode = apiTest.stdout.trim();
     checks.push({
       name: 'http_api_route',
-      status: apiTest.stdout.trim() === '200' ? 'pass'
-            : apiTest.stdout.trim() === '000' ? 'fail' : 'warn',
-      detail: `GET /api/health → HTTP ${apiTest.stdout.trim() || apiTest.stderr.trim()}`,
+      status: apiCode === '000' || apiCode === '502' ? 'fail'
+            : 'pass',
+      detail: `GET /api/health → HTTP ${apiCode || apiTest.stderr.trim()}`,
     });
 
     // Test / route → should reach Vite
@@ -1106,19 +1107,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         `docker exec ${gatewayContainer} curl -s -o /dev/null -w "%{http_code}" --max-time 5 ${viteUrl} 2>&1`,
       );
       const httpCode = viteTest.stdout.trim();
-      let detail = `GET ${viteUrl} → HTTP ${httpCode || viteTest.stderr.trim()}`;
-      // On 403, fetch body to show Vite's allowedHosts message
-      if (httpCode === '403') {
-        const body = await shell.exec(
-          `docker exec ${gatewayContainer} curl -s --max-time 5 ${viteUrl} 2>&1`,
-        );
-        detail += `\n\n${body.stdout.trim().slice(0, 500)}`;
-      }
+      // 200 = reachable, 403 = reachable but blocked by Vite allowedHosts (expected via container name)
+      const reachable = httpCode !== '000' && httpCode !== '';
       checks.push({
         name: 'vite_direct',
-        status: httpCode === '200' ? 'pass'
-              : httpCode === '000' ? 'fail' : 'warn',
-        detail,
+        status: reachable ? 'pass' : 'fail',
+        detail: `GET ${viteUrl} → HTTP ${httpCode || viteTest.stderr.trim()}${httpCode === '403' ? ' (allowedHosts — 通过网关访问正常)' : ''}`,
       });
     }
 

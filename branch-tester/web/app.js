@@ -200,6 +200,7 @@ function renderBranches(branches, activeBranchId) {
             <div class="branch-meta">部署: ${deployStatus}${runStatus} · DB: <span class="${b.originalDbName ? 'db-shared' : ''}" title="${b.originalDbName ? '正在使用主库（原始库: ' + esc(b.originalDbName) + '）' : ''}">${b.dbName}${b.originalDbName ? ' (主库)' : ''}</span></div>
             ${timeLine ? `<div class="branch-time">${timeLine}</div>` : ''}
             ${portInfo ? `<div class="branch-ports">${portInfo}</div>` : ''}
+            ${b.worktreePath ? `<div class="branch-time" title="${esc(b.worktreePath)}">源码: ${esc(b.worktreePath)}</div>` : ''}
             ${errorHtml}
           </div>
         </div>
@@ -505,7 +506,7 @@ function appendLogEvent(data) {
         </div>`);
     } else {
       // Update title and progress
-      const hdr = el.querySelector('.deploy-step-hdr span');
+      const hdr = el.querySelector('.deploy-step-hdr span:not(.loading)');
       if (hdr) hdr.textContent = data.title;
       if (data.total != null) {
         let pb = el.querySelector('.step-progress-bar');
