@@ -307,43 +307,61 @@ public static class CapsuleExecutor
         if (gateway == null)
             throw new InvalidOperationException("LLM Gateway 未配置，无法执行 LLM 分析");
 
-        var prompt = ReplaceVariables(GetConfigString(node, "prompt") ?? "", variables);
-        var model = GetConfigString(node, "model") ?? "gpt-4o";
+        var systemPrompt = ReplaceVariables(GetConfigString(node, "systemPrompt") ?? "", variables);
+        var userPromptTemplate = ReplaceVariables(GetConfigString(node, "userPromptTemplate") ?? "", variables);
+        var temperature = double.TryParse(GetConfigString(node, "temperature"), out var t) ? t : 0.3;
 
-        // 将输入产物内容注入 prompt
+        // 将输入产物内容拼接为 inputText
+        var inputText = "";
         if (inputArtifacts.Count > 0)
         {
-            var inputText = string.Join("\n---\n", inputArtifacts
+            inputText = string.Join("\n---\n", inputArtifacts
                 .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
                 .Select(a => $"[{a.Name}]\n{a.InlineContent}"));
-            if (!string.IsNullOrWhiteSpace(inputText))
-                prompt = $"{prompt}\n\n## 输入数据\n\n{inputText}";
         }
 
-        if (string.IsNullOrWhiteSpace(prompt))
-            throw new InvalidOperationException("LLM 分析器 prompt 未配置");
+        // 替换 userPromptTemplate 中的 {{input}} 占位符
+        var userContent = userPromptTemplate;
+        if (!string.IsNullOrWhiteSpace(inputText))
+        {
+            if (userContent.Contains("{{input}}"))
+                userContent = userContent.Replace("{{input}}", inputText);
+            else
+                userContent = $"{userContent}\n\n## 输入数据\n\n{inputText}";
+        }
+
+        if (string.IsNullOrWhiteSpace(systemPrompt) && string.IsNullOrWhiteSpace(userContent))
+            throw new InvalidOperationException("LLM 分析器提示词未配置，请填写「系统提示词」和「用户提示词模板」");
+
+        var messages = new System.Text.Json.Nodes.JsonArray();
+        if (!string.IsNullOrWhiteSpace(systemPrompt))
+        {
+            messages.Add(new System.Text.Json.Nodes.JsonObject
+            {
+                ["role"] = "system",
+                ["content"] = systemPrompt
+            });
+        }
+        messages.Add(new System.Text.Json.Nodes.JsonObject
+        {
+            ["role"] = "user",
+            ["content"] = userContent
+        });
 
         var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
         {
-            AppCallerCode = "workflow-agent.llm-analyzer::chat",
+            AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.LlmAnalyzer.Chat,
             ModelType = "chat",
-            ExpectedModel = model,
             RequestBody = new System.Text.Json.Nodes.JsonObject
             {
-                ["messages"] = new System.Text.Json.Nodes.JsonArray
-                {
-                    new System.Text.Json.Nodes.JsonObject
-                    {
-                        ["role"] = "user",
-                        ["content"] = prompt
-                    }
-                }
+                ["messages"] = messages,
+                ["temperature"] = temperature,
             }
         };
 
         var response = await gateway.SendAsync(request, CancellationToken.None);
         var content = response.Content ?? "";
-        var logs = $"LLM model={response.Resolution?.ActualModel ?? model}\nTokens: input={response.TokenUsage?.InputTokens} output={response.TokenUsage?.OutputTokens}\n";
+        var logs = $"LLM model={response.Resolution?.ActualModel}\nTokens: input={response.TokenUsage?.InputTokens} output={response.TokenUsage?.OutputTokens}\n";
 
         var artifact = MakeTextArtifact(node, "llm-output", "分析结果", content);
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs);
@@ -758,20 +776,20 @@ public static class CapsuleExecutor
         if (gateway == null)
             throw new InvalidOperationException("LLM Gateway 未配置，无法生成报告");
 
-        var template = ReplaceVariables(GetConfigString(node, "template") ?? GetConfigString(node, "prompt") ?? "", variables);
-        var format = GetConfigString(node, "output_format") ?? GetConfigString(node, "outputFormat") ?? "markdown";
+        var reportTemplate = ReplaceVariables(GetConfigString(node, "reportTemplate") ?? "", variables);
+        var format = GetConfigString(node, "format") ?? "markdown";
 
         var inputText = string.Join("\n---\n", inputArtifacts
             .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
             .Select(a => $"[{a.Name}]\n{a.InlineContent}"));
 
-        var prompt = string.IsNullOrWhiteSpace(template)
+        var prompt = string.IsNullOrWhiteSpace(reportTemplate)
             ? $"请根据以下数据生成{format}格式的报告：\n\n{inputText}"
-            : $"{template}\n\n## 数据\n\n{inputText}";
+            : $"{reportTemplate}\n\n## 数据\n\n{inputText}";
 
         var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
         {
-            AppCallerCode = "workflow-agent.report-generator::chat",
+            AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.ReportGenerator.Chat,
             ModelType = "chat",
             RequestBody = new System.Text.Json.Nodes.JsonObject
             {
