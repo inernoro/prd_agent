@@ -554,11 +554,11 @@ public static class Admin
     {
         [AppCallerMetadata(
             "模型重分类",
-            "使用 AI 对平台可用模型进行分类",
-            ModelTypes = new[] { ModelTypes.Chat },
+            "使用 AI 对平台可用模型进行分类（严格 JSON 输出）",
+            ModelTypes = new[] { ModelTypes.Intent },
             Category = "Management"
         )]
-        public const string Reclassify = "prd-agent-web.platforms.reclassify::chat";
+        public const string Reclassify = "prd-agent-web.platforms.reclassify::intent";
     }
 
     public static class Prompts

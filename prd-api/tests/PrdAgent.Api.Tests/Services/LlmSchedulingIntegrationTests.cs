@@ -205,7 +205,7 @@ public class LlmSchedulingIntegrationTests
             {
                 var startReclassify = DateTime.UtcNow;
                 var reclassifyError = await TryCallAsync(() => CallPlatformsReclassifyAsync(httpAdmin, platformId));
-            var (reclassifyLog, reclassifyLogError) = await TryWaitLogAsync(httpAdmin, "prd-agent-web.platforms.reclassify::chat", startReclassify, logTimeout);
+            var (reclassifyLog, reclassifyLogError) = await TryWaitLogAsync(httpAdmin, "prd-agent-web.platforms.reclassify::intent", startReclassify, logTimeout);
                 if (reclassifyLog != null)
                 {
                     reclassifyLog.ModelResolutionType.ShouldNotBeNull();
@@ -213,7 +213,7 @@ public class LlmSchedulingIntegrationTests
                 }
                 else
                 {
-                results.Add(new CaseResult("platforms.reclassify", "prd-agent-web.platforms.reclassify::chat", "Any", "MISSING_LOG", null, null, reclassifyError ?? reclassifyLogError));
+                results.Add(new CaseResult("platforms.reclassify", "prd-agent-web.platforms.reclassify::intent", "Any", "MISSING_LOG", null, null, reclassifyError ?? reclassifyLogError));
                 }
             }
 

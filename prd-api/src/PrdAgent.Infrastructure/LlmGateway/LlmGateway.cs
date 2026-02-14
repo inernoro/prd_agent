@@ -106,7 +106,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
 
             _logger.LogInformation(
-                "[LlmGateway] 发送请求\n" +
+                "[LlmGateway] 向 LLM 发起非流式请求\n" +
                 "  AppCallerCode: {AppCallerCode}\n" +
                 "  ExpectedModel: {ExpectedModel}\n" +
                 "  ActualModel: {ActualModel}\n" +
@@ -234,7 +234,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
 
             _logger.LogInformation(
-                "[LlmGateway] 发送流式请求\n" +
+                "[LlmGateway] 向 LLM 发起流式请求\n" +
                 "  AppCallerCode: {AppCallerCode}\n" +
                 "  ExpectedModel: {ExpectedModel}\n" +
                 "  ActualModel: {ActualModel}\n" +
@@ -637,7 +637,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
 
             _logger.LogInformation(
-                "[LlmGateway.SendRaw] 发送请求\n" +
+                "[LlmGateway.SendRaw] 向 LLM 发起原始请求\n" +
                 "  AppCallerCode: {AppCallerCode}\n" +
                 "  ActualModel: {ActualModel}\n" +
                 "  Platform: {Platform}\n" +
