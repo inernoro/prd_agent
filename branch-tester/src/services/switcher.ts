@@ -85,7 +85,18 @@ ${proxyHeaders}
     location / {
         set $web_backend http://${webTarget}:${webPort};
         proxy_pass $web_backend;
-${proxyHeaders}
+        proxy_http_version 1.1;
+        # Use localhost as Host to pass Vite's allowedHosts check
+        proxy_set_header Host localhost;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_connect_timeout 3s;
+        proxy_send_timeout 60s;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
         # WebSocket support for Vite HMR
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
