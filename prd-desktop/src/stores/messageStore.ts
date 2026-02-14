@@ -585,10 +585,17 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
 
   startStreaming: (message) => set((state) => {
     const idx = state.messages.findIndex((m) => m.id === message.id);
-    const msgWithBlocks: Message = { ...message, blocks: message.blocks ?? [] };
+    const existing = idx !== -1 ? state.messages[idx] : null;
+    // Merge with existing message to preserve accumulated thinking from early events
+    const merged: Message = {
+      ...(existing ?? ({} as Partial<Message>)),
+      ...message,
+      thinking: message.thinking ?? existing?.thinking,
+      blocks: message.blocks ?? existing?.blocks ?? [],
+    };
     const next = idx === -1
-      ? [...state.messages, msgWithBlocks]
-      : state.messages.map((m) => (m.id === message.id ? msgWithBlocks : m));
+      ? [...state.messages, merged]
+      : state.messages.map((m) => (m.id === message.id ? merged : m));
 
     return {
       messages: next,

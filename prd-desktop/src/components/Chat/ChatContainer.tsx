@@ -9,7 +9,7 @@ import ChatInput from './ChatInput';
 import SystemNoticeOverlay from '../Feedback/SystemNoticeOverlay';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useGroupInfoDrawerStore } from '../../stores/groupInfoDrawerStore';
-import type { DocCitation } from '../../types';
+import type { DocCitation, Message } from '../../types';
 import { useGroupStreamReconnect } from '../../hooks/useGroupStreamReconnect';
 
 // 阶段提示文案会造成重复状态块（且与“AI 回复气泡”割裂），这里不再使用。
@@ -126,15 +126,23 @@ function ChatContainerInner() {
         if (store.streamingMessageId === mid) {
           store.appendToStreamingThinking(String(p.thinkingContent));
         } else {
-          // 容错：thinking 先于占位消息到达时，尝试找到消息并启动流式
+          // 容错：thinking 先于占位消息到达时，创建临时占位并启动流式
           const existingMsg = store.messages.find(m => m.id === mid);
           if (existingMsg) {
             console.log('[ChatContainer] ✦ thinking fallback: found message, starting streaming');
             store.startStreaming(existingMsg);
-            store.appendToStreamingThinking(String(p.thinkingContent));
           } else {
-            console.warn('[ChatContainer] ✦ thinking dropped: no matching message in store for', mid);
+            console.log('[ChatContainer] ✦ creating temp placeholder for early thinking:', mid);
+            const tempMessage: Message = {
+              id: mid,
+              role: 'Assistant',
+              content: '',
+              thinking: '',
+              timestamp: new Date(),
+            };
+            store.startStreaming(tempMessage);
           }
+          store.appendToStreamingThinking(String(p.thinkingContent));
         }
         return;
       }
