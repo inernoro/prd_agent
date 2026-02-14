@@ -23,7 +23,7 @@ const CATEGORY_OPTIONS: { key: ToolboxCategory; label: string; icon: React.React
 
 // 页面容器样式 - 不透明背景
 const pageContainerStyle: React.CSSProperties = {
-  background: 'var(--bg-primary, #0f1419)',
+  background: 'var(--bg-elevated)',
   borderRadius: '16px',
   border: '1px solid rgba(255, 255, 255, 0.06)',
 };
