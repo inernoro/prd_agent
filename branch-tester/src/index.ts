@@ -28,7 +28,7 @@ stateService.load();
 const worktreeService = new WorktreeService(shell, config.repoRoot);
 const containerService = new ContainerService(shell, config);
 const switcherService = new SwitcherService(shell, {
-  nginxConfPath: path.join(config.repoRoot, config.deployDir, 'nginx', 'nginx.conf'),
+  confDir: path.join(config.repoRoot, config.deployDir, 'nginx', 'conf.d'),
   distPath: path.join(config.repoRoot, config.deployDir, 'web', 'dist'),
   gatewayContainerName: config.gateway.containerName,
 });

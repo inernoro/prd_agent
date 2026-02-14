@@ -75,6 +75,7 @@ describe('Branch Routes', () => {
   let server: http.Server;
   let mock: MockShellExecutor;
   let stateService: StateService;
+  let switcherService: SwitcherService;
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bt-routes-'));
@@ -117,15 +118,15 @@ describe('Branch Routes', () => {
     stateService = new StateService(stateFile);
     stateService.load();
 
-    const nginxConfPath = path.join(tmpDir, 'nginx.conf');
-    fs.writeFileSync(nginxConfPath, 'original');
+    // Create conf.d directory structure for symlink-based switcher
+    const confDir = path.join(tmpDir, 'deploy', 'nginx', 'conf.d');
     const distPath = path.join(tmpDir, 'dist');
-    fs.mkdirSync(distPath);
+    fs.mkdirSync(distPath, { recursive: true });
 
     const worktreeService = new WorktreeService(mock, config.repoRoot);
     const containerService = new ContainerService(mock, config);
-    const switcherService = new SwitcherService(mock, {
-      nginxConfPath,
+    switcherService = new SwitcherService(mock, {
+      confDir,
       distPath,
       gatewayContainerName: config.gateway.containerName,
     });
@@ -306,6 +307,10 @@ describe('Branch Routes', () => {
       // Active branch should be cleared
       const list = await request(server, 'GET', '/api/branches');
       expect((list.body as any).activeBranchId).toBeNull();
+
+      // Symlink should point to _disconnected after deletion of active branch
+      const activeSymlink = switcherService.getActiveBranchFromSymlink();
+      expect(activeSymlink).toBe('_disconnected');
     });
   });
 
@@ -356,10 +361,15 @@ describe('Branch Routes', () => {
   });
 
   describe('POST /api/branches/:id/start', () => {
-    it('should start a branch container', async () => {
+    it('should start a branch container and save nginx config to disk', async () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
       const res = await request(server, 'POST', '/api/branches/feature-test/start');
       expect(res.status).toBe(200);
+
+      // Verify per-branch config file was created on disk
+      const conf = switcherService.readBranchConfig('feature-test');
+      expect(conf).toBeTruthy();
+      expect(conf).toContain('prdagent-api-feature-test');
     });
 
     it('should return 404 for unknown branch', async () => {
@@ -392,6 +402,10 @@ describe('Branch Routes', () => {
       await request(server, 'POST', '/api/branches/feature-test/activate');
       list = await request(server, 'GET', '/api/branches');
       expect((list.body as any).activeBranchId).toBe('feature-test');
+
+      // Verify symlink points to the activated branch
+      const activeSymlink = switcherService.getActiveBranchFromSymlink();
+      expect(activeSymlink).toBe('feature-test');
     });
   });
 
@@ -423,6 +437,37 @@ describe('Branch Routes', () => {
       );
       const res = await request(server, 'POST', '/api/branches/feature-test/activate');
       expect(res.status).toBe(400);
+    });
+  });
+
+  // ─── Per-branch nginx config endpoint ──────────
+
+  describe('GET /api/branches/:id/nginx-conf', () => {
+    it('should return 404 when no config exists', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      const res = await request(server, 'GET', '/api/branches/feature-test/nginx-conf');
+      expect(res.status).toBe(404);
+    });
+
+    it('should return config after start', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      await request(server, 'POST', '/api/branches/feature-test/start');
+
+      const res = await request(server, 'GET', '/api/branches/feature-test/nginx-conf');
+      expect(res.status).toBe(200);
+      const body = res.body as any;
+      expect(body.content).toContain('prdagent-api-feature-test');
+      expect(body.branchId).toBe('feature-test');
+    });
+
+    it('should show isActive=true when branch is activated', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      await request(server, 'POST', '/api/branches/feature-test/start');
+      await request(server, 'POST', '/api/branches/feature-test/activate');
+
+      const res = await request(server, 'GET', '/api/branches/feature-test/nginx-conf');
+      expect(res.status).toBe(200);
+      expect((res.body as any).isActive).toBe(true);
     });
   });
 
@@ -504,6 +549,11 @@ describe('Branch Routes', () => {
       expect(br.runContainerName).toBe('prdagent-run-feature-test');
       expect(br.status).toBe('idle'); // deploy status NOT changed
       expect((list.body as any).activeBranchId).toBe('feature-test');
+
+      // Verify per-branch config file saved to disk
+      const conf = switcherService.readBranchConfig('feature-test');
+      expect(conf).toBeTruthy();
+      expect(conf).toContain('prdagent-run-feature-test');
     });
 
     it('should return 409 if branch already running (isolation guard)', async () => {
@@ -660,7 +710,7 @@ describe('Branch Routes', () => {
       await request(server, 'POST', '/api/branches/feature-test/start');
       await request(server, 'POST', '/api/branches/feature-test/activate');
 
-      // Manually add a second branch and activate it
+      // Manually add a second branch, save its config to disk, and activate it
       stateService.addBranch({
         id: 'branch-b',
         branch: 'branch/b',
@@ -671,13 +721,22 @@ describe('Branch Routes', () => {
         status: 'running',
         createdAt: new Date().toISOString(),
       });
+      // Save nginx config for branch-b to disk (required for activate)
+      const confB = switcherService.generateConfig('prdagent-api-branch-b', 'deploy');
+      switcherService.saveBranchConfig('branch-b', confB);
       stateService.activate('branch-b');
       stateService.save();
+
+      // Manually switch symlink to branch-b (simulate activation)
+      await switcherService.activateBranch('branch-b');
 
       const res = await request(server, 'POST', '/api/rollback');
       expect(res.status).toBe(200);
       const body = res.body as { activeBranchId: string };
       expect(body.activeBranchId).toBe('feature-test');
+
+      // Verify symlink rolled back to feature-test
+      expect(switcherService.getActiveBranchFromSymlink()).toBe('feature-test');
     });
 
     it('should return 400 if no history', async () => {
@@ -687,10 +746,19 @@ describe('Branch Routes', () => {
   });
 
   describe('DELETE /api/branches/:id', () => {
-    it('should delete a branch', async () => {
+    it('should delete a branch and remove nginx config file', async () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      // Start to create the nginx config file
+      await request(server, 'POST', '/api/branches/feature-test/start');
+
+      // Verify config exists before delete
+      expect(switcherService.readBranchConfig('feature-test')).toBeTruthy();
+
       const res = await request(server, 'DELETE', '/api/branches/feature-test');
       expect(res.status).toBe(200);
+
+      // Config file should be removed
+      expect(switcherService.readBranchConfig('feature-test')).toBeNull();
 
       const listRes = await request(server, 'GET', '/api/branches');
       const body = listRes.body as { branches: object };
@@ -704,6 +772,39 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(200);
       const body = res.body as { history: string[] };
       expect(body.history).toEqual([]);
+    });
+  });
+
+  // ─── Nginx config endpoints ──────────
+
+  describe('GET /api/nginx-config', () => {
+    it('should return active config with symlink info', async () => {
+      const res = await request(server, 'GET', '/api/nginx-config');
+      expect(res.status).toBe(200);
+      const body = res.body as any;
+      expect(body.content).toBeTruthy();
+      expect(body.activeBranch).toBe('_disconnected');
+    });
+  });
+
+  describe('POST /api/gateway/disconnect', () => {
+    it('should disconnect gateway and symlink to _disconnected', async () => {
+      // First activate a branch
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      await request(server, 'POST', '/api/branches/feature-test/start');
+      await request(server, 'POST', '/api/branches/feature-test/activate');
+
+      expect(switcherService.getActiveBranchFromSymlink()).toBe('feature-test');
+
+      const res = await request(server, 'POST', '/api/gateway/disconnect');
+      expect(res.status).toBe(200);
+
+      // Symlink should now point to _disconnected
+      expect(switcherService.getActiveBranchFromSymlink()).toBe('_disconnected');
+
+      // State should reflect disconnected
+      const list = await request(server, 'GET', '/api/branches');
+      expect((list.body as any).activeBranchId).toBeNull();
     });
   });
 });

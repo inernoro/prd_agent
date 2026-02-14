@@ -132,16 +132,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json(safe);
   });
 
-  // GET /nginx-config — read current nginx.conf from disk
+  // GET /nginx-config — read current active nginx config (follows symlink)
   router.get('/nginx-config', (_req, res) => {
     try {
-      const nginxConfPath = path.join(config.repoRoot, config.deployDir, 'nginx', 'nginx.conf');
-      if (!fs.existsSync(nginxConfPath)) {
-        res.status(404).json({ error: 'nginx.conf not found', path: nginxConfPath });
+      const content = switcherService.readActiveConfig();
+      if (!content) {
+        res.status(404).json({ error: 'No active nginx config found' });
         return;
       }
-      const content = fs.readFileSync(nginxConfPath, 'utf-8');
-      res.json({ content, path: nginxConfPath });
+      const activeBranch = switcherService.getActiveBranchFromSymlink();
+      res.json({ content, activeBranch });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // GET /branches/:id/nginx-conf — read per-branch nginx config from disk
+  router.get('/branches/:id/nginx-conf', (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+      const content = switcherService.readBranchConfig(id);
+      if (!content) {
+        res.status(404).json({ error: `No nginx config for branch "${id}"` });
+        return;
+      }
+      const isActive = switcherService.getActiveBranchFromSymlink() === id;
+      res.json({ content, branchId: id, isActive });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -230,9 +251,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (wasActive) {
         send({ step: 'nginx', status: 'running', title: '断开网关' });
         try {
-          switcherService.backup();
-          const disconnectedConf = switcherService.generateConfig('_disconnected_upstream_');
-          await switcherService.applyConfig(disconnectedConf);
+          await switcherService.disconnect();
           stateService.getState().activeBranchId = null;
           stateService.save();
           send({ step: 'nginx', status: 'done', title: '网关已断开' });
@@ -274,6 +293,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       send({ step: 'state', status: 'running', title: '清理状态' });
+      switcherService.removeBranchConfig(id);
       stateService.removeBranch(id);
       stateService.removeLogs(id);
       stateService.save();
@@ -408,7 +428,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       await containerService.start(entry);
       stateService.updateStatus(id, 'running');
-      entry.nginxConf = switcherService.generateConfig(entry.containerName, 'deploy');
+      const nginxConf = switcherService.generateConfig(entry.containerName, 'deploy');
+      switcherService.saveBranchConfig(id, nginxConf);
       stateService.save();
 
       res.json({ success: true, containerName: entry.containerName });
@@ -464,9 +485,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`Branch "${id}" has no running container (deploy or source-run)`);
     }
 
-    // Use pre-generated nginx config stored on the branch entry
-    if (!entry.nginxConf) {
-      throw new Error(`Branch "${id}" has no nginx config — was the container started properly?`);
+    // Check per-branch config file exists on disk
+    const nginxConf = switcherService.readBranchConfig(id);
+    if (!nginxConf) {
+      throw new Error(`Branch "${id}" has no nginx config file — was the container started properly?`);
     }
 
     // Deploy mode: sync static files before applying config
@@ -478,15 +500,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
-    switcherService.backup();
-    await switcherService.applyConfig(entry.nginxConf);
+    // Symlink default.conf → branches/{id}.conf + validate + reload
+    await switcherService.activateBranch(id);
     stateService.activate(id);
     stateService.save();
 
     return {
       upstream: `${resolved.upstream}:8080`,
       gateway: `http://localhost:${config.gateway.port}`,
-      nginxConf: entry.nginxConf,
+      nginxConf,
     };
   }
 
@@ -515,16 +537,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
           });
           return;
         }
-        // State was stale, update it and regenerate nginx config
+        // State was stale, update it and regenerate nginx config on disk
         if (deployAlive) {
           entry.status = 'running';
-          entry.nginxConf = switcherService.generateConfig(entry.containerName, 'deploy');
+          const conf = switcherService.generateConfig(entry.containerName, 'deploy');
+          switcherService.saveBranchConfig(id, conf);
         }
         if (runAlive) {
           entry.runStatus = 'running';
-          entry.nginxConf = switcherService.generateConfig(
+          const conf = switcherService.generateConfig(
             entry.runContainerName!, 'run', entry.runWebContainerName,
           );
+          switcherService.saveBranchConfig(id, conf);
         }
         stateService.save();
       }
@@ -777,10 +801,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         webPort,
       });
 
-      // Pre-generate nginx config for this branch (run mode)
-      entry.nginxConf = switcherService.generateConfig(
+      // Save per-branch nginx config to disk (run mode)
+      const nginxConf = switcherService.generateConfig(
         entry.runContainerName!, 'run', entry.runWebContainerName,
       );
+      switcherService.saveBranchConfig(id, nginxConf);
       stateService.save();
 
       send({
@@ -1033,9 +1058,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     // 4. Nginx config analysis
-    const nginxConfPath = path.join(config.repoRoot, config.deployDir, 'nginx', 'nginx.conf');
-    if (fs.existsSync(nginxConfPath)) {
-      const nginxConf = fs.readFileSync(nginxConfPath, 'utf-8');
+    const nginxConf = switcherService.readActiveConfig();
+    if (nginxConf) {
       // Extract upstream targets from config.
       // Supports both direct proxy_pass and variable-based (set $var + proxy_pass $var) patterns.
       const apiSection = nginxConf.match(/location \^~ \/api\/([\s\S]*?)}/)?.[1] ?? '';
@@ -1252,8 +1276,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         send({ step: 'start', status: 'skip', title: '启动容器 (已运行，跳过)' });
       }
 
-      // Pre-generate nginx config for this branch (deploy mode)
-      entry.nginxConf = switcherService.generateConfig(entry.containerName, 'deploy');
+      // Save per-branch nginx config to disk (deploy mode)
+      const nginxConf = switcherService.generateConfig(entry.containerName, 'deploy');
+      switcherService.saveBranchConfig(id, nginxConf);
       stateService.save();
 
       // ---- activate nginx ----
@@ -1357,9 +1382,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           try { await containerService.stop(entry.runContainerName); } catch { /* ok */ }
         }
 
-        // Remove worktree + image
+        // Remove worktree + image + nginx config
         try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
         try { await containerService.removeImage(entry.imageName); } catch { /* ok */ }
+        switcherService.removeBranchConfig(entry.id);
 
         // Drop branch DB (strict safety)
         const mainDb = config.mongodb.defaultDbName;
@@ -1414,8 +1440,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      if (!entry.nginxConf) {
-        throw new Error(`Previous branch "${previousId}" has no nginx config`);
+      // Check per-branch config file exists on disk
+      const branchConf = switcherService.readBranchConfig(previousId);
+      if (!branchConf) {
+        throw new Error(`Previous branch "${previousId}" has no nginx config file`);
       }
 
       // Deploy mode: sync static files before switching
@@ -1428,9 +1456,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // Apply stored nginx config — if this fails, state stays untouched
-      switcherService.backup();
-      await switcherService.applyConfig(entry.nginxConf);
+      // Symlink-based activation — if this fails, state stays untouched
+      await switcherService.activateBranch(previousId);
 
       // Nginx succeeded — NOW commit the state change
       stateService.rollback();
@@ -1455,11 +1482,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
-      // Generate nginx config that returns 502 directly for /api/ calls
-      // (no upstream reference, so nginx -t won't fail on DNS resolution)
-      switcherService.backup();
-      const disconnectedConf = switcherService.generateConfig('_disconnected_upstream_');
-      await switcherService.applyConfig(disconnectedConf);
+      // Symlink to _disconnected.conf (returns 502 for /api/ calls)
+      await switcherService.disconnect();
 
       state.activeBranchId = null;
       stateService.save();

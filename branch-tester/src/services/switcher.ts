@@ -1,18 +1,40 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import type { IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 export interface SwitcherOptions {
-  nginxConfPath: string;
+  confDir: string;
   distPath: string;
   gatewayContainerName: string;
 }
 
 export class SwitcherService {
+  private readonly branchesDir: string;
+  private readonly defaultConfPath: string;
+  /** Saved symlink target for rollback on nginx -t / reload failure */
+  private previousTarget: string | null = null;
+
   constructor(
     private readonly shell: IShellExecutor,
     private readonly options: SwitcherOptions,
-  ) {}
+  ) {
+    this.branchesDir = path.join(options.confDir, 'branches');
+    this.defaultConfPath = path.join(options.confDir, 'default.conf');
+
+    // Ensure directory structure
+    fs.mkdirSync(this.branchesDir, { recursive: true });
+
+    // Ensure disconnected config exists
+    this.ensureDisconnectedConfig();
+
+    // If no default.conf exists at all, symlink to disconnected
+    if (!this.linkOrFileExists(this.defaultConfPath)) {
+      this.createSymlink('_disconnected');
+    }
+  }
+
+  // ── Config generation (unchanged) ──
 
   generateConfig(upstream: string, mode: 'deploy' | 'run' = 'deploy', webUpstream?: string): string {
     // When upstream is null/sentinel, produce a config that returns 502 for API
@@ -54,10 +76,6 @@ export class SwitcherService {
 
     // Source-run mode: dual-container dev (Vite dev server + dotnet API)
     if (mode === 'run') {
-      // When a web container is available, route /api/ to dotnet and everything else to Vite.
-      // We use Docker's embedded DNS resolver (127.0.0.11) with nginx variables so that
-      // upstream hostnames are resolved at REQUEST time, not config-load time. This prevents
-      // `nginx -t` from failing when a container hasn't started yet or was removed.
       const webTarget = webUpstream ?? upstream;
       const webPort = webUpstream ? 8000 : 8080;
       return `server {
@@ -142,42 +160,79 @@ ${proxyHeaders}
 `;
   }
 
-  backup(): void {
-    const { nginxConfPath } = this.options;
-    if (fs.existsSync(nginxConfPath)) {
-      fs.copyFileSync(nginxConfPath, nginxConfPath + '.rollback');
+  // ── Per-branch config file management ──
+
+  /** Write a branch's nginx config to conf.d/branches/{branchId}.conf */
+  saveBranchConfig(branchId: string, content: string): void {
+    const confPath = path.join(this.branchesDir, `${branchId}.conf`);
+    fs.writeFileSync(confPath, content);
+  }
+
+  /** Read a branch's nginx config from disk (returns null if not found) */
+  readBranchConfig(branchId: string): string | null {
+    const confPath = path.join(this.branchesDir, `${branchId}.conf`);
+    if (fs.existsSync(confPath)) {
+      return fs.readFileSync(confPath, 'utf-8');
+    }
+    return null;
+  }
+
+  /** Remove a branch's nginx config file */
+  removeBranchConfig(branchId: string): void {
+    const confPath = path.join(this.branchesDir, `${branchId}.conf`);
+    try { fs.unlinkSync(confPath); } catch { /* may not exist */ }
+  }
+
+  // ── Symlink-based activation (like nvm/pnpm) ──
+
+  /**
+   * Activate a branch: symlink default.conf → branches/{branchId}.conf,
+   * then validate and reload nginx.
+   */
+  async activateBranch(branchId: string): Promise<void> {
+    const targetConf = path.join(this.branchesDir, `${branchId}.conf`);
+    if (!fs.existsSync(targetConf)) {
+      throw new Error(`No nginx config for branch "${branchId}" at ${targetConf}`);
+    }
+
+    this.backupSymlink();
+    this.createSymlink(branchId);
+
+    try {
+      await this.validateAndReload();
+    } catch (err) {
+      this.rollbackSymlink();
+      throw err;
     }
   }
 
-  rollbackConfig(): void {
-    const { nginxConfPath } = this.options;
-    const rollbackPath = nginxConfPath + '.rollback';
-    if (fs.existsSync(rollbackPath)) {
-      fs.copyFileSync(rollbackPath, nginxConfPath);
+  /** Disconnect gateway: symlink to the _disconnected config */
+  async disconnect(): Promise<void> {
+    this.ensureDisconnectedConfig();
+    await this.activateBranch('_disconnected');
+  }
+
+  /** Get the branch ID currently pointed to by the default.conf symlink */
+  getActiveBranchFromSymlink(): string | null {
+    try {
+      const target = fs.readlinkSync(this.defaultConfPath);
+      const match = target.match(/^branches\/(.+)\.conf$/);
+      return match?.[1] ?? null;
+    } catch {
+      return null;
     }
   }
 
-  async applyConfig(configContent: string): Promise<void> {
-    const { nginxConfPath, gatewayContainerName } = this.options;
-
-    fs.writeFileSync(nginxConfPath, configContent);
-
-    const testResult = await this.shell.exec(
-      `docker exec ${gatewayContainerName} nginx -t`,
-    );
-    if (testResult.exitCode !== 0) {
-      this.rollbackConfig();
-      throw new Error(`Nginx syntax validation failed:\n${combinedOutput(testResult)}`);
-    }
-
-    const reloadResult = await this.shell.exec(
-      `docker exec ${gatewayContainerName} nginx -s reload`,
-    );
-    if (reloadResult.exitCode !== 0) {
-      this.rollbackConfig();
-      throw new Error(`Nginx reload failed:\n${combinedOutput(reloadResult)}`);
+  /** Read the currently active nginx config content (follows symlink) */
+  readActiveConfig(): string | null {
+    try {
+      return fs.readFileSync(this.defaultConfPath, 'utf-8');
+    } catch {
+      return null;
     }
   }
+
+  // ── Static file sync (unchanged) ──
 
   async syncStaticFiles(sourceDir: string, targetDir: string): Promise<void> {
     const result = await this.shell.exec(
@@ -191,6 +246,72 @@ ${proxyHeaders}
       if (cpResult.exitCode !== 0) {
         throw new Error(`Failed to sync static files:\n${combinedOutput(cpResult)}`);
       }
+    }
+  }
+
+  // ── Private helpers ──
+
+  private ensureDisconnectedConfig(): void {
+    const disconnectedPath = path.join(this.branchesDir, '_disconnected.conf');
+    if (!fs.existsSync(disconnectedPath)) {
+      const content = this.generateConfig('_disconnected_upstream_');
+      fs.writeFileSync(disconnectedPath, content);
+    }
+  }
+
+  private backupSymlink(): void {
+    try {
+      if (fs.lstatSync(this.defaultConfPath).isSymbolicLink()) {
+        this.previousTarget = fs.readlinkSync(this.defaultConfPath);
+      } else {
+        this.previousTarget = null;
+      }
+    } catch {
+      this.previousTarget = null;
+    }
+  }
+
+  private rollbackSymlink(): void {
+    if (!this.previousTarget) return;
+    try { fs.unlinkSync(this.defaultConfPath); } catch { /* ok */ }
+    fs.symlinkSync(this.previousTarget, this.defaultConfPath);
+    this.previousTarget = null;
+  }
+
+  /** Create symlink: default.conf → branches/{branchId}.conf */
+  private createSymlink(branchId: string): void {
+    const relativeTarget = path.join('branches', `${branchId}.conf`);
+
+    // Remove existing default.conf (file or symlink)
+    try { fs.unlinkSync(this.defaultConfPath); } catch { /* may not exist */ }
+
+    fs.symlinkSync(relativeTarget, this.defaultConfPath);
+  }
+
+  private linkOrFileExists(p: string): boolean {
+    try {
+      fs.lstatSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async validateAndReload(): Promise<void> {
+    const { gatewayContainerName } = this.options;
+
+    const testResult = await this.shell.exec(
+      `docker exec ${gatewayContainerName} nginx -t`,
+    );
+    if (testResult.exitCode !== 0) {
+      throw new Error(`Nginx syntax validation failed:\n${combinedOutput(testResult)}`);
+    }
+
+    const reloadResult = await this.shell.exec(
+      `docker exec ${gatewayContainerName} nginx -s reload`,
+    );
+    if (reloadResult.exitCode !== 0) {
+      throw new Error(`Nginx reload failed:\n${combinedOutput(reloadResult)}`);
     }
   }
 }

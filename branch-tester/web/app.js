@@ -124,9 +124,10 @@ function branchActions(b, isActive) {
   }
   groups.push(dbBtns.join(''));
 
-  // ── Management (日志/诊断 are read-only: never disabled by busy) ──
+  // ── Management (日志/诊断/Nginx are read-only: never disabled by busy) ──
   const mgmtBtns = [];
   mgmtBtns.push(`<button onclick="viewLogs('${b.id}')" title="查看日志">日志</button>`);
+  mgmtBtns.push(`<button onclick="viewBranchNginxConfig('${b.id}')" title="查看此分支的 Nginx 配置">Nginx</button>`);
   if (srcRunning) {
     mgmtBtns.push(`<button onclick="runDiagnostics('${b.id}')" title="运行模式诊断检查">诊断</button>`);
   }
@@ -1210,14 +1211,34 @@ document.getElementById('activeSwitcher').addEventListener('change', async (e) =
 // ---- Nginx config viewer ----
 
 async function viewNginxConfig() {
-  openLogModal('Nginx 配置');
+  openLogModal('Nginx 配置（当前激活）');
   const body = document.getElementById('logModalBody');
   body.innerHTML = '<div class="empty-state"><span class="loading"></span> 加载中...</div>';
 
   try {
     const data = await api('GET', '/nginx-config');
+    const activeBranch = data.activeBranch || '(unknown)';
+    const isDisconnected = activeBranch === '_disconnected';
     body.innerHTML = `
-      <div class="nginx-conf-path">文件路径: <code>${esc(data.path)}</code></div>
+      <div class="nginx-conf-path">激活分支: <code>${esc(activeBranch)}</code>${isDisconnected ? ' <span class="health-fail">(已断开)</span>' : ''}</div>
+      <div class="nginx-conf-path">模式: <code>default.conf → branches/${esc(activeBranch)}.conf</code></div>
+      <pre class="nginx-conf-content">${esc(data.content)}</pre>`;
+  } catch (err) {
+    body.innerHTML = `<div class="deploy-step is-error"><div class="deploy-step-hdr">${STEP_ICONS.error} <span>${esc(err.message)}</span></div></div>`;
+  }
+}
+
+async function viewBranchNginxConfig(id) {
+  openLogModal(`Nginx 配置 — ${id}`);
+  const body = document.getElementById('logModalBody');
+  body.innerHTML = '<div class="empty-state"><span class="loading"></span> 加载中...</div>';
+
+  try {
+    const data = await api('GET', `/branches/${id}/nginx-conf`);
+    const activeLabel = data.isActive ? ' <span class="active-badge">当前激活</span>' : '';
+    body.innerHTML = `
+      <div class="nginx-conf-path">分支: <code>${esc(data.branchId)}</code>${activeLabel}</div>
+      <div class="nginx-conf-path">文件: <code>conf.d/branches/${esc(data.branchId)}.conf</code></div>
       <pre class="nginx-conf-content">${esc(data.content)}</pre>`;
   } catch (err) {
     body.innerHTML = `<div class="deploy-step is-error"><div class="deploy-step-hdr">${STEP_ICONS.error} <span>${esc(err.message)}</span></div></div>`;

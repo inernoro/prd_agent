@@ -9,18 +9,22 @@ describe('SwitcherService', () => {
   let mock: MockShellExecutor;
   let service: SwitcherService;
   let tmpDir: string;
-  let nginxConf: string;
+  let confDir: string;
   let distDir: string;
 
   beforeEach(() => {
     mock = new MockShellExecutor();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bt-switch-'));
-    nginxConf = path.join(tmpDir, 'nginx.conf');
+    confDir = path.join(tmpDir, 'conf.d');
     distDir = path.join(tmpDir, 'dist');
     fs.mkdirSync(distDir);
 
+    // Mock nginx commands for constructor's ensureDisconnectedConfig
+    mock.addResponsePattern(/nginx -t/, () => ({ stdout: '', stderr: 'ok', exitCode: 0 }));
+    mock.addResponsePattern(/nginx -s reload/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
     service = new SwitcherService(mock, {
-      nginxConfPath: nginxConf,
+      confDir,
       distPath: distDir,
       gatewayContainerName: 'prdagent-gateway',
     });
@@ -30,6 +34,20 @@ describe('SwitcherService', () => {
     if (fs.existsSync(tmpDir)) {
       fs.rmSync(tmpDir, { recursive: true });
     }
+  });
+
+  describe('constructor', () => {
+    it('should create branches directory and _disconnected.conf', () => {
+      const branchesDir = path.join(confDir, 'branches');
+      expect(fs.existsSync(branchesDir)).toBe(true);
+      expect(fs.existsSync(path.join(branchesDir, '_disconnected.conf'))).toBe(true);
+    });
+
+    it('should create default.conf symlink to _disconnected', () => {
+      const defaultConf = path.join(confDir, 'default.conf');
+      expect(fs.lstatSync(defaultConf).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(defaultConf)).toBe(path.join('branches', '_disconnected.conf'));
+    });
   });
 
   describe('generateConfig', () => {
@@ -55,7 +73,6 @@ describe('SwitcherService', () => {
 
     it('should generate run-mode config proxying all requests', () => {
       const conf = service.generateConfig('prdagent-api-feature-a', 'run');
-      // Run mode uses nginx variables for deferred DNS resolution (Docker resolver)
       expect(conf).toContain('resolver 127.0.0.11');
       expect(conf).toContain('set $api_backend http://prdagent-api-feature-a:8080');
       expect(conf).toContain('proxy_pass $api_backend');
@@ -72,69 +89,110 @@ describe('SwitcherService', () => {
     });
   });
 
-  describe('backup & rollbackConfig', () => {
-    it('should backup current config', () => {
-      fs.writeFileSync(nginxConf, 'original config');
-      service.backup();
-      expect(fs.existsSync(nginxConf + '.rollback')).toBe(true);
-      expect(fs.readFileSync(nginxConf + '.rollback', 'utf-8')).toBe('original config');
+  describe('saveBranchConfig & readBranchConfig', () => {
+    it('should save and read per-branch config files', () => {
+      const conf = service.generateConfig('my-upstream');
+      service.saveBranchConfig('feature-a', conf);
+
+      const read = service.readBranchConfig('feature-a');
+      expect(read).toBe(conf);
     });
 
-    it('should restore config from backup', () => {
-      fs.writeFileSync(nginxConf, 'original config');
-      service.backup();
-      fs.writeFileSync(nginxConf, 'new config');
-
-      mock.addResponsePattern(/nginx -t/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-      mock.addResponsePattern(/nginx -s reload/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-
-      service.rollbackConfig();
-      expect(fs.readFileSync(nginxConf, 'utf-8')).toBe('original config');
+    it('should return null for non-existent branch config', () => {
+      expect(service.readBranchConfig('nonexistent')).toBeNull();
     });
   });
 
-  describe('applyConfig', () => {
-    it('should write config + validate + reload', async () => {
-      mock.addResponsePattern(/nginx -t/, () => ({
-        stdout: '',
-        stderr: 'syntax is ok\ntest is successful',
-        exitCode: 0,
-      }));
-      mock.addResponsePattern(/nginx -s reload/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+  describe('removeBranchConfig', () => {
+    it('should remove branch config file', () => {
+      service.saveBranchConfig('feature-a', 'some config');
+      expect(service.readBranchConfig('feature-a')).toBeTruthy();
 
+      service.removeBranchConfig('feature-a');
+      expect(service.readBranchConfig('feature-a')).toBeNull();
+    });
+
+    it('should not throw when removing non-existent config', () => {
+      expect(() => service.removeBranchConfig('nonexistent')).not.toThrow();
+    });
+  });
+
+  describe('activateBranch (symlink)', () => {
+    it('should create symlink + validate + reload', async () => {
       const conf = service.generateConfig('my-upstream');
-      await service.applyConfig(conf);
+      service.saveBranchConfig('feature-a', conf);
 
-      expect(fs.readFileSync(nginxConf, 'utf-8')).toBe(conf);
+      await service.activateBranch('feature-a');
+
+      // Symlink should point to branches/feature-a.conf
+      const defaultConf = path.join(confDir, 'default.conf');
+      expect(fs.lstatSync(defaultConf).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(defaultConf)).toBe(path.join('branches', 'feature-a.conf'));
+
+      // Should have validated and reloaded
       expect(mock.commands.some((c) => c.includes('nginx -t'))).toBe(true);
       expect(mock.commands.some((c) => c.includes('nginx -s reload'))).toBe(true);
     });
 
-    it('should throw and rollback if nginx -t fails', async () => {
-      fs.writeFileSync(nginxConf, 'good config');
-      service.backup();
+    it('should throw if branch config file missing', async () => {
+      await expect(service.activateBranch('nonexistent')).rejects.toThrow('No nginx config');
+    });
 
+    it('should rollback symlink if nginx -t fails', async () => {
+      const conf = service.generateConfig('my-upstream');
+      service.saveBranchConfig('feature-a', conf);
+
+      // First activate to set a known symlink target
+      await service.activateBranch('feature-a');
+
+      // Now try to activate a second branch with failing nginx -t
+      service.saveBranchConfig('feature-b', 'bad config');
+      // Clear patterns so the new failing pattern takes precedence
+      mock.clearPatterns();
       mock.addResponsePattern(/nginx -t/, () => ({
         stdout: '',
         stderr: 'syntax error',
         exitCode: 1,
       }));
 
-      const badConf = 'bad { config';
-      await expect(service.applyConfig(badConf)).rejects.toThrow('syntax');
-      // Should have restored the backup
-      expect(fs.readFileSync(nginxConf, 'utf-8')).toBe('good config');
+      await expect(service.activateBranch('feature-b')).rejects.toThrow('syntax');
+
+      // Symlink should have been rolled back to feature-a
+      const defaultConf = path.join(confDir, 'default.conf');
+      expect(fs.readlinkSync(defaultConf)).toBe(path.join('branches', 'feature-a.conf'));
+    });
+  });
+
+  describe('disconnect', () => {
+    it('should symlink to _disconnected.conf', async () => {
+      // First activate a branch
+      service.saveBranchConfig('feature-a', service.generateConfig('my-upstream'));
+      await service.activateBranch('feature-a');
+
+      await service.disconnect();
+
+      const defaultConf = path.join(confDir, 'default.conf');
+      expect(fs.readlinkSync(defaultConf)).toBe(path.join('branches', '_disconnected.conf'));
+    });
+  });
+
+  describe('getActiveBranchFromSymlink', () => {
+    it('should return _disconnected initially', () => {
+      expect(service.getActiveBranchFromSymlink()).toBe('_disconnected');
     });
 
-    it('should throw if reload fails', async () => {
-      mock.addResponsePattern(/nginx -t/, () => ({ stdout: '', stderr: 'ok', exitCode: 0 }));
-      mock.addResponsePattern(/nginx -s reload/, () => ({
-        stdout: '',
-        stderr: 'reload failed',
-        exitCode: 1,
-      }));
+    it('should return the activated branch id', async () => {
+      service.saveBranchConfig('feature-a', service.generateConfig('my-upstream'));
+      await service.activateBranch('feature-a');
+      expect(service.getActiveBranchFromSymlink()).toBe('feature-a');
+    });
+  });
 
-      await expect(service.applyConfig('some config')).rejects.toThrow('reload');
+  describe('readActiveConfig', () => {
+    it('should read through symlink', () => {
+      const content = service.readActiveConfig();
+      expect(content).toBeTruthy();
+      expect(content).toContain('return 502'); // disconnected config
     });
   });
 
@@ -147,7 +205,7 @@ describe('SwitcherService', () => {
       mock.addResponsePattern(/rsync|cp/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
       await service.syncStaticFiles(srcDir, distDir);
-      expect(mock.commands[0]).toContain(srcDir);
+      expect(mock.commands.some(c => c.includes(srcDir))).toBe(true);
     });
 
     it('should throw if sync fails', async () => {
