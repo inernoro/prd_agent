@@ -37,8 +37,8 @@ function timeAgo(iso: string | null | undefined): string {
 /** 节点类型 → 分类色相 */
 const CATEGORY_HUE: Record<string, number> = {
   'timer': 30, 'webhook-receiver': 200, 'manual-trigger': 280, 'file-upload': 170,
-  'tapd-collector': 30, 'http-request': 210, 'llm-analyzer': 270,
-  'script-executor': 150, 'data-extractor': 180, 'data-merger': 60,
+  'tapd-collector': 30, 'http-request': 210, 'smart-http': 250, 'llm-analyzer': 270,
+  'script-executor': 150, 'data-extractor': 180, 'data-merger': 60, 'format-converter': 45,
   'report-generator': 150, 'file-exporter': 100, 'webhook-sender': 200, 'notification-sender': 340,
 };
 
@@ -383,6 +383,239 @@ function EmptyState({ onCreate, creating }: { onCreate: () => void; creating: bo
   );
 }
 
+// ── 全套测试工作流模板 ─────────────────────────────────────
+//
+// 拓扑图：
+//   👆 manual-trigger
+//     ├─→ 🌐 http-request → 🔍 data-extractor → 💻 script-executor ──→ 🔀 data-merger(in1)
+//     └─→ 🐛 tapd-collector → 🤖 smart-http ─────────────────────────→ 🔀 data-merger(in2)
+//                                                                          ↓
+//                                                                    🔄 format-converter
+//                                                                          ↓
+//                                                                    🧠 llm-analyzer
+//                                                                          ↓
+//                                                                    📝 report-generator
+//                                                                    ↓     ↓     ↓
+//                                                              💾 export  📡 webhook  🔔 notify
+//
+// 共 13 节点 = 1 trigger + 8 processor + 4 output，覆盖全部可用舱类型
+
+function buildTestWorkflowTemplate(): {
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+} {
+  const nodes: WorkflowNode[] = [
+    // ── 触发 ──
+    {
+      nodeId: 'n-trigger',
+      name: '手动触发',
+      nodeType: 'manual-trigger',
+      config: { inputPrompt: '点击执行开始全链路测试' },
+      inputSlots: [],
+      outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
+      position: { x: 100, y: 350 },
+    },
+
+    // ── 上分支：HTTP → 提取 → 脚本 ──
+    {
+      nodeId: 'n-http',
+      name: 'HTTP 请求（测试）',
+      nodeType: 'http-request',
+      config: {
+        url: 'https://jsonplaceholder.typicode.com/posts?_limit=3',
+        method: 'GET',
+      },
+      inputSlots: [{ slotId: 'http-in', name: 'input', dataType: 'json', required: false }],
+      outputSlots: [{ slotId: 'http-out', name: 'response', dataType: 'json', required: true }],
+      position: { x: 400, y: 180 },
+    },
+    {
+      nodeId: 'n-extractor',
+      name: '数据提取',
+      nodeType: 'data-extractor',
+      config: {
+        expression: '$',
+        flattenArray: 'false',
+      },
+      inputSlots: [{ slotId: 'extract-in', name: 'input', dataType: 'json', required: true }],
+      outputSlots: [{ slotId: 'extract-out', name: 'extracted', dataType: 'json', required: true }],
+      position: { x: 700, y: 180 },
+    },
+    {
+      nodeId: 'n-script',
+      name: '代码脚本（透传）',
+      nodeType: 'script-executor',
+      config: {
+        language: 'javascript',
+        code: '// 透传输入数据，可在此添加自定义处理\nmodule.exports = (input) => {\n  return { processed: true, count: Array.isArray(input) ? input.length : 1, data: input };\n};',
+        timeoutSeconds: '30',
+      },
+      inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
+      outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'json', required: true }],
+      position: { x: 1000, y: 180 },
+    },
+
+    // ── 下分支：TAPD → 智能HTTP ──
+    {
+      nodeId: 'n-tapd',
+      name: 'TAPD 采集（需配置凭证）',
+      nodeType: 'tapd-collector',
+      config: {
+        apiUrl: 'https://api.tapd.cn',
+        workspaceId: '',
+        authToken: '',
+        dataType: 'bugs',
+        dateRange: '',
+      },
+      inputSlots: [{ slotId: 'tapd-in', name: 'trigger', dataType: 'json', required: false }],
+      outputSlots: [{ slotId: 'tapd-out', name: 'data', dataType: 'json', required: true }],
+      position: { x: 400, y: 520 },
+    },
+    {
+      nodeId: 'n-smart',
+      name: '智能 HTTP（测试）',
+      nodeType: 'smart-http',
+      config: {
+        url: 'https://jsonplaceholder.typicode.com/users?_limit=2',
+        method: 'GET',
+        paginationType: 'none',
+        maxPages: '1',
+      },
+      inputSlots: [{ slotId: 'smart-in', name: 'context', dataType: 'json', required: false }],
+      outputSlots: [
+        { slotId: 'smart-out', name: 'data', dataType: 'json', required: true },
+        { slotId: 'smart-meta', name: 'meta', dataType: 'json', required: false },
+      ],
+      position: { x: 700, y: 520 },
+    },
+
+    // ── 合并 ──
+    {
+      nodeId: 'n-merger',
+      name: '数据合并',
+      nodeType: 'data-merger',
+      config: { mergeStrategy: 'object' },
+      inputSlots: [
+        { slotId: 'merge-in-1', name: 'input1', dataType: 'json', required: true },
+        { slotId: 'merge-in-2', name: 'input2', dataType: 'json', required: true },
+      ],
+      outputSlots: [{ slotId: 'merge-out', name: 'merged', dataType: 'json', required: true }],
+      position: { x: 1300, y: 350 },
+    },
+
+    // ── 后续处理：转换 → LLM → 报告 ──
+    {
+      nodeId: 'n-converter',
+      name: '格式转换（JSON→Markdown表格）',
+      nodeType: 'format-converter',
+      config: {
+        sourceFormat: 'json',
+        targetFormat: 'markdown-table',
+        prettyPrint: 'true',
+      },
+      inputSlots: [{ slotId: 'convert-in', name: 'input', dataType: 'text', required: true }],
+      outputSlots: [{ slotId: 'convert-out', name: 'converted', dataType: 'text', required: true }],
+      position: { x: 1600, y: 350 },
+    },
+    {
+      nodeId: 'n-llm',
+      name: 'LLM 分析',
+      nodeType: 'llm-analyzer',
+      config: {
+        systemPrompt: '你是一个数据分析专家，擅长从结构化数据中发现规律和问题。请用中文回答。',
+        userPromptTemplate: '请分析以下数据，给出 3 个关键发现和改进建议：\n\n{{input}}',
+        outputFormat: 'markdown',
+        temperature: '0.3',
+      },
+      inputSlots: [{ slotId: 'llm-in', name: 'input', dataType: 'json', required: true }],
+      outputSlots: [{ slotId: 'llm-out', name: 'result', dataType: 'json', required: true }],
+      position: { x: 1900, y: 350 },
+    },
+    {
+      nodeId: 'n-report',
+      name: '报告生成',
+      nodeType: 'report-generator',
+      config: {
+        reportTemplate: '将以下数据整理为质量分析报告，包含：\n1. 数据概览\n2. 关键指标统计\n3. 趋势分析\n4. 改进建议',
+        format: 'markdown',
+      },
+      inputSlots: [{ slotId: 'report-in', name: 'data', dataType: 'json', required: true }],
+      outputSlots: [{ slotId: 'report-out', name: 'report', dataType: 'text', required: true }],
+      position: { x: 2200, y: 350 },
+    },
+
+    // ── 三路输出 ──
+    {
+      nodeId: 'n-export',
+      name: '文件导出',
+      nodeType: 'file-exporter',
+      config: {
+        fileFormat: 'markdown',
+        fileName: 'test-report-{{date}}',
+      },
+      inputSlots: [{ slotId: 'export-in', name: 'data', dataType: 'json', required: true }],
+      outputSlots: [{ slotId: 'export-out', name: 'file', dataType: 'binary', required: true }],
+      position: { x: 2500, y: 180 },
+    },
+    {
+      nodeId: 'n-webhook',
+      name: 'Webhook 发送（httpbin）',
+      nodeType: 'webhook-sender',
+      config: {
+        targetUrl: 'https://httpbin.org/post',
+      },
+      inputSlots: [{ slotId: 'wh-send-in', name: 'data', dataType: 'json', required: true }],
+      outputSlots: [{ slotId: 'wh-send-out', name: 'response', dataType: 'json', required: true }],
+      position: { x: 2500, y: 350 },
+    },
+    {
+      nodeId: 'n-notify',
+      name: '站内通知',
+      nodeType: 'notification-sender',
+      config: {
+        title: '全链路测试完成',
+        content: '工作流全链路测试运行成功，请查看执行结果',
+        level: 'success',
+      },
+      inputSlots: [{ slotId: 'notify-in', name: 'data', dataType: 'json', required: false }],
+      outputSlots: [{ slotId: 'notify-out', name: 'result', dataType: 'json', required: true }],
+      position: { x: 2500, y: 520 },
+    },
+  ];
+
+  let edgeIdx = 0;
+  const edge = (src: string, srcSlot: string, tgt: string, tgtSlot: string): WorkflowEdge => ({
+    edgeId: `e-test-${edgeIdx++}`,
+    sourceNodeId: src,
+    sourceSlotId: srcSlot,
+    targetNodeId: tgt,
+    targetSlotId: tgtSlot,
+  });
+
+  const edges: WorkflowEdge[] = [
+    // trigger → 上下两条分支
+    edge('n-trigger', 'manual-out', 'n-http',    'http-in'),
+    edge('n-trigger', 'manual-out', 'n-tapd',    'tapd-in'),
+    // 上分支：http → extractor → script → merger(in1)
+    edge('n-http',      'http-out',    'n-extractor', 'extract-in'),
+    edge('n-extractor', 'extract-out', 'n-script',    'script-in'),
+    edge('n-script',    'script-out',  'n-merger',    'merge-in-1'),
+    // 下分支：tapd → smart-http → merger(in2)
+    edge('n-tapd',  'tapd-out',  'n-smart',  'smart-in'),
+    edge('n-smart', 'smart-out', 'n-merger', 'merge-in-2'),
+    // 合并 → 转换 → LLM → 报告
+    edge('n-merger',    'merge-out',   'n-converter', 'convert-in'),
+    edge('n-converter', 'convert-out', 'n-llm',       'llm-in'),
+    edge('n-llm',       'llm-out',     'n-report',    'report-in'),
+    // 报告 → 三路输出
+    edge('n-report', 'report-out', 'n-export',  'export-in'),
+    edge('n-report', 'report-out', 'n-webhook', 'wh-send-in'),
+    edge('n-report', 'report-out', 'n-notify',  'notify-in'),
+  ];
+
+  return { nodes, edges };
+}
+
 // ── 主页面 ─────────────────────────────────────────────────
 
 export function WorkflowListPage() {
@@ -390,6 +623,7 @@ export function WorkflowListPage() {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [creatingTest, setCreatingTest] = useState(false);
 
   useEffect(() => {
     reload();
@@ -422,6 +656,25 @@ export function WorkflowListPage() {
     setCreating(false);
   }
 
+  async function handleCreateTestWorkflow() {
+    setCreatingTest(true);
+    try {
+      const { nodes, edges } = buildTestWorkflowTemplate();
+      const res = await createWorkflow({
+        name: '全链路测试工作流',
+        description: '覆盖全部 13 种舱类型的端到端测试工作流 (手动触发 → HTTP/TAPD → 提取/脚本/智能HTTP → 合并 → 转换 → LLM → 报告 → 导出/Webhook/通知)',
+        icon: '🧪',
+        tags: ['test', 'full-chain'],
+        nodes,
+        edges,
+      });
+      if (res.success && res.data) {
+        navigate(`/workflow-agent/${res.data.workflow.id}`);
+      }
+    } catch { /* ignore */ }
+    setCreatingTest(false);
+  }
+
   async function handleDelete(wf: Workflow) {
     if (!confirm(`确定删除「${wf.name || '未命名'}」？`)) return;
     try {
@@ -438,14 +691,25 @@ export function WorkflowListPage() {
         title="TAPD 数据自动化"
         icon={<span className="text-[14px]">⚡</span>}
         actions={
-          <Button
-            variant="primary"
-            size="xs"
-            onClick={handleCreate}
-            disabled={creating}
-          >
-            {creating ? '⏳' : '＋'} 新建工作流
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={handleCreateTestWorkflow}
+              disabled={creatingTest || creating}
+              title="一键创建包含全部 13 种舱类型的测试工作流"
+            >
+              {creatingTest ? '⏳' : '🧪'} 创建全套测试
+            </Button>
+            <Button
+              variant="primary"
+              size="xs"
+              onClick={handleCreate}
+              disabled={creating || creatingTest}
+            >
+              {creating ? '⏳' : '＋'} 新建工作流
+            </Button>
+          </div>
         }
       />
 

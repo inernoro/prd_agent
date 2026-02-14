@@ -61,6 +61,9 @@ public class CapsuleTypeMeta
 
     /// <summary>是否支持单独测试运行</summary>
     public bool Testable { get; set; } = true;
+
+    /// <summary>非空时表示该舱不可用，内容为不可用原因（前端灰显 + tooltip）</summary>
+    public string? DisabledReason { get; set; }
 }
 
 /// <summary>
@@ -79,6 +82,7 @@ public static class CapsuleTypeRegistry
         Category = CapsuleCategory.Trigger,
         AccentHue = 30,
         Testable = false,
+        DisabledReason = "🚧 需要后端 Cron 调度器支持，开发中",
         ConfigSchema = new()
         {
             new() { Key = "cronExpression", Label = "Cron 表达式", FieldType = "cron", Required = true, Placeholder = "0 9 1 * *", HelpTip = "标准 5 位 Cron：分 时 日 月 周。例如 '0 9 1 * *' 表示每月 1 号早上 9 点" },
@@ -103,6 +107,7 @@ public static class CapsuleTypeRegistry
         Category = CapsuleCategory.Trigger,
         AccentHue = 200,
         Testable = true,
+        DisabledReason = "🚧 需要后端 Webhook 接收入口，开发中",
         ConfigSchema = new()
         {
             new() { Key = "secret", Label = "验签密钥", FieldType = "password", Required = false, HelpTip = "可选。设置后外部请求需携带 HMAC-SHA256 签名" },
@@ -142,6 +147,7 @@ public static class CapsuleTypeRegistry
         Category = CapsuleCategory.Trigger,
         AccentHue = 170,
         Testable = true,
+        DisabledReason = "🚧 需要执行时文件选择器支持，开发中",
         ConfigSchema = new()
         {
             new() { Key = "acceptTypes", Label = "接受的文件类型", FieldType = "text", Required = false, DefaultValue = ".csv,.json,.txt,.xlsx", HelpTip = "逗号分隔，如 .csv,.json,.txt" },

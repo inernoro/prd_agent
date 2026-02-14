@@ -37,6 +37,8 @@ export interface CapsuleTypeDef {
   category: CapsuleCategory;
   accentHue: number;
   testable: boolean;
+  /** 非空时表示该舱不可用，内容为不可用原因 */
+  disabledReason?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -54,6 +56,7 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     category: 'trigger',
     accentHue: 30,
     testable: false,
+    disabledReason: '🚧 需要后端 Cron 调度器支持，开发中',
   },
   'webhook-receiver': {
     typeKey: 'webhook-receiver',
@@ -64,6 +67,7 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     category: 'trigger',
     accentHue: 200,
     testable: true,
+    disabledReason: '🚧 需要后端 Webhook 接收入口，开发中',
   },
   'manual-trigger': {
     typeKey: 'manual-trigger',
@@ -84,6 +88,7 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     category: 'trigger',
     accentHue: 170,
     testable: true,
+    disabledReason: '🚧 需要执行时文件选择器支持，开发中',
   },
 
   // ──────── 处理类 ────────

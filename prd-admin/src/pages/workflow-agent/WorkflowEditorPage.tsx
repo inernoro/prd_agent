@@ -121,30 +121,38 @@ function CapsuleSidebar({ capsuleTypes, categories, onAddCapsule }: {
               {types.map((meta) => {
                 const Icon = getIconForCapsule(meta.icon);
                 const emoji = getEmojiForCapsule(meta.typeKey);
+                const frontDef = getCapsuleType(meta.typeKey);
+                const disabledReason = (meta as any).disabledReason || frontDef?.disabledReason;
+                const isDisabled = !!disabledReason;
+
                 return (
                   <button
                     key={meta.typeKey}
-                    onClick={() => onAddCapsule(meta.typeKey)}
+                    onClick={() => !isDisabled && onAddCapsule(meta.typeKey)}
                     className="w-full flex items-center gap-2 px-2 py-1.5 rounded-[8px] transition-colors text-left"
                     style={{
                       background: 'rgba(255,255,255,0.03)',
                       border: '1px solid rgba(255,255,255,0.06)',
+                      opacity: isDisabled ? 0.4 : 1,
+                      cursor: isDisabled ? 'not-allowed' : 'pointer',
                     }}
                     onMouseEnter={(e) => {
+                      if (isDisabled) return;
                       e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
                       e.currentTarget.style.borderColor = `hsla(${meta.accentHue}, 60%, 55%, 0.2)`;
                     }}
                     onMouseLeave={(e) => {
+                      if (isDisabled) return;
                       e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
                       e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
                     }}
-                    title={meta.description}
+                    title={isDisabled ? disabledReason : meta.description}
                   >
                     <div
                       className="w-6 h-6 rounded-[6px] flex items-center justify-center flex-shrink-0"
                       style={{
-                        background: `hsla(${meta.accentHue}, 60%, 55%, 0.12)`,
-                        color: `hsla(${meta.accentHue}, 60%, 65%, 0.9)`,
+                        background: `hsla(${meta.accentHue}, 60%, 55%, ${isDisabled ? '0.06' : '0.12'})`,
+                        color: `hsla(${meta.accentHue}, 60%, 65%, ${isDisabled ? '0.4' : '0.9'})`,
                       }}
                     >
                       <Icon className="w-3 h-3" />
@@ -155,9 +163,14 @@ function CapsuleSidebar({ capsuleTypes, categories, onAddCapsule }: {
                         <span className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                           {meta.name}
                         </span>
+                        {isDisabled && (
+                          <span className="text-[9px] ml-auto flex-shrink-0" style={{ color: 'var(--text-muted)' }}>开发中</span>
+                        )}
                       </div>
                     </div>
-                    <Plus className="w-3 h-3 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: 'var(--text-muted)' }} />
+                    {!isDisabled && (
+                      <Plus className="w-3 h-3 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: 'var(--text-muted)' }} />
+                    )}
                   </button>
                 );
               })}

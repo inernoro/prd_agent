@@ -184,6 +184,7 @@ export const NodeTypeLabels: Record<string, string> = {
   'smart-http': '智能 HTTP',
   'data-extractor': '数据提取',
   'data-merger': '数据合并',
+  'format-converter': '格式转换',
   // 舱类型 — 输出
   'report-generator': '报告生成',
   'file-exporter': '文件导出',
@@ -322,6 +323,8 @@ export interface CapsuleTypeMeta {
   defaultInputSlots: ArtifactSlot[];
   defaultOutputSlots: ArtifactSlot[];
   testable: boolean;
+  /** 非空时表示该舱不可用，内容为不可用原因 */
+  disabledReason?: string;
 }
 
 export interface CapsuleCategoryInfo {
