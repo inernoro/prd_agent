@@ -24,6 +24,7 @@ import {
   getCapsuleType, getIconForCapsule, getEmojiForCapsule, getCategoryEmoji,
 } from './capsuleRegistry';
 import { parseCurl, toCurl, headersToJson, prettyBody, type ParsedCurl } from './parseCurl';
+import { HttpConfigPanel } from './HttpConfigPanel';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流直接编辑页
@@ -436,6 +437,48 @@ function CapsuleConfigForm({ fields, values, onChange, onBatchChange, disabled, 
   );
 }
 
+// ──── 区域框（输入/配置/输出 三段分区） ────
+
+const SECTION_STYLES = {
+  input: {
+    bg: 'rgba(59,130,246,0.03)',
+    border: 'rgba(59,130,246,0.12)',
+    headerBg: 'rgba(59,130,246,0.06)',
+    title: 'rgba(59,130,246,0.85)',
+  },
+  config: {
+    bg: 'rgba(214,178,106,0.02)',
+    border: 'rgba(214,178,106,0.12)',
+    headerBg: 'rgba(214,178,106,0.05)',
+    title: 'rgba(214,178,106,0.85)',
+  },
+  output: {
+    bg: 'rgba(34,197,94,0.03)',
+    border: 'rgba(34,197,94,0.12)',
+    headerBg: 'rgba(34,197,94,0.06)',
+    title: 'rgba(34,197,94,0.85)',
+  },
+} as const;
+
+function SectionBox({ title, type, children }: {
+  title: string;
+  type: keyof typeof SECTION_STYLES;
+  children: React.ReactNode;
+}) {
+  const s = SECTION_STYLES[type];
+  return (
+    <div className="rounded-[10px] overflow-hidden" style={{ border: `1px solid ${s.border}` }}>
+      <div
+        className="px-3 py-1.5 flex items-center gap-1.5"
+        style={{ background: s.headerBg, borderBottom: `1px solid ${s.border}` }}
+      >
+        <span className="text-[11px] font-semibold" style={{ color: s.title }}>{title}</span>
+      </div>
+      <div className="p-3" style={{ background: s.bg }}>{children}</div>
+    </div>
+  );
+}
+
 // ──── 右侧舱卡片 ────
 
 function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, isCurrentExec }: {
@@ -494,6 +537,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   // 判断此舱是否需要输入（有 required 输入插槽）
   const hasRequiredInput = node.inputSlots.some(s => s.required);
   const hasAnyInputSlot = node.inputSlots.length > 0;
+  const isHttpType = node.nodeType === 'http-request' || node.nodeType === 'smart-http';
 
   // 统一结果：合并测试结果和执行结果为同一面板
   // 仅显示「本次会话」触发的执行结果，不显示历史执行的陈旧结果
@@ -623,9 +667,9 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
           </div>
         )}
 
-        {/* ════════ 展开区域：输入 → 处理 → 输出 ════════ */}
+        {/* ════════ 展开区域：输入 → 配置 → 输出 ════════ */}
         {isExpanded && (
-          <div className="mt-4 ml-[68px] space-y-4" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 16 }}>
+          <div className="mt-4 ml-[68px] space-y-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 16 }}>
 
             {/* 格式兼容性警告 */}
             {formatWarnings && formatWarnings.length > 0 && (
@@ -646,66 +690,80 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
               </div>
             )}
 
-            {/* ──── 测试输入区（有输入插槽 + 可测试时显示） ──── */}
+            {/* ──── 📥 输入区 ──── */}
             {hasAnyInputSlot && capsuleMeta?.testable && (
-              <div>
-                <label className="text-[10px] mb-1 block" style={{ color: 'var(--text-muted)' }}>
-                  {hasRequiredInput ? '⚠ 此舱需要输入数据才能测试' : '测试输入（可选）'}
-                </label>
-                <textarea
-                  value={testInput}
-                  onChange={(e) => setTestInput(e.target.value)}
-                  placeholder={hasRequiredInput
-                    ? '粘贴 JSON 数据或上传文件内容…'
-                    : '空则使用默认模拟数据'}
-                  rows={2}
-                  className="prd-field w-full px-3 py-2 rounded-[8px] text-[11px] outline-none resize-y font-mono"
-                />
-                <div className="flex items-center gap-2 mt-1">
-                  <label
-                    className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer transition-colors"
-                    style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
-                  >
-                    📎 上传
-                    <input
-                      type="file"
-                      className="hidden"
-                      accept=".json,.csv,.txt,.xml"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        const reader = new FileReader();
-                        reader.onload = () => setTestInput(reader.result as string);
-                        reader.readAsText(file);
-                        e.target.value = '';
+              <SectionBox title="📥 输入" type="input">
+                <div className="space-y-2">
+                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    {isHttpType
+                      ? '上游数据 — JSON 对象，键名对应 URL/Headers/Body 中的 {{变量}} 占位符'
+                      : hasRequiredInput ? '此舱需要输入数据才能测试' : '测试输入（可选，空则使用模拟数据）'}
+                  </div>
+                  <textarea
+                    value={testInput}
+                    onChange={(e) => setTestInput(e.target.value)}
+                    placeholder={isHttpType
+                      ? '{"userId": "123", "token": "xxx"}'
+                      : hasRequiredInput
+                        ? '粘贴 JSON 数据或上传文件内容…'
+                        : '空则使用默认模拟数据'}
+                    rows={2}
+                    className="prd-field w-full px-3 py-2 rounded-[8px] text-[11px] outline-none resize-y font-mono"
+                  />
+                  <div className="flex items-center gap-2">
+                    <label
+                      className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer transition-colors"
+                      style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                    >
+                      📎 上传
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept=".json,.csv,.txt,.xml"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = () => setTestInput(reader.result as string);
+                          reader.readAsText(file);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                    <button
+                      className="text-[10px] px-2 py-0.5 rounded-[6px] transition-colors"
+                      style={{ color: 'var(--text-muted)' }}
+                      onClick={() => {
+                        try { setTestInput(JSON.stringify(JSON.parse(testInput), null, 2)); } catch { /* not json */ }
                       }}
-                    />
-                  </label>
-                  <button
-                    className="text-[10px] px-2 py-0.5 rounded-[6px] transition-colors"
-                    style={{ color: 'var(--text-muted)' }}
-                    onClick={() => {
-                      try { setTestInput(JSON.stringify(JSON.parse(testInput), null, 2)); } catch { /* not json */ }
-                    }}
-                  >
-                    格式化
-                  </button>
+                    >
+                      格式化
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </SectionBox>
             )}
 
-            {/* ──── 舱配置 ──── */}
-            {capsuleMeta && capsuleMeta.configSchema.length > 0 && (
-              <div>
-                <CapsuleConfigForm
-                  fields={capsuleMeta.configSchema}
-                  values={configValues}
-                  onChange={handleConfigFieldChange}
-                  onBatchChange={handleConfigBatchChange}
-                  disabled={isRunning}
-                  nodeType={node.nodeType}
-                />
-              </div>
+            {/* ──── ⚙ 配置区 ──── */}
+            {(isHttpType || (capsuleMeta && capsuleMeta.configSchema.length > 0)) && (
+              <SectionBox title="⚙ 配置" type="config">
+                {isHttpType ? (
+                  <HttpConfigPanel
+                    values={configValues}
+                    onBatchChange={handleConfigBatchChange}
+                    disabled={isRunning}
+                  />
+                ) : (
+                  <CapsuleConfigForm
+                    fields={capsuleMeta!.configSchema}
+                    values={configValues}
+                    onChange={handleConfigFieldChange}
+                    onBatchChange={handleConfigBatchChange}
+                    disabled={isRunning}
+                    nodeType={node.nodeType}
+                  />
+                )}
+              </SectionBox>
             )}
 
             {/* ──── 操作栏 ──── */}
@@ -735,14 +793,16 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
               </Button>
             </div>
 
-            {/* ──── 统一结果面板（测试+执行共用） ──── */}
+            {/* ──── 📤 输出 / 结果 ──── */}
             {unifiedResult && (
-              <UnifiedResultPanel
-                result={unifiedResult}
-                source={resultSource!}
-                expandedArtifacts={expandedArtifacts}
-                toggleArtifact={toggleArtifact}
-              />
+              <SectionBox title="📤 输出" type="output">
+                <UnifiedResultPanel
+                  result={unifiedResult}
+                  source={resultSource!}
+                  expandedArtifacts={expandedArtifacts}
+                  toggleArtifact={toggleArtifact}
+                />
+              </SectionBox>
             )}
           </div>
         )}
@@ -983,6 +1043,10 @@ export function WorkflowEditorPage() {
   const [dirty, setDirty] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
+
+  // 标题编辑
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
 
   // 变量
   const [vars, setVars] = useState<Record<string, string>>({});
@@ -1303,7 +1367,37 @@ export function WorkflowEditorPage() {
     <div className="h-full flex flex-col">
       {/* 顶部工具栏 */}
       <TabBar
-        title={workflow.name || '编辑工作流'}
+        title={
+          editingTitle ? (
+            <input
+              autoFocus
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={() => {
+                const name = titleDraft.trim();
+                if (name && name !== workflow.name) {
+                  setWorkflow(prev => prev ? { ...prev, name } : prev);
+                  setDirty(true);
+                }
+                setEditingTitle(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                if (e.key === 'Escape') { setEditingTitle(false); }
+              }}
+              className="text-[14px] font-semibold bg-transparent outline-none px-1 rounded-[6px]"
+              style={{ color: 'var(--text-primary)', border: '1px solid rgba(214,178,106,0.3)', minWidth: 120 }}
+            />
+          ) : (
+            <span
+              onDoubleClick={() => { setEditingTitle(true); setTitleDraft(workflow.name || ''); }}
+              className="cursor-text"
+              title="双击编辑名称"
+            >
+              {workflow.name || '未命名工作流'}
+            </span>
+          )
+        }
         icon={<Zap size={16} />}
         actions={
           <div className="flex items-center gap-2">
