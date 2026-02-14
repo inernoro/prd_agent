@@ -72,6 +72,7 @@ export class SwitcherService {
 
     # Source-run mode — ALL requests proxied to container (Vite dev + ASP.NET)
     # Active upstream: ${upstream}
+
     location / {
         proxy_pass http://${upstream}:8080;
 ${proxyHeaders}
