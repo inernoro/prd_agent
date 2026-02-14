@@ -925,31 +925,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }, null, 2),
     });
 
-    // 2. API container alive
+    // 2. API container alive (include crash logs if dead)
     if (entry.runContainerName) {
       const alive = await containerService.isRunning(entry.runContainerName);
       const inspect = await shell.exec(
-        `docker inspect --format '{{.State.Status}} | {{.Config.Cmd}}' ${entry.runContainerName} 2>&1`,
+        `docker inspect --format '{{.State.Status}} | {{.State.ExitCode}} | {{.Config.Cmd}}' ${entry.runContainerName} 2>&1`,
       );
+      let detail = `container=${entry.runContainerName}\nalive=${alive}\ninspect=${inspect.stdout.trim()}`;
+      if (!alive) {
+        const logs = await shell.exec(
+          `docker logs --tail 80 ${entry.runContainerName} 2>&1`,
+        );
+        detail += `\n\n--- CRASH LOGS (last 80 lines) ---\n${logs.stdout.trim()}`;
+      }
       checks.push({
         name: 'api_container',
         status: alive ? 'pass' : 'fail',
-        detail: `container=${entry.runContainerName}\nalive=${alive}\ninspect=${inspect.stdout.trim()}`,
+        detail,
       });
     } else {
       checks.push({ name: 'api_container', status: 'fail', detail: 'runContainerName not set in state' });
     }
 
-    // 3. Web container alive
+    // 3. Web container alive (include crash logs if dead)
     if (entry.runWebContainerName) {
       const alive = await containerService.isRunning(entry.runWebContainerName);
       const inspect = await shell.exec(
-        `docker inspect --format '{{.State.Status}} | {{.Config.Cmd}}' ${entry.runWebContainerName} 2>&1`,
+        `docker inspect --format '{{.State.Status}} | {{.State.ExitCode}} | {{.Config.Cmd}}' ${entry.runWebContainerName} 2>&1`,
       );
+      let detail = `container=${entry.runWebContainerName}\nalive=${alive}\ninspect=${inspect.stdout.trim()}`;
+      if (!alive) {
+        // Grab last 80 lines of logs to diagnose crash
+        const logs = await shell.exec(
+          `docker logs --tail 80 ${entry.runWebContainerName} 2>&1`,
+        );
+        detail += `\n\n--- CRASH LOGS (last 80 lines) ---\n${logs.stdout.trim()}`;
+      }
       checks.push({
         name: 'web_container',
         status: alive ? 'pass' : 'fail',
-        detail: `container=${entry.runWebContainerName}\nalive=${alive}\ninspect=${inspect.stdout.trim()}`,
+        detail,
       });
     } else {
       checks.push({ name: 'web_container', status: 'fail', detail: 'runWebContainerName not set in state' });
