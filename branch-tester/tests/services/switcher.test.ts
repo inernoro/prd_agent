@@ -47,19 +47,18 @@ describe('SwitcherService', () => {
       expect(conf).toContain('root /usr/share/nginx/html');
     });
 
-    it('should inject branch badge via sub_filter when branchLabel is provided', () => {
-      const conf = service.generateConfig('prdagent-api-feature-a', 'feature/login (源码)');
-      expect(conf).toContain('sub_filter_once on');
-      expect(conf).toContain('sub_filter_types text/html');
-      expect(conf).toContain('bt-branch-badge');
-      expect(conf).toContain('feature/login (源码)');
-      expect(conf).toContain("sub_filter '</body>'");
-    });
-
-    it('should not inject sub_filter when branchLabel is omitted', () => {
+    it('should not contain sub_filter (badge is rendered by frontend)', () => {
       const conf = service.generateConfig('prdagent-api-feature-a');
       expect(conf).not.toContain('sub_filter');
       expect(conf).not.toContain('bt-branch-badge');
+    });
+
+    it('should generate run-mode config proxying all requests', () => {
+      const conf = service.generateConfig('prdagent-api-feature-a', 'run');
+      expect(conf).toContain('proxy_pass http://prdagent-api-feature-a:8080');
+      expect(conf).toContain('Source-run mode');
+      expect(conf).toContain('WebSocket support');
+      expect(conf).not.toContain('root /usr/share/nginx/html');
     });
   });
 

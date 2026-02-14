@@ -14,7 +14,7 @@ export class SwitcherService {
     private readonly options: SwitcherOptions,
   ) {}
 
-  generateConfig(upstream: string, branchLabel?: string, mode: 'deploy' | 'run' = 'deploy'): string {
+  generateConfig(upstream: string, mode: 'deploy' | 'run' = 'deploy'): string {
     // When upstream is null/sentinel, produce a config that returns 502 for API
     // without referencing any upstream host (avoids DNS resolution failure).
     if (upstream === '_disconnected_upstream_') {
@@ -41,15 +41,6 @@ export class SwitcherService {
 `;
     }
 
-    // Inject a floating branch indicator badge via sub_filter when branchLabel is provided
-    const subFilterBlock = branchLabel
-      ? `
-    # Branch indicator badge — injected by branch-tester
-    sub_filter_once on;
-    sub_filter_types text/html;
-    sub_filter '</body>' '<div id="bt-branch-badge" style="position:fixed;bottom:12px;left:12px;z-index:99999;display:flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(22,27,34,0.88);border:1px solid rgba(48,54,61,0.6);border-radius:6px;font:12px/1 -apple-system,sans-serif;color:#c9d1d9;pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,0.3);backdrop-filter:blur(8px)"><span style="width:7px;height:7px;border-radius:50%;background:#3fb950;display:inline-block"></span>${branchLabel}</div></body>';`
-      : '';
-
     const proxyHeaders = `        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -68,7 +59,7 @@ export class SwitcherService {
     server_name _;
     client_max_body_size 30m;
     absolute_redirect off;
-    port_in_redirect off;${subFilterBlock}
+    port_in_redirect off;
 
     # Source-run mode — ALL requests proxied to container (Vite dev + ASP.NET)
     # Active upstream: ${upstream}
@@ -93,7 +84,7 @@ ${proxyHeaders}
     port_in_redirect off;
 
     root /usr/share/nginx/html;
-    index index.html;${subFilterBlock}
+    index index.html;
 
     # API reverse proxy — managed by branch-tester
     # Active upstream: ${upstream}
