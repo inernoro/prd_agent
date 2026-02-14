@@ -111,13 +111,14 @@ public class LiteraryAgentAdapter : IAgentAdapter
                 break;
 
             case "generate_illustration":
-                // 生成插图描述（用于后续图片生成）
+                // 生成插图描述（用于后续图片生成，中文输出便于用户理解）
                 systemPrompt = """
                     你是一位专业的插画描述师。根据文字内容，生成适合的插图描述。
                     要求：
-                    - 输出适合 AI 绘图的英文描述（prompt）
-                    - 描述要具体、有画面感
+                    - 必须使用中文输出描述
+                    - 描述要具体、有画面感，适合 AI 绘图工具理解
                     - 风格要与文字内容匹配
+                    - 包含画面构图、色调、氛围等关键词
                     只输出图片描述，不要其他说明。
                     """;
                 var contentForIllustration = previousOutput ?? userMessage;
