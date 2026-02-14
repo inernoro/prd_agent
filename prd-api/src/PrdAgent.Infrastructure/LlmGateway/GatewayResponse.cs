@@ -338,7 +338,9 @@ public enum GatewayChunkType
 
     /// <summary>
     /// 思考过程（reasoning_content / &lt;think&gt; 标签内容）
-    /// 由适配器产生，Gateway 默认过滤不传给调用方
+    /// 由适配器产生，Gateway 根据 IncludeThinking 决定是否透传给调用方。
+    /// 默认不透传（IncludeThinking=false），Intent 模型类型强制不透传。
+    /// 日志始终记录思考内容，无论是否透传。
     /// </summary>
     Thinking,
 

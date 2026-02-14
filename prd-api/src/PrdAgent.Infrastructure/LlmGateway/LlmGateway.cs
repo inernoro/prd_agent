@@ -46,6 +46,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _adapters[adapter.PlatformType] = adapter;
     }
 
+    /// <summary>
+    /// 计算是否实际允许思考内容透传。
+    /// Intent 模型类型强制禁止思考输出，其他类型尊重请求方的 IncludeThinking 设置。
+    /// </summary>
+    public static bool IsThinkingEffective(bool includeThinking, string modelType)
+    {
+        return includeThinking
+            && !string.Equals(modelType, ModelTypes.Intent, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <inheritdoc />
     public async Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
     {
@@ -269,6 +279,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var thinkingStarted = false; // 调试：标记思考是否已开始
             var contentStarted = false;  // 调试：标记正文是否已开始
 
+            // Intent 模型类型强制禁止思考输出，其他类型尊重请求方设置
+            var effectiveIncludeThinking = IsThinkingEffective(request.IncludeThinking, request.ModelType);
+
             await foreach (var data in sseReader.ReadEventsAsync(ct))
             {
                 // 标记首字节
@@ -300,7 +313,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
 
                 // Thinking 类型（来自 reasoning_content 字段）
-                // Gateway 始终透传，由消费层 (GatewayLLMClient) 决定是否暴露给调用方
+                // Gateway 根据 IncludeThinking 决定是否透传给调用方
+                // Intent 模型类型强制禁止思考输出（无论 IncludeThinking 设置如何）
                 if (chunk.Type == GatewayChunkType.Thinking)
                 {
                     if (!thinkingStarted)
@@ -310,9 +324,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     }
                     if (!string.IsNullOrEmpty(chunk.Content))
                     {
-                        thinkingBuilder.Append(chunk.Content);
+                        thinkingBuilder.Append(chunk.Content); // 日志始终记录，无论是否透传
                     }
-                    yield return chunk;
+                    // 仅在 IncludeThinking=true 且非 Intent 模型类型时透传
+                    if (effectiveIncludeThinking)
+                    {
+                        yield return chunk;
+                    }
                     continue;
                 }
 
@@ -326,12 +344,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     // 通过 ThinkTagStripper 过滤 <think>...</think> 标签
                     var stripped = thinkTagStripper.Process(chunk.Content);
 
-                    // <think> 标签内容始终作为 Thinking 块透传
+                    // <think> 标签内容：日志始终记录，仅在 effectiveIncludeThinking 时透传
                     var capturedThink = thinkTagStripper.PopCapturedThinking();
                     if (!string.IsNullOrEmpty(capturedThink))
                     {
                         thinkingBuilder.Append(capturedThink);
-                        yield return GatewayStreamChunk.Thinking(capturedThink);
+                        if (effectiveIncludeThinking)
+                        {
+                            yield return GatewayStreamChunk.Thinking(capturedThink);
+                        }
                     }
 
                     if (!string.IsNullOrEmpty(stripped))

@@ -61,6 +61,9 @@ public class GatewayLLMClient : ILLMClient
     /// <summary>EnablePromptCache（用于测试断言）</summary>
     public bool EnablePromptCache => _enablePromptCache;
 
+    /// <summary>IncludeThinking（用于测试断言）</summary>
+    public bool IncludeThinking => _includeThinking;
+
     /// <inheritdoc />
     public string Provider => "Gateway";
 
