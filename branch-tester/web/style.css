@@ -1183,3 +1183,22 @@ button.warn:hover { background: #8a5900; color: #fff; }
   line-height: 1.6;
   tab-size: 4;
 }
+
+/* ── Per-branch busy state ── */
+.branch-card.is-busy {
+  border-color: #d29922;
+  position: relative;
+}
+.branch-card.is-busy::after {
+  content: '⏳ 操作进行中...';
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-size: 11px;
+  color: #d29922;
+  animation: busyPulse 1.5s ease-in-out infinite;
+}
+@keyframes busyPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
