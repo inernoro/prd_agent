@@ -491,7 +491,7 @@ describe('Branch Routes', () => {
       expect(runCmd).toContain('-p');
       expect(runCmd).toContain('-v');
       expect(runCmd).toContain('dotnet/sdk');
-      expect(runCmd).toContain('dotnet run');
+      expect(runCmd).toContain('dotnet watch run');
 
       // State: runStatus = running, deploy status unchanged
       const list = await request(server, 'GET', '/api/branches');

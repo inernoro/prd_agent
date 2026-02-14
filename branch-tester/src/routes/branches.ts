@@ -565,7 +565,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     const portStart = config.run?.portStart ?? 9001;
     const baseImage = config.run?.baseImage ?? 'mcr.microsoft.com/dotnet/sdk:8.0';
-    const command = config.run?.command ?? 'dotnet run --project src/PrdAgent.Api';
+    const command = config.run?.command ?? 'dotnet watch run --project src/PrdAgent.Api';
     const sourceDir = config.run?.sourceDir ?? 'prd-api';
 
     try {
@@ -805,6 +805,80 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
 
       res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /branches/:id/run-pull — Pull latest code for a running source branch (both containers share the mount)
+  router.post('/branches/:id/run-pull', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+      if (entry.runStatus !== 'running') {
+        res.status(400).json({ error: 'No run container is active for this branch' });
+        return;
+      }
+
+      const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
+      res.json({
+        success: true,
+        before: pullResult.before,
+        after: pullResult.after,
+        updated: pullResult.updated,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /branches/:id/run-restart-api — Restart only the dotnet API container
+  router.post('/branches/:id/run-restart-api', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+      if (!entry.runContainerName || entry.runStatus !== 'running') {
+        res.status(400).json({ error: 'No run container is active for this branch' });
+        return;
+      }
+
+      const result = await shell.exec(`docker restart ${entry.runContainerName}`);
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to restart API container: ${combinedOutput(result)}`);
+      }
+      res.json({ success: true, container: entry.runContainerName });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /branches/:id/run-restart-web — Restart only the Vite dev server container
+  router.post('/branches/:id/run-restart-web', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+      if (!entry.runWebContainerName || entry.runStatus !== 'running') {
+        res.status(400).json({ error: 'No web dev container is active for this branch' });
+        return;
+      }
+
+      const result = await shell.exec(`docker restart ${entry.runWebContainerName}`);
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to restart web container: ${combinedOutput(result)}`);
+      }
+      res.json({ success: true, container: entry.runWebContainerName });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

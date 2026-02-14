@@ -91,7 +91,7 @@ export interface BtConfig {
     portStart?: number;
     /** SDK base image for running from source (default: mcr.microsoft.com/dotnet/sdk:8.0) */
     baseImage?: string;
-    /** Command to run inside the container (default: dotnet run --project src/PrdAgent.Api) */
+    /** Command to run inside the container (default: dotnet watch run --project src/PrdAgent.Api) */
     command?: string;
     /** Subdirectory of worktree to mount as /src (default: prd-api) */
     sourceDir?: string;
