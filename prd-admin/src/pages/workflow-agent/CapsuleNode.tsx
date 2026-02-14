@@ -7,8 +7,8 @@ import type { ArtifactSlot } from '@/services/contracts/workflowAgent';
 // ═══════════════════════════════════════════════════════════════
 // CapsuleNode — React Flow 自定义节点
 //
-// 每个舱在画布上渲染为一个带有输入/输出端口 (Handle) 的卡片。
-// 顶部输入端口，底部输出端口，中间显示图标 + 名称 + 状态。
+// dragHandle='.capsule-node-body' 限定只有卡片主体可拖拽，
+// 端口 (Handle) 和外围区域不触发拖动。
 // ═══════════════════════════════════════════════════════════════
 
 export interface CapsuleNodeData {
@@ -33,10 +33,10 @@ type CapsuleNodeType = NodeProps & { data: CapsuleNodeData };
 // 状态色
 function statusColor(status?: string) {
   switch (status) {
-    case 'running': return { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.35)', glow: 'rgba(59,130,246,0.2)' };
-    case 'completed': return { bg: 'rgba(34,197,94,0.1)', border: 'rgba(34,197,94,0.3)', glow: 'rgba(34,197,94,0.15)' };
-    case 'failed': return { bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.3)', glow: 'rgba(239,68,68,0.15)' };
-    default: return { bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.12)', glow: 'transparent' };
+    case 'running': return { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.35)' };
+    case 'completed': return { bg: 'rgba(34,197,94,0.1)', border: 'rgba(34,197,94,0.3)' };
+    case 'failed': return { bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.3)' };
+    default: return { bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.12)' };
   }
 }
 
@@ -45,7 +45,6 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
   const emoji = useMemo(() => getEmojiForCapsule(data.capsuleType), [data.capsuleType]);
   const sc = statusColor(data.execStatus);
 
-  // CSS class 映射 — 驱动 workflow-canvas.css 中的呼吸/脉冲动画
   const statusClass =
     data.execStatus === 'running' ? 'capsule-node-body--running'
     : data.execStatus === 'completed' ? 'capsule-node-body--completed'
@@ -54,19 +53,17 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
 
   return (
     <div
-      className="relative group"
-      style={{
-        minWidth: 180,
-        maxWidth: 240,
-      }}
+      className="relative"
+      style={{ minWidth: 180, maxWidth: 240 }}
     >
-      {/* 输入端口 (顶部) */}
+      {/* ── 输入端口 (顶部) ── */}
       {data.inputSlots.map((slot, i) => (
         <Handle
           key={slot.slotId}
           type="target"
           position={Position.Top}
           id={slot.slotId}
+          className="nodrag"
           style={{
             left: data.inputSlots.length === 1
               ? '50%'
@@ -76,17 +73,16 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
             background: 'rgba(255,255,255,0.15)',
             border: '2px solid rgba(255,255,255,0.3)',
             borderRadius: '50%',
-            transition: 'background 0.2s, border-color 0.2s, box-shadow 0.2s',
           }}
           title={`${slot.name} (${slot.dataType})`}
         />
       ))}
-      {/* 没有输入插槽也要有一个默认的 target handle 允许连线 */}
       {data.inputSlots.length === 0 && (
         <Handle
           type="target"
           position={Position.Top}
           id="default-in"
+          className="nodrag"
           style={{
             width: 10, height: 10,
             background: 'rgba(255,255,255,0.08)',
@@ -96,9 +92,9 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
         />
       )}
 
-      {/* 节点主体 — 应用呼吸动画 CSS class */}
+      {/* ── 节点主体 (拖拽手柄) ── */}
       <div
-        className={`capsule-node-body ${statusClass} rounded-[14px] px-4 py-3 backdrop-blur-xl`}
+        className={`capsule-node-body ${statusClass} rounded-[14px] px-4 py-3 cursor-grab active:cursor-grabbing`}
         style={{
           '--node-glow-color': `hsla(${data.accentHue}, 50%, 60%, 0.08)`,
           background: sc.bg,
@@ -153,7 +149,6 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
           )}
           {!data.execStatus || data.execStatus === 'idle' || data.execStatus === 'pending' ? (
             <div className="flex items-center gap-1.5">
-              {/* 插槽预览 */}
               {data.inputSlots.length > 0 && (
                 <span className="text-[9px] px-1.5 py-0.5 rounded" style={{
                   background: 'rgba(255,255,255,0.05)',
@@ -176,7 +171,7 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
                     e.stopPropagation();
                     data.onTestRun!(data.capsuleType);
                   }}
-                  className="text-[9px] px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors"
+                  className="nodrag text-[9px] px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors"
                   style={{
                     background: `hsla(${data.accentHue}, 60%, 55%, 0.1)`,
                     color: `hsla(${data.accentHue}, 60%, 65%, 0.85)`,
@@ -191,7 +186,7 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
           ) : null}
         </div>
 
-        {/* 运行态脉冲条 — 带水波光效 */}
+        {/* 运行态脉冲条 */}
         {data.execStatus === 'running' && (
           <div className="capsule-progress-bar mt-2 h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
             <div
@@ -202,13 +197,14 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
         )}
       </div>
 
-      {/* 输出端口 (底部) */}
+      {/* ── 输出端口 (底部) ── */}
       {data.outputSlots.map((slot, i) => (
         <Handle
           key={slot.slotId}
           type="source"
           position={Position.Bottom}
           id={slot.slotId}
+          className="nodrag"
           style={{
             left: data.outputSlots.length === 1
               ? '50%'
@@ -218,7 +214,6 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
             background: `hsla(${data.accentHue}, 60%, 55%, 0.3)`,
             border: `2px solid hsla(${data.accentHue}, 60%, 55%, 0.5)`,
             borderRadius: '50%',
-            transition: 'background 0.2s, border-color 0.2s, box-shadow 0.2s',
           }}
           title={`${slot.name} (${slot.dataType})`}
         />
@@ -228,6 +223,7 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
           type="source"
           position={Position.Bottom}
           id="default-out"
+          className="nodrag"
           style={{
             width: 10, height: 10,
             background: 'rgba(255,255,255,0.08)',

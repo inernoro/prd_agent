@@ -64,6 +64,7 @@ function workflowToFlow(
       id: n.nodeId,
       type: 'capsule',
       position: n.position ?? { x: 250, y: idx * 160 },
+      dragHandle: '.capsule-node-body',
       data: {
         label: n.name,
         capsuleType: n.nodeType,
@@ -260,6 +261,7 @@ function CanvasInner({
         id: `new-${Date.now()}-${nodeCounter}`,
         type: 'capsule',
         position,
+        dragHandle: '.capsule-node-body',
         data: {
           label: meta.name,
           capsuleType: meta.typeKey,
