@@ -444,26 +444,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     switcherService.backup();
 
-    // Always try to sync pre-built static files so nginx can serve the frontend.
-    // In run mode, this allows the gateway to serve the frontend (from last build)
-    // while proxying /api/ to the source-run container — instead of the old behavior
-    // where run mode proxied ALL requests (causing 404 for frontend routes).
-    const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
-    const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
-    let hasStaticFiles = false;
-    if (fs.existsSync(buildsDir)) {
-      await switcherService.syncStaticFiles(buildsDir, distDir);
-      hasStaticFiles = true;
-    } else if (resolved.mode === 'run') {
-      // No build for this branch — check if dist/ already has files from another branch
-      hasStaticFiles = fs.existsSync(path.join(distDir, 'index.html'));
+    if (resolved.mode === 'deploy') {
+      // Deploy mode: sync pre-built static files to dist/ (nginx serves them)
+      const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
+      const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
+      if (fs.existsSync(buildsDir)) {
+        await switcherService.syncStaticFiles(buildsDir, distDir);
+      }
+      const newConf = switcherService.generateConfig(resolved.upstream, 'deploy');
+      await switcherService.applyConfig(newConf);
+    } else {
+      // Run mode: dual-container dev — Vite dev + dotnet run
+      const webContainer = entry.runWebContainerName;
+      const newConf = switcherService.generateConfig(resolved.upstream, 'run', webContainer);
+      await switcherService.applyConfig(newConf);
     }
-
-    // Use deploy-style config (static files + API proxy) when static files are available,
-    // even in run mode. Fall back to full-proxy only when no static files exist at all.
-    const nginxMode = (resolved.mode === 'run' && !hasStaticFiles) ? 'run' : 'deploy';
-    const newConf = switcherService.generateConfig(resolved.upstream, nginxMode);
-    await switcherService.applyConfig(newConf);
 
     stateService.activate(id);
     stateService.save();
@@ -639,10 +634,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         },
       });
 
-      // ---- stop old run container if running ----
+      // ---- stop old run containers if running ----
       if (entry.runStatus === 'running') {
         send({ step: 'stop', status: 'running', title: '停止旧容器' });
         try { await containerService.stop(entry.runContainerName); } catch { /* may not exist */ }
+        if (entry.runWebContainerName) {
+          try { await containerService.stop(entry.runWebContainerName); } catch { /* may not exist */ }
+        }
         entry.runStatus = 'stopped';
         stateService.save();
         send({ step: 'stop', status: 'done', title: '停止旧容器' });
@@ -717,26 +715,40 @@ export function createBranchRouter(deps: RouterDeps): Router {
         send({ step: 'logs', status: 'warn', title: '容器启动日志（等待超时，应用可能仍在启动）' });
       }
 
-      // ---- build frontend if no prior build exists (so gateway can serve it) ----
-      const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
-      if (!fs.existsSync(buildsDir) || !fs.existsSync(path.join(buildsDir, 'index.html'))) {
-        send({ step: 'frontend', status: 'running', title: '构建前端（首次运行）' });
-        try {
-          await builderService.buildAdminStatic(entry.worktreePath, buildsDir, (chunk) => {
-            send({ step: 'frontend', status: 'running', title: '构建前端（首次运行）', chunk });
-          });
-          send({ step: 'frontend', status: 'done', title: '前端构建完成' });
-        } catch (buildErr) {
-          // Frontend build failure is non-fatal — API still works via direct port
-          send({
-            step: 'frontend', status: 'warn',
-            title: '前端构建失败（API 仍可通过直接端口访问）',
-            log: (buildErr as Error).message,
-          });
-        }
-      } else {
-        send({ step: 'frontend', status: 'skip', title: '前端已有构建缓存，跳过' });
+      // ---- start Vite dev server container for frontend ----
+      send({ step: 'frontend', status: 'running', title: '启动前端开发服务器' });
+
+      if (!entry.runWebContainerName) {
+        entry.runWebContainerName = `prdagent-run-${id}-web`;
       }
+
+      // Stop existing web container if running
+      try { await containerService.stop(entry.runWebContainerName); } catch { /* may not exist */ }
+
+      const webBaseImage = config.run?.webBaseImage ?? 'node:20-slim';
+      const webSourceDir = config.run?.webSourceDir ?? 'prd-admin';
+      const webPort = config.run?.webPort ?? 8000;
+      const apiUpstream = entry.runContainerName!;
+      // Vite dev server command: install deps + start with host binding so it's accessible from nginx
+      const webCommand = config.run?.webCommand
+        ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && VITE_API_BASE_URL=http://${apiUpstream}:8080 pnpm dev --host 0.0.0.0"`;
+
+      await containerService.runWebFromSource(entry, {
+        webBaseImage,
+        webCommand,
+        webSourceDir,
+        webPort,
+      });
+      stateService.save();
+
+      send({
+        step: 'frontend', status: 'done', title: '前端开发服务器已启动',
+        detail: {
+          webContainerName: entry.runWebContainerName,
+          webBaseImage,
+          webPort,
+        },
+      });
 
       // ---- done ----
       send({
@@ -785,6 +797,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       await containerService.stop(entry.runContainerName);
+      // Also stop the web dev container if it exists
+      if (entry.runWebContainerName) {
+        try { await containerService.stop(entry.runWebContainerName); } catch { /* ok */ }
+      }
       entry.runStatus = 'stopped';
       stateService.save();
 

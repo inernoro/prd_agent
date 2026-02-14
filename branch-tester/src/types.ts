@@ -17,6 +17,8 @@ export interface BranchEntry {
 
   // ── Run mode (source-based, direct port access) ──
   runContainerName?: string;
+  /** Vite dev server container name (paired with runContainerName for full-stack dev) */
+  runWebContainerName?: string;
   runStatus?: 'idle' | 'running' | 'stopped' | 'error';
   hostPort?: number;
   /** Human-readable error message when runStatus === 'error' */
@@ -93,6 +95,14 @@ export interface BtConfig {
     command?: string;
     /** Subdirectory of worktree to mount as /src (default: prd-api) */
     sourceDir?: string;
+    /** Node.js base image for Vite dev server (default: node:20-slim) */
+    webBaseImage?: string;
+    /** Command to run Vite dev server (default: auto-generated with pnpm dev --host) */
+    webCommand?: string;
+    /** Subdirectory for frontend source (default: prd-admin) */
+    webSourceDir?: string;
+    /** Vite dev server port inside container (default: 8000) */
+    webPort?: number;
   };
 }
 
@@ -102,6 +112,14 @@ export interface RunFromSourceOptions {
   baseImage: string;
   command: string;
   sourceDir: string;
+}
+
+/** Options for running a Vite dev server container from source */
+export interface RunWebFromSourceOptions {
+  webBaseImage: string;
+  webCommand: string;
+  webSourceDir: string;
+  webPort: number;
 }
 
 export interface ExecResult {

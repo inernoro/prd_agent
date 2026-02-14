@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { IShellExecutor, BranchEntry, BtConfig, RunFromSourceOptions } from '../types.js';
+import type { IShellExecutor, BranchEntry, BtConfig, RunFromSourceOptions, RunWebFromSourceOptions } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 /**
@@ -116,6 +116,35 @@ export class ContainerService {
     const result = await this.shell.exec(cmd);
     if (result.exitCode !== 0) {
       throw new Error(`Failed to run container "${containerName}":\n${combinedOutput(result)}`);
+    }
+  }
+
+  /** Run a Vite dev server container from source (mount worktree + Node image + pnpm dev) */
+  async runWebFromSource(entry: BranchEntry, options: RunWebFromSourceOptions): Promise<void> {
+    const { docker } = this.config;
+    const containerName = entry.runWebContainerName!;
+
+    await this.ensureNetwork(docker.network);
+
+    // Remove any existing container with the same name
+    await this.shell.exec(`docker rm -f ${containerName}`);
+
+    const srcMount = path.join(entry.worktreePath, options.webSourceDir);
+
+    const cmd = [
+      'docker run -d',
+      `--name ${containerName}`,
+      `--network ${docker.network}`,
+      `-v ${srcMount}:/src`,
+      `-w /src`,
+      '--tmpfs /tmp',
+      options.webBaseImage,
+      options.webCommand,
+    ].join(' ');
+
+    const result = await this.shell.exec(cmd);
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to start web dev container "${containerName}":\n${combinedOutput(result)}`);
     }
   }
 

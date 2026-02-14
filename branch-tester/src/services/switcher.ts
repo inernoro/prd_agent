@@ -14,7 +14,7 @@ export class SwitcherService {
     private readonly options: SwitcherOptions,
   ) {}
 
-  generateConfig(upstream: string, mode: 'deploy' | 'run' = 'deploy'): string {
+  generateConfig(upstream: string, mode: 'deploy' | 'run' = 'deploy', webUpstream?: string): string {
     // When upstream is null/sentinel, produce a config that returns 502 for API
     // without referencing any upstream host (avoids DNS resolution failure).
     if (upstream === '_disconnected_upstream_') {
@@ -52,8 +52,11 @@ export class SwitcherService {
         proxy_cache off;
         proxy_read_timeout 3600s;`;
 
-    // Source-run mode: proxy ALL requests to the container (Vite dev server handles frontend + API)
+    // Source-run mode: dual-container dev (Vite dev server + dotnet API)
     if (mode === 'run') {
+      // When a web container is available, route /api/ to dotnet and everything else to Vite
+      const webTarget = webUpstream ?? upstream;
+      const webPort = webUpstream ? 8000 : 8080;
       return `server {
     listen 80;
     server_name _;
@@ -61,11 +64,19 @@ export class SwitcherService {
     absolute_redirect off;
     port_in_redirect off;
 
-    # Source-run mode — ALL requests proxied to container (Vite dev + ASP.NET)
-    # Active upstream: ${upstream}
+    # Source-run mode — dual dev containers
+    # API upstream: ${upstream}
+    # Web upstream: ${webTarget}
 
-    location / {
+    # API requests → dotnet container
+    location ^~ /api/ {
         proxy_pass http://${upstream}:8080;
+${proxyHeaders}
+    }
+
+    # Everything else → Vite dev server (with HMR WebSocket support)
+    location / {
+        proxy_pass http://${webTarget}:${webPort};
 ${proxyHeaders}
         # WebSocket support for Vite HMR
         proxy_set_header Upgrade $http_upgrade;
