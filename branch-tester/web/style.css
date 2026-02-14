@@ -957,18 +957,29 @@ button.warn:hover { background: #8a5900; color: #fff; }
   line-height: 1.5;
 }
 
-/* ---- Deployed branch visual distinction ---- */
+/* ---- Deployed branch visual distinction (animated barber-pole stripes) ---- */
+
+@keyframes stripe-slide {
+  from { background-position: 0 0; }
+  to { background-position: 40px 0; }
+}
 
 .branch-card.deployed {
-  background: repeating-linear-gradient(
+  background-color: #161b22;
+  background-image: linear-gradient(
     -45deg,
-    #161b22,
-    #161b22 10px,
-    #182030 10px,
-    #182030 20px
+    rgba(35, 134, 54, 0.1) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(35, 134, 54, 0.1) 50%,
+    rgba(35, 134, 54, 0.1) 75%,
+    transparent 75%,
+    transparent
   );
+  background-size: 40px 40px;
   border-color: #238636;
   box-shadow: inset 0 0 0 1px rgba(35, 134, 54, 0.15);
+  animation: stripe-slide 2s linear infinite;
 }
 
 .deploy-icon {
@@ -1028,20 +1039,33 @@ button.warn:hover { background: #8a5900; color: #fff; }
   font-size: 13px;
 }
 
-/* ---- Visual timeline ---- */
+/* ---- Visual timeline (vertical) ---- */
 
 .timeline {
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
   gap: 0;
-  padding: 8px 0;
-  overflow-x: auto;
+  padding: 4px 0;
+  position: relative;
 }
 
 .timeline-node {
   display: flex;
   align-items: center;
-  flex-shrink: 0;
+  gap: 12px;
+  padding: 6px 0;
+  position: relative;
+}
+
+/* Vertical connector line between dots */
+.timeline-node:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 22px;
+  width: 2px;
+  height: calc(100% - 10px);
+  background: #30363d;
 }
 
 .timeline-dot {
@@ -1055,9 +1079,12 @@ button.warn:hover { background: #8a5900; color: #fff; }
 }
 
 .timeline-node.current .timeline-dot {
+  width: 14px;
+  height: 14px;
   background: #238636;
   border-color: #3fb950;
   box-shadow: 0 0 8px rgba(63, 185, 80, 0.4);
+  margin-left: -1px;
 }
 
 .timeline-node.rollback-target .timeline-dot {
@@ -1068,20 +1095,23 @@ button.warn:hover { background: #8a5900; color: #fff; }
 
 .timeline-content {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  margin-left: 6px;
-  gap: 2px;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
 }
 
 .timeline-branch {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   color: #e1e4e8;
-  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.timeline-node:not(.current):not(.rollback-target) .timeline-branch {
+  color: #8b949e;
 }
 
 .timeline-label {
@@ -1089,6 +1119,7 @@ button.warn:hover { background: #8a5900; color: #fff; }
   padding: 1px 6px;
   border-radius: 8px;
   font-weight: 500;
+  flex-shrink: 0;
 }
 
 .timeline-node.current .timeline-label {
@@ -1101,12 +1132,9 @@ button.warn:hover { background: #8a5900; color: #fff; }
   color: #58a6ff;
 }
 
-.timeline-line {
-  width: 32px;
-  height: 2px;
-  background: #30363d;
-  margin: 0 4px;
+.timeline-index {
+  font-size: 11px;
+  color: #6e7681;
+  margin-left: auto;
   flex-shrink: 0;
-  align-self: center;
-  margin-top: -14px;
 }

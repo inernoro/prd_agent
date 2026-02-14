@@ -211,18 +211,17 @@ function renderHistory(history, branches) {
 
   btn.disabled = history.length <= 1;
 
-  // Deduplicate consecutive entries for cleaner display, keep last N
-  const displayHistory = history.slice(-10);
-  const currentId = displayHistory[displayHistory.length - 1];
-  const rollbackTarget = displayHistory.length > 1 ? displayHistory[displayHistory.length - 2] : null;
+  // Keep last 10, most recent first (top = current)
+  const displayHistory = history.slice(-10).reverse();
 
   el.innerHTML = `<div class="timeline">` +
     displayHistory.map((id, i) => {
-      const isCurrent = i === displayHistory.length - 1;
-      const isRollbackTarget = rollbackTarget && i === displayHistory.length - 2;
+      const isCurrent = i === 0;
+      const isRollbackTarget = i === 1 && displayHistory.length > 1;
       const branchName = branches?.[id]?.branch || id;
       const nodeClass = isCurrent ? 'timeline-node current' : isRollbackTarget ? 'timeline-node rollback-target' : 'timeline-node';
-      const label = isCurrent ? '当前' : isRollbackTarget ? '回滚目标 ↩' : '';
+      const label = isCurrent ? '当前' : isRollbackTarget ? '↩ 回滚目标' : '';
+      const stepNum = displayHistory.length - i;
       return `
         <div class="${nodeClass}">
           <div class="timeline-dot"></div>
@@ -230,7 +229,7 @@ function renderHistory(history, branches) {
             <span class="timeline-branch">${esc(branchName)}</span>
             ${label ? `<span class="timeline-label">${label}</span>` : ''}
           </div>
-          ${i < displayHistory.length - 1 ? '<div class="timeline-line"></div>' : ''}
+          <span class="timeline-index">#${stepNum}</span>
         </div>`;
     }).join('') +
     `</div>`;
