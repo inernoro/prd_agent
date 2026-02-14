@@ -295,13 +295,17 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(409);
     });
 
-    it('should reject delete on active branch', async () => {
+    it('should allow delete on active branch and disconnect nginx', async () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
       await request(server, 'POST', '/api/branches/feature-test/start');
       await request(server, 'POST', '/api/branches/feature-test/activate');
 
       const res = await request(server, 'DELETE', '/api/branches/feature-test');
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(200);
+
+      // Active branch should be cleared
+      const list = await request(server, 'GET', '/api/branches');
+      expect((list.body as any).activeBranchId).toBeNull();
     });
   });
 

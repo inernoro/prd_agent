@@ -133,9 +133,7 @@ function branchActions(b, isActive) {
   mgmtBtns.push(hasError
     ? `<button class="warn" onclick="resetBranch('${b.id}')" title="重置错误状态"${dis}>重置</button>`
     : `<button disabled title="无异常状态需要重置">重置</button>`);
-  mgmtBtns.push(!isActive
-    ? `<button class="danger" onclick="removeBranch('${b.id}')"${dis}>删除</button>`
-    : `<button class="danger" disabled title="当前激活的分支不能删除">删除</button>`);
+  mgmtBtns.push(`<button class="danger" onclick="removeBranch('${b.id}')"${dis}>删除</button>`);
   groups.push(mgmtBtns.join(''));
 
   return groups.join('<span class="action-divider">|</span>');
@@ -993,16 +991,20 @@ async function removeBranch(id) {
   // Get branch info for better confirm message
   let branchName = id;
   let isDeploying = false;
+  let isActive = false;
   try {
     const bd = await api('GET', '/branches');
     const b = bd.branches[id];
     if (b) {
       branchName = b.branch;
       isDeploying = b.status === 'building';
+      isActive = bd.activeBranchId === id;
     }
   } catch { /* ok */ }
 
-  if (isDeploying) {
+  if (isActive) {
+    if (!confirm(`⚠️ 分支 ${branchName} 是当前激活的分支！\n删除后网关将断开连接。\n\n确认删除？将停止容器、删除 worktree、镜像和分支数据库。`)) return;
+  } else if (isDeploying) {
     if (!confirm(`⚠️ 分支 ${branchName} 正在构建中！\n确认强制删除？这会中断构建过程。\n\n将删除: 容器、Worktree、镜像、分支数据库`)) return;
   } else {
     if (!confirm(`确认删除分支 ${branchName}？\n将停止容器、删除 worktree、镜像和分支数据库。`)) return;

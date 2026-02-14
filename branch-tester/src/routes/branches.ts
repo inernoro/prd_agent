@@ -197,10 +197,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    if (stateService.getState().activeBranchId === id) {
-      res.status(400).json({ error: 'Cannot delete the active branch. Switch to another first.' });
-      return;
-    }
+    const wasActive = stateService.getState().activeBranchId === id;
 
     // SSE for progress
     res.setHeader('Content-Type', 'text/event-stream');
@@ -223,7 +220,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (entry.runStatus === 'running' && entry.runContainerName) {
         send({ step: 'stop-run', status: 'running', title: '停止运行容器' });
         try { await containerService.stop(entry.runContainerName); } catch { /* may not exist */ }
+        if (entry.runWebContainerName) {
+          try { await containerService.stop(entry.runWebContainerName); } catch { /* may not exist */ }
+        }
         send({ step: 'stop-run', status: 'done', title: '停止运行容器' });
+      }
+
+      // Disconnect nginx if deleting the active branch
+      if (wasActive) {
+        send({ step: 'nginx', status: 'running', title: '断开网关' });
+        try {
+          switcherService.backup();
+          const disconnectedConf = switcherService.generateConfig('_disconnected_upstream_');
+          await switcherService.applyConfig(disconnectedConf);
+          stateService.getState().activeBranchId = null;
+          stateService.save();
+          send({ step: 'nginx', status: 'done', title: '网关已断开' });
+        } catch {
+          send({ step: 'nginx', status: 'warn', title: '断开网关失败（已忽略）' });
+        }
       }
 
       send({ step: 'worktree', status: 'running', title: '删除 Worktree' });
