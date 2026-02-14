@@ -393,6 +393,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       await containerService.start(entry);
       stateService.updateStatus(id, 'running');
+      entry.nginxConf = switcherService.generateConfig(entry.containerName, 'deploy');
       stateService.save();
 
       res.json({ success: true, containerName: entry.containerName });
@@ -448,31 +449,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`Branch "${id}" has no running container (deploy or source-run)`);
     }
 
-    switcherService.backup();
+    // Use pre-generated nginx config stored on the branch entry
+    if (!entry.nginxConf) {
+      throw new Error(`Branch "${id}" has no nginx config — was the container started properly?`);
+    }
 
-    let nginxConf: string;
+    // Deploy mode: sync static files before applying config
     if (resolved.mode === 'deploy') {
-      // Deploy mode: sync pre-built static files to dist/ (nginx serves them)
       const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
       const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
       if (fs.existsSync(buildsDir)) {
         await switcherService.syncStaticFiles(buildsDir, distDir);
       }
-      nginxConf = switcherService.generateConfig(resolved.upstream, 'deploy');
-    } else {
-      // Run mode: dual-container dev — Vite dev + dotnet run
-      const webContainer = entry.runWebContainerName;
-      nginxConf = switcherService.generateConfig(resolved.upstream, 'run', webContainer);
     }
 
-    await switcherService.applyConfig(nginxConf);
+    switcherService.backup();
+    await switcherService.applyConfig(entry.nginxConf);
     stateService.activate(id);
     stateService.save();
 
     return {
       upstream: `${resolved.upstream}:8080`,
       gateway: `http://localhost:${config.gateway.port}`,
-      nginxConf,
+      nginxConf: entry.nginxConf,
     };
   }
 
@@ -501,9 +500,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
           });
           return;
         }
-        // State was stale, update it
-        if (deployAlive) entry.status = 'running';
-        if (runAlive) entry.runStatus = 'running';
+        // State was stale, update it and regenerate nginx config
+        if (deployAlive) {
+          entry.status = 'running';
+          entry.nginxConf = switcherService.generateConfig(entry.containerName, 'deploy');
+        }
+        if (runAlive) {
+          entry.runStatus = 'running';
+          entry.nginxConf = switcherService.generateConfig(
+            entry.runContainerName!, 'run', entry.runWebContainerName,
+          );
+        }
         stateService.save();
       }
 
@@ -754,6 +761,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         webSourceDir,
         webPort,
       });
+
+      // Pre-generate nginx config for this branch (run mode)
+      entry.nginxConf = switcherService.generateConfig(
+        entry.runContainerName!, 'run', entry.runWebContainerName,
+      );
       stateService.save();
 
       send({
@@ -1223,7 +1235,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         send({ step: 'start', status: 'running', title: '启动容器' });
         await containerService.start(stateService.getBranch(id)!);
         stateService.updateStatus(id, 'running');
-        stateService.save();
         send({
           step: 'start', status: 'done', title: '启动容器',
           detail: { containerName: entry.containerName, network: config.docker.network },
@@ -1231,6 +1242,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } else {
         send({ step: 'start', status: 'skip', title: '启动容器 (已运行，跳过)' });
       }
+
+      // Pre-generate nginx config for this branch (deploy mode)
+      entry.nginxConf = switcherService.generateConfig(entry.containerName, 'deploy');
+      stateService.save();
 
       // ---- activate nginx ----
       send({ step: 'activate', status: 'running', title: '切换 Nginx 网关' });
@@ -1390,12 +1405,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      const upstream = resolved ?? { upstream: entry.containerName, mode: 'deploy' as const };
+      if (!entry.nginxConf) {
+        throw new Error(`Previous branch "${previousId}" has no nginx config`);
+      }
 
-      // Switch nginx FIRST — if this fails, state stays untouched
-      switcherService.backup();
-
-      if (upstream.mode === 'deploy') {
+      // Deploy mode: sync static files before switching
+      const mode = (resolved ?? { mode: 'deploy' as const }).mode;
+      if (mode === 'deploy') {
         const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', previousId);
         const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
         if (fs.existsSync(buildsDir)) {
@@ -1403,9 +1419,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      const webUpstream = upstream.mode === 'run' ? entry.runWebContainerName : undefined;
-      const newConf = switcherService.generateConfig(upstream.upstream, upstream.mode, webUpstream);
-      await switcherService.applyConfig(newConf);
+      // Apply stored nginx config — if this fails, state stays untouched
+      switcherService.backup();
+      await switcherService.applyConfig(entry.nginxConf);
 
       // Nginx succeeded — NOW commit the state change
       stateService.rollback();

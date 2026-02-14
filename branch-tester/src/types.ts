@@ -14,6 +14,8 @@ export interface BranchEntry {
   lastActivatedAt?: string;
   /** Human-readable error message when status === 'error' */
   errorMessage?: string;
+  /** Pre-generated nginx config for this branch (generated at start time, applied on activation) */
+  nginxConf?: string;
 
   // ── Run mode (source-based, direct port access) ──
   runContainerName?: string;
