@@ -44,6 +44,10 @@ public static class CapsuleExecutor
             CapsuleTypes.DataMerger => ExecuteDataMerger(node, inputArtifacts),
             CapsuleTypes.FormatConverter => ExecuteFormatConverter(node, inputArtifacts),
 
+            // ── 流程控制类 ──
+            CapsuleTypes.Delay => await ExecuteDelayAsync(node, inputArtifacts),
+            CapsuleTypes.Condition => ExecuteCondition(node, inputArtifacts),
+
             // ── 输出类 ──
             CapsuleTypes.ReportGenerator => await ExecuteReportGeneratorAsync(sp, node, variables, inputArtifacts),
             CapsuleTypes.FileExporter => ExecuteFileExporter(node, inputArtifacts),
@@ -468,6 +472,106 @@ public static class CapsuleExecutor
         var logs = $"Data merger: strategy={strategy}, sources={inputArtifacts.Count}\n";
         var artifact = MakeTextArtifact(node, "merged-data", "合并结果", merged);
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs);
+    }
+
+    // ── 流程控制类 ──────────────────────────────────────────────
+
+    public static async Task<CapsuleResult> ExecuteDelayAsync(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
+    {
+        var seconds = int.TryParse(GetConfigString(node, "seconds"), out var s) ? Math.Clamp(s, 1, 300) : 3;
+        var message = GetConfigString(node, "message") ?? $"等待 {seconds} 秒";
+
+        await Task.Delay(TimeSpan.FromSeconds(seconds), CancellationToken.None);
+
+        // 透传上游数据
+        var passthrough = inputArtifacts.Count > 0
+            ? string.Join("\n", inputArtifacts
+                .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
+                .Select(a => a.InlineContent))
+            : "{}";
+
+        var output = JsonSerializer.Serialize(new { delayed = true, seconds, message, timestamp = DateTime.UtcNow });
+        var artifact = MakeTextArtifact(node, "delay-out", "延时输出", passthrough.Length > 2 ? passthrough : output);
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, $"Delay: {seconds}s — {message}");
+    }
+
+    public static CapsuleResult ExecuteCondition(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
+    {
+        var field = GetConfigString(node, "field") ?? "";
+        var op = GetConfigString(node, "operator") ?? "==";
+        var compareValue = GetConfigString(node, "value") ?? "";
+
+        // 从输入产物中提取 JSON 数据
+        var inputText = inputArtifacts
+            .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
+            .Select(a => a.InlineContent!)
+            .FirstOrDefault() ?? "{}";
+
+        // 提取字段值（支持嵌套路径如 data.count）
+        string? fieldValue = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(inputText);
+            var current = doc.RootElement;
+            foreach (var part in field.Split('.'))
+            {
+                if (current.ValueKind == JsonValueKind.Object && current.TryGetProperty(part, out var child))
+                    current = child;
+                else
+                    { current = default; break; }
+            }
+            if (current.ValueKind != JsonValueKind.Undefined)
+                fieldValue = current.ToString();
+        }
+        catch { /* 无法解析，fieldValue 为 null */ }
+
+        // 求值
+        var result = EvaluateCondition(fieldValue, op, compareValue);
+
+        var logs = $"Condition: {field} {op} {compareValue}\n  FieldValue = {fieldValue ?? "(null)"}\n  Result = {result}\n";
+
+        // 输出到对应的 slot：cond-true 或 cond-false
+        var activeSlotId = result ? "cond-true" : "cond-false";
+        var branchLabel = result ? "TRUE 分支" : "FALSE 分支";
+
+        var artifact = new ExecutionArtifact
+        {
+            Name = branchLabel,
+            MimeType = "application/json",
+            SlotId = activeSlotId,
+            InlineContent = inputText,
+            SizeBytes = System.Text.Encoding.UTF8.GetByteCount(inputText),
+        };
+
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs);
+    }
+
+    private static bool EvaluateCondition(string? fieldValue, string op, string compareValue)
+    {
+        return op switch
+        {
+            "empty" => string.IsNullOrWhiteSpace(fieldValue),
+            "not-empty" => !string.IsNullOrWhiteSpace(fieldValue),
+            "==" => string.Equals(fieldValue, compareValue, StringComparison.OrdinalIgnoreCase),
+            "!=" => !string.Equals(fieldValue, compareValue, StringComparison.OrdinalIgnoreCase),
+            "contains" => fieldValue?.Contains(compareValue, StringComparison.OrdinalIgnoreCase) == true,
+            ">" or ">=" or "<" or "<=" => EvaluateNumericCondition(fieldValue, op, compareValue),
+            _ => false,
+        };
+    }
+
+    private static bool EvaluateNumericCondition(string? fieldValue, string op, string compareValue)
+    {
+        if (!double.TryParse(fieldValue, out var left) || !double.TryParse(compareValue, out var right))
+            return false;
+        return op switch
+        {
+            ">" => left > right,
+            ">=" => left >= right,
+            "<" => left < right,
+            "<=" => left <= right,
+            _ => false,
+        };
     }
 
     // ── 格式转换 ──────────────────────────────────────────────

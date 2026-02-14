@@ -1,6 +1,7 @@
 import {
   Timer, Webhook, Hand, Upload,
   Database, Globe, Brain, Code2, Filter, Merge, Repeat,
+  Clock, GitBranch,
   FileText, Download, Send, Bell, Box,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -9,7 +10,7 @@ import type { LucideIcon } from 'lucide-react';
 // 舱分类
 // ═══════════════════════════════════════════════════════════════
 
-export type CapsuleCategory = 'trigger' | 'processor' | 'output';
+export type CapsuleCategory = 'trigger' | 'processor' | 'control' | 'output';
 
 export interface CapsuleCategoryMeta {
   key: CapsuleCategory;
@@ -21,6 +22,7 @@ export interface CapsuleCategoryMeta {
 export const CAPSULE_CATEGORIES: CapsuleCategoryMeta[] = [
   { key: 'trigger', label: '触发', description: '流水线的起点，负责产生触发信号', emoji: '⚡' },
   { key: 'processor', label: '处理', description: '数据采集、分析、转换', emoji: '⚙️' },
+  { key: 'control', label: '流程控制', description: '延时、条件分支等流程控制', emoji: '🔀' },
   { key: 'output', label: '输出', description: '结果输出、通知、导出', emoji: '📤' },
 ];
 
@@ -174,6 +176,28 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     testable: true,
   },
 
+  // ──────── 流程控制类 ────────
+  'delay': {
+    typeKey: 'delay',
+    name: '延时',
+    description: '等待指定秒数后继续',
+    Icon: Clock,
+    emoji: '⏳',
+    category: 'control',
+    accentHue: 200,
+    testable: true,
+  },
+  'condition': {
+    typeKey: 'condition',
+    name: '条件判断',
+    description: '根据条件选择执行分支（if/else）',
+    Icon: GitBranch,
+    emoji: '🔀',
+    category: 'control',
+    accentHue: 45,
+    testable: true,
+  },
+
   // ──────── 输出类 ────────
   'report-generator': {
     typeKey: 'report-generator',
@@ -236,6 +260,7 @@ export function getCapsuleTypesByCategory(): Record<CapsuleCategory, CapsuleType
   const grouped: Record<CapsuleCategory, CapsuleTypeDef[]> = {
     trigger: [],
     processor: [],
+    control: [],
     output: [],
   };
   for (const def of Object.values(CAPSULE_TYPE_REGISTRY)) {
@@ -246,7 +271,7 @@ export function getCapsuleTypesByCategory(): Record<CapsuleCategory, CapsuleType
 
 /** 全部舱类型（按分类排序：触发 → 处理 → 输出） */
 export function getAllCapsuleTypes(): CapsuleTypeDef[] {
-  const order: CapsuleCategory[] = ['trigger', 'processor', 'output'];
+  const order: CapsuleCategory[] = ['trigger', 'processor', 'control', 'output'];
   return Object.values(CAPSULE_TYPE_REGISTRY).sort(
     (a, b) => order.indexOf(a.category) - order.indexOf(b.category)
   );
@@ -267,6 +292,9 @@ const ICON_MAP: Record<string, LucideIcon> = {
   'code': Code2,
   'filter': Filter,
   'merge': Merge,
+  'repeat': Repeat,
+  'clock': Clock,
+  'git-branch': GitBranch,
   'file-text': FileText,
   'download': Download,
   'send': Send,
@@ -286,6 +314,8 @@ const EMOJI_MAP: Record<string, string> = {
   'data-extractor': '🔍',
   'data-merger': '🔀',
   'format-converter': '🔄',
+  'delay': '⏳',
+  'condition': '🔀',
   'report-generator': '📝',
   'file-exporter': '💾',
   'webhook-sender': '📡',
@@ -295,6 +325,7 @@ const EMOJI_MAP: Record<string, string> = {
 const CATEGORY_EMOJI: Record<string, string> = {
   'trigger': '⚡',
   'processor': '⚙️',
+  'control': '🔀',
   'output': '📤',
 };
 

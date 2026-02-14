@@ -622,6 +622,8 @@ export const api = {
         `/api/workflow-agent/executions/${executionId}/resume-from/${nodeId}`,
       nodeLogs: (executionId: string, nodeId: string) =>
         `/api/workflow-agent/executions/${executionId}/nodes/${nodeId}/logs`,
+      stream: (executionId: string) =>
+        `/api/workflow-agent/executions/${executionId}/stream`,
     },
     shares: {
       list: () => '/api/workflow-agent/shares',

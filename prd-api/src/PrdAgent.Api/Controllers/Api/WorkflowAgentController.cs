@@ -21,15 +21,18 @@ public class WorkflowAgentController : ControllerBase
 
     private readonly MongoDbContext _db;
     private readonly IRunQueue _runQueue;
+    private readonly IRunEventStore _eventStore;
     private readonly ILogger<WorkflowAgentController> _logger;
 
     public WorkflowAgentController(
         MongoDbContext db,
         IRunQueue runQueue,
+        IRunEventStore eventStore,
         ILogger<WorkflowAgentController> logger)
     {
         _db = db;
         _runQueue = runQueue;
+        _eventStore = eventStore;
         _logger = logger;
     }
 
@@ -53,6 +56,7 @@ public class WorkflowAgentController : ControllerBase
             {
                 new { key = CapsuleCategory.Trigger, label = "触发", description = "流水线的起点，负责产生触发信号" },
                 new { key = CapsuleCategory.Processor, label = "处理", description = "数据采集、分析、转换" },
+                new { key = CapsuleCategory.Control, label = "流程控制", description = "延时、条件分支等流程控制" },
                 new { key = CapsuleCategory.Output, label = "输出", description = "结果输出、通知、导出" },
             }
         }));
@@ -808,6 +812,84 @@ public class WorkflowAgentController : ControllerBase
             JsonValueKind.Object => je.EnumerateObject().ToDictionary(p => p.Name, p => ConvertJsonElement((object)p.Value)),
             _ => je.GetRawText(),
         };
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // SSE 实时流
+    // ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 订阅工作流执行事件流（SSE）：实时推送节点状态变更。
+    /// 支持 afterSeq 断线续传。
+    /// </summary>
+    [HttpGet("executions/{executionId}/stream")]
+    [Produces("text/event-stream")]
+    public async Task StreamExecution(string executionId, [FromQuery] long afterSeq = 0, CancellationToken cancellationToken = default)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        var execution = await _db.WorkflowExecutions.Find(e => e.Id == executionId)
+            .Project(e => new { e.Status })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (execution == null)
+        {
+            await Response.WriteAsync($"event: error\ndata: {{\"errorCode\":\"NOT_FOUND\",\"errorMessage\":\"执行记录不存在\"}}\n\n", cancellationToken);
+            return;
+        }
+
+        if (afterSeq <= 0)
+        {
+            var last = (Request.Headers["Last-Event-ID"].FirstOrDefault() ?? "").Trim();
+            if (long.TryParse(last, out var parsed) && parsed > 0) afterSeq = parsed;
+        }
+
+        var lastKeepAliveAt = DateTime.UtcNow;
+        var isTerminal = false;
+
+        while (!cancellationToken.IsCancellationRequested && !isTerminal)
+        {
+            // Keepalive
+            if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 10)
+            {
+                try
+                {
+                    await Response.WriteAsync(": keepalive\n\n", cancellationToken);
+                    await Response.Body.FlushAsync(cancellationToken);
+                }
+                catch { break; }
+                lastKeepAliveAt = DateTime.UtcNow;
+            }
+
+            var batch = await _eventStore.GetEventsAsync("workflow", executionId, afterSeq, limit: 100, cancellationToken);
+            if (batch.Count > 0)
+            {
+                foreach (var ev in batch)
+                {
+                    try
+                    {
+                        await Response.WriteAsync($"id: {ev.Seq}\n", cancellationToken);
+                        await Response.WriteAsync($"event: {ev.EventName}\n", cancellationToken);
+                        await Response.WriteAsync($"data: {ev.PayloadJson}\n\n", cancellationToken);
+                        await Response.Body.FlushAsync(cancellationToken);
+                    }
+                    catch { break; }
+                    afterSeq = ev.Seq;
+                    lastKeepAliveAt = DateTime.UtcNow;
+
+                    // 执行完成后结束流
+                    if (ev.EventName == "execution-completed")
+                        isTerminal = true;
+                }
+            }
+            else
+            {
+                try { await Task.Delay(400, cancellationToken); }
+                catch { break; }
+            }
+        }
     }
 }
 

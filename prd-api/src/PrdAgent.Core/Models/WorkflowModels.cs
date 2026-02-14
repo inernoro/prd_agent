@@ -417,6 +417,10 @@ public static class CapsuleTypes
     public const string DataMerger = "data-merger";
     public const string FormatConverter = "format-converter";
 
+    // 流程控制类
+    public const string Delay = "delay";
+    public const string Condition = "condition";
+
     // 输出类
     public const string ReportGenerator = "report-generator";
     public const string FileExporter = "file-exporter";
@@ -434,6 +438,8 @@ public static class CapsuleTypes
         Timer, WebhookReceiver, ManualTrigger, FileUpload,
         // 处理类
         TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter,
+        // 流程控制类
+        Delay, Condition,
         // 输出类
         ReportGenerator, FileExporter, WebhookSender, NotificationSender,
         // 旧类型兼容

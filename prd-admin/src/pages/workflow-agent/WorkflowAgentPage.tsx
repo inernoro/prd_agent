@@ -11,6 +11,9 @@ import {
   listWorkflows, listExecutions, cancelExecution, testRunCapsule,
   listCapsuleTypes,
 } from '@/services';
+import { readSseStream } from '@/lib/sse';
+import { useAuthStore } from '@/stores/authStore';
+import { api } from '@/services/api';
 import { ExecutionListPanel } from './ExecutionListPanel';
 import { ExecutionDetailPanel } from './ExecutionDetailPanel';
 import { SharePanel } from './SharePanel';
@@ -49,43 +52,52 @@ interface StepMeta {
 
 const STEPS: StepMeta[] = [
   {
-    nodeId: 'n1', step: 1, icon: '🐛', accentHue: 30,
-    capsuleType: 'tapd-collector',
-    name: 'Bug 数据采集',
-    desc: '通过 TAPD Open API 自动拉取指定月份的所有缺陷记录',
-    helpTip: '缺陷（Bug）是 TAPD 中记录的软件问题，包含严重程度、状态、所属模块、负责人等字段。此步骤通过 TAPD 提供的开放接口（Open API）批量拉取原始数据。',
-    inputLabel: 'TAPD 凭证 + 目标月份',
-    outputLabel: 'Bug 数据列表（JSON）',
-    feedsToLabel: '传递给步骤 ③「智能分析」',
+    nodeId: 'n1', step: 1, icon: '🌐', accentHue: 210,
+    capsuleType: 'http-request',
+    name: '获取测试数据',
+    desc: '从公共 API 获取 JSON 测试数据',
+    helpTip: '使用 JSONPlaceholder 公共 API 获取示例数据（用户列表）。无需凭证，可直接运行。',
+    inputLabel: '无（自动请求）',
+    outputLabel: 'JSON 用户列表',
+    feedsToLabel: '传递给步骤 ②「延时等待」',
   },
   {
-    nodeId: 'n2', step: 2, icon: '📋', accentHue: 210,
-    capsuleType: 'tapd-collector',
-    name: '需求数据采集',
-    desc: '通过 TAPD Open API 自动拉取指定月份的所有需求记录',
-    helpTip: '需求（Story）是 TAPD 中描述产品功能的用户故事，包含优先级、状态、所属迭代、预估工时等。此步骤和 Bug 采集并行执行。',
-    inputLabel: 'TAPD 凭证 + 目标月份',
-    outputLabel: 'Story 数据列表（JSON）',
-    feedsToLabel: '传递给步骤 ③「智能分析」',
+    nodeId: 'n2', step: 2, icon: '⏳', accentHue: 200,
+    capsuleType: 'delay',
+    name: '延时等待',
+    desc: '等待 3 秒模拟数据处理耗时',
+    helpTip: '延时舱用于控制流水线节奏，此处等待 3 秒让你观察实时状态推送效果。',
+    inputLabel: '步骤 ① 用户数据',
+    outputLabel: '透传数据',
+    feedsToLabel: '传递给步骤 ③「条件判断」',
   },
   {
-    nodeId: 'n3', step: 3, icon: '🧠', accentHue: 270,
-    capsuleType: 'llm-analyzer',
-    name: '智能分析',
-    desc: 'AI 综合分析缺陷和需求数据，自动生成多维度统计',
-    helpTip: '使用大语言模型（LLM）对步骤 ① 和 ② 采集的原始数据进行自动分析。会生成：缺陷趋势、严重程度分布、模块缺陷热点、需求完成率、迭代健康度等多个统计维度。',
-    inputLabel: '步骤 ① Bug 数据 + 步骤 ② 需求数据',
-    outputLabel: '统计分析结果（JSON）',
-    feedsToLabel: '传递给步骤 ④「生成报告」',
+    nodeId: 'n3', step: 3, icon: '🔀', accentHue: 45,
+    capsuleType: 'condition',
+    name: '条件判断',
+    desc: '判断数据量是否大于 0，决定走哪个分支',
+    helpTip: '条件舱根据数据内容走 TRUE / FALSE 分支。此处检查数据是否非空（not-empty）。如果有数据走格式转换，无数据走通知。',
+    inputLabel: '步骤 ② 透传数据',
+    outputLabel: 'TRUE 或 FALSE 分支',
+    feedsToLabel: 'TRUE → 步骤 ④ / FALSE → 步骤 ⑤',
   },
   {
-    nodeId: 'n4', step: 4, icon: '📄', accentHue: 150,
-    capsuleType: 'report-generator',
-    name: '生成报告',
-    desc: '将分析结果整理渲染为结构化的月度质量报告',
-    helpTip: '将上一步产出的 JSON 统计数据，转换为可阅读的 Markdown 格式报告。包含数据汇总表格、趋势描述和改进建议，可直接用于月度质量会议。',
-    inputLabel: '步骤 ③ 分析结果',
-    outputLabel: '月度质量报告（Markdown）',
+    nodeId: 'n4', step: 4, icon: '🔄', accentHue: 45,
+    capsuleType: 'format-converter',
+    name: '格式转换',
+    desc: '将 JSON 数据转换为 CSV 格式',
+    helpTip: 'TRUE 分支：数据非空时，将 JSON 数组转换为 CSV 格式，便于导出到 Excel 等工具。',
+    inputLabel: '步骤 ③ TRUE 分支数据',
+    outputLabel: 'CSV 格式数据',
+  },
+  {
+    nodeId: 'n5', step: 5, icon: '🔔', accentHue: 340,
+    capsuleType: 'notification-sender',
+    name: '空数据通知',
+    desc: 'FALSE 分支 — 数据为空时发送告警通知',
+    helpTip: 'FALSE 分支：如果数据为空，发送站内通知告警。此步骤在正常流程中会被跳过。',
+    inputLabel: '步骤 ③ FALSE 分支',
+    outputLabel: '通知结果',
   },
 ];
 
@@ -104,27 +116,11 @@ interface VarConfig {
 
 const VAR_CONFIGS: VarConfig[] = [
   {
-    key: 'TAPD_WORKSPACE_ID',
-    label: 'TAPD 工作空间 ID',
-    helpTip: '在 TAPD 项目首页的浏览器地址栏中可以找到，是一串数字（如 20000001）。每个项目有唯一的工作空间 ID，用于标识拉取哪个项目的数据。',
+    key: 'API_URL',
+    label: '测试 API 地址',
+    helpTip: '公共 REST API 地址，默认使用 JSONPlaceholder（免费测试 API）。可以改成任意返回 JSON 数组的地址。',
     type: 'text',
-    placeholder: '例如: 20000001',
-    required: true,
-  },
-  {
-    key: 'TAPD_API_TOKEN',
-    label: 'API 访问凭证',
-    helpTip: '在 TAPD「公司管理 → 应用与服务 → API」中创建。是一个 Base64 编码的字符串（格式: api_user:api_password 经过编码），用于接口身份验证。创建后请妥善保管，此处以密文方式存储。',
-    type: 'password',
-    placeholder: '例如: dXNlcjpwYXNzd29yZA==',
-    required: true,
-  },
-  {
-    key: 'TARGET_MONTH',
-    label: '目标月份',
-    helpTip: '要统计的数据月份。系统会拉取该月 1 日至月底的全部数据。留空则默认使用当前月份。',
-    type: 'month',
-    placeholder: '',
+    placeholder: 'https://jsonplaceholder.typicode.com/users',
     required: false,
   },
 ];
@@ -133,33 +129,58 @@ const VAR_CONFIGS: VarConfig[] = [
 // 后端工作流模板
 // ═══════════════════════════════════════════════════════════════
 
-const TAPD_TEMPLATE = {
-  name: 'TAPD 月度质量报告',
-  description: '自动从 TAPD 拉取 Bug 和 Story 数据，统计分析后生成月度质量报告',
-  icon: '📊',
-  tags: ['tapd', 'quality', 'monthly'],
+const DEMO_TEMPLATE = {
+  name: '数据采集 + 条件分支 Demo',
+  description: '获取测试数据 → 延时等待 → 条件判断 → 格式转换(TRUE) / 通知(FALSE)',
+  icon: '🧪',
+  tags: ['demo', 'test'],
   variables: [
-    { key: 'TAPD_WORKSPACE_ID', label: 'TAPD 工作空间 ID', type: 'string', required: true, isSecret: false },
-    { key: 'TAPD_API_TOKEN', label: 'TAPD API Token', type: 'string', required: true, isSecret: true },
-    { key: 'TARGET_MONTH', label: '目标月份', type: 'string', required: false, isSecret: false },
+    { key: 'API_URL', label: '测试 API 地址', type: 'string', required: false, isSecret: false, defaultValue: 'https://jsonplaceholder.typicode.com/users' },
   ],
   nodes: [
-    { nodeId: 'n1', name: 'Bug 数据采集', nodeType: 'tapd-collector', config: {}, inputSlots: [], outputSlots: [{ slotId: 's1o', name: 'bugs', dataType: 'json', required: true }] },
-    { nodeId: 'n2', name: '需求数据采集', nodeType: 'tapd-collector', config: {}, inputSlots: [], outputSlots: [{ slotId: 's2o', name: 'stories', dataType: 'json', required: true }] },
-    { nodeId: 'n3', name: '智能分析', nodeType: 'llm-analyzer', config: {}, inputSlots: [{ slotId: 's3i1', name: 'bugs', dataType: 'json', required: true }, { slotId: 's3i2', name: 'stories', dataType: 'json', required: true }], outputSlots: [{ slotId: 's3o', name: 'stats', dataType: 'json', required: true }] },
-    { nodeId: 'n4', name: '生成报告', nodeType: 'report-generator', config: {}, inputSlots: [{ slotId: 's4i', name: 'stats', dataType: 'json', required: true }], outputSlots: [{ slotId: 's4o', name: 'report', dataType: 'text', required: true }] },
+    {
+      nodeId: 'n1', name: '获取测试数据', nodeType: 'http-request',
+      config: { url: '{{API_URL}}', method: 'GET' },
+      inputSlots: [],
+      outputSlots: [{ slotId: 'n1-out', name: 'response', dataType: 'json', required: true }],
+    },
+    {
+      nodeId: 'n2', name: '延时等待', nodeType: 'delay',
+      config: { seconds: '3', message: '模拟数据处理中…' },
+      inputSlots: [{ slotId: 'n2-in', name: 'input', dataType: 'json', required: false }],
+      outputSlots: [{ slotId: 'n2-out', name: 'output', dataType: 'json', required: true }],
+    },
+    {
+      nodeId: 'n3', name: '条件判断', nodeType: 'condition',
+      config: { field: '0.name', operator: 'not-empty', value: '' },
+      inputSlots: [{ slotId: 'n3-in', name: 'input', dataType: 'json', required: true }],
+      outputSlots: [
+        { slotId: 'cond-true', name: 'true', dataType: 'json', required: true },
+        { slotId: 'cond-false', name: 'false', dataType: 'json', required: true },
+      ],
+    },
+    {
+      nodeId: 'n4', name: '格式转换', nodeType: 'format-converter',
+      config: { sourceFormat: 'json', targetFormat: 'csv' },
+      inputSlots: [{ slotId: 'n4-in', name: 'input', dataType: 'json', required: true }],
+      outputSlots: [{ slotId: 'n4-out', name: 'csv', dataType: 'text', required: true }],
+    },
+    {
+      nodeId: 'n5', name: '空数据通知', nodeType: 'notification-sender',
+      config: { title: '数据为空告警', content: '测试 API 返回了空数据，请检查数据源', level: 'warning' },
+      inputSlots: [{ slotId: 'n5-in', name: 'input', dataType: 'json', required: false }],
+      outputSlots: [{ slotId: 'n5-out', name: 'result', dataType: 'json', required: true }],
+    },
   ],
   edges: [
-    { edgeId: 'e1', sourceNodeId: 'n1', sourceSlotId: 's1o', targetNodeId: 'n3', targetSlotId: 's3i1' },
-    { edgeId: 'e2', sourceNodeId: 'n2', sourceSlotId: 's2o', targetNodeId: 'n3', targetSlotId: 's3i2' },
-    { edgeId: 'e3', sourceNodeId: 'n3', sourceSlotId: 's3o', targetNodeId: 'n4', targetSlotId: 's4i' },
+    { edgeId: 'e1', sourceNodeId: 'n1', sourceSlotId: 'n1-out', targetNodeId: 'n2', targetSlotId: 'n2-in' },
+    { edgeId: 'e2', sourceNodeId: 'n2', sourceSlotId: 'n2-out', targetNodeId: 'n3', targetSlotId: 'n3-in' },
+    { edgeId: 'e3', sourceNodeId: 'n3', sourceSlotId: 'cond-true', targetNodeId: 'n4', targetSlotId: 'n4-in' },
+    { edgeId: 'e4', sourceNodeId: 'n3', sourceSlotId: 'cond-false', targetNodeId: 'n5', targetSlotId: 'n5-in' },
   ],
 };
 
-function getDefaultMonth() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
+const DEFAULT_API_URL = 'https://jsonplaceholder.typicode.com/users';
 
 // ═══════════════════════════════════════════════════════════════
 // 小组件
@@ -709,22 +730,22 @@ export function WorkflowAgentPage() {
   const [nodeOutputs, setNodeOutputs] = useState<Record<string, NodeOutput>>({});
 
   // UI 状态
-  const [vars, setVars] = useState<Record<string, string>>({ TARGET_MONTH: getDefaultMonth() });
+  const [vars, setVars] = useState<Record<string, string>>({ API_URL: DEFAULT_API_URL });
   const [isExecuting, setIsExecuting] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Set<string>>(new Set());
   const [showCatalog, setShowCatalog] = useState(false);
   const [showCanvas, setShowCanvas] = useState(false);
 
-  // 轮询
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // SSE 流式订阅
+  const sseAbortRef = useRef<AbortController | null>(null);
   const fetchedNodesRef = useRef(new Set<string>());
 
   // ── 初始化（必须在所有 early return 之前调用 hooks）──
 
   useEffect(() => {
     init();
-    return () => stopPolling();
+    return () => stopSse();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -745,7 +766,7 @@ export function WorkflowAgentPage() {
   async function init() {
     setPageLoading(true);
     try {
-      const wfRes = await listWorkflows({ tag: 'tapd', pageSize: 1 });
+      const wfRes = await listWorkflows({ tag: 'demo', pageSize: 1 });
       if (wfRes.success && wfRes.data?.items?.length) {
         const wf = wfRes.data.items[0];
         setTapdWorkflow(wf);
@@ -758,7 +779,7 @@ export function WorkflowAgentPage() {
           setLatestExec(latest);
 
           if (['queued', 'running'].includes(latest.status)) {
-            startPolling(latest.id);
+            startSse(latest.id);
           } else {
             fetchAllNodeOutputs(latest);
           }
@@ -768,36 +789,130 @@ export function WorkflowAgentPage() {
     setPageLoading(false);
   }
 
-  // ── 轮询执行状态 ──
+  // ── SSE 实时状态推送 ──
 
-  function startPolling(execId: string) {
-    stopPolling();
-    pollingRef.current = setInterval(async () => {
+  function startSse(execId: string) {
+    stopSse();
+    const ac = new AbortController();
+    sseAbortRef.current = ac;
+    const token = useAuthStore.getState().token;
+    const baseUrl = (import.meta as unknown as { env: Record<string, string> }).env.VITE_API_BASE_URL || '';
+    const url = `${baseUrl}${api.workflowAgent.executions.stream(execId)}`;
+
+    (async () => {
+      try {
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
+          signal: ac.signal,
+        });
+        if (!res.ok) {
+          // SSE 不可用，回退到轮询
+          fallbackPolling(execId);
+          return;
+        }
+
+        await readSseStream(res, (evt) => {
+          if (!evt.data || !evt.event) return;
+          try {
+            const payload = JSON.parse(evt.data);
+            handleSseEvent(evt.event, payload, execId);
+          } catch { /* ignore */ }
+        }, ac.signal);
+      } catch {
+        // SSE 连接异常，回退到轮询
+        if (!ac.signal.aborted) {
+          fallbackPolling(execId);
+        }
+      }
+    })();
+  }
+
+  function handleSseEvent(eventName: string, payload: Record<string, unknown>, execId: string) {
+    if (eventName === 'node-started') {
+      setLatestExec(prev => {
+        if (!prev) return prev;
+        const nodeId = payload.nodeId as string;
+        return {
+          ...prev,
+          status: 'running',
+          nodeExecutions: prev.nodeExecutions.map(ne =>
+            ne.nodeId === nodeId ? { ...ne, status: 'running', startedAt: new Date().toISOString() } : ne
+          ),
+        };
+      });
+    } else if (eventName === 'node-completed') {
+      const nodeId = payload.nodeId as string;
+      setLatestExec(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          nodeExecutions: prev.nodeExecutions.map(ne =>
+            ne.nodeId === nodeId
+              ? { ...ne, status: 'completed', durationMs: payload.durationMs as number, completedAt: new Date().toISOString() }
+              : ne
+          ),
+        };
+      });
+      if (!fetchedNodesRef.current.has(nodeId)) {
+        fetchedNodesRef.current.add(nodeId);
+        fetchNodeOutput(execId, nodeId);
+      }
+    } else if (eventName === 'node-failed') {
+      const nodeId = payload.nodeId as string;
+      setLatestExec(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          nodeExecutions: prev.nodeExecutions.map(ne =>
+            ne.nodeId === nodeId
+              ? { ...ne, status: 'failed', errorMessage: payload.errorMessage as string, durationMs: payload.durationMs as number, completedAt: new Date().toISOString() }
+              : ne
+          ),
+        };
+      });
+      if (!fetchedNodesRef.current.has(nodeId)) {
+        fetchedNodesRef.current.add(nodeId);
+        fetchNodeOutput(execId, nodeId);
+      }
+    } else if (eventName === 'execution-completed') {
+      const status = payload.status as string;
+      setLatestExec(prev => {
+        if (!prev) return prev;
+        return { ...prev, status, completedAt: new Date().toISOString(), errorMessage: (payload.errorMessage as string) || undefined };
+      });
+      // 获取最终完整状态
+      handleRefresh();
+      stopSse();
+    }
+  }
+
+  function fallbackPolling(execId: string) {
+    const iv = setInterval(async () => {
       try {
         const res = await getExecution(execId);
         if (res.success && res.data) {
           const exec = res.data.execution;
           setLatestExec(exec);
-
           for (const ne of exec.nodeExecutions) {
             if (['completed', 'failed'].includes(ne.status) && !fetchedNodesRef.current.has(ne.nodeId)) {
               fetchedNodesRef.current.add(ne.nodeId);
               fetchNodeOutput(exec.id, ne.nodeId);
             }
           }
-
           if (['completed', 'failed', 'cancelled'].includes(exec.status)) {
-            stopPolling();
+            clearInterval(iv);
           }
         }
       } catch { /* ignore */ }
-    }, 2500);
+    }, 2000);
+    // Store interval id so stopSse can clear it
+    sseAbortRef.current = { abort: () => clearInterval(iv) } as unknown as AbortController;
   }
 
-  function stopPolling() {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
+  function stopSse() {
+    if (sseAbortRef.current) {
+      sseAbortRef.current.abort();
+      sseAbortRef.current = null;
     }
   }
 
@@ -840,7 +955,7 @@ export function WorkflowAgentPage() {
     try {
       let wf = tapdWorkflow;
       if (!wf) {
-        const res = await createWorkflow(TAPD_TEMPLATE);
+        const res = await createWorkflow(DEMO_TEMPLATE);
         if (!res.success || !res.data) {
           alert('创建工作流失败: ' + (res.error?.message || '未知错误'));
           setIsExecuting(false);
@@ -856,7 +971,7 @@ export function WorkflowAgentPage() {
         const exec = res.data.execution;
         setLatestExec(exec);
         setRecentRuns((prev) => [exec, ...prev.slice(0, 4)]);
-        startPolling(exec.id);
+        startSse(exec.id);
       } else {
         alert('执行失败: ' + (res.error?.message || '未知错误'));
       }
@@ -870,7 +985,7 @@ export function WorkflowAgentPage() {
   async function handleCancel() {
     if (!latestExec || !confirm('确定取消当前执行？')) return;
     await cancelExecution(latestExec.id);
-    stopPolling();
+    stopSse();
     try {
       const res = await getExecution(latestExec.id);
       if (res.success && res.data) setLatestExec(res.data.execution);
@@ -912,7 +1027,7 @@ export function WorkflowAgentPage() {
     <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
       {/* ──── 标题栏 ──── */}
       <TabBar
-        title="TAPD 数据自动化"
+        title="数据自动化流水线"
         icon={<Zap size={16} />}
         actions={
           <div className="flex items-center gap-2">
@@ -964,7 +1079,7 @@ export function WorkflowAgentPage() {
       <div className="px-5 pb-6 space-y-5 max-w-3xl mx-auto w-full">
         {/* ──── 描述 ──── */}
         <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-          填写数据源配置 → 一键执行 → 查看每个步骤的产出 → 获得月度质量报告
+          一键执行 → 实时观察每个节点状态 → 条件分支自动路由 → 查看最终产出
         </p>
 
         {/* ──── 加载中 ──── */}

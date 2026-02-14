@@ -11,6 +11,7 @@ public static class CapsuleCategory
 {
     public const string Trigger = "trigger";
     public const string Processor = "processor";
+    public const string Control = "control";
     public const string Output = "output";
 }
 
@@ -421,6 +422,66 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    // ──────────── 流程控制类 ────────────
+
+    public static readonly CapsuleTypeMeta Delay = new()
+    {
+        TypeKey = CapsuleTypes.Delay,
+        Name = "延时",
+        Description = "等待指定秒数后继续，用于控制节奏或等待外部系统就绪",
+        Icon = "clock",
+        Category = CapsuleCategory.Control,
+        AccentHue = 200,
+        ConfigSchema = new()
+        {
+            new() { Key = "seconds", Label = "等待秒数", FieldType = "number", Required = true, DefaultValue = "3", Placeholder = "3", HelpTip = "流水线将暂停执行指定的秒数（1~300）" },
+            new() { Key = "message", Label = "等待消息", FieldType = "text", Required = false, Placeholder = "等待数据同步完成…", HelpTip = "等待时显示的提示信息" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "delay-in", Name = "input", DataType = "json", Required = false, Description = "透传数据（不做修改）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "delay-out", Name = "output", DataType = "json", Required = true, Description = "透传上游数据 + 等待信息" },
+        },
+    };
+
+    public static readonly CapsuleTypeMeta Condition = new()
+    {
+        TypeKey = CapsuleTypes.Condition,
+        Name = "条件判断",
+        Description = "根据条件表达式选择执行分支（if / else）",
+        Icon = "git-branch",
+        Category = CapsuleCategory.Control,
+        AccentHue = 45,
+        ConfigSchema = new()
+        {
+            new() { Key = "field", Label = "判断字段", FieldType = "text", Required = true, Placeholder = "status", HelpTip = "从输入数据中提取的字段名。支持嵌套路径如 data.count" },
+            new() { Key = "operator", Label = "运算符", FieldType = "select", Required = true, DefaultValue = "==", Options = new() {
+                new() { Value = "==", Label = "等于 (==)" },
+                new() { Value = "!=", Label = "不等于 (!=)" },
+                new() { Value = ">", Label = "大于 (>)" },
+                new() { Value = ">=", Label = "大于等于 (>=)" },
+                new() { Value = "<", Label = "小于 (<)" },
+                new() { Value = "<=", Label = "小于等于 (<=)" },
+                new() { Value = "contains", Label = "包含 (contains)" },
+                new() { Value = "not-empty", Label = "非空 (not-empty)" },
+                new() { Value = "empty", Label = "为空 (empty)" },
+            }},
+            new() { Key = "value", Label = "比较值", FieldType = "text", Required = false, Placeholder = "success", HelpTip = "与字段值比较的目标值。运算符为 empty / not-empty 时可留空" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "cond-in", Name = "input", DataType = "json", Required = true, Description = "待判断的数据" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "cond-true", Name = "true", DataType = "json", Required = true, Description = "条件成立时输出" },
+            new() { SlotId = "cond-false", Name = "false", DataType = "json", Required = true, Description = "条件不成立时输出" },
+        },
+    };
+
     // ──────────── 输出类 ────────────
 
     public static readonly CapsuleTypeMeta ReportGenerator = new()
@@ -539,6 +600,8 @@ public static class CapsuleTypeRegistry
         Timer, WebhookReceiver, ManualTrigger, FileUpload,
         // 处理类
         TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter,
+        // 流程控制类
+        Delay, Condition,
         // 输出类
         ReportGenerator, FileExporter, WebhookSender, NotificationSender,
     };

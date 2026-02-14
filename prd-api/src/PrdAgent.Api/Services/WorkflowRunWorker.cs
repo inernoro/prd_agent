@@ -15,12 +15,16 @@ public sealed class WorkflowRunWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IRunQueue _queue;
+    private readonly IRunEventStore _eventStore;
     private readonly ILogger<WorkflowRunWorker> _logger;
 
-    public WorkflowRunWorker(IServiceScopeFactory scopeFactory, IRunQueue queue, ILogger<WorkflowRunWorker> logger)
+    private const string EventKind = "workflow";
+
+    public WorkflowRunWorker(IServiceScopeFactory scopeFactory, IRunQueue queue, IRunEventStore eventStore, ILogger<WorkflowRunWorker> logger)
     {
         _scopeFactory = scopeFactory;
         _queue = queue;
+        _eventStore = eventStore;
         _logger = logger;
     }
 
@@ -91,7 +95,7 @@ public sealed class WorkflowRunWorker : BackgroundService
 
         _logger.LogInformation("Processing execution: {ExecutionId} workflow={WorkflowName}", executionId, execution.WorkflowName);
 
-        // 2. 标记为运行中
+        // 2. 标记为运行中 + 推送 SSE 事件
         var sw = Stopwatch.StartNew();
         await db.WorkflowExecutions.UpdateOneAsync(
             e => e.Id == executionId,
@@ -99,6 +103,13 @@ public sealed class WorkflowRunWorker : BackgroundService
                 .Set(e => e.Status, WorkflowExecutionStatus.Running)
                 .Set(e => e.StartedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+
+        await EmitEventAsync(executionId, "execution-started", new
+        {
+            executionId,
+            status = WorkflowExecutionStatus.Running,
+            totalNodes = execution.NodeExecutions.Count,
+        });
 
         // 3. 构建 DAG 依赖图
         var (inDegree, downstream, nodeMap) = BuildDag(execution);
@@ -142,11 +153,19 @@ public sealed class WorkflowRunWorker : BackgroundService
             var nodeDef = nodeMap.GetValueOrDefault(nodeId);
             if (nodeDef == null) continue;
 
-            // 标记节点为 running
+            // 标记节点为 running + 推送 SSE 事件
             nodeExec.Status = NodeExecutionStatus.Running;
             nodeExec.StartedAt = DateTime.UtcNow;
             nodeExec.AttemptCount++;
             await UpdateNodeExecutionAsync(db, executionId, nodeExec);
+
+            await EmitEventAsync(executionId, "node-started", new
+            {
+                nodeId,
+                nodeName = nodeExec.NodeName,
+                nodeType = nodeExec.NodeType,
+                attemptCount = nodeExec.AttemptCount,
+            });
 
             // 执行舱逻辑
             var nodeSw = Stopwatch.StartNew();
@@ -163,6 +182,15 @@ public sealed class WorkflowRunWorker : BackgroundService
                 nodeExec.Logs = CapsuleExecutor.TruncateLogs(result.Logs);
 
                 artifactStore[nodeId] = result.Artifacts;
+
+                await EmitEventAsync(executionId, "node-completed", new
+                {
+                    nodeId,
+                    nodeName = nodeExec.NodeName,
+                    nodeType = nodeExec.NodeType,
+                    durationMs = nodeExec.DurationMs,
+                    artifactCount = result.Artifacts.Count,
+                });
             }
             catch (Exception ex)
             {
@@ -190,20 +218,61 @@ public sealed class WorkflowRunWorker : BackgroundService
                 nodeExec.Logs = CapsuleExecutor.TruncateLogs($"[ERROR] {ex.Message}\n{ex.StackTrace}");
                 failedAny = true;
                 errorMsg = $"节点 '{nodeExec.NodeName}' 执行失败: {ex.Message}";
+
+                await EmitEventAsync(executionId, "node-failed", new
+                {
+                    nodeId,
+                    nodeName = nodeExec.NodeName,
+                    nodeType = nodeExec.NodeType,
+                    errorMessage = ex.Message,
+                    durationMs = nodeExec.DurationMs,
+                });
             }
 
             await UpdateNodeExecutionAsync(db, executionId, nodeExec);
 
             // 如果节点成功，检查下游节点是否就绪
-            if (nodeExec.Status == NodeExecutionStatus.Completed && downstream.TryGetValue(nodeId, out var children))
+            if (nodeExec.Status == NodeExecutionStatus.Completed)
             {
-                foreach (var childId in children)
+                // 条件舱特殊处理：只激活匹配分支，跳过另一个分支
+                if (nodeDef.NodeType == CapsuleTypes.Condition)
                 {
-                    if (inDegree.ContainsKey(childId))
+                    var activeSlotIds = nodeExec.OutputArtifacts.Select(a => a.SlotId).ToHashSet();
+                    var outEdges = execution.EdgeSnapshot.Where(e => e.SourceNodeId == nodeId).ToList();
+
+                    foreach (var edge in outEdges)
                     {
-                        inDegree[childId]--;
-                        if (inDegree[childId] <= 0)
-                            ready.Enqueue(childId);
+                        var childId = edge.TargetNodeId;
+                        if (activeSlotIds.Contains(edge.SourceSlotId))
+                        {
+                            // 激活的分支：减少入度
+                            if (inDegree.ContainsKey(childId))
+                            {
+                                inDegree[childId]--;
+                                if (inDegree[childId] <= 0)
+                                    ready.Enqueue(childId);
+                            }
+                        }
+                        else
+                        {
+                            // 未激活的分支：跳过下游
+                            SkipDownstream(childId, downstream, execution.NodeExecutions);
+                        }
+                    }
+
+                    await BulkUpdateNodeExecutionsAsync(db, executionId, execution.NodeExecutions);
+                }
+                else if (downstream.TryGetValue(nodeId, out var children))
+                {
+                    // 普通节点：激活所有下游
+                    foreach (var childId in children)
+                    {
+                        if (inDegree.ContainsKey(childId))
+                        {
+                            inDegree[childId]--;
+                            if (inDegree[childId] <= 0)
+                                ready.Enqueue(childId);
+                        }
                     }
                 }
             }
@@ -239,6 +308,17 @@ public sealed class WorkflowRunWorker : BackgroundService
                 .Set(e => e.FinalArtifacts, finalArtifacts)
                 .Set(e => e.ErrorMessage, errorMsg),
             cancellationToken: CancellationToken.None);
+
+        await EmitEventAsync(executionId, "execution-completed", new
+        {
+            executionId,
+            status = finalStatus,
+            durationMs = sw.ElapsedMilliseconds,
+            completedNodes = execution.NodeExecutions.Count(n => n.Status == NodeExecutionStatus.Completed),
+            failedNodes = execution.NodeExecutions.Count(n => n.Status == NodeExecutionStatus.Failed),
+            skippedNodes = execution.NodeExecutions.Count(n => n.Status == NodeExecutionStatus.Skipped),
+            errorMessage = errorMsg,
+        });
 
         _logger.LogInformation("Execution {Status}: {ExecutionId} duration={DurationMs}ms nodes={Total}",
             finalStatus, executionId, sw.ElapsedMilliseconds, execution.NodeExecutions.Count);
@@ -369,6 +449,20 @@ public sealed class WorkflowRunWorker : BackgroundService
             e => e.Id == executionId,
             Builders<WorkflowExecution>.Update.Set(e => e.NodeExecutions, nodeExecutions),
             cancellationToken: CancellationToken.None);
+    }
+
+    /// <summary>推送 SSE 事件到 IRunEventStore（前端可通过 stream 端点消费）</summary>
+    private async Task EmitEventAsync(string executionId, string eventName, object payload)
+    {
+        try
+        {
+            await _eventStore.AppendEventAsync(EventKind, executionId, eventName, payload,
+                ttl: TimeSpan.FromMinutes(30));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to emit workflow event: {Event} for {ExecutionId}", eventName, executionId);
+        }
     }
 
     private async Task MarkExecutionFailedAsync(string executionId, string errorMessage)
