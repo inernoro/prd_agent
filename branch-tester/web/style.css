@@ -22,6 +22,12 @@ header {
   border-bottom: 1px solid #2d333b;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 h1 {
   font-size: 22px;
   font-weight: 600;
@@ -509,17 +515,7 @@ button.warn:hover { background: #8a5900; color: #fff; }
   font-size: 14px;
 }
 
-.history-section {
-  padding-top: 24px;
-  border-top: 1px solid #2d333b;
-}
-
-.history-list {
-  font-size: 13px;
-  color: #8b949e;
-  margin-bottom: 12px;
-  word-break: break-all;
-}
+/* history-section and history-list styles moved to bottom (timeline redesign) */
 
 .toast {
   position: fixed;
@@ -959,4 +955,158 @@ button.warn:hover { background: #8a5900; color: #fff; }
   white-space: pre-wrap;
   word-break: break-all;
   line-height: 1.5;
+}
+
+/* ---- Deployed branch visual distinction ---- */
+
+.branch-card.deployed {
+  background: repeating-linear-gradient(
+    -45deg,
+    #161b22,
+    #161b22 10px,
+    #182030 10px,
+    #182030 20px
+  );
+  border-color: #238636;
+  box-shadow: inset 0 0 0 1px rgba(35, 134, 54, 0.15);
+}
+
+.deploy-icon {
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+/* ---- Step progress bar ---- */
+
+.step-progress {
+  height: 4px;
+  background: #21262d;
+  border-radius: 2px;
+  margin: 6px 0 4px;
+  overflow: hidden;
+}
+
+.step-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #1f6feb, #58a6ff);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* ---- History section redesign ---- */
+
+.history-section {
+  padding-top: 24px;
+  border-top: 1px solid #2d333b;
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.history-header h2 {
+  margin-bottom: 0;
+}
+
+.history-header button {
+  font-size: 12px;
+  padding: 5px 12px;
+}
+
+.history-list {
+  font-size: 13px;
+  color: #8b949e;
+  word-break: break-all;
+}
+
+.timeline-empty {
+  color: #6e7681;
+  padding: 12px 0;
+  font-size: 13px;
+}
+
+/* ---- Visual timeline ---- */
+
+.timeline {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  padding: 8px 0;
+  overflow-x: auto;
+}
+
+.timeline-node {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.timeline-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #30363d;
+  border: 2px solid #6e7681;
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.timeline-node.current .timeline-dot {
+  background: #238636;
+  border-color: #3fb950;
+  box-shadow: 0 0 8px rgba(63, 185, 80, 0.4);
+}
+
+.timeline-node.rollback-target .timeline-dot {
+  background: #1f6feb;
+  border-color: #58a6ff;
+  box-shadow: 0 0 6px rgba(88, 166, 255, 0.3);
+}
+
+.timeline-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-left: 6px;
+  gap: 2px;
+}
+
+.timeline-branch {
+  font-size: 12px;
+  font-weight: 500;
+  color: #e1e4e8;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-label {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.timeline-node.current .timeline-label {
+  background: rgba(35, 134, 54, 0.2);
+  color: #3fb950;
+}
+
+.timeline-node.rollback-target .timeline-label {
+  background: rgba(31, 111, 235, 0.2);
+  color: #58a6ff;
+}
+
+.timeline-line {
+  width: 32px;
+  height: 2px;
+  background: #30363d;
+  margin: 0 4px;
+  flex-shrink: 0;
+  align-self: center;
+  margin-top: -14px;
 }

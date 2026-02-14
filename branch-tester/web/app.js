@@ -7,16 +7,21 @@ async function api(method, path, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(`${API}${path}`, opts);
+  if (res.status === 401) { location.href = '/login.html'; return; }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
 }
 
-function showToast(msg, type = 'info') {
+let toastTimer = null;
+function showToast(msg, type = 'info', duration) {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.className = `toast ${type}`;
-  setTimeout(() => (el.className = 'toast hidden'), 4000);
+  if (toastTimer) clearTimeout(toastTimer);
+  // Success/info toasts: longer by default so user can read them
+  const ms = duration ?? (type === 'success' ? 6000 : type === 'error' ? 8000 : 4000);
+  toastTimer = setTimeout(() => { el.className = 'toast hidden'; toastTimer = null; }, ms);
 }
 
 function statusLabel(s) {
@@ -129,6 +134,7 @@ function renderBranches(branches, activeBranchId) {
   }
   list.innerHTML = entries.map((b) => {
     const a = b.id === activeBranchId;
+    const depRunning = b.status === 'running';
     // Build port info line
     let portInfo = '';
     if (b.runStatus === 'running' && b.hostPort) {
@@ -164,13 +170,18 @@ function renderBranches(branches, activeBranchId) {
     if (b.lastActivatedAt) timeInfo.push(`激活于 ${relativeTime(b.lastActivatedAt)}`);
     const timeLine = timeInfo.length ? timeInfo.join(' · ') : '';
 
+    // Deployed (artifact running) branches get a special visual treatment
+    const deployedClass = depRunning ? 'deployed' : '';
+
     return `
-    <div class="branch-card ${a ? 'active' : ''} ${b.status === 'error' || b.runStatus === 'error' ? 'has-error' : ''}">
+    <div class="branch-card ${a ? 'active' : ''} ${deployedClass} ${b.status === 'error' || b.runStatus === 'error' ? 'has-error' : ''}">
       <div class="branch-card-header">
         <div class="branch-card-left">
           <div class="status-dot ${b.status}"></div>
           <div class="branch-info">
-            <div class="branch-name">${esc(b.branch)} ${a ? '<span class="active-badge">当前激活</span>' : ''}</div>
+            <div class="branch-name">
+              ${depRunning ? '<span class="deploy-icon" title="制品部署运行中">📦</span> ' : ''}${esc(b.branch)} ${a ? '<span class="active-badge">当前激活</span>' : ''}
+            </div>
             <div class="branch-meta">部署: ${deployStatus}${runStatus} · DB: <span class="${b.originalDbName ? 'db-shared' : ''}" title="${b.originalDbName ? '正在使用主库（原始库: ' + esc(b.originalDbName) + '）' : ''}">${b.dbName}${b.originalDbName ? ' (主库)' : ''}</span></div>
             ${timeLine ? `<div class="branch-time">${timeLine}</div>` : ''}
             ${portInfo ? `<div class="branch-ports">${portInfo}</div>` : ''}
@@ -184,11 +195,45 @@ function renderBranches(branches, activeBranchId) {
   }).join('');
 }
 
-function renderHistory(history) {
+// ============================================================
+// Operation History — Visual Timeline
+// ============================================================
+
+function renderHistory(history, branches) {
   const el = document.getElementById('historyList');
   const btn = document.getElementById('rollbackBtn');
-  if (!history.length) { el.textContent = '暂无切换记录'; btn.disabled = true; }
-  else { el.textContent = history.join(' → '); btn.disabled = history.length <= 1; }
+
+  if (!history.length) {
+    el.innerHTML = '<div class="timeline-empty">暂无切换记录</div>';
+    btn.disabled = true;
+    return;
+  }
+
+  btn.disabled = history.length <= 1;
+
+  // Deduplicate consecutive entries for cleaner display, keep last N
+  const displayHistory = history.slice(-10);
+  const currentId = displayHistory[displayHistory.length - 1];
+  const rollbackTarget = displayHistory.length > 1 ? displayHistory[displayHistory.length - 2] : null;
+
+  el.innerHTML = `<div class="timeline">` +
+    displayHistory.map((id, i) => {
+      const isCurrent = i === displayHistory.length - 1;
+      const isRollbackTarget = rollbackTarget && i === displayHistory.length - 2;
+      const branchName = branches?.[id]?.branch || id;
+      const nodeClass = isCurrent ? 'timeline-node current' : isRollbackTarget ? 'timeline-node rollback-target' : 'timeline-node';
+      const label = isCurrent ? '当前' : isRollbackTarget ? '回滚目标 ↩' : '';
+      return `
+        <div class="${nodeClass}">
+          <div class="timeline-dot"></div>
+          <div class="timeline-content">
+            <span class="timeline-branch">${esc(branchName)}</span>
+            ${label ? `<span class="timeline-label">${label}</span>` : ''}
+          </div>
+          ${i < displayHistory.length - 1 ? '<div class="timeline-line"></div>' : ''}
+        </div>`;
+    }).join('') +
+    `</div>`;
 }
 
 function renderActiveSwitcher(branches, activeBranchId) {
@@ -222,12 +267,24 @@ function renderActiveSwitcher(branches, activeBranchId) {
   }
 }
 
+// Update cleanup button state based on branches
+function updateCleanupBtn(branches, activeBranchId) {
+  const btn = document.getElementById('cleanupBtn');
+  if (!btn) return;
+  const nonActive = Object.values(branches).filter((b) => b.id !== activeBranchId);
+  btn.disabled = !nonActive.length;
+  btn.title = nonActive.length
+    ? `清理 ${nonActive.length} 个非活跃分支（含容器、镜像、数据库）`
+    : '没有可清理的分支';
+}
+
 // ---- Branch picker (combobox dropdown) ----
 
 const BRANCH_ICON = `<svg class="branch-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>`;
 
 let remoteBranches = []; // cached from server
 let mainDbName = 'prdagent'; // updated from API
+let lastBranches = {}; // cached branch data for history rendering
 
 function renderDropdown(keyword) {
   const dd = document.getElementById('branchDropdown');
@@ -318,9 +375,11 @@ async function refresh() {
   try {
     const [bd, hd] = await Promise.all([api('GET', '/branches'), api('GET', '/history')]);
     if (bd.mainDbName) mainDbName = bd.mainDbName;
+    lastBranches = bd.branches;
     renderBranches(bd.branches, bd.activeBranchId);
-    renderHistory(hd.history);
+    renderHistory(hd.history, bd.branches);
     renderActiveSwitcher(bd.branches, bd.activeBranchId);
+    updateCleanupBtn(bd.branches, bd.activeBranchId);
   } catch (err) { showToast(err.message, 'error'); }
 }
 
@@ -390,8 +449,9 @@ function appendLogEvent(data) {
   // ---- complete ----
   if (data.step === 'complete') {
     const url = data.detail?.url;
+    const title = data.title || '';
     body.insertAdjacentHTML('beforeend',
-      `<div class="deploy-complete">✅ ${url ? `完成 — <a href="${esc(url)}" target="_blank">${esc(url)}</a>` : '操作完成'}</div>`);
+      `<div class="deploy-complete">✅ ${url ? `完成 — <a href="${esc(url)}" target="_blank">${esc(url)}</a>` : esc(title) || '操作完成'}</div>`);
     return;
   }
 
@@ -401,7 +461,6 @@ function appendLogEvent(data) {
       el.className = 'deploy-step is-error';
       const hdr = el.querySelector('.deploy-step-hdr');
       if (hdr) {
-        // Get title text from the non-loading span (skip spinner span)
         const titleSpan = hdr.querySelector('span:not(.loading)');
         const titleText = titleSpan ? titleSpan.textContent : '';
         hdr.innerHTML = `${STEP_ICONS.error} <span>${esc(titleText)}</span>`;
@@ -421,11 +480,23 @@ function appendLogEvent(data) {
   if (data.status === 'running') {
     if (!el) {
       // First running event — create step with streaming log area
+      const progressBar = (data.total != null)
+        ? `<div class="step-progress"><div class="step-progress-bar" style="width:${Math.round(((data.progress || 0) / data.total) * 100)}%"></div></div>`
+        : '';
       body.insertAdjacentHTML('beforeend', `
         <div class="deploy-step is-running" id="ds-${data.step}">
           <div class="deploy-step-hdr">${STEP_ICONS.running} <span>${esc(data.title)}</span></div>
+          ${progressBar}
           <pre class="deploy-stream-log"></pre>
         </div>`);
+    } else {
+      // Update title and progress
+      const hdr = el.querySelector('.deploy-step-hdr span');
+      if (hdr) hdr.textContent = data.title;
+      if (data.total != null) {
+        let pb = el.querySelector('.step-progress-bar');
+        if (pb) pb.style.width = `${Math.round(((data.progress || 0) / data.total) * 100)}%`;
+      }
     }
     // Append streaming chunk if present
     if (data.chunk) {
@@ -456,6 +527,10 @@ function appendLogEvent(data) {
     const hdr = el.querySelector('.deploy-step-hdr');
     if (hdr) hdr.innerHTML = `${icon} <span>${esc(data.title)}</span>`;
 
+    // Hide progress bar on completion
+    const pb = el.querySelector('.step-progress');
+    if (pb) pb.style.display = 'none';
+
     // If streaming log has content, keep it visible; otherwise hide empty pre
     const streamLog = el.querySelector('.deploy-stream-log');
     if (streamLog && !streamLog.textContent.trim()) {
@@ -482,8 +557,10 @@ function appendLogEvent(data) {
       const d = data.detail;
       el.insertAdjacentHTML('beforeend',
         `<div class="deploy-detail">upstream: <code>${esc(String(d.upstream))}</code> → gateway: <code>${esc(String(d.gateway))}</code></div>`);
-      el.insertAdjacentHTML('beforeend',
-        `<details class="deploy-log-wrap"><summary>查看 Nginx 配置</summary><pre class="deploy-log">${esc(d.nginxConf || '')}</pre></details>`);
+      if (d.nginxConf) {
+        el.insertAdjacentHTML('beforeend',
+          `<details class="deploy-log-wrap"><summary>查看 Nginx 配置</summary><pre class="deploy-log">${esc(d.nginxConf || '')}</pre></details>`);
+      }
     }
 
     // Health check detail
@@ -517,9 +594,9 @@ function appendLogEvent(data) {
 }
 
 // ---- SSE consumer helper ----
-async function consumeSSE(url, { onEvent, onError, onDone }) {
+async function consumeSSE(url, { method, onEvent, onError, onDone }) {
   const response = await fetch(url, {
-    method: 'POST',
+    method: method || 'POST',
     headers: { 'Content-Type': 'application/json' },
   });
 
@@ -553,7 +630,7 @@ async function consumeSSE(url, { onEvent, onError, onDone }) {
 }
 
 // ============================================================
-// Live container log streaming (request 8)
+// Live container log streaming
 // ============================================================
 
 function stopLiveLog() {
@@ -706,7 +783,7 @@ async function pullBranch(id) {
     if (data.updated) {
       showToast(`${id} 已更新: ${data.before} → ${data.after}`, 'success');
     } else {
-      showToast(`${id} 已是最新 (${data.after})`, 'info');
+      showToast(`${id} 已是最新 (${data.after})`, 'success');
     }
   } catch (err) { showToast(`拉取失败: ${err.message}`, 'error'); }
   finally { setBusy(false); }
@@ -865,19 +942,48 @@ async function viewLogs(id) {
   }
 }
 
+// ---- Async delete with SSE progress (request 6) ----
 async function removeBranch(id) {
-  if (!confirm(`确认删除分支 ${id}？\n将停止容器、删除 worktree、镜像和分支数据库。`)) return;
+  // Get branch info for better confirm message
+  let branchName = id;
+  let isDeploying = false;
+  try {
+    const bd = await api('GET', '/branches');
+    const b = bd.branches[id];
+    if (b) {
+      branchName = b.branch;
+      isDeploying = b.status === 'building';
+    }
+  } catch { /* ok */ }
+
+  if (isDeploying) {
+    if (!confirm(`⚠️ 分支 ${branchName} 正在构建中！\n确认强制删除？这会中断构建过程。\n\n将删除: 容器、Worktree、镜像、分支数据库`)) return;
+  } else {
+    if (!confirm(`确认删除分支 ${branchName}？\n将停止容器、删除 worktree、镜像和分支数据库。`)) return;
+  }
+
   if (busy) return;
   setBusy(true);
+
+  currentLogModalBranchId = id;
+  openLogModal(`删除 — ${branchName}`);
+
   try {
-    await api('DELETE', `/branches/${id}`);
-    showToast(`${id} 已删除`, 'success');
+    await consumeSSE(`${API}/branches/${id}`, {
+      method: 'DELETE',
+      onEvent: appendLogEvent,
+    });
+    showToast(`${branchName} 已删除`, 'success');
     await loadRemoteBranches();
-  } catch (err) { showToast(err.message, 'error'); }
-  finally { setBusy(false); }
+  } catch (err) {
+    appendLogEvent({ step: 'error', status: 'error', title: '删除失败', log: err.message });
+    showToast(`删除失败: ${err.message}`, 'error');
+  } finally {
+    setBusy(false);
+  }
 }
 
-// ---- switchToBranch: auto-run + activate (request 2) ----
+// ---- switchToBranch: auto-run + activate ----
 
 async function switchToBranch(id) {
   let bd;
@@ -938,12 +1044,27 @@ async function cloneDb(id) {
   if (!confirm(`将主库数据克隆到 ${id} 的分支库？\n（会覆盖分支库现有数据）`)) return;
   if (busy) return;
   setBusy(true);
-  showToast('正在克隆数据库...', 'info');
+
+  let branchName = id;
   try {
-    const data = await api('POST', `/branches/${id}/db/clone`);
-    showToast(data.message, 'success');
-  } catch (err) { showToast(err.message, 'error'); }
-  finally { setBusy(false); }
+    const bd = await api('GET', '/branches');
+    branchName = bd.branches[id]?.branch || id;
+  } catch { /* ok */ }
+
+  currentLogModalBranchId = id;
+  openLogModal(`克隆数据库 — ${branchName}`);
+
+  try {
+    await consumeSSE(`${API}/branches/${id}/db/clone`, {
+      onEvent: appendLogEvent,
+    });
+    showToast('数据库克隆完成', 'success');
+  } catch (err) {
+    appendLogEvent({ step: 'error', status: 'error', title: '克隆失败', log: err.message });
+    showToast(`克隆失败: ${err.message}`, 'error');
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function useMainDb(id) {
@@ -988,6 +1109,35 @@ async function activateBranch(id) {
     showToast(`已切换到 ${id}`, 'success');
   } catch (err) { showToast(err.message, 'error'); }
   finally { setBusy(false); }
+}
+
+// ---- One-click cleanup ----
+async function cleanupAll() {
+  const nonActive = Object.values(lastBranches).filter((b) => b.id !== document.getElementById('activeSwitcher').value);
+  if (!nonActive.length) {
+    showToast('没有需要清理的分支', 'info');
+    return;
+  }
+  const names = nonActive.map(b => b.branch).join('\n  ');
+  if (!confirm(`一键清理以下 ${nonActive.length} 个分支？\n  ${names}\n\n将删除: 容器、Worktree、镜像、分支数据库\n（当前激活分支不会被清理）`)) return;
+
+  if (busy) return;
+  setBusy(true);
+
+  openLogModal(`一键清理 ${nonActive.length} 个分支`);
+
+  try {
+    await consumeSSE(`${API}/cleanup`, {
+      onEvent: appendLogEvent,
+    });
+    showToast('清理完成', 'success');
+    await loadRemoteBranches();
+  } catch (err) {
+    appendLogEvent({ step: 'error', status: 'error', title: '清理失败', log: err.message });
+    showToast(`清理失败: ${err.message}`, 'error');
+  } finally {
+    setBusy(false);
+  }
 }
 
 // Top switcher

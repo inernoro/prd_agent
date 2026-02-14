@@ -38,6 +38,9 @@ jobs:
             desktop:
               - 'prd-desktop/**'
               - '.github/workflows/ci.yml'
+            branch-tester:
+              - 'branch-tester/**'
+              - '.github/workflows/ci.yml'
 
   # 后端服务构建和测试
   server-build:

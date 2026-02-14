@@ -10,12 +10,15 @@
   <div class="container">
     <header>
       <h1>Branch Tester</h1>
-      <div class="active-info" id="activeInfo">
-        <span class="gateway-label">Gateway :5500 →</span>
-        <select id="activeSwitcher" disabled>
-          <option value="">未指向任何分支</option>
-        </select>
-        <a id="activeLink" href="#" target="_blank" class="hidden">打开</a>
+      <div class="header-actions">
+        <button id="cleanupBtn" class="danger" onclick="cleanupAll()" disabled title="没有可清理的分支">一键清理</button>
+        <div class="active-info" id="activeInfo">
+          <span class="gateway-label">Gateway :5500 →</span>
+          <select id="activeSwitcher" disabled>
+            <option value="">未指向任何分支</option>
+          </select>
+          <a id="activeLink" href="#" target="_blank" class="hidden">打开</a>
+        </div>
       </div>
     </header>
 
@@ -40,9 +43,11 @@
     </section>
 
     <section class="history-section">
-      <h2>操作历史</h2>
+      <div class="history-header">
+        <h2>切换历史</h2>
+        <button id="rollbackBtn" onclick="doRollback()" disabled>↩ 回滚到上一个</button>
+      </div>
       <div id="historyList" class="history-list">-</div>
-      <button id="rollbackBtn" onclick="doRollback()" disabled>回滚到上一个</button>
     </section>
 
     <div id="toast" class="toast hidden"></div>

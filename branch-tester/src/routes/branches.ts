@@ -173,43 +173,57 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  // DELETE /branches/:id — remove a branch (blocked if active)
+  // DELETE /branches/:id — remove a branch (SSE stream for progress)
   router.delete('/branches/:id', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `Branch "${id}" not found` });
+      return;
+    }
+
+    if (stateService.getState().activeBranchId === id) {
+      res.status(400).json({ error: 'Cannot delete the active branch. Switch to another first.' });
+      return;
+    }
+
+    // SSE for progress
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (data: Record<string, unknown>) => {
+      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+    };
+
     try {
-      const { id } = req.params;
-      const entry = stateService.getBranch(id);
-      if (!entry) {
-        res.status(404).json({ error: `Branch "${id}" not found` });
-        return;
-      }
-
-      if (stateService.getState().activeBranchId === id) {
-        res.status(400).json({ error: 'Cannot delete the active branch. Switch to another first.' });
-        return;
-      }
-
       // Stop deploy container if running
       if (entry.status === 'running') {
+        send({ step: 'stop-deploy', status: 'running', title: '停止部署容器' });
         await containerService.stop(entry.containerName);
+        send({ step: 'stop-deploy', status: 'done', title: '停止部署容器' });
       }
       // Stop run container if running
       if (entry.runStatus === 'running' && entry.runContainerName) {
+        send({ step: 'stop-run', status: 'running', title: '停止运行容器' });
         try { await containerService.stop(entry.runContainerName); } catch { /* may not exist */ }
+        send({ step: 'stop-run', status: 'done', title: '停止运行容器' });
       }
 
+      send({ step: 'worktree', status: 'running', title: '删除 Worktree' });
       try { await worktreeService.remove(entry.worktreePath); } catch { /* may not exist */ }
-      try { await containerService.removeImage(entry.imageName); } catch { /* may not exist */ }
+      send({ step: 'worktree', status: 'done', title: '删除 Worktree' });
 
-      // Drop branch database (strict safety checks — request 5)
+      send({ step: 'image', status: 'running', title: '删除 Docker 镜像' });
+      try { await containerService.removeImage(entry.imageName); } catch { /* may not exist */ }
+      send({ step: 'image', status: 'done', title: '删除 Docker 镜像' });
+
+      // Drop branch database (strict safety checks)
       const mainDb = config.mongodb.defaultDbName;
       const branchDb = entry.originalDbName || entry.dbName;
 
-      if (
-        branchDb
-        && branchDb !== mainDb
-        && branchDb.startsWith(`${mainDb}_`)
-      ) {
-        // Ensure no other branch references this DB
+      if (branchDb && branchDb !== mainDb && branchDb.startsWith(`${mainDb}_`)) {
         const otherBranches = Object.values(stateService.getState().branches)
           .filter((b) => b.id !== id);
         const dbInUse = otherBranches.some(
@@ -217,21 +231,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
         );
 
         if (!dbInUse) {
+          send({ step: 'db', status: 'running', title: `删除数据库 ${branchDb}` });
           try {
             const mongoContainer = 'prdagent-mongodb';
             const dropCmd = `docker exec ${mongoContainer} mongosh --quiet --eval "db.getMongo().getDB('${branchDb}').dropDatabase()"`;
             await shell.exec(dropCmd, { timeout: 30_000 });
-          } catch { /* best effort — don't fail the delete if drop fails */ }
+            send({ step: 'db', status: 'done', title: `删除数据库 ${branchDb}` });
+          } catch {
+            send({ step: 'db', status: 'warn', title: `删除数据库 ${branchDb} 失败（已忽略）` });
+          }
         }
       }
 
+      send({ step: 'state', status: 'running', title: '清理状态' });
       stateService.removeBranch(id);
       stateService.removeLogs(id);
       stateService.save();
+      send({ step: 'state', status: 'done', title: '清理状态' });
 
-      res.json({ success: true });
+      send({ step: 'complete', status: 'done', title: '删除完成' });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      send({ step: 'error', status: 'error', title: `删除失败: ${(err as Error).message}` });
+    } finally {
+      res.end();
     }
   });
 
@@ -528,6 +550,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const sourceDir = config.run?.sourceDir ?? 'prd-api';
 
     try {
+      // ---- Mode switching: stop deploy container if active before running from source ----
+      if (entry.status === 'running') {
+        send({ step: 'mode_switch', status: 'running', title: '停止部署容器（切换到源码运行模式）' });
+        try { await containerService.stop(entry.containerName); } catch { /* ok */ }
+        entry.status = 'stopped';
+        stateService.save();
+        send({ step: 'mode_switch', status: 'done', title: '已停止部署容器' });
+      }
+
       // ---- pull (rerun: pull latest code) ----
       if (opts.forcePull) {
         send({ step: 'pull', status: 'running', title: '拉取最新代码' });
@@ -762,6 +793,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
 
     try {
+      // ---- Mode switching: stop run container if active before deploying ----
+      if (entry.runStatus === 'running' && entry.runContainerName) {
+        send({ step: 'mode_switch', status: 'running', title: '停止源码运行容器（切换到部署模式）' });
+        try { await containerService.stop(entry.runContainerName); } catch { /* ok */ }
+        entry.runStatus = 'stopped';
+        stateService.save();
+        send({ step: 'mode_switch', status: 'done', title: '已停止源码运行容器' });
+      }
+
       // ---- env info ----
       const commitResult = await shell.exec(
         'git log --oneline -1', { cwd: entry.worktreePath },
@@ -916,6 +956,71 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // POST /cleanup — one-click cleanup all non-active branches (SSE stream)
+  router.post('/cleanup', async (req, res) => {
+    const state = stateService.getState();
+    const activeId = state.activeBranchId;
+    const toClean = Object.values(state.branches).filter((b) => b.id !== activeId);
+
+    if (!toClean.length) {
+      res.json({ success: true, message: '没有需要清理的分支' });
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (data: Record<string, unknown>) => {
+      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+    };
+
+    send({ step: 'start', status: 'running', title: `即将清理 ${toClean.length} 个分支`, total: toClean.length });
+
+    let cleaned = 0;
+    for (const entry of toClean) {
+      send({ step: entry.id, status: 'running', title: `清理 ${entry.branch}`, progress: cleaned, total: toClean.length });
+
+      try {
+        // Stop containers
+        if (entry.status === 'running') {
+          try { await containerService.stop(entry.containerName); } catch { /* ok */ }
+        }
+        if (entry.runStatus === 'running' && entry.runContainerName) {
+          try { await containerService.stop(entry.runContainerName); } catch { /* ok */ }
+        }
+
+        // Remove worktree + image
+        try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+        try { await containerService.removeImage(entry.imageName); } catch { /* ok */ }
+
+        // Drop branch DB (strict safety)
+        const mainDb = config.mongodb.defaultDbName;
+        const branchDb = entry.originalDbName || entry.dbName;
+        if (branchDb && branchDb !== mainDb && branchDb.startsWith(`${mainDb}_`)) {
+          try {
+            const mongoContainer = 'prdagent-mongodb';
+            const dropCmd = `docker exec ${mongoContainer} mongosh --quiet --eval "db.getMongo().getDB('${branchDb}').dropDatabase()"`;
+            await shell.exec(dropCmd, { timeout: 30_000 });
+          } catch { /* ok */ }
+        }
+
+        stateService.removeBranch(entry.id);
+        stateService.removeLogs(entry.id);
+        cleaned++;
+        send({ step: entry.id, status: 'done', title: `已清理 ${entry.branch}`, progress: cleaned, total: toClean.length });
+      } catch (err) {
+        cleaned++;
+        send({ step: entry.id, status: 'error', title: `清理 ${entry.branch} 失败: ${(err as Error).message}`, progress: cleaned, total: toClean.length });
+      }
+    }
+
+    stateService.save();
+    send({ step: 'complete', status: 'done', title: `清理完成，共清理 ${cleaned} 个分支` });
+    res.end();
+  });
+
   // POST /rollback — rollback to previous branch
   router.post('/rollback', async (_req, res) => {
     try {
@@ -1043,49 +1148,63 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // Database management
   // ================================================================
 
-  // POST /branches/:id/db/clone — clone main DB into branch DB
+  // POST /branches/:id/db/clone — clone main DB into branch DB (SSE stream)
   router.post('/branches/:id/db/clone', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) { res.status(404).json({ error: `Branch "${id}" not found` }); return; }
+
+    const mainDbName = config.mongodb.defaultDbName;
+    const targetDb = entry.dbName;
+
+    if (targetDb === mainDbName) {
+      res.status(400).json({ error: '当前分支已在使用主库，无需克隆' });
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (data: Record<string, unknown>) => {
+      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+    };
+
     try {
-      const { id } = req.params;
-      const entry = stateService.getBranch(id);
-      if (!entry) { res.status(404).json({ error: `Branch "${id}" not found` }); return; }
-
-      const mainDbName = config.mongodb.defaultDbName;
-      const targetDb = entry.dbName;
-
-      if (targetDb === mainDbName) {
-        res.status(400).json({ error: '当前分支已在使用主库，无需克隆' });
-        return;
-      }
-
-      // Use mongodump/mongorestore inside the MongoDB container to clone
       const mongoContainer = 'prdagent-mongodb';
-      const cmd = [
-        `docker exec ${mongoContainer} mongosh --quiet --eval`,
-        `"db.getMongo().getDB('${mainDbName}').getCollectionNames().forEach(function(c) {`,
-        `  if (!c.startsWith('system.')) {`,
-        `    const docs = db.getMongo().getDB('${mainDbName}').getCollection(c).find().toArray();`,
-        `    if (docs.length > 0) {`,
-        `      db.getMongo().getDB('${targetDb}').getCollection(c).drop();`,
-        `      db.getMongo().getDB('${targetDb}').getCollection(c).insertMany(docs);`,
-        `    }`,
-        `  }`,
-        `});"`,
-      ].join(' ');
 
-      const result = await shell.exec(cmd, { timeout: 120_000 });
-      if (result.exitCode !== 0) {
-        throw new Error(`数据库克隆失败: ${combinedOutput(result)}`);
+      // Step 1: Get collection list
+      send({ step: 'list', status: 'running', title: '获取集合列表' });
+      const listCmd = `docker exec ${mongoContainer} mongosh --quiet --eval "db.getMongo().getDB('${mainDbName}').getCollectionNames().filter(c => !c.startsWith('system.')).join('\\n')"`;
+      const listResult = await shell.exec(listCmd, { timeout: 30_000 });
+      if (listResult.exitCode !== 0) throw new Error(`获取集合列表失败: ${combinedOutput(listResult)}`);
+
+      const collections = listResult.stdout.trim().split('\n').filter(Boolean);
+      send({ step: 'list', status: 'done', title: `共 ${collections.length} 个集合`, detail: { collections } });
+
+      // Step 2: Copy each collection
+      let copied = 0;
+      for (const col of collections) {
+        send({ step: 'copy', status: 'running', title: `复制 ${col}`, progress: copied, total: collections.length });
+        const copyCmd = [
+          `docker exec ${mongoContainer} mongosh --quiet --eval`,
+          `"const docs = db.getMongo().getDB('${mainDbName}').getCollection('${col}').find().toArray();`,
+          `db.getMongo().getDB('${targetDb}').getCollection('${col}').drop();`,
+          `if (docs.length > 0) db.getMongo().getDB('${targetDb}').getCollection('${col}').insertMany(docs);`,
+          `print('copied ' + docs.length + ' docs');"`,
+        ].join(' ');
+        const copyResult = await shell.exec(copyCmd, { timeout: 60_000 });
+        copied++;
+        const count = copyResult.stdout.match(/copied (\d+)/)?.[1] || '?';
+        send({ step: 'copy', status: 'running', title: `已复制 ${col} (${count} 条)`, progress: copied, total: collections.length });
       }
 
-      res.json({
-        success: true,
-        message: `已将 ${mainDbName} 的数据克隆到 ${targetDb}`,
-        sourceDb: mainDbName,
-        targetDb,
-      });
+      send({ step: 'complete', status: 'done', title: `克隆完成: ${mainDbName} → ${targetDb}（${collections.length} 个集合）` });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      send({ step: 'error', status: 'error', title: `克隆失败: ${(err as Error).message}` });
+    } finally {
+      res.end();
     }
   });
 
