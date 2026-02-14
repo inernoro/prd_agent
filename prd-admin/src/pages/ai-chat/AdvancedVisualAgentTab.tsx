@@ -7133,10 +7133,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
           {/* 右侧：浮动对话面板（液态大玻璃效果）— 移动端全屏覆盖 / 桌面端浮动 */}
           <div
-            className={`${isMobile ? 'absolute inset-0' : 'absolute right-3 top-1/2 -translate-y-1/2'} z-30 flex flex-col`}
+            className={`${isMobile ? 'absolute inset-0' : 'absolute right-3 top-3'} z-30 flex flex-col`}
             style={{
-              width: isMobile ? '100%' : 350,
-              height: isMobile ? '100%' : '75%',
+              width: isMobile ? '100%' : 420,
+              height: isMobile ? '100%' : 'calc(100% - 24px)',
               display: isMobile && !mobileShowChat ? 'none' : undefined,
               // 移动端：底部留出工具栏空间
               paddingBottom: isMobile ? 60 : undefined,
