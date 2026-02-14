@@ -1,0 +1,248 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { ContainerService } from '../../src/services/container.js';
+import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import type { BranchEntry, BtConfig } from '../../src/types.js';
+
+const makeConfig = (): BtConfig => ({
+  repoRoot: '/repo',
+  worktreeBase: '/wt',
+  deployDir: 'deploy',
+  gateway: { containerName: 'prdagent-gateway', port: 5500 },
+  docker: {
+    network: 'prdagent-network',
+    apiDockerfile: 'prd-api/Dockerfile',
+    apiImagePrefix: 'prdagent-server',
+    containerPrefix: 'prdagent-api',
+  },
+  mongodb: { containerHost: 'prdagent-mongodb', port: 27017, defaultDbName: 'prdagent' },
+  redis: { connectionString: 'prdagent-redis:6379' },
+  jwt: { secret: 'test-secret', issuer: 'prdagent' },
+  dashboard: { port: 9900 },
+});
+
+const makeEntry = (overrides?: Partial<BranchEntry>): BranchEntry => ({
+  id: 'feature-a',
+  branch: 'feature/a',
+  worktreePath: '/wt/feature-a',
+  containerName: 'prdagent-api-feature-a',
+  imageName: 'prdagent-server:feature-a',
+  dbName: 'prdagent_1',
+  status: 'idle',
+  createdAt: '2026-02-12T00:00:00Z',
+  ...overrides,
+});
+
+describe('ContainerService', () => {
+  let mock: MockShellExecutor;
+  let service: ContainerService;
+  const config = makeConfig();
+
+  beforeEach(() => {
+    mock = new MockShellExecutor();
+    service = new ContainerService(mock, config);
+  });
+
+  describe('start', () => {
+    it('should run docker container with correct env vars', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'abc123', stderr: '', exitCode: 0 }));
+
+      const entry = makeEntry();
+      await service.start(entry);
+
+      const runCmd = mock.commands.find((c) => c.includes('docker run'));
+      expect(runCmd).toBeDefined();
+      expect(runCmd).toContain('docker run -d');
+      expect(runCmd).toContain('--name prdagent-api-feature-a');
+      expect(runCmd).toContain('--network prdagent-network');
+      expect(runCmd).toContain('MongoDB__DatabaseName=prdagent_1');
+      expect(runCmd).toContain('MongoDB__ConnectionString=mongodb://prdagent-mongodb:27017');
+      expect(runCmd).toContain('Redis__ConnectionString=prdagent-redis:6379');
+      expect(runCmd).toContain('Jwt__Secret=test-secret');
+      expect(runCmd).toContain('prdagent-server:feature-a');
+    });
+
+    it('should remove existing container before starting', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'abc123', stderr: '', exitCode: 0 }));
+
+      await service.start(makeEntry());
+
+      const rmCmd = mock.commands.find((c) => c.includes('docker rm -f'));
+      expect(rmCmd).toContain('docker rm -f prdagent-api-feature-a');
+      // rm -f should come before docker run
+      const rmIdx = mock.commands.indexOf(rmCmd!);
+      const runIdx = mock.commands.findIndex((c) => c.includes('docker run'));
+      expect(rmIdx).toBeLessThan(runIdx);
+    });
+
+    it('should throw if docker run fails', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({
+        stdout: '',
+        stderr: 'error starting container',
+        exitCode: 125,
+      }));
+
+      await expect(service.start(makeEntry())).rejects.toThrow('start');
+    });
+  });
+
+  describe('runFromSource', () => {
+    const runOpts = {
+      hostPort: 9001,
+      baseImage: 'mcr.microsoft.com/dotnet/sdk:8.0',
+      command: 'dotnet run --project src/PrdAgent.Api',
+      sourceDir: 'prd-api',
+    };
+
+    it('should mount source and expose port', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'run123', stderr: '', exitCode: 0 }));
+
+      const entry = makeEntry({ runContainerName: 'prdagent-run-feature-a' });
+      await service.runFromSource(entry, runOpts);
+
+      const runCmd = mock.commands.find((c) => c.includes('docker run'));
+      expect(runCmd).toContain('--name prdagent-run-feature-a');
+      expect(runCmd).toContain('-p 9001:8080');
+      expect(runCmd).toContain('-v /wt/feature-a/prd-api:/src');
+      expect(runCmd).toContain('-w /src');
+      expect(runCmd).toContain('mcr.microsoft.com/dotnet/sdk:8.0');
+      expect(runCmd).toContain('dotnet run --project src/PrdAgent.Api');
+    });
+
+    it('should remove existing container before starting', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'run123', stderr: '', exitCode: 0 }));
+
+      const entry = makeEntry({ runContainerName: 'prdagent-run-feature-a' });
+      await service.runFromSource(entry, runOpts);
+
+      const rmCmd = mock.commands.find((c) => c.includes('docker rm -f'));
+      expect(rmCmd).toContain('docker rm -f prdagent-run-feature-a');
+    });
+
+    it('should use Development environment', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'run123', stderr: '', exitCode: 0 }));
+
+      const entry = makeEntry({ runContainerName: 'prdagent-run-feature-a' });
+      await service.runFromSource(entry, runOpts);
+
+      const runCmd = mock.commands.find((c) => c.includes('docker run'));
+      expect(runCmd).toContain('ASPNETCORE_ENVIRONMENT=Development');
+    });
+
+    it('should use different container name than deploy', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'run123', stderr: '', exitCode: 0 }));
+
+      const entry = makeEntry({
+        containerName: 'prdagent-api-feature-a',
+        runContainerName: 'prdagent-run-feature-a',
+      });
+      await service.runFromSource(entry, runOpts);
+
+      const runCmd = mock.commands.find((c) => c.includes('docker run'));
+      expect(runCmd).toContain('prdagent-run-feature-a');
+      expect(runCmd).not.toContain('prdagent-api-feature-a');
+    });
+
+    it('should NOT use --read-only (source needs write access)', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'run123', stderr: '', exitCode: 0 }));
+
+      const entry = makeEntry({ runContainerName: 'prdagent-run-feature-a' });
+      await service.runFromSource(entry, runOpts);
+
+      const runCmd = mock.commands.find((c) => c.includes('docker run'));
+      expect(runCmd).not.toContain('--read-only');
+    });
+
+    it('should throw if docker run fails', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({
+        stdout: '', stderr: 'port in use', exitCode: 125,
+      }));
+
+      const entry = makeEntry({ runContainerName: 'prdagent-run-feature-a' });
+      await expect(service.runFromSource(entry, runOpts)).rejects.toThrow('run');
+    });
+  });
+
+  describe('stop', () => {
+    it('should stop and remove container', async () => {
+      mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      await service.stop('prdagent-api-feature-a');
+      expect(mock.commands[0]).toContain('docker stop prdagent-api-feature-a');
+      expect(mock.commands[1]).toContain('docker rm prdagent-api-feature-a');
+    });
+
+    it('should not throw if container does not exist on rm', async () => {
+      mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm/, () => ({
+        stdout: '',
+        stderr: 'No such container',
+        exitCode: 1,
+      }));
+
+      await expect(service.stop('gone')).resolves.not.toThrow();
+    });
+  });
+
+  describe('isRunning', () => {
+    it('should return true if container is running', async () => {
+      mock.addResponsePattern(/docker inspect/, () => ({
+        stdout: 'true',
+        stderr: '',
+        exitCode: 0,
+      }));
+
+      const running = await service.isRunning('prdagent-api-feature-a');
+      expect(running).toBe(true);
+    });
+
+    it('should return false if container is not running', async () => {
+      mock.addResponsePattern(/docker inspect/, () => ({
+        stdout: 'false',
+        stderr: '',
+        exitCode: 0,
+      }));
+
+      const running = await service.isRunning('c-stopped');
+      expect(running).toBe(false);
+    });
+
+    it('should return false if container does not exist', async () => {
+      mock.addResponsePattern(/docker inspect/, () => ({
+        stdout: '',
+        stderr: 'No such object',
+        exitCode: 1,
+      }));
+
+      const running = await service.isRunning('c-missing');
+      expect(running).toBe(false);
+    });
+  });
+
+  describe('removeImage', () => {
+    it('should remove docker image', async () => {
+      mock.addResponsePattern(/docker rmi/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      await service.removeImage('prdagent-server:feature-a');
+      expect(mock.commands[0]).toContain('docker rmi prdagent-server:feature-a');
+    });
+  });
+});

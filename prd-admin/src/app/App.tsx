@@ -31,6 +31,7 @@ import MobileAuditPage from '@/pages/_dev/MobileAuditPage';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 import { AgentSwitcherProvider } from '@/components/agent-switcher';
+import { BranchBadge } from '@/components/BranchBadge';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -157,6 +158,7 @@ export default function App() {
   return (
     <AgentSwitcherProvider>
       <ToastContainer />
+      <BranchBadge />
       <Routes>
         {/* Landing page - public */}
         <Route path="/home" element={<LandingPage />} />

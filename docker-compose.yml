@@ -5,7 +5,8 @@ services:
     ports:
       - "5500:80"
     volumes:
-      - ./deploy/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # Per-branch nginx configs in conf.d/branches/, activated via symlink default.conf
+      - ./deploy/nginx/conf.d:/etc/nginx/conf.d:ro
       # 由 deploy.sh 从 GitHub Release 下载并解压到此目录
       - ./deploy/web/dist:/usr/share/nginx/html:ro
     depends_on:
@@ -84,7 +85,7 @@ volumes:
 
 networks:
   prdagent-network:
-    driver: bridge
+    external: true
 
 
 

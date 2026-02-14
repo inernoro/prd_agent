@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Branch Tester</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Branch Tester</h1>
+      <div class="header-actions">
+        <button id="cleanupBtn" class="danger" onclick="cleanupAll()" disabled title="没有可清理的分支">一键清理</button>
+        <div class="active-info" id="activeInfo">
+          <span class="gateway-label">Gateway :5500 →</span>
+          <select id="activeSwitcher" disabled>
+            <option value="">未指向任何分支</option>
+          </select>
+          <a id="activeLink" href="#" target="_blank" class="hidden">打开</a>
+          <button class="nginx-conf-btn" onclick="viewNginxConfig()" title="查看当前 Nginx 配置">Nginx</button>
+        </div>
+      </div>
+    </header>
+
+    <section class="branch-picker-section">
+      <h2>添加远程分支</h2>
+      <div class="branch-picker">
+        <div class="branch-picker-input-wrap">
+          <input id="branchSearch" type="text" placeholder="输入关键字搜索远程分支..." autocomplete="off">
+          <button id="refreshRemoteBtn" onclick="refreshRemoteBranches()" title="刷新远程分支">↻</button>
+        </div>
+        <div id="branchDropdown" class="branch-dropdown hidden"></div>
+      </div>
+    </section>
+
+    <section class="legend-bar">
+      <span class="legend-item"><span class="legend-dot run-dot"></span> 运行 = 源码 (dotnet run)</span>
+      <span class="legend-item"><span class="legend-dot deploy-dot"></span> 部署 = 制品 (Docker image + Nginx)</span>
+    </section>
+
+    <section id="branchList" class="branch-list">
+      <div class="empty-state">暂无分支，请从下拉框选择添加</div>
+    </section>
+
+    <section class="history-section">
+      <div class="history-header">
+        <h2>切换历史</h2>
+        <button id="rollbackBtn" onclick="doRollback()" disabled>↩ 回滚到上一个</button>
+      </div>
+      <div id="historyList" class="history-list">-</div>
+    </section>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <!-- Unified log modal (deploy / run / history) -->
+  <div id="logModal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeLogModal()"></div>
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2 id="logModalTitle">操作日志</h2>
+        <div class="log-tabs hidden" id="logTabs">
+          <button class="log-tab active" data-tab="live" onclick="switchLogTab('live')">实时日志</button>
+          <button class="log-tab" data-tab="history" onclick="switchLogTab('history')">操作历史</button>
+        </div>
+        <button class="modal-close" onclick="closeLogModal()">✕</button>
+      </div>
+      <div id="logModalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
