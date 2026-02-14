@@ -750,10 +750,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
         },
       });
 
+      // ---- activate nginx (route /api → dotnet, / → Vite) ----
+      send({ step: 'activate', status: 'running', title: '切换 Nginx 网关' });
+      try {
+        await doActivate(id);
+        send({
+          step: 'activate', status: 'done', title: '切换 Nginx 网关',
+          detail: { url: `http://localhost:${config.gateway.port}` },
+        });
+      } catch (activateErr) {
+        // Non-fatal: containers are running, just nginx switch failed
+        send({
+          step: 'activate', status: 'warn', title: 'Nginx 切换失败（容器已启动，可手动激活）',
+          log: (activateErr as Error).message,
+        });
+      }
+
       // ---- done ----
       send({
         step: 'complete', status: 'done',
-        detail: { url: `http://localhost:${entry.hostPort}` },
+        detail: { url: `http://localhost:${config.gateway.port}` },
       });
 
       opLog.status = 'completed';
@@ -1195,7 +1211,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      const newConf = switcherService.generateConfig(upstream.upstream, upstream.mode);
+      const webUpstream = upstream.mode === 'run' ? entry.runWebContainerName : undefined;
+      const newConf = switcherService.generateConfig(upstream.upstream, upstream.mode, webUpstream);
       await switcherService.applyConfig(newConf);
 
       // Nginx succeeded — NOW commit the state change

@@ -479,9 +479,9 @@ describe('Branch Routes', () => {
       expect(start!.detail.runContainerName).toBe('prdagent-run-feature-test');
       expect(start!.detail.sourceMount).toContain('prd-api');
 
-      // Verify no activate step
-      const activate = events.find((e) => e.step === 'activate');
-      expect(activate).toBeUndefined();
+      // Verify activate step fires after containers start (auto-activate nginx)
+      const activate = events.find((e) => e.step === 'activate' && e.status === 'done');
+      expect(activate).toBeDefined();
 
       // Docker run command: -p port, -v source mount, SDK image
       const runCmd = mock.commands.find(
@@ -493,13 +493,13 @@ describe('Branch Routes', () => {
       expect(runCmd).toContain('dotnet/sdk');
       expect(runCmd).toContain('dotnet watch run');
 
-      // State: runStatus = running, deploy status unchanged
+      // State: runStatus = running, deploy status unchanged, branch auto-activated
       const list = await request(server, 'GET', '/api/branches');
       const br = (list.body as any).branches['feature-test'];
       expect(br.runStatus).toBe('running');
       expect(br.runContainerName).toBe('prdagent-run-feature-test');
       expect(br.status).toBe('idle'); // deploy status NOT changed
-      expect((list.body as any).activeBranchId).toBeNull();
+      expect((list.body as any).activeBranchId).toBe('feature-test');
     });
 
     it('should return 409 if branch already running (isolation guard)', async () => {
