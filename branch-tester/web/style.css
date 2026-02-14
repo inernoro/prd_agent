@@ -1138,3 +1138,48 @@ button.warn:hover { background: #8a5900; color: #fff; }
   margin-left: auto;
   flex-shrink: 0;
 }
+
+/* ---- Nginx config viewer ---- */
+
+.nginx-conf-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #8b949e;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+}
+
+.nginx-conf-btn:hover {
+  background: #30363d;
+  color: #e1e4e8;
+}
+
+.nginx-conf-path {
+  font-size: 12px;
+  color: #8b949e;
+  margin-bottom: 12px;
+}
+
+.nginx-conf-path code {
+  color: #e1e4e8;
+  font-size: 11px;
+}
+
+.nginx-conf-content {
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #e1e4e8;
+  background: #010409;
+  border: 1px solid #21262d;
+  border-radius: 6px;
+  padding: 14px 16px;
+  max-height: 65vh;
+  overflow-y: auto;
+  white-space: pre;
+  line-height: 1.6;
+  tab-size: 4;
+}

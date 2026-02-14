@@ -132,6 +132,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json(safe);
   });
 
+  // GET /nginx-config — read current nginx.conf from disk
+  router.get('/nginx-config', (_req, res) => {
+    try {
+      const nginxConfPath = path.join(config.repoRoot, config.deployDir, 'nginx', 'nginx.conf');
+      if (!fs.existsSync(nginxConfPath)) {
+        res.status(404).json({ error: 'nginx.conf not found', path: nginxConfPath });
+        return;
+      }
+      const content = fs.readFileSync(nginxConfPath, 'utf-8');
+      res.json({ content, path: nginxConfPath });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // POST /branches — add a branch
   router.post('/branches', async (req, res) => {
     try {

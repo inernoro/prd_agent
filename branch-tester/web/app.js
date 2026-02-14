@@ -1158,6 +1158,23 @@ document.getElementById('activeSwitcher').addEventListener('change', async (e) =
   finally { setBusy(false); }
 });
 
+// ---- Nginx config viewer ----
+
+async function viewNginxConfig() {
+  openLogModal('Nginx 配置');
+  const body = document.getElementById('logModalBody');
+  body.innerHTML = '<div class="empty-state"><span class="loading"></span> 加载中...</div>';
+
+  try {
+    const data = await api('GET', '/nginx-config');
+    body.innerHTML = `
+      <div class="nginx-conf-path">文件路径: <code>${esc(data.path)}</code></div>
+      <pre class="nginx-conf-content">${esc(data.content)}</pre>`;
+  } catch (err) {
+    body.innerHTML = `<div class="deploy-step is-error"><div class="deploy-step-hdr">${STEP_ICONS.error} <span>${esc(err.message)}</span></div></div>`;
+  }
+}
+
 // Init
 loadRemoteBranches();
 refresh();
