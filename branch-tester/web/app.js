@@ -906,12 +906,12 @@ async function runDiagnostics(id) {
     // Show in log modal for easy copy-paste
     currentLogModalBranchId = id;
     openLogModal(`诊断报告 — ${id}`);
-    const container = document.getElementById('logContent');
-    container.innerHTML = '';
+    const body = document.getElementById('logModalBody');
+    body.innerHTML = '';
     const pre = document.createElement('pre');
     pre.style.cssText = 'white-space:pre-wrap;word-break:break-all;font-size:12px;line-height:1.5;';
     pre.textContent = report;
-    container.appendChild(pre);
+    body.appendChild(pre);
   } catch (err) {
     showToast(`诊断失败: ${err.message}`, 'error');
   } finally {
