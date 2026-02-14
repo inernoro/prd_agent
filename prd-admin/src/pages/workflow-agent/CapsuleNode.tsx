@@ -54,7 +54,7 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
 
   return (
     <div
-      className="relative group transition-all duration-200"
+      className="relative group"
       style={{
         minWidth: 180,
         maxWidth: 240,
@@ -76,7 +76,7 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
             background: 'rgba(255,255,255,0.15)',
             border: '2px solid rgba(255,255,255,0.3)',
             borderRadius: '50%',
-            transition: 'all 0.2s',
+            transition: 'background 0.2s, border-color 0.2s, box-shadow 0.2s',
           }}
           title={`${slot.name} (${slot.dataType})`}
         />
@@ -98,7 +98,7 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
 
       {/* 节点主体 — 应用呼吸动画 CSS class */}
       <div
-        className={`capsule-node-body ${statusClass} rounded-[14px] px-4 py-3 backdrop-blur-xl transition-all duration-200`}
+        className={`capsule-node-body ${statusClass} rounded-[14px] px-4 py-3 backdrop-blur-xl`}
         style={{
           '--node-glow-color': `hsla(${data.accentHue}, 50%, 60%, 0.08)`,
           background: sc.bg,
@@ -218,7 +218,7 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
             background: `hsla(${data.accentHue}, 60%, 55%, 0.3)`,
             border: `2px solid hsla(${data.accentHue}, 60%, 55%, 0.5)`,
             borderRadius: '50%',
-            transition: 'all 0.2s',
+            transition: 'background 0.2s, border-color 0.2s, box-shadow 0.2s',
           }}
           title={`${slot.name} (${slot.dataType})`}
         />

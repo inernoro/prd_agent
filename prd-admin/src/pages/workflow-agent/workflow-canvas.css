@@ -25,13 +25,14 @@
 /* 节点主体 — 呼吸态 */
 .capsule-node-body {
   animation: nodeBreath 4s ease-in-out infinite;
-  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
-              border-color 0.3s ease,
+  transition: border-color 0.3s ease,
               box-shadow 0.3s ease;
 }
 
 .capsule-node-body:hover {
-  transform: scale(1.03) translateY(-1px);
+  box-shadow:
+    0 0 20px var(--node-glow-color, rgba(255,255,255,0.06)),
+    0 4px 24px rgba(0,0,0,0.4);
 }
 
 /* 节点运行态 — 更强的脉冲 */
@@ -72,14 +73,9 @@
 
 /* ──── 端口呼吸 ──── */
 
-@keyframes handleBreath {
-  0%, 100% { transform: translate(-50%, -50%) scale(1); }
-  50% { transform: translate(-50%, -50%) scale(1.15); }
-}
-
 .react-flow__handle:hover {
-  animation: handleBreath 1.5s ease-in-out infinite;
-  filter: brightness(1.4);
+  filter: brightness(1.5);
+  box-shadow: 0 0 6px rgba(255,255,255,0.2);
 }
 
 /* ──── 进度条水波 ──── */
