@@ -728,11 +728,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const webBaseImage = config.run?.webBaseImage ?? 'node:20-slim';
       const webSourceDir = config.run?.webSourceDir ?? 'prd-admin';
       const webPort = config.run?.webPort ?? 8000;
-      const apiUpstream = entry.runContainerName!;
       // Vite dev server command: install deps + start with host binding so it's accessible from nginx.
       // allowedHosts is configured in vite.config.ts (not a CLI flag in Vite 6.x).
+      // IMPORTANT: Do NOT set VITE_API_BASE_URL here. The browser cannot resolve Docker-internal
+      // hostnames (e.g. prdagent-run-main:8080). Instead, the frontend should use relative paths
+      // (/api/...) which nginx reverse-proxies to the API container automatically.
       const webCommand = config.run?.webCommand
-        ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && VITE_API_BASE_URL=http://${apiUpstream}:8080 pnpm dev --host 0.0.0.0"`;
+        ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && pnpm dev --host 0.0.0.0"`;
 
       await containerService.runWebFromSource(entry, {
         webBaseImage,
@@ -904,9 +906,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const webBaseImage = config.run?.webBaseImage ?? 'node:20-slim';
         const webSourceDir = config.run?.webSourceDir ?? 'prd-admin';
         const webPort = config.run?.webPort ?? 8000;
-        const apiUpstream = entry.runContainerName!;
         const webCommand = config.run?.webCommand
-          ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && VITE_API_BASE_URL=http://${apiUpstream}:8080 pnpm dev --host 0.0.0.0"`;
+          ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && pnpm dev --host 0.0.0.0"`;
 
         await containerService.runWebFromSource(entry, {
           webBaseImage,
