@@ -678,7 +678,7 @@ public class AiToolboxController : ControllerBase
 
             await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
             {
-                if (!string.IsNullOrEmpty(chunk.Content))
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                 {
                     try
                     {
@@ -687,8 +687,7 @@ public class AiToolboxController : ControllerBase
                     catch (OperationCanceledException) { /* 客户端断开 */ }
                     catch (ObjectDisposedException) { /* 连接关闭 */ }
                 }
-
-                if (chunk.Type == GatewayChunkType.Error)
+                else if (chunk.Type == GatewayChunkType.Error)
                 {
                     await WriteSseEventAsync("error", new { message = chunk.Error ?? "LLM 调用失败" });
                     return;
@@ -769,7 +768,7 @@ public class AiToolboxController : ControllerBase
 
             await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
             {
-                if (!string.IsNullOrEmpty(chunk.Content))
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                 {
                     try
                     {
@@ -778,8 +777,7 @@ public class AiToolboxController : ControllerBase
                     catch (OperationCanceledException) { }
                     catch (ObjectDisposedException) { }
                 }
-
-                if (chunk.Type == GatewayChunkType.Error)
+                else if (chunk.Type == GatewayChunkType.Error)
                 {
                     await WriteSseEventAsync("error", new { message = chunk.Error ?? "调用失败" });
                     return;

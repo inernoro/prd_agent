@@ -231,7 +231,7 @@ public class VisualAgentAdapter : IAgentAdapter
 
         await foreach (var chunk in _gateway.StreamAsync(request, ct))
         {
-            if (!string.IsNullOrEmpty(chunk.Content))
+            if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
             {
                 fullContent.Append(chunk.Content);
                 yield return AgentStreamChunk.Text(chunk.Content);

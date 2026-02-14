@@ -261,24 +261,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 6. 读取流式响应
             using var stream = await response.Content.ReadAsStreamAsync(ct);
             using var reader = new StreamReader(stream);
+            var sseReader = new SseEventReader(reader);
 
             string? finishReason = null;
             var thinkingBuilder = new StringBuilder(); // 记录思考过程（用于日志）
-            var thinkTagStripper = new ThinkTagStripper(captureThinking: request.IncludeThinking); // 剥离 <think> 标签，可选捕获
+            var thinkTagStripper = new ThinkTagStripper(captureThinking: true); // 始终捕获 <think> 内容
 
-            while (!reader.EndOfStream)
+            await foreach (var data in sseReader.ReadEventsAsync(ct))
             {
-                var line = await reader.ReadLineAsync(ct);
-                if (string.IsNullOrEmpty(line)) continue;
-
-                if (!line.StartsWith("data:")) continue;
-                var data = line.Substring(5).Trim();
-
-                if (data == "[DONE]")
-                {
-                    break;
-                }
-
                 // 标记首字节
                 if (firstByteAt == null)
                 {
@@ -304,24 +294,18 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
                 if (chunk == null)
                 {
-                    // 调试：记录无法解析的 SSE 数据（仅记录前 200 字符）
-                    var dataPreview = data.Length > 200 ? data[..200] + "..." : data;
-                    _logger.LogDebug("[LlmGateway] ParseStreamChunk returned null for data: {DataPreview}", dataPreview);
                     continue;
                 }
 
                 // Thinking 类型（来自 reasoning_content 字段）
+                // Gateway 始终透传，由消费层 (GatewayLLMClient) 决定是否暴露给调用方
                 if (chunk.Type == GatewayChunkType.Thinking)
                 {
                     if (!string.IsNullOrEmpty(chunk.Content))
                     {
                         thinkingBuilder.Append(chunk.Content);
                     }
-                    // 当 IncludeThinking 时，将思考块传递给调用方
-                    if (request.IncludeThinking && !string.IsNullOrEmpty(chunk.Content))
-                    {
-                        yield return chunk;
-                    }
+                    yield return chunk;
                     continue;
                 }
 
@@ -330,15 +314,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     // 通过 ThinkTagStripper 过滤 <think>...</think> 标签
                     var stripped = thinkTagStripper.Process(chunk.Content);
 
-                    // 当 IncludeThinking 时，将 <think> 标签内容作为 Thinking 块传递
+                    // <think> 标签内容始终作为 Thinking 块透传
                     var capturedThink = thinkTagStripper.PopCapturedThinking();
                     if (!string.IsNullOrEmpty(capturedThink))
                     {
                         thinkingBuilder.Append(capturedThink);
-                        if (request.IncludeThinking)
-                        {
-                            yield return GatewayStreamChunk.Thinking(capturedThink);
-                        }
+                        yield return GatewayStreamChunk.Thinking(capturedThink);
                     }
 
                     if (!string.IsNullOrEmpty(stripped))
@@ -375,10 +356,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 记录思考过程（如果有）
             if (thinkingBuilder.Length > 0)
             {
-                var thinkingAction = request.IncludeThinking ? "已传递给调用方" : "已过滤";
                 _logger.LogDebug(
-                    "[LlmGateway] 模型思考过程{ThinkingAction}（{ThinkingChars} 字符）。AppCallerCode: {AppCallerCode}, Model: {Model}",
-                    thinkingAction,
+                    "[LlmGateway] 模型思考过程（{ThinkingChars} 字符）。AppCallerCode: {AppCallerCode}, Model: {Model}",
                     thinkingBuilder.Length,
                     request.AppCallerCode,
                     resolution?.ActualModel);
