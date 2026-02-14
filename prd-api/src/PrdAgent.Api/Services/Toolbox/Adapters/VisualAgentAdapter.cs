@@ -260,6 +260,7 @@ public class VisualAgentAdapter : IAgentAdapter
                             - Keep the core meaning
                             - Add artistic style descriptions if appropriate
                             - Use professional image generation prompt format
+                            - If the description contains text that should appear in the image, specify that text must be rendered in Chinese (e.g. "with Chinese text '某某'")
                             - Output only the English prompt, nothing else
                             """
                     },
