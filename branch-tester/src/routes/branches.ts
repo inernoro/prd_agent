@@ -729,9 +729,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const webSourceDir = config.run?.webSourceDir ?? 'prd-admin';
       const webPort = config.run?.webPort ?? 8000;
       const apiUpstream = entry.runContainerName!;
-      // Vite dev server command: install deps + start with host binding so it's accessible from nginx
+      // Vite dev server command: install deps + start with host binding so it's accessible from nginx.
+      // --allowedHosts all: Vite 6+ blocks requests whose Host header doesn't match; since the
+      // container sits behind our nginx reverse-proxy the Host will be the external domain, so we
+      // must allow all hosts here (security is handled at the nginx layer).
       const webCommand = config.run?.webCommand
-        ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && VITE_API_BASE_URL=http://${apiUpstream}:8080 pnpm dev --host 0.0.0.0"`;
+        ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && VITE_API_BASE_URL=http://${apiUpstream}:8080 pnpm dev --host 0.0.0.0 --allowedHosts all"`;
 
       await containerService.runWebFromSource(entry, {
         webBaseImage,
@@ -1027,14 +1030,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // Test Vite direct (inside docker network)
     if (entry.runWebContainerName) {
+      const viteUrl = `http://${entry.runWebContainerName}:8000/`;
       const viteTest = await shell.exec(
-        `docker exec ${gatewayContainer} curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://${entry.runWebContainerName}:8000/ 2>&1`,
+        `docker exec ${gatewayContainer} curl -s -o /dev/null -w "%{http_code}" --max-time 5 ${viteUrl} 2>&1`,
       );
+      const httpCode = viteTest.stdout.trim();
+      let detail = `GET ${viteUrl} → HTTP ${httpCode || viteTest.stderr.trim()}`;
+      // On 403, fetch body to show Vite's allowedHosts message
+      if (httpCode === '403') {
+        const body = await shell.exec(
+          `docker exec ${gatewayContainer} curl -s --max-time 5 ${viteUrl} 2>&1`,
+        );
+        detail += `\n\n${body.stdout.trim().slice(0, 500)}`;
+      }
       checks.push({
         name: 'vite_direct',
-        status: viteTest.stdout.trim() === '200' ? 'pass'
-              : viteTest.stdout.trim() === '000' ? 'fail' : 'warn',
-        detail: `GET http://${entry.runWebContainerName}:8000/ → HTTP ${viteTest.stdout.trim() || viteTest.stderr.trim()}`,
+        status: httpCode === '200' ? 'pass'
+              : httpCode === '000' ? 'fail' : 'warn',
+        detail,
       });
     }
 
