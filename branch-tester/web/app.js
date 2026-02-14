@@ -114,6 +114,9 @@ function branchActions(b, isActive) {
   // ── Management ──
   const mgmtBtns = [];
   mgmtBtns.push(`<button onclick="viewLogs('${b.id}')" title="查看日志">日志</button>`);
+  if (srcRunning) {
+    mgmtBtns.push(`<button onclick="runDiagnostics('${b.id}')" title="运行模式诊断检查">诊断</button>`);
+  }
   mgmtBtns.push(hasError
     ? `<button class="warn" onclick="resetBranch('${b.id}')" title="重置错误状态">重置</button>`
     : `<button disabled title="无异常状态需要重置">重置</button>`);
@@ -881,6 +884,39 @@ async function stopRunBranch(id) {
     showToast(`${id} 源码运行已停止`, 'success');
   } catch (err) { showToast(err.message, 'error'); }
   finally { setBusy(false); }
+}
+
+async function runDiagnostics(id) {
+  if (busy) return;
+  setBusy(true);
+  try {
+    const data = await api('GET', `/branches/${id}/run-diagnostics`);
+    const checks = data.checks || [];
+
+    // Build readable report
+    const statusIcon = { pass: '\u2705', fail: '\u274c', warn: '\u26a0\ufe0f', skip: '\u23ed\ufe0f' };
+    const lines = checks.map(c => {
+      const icon = statusIcon[c.status] || '?';
+      return `${icon} [${c.name}] ${c.status.toUpperCase()}\n${c.detail}`;
+    });
+
+    const overall = data.overall === 'healthy' ? '\u2705 ALL PASS' : '\u274c UNHEALTHY';
+    const report = `=== Diagnostics: ${id} ===\nOverall: ${overall}\n\n${lines.join('\n\n---\n\n')}`;
+
+    // Show in log modal for easy copy-paste
+    currentLogModalBranchId = id;
+    openLogModal(`诊断报告 — ${id}`);
+    const container = document.getElementById('logContent');
+    container.innerHTML = '';
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'white-space:pre-wrap;word-break:break-all;font-size:12px;line-height:1.5;';
+    pre.textContent = report;
+    container.appendChild(pre);
+  } catch (err) {
+    showToast(`诊断失败: ${err.message}`, 'error');
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function stopBranch(id) {

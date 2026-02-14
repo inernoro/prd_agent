@@ -900,6 +900,138 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // GET /branches/:id/run-diagnostics — Comprehensive health check for run mode
+  router.get('/branches/:id/run-diagnostics', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `Branch "${id}" not found` });
+      return;
+    }
+
+    const checks: Array<{ name: string; status: 'pass' | 'fail' | 'warn' | 'skip'; detail: string }> = [];
+
+    // 1. Branch state
+    checks.push({
+      name: 'branch_state',
+      status: entry.runStatus === 'running' ? 'pass' : 'fail',
+      detail: JSON.stringify({
+        runStatus: entry.runStatus,
+        runContainerName: entry.runContainerName ?? '(not set)',
+        runWebContainerName: entry.runWebContainerName ?? '(not set)',
+        hostPort: entry.hostPort ?? '(not set)',
+        deployStatus: entry.status,
+        isActive: stateService.getState().activeBranchId === id,
+      }, null, 2),
+    });
+
+    // 2. API container alive
+    if (entry.runContainerName) {
+      const alive = await containerService.isRunning(entry.runContainerName);
+      const inspect = await shell.exec(
+        `docker inspect --format '{{.State.Status}} | {{.Config.Cmd}}' ${entry.runContainerName} 2>&1`,
+      );
+      checks.push({
+        name: 'api_container',
+        status: alive ? 'pass' : 'fail',
+        detail: `container=${entry.runContainerName}\nalive=${alive}\ninspect=${inspect.stdout.trim()}`,
+      });
+    } else {
+      checks.push({ name: 'api_container', status: 'fail', detail: 'runContainerName not set in state' });
+    }
+
+    // 3. Web container alive
+    if (entry.runWebContainerName) {
+      const alive = await containerService.isRunning(entry.runWebContainerName);
+      const inspect = await shell.exec(
+        `docker inspect --format '{{.State.Status}} | {{.Config.Cmd}}' ${entry.runWebContainerName} 2>&1`,
+      );
+      checks.push({
+        name: 'web_container',
+        status: alive ? 'pass' : 'fail',
+        detail: `container=${entry.runWebContainerName}\nalive=${alive}\ninspect=${inspect.stdout.trim()}`,
+      });
+    } else {
+      checks.push({ name: 'web_container', status: 'fail', detail: 'runWebContainerName not set in state' });
+    }
+
+    // 4. Nginx config analysis
+    const nginxConfPath = path.join(config.repoRoot, config.deployDir, 'nginx', 'nginx.conf');
+    if (fs.existsSync(nginxConfPath)) {
+      const nginxConf = fs.readFileSync(nginxConfPath, 'utf-8');
+      // Extract upstream targets from config
+      const apiMatch = nginxConf.match(/location \^~ \/api\/[\s\S]*?proxy_pass\s+http:\/\/([^;]+);/);
+      const webMatch = nginxConf.match(/location \/[\s\S]*?proxy_pass\s+http:\/\/([^;]+);/);
+      const apiTarget = apiMatch?.[1] ?? '(not found)';
+      const webTarget = webMatch?.[1] ?? '(not found)';
+      const isSameTarget = apiTarget === webTarget;
+      const expectedWebTarget = entry.runWebContainerName
+        ? `${entry.runWebContainerName}:8000`
+        : '(runWebContainerName not set)';
+
+      checks.push({
+        name: 'nginx_routing',
+        status: isSameTarget ? 'fail' : 'pass',
+        detail: [
+          `api_target=${apiTarget}`,
+          `web_target=${webTarget}`,
+          `expected_web_target=${expectedWebTarget}`,
+          isSameTarget ? 'BUG: api and web route to SAME target!' : 'OK: api and web route to different targets',
+          `---\n${nginxConf}`,
+        ].join('\n'),
+      });
+    } else {
+      checks.push({ name: 'nginx_routing', status: 'skip', detail: 'nginx.conf not found' });
+    }
+
+    // 5. HTTP connectivity through gateway
+    const gatewayPort = config.gateway.port;
+    const gatewayContainer = config.gateway.containerName;
+
+    // Test /api/ route → should reach dotnet
+    const apiTest = await shell.exec(
+      `docker exec ${gatewayContainer} curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:80/api/health 2>&1`,
+    );
+    checks.push({
+      name: 'http_api_route',
+      status: apiTest.stdout.trim() === '200' ? 'pass'
+            : apiTest.stdout.trim() === '000' ? 'fail' : 'warn',
+      detail: `GET /api/health → HTTP ${apiTest.stdout.trim() || apiTest.stderr.trim()}`,
+    });
+
+    // Test / route → should reach Vite
+    const webTest = await shell.exec(
+      `docker exec ${gatewayContainer} curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:80/ 2>&1`,
+    );
+    checks.push({
+      name: 'http_web_route',
+      status: webTest.stdout.trim() === '200' ? 'pass'
+            : webTest.stdout.trim() === '000' ? 'fail' : 'warn',
+      detail: `GET / → HTTP ${webTest.stdout.trim() || webTest.stderr.trim()}`,
+    });
+
+    // Test Vite direct (inside docker network)
+    if (entry.runWebContainerName) {
+      const viteTest = await shell.exec(
+        `docker exec ${gatewayContainer} curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://${entry.runWebContainerName}:8000/ 2>&1`,
+      );
+      checks.push({
+        name: 'vite_direct',
+        status: viteTest.stdout.trim() === '200' ? 'pass'
+              : viteTest.stdout.trim() === '000' ? 'fail' : 'warn',
+        detail: `GET http://${entry.runWebContainerName}:8000/ → HTTP ${viteTest.stdout.trim() || viteTest.stderr.trim()}`,
+      });
+    }
+
+    // Summary
+    const allPass = checks.every((c) => c.status === 'pass' || c.status === 'skip');
+    res.json({
+      branchId: id,
+      overall: allPass ? 'healthy' : 'unhealthy',
+      checks,
+    });
+  });
+
   // POST /branches/:id/deploy — SSE stream: build + start + activate + health check
   router.post('/branches/:id/deploy', async (req, res) => {
     const { id } = req.params;
