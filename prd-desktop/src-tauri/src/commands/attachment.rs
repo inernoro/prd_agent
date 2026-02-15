@@ -83,10 +83,7 @@ pub async fn upload_attachment(
         req = req.header("Authorization", format!("Bearer {}", token));
     }
 
-    let response = req
-        .send()
-        .await
-        .map_err(|e| format!("上传失败: {}", e))?;
+    let response = req.send().await.map_err(|e| format!("上传失败: {}", e))?;
 
     let status = response.status();
     let text = response
