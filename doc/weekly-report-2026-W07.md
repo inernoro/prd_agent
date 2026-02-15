@@ -1,0 +1,223 @@
+# 周报 2026-W07 (02-09 ~ 02-15)
+
+> **总计 198 次提交 | 32 个 PR 合并 | +380,410 行 / -11,830 行**
+>
+> **贡献者**：Claude (194 commits), Cursor Agent (4 commits)
+
+---
+
+## 一、已合并 Pull Requests (#94 ~ #125)
+
+| PR | 标题 | 分类 |
+|----|------|------|
+| #125 | show-thinking-section — AI 思维链展示 | 🧠 AI 能力 |
+| #124 | streamline-branch-testing — 分支测试器全面升级 | 🔧 DevOps |
+| #123 | add-chinese-writing-prompts — 文学创作中文插图描述 | ✍️ 文学 Agent |
+| #122 | update-quick-ps1-watch — 后端热重载开发脚本 | 🔧 DevOps |
+| #121 | expand-dialog-box — 视觉 Agent 对话面板扩大 | 🎨 视觉 Agent |
+| #120 | fix-panel-color — 面板颜色统一修复 | 🎨 UI/UX |
+| #119 | remove-duplicate-lists — 模型池编辑去重 | 🔧 模型管理 |
+| #118 | refactor-domain-references — 消除硬编码 CDN 域名 | 🏗️ 架构 |
+| #117 | separate-nav-skin-tabs — 皮肤与导航独立 Tab | 🎨 UI/UX |
+| #116 | fix-image-copy-clipboard — Ctrl+C 画布图片复制修复 | 🐛 Bug 修复 |
+| #115 | debug-validation-error — 部署脚本 SHA256 校验改进 | 🔧 DevOps |
+| #114 | fix-ui-consistency — 对话框/按钮/登录页一致性修复 | 🎨 UI/UX |
+| #113 | unify-panel-colors — 全局面板颜色统一为 CSS 变量 | 🎨 UI/UX |
+| #112 | mobile-adaptation-planning — 移动端适配 (全量) | 📱 移动端 |
+| #111 | screenshot-tutorial-email — 截图教程邮件功能 | ✨ 新功能 |
+| #110 | fix-collapsed-elements — 系统提示词编辑器折叠修复 | 🐛 Bug 修复 |
+| #109 | desktop-attachments-skills — 桌面端附件上传 + 技能系统 | 🖥️ 桌面端 |
+| #108 | add-card-effect-toolbox — AI 百宝箱卡片效果 + 导航重构 | 🎨 UI/UX |
+| #107 | fix-admin-performance — 性能模式 + 散装玻璃迁移 | ⚡ 性能 |
+| #106 | fix-image-generation-style — 生图风格推断修复 | 🐛 Bug 修复 |
+| #105 | restore-literary-system — 恢复 PR#102 丢失的文学 Agent 功能 | 🐛 Bug 修复 |
+| #104 | add-gemini-3-pro-config — Gemini 3 Pro 图片生成模型 | 🧠 AI 能力 |
+| #103 | fix-image-url-redraw — 画布交互修复 (dialog/尺寸/Delete键) | 🐛 Bug 修复 |
+| #102 | fix-model-list-retrieval — 模型池查询服务提炼 | 🏗️ 架构 |
+| #101 | literary-prompt-insertion-system — 提示词技能化全栈架构 | ✨ 新功能 |
+| #100 | enable-developer-options — Agent 体验者权限 + 隐藏仪表盘 | 🔐 权限 |
+| #99 | webhook-notification-system — 自动化规则 + Webhook + 模板 | ✨ 新功能 |
+| #98 | weekly-summary-report — 周报生成 | 📝 文档 |
+| #97 | fix-prdagent-update — 桌面端自动更新修复 | 🐛 Bug 修复 |
+| #96 | fix-404-empty-response — 桌面端缺陷 Agent 404 修复 | 🐛 Bug 修复 |
+| #95 | enable-group-creation — 允许所有用户创建群组 | ✨ 新功能 |
+| #94 | postman-curl-env-vars — 冒烟测试环境变量 | 🔧 DevOps |
+
+---
+
+## 二、本周完成
+
+### 1. 移动端适配 (Mobile Adaptation) — 全量落地
+
+本周最大的功能块，从零搭建移动端基础设施并适配全部核心页面。
+
+- **5-Tab 架构**：Home / Browse / + / Assets / Profile，底部导航栏带发光中心按钮
+- **移动端首页**：P0 Mobile Dashboard，后端 API 提供真实 feed/stats/assets 数据
+- **Agent 快捷入口**：放射状扇形菜单 (Radial Fan Menu) 替代 BottomSheet
+- **VisualAgent 画布**：重新设计移动端画布交互，增加画笔和上传工具
+- **全量页面适配**：批量适配剩余 admin 页面 + 审计工具
+- **导航重构**：合并 PRD 协作 → AI 百宝箱，精简 Executive Tab 标签
+- **触控优化**：改善移动端触摸目标尺寸
+
+### 2. AI 思维链 (Thinking Content) — 全链路可见
+
+打通 LLM 思维过程从生成到展示的完整链路。
+
+- **流式推送**：思维内容实时流式推送到前端左侧面板
+- **持久化存储**：thinking content 写入 messages 和 llm_request_logs
+- **多格式支持**：同时捕获 `reasoning_content` 字段和 `<think>` 标签内容
+- **桌面端展示**：AI 思考过程在内容前显示，输出时自动折叠
+- **Gateway 隔离**：Gateway 层面实现 thinking 隔离 + Intent 模型强制不返回思维链
+- **竞态修复**：解决 thinking 早期占位符 + startStreaming 合并竞态条件
+- **Markdown 渲染**：思维面板内容支持 Markdown 渲染
+
+### 3. 分支测试器 (Branch Tester) — 架构升级
+
+从简单部署工具升级为完整的多分支开发环境管理器。
+
+- **双容器运行模式**：dotnet API + Vite dev server 独立容器
+- **细粒度控制**：Pull / Restart-API / Restart-Web 独立操作按钮
+- **Nginx 架构重构**：symlink 切换 + 每分支预生成配置文件 + Docker DNS 解析
+- **Gateway 切换**：自由切换所有分支 + 断开连接 + 数据库管理 (clone/switch)
+- **诊断系统**：run-diagnostics 端点 + UI 按钮 + 崩溃日志收集
+- **基础设施自动化**：启动时自动确保 Docker 网络/MongoDB/Redis (InfraService)
+- **分支标识**：构建时注入 BranchBadge 浮动组件，交叉验证 build 分支 vs gateway 分支
+- **并发安全**：per-branch busy tracking 替代全局锁
+- **UX 改进**：垂直时间线 + 动画部署条纹 + 日志去重
+
+### 4. 文学创作 Agent 增强
+
+- **流式输出**：标记生成期间展示完整 AI 输出，完成后切换为文章视图
+- **Anchor 模式优化**：流式传输原始 delta 消除 thinking→marker 停顿
+- **中文描述**：插图描述改为中文输出，图片中文字保持中文
+- **新标记卡片动画**：发光边框入场动画
+- **Bug 修复**：4 个关键修复 (滚动跳动、定位、动画、幻影参考图)
+- **功能恢复**：修复 PR#102 合并导致的功能丢失
+
+### 5. UI/UX 全局统一
+
+- **面板颜色统一**：所有页面/子组件的面板背景色统一为 CSS 变量 (`--panel-bg`)
+- **性能模式重设计**：从模糊玻璃改为 Obsidian 纯色暗黑风格，解决 Windows backdrop-filter 卡顿
+- **导航结构重构**：删除仪表盘入口，合并群组/资源/权限/数据到页签，新增 Cmd+K 启动页
+- **散装玻璃迁移**：完成剩余 74 处散装液态玻璃样式迁移到统一组件
+- **AI 百宝箱卡片**：aurora 渐变头部替换为基础 GlassCard 效果
+- **对话框/按钮一致性**：对话框收敛、按钮样式统一、登录页玻璃效果、路由解耦
+
+### 6. 教程邮件系统 (Tutorial Email)
+
+- **AI 生成**：一键 AI 生成邮件模板 + 快速发送工作流
+- **分屏布局**：左预览右对话的分屏布局
+- **AppCaller 注册**：`tutorial-email.generate::chat` 接入 LLM Gateway
+- **安全加固**：修复模板预览 XSS 风险
+
+### 7. 提示词技能化 (Skill System)
+
+- **全栈架构**：统一 Skill 模型 + 服务端 CRUD + 单击执行
+- **Admin 管理页面**：完整 CRUD + 权限控制 + 导航集成
+- **SkillService 改造**：直接从 prompt_stages 读取系统技能，免迁移
+- **桌面端集成**：服务端公共技能 + 客户端本地自定义技能
+
+### 8. 自动化规则 (Automation Rules) 重写
+
+- **布局重写**：从列表改为 master-detail 分栏布局
+- **Webhook 触发器**：新增 incoming webhook 触发类型 + Tab 切换 + 流程预览
+- **消息模板**：支持 `{{placeholder}}` 变量插值 + 用户下拉选择通知目标
+- **WorkflowProgressBar**：替代 FlowPreview，改进 UserMultiSelect 组件
+
+### 9. 总裁面板 (Executive Dashboard) 迭代
+
+- **全景战力面板**：重新设计 Team Insights 为 Panoramic Power Panel
+- **排行榜**：水平柱状图排名卡片 + 按维度排行榜
+- **雷达图迭代**：从 4 图到双图 (Agent vs Activity)，主题化配色
+- **去 Mock 化**：移除 mock 数据开关，仅使用真实数据
+- **布局优化**：Groups 维度补全、排名表上移、雷达图放大
+
+### 10. LLM 日志图片架构简化
+
+- **直写架构**：InputImages / OutputImages 直接写入日志，移除回退逻辑
+- **双栏预览**：LLM 日志图片预览改为左右布局 + 详情面板加宽
+- **测试覆盖**：新增 PatchLogImages 测试 + 修复中文 Unicode 转义
+
+### 11. 桌面端 (Tauri) 增强
+
+- **预设服务器选择器**：pa.759800.com / miduo.org / sassagent.com 三服务器切换
+- **附件上传**：图片选择/预览/上传完整流程
+- **缺陷管理对齐**：Desktop 缺陷面板与 Admin 面板功能对齐
+- **自动更新修复**：dialog ACL 权限不足、reqwest multipart feature
+- **剪贴板修复**：Ctrl+C 选中画布图片复制到剪贴板
+
+### 12. 架构与基础设施
+
+- **超长文本 COS 存储**：JSON 字符串值 >1024 字符自动上传 COS，MongoDB 仅存引用
+- **CDN 域名集中化**：消除硬编码 CDN 域名引用，统一通过环境变量配置
+- **API 权限隔离**：消除 Agent 页面对管理端点 (`/api/mds/`) 的非法调用，各 Agent 使用私有化端点
+- **ModelPoolQueryService**：提炼模型池查询为独立服务，各应用 Controller 自带模型列表端点
+- **Gemini 3 Pro**：新增 gemini-3-pro-image-preview 图片生成模型配置
+- **Gateway 日志增强**：ModelType 重分类修正 + 日志字段澄清 + skill contextScope 串联
+
+### 13. 其他改进
+
+- **群组创建开放**：允许所有用户创建群组，移除 PM/ADMIN 角色限制
+- **Agent 体验者权限**：隐藏仪表盘 + 默认拥有 AI 百宝箱权限
+- **SSE 解析重构**：SseEventReader + Utf8JsonReader 简化 thinking 解析
+- **Tauri 构建优化**：源图标未变时跳过图标生成
+- **后端热重载**：quick.ps1 改用 dotnet watch run
+
+---
+
+## 三、本周数据
+
+### 每日提交分布
+
+| 日期 | 提交数 | 重点方向 |
+|------|--------|----------|
+| 02-09 (周日) | 6 | 教程邮件功能 |
+| 02-10 (周一) | 67 | 自动化规则、总裁面板、文学 Agent、桌面端、COS 存储 |
+| 02-11 (周二) | 49 | 移动端适配、技能系统、性能模式、导航重构 |
+| 02-12 (周三) | 6 | CDN 集中化、皮肤/导航分离、剪贴板修复 |
+| 02-13 (周四) | 25 | 分支测试器、思维链持久化、Gateway 切换 |
+| 02-14 (周五) | 41 | 分支测试器架构升级、思维链 Gateway 隔离、SSE 重构 |
+
+### 提交类型分布
+
+| 类型 | 数量 | 占比 |
+|------|------|------|
+| feat (新功能) | 44 | 22% |
+| fix (Bug 修复) | 77 | 39% |
+| refactor (重构) | 24 | 12% |
+| 其他 (docs/chore/perf/ui) | 9 | 5% |
+| 中文 commit / 无前缀 | 44 | 22% |
+
+---
+
+## 四、与上周 (W06) 对比
+
+| 指标 | W06 | W07 | 变化 |
+|------|-----|-----|------|
+| 提交数 | 241 | 198 | -18% |
+| 合并 PR 数 | — | 32 | 新指标 |
+| 新增行数 | +57,589 | +380,410 | +560% (含移动端大量新页面) |
+| 删除行数 | -4,238 | -11,830 | +179% |
+
+### 上周方向落地情况
+
+| W06 建议方向 | W07 实际进展 |
+|-------------|-------------|
+| P0 PRD Agent 体验重构 | ✅ 技能系统全栈落地，Agent 体验者权限体系 |
+| P0 总裁面板 | ✅ Team Insights 全景战力面板 + 去 Mock 化 |
+| P1 新手教程 | ✅ 教程邮件系统 (AI 生成 + 分屏布局) |
+| P2 移动端 | ✅ **超额完成** — 5-Tab 架构 + 全量页面适配 |
+| P2 工作流引擎 | ✅ 自动化规则重写 + Webhook 触发器 |
+
+---
+
+## 五、下周优先级建议
+
+| 优先级 | 方向 | 建议动作 |
+|--------|------|----------|
+| P0 | 思维链体验打磨 | Gateway thinking 隔离验证 + 前端折叠/展开交互优化 |
+| P0 | 移动端 QA | 多设备/多浏览器兼容性测试，触控交互细节打磨 |
+| P1 | 分支测试器稳定化 | 集成测试覆盖核心流程，文档补全 |
+| P1 | 知识库 MVP | 文档上传 + 向量索引 + 对话引用 |
+| P2 | 自动化规则 v2 | 定时触发器 + 更多动作类型 |
+| P2 | 桌面端功能对齐 | 与 Admin 端剩余功能差异收敛 |
