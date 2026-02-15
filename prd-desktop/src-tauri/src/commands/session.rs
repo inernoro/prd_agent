@@ -172,15 +172,6 @@ fn handle_sse_text(
         // 默认期望 data 是 JSON（后端会发 {"type":"delta"...}），但这里要容错
         match serde_json::from_str::<serde_json::Value>(&data) {
             Ok(event) => {
-                // Debug: 打印前5个 delta 事件的原始数据
-                if channel == "group-message"
-                    && event.get("type").and_then(|t| t.as_str()) == Some("delta")
-                {
-                    eprintln!(
-                        "[SSE Debug] group-message delta event: {}",
-                        serde_json::to_string(&event).unwrap_or_default()
-                    );
-                }
                 let _ = app.emit(channel, event);
             }
             Err(_) => {

@@ -46,6 +46,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _adapters[adapter.PlatformType] = adapter;
     }
 
+    /// <summary>
+    /// 计算是否实际允许思考内容透传。
+    /// Intent 模型类型强制禁止思考输出，其他类型尊重请求方的 IncludeThinking 设置。
+    /// </summary>
+    public static bool IsThinkingEffective(bool includeThinking, string modelType)
+    {
+        return includeThinking
+            && !string.Equals(modelType, ModelTypes.Intent, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <inheritdoc />
     public async Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
     {
@@ -96,7 +106,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
 
             _logger.LogInformation(
-                "[LlmGateway] 发送请求\n" +
+                "[LlmGateway] 向 LLM 发起非流式请求\n" +
                 "  AppCallerCode: {AppCallerCode}\n" +
                 "  ExpectedModel: {ExpectedModel}\n" +
                 "  ActualModel: {ActualModel}\n" +
@@ -224,7 +234,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
 
             _logger.LogInformation(
-                "[LlmGateway] 发送流式请求\n" +
+                "[LlmGateway] 向 LLM 发起流式请求\n" +
                 "  AppCallerCode: {AppCallerCode}\n" +
                 "  ExpectedModel: {ExpectedModel}\n" +
                 "  ActualModel: {ActualModel}\n" +
@@ -261,24 +271,19 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 6. 读取流式响应
             using var stream = await response.Content.ReadAsStreamAsync(ct);
             using var reader = new StreamReader(stream);
+            var sseReader = new SseEventReader(reader);
 
             string? finishReason = null;
             var thinkingBuilder = new StringBuilder(); // 记录思考过程（用于日志）
-            var thinkTagStripper = new ThinkTagStripper(captureThinking: request.IncludeThinking); // 剥离 <think> 标签，可选捕获
+            var thinkTagStripper = new ThinkTagStripper(captureThinking: true); // 始终捕获 <think> 内容
+            var thinkingStarted = false; // 调试：标记思考是否已开始
+            var contentStarted = false;  // 调试：标记正文是否已开始
 
-            while (!reader.EndOfStream)
+            // Intent 模型类型强制禁止思考输出，其他类型尊重请求方设置
+            var effectiveIncludeThinking = IsThinkingEffective(request.IncludeThinking, request.ModelType);
+
+            await foreach (var data in sseReader.ReadEventsAsync(ct))
             {
-                var line = await reader.ReadLineAsync(ct);
-                if (string.IsNullOrEmpty(line)) continue;
-
-                if (!line.StartsWith("data:")) continue;
-                var data = line.Substring(5).Trim();
-
-                if (data == "[DONE]")
-                {
-                    break;
-                }
-
                 // 标记首字节
                 if (firstByteAt == null)
                 {
@@ -290,24 +295,39 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
 
                 // 解析 SSE 数据
-                var chunk = adapter.ParseStreamChunk(data);
+                GatewayStreamChunk? chunk;
+                try
+                {
+                    chunk = adapter.ParseStreamChunk(data);
+                }
+                catch (Exception parseEx)
+                {
+                    // Adapter 解析失败（JSON 异常等），记录错误但不中断流
+                    var dataPreview = data.Length > 200 ? data[..200] + "..." : data;
+                    _logger.LogWarning(parseEx, "[LlmGateway] ParseStreamChunk 异常, data: {DataPreview}", dataPreview);
+                    continue;
+                }
                 if (chunk == null)
                 {
-                    // 调试：记录无法解析的 SSE 数据（仅记录前 200 字符）
-                    var dataPreview = data.Length > 200 ? data[..200] + "..." : data;
-                    _logger.LogDebug("[LlmGateway] ParseStreamChunk returned null for data: {DataPreview}", dataPreview);
                     continue;
                 }
 
                 // Thinking 类型（来自 reasoning_content 字段）
+                // Gateway 根据 IncludeThinking 决定是否透传给调用方
+                // Intent 模型类型强制禁止思考输出（无论 IncludeThinking 设置如何）
                 if (chunk.Type == GatewayChunkType.Thinking)
                 {
+                    if (!thinkingStarted)
+                    {
+                        thinkingStarted = true;
+                        _logger.LogInformation("[LlmGateway] ✦ 思考开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
+                    }
                     if (!string.IsNullOrEmpty(chunk.Content))
                     {
-                        thinkingBuilder.Append(chunk.Content);
+                        thinkingBuilder.Append(chunk.Content); // 日志始终记录，无论是否透传
                     }
-                    // 当 IncludeThinking 时，将思考块传递给调用方
-                    if (request.IncludeThinking && !string.IsNullOrEmpty(chunk.Content))
+                    // 仅在 IncludeThinking=true 且非 Intent 模型类型时透传
+                    if (effectiveIncludeThinking)
                     {
                         yield return chunk;
                     }
@@ -316,15 +336,20 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 if (!string.IsNullOrEmpty(chunk.Content) && chunk.Type == GatewayChunkType.Text)
                 {
+                    if (!contentStarted)
+                    {
+                        contentStarted = true;
+                        _logger.LogInformation("[LlmGateway] ✦ 正文开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
+                    }
                     // 通过 ThinkTagStripper 过滤 <think>...</think> 标签
                     var stripped = thinkTagStripper.Process(chunk.Content);
 
-                    // 当 IncludeThinking 时，将 <think> 标签内容作为 Thinking 块传递
+                    // <think> 标签内容：日志始终记录，仅在 effectiveIncludeThinking 时透传
                     var capturedThink = thinkTagStripper.PopCapturedThinking();
                     if (!string.IsNullOrEmpty(capturedThink))
                     {
                         thinkingBuilder.Append(capturedThink);
-                        if (request.IncludeThinking)
+                        if (effectiveIncludeThinking)
                         {
                             yield return GatewayStreamChunk.Thinking(capturedThink);
                         }
@@ -364,10 +389,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 记录思考过程（如果有）
             if (thinkingBuilder.Length > 0)
             {
-                var thinkingAction = request.IncludeThinking ? "已传递给调用方" : "已过滤";
                 _logger.LogDebug(
-                    "[LlmGateway] 模型思考过程{ThinkingAction}（{ThinkingChars} 字符）。AppCallerCode: {AppCallerCode}, Model: {Model}",
-                    thinkingAction,
+                    "[LlmGateway] 模型思考过程（{ThinkingChars} 字符）。AppCallerCode: {AppCallerCode}, Model: {Model}",
                     thinkingBuilder.Length,
                     request.AppCallerCode,
                     resolution?.ActualModel);
@@ -398,7 +421,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     resolution?.ActualModel);
             }
 
-            await FinishStreamLogAsync(logId, assembledText, tokenUsage, durationMs, ct);
+            var assembledThinking = thinkingBuilder.ToString();
+            await FinishStreamLogAsync(logId, assembledText, assembledThinking, tokenUsage, durationMs, ct);
         }
         finally
         {
@@ -613,7 +637,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
 
             _logger.LogInformation(
-                "[LlmGateway.SendRaw] 发送请求\n" +
+                "[LlmGateway.SendRaw] 向 LLM 发起原始请求\n" +
                 "  AppCallerCode: {AppCallerCode}\n" +
                 "  ActualModel: {ActualModel}\n" +
                 "  Platform: {Platform}\n" +
@@ -938,6 +962,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     TokenUsageSource: tokenUsage?.Source ?? "missing",
                     ImageSuccessCount: null,
                     AnswerText: answerText,
+                    ThinkingText: null,
                     AssembledTextChars: responseBody.Length,
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(responseBody),
                     Status: status,
@@ -953,6 +978,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private async Task FinishStreamLogAsync(
         string? logId,
         string assembledText,
+        string assembledThinking,
         GatewayTokenUsage? tokenUsage,
         long durationMs,
         CancellationToken ct)
@@ -976,6 +1002,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     TokenUsageSource: tokenUsage?.Source ?? "missing",
                     ImageSuccessCount: null,
                     AnswerText: assembledText.Length > 5000 ? assembledText.Substring(0, 5000) + "..." : assembledText,
+                    ThinkingText: string.IsNullOrEmpty(assembledThinking) ? null : assembledThinking,
                     AssembledTextChars: assembledText.Length,
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(assembledText),
                     Status: "succeeded",
@@ -1086,6 +1113,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     TokenUsageSource: "missing",
                     ImageSuccessCount: null,
                     AnswerText: answerText,
+                    ThinkingText: null,
                     AssembledTextChars: responseBody.Length,
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(responseBody),
                     Status: status,

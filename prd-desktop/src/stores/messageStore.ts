@@ -49,6 +49,7 @@ interface MessageState {
   startStreamingBlock: (block: { id: string; kind: MessageBlockKind; language?: string | null }) => void;
   appendToStreamingBlock: (blockId: string, content: string) => void;
   endStreamingBlock: (blockId: string) => void;
+  appendToStreamingThinking: (content: string) => void;
   setMessageCitations: (messageId: string, citations: DocCitation[]) => void;
   setStreamingMessageCitations: (citations: DocCitation[]) => void;
   setStreamingPhase: (phase: StreamingPhase) => void;
@@ -135,6 +136,7 @@ type MessageHistoryItem = {
   groupSeq?: number;
   role: string;
   content: string;
+  thinkingContent?: string | null;
   senderId?: string;
   senderName?: string;
   senderRole?: string;
@@ -423,6 +425,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
         id: m.id,
         role: (m.role === 'User' ? 'User' : 'Assistant') as any,
         content: m.content,
+        thinking: m.thinkingContent ? String(m.thinkingContent) : undefined,
         timestamp: new Date(m.timestamp),
         viewRole: (m.viewRole as any) || undefined,
         groupSeq: typeof (m as any).groupSeq === 'number' ? (m as any).groupSeq : undefined,
@@ -476,6 +479,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
         id: m.id,
         role: (m.role === 'User' ? 'User' : 'Assistant') as any,
         content: m.content,
+        thinking: m.thinkingContent ? String(m.thinkingContent) : undefined,
         timestamp: new Date(m.timestamp),
         viewRole: (m.viewRole as any) || undefined,
         groupSeq: typeof (m as any).groupSeq === 'number' ? (m as any).groupSeq : undefined,
@@ -581,10 +585,17 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
 
   startStreaming: (message) => set((state) => {
     const idx = state.messages.findIndex((m) => m.id === message.id);
-    const msgWithBlocks: Message = { ...message, blocks: message.blocks ?? [] };
+    const existing = idx !== -1 ? state.messages[idx] : null;
+    // Merge with existing message to preserve accumulated thinking from early events
+    const merged: Message = {
+      ...(existing ?? ({} as Partial<Message>)),
+      ...message,
+      thinking: message.thinking ?? existing?.thinking,
+      blocks: message.blocks ?? existing?.blocks ?? [],
+    };
     const next = idx === -1
-      ? [...state.messages, msgWithBlocks]
-      : state.messages.map((m) => (m.id === message.id ? msgWithBlocks : m));
+      ? [...state.messages, merged]
+      : state.messages.map((m) => (m.id === message.id ? merged : m));
 
     return {
       messages: next,
@@ -724,6 +735,18 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
       nextBlocks[idx] = { ...nextBlocks[idx], isComplete: true };
       const isCode = nextBlocks[idx].kind === 'codeBlock';
       return { ...m, blocks: nextBlocks, content: isCode ? (m.content ?? '') + '```\n' : (m.content ?? '') };
+    });
+    return { messages: next };
+  }),
+
+  // 追加思考过程内容（thinking delta）：直接 set，不走平滑缓冲（思考过程允许快速追加）
+  appendToStreamingThinking: (content) => set((state) => {
+    if (!state.streamingMessageId) return state;
+    const txt = String(content ?? '');
+    if (!txt) return state;
+    const next = state.messages.map((m) => {
+      if (m.id !== state.streamingMessageId) return m;
+      return { ...m, thinking: (m.thinking ?? '') + txt };
     });
     return { messages: next };
   }),

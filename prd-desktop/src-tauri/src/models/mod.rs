@@ -179,6 +179,9 @@ pub struct MessageHistoryItem {
     pub sender_tags: Option<Vec<GroupMemberTag>>,
     pub role: String,
     pub content: String,
+    /// AI 思考过程（reasoning_content / think 标签内容）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to_message_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

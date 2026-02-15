@@ -150,6 +150,31 @@ public class GroupMessageStreamHub : IGroupMessageStreamHub
         }
     }
 
+    public void PublishThinking(string groupId, string messageId, string thinkingContent)
+    {
+        var gid = (groupId ?? string.Empty).Trim();
+        var mid = (messageId ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(gid) || string.IsNullOrEmpty(mid)) return;
+        if (string.IsNullOrEmpty(thinkingContent)) return;
+
+        if (!_subs.TryGetValue(gid, out var map) || map.IsEmpty) return;
+
+        var payload = new GroupMessageBroadcast
+        {
+            GroupId = gid,
+            Seq = 0,
+            Type = "thinking",
+            MessageId = mid,
+            ThinkingContent = thinkingContent
+        };
+
+        foreach (var kv in map)
+        {
+            var ch = kv.Value;
+            ch.Writer.TryWrite(payload);
+        }
+    }
+
     public void PublishCitations(string groupId, string messageId, IReadOnlyList<DocCitation> citations)
     {
         var gid = (groupId ?? string.Empty).Trim();

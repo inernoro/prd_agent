@@ -2717,7 +2717,7 @@ public class ImageMasterController : ControllerBase
         {
             await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
             {
-                if (!string.IsNullOrEmpty(chunk.Content))
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                 {
                     var data = JsonSerializer.Serialize(new { type = "text", content = chunk.Content });
                     try

@@ -174,6 +174,8 @@ export type LlmRequestLog = {
   responseHeaders?: Record<string, string> | null;
   questionText?: string | null;
   answerText?: string | null;
+  /** AI 思考过程文本（DeepSeek reasoning_content） */
+  thinkingText?: string | null;
   answerTextChars?: number | null;
   answerTextHash?: string | null;
   assembledTextChars?: number | null;

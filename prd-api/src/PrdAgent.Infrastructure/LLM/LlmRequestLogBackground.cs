@@ -94,6 +94,13 @@ public sealed class LlmRequestLogBackground
             answerText = answerText[..answerMaxChars] + "...[TRUNCATED]";
         }
 
+        // 思考过程文本同样做截断保护
+        var thinkingText = done.ThinkingText;
+        if (!string.IsNullOrEmpty(thinkingText) && thinkingText.Length > answerMaxChars)
+        {
+            thinkingText = thinkingText[..answerMaxChars] + "...[TRUNCATED]";
+        }
+
         var update = Builders<LlmRequestLog>.Update
             .Set(l => l.StatusCode, done.StatusCode)
             .Set(l => l.ResponseHeaders, done.ResponseHeaders)
@@ -104,6 +111,7 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.TokenUsageSource, done.TokenUsageSource)
             .Set(l => l.ImageSuccessCount, done.ImageSuccessCount)
             .Set(l => l.AnswerText, answerText)
+            .Set(l => l.ThinkingText, thinkingText)
             .Set(l => l.AnswerTextChars, done.AssembledTextChars)
             .Set(l => l.AnswerTextHash, done.AssembledTextHash)
             .Set(l => l.AssembledTextChars, done.AssembledTextChars)

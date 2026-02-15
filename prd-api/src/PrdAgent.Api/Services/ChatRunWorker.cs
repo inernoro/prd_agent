@@ -32,7 +32,8 @@ public sealed class ChatRunWorker : BackgroundService
         List<string>? AttachmentIds,
         UserRole? AnswerAsRole,
         string? ResolvedPromptTemplate = null,
-        string? SystemPromptOverride = null);
+        string? SystemPromptOverride = null,
+        bool DisableGroupContext = false);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -130,6 +131,10 @@ public sealed class ChatRunWorker : BackgroundService
             var resolvedPrompt = root.TryGetProperty("resolvedPromptTemplate", out var rpt) ? rpt.GetString() : null;
             var sysOverride = root.TryGetProperty("systemPromptOverride", out var spo) ? spo.GetString() : null;
 
+            // 技能上下文范围：contextScope 为 prd 或 none 时禁用群上下文（仅系统提示词+PRD+当前消息）
+            var contextScope = root.TryGetProperty("contextScope", out var cs) ? cs.GetString() : null;
+            var disableCtx = contextScope is "prd" or "none";
+
             sessionId = sessionId.Trim();
             content = content.Trim();
             if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(content)) return null;
@@ -141,7 +146,8 @@ public sealed class ChatRunWorker : BackgroundService
                 atts,
                 answerRole,
                 string.IsNullOrWhiteSpace(resolvedPrompt) ? null : resolvedPrompt.Trim(),
-                string.IsNullOrWhiteSpace(sysOverride) ? null : sysOverride.Trim());
+                string.IsNullOrWhiteSpace(sysOverride) ? null : sysOverride.Trim(),
+                DisableGroupContext: disableCtx);
         }
         catch
         {
@@ -251,6 +257,7 @@ public sealed class ChatRunWorker : BackgroundService
                                runId: runId,
                                fixedUserMessageId: meta.UserMessageId,
                                fixedAssistantMessageId: meta.AssistantMessageId,
+                               disableGroupContext: input.DisableGroupContext,
                                systemPromptOverride: effectiveSystemOverride,
                                answerAsRole: input.AnswerAsRole,
                                cancellationToken: cts.Token))

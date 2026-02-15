@@ -8,8 +8,6 @@ use uuid::Uuid;
 
 use crate::services::api_client;
 
-const DEFAULT_API_URL_DEV: &str = "http://localhost:5000";
-
 /// 应用配置结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

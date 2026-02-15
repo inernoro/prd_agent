@@ -61,6 +61,8 @@ export interface Message {
   id: string;
   role: MessageRole;
   content: string;
+  /** AI 思考过程（DeepSeek reasoning_content），在正文输出前展示，正文开始后自动折叠 */
+  thinking?: string;
   blocks?: MessageBlock[];
   citations?: DocCitation[];
   viewRole?: UserRole;
@@ -237,7 +239,7 @@ export interface SkillsResponse {
 }
 
 export interface StreamEvent {
-  type: 'start' | 'delta' | 'done' | 'error' | 'blockStart' | 'blockDelta' | 'blockEnd' | 'phase' | 'citations';
+  type: 'start' | 'delta' | 'done' | 'error' | 'blockStart' | 'blockDelta' | 'blockEnd' | 'phase' | 'citations' | 'thinking';
   messageId?: string;
   content?: string;
   errorCode?: string;

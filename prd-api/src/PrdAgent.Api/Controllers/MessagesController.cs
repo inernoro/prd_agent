@@ -552,6 +552,8 @@ public class MessageResponse
     public List<GroupMemberTag>? SenderTags { get; set; }
     public MessageRole Role { get; set; }
     public string Content { get; set; } = string.Empty;
+    /// <summary>AI 思考过程（reasoning_content / think 标签内容），与正文分开。</summary>
+    public string? ThinkingContent { get; set; }
     public string? ReplyToMessageId { get; set; }
     public string? ResendOfMessageId { get; set; }
     public UserRole? ViewRole { get; set; }

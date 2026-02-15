@@ -50,6 +50,12 @@ public class Message
     public string Content { get; set; } = string.Empty;
 
     /// <summary>
+    /// AI 思考过程（DeepSeek reasoning_content 等），与正文分开存储。
+    /// 仅 Assistant 消息使用；前端在正文输出前展示，正文开始后自动折叠。
+    /// </summary>
+    public string? ThinkingContent { get; set; }
+
+    /// <summary>
     /// Assistant 消息所回答的 User 消息 ID（用于“一问多答”与排障关联）。
     /// </summary>
     public string? ReplyToMessageId { get; set; }
