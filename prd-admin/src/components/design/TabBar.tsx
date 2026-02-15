@@ -9,7 +9,7 @@ export interface TabBarItem {
 
 interface TabBarProps {
   /** 标题模式：显示 icon + title */
-  title?: string;
+  title?: React.ReactNode;
   /** 标题图标 */
   icon?: React.ReactNode;
   /** 切换模式：显示 tabs */

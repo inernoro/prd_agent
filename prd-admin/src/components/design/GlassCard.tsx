@@ -70,10 +70,11 @@ export function GlassCard({
   return (
     <div
       className={cn(
-        'rounded-[16px] transition-all duration-200 relative no-focus-ring',
+        'rounded-[16px] relative no-focus-ring',
+        'transition-[border-color,box-shadow,opacity] duration-200',
         overflowClass[overflow],
         paddingClass[padding],
-        interactive && 'cursor-pointer hover:scale-[1.01] active:scale-[0.99]',
+        interactive && 'cursor-pointer',
         className
       )}
       style={cardStyle}

@@ -1,0 +1,148 @@
+/* ═══════════════════════════════════════════════════════════════
+   Workflow Canvas — 视觉灵魂层
+
+   设计哲学：
+   静止时有生命，流动时有灵魂。
+   节点是夜间花园的灯笼，连线是灯笼之间的萤火虫之河。
+   即使没有执行，数据的可能性也在静静地流淌。
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ──── 节点容器：禁止默认 grab 光标 ────
+   拖拽仅由 .capsule-node-body (dragHandle) 触发，
+   外层节点容器保持 default 光标。 */
+
+.workflow-canvas .react-flow__node {
+  cursor: default !important;
+}
+
+/* ──── 节点呼吸光晕 ──── */
+
+@keyframes nodeBreath {
+  0%, 100% {
+    box-shadow:
+      0 0 8px var(--node-glow-color, rgba(255,255,255,0.03)),
+      0 2px 8px rgba(0,0,0,0.3);
+  }
+  50% {
+    box-shadow:
+      0 0 14px var(--node-glow-color, rgba(255,255,255,0.05)),
+      0 2px 8px rgba(0,0,0,0.3);
+  }
+}
+
+/* 节点主体 — 呼吸态 + 交互 */
+.capsule-node-body {
+  animation: nodeBreath 4s ease-in-out infinite;
+  transition: border-color 0.2s ease,
+              box-shadow 0.2s ease,
+              background 0.2s ease;
+}
+
+/* hover：边框提亮 + 背景微亮 + 光晕增强 */
+.capsule-node-body:hover {
+  border-color: rgba(255,255,255,0.25) !important;
+  background: rgba(255,255,255,0.07) !important;
+  box-shadow:
+    0 0 16px var(--node-glow-color, rgba(255,255,255,0.06)),
+    0 2px 12px rgba(0,0,0,0.35);
+}
+
+/* 选中态由 React Flow 管理，额外加亮边框 */
+.react-flow__node.selected .capsule-node-body {
+  border-color: rgba(255,255,255,0.4) !important;
+  box-shadow:
+    0 0 20px var(--node-glow-color, rgba(255,255,255,0.1)),
+    0 4px 16px rgba(0,0,0,0.4);
+}
+
+/* 节点运行态 — 更强的脉冲 */
+@keyframes nodeRunningPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 12px rgba(59,130,246,0.2),
+      0 0 28px rgba(59,130,246,0.06),
+      0 2px 8px rgba(0,0,0,0.3);
+  }
+  50% {
+    box-shadow:
+      0 0 22px rgba(59,130,246,0.3),
+      0 0 40px rgba(59,130,246,0.08),
+      0 2px 8px rgba(0,0,0,0.3);
+  }
+}
+
+.capsule-node-body--running {
+  animation: nodeRunningPulse 2s ease-in-out infinite;
+}
+
+/* 节点完成态 — 平静的绿色余辉 */
+.capsule-node-body--completed {
+  animation: none;
+  box-shadow:
+    0 0 12px rgba(34,197,94,0.12),
+    0 2px 8px rgba(0,0,0,0.3);
+}
+
+/* 节点失败态 */
+.capsule-node-body--failed {
+  animation: none;
+  box-shadow:
+    0 0 12px rgba(239,68,68,0.12),
+    0 2px 8px rgba(0,0,0,0.3);
+}
+
+/* ──── 端口 (Handle) ──── */
+
+.react-flow__handle:hover {
+  filter: brightness(1.5);
+  box-shadow: 0 0 6px rgba(255,255,255,0.25);
+}
+
+/* ──── 进度条水波 ──── */
+
+@keyframes progressWave {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+.capsule-progress-bar {
+  position: relative;
+  overflow: hidden;
+}
+
+.capsule-progress-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255,255,255,0.15) 50%,
+    transparent 100%
+  );
+  animation: progressWave 2s ease-in-out infinite;
+}
+
+/* ──── 画布全局微调 ──── */
+
+.workflow-canvas .react-flow__controls {
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+
+.workflow-canvas .react-flow__controls button {
+  background: rgba(0,0,0,0.5) !important;
+  border-bottom: 1px solid rgba(255,255,255,0.06) !important;
+  color: rgba(255,255,255,0.6) !important;
+  transition: background 0.2s, color 0.2s !important;
+}
+
+.workflow-canvas .react-flow__controls button:hover {
+  background: rgba(255,255,255,0.08) !important;
+  color: rgba(255,255,255,0.9) !important;
+}
+
+.workflow-canvas .react-flow__minimap {
+  border-radius: 12px !important;
+  overflow: hidden;
+}

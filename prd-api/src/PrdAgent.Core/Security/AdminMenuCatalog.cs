@@ -43,6 +43,9 @@ public static class AdminMenuCatalog
         // 开放平台
         new("open-platform", "/open-platform", "开放平台", null, "Plug", 120),
 
+        // 工作流引擎
+        new("workflow-agent", "/workflow-agent", "工作流引擎", null, "Workflow", 124),
+
         // 自动化
         new("automations", "/automations", "自动化", null, "Zap", 125),
 

@@ -132,6 +132,13 @@ public class MongoDbContext
     // 统一技能集合（替代 prompt_stages + skill_settings）
     public IMongoCollection<Skill> Skills => _database.GetCollection<Skill>("skills");
 
+    // Workflow Agent 工作流引擎
+    public IMongoCollection<Workflow> Workflows => _database.GetCollection<Workflow>("workflows");
+    public IMongoCollection<WorkflowExecution> WorkflowExecutions => _database.GetCollection<WorkflowExecution>("workflow_executions");
+    public IMongoCollection<WorkflowSchedule> WorkflowSchedules => _database.GetCollection<WorkflowSchedule>("workflow_schedules");
+    public IMongoCollection<WorkflowSecret> WorkflowSecrets => _database.GetCollection<WorkflowSecret>("workflow_secrets");
+    public IMongoCollection<ShareLink> ShareLinks => _database.GetCollection<ShareLink>("share_links");
+
     // Webhook 通知
     public IMongoCollection<WebhookDeliveryLog> WebhookDeliveryLogs => _database.GetCollection<WebhookDeliveryLog>("webhook_delivery_logs");
 
@@ -809,6 +816,65 @@ public class MongoDbContext
         ToolboxItems.Indexes.CreateOne(new CreateIndexModel<ToolboxItem>(
             Builders<ToolboxItem>.IndexKeys.Ascending(x => x.CreatedByUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_toolbox_items_user_created" }));
+
+        // ========== Workflow Agent 工作流引擎索引 ==========
+
+        // Workflows：按创建者 + 更新时间查询
+        Workflows.Indexes.CreateOne(new CreateIndexModel<Workflow>(
+            Builders<Workflow>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_workflows_creator_updated" }));
+        Workflows.Indexes.CreateOne(new CreateIndexModel<Workflow>(
+            Builders<Workflow>.IndexKeys.Ascending(x => x.IsPublic).Descending(x => x.ForkCount),
+            new CreateIndexOptions { Name = "idx_workflows_public_forkcount" }));
+
+        // WorkflowExecutions：按工作流ID + 创建时间；按状态 + 创建时间
+        WorkflowExecutions.Indexes.CreateOne(new CreateIndexModel<WorkflowExecution>(
+            Builders<WorkflowExecution>.IndexKeys.Ascending(x => x.WorkflowId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_workflow_executions_workflow_created" }));
+        WorkflowExecutions.Indexes.CreateOne(new CreateIndexModel<WorkflowExecution>(
+            Builders<WorkflowExecution>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_workflow_executions_status_created" }));
+        WorkflowExecutions.Indexes.CreateOne(new CreateIndexModel<WorkflowExecution>(
+            Builders<WorkflowExecution>.IndexKeys.Ascending(x => x.TriggeredBy).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_workflow_executions_trigger_created" }));
+
+        // WorkflowSchedules：Worker 轮询（启用 + 下次执行时间）
+        WorkflowSchedules.Indexes.CreateOne(new CreateIndexModel<WorkflowSchedule>(
+            Builders<WorkflowSchedule>.IndexKeys.Ascending(x => x.IsEnabled).Ascending(x => x.NextRunAt),
+            new CreateIndexOptions { Name = "idx_workflow_schedules_enabled_nextrun" }));
+        WorkflowSchedules.Indexes.CreateOne(new CreateIndexModel<WorkflowSchedule>(
+            Builders<WorkflowSchedule>.IndexKeys.Ascending(x => x.WorkflowId),
+            new CreateIndexOptions { Name = "idx_workflow_schedules_workflow" }));
+
+        // WorkflowSecrets：按工作流ID + Key 唯一
+        try
+        {
+            WorkflowSecrets.Indexes.CreateOne(new CreateIndexModel<WorkflowSecret>(
+                Builders<WorkflowSecret>.IndexKeys.Ascending(x => x.WorkflowId).Ascending(x => x.Key),
+                new CreateIndexOptions { Name = "uniq_workflow_secrets_workflow_key", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // ShareLinks：按 Token 唯一
+        try
+        {
+            ShareLinks.Indexes.CreateOne(new CreateIndexModel<ShareLink>(
+                Builders<ShareLink>.IndexKeys.Ascending(x => x.Token),
+                new CreateIndexOptions { Name = "uniq_share_links_token", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        ShareLinks.Indexes.CreateOne(new CreateIndexModel<ShareLink>(
+            Builders<ShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_share_links_creator_created" }));
+        ShareLinks.Indexes.CreateOne(new CreateIndexModel<ShareLink>(
+            Builders<ShareLink>.IndexKeys.Ascending(x => x.ResourceType).Ascending(x => x.ResourceId),
+            new CreateIndexOptions { Name = "idx_share_links_resource" }));
 
         // Skills：SkillKey 唯一索引
         try

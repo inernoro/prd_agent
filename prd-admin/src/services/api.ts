@@ -607,6 +607,36 @@ export const api = {
     prompts: () => '/api/v1/prompts',
   },
 
+  // ============ Workflow Agent 工作流引擎 ============
+  workflowAgent: {
+    workflows: {
+      list: () => '/api/workflow-agent/workflows',
+      byId: (id: string) => `/api/workflow-agent/workflows/${id}`,
+      execute: (id: string) => `/api/workflow-agent/workflows/${id}/execute`,
+    },
+    executions: {
+      list: () => '/api/workflow-agent/executions',
+      byId: (id: string) => `/api/workflow-agent/executions/${id}`,
+      cancel: (id: string) => `/api/workflow-agent/executions/${id}/cancel`,
+      resumeFrom: (executionId: string, nodeId: string) =>
+        `/api/workflow-agent/executions/${executionId}/resume-from/${nodeId}`,
+      nodeLogs: (executionId: string, nodeId: string) =>
+        `/api/workflow-agent/executions/${executionId}/nodes/${nodeId}/logs`,
+      stream: (executionId: string) =>
+        `/api/workflow-agent/executions/${executionId}/stream`,
+    },
+    shares: {
+      list: () => '/api/workflow-agent/shares',
+      create: (executionId: string) => `/api/workflow-agent/executions/${executionId}/share`,
+      revoke: (shareId: string) => `/api/workflow-agent/shares/${shareId}`,
+    },
+    capsules: {
+      types: () => '/api/workflow-agent/capsule-types',
+      typeByKey: (typeKey: string) => `/api/workflow-agent/capsule-types/${typeKey}`,
+      testRun: () => '/api/workflow-agent/capsules/test-run',
+    },
+  },
+
   // ─── 移动端仪表盘 ───
   mobile: {
     feed: () => '/api/mobile/feed',

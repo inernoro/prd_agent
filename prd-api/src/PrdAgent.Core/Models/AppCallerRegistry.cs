@@ -506,6 +506,36 @@ public static class AiToolbox
 }
 
 /// <summary>
+/// Workflow Agent 工作流自动化
+/// </summary>
+public static class WorkflowAgent
+{
+    public const string AppName = "Workflow Agent";
+
+    public static class LlmAnalyzer
+    {
+        [AppCallerMetadata(
+            "工作流-LLM分析",
+            "工作流中使用大语言模型对数据进行智能分析、总结、分类",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "workflow-agent.llm-analyzer::chat";
+    }
+
+    public static class ReportGenerator
+    {
+        [AppCallerMetadata(
+            "工作流-报告生成",
+            "工作流中使用LLM将结构化数据渲染为可读报告",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "workflow-agent.report-generator::chat";
+    }
+}
+
+/// <summary>
 /// Admin 管理后台
 /// </summary>
 public static class Admin

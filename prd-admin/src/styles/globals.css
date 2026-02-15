@@ -1246,3 +1246,75 @@ html[data-perf-mode="performance"] [style*="will-change"] {
     min-width: 36px;
   }
 }
+
+/* ========================================
+   React Flow (Workflow Canvas) — 暗色覆盖
+   ======================================== */
+
+.workflow-canvas .react-flow__node {
+  cursor: grab;
+}
+
+.workflow-canvas .react-flow__node:active {
+  cursor: grabbing;
+}
+
+/* 连线吸附时端口高亮 */
+.workflow-canvas .react-flow__handle.connecting {
+  background: rgba(59, 130, 246, 0.6) !important;
+  border-color: rgba(59, 130, 246, 0.8) !important;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
+}
+
+/* 选中节点环 */
+.workflow-canvas .react-flow__node.selected .react-flow__handle {
+  border-color: rgba(214, 178, 106, 0.5) !important;
+}
+
+/* 控件面板暗色 */
+.workflow-canvas .react-flow__controls button {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+  width: 28px;
+  height: 28px;
+}
+
+.workflow-canvas .react-flow__controls button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.workflow-canvas .react-flow__controls button svg {
+  fill: currentColor;
+}
+
+/* 选区框 */
+.workflow-canvas .react-flow__selection {
+  background: rgba(59, 130, 246, 0.06);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+/* 小地图节点 */
+.workflow-canvas .react-flow__minimap-node {
+  fill: rgba(255, 255, 255, 0.08);
+  stroke: rgba(255, 255, 255, 0.15);
+  stroke-width: 1;
+  rx: 4;
+}
+
+/* 连线路径动画 */
+.workflow-canvas .react-flow__edge.animated path {
+  stroke-dasharray: 5;
+  animation: wfEdgeDash 0.5s linear infinite;
+}
+
+@keyframes wfEdgeDash {
+  to { stroke-dashoffset: -10; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-canvas .react-flow__edge.animated path {
+    animation: none !important;
+  }
+}
