@@ -24,6 +24,7 @@ public class LlmGatewayTests
         // Arrange
         var gateway = CreateTestGateway();
 
+        // Act - Use registered appCallerCode from AppCallerRegistry
         // Act
         var client = gateway.CreateClient(AppCallerRegistry.Admin.Lab.Chat, "chat");
 
@@ -37,9 +38,11 @@ public class LlmGatewayTests
     {
         // Arrange
         var gateway = CreateTestGateway();
+        var appCallerCode = AppCallerRegistry.Admin.Lab.Chat;
 
         // Act
         var client = gateway.CreateClient(
+            appCallerCode,
             AppCallerRegistry.Admin.Lab.Chat,
             "chat",
             maxTokens: 8192,
@@ -48,6 +51,7 @@ public class LlmGatewayTests
         // Assert
         Assert.NotNull(client);
         var gatewayClient = Assert.IsType<GatewayLLMClient>(client);
+        Assert.Equal(appCallerCode, gatewayClient.AppCallerCode);
         Assert.Equal(AppCallerRegistry.Admin.Lab.Chat, gatewayClient.AppCallerCode);
         Assert.Equal("chat", gatewayClient.ModelType);
         Assert.Equal(8192, gatewayClient.MaxTokens);
@@ -60,6 +64,7 @@ public class LlmGatewayTests
         // Arrange
         var gateway = CreateTestGateway();
 
+        // Act - Use registered appCallerCode from AppCallerRegistry
         // Act
         var client = gateway.CreateClient(AppCallerRegistry.Admin.Lab.Chat, "chat");
 
@@ -104,6 +109,13 @@ public class LlmGatewayTests
     #region AppCallerCode Format Tests
 
     [Theory]
+    // Use actual registered appCallerCodes from AppCallerRegistry with matching modelType
+    [InlineData("prd-agent-desktop.chat.sendmessage::chat", "chat", true)]     // Desktop Chat
+    [InlineData("visual-agent.image.text2img::generation", "generation", true)] // VisualAgent Image (generation modelType)
+    [InlineData("prd-agent-web.prompts.optimize::chat", "chat", true)]         // Admin Prompts
+    [InlineData("open-platform-agent.proxy::chat", "chat", true)]              // OpenPlatform Proxy
+    [InlineData("", "chat", false)]
+    public void CreateClient_ShouldAcceptVariousAppCallerCodeFormats(string appCallerCode, string modelType, bool shouldSucceed)
     [InlineData("prd-agent-desktop.chat.sendmessage::chat", true)]
     [InlineData("visual-agent.image.text2img::generation", true)]
     [InlineData("prd-agent-web.prompts.optimize::chat", true)]
@@ -128,6 +140,7 @@ public class LlmGatewayTests
         }
         else
         {
+            // Empty appCallerCode should throw InvalidOperationException
             Assert.Throws<InvalidOperationException>(() => gateway.CreateClient(appCallerCode, modelType));
         }
     }
@@ -136,12 +149,14 @@ public class LlmGatewayTests
     [InlineData("chat", "prd-agent-web.lab::chat")]
     [InlineData("vision", "prd-agent-web.lab::vision")]
     [InlineData("generation", "prd-agent-web.lab::generation")]
+    [InlineData("intent", "prd-agent-desktop.chat.sendmessage::intent")]
     [InlineData("intent", "visual-agent.image-gen.plan::intent")]
     public void CreateClient_ShouldAcceptAllModelTypes(string modelType, string appCallerCode)
     {
         // Arrange
         var gateway = CreateTestGateway();
 
+        // Act - Use registered appCallerCode that matches the model type
         // Act
         var client = gateway.CreateClient(appCallerCode, modelType);
 
@@ -160,6 +175,7 @@ public class LlmGatewayTests
     {
         // Arrange
         var gateway = CreateTestGateway();
+        // Use actual registered appCallerCode from AppCallerRegistry
         var expectedCode = AppCallerRegistry.Desktop.Chat.SendMessageChat;
 
         // Act
@@ -175,8 +191,11 @@ public class LlmGatewayTests
     {
         // Arrange
         var gateway = CreateTestGateway();
+        // Use actual registered appCallerCode from AppCallerRegistry
+        var appCallerCode = AppCallerRegistry.Admin.Lab.Vision;
 
         // Act
+        var client = gateway.CreateClient(appCallerCode, "vision");
         var client = gateway.CreateClient(AppCallerRegistry.VisualAgent.Image.Vision, "vision");
         var gatewayClient = (GatewayLLMClient)client;
 

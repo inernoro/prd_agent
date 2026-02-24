@@ -424,6 +424,141 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_mast
 
 ---
 
+## AI 测试规范（云端开发必读）
+
+> **核心原则**：AI 在云端开发时无法交互式调试，必须依赖测试来验证代码正确性。
+> **详细文档**：参见 [TESTING.md](./TESTING.md)
+
+### 云端环境实测能力
+
+| 测试类型 | 命令 | 云端可用 |
+|---------|------|---------|
+| 前端单元测试 | `cd prd-admin && pnpm test` | ✅ 可用 |
+| TypeScript 检查 | `cd prd-admin && pnpm tsc` | ✅ 可用 |
+| ESLint 检查 | `cd prd-admin && pnpm lint` | ✅ 可用 |
+| 后端单元测试 | `cd prd-api && dotnet test` | ⚠️ 需安装 SDK |
+| E2E 测试 | `pnpm test:e2e` | ❌ 网络限制 |
+
+**云端 AI 必做**：前端改动必须跑 `pnpm test` 确认通过后再提交。
+
+### 技能：安装 .NET SDK（dotnet 不可用时执行）
+
+当执行 `dotnet` 命令报错 `command not found` 时，执行以下步骤：
+
+```bash
+# 步骤 1：下载并执行官方安装脚本
+curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+chmod +x /tmp/dotnet-install.sh
+/tmp/dotnet-install.sh --channel 8.0 --install-dir ~/.dotnet
+
+# 步骤 2：添加到 PATH（当前会话）
+export PATH="$HOME/.dotnet:$PATH"
+
+# 步骤 3：验证安装
+dotnet --version   # 应输出 8.0.x
+```
+
+**注意事项**：
+- SDK 可以安装成功（Microsoft CDN 可访问）
+- `dotnet restore` 可能失败（NuGet 网络受限）
+- 如果项目已有 `obj/` 目录（本地 restore 过），可直接 `dotnet build --no-restore`
+
+### 技能：前端依赖安装（node_modules 不存在时执行）
+
+当 `pnpm test` 报错找不到依赖时：
+
+```bash
+cd prd-admin && pnpm install
+```
+
+pnpm 源通常可访问，依赖安装应能成功。
+
+### 测试金字塔
+
+```
+     E2E Tests (Playwright)      ← 页面流程验证
+    ─────────────────────────
+   Contract Tests (xUnit)        ← 前后端接口契约 [重点]
+  ───────────────────────────
+ Unit Tests (xUnit/Vitest)       ← 业务逻辑验证
+```
+
+### AI 必须遵守的测试规则
+
+| 场景 | 规则 |
+|------|------|
+| 新增功能 | 必须同时新增测试 |
+| 修复 Bug | 先写失败测试，再修复 |
+| 重构代码 | 先跑测试确保绿灯 |
+| 提交代码 | 必须先跑 `dotnet test` |
+
+### 快速命令
+
+```bash
+# 后端测试
+cd prd-api && dotnet test                              # 全部测试
+dotnet test --filter "Category=Contract"               # 契约测试
+dotnet test --filter "ClassName~LlmGateway"            # 特定模块
+
+# 前端测试
+cd prd-admin && pnpm test                              # 单元测试
+pnpm test:e2e                                          # E2E 测试
+```
+
+### 契约测试目录
+
+```
+prd-api/tests/PrdAgent.Api.Tests/
+├── Contract/                     # 契约测试
+│   ├── Requests/                 # 请求格式验证
+│   ├── Responses/                # 响应格式验证
+│   └── Flows/                    # 流程契约验证
+├── Integration/                  # 集成测试
+│   └── FrontendSimulationTests.cs
+└── Services/                     # 服务单元测试
+```
+
+### 测试标记（Trait）
+
+| 标记 | 用途 | 运行命令 |
+|------|------|----------|
+| `Category=Contract` | 前后端契约测试 | `dotnet test --filter "Category=Contract"` |
+| `Category=Fast` | 快速测试（无外部依赖） | `dotnet test --filter "Category=Fast"` |
+| `Category=Integration` | 需要数据库/网络 | `dotnet test --filter "Category=Integration"` |
+
+### 测试文件命名
+
+- 后端：`{被测类}Tests.cs`（如 `LlmGatewayTests.cs`）
+- 前端：`{模块名}.test.ts`（如 `themeSystem.test.ts`）
+- E2E：`{页面/流程}.spec.ts`（如 `visual-agent.spec.ts`）
+
+### AI 开发工作流检查清单
+
+```
+□ 1. 读取相关测试文件，理解现有测试
+□ 2. 运行现有测试确认绿灯基线
+□ 3. 如果是新功能，先创建测试
+□ 4. 编写/修改代码
+□ 5. 运行测试确认通过
+□ 6. 提交代码
+```
+
+### 测试驱动开发示例
+
+```csharp
+// 1. 先写失败测试
+[Fact]
+public void ResolveModel_WithNewFeature_ShouldWork()
+{
+    var resolver = new ModelResolver(...);
+    var result = resolver.Resolve("new-app.feature::chat");
+    Assert.Equal("expected-model", result.ModelId);  // 此时会失败
+}
+
+// 2. 实现功能使测试通过
+// 3. 运行 dotnet test 确认
+// 4. 提交代码
+```
 ## 海鲜市场 (Configuration Marketplace) 扩展指南
 
 **触发场景**：当需要将新的配置类型（如画布模板、工作流模板等）发布到海鲜市场时。
