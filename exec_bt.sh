@@ -38,6 +38,32 @@ fail() { echo -e "  ${RED}✗${NC} $1"; }
 die()  { echo -e "  ${RED}✗${NC} $1"; exit 1; }
 info() { echo -e "  ${CYAN}▸${NC} $1"; }
 
+# ── PID Safety ──
+# Validate that PID actually belongs to branch-tester (防止 PID reuse 误杀)
+is_bt_pid() {
+  local pid="$1"
+  kill -0 "$pid" 2>/dev/null || return 1
+  # Linux: check /proc/{pid}/cmdline for node/pnpm + branch-tester
+  if [ -f "/proc/$pid/cmdline" ]; then
+    tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -qi "branch-tester\|bt.*dev\|pnpm.*dev" && return 0
+    return 1
+  fi
+  # Fallback: ps check
+  ps -p "$pid" -o args= 2>/dev/null | grep -qi "branch-tester\|bt.*dev\|pnpm.*dev" && return 0
+  return 1
+}
+
+# Wait for port to be released (max ~5s)
+wait_port_free() {
+  local port="$1" max_wait="${2:-5}" i=0
+  while [ "$i" -lt "$max_wait" ]; do
+    ss -tlnp 2>/dev/null | grep -q ":${port} " || return 0
+    sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
 # ══════════════════════════════════════════
 # --stop
 # ══════════════════════════════════════════
@@ -48,10 +74,12 @@ do_stop() {
 
   if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE")
-    if kill -0 "$PID" 2>/dev/null; then
+    if is_bt_pid "$PID"; then
       kill "$PID" 2>/dev/null || true
       sleep 1
       ok "Branch-Tester stopped (PID: $PID)"
+    elif kill -0 "$PID" 2>/dev/null; then
+      warn "PID $PID exists but is NOT branch-tester (PID reuse). Skipping kill."
     else
       warn "Branch-Tester not running (stale PID: $PID)"
     fi
@@ -81,10 +109,17 @@ do_status() {
   echo "  Branch-Tester Status"
   echo "  ────────────────────"
 
-  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-    ok "Branch-Tester: running (PID: $(cat "$PID_FILE"))"
+  if [ -f "$PID_FILE" ]; then
+    BT_PID=$(cat "$PID_FILE")
+    if is_bt_pid "$BT_PID"; then
+      ok "Branch-Tester: running (PID: $BT_PID)"
+    elif kill -0 "$BT_PID" 2>/dev/null; then
+      warn "Branch-Tester: PID $BT_PID exists but is NOT branch-tester (PID reuse!)"
+    else
+      warn "Branch-Tester: not running (stale PID: $BT_PID)"
+    fi
   else
-    warn "Branch-Tester: not running"
+    warn "Branch-Tester: no PID file"
   fi
 
   for name in prdagent-mongodb prdagent-redis prdagent-gateway; do
@@ -171,7 +206,14 @@ do_test() {
   echo "  Branch-Tester"
   echo "  -------------"
   if [ -f "$PID_FILE" ]; then
-    t "T20" "BT process alive"            kill -0 "$(cat "$PID_FILE")"
+    BT_PID=$(cat "$PID_FILE")
+    if is_bt_pid "$BT_PID"; then
+      TOTAL=$((TOTAL + 1)); ok "[T20] BT process alive (PID: $BT_PID)"; PASS=$((PASS + 1))
+    elif kill -0 "$BT_PID" 2>/dev/null; then
+      TOTAL=$((TOTAL + 1)); fail "[T20] PID $BT_PID exists but NOT branch-tester (PID reuse!)"
+    else
+      TOTAL=$((TOTAL + 1)); fail "[T20] BT process dead (stale PID: $BT_PID)"
+    fi
   else
     TOTAL=$((TOTAL + 1)); fail "[T20] BT PID file not found"
   fi
@@ -310,6 +352,26 @@ if docker inspect --format='{{.State.Running}}' prdagent-api 2>/dev/null | grep 
   docker stop prdagent-api >/dev/null 2>&1 || true
   ok "prdagent-api stopped"
 fi
+
+# S2: 检查 gateway 的 default.conf 是否为独立部署残留的静态文件
+# 如果是普通文件(不是 symlink), 停掉 api 后 gateway 会 502
+# BT 的 SwitcherService 用 symlink 管理, 这里替换为 _disconnected.conf
+GATEWAY_CONF_D=$(docker inspect --format='{{range .Mounts}}{{if eq .Destination "/etc/nginx/conf.d"}}{{.Source}}{{end}}{{end}}' prdagent-gateway 2>/dev/null || echo "")
+if [ -z "$GATEWAY_CONF_D" ]; then
+  GATEWAY_CONF_D="${REPO_ROOT}/deploy/nginx/conf.d"
+fi
+GW_DEFAULT="${GATEWAY_CONF_D}/default.conf"
+GW_DISCONNECTED="${GATEWAY_CONF_D}/branches/_disconnected.conf"
+if [ -f "$GW_DEFAULT" ] && [ ! -L "$GW_DEFAULT" ]; then
+  if [ -f "$GW_DISCONNECTED" ]; then
+    cp "$GW_DEFAULT" "${GW_DEFAULT}.standalone-bak.$(date +%s)"
+    ln -sf "$GW_DISCONNECTED" "$GW_DEFAULT"
+    docker exec prdagent-gateway nginx -s reload 2>/dev/null || true
+    ok "gateway default.conf: standalone→_disconnected (prevents 502)"
+  else
+    warn "gateway default.conf is static file but _disconnected.conf not found"
+  fi
+fi
 echo ""
 
 # ══════════════════════════════════════════
@@ -397,11 +459,19 @@ NGINX_CONF
       fi
 
       if nginx -t 2>&1; then
-        systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true
-        ok ":${APP_PORT} → :5500"
+        # Start nginx if not running, reload if already running
+        if systemctl is-active --quiet nginx 2>/dev/null; then
+          systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true
+          ok ":${APP_PORT} → :5500 (reloaded)"
+        else
+          systemctl start nginx 2>/dev/null || nginx 2>/dev/null || true
+          ok ":${APP_PORT} → :5500 (started)"
+        fi
         [ "$PUBLIC_IP" != "_" ] && ok "Public IP: $PUBLIC_IP"
       else
-        warn "nginx -t failed"
+        warn "nginx -t failed, reverting prdagent-app.conf"
+        rm -f "$CONF_DIR/prdagent-app.conf"
+        [ -n "$ENABLED_DIR" ] && rm -f "$ENABLED_DIR/prdagent-app.conf"
       fi
     fi
   fi
@@ -414,20 +484,46 @@ echo ""
 echo "  [4/4] Branch-Tester..."
 cd "$BT_DIR"
 
+# Kill old instance safely (with PID ownership validation)
 if [ -f "$PID_FILE" ]; then
   OLD_PID=$(cat "$PID_FILE")
-  if kill -0 "$OLD_PID" 2>/dev/null; then
+  if is_bt_pid "$OLD_PID"; then
     info "Replacing (PID: $OLD_PID)"
     kill "$OLD_PID" 2>/dev/null || true
-    sleep 1
+    # Wait for port 9900 to be released (max 5s)
+    if ! wait_port_free 9900 5; then
+      warn ":9900 still occupied after kill. Force killing..."
+      kill -9 "$OLD_PID" 2>/dev/null || true
+      wait_port_free 9900 3 || warn ":9900 still occupied, BT may fail to bind"
+    fi
+    ok "Old instance stopped"
+  elif kill -0 "$OLD_PID" 2>/dev/null; then
+    warn "PID $OLD_PID exists but is NOT branch-tester (PID reuse). Skipping kill."
+    # Check if :9900 is actually free
+    if ss -tlnp 2>/dev/null | grep -q ":9900 "; then
+      warn ":9900 occupied by another process, BT may fail to bind"
+    fi
   fi
   rm -f "$PID_FILE"
+fi
+
+# Validate state.json if it exists
+STATE_FILE="${REPO_ROOT}/.bt/state.json"
+if [ -f "$STATE_FILE" ]; then
+  if ! node -e "JSON.parse(require('fs').readFileSync('$STATE_FILE','utf8'))" 2>/dev/null; then
+    warn "state.json is corrupted, backing up and resetting"
+    cp "$STATE_FILE" "${STATE_FILE}.bak.$(date +%s)"
+    rm -f "$STATE_FILE"
+  fi
 fi
 
 if [ "$BACKGROUND" = true ]; then
   nohup pnpm dev > "$LOG_FILE" 2>&1 &
   echo "$!" > "$PID_FILE"
   ok "Started (PID: $(cat "$PID_FILE"))"
+else
+  # Foreground mode: still save PID for --status to find
+  echo "$$" > "$PID_FILE"
 fi
 
 # ══════════════════════════════════════════

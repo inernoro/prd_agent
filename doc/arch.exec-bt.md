@@ -1,6 +1,6 @@
 # exec_bt.sh 部署架构与冲突分析
 
-> **版本**：v1.0 | **日期**：2026-02-24 | **关联**：design.branch-tester.md, quickstart.md
+> **版本**：v1.1 | **日期**：2026-02-24 | **关联**：design.branch-tester.md, quickstart.md
 
 ## 1. 系统全景
 
@@ -94,7 +94,10 @@ exec_bt.sh
   │   │   └─ ⚠ gateway depends_on api → compose 会尝试拉 api 镜像
   │   │     如果拉取失败, gateway 仍然启动 (soft dependency)
   │   ├─ 等待 2s, 验证三个容器 running
-  │   └─ docker stop prdagent-api (如果在跑 → 独立部署残留)
+  │   ├─ docker stop prdagent-api (如果在跑 → 独立部署残留)
+  │   └─ **NEW** 检查 gateway default.conf 类型
+  │       ├─ 如果是普通文件 (独立部署残留) → 备份 → symlink 到 _disconnected.conf
+  │       └─ docker exec gateway nginx -s reload
   │
   ├─ [2/4] Branch-Tester 依赖
   │   └─ pnpm install (如 node_modules 不存在或过期)
@@ -104,10 +107,13 @@ exec_bt.sh
   │   ├─ 扫描已有配置, 检测 :80 端口冲突
   │   ├─ 写入 prdagent-app.conf (仅此一个文件)
   │   ├─ 如 default 站点冲突 :80 → 备份到 .bak 再禁用
-  │   └─ nginx -t && reload
+  │   ├─ nginx -t → **失败则自动回滚** (删除 prdagent-app.conf)
+  │   └─ **NEW** nginx 未运行 → `start`; 已运行 → `reload`
   │
   ├─ [4/4] 启动 Branch-Tester
-  │   ├─ 停止旧实例 (如 PID file 存在)
+  │   ├─ **NEW** is_bt_pid() 验证 PID 归属 (防 PID reuse 误杀)
+  │   ├─ kill 旧实例 → wait_port_free(9900, 5s) → 超时 kill -9
+  │   ├─ **NEW** 验证 state.json 合法性 → 损坏则备份+重置
   │   └─ pnpm dev (前台) 或 nohup (后台)
   │       └─ Branch-Tester 内部 InfraService 会再次检查基础设施
   │          (幂等, 已经 running 的不会重启)
@@ -154,6 +160,16 @@ exec_bt.sh
 | C1 | `docker compose up -d gateway` 触发 api depends_on | compose 尝试拉 api 镜像 | api 镜像拉取可能失败 | **gateway 仍会启动** (soft dep), 但有 warning |
 | C2 | api 镜像已存在 (之前拉过) | compose 启动 api 容器 | api 容器启动后被 InfraService 停掉 | 浪费几秒, 功能正确 |
 | C3 | docker-compose.yml 被修改 (用户自定义端口) | compose 使用修改后的配置 | 端口可能变化 | 脚本应从 compose 配置读端口, 或用常量 |
+| **PID/进程安全相关** | | | | |
+| R1 | PID file 中的 PID 被 OS 复用给其他进程 | `is_bt_pid()` 检测 cmdline 不匹配 → 跳过 kill | 不误杀, 新实例正常启动 | ~~CRITICAL~~ **已修复** |
+| R2 | kill 旧 BT 后端口 9900 仍被占用 (TIME_WAIT) | `wait_port_free(9900, 5s)` 等待 → 超时 kill -9 | 端口释放, 新实例绑定成功 | ~~HIGH~~ **已修复** |
+| R3 | state.json 被截断或损坏 | 启动前 `JSON.parse` 校验 → 失败则备份+重置 | BT 正常启动 (空状态) | ~~HIGH~~ **已修复** |
+| **Gateway 残留相关** | | | | |
+| G1 | gateway default.conf 是静态文件 (独立部署残留) + api 被停 | 检测非 symlink → 备份 → 替换为 _disconnected symlink + reload | gateway 返回友好 502 而非挂死 | ~~HIGH~~ **已修复** |
+| G2 | gateway 的 default.conf symlink 指向不存在的文件 | BT SwitcherService 内部处理 (写新 conf 再 link) | gateway reload 前验证 target | BT 内部责任 |
+| **Host Nginx 启动相关** | | | | |
+| N7 | nginx 已安装但未运行, reload 无效 | 检测 `systemctl is-active` → 不活跃则 `start` | nginx 正确启动 | ~~HIGH~~ **已修复** |
+| N8 | nginx -t 失败 | 自动回滚: 删除 prdagent-app.conf | 恢复原有配置 | **已修复** (之前只 warn 不回滚) |
 
 ### 4.2 组合场景（最常见路径）
 
@@ -173,18 +189,65 @@ exec_bt.sh 对宿主机的**全部写操作**：
 
 | 写操作 | 文件/目标 | 可回滚? | 保护措施 |
 |--------|-----------|---------|----------|
-| 写 nginx conf | `/etc/nginx/{sites-available,conf.d}/prdagent-app.conf` | 是(删除即可) | 只写这一个文件 |
+| 写 nginx conf | `/etc/nginx/{sites-available,conf.d}/prdagent-app.conf` | 是(删除即可) | 只写这一个文件; nginx -t 失败自动删除 |
 | 禁用 default | `/etc/nginx/sites-enabled/default` | 是(有 .bak) | 先备份, 只在端口冲突时才禁用 |
 | symlink | `/etc/nginx/sites-enabled/prdagent-app.conf` | 是(删除即可) | — |
-| 写 PID file | `branch-tester/.bt/bt.pid` | 自动(进程退出后) | — |
+| 写 PID file | `branch-tester/.bt/bt.pid` | 自动(进程退出后) | is_bt_pid() 验证所有权 |
 | pnpm install | `branch-tester/node_modules/` | 是(删除即可) | — |
+| gateway default.conf → symlink | `deploy/nginx/conf.d/default.conf` | 是(有 .standalone-bak) | 仅在 api 停止且 default.conf 为静态文件时 |
+| 备份 state.json | `.bt/state.json.bak.{ts}` | — | 仅在 JSON 损坏时自动备份 |
 
-### 5.2 不触碰原则
+### 5.2 PID 安全
+
+**问题**：Linux 会复用 PID。如果 BT 进程退出，OS 可能将相同 PID 分配给无关进程。盲目 `kill` 会误杀。
+
+**解决**：`is_bt_pid()` 函数双重验证：
+1. `/proc/{pid}/cmdline` 包含 `branch-tester` / `pnpm` 关键词
+2. 回退到 `ps -p {pid} -o args=` 检查
+
+```
+kill 前:
+  PID 存在?  ── No  → 跳过 (stale)
+      │
+     Yes
+      │
+  is_bt_pid?  ── No  → WARN "PID reuse, skip kill"
+      │
+     Yes
+      │
+  kill + wait_port_free(9900, 5s) → 超时则 kill -9
+```
+
+### 5.3 端口释放等待
+
+**问题**：kill 旧进程后，端口不会立刻释放（TCP TIME_WAIT）。新 BT 立即启动会 EADDRINUSE。
+
+**解决**：`wait_port_free()` 最多等待 5 秒确认端口空闲，超时则 `kill -9` 强杀后再等。
+
+### 5.4 Gateway default.conf 保护
+
+**问题**：独立部署模式下 `default.conf` 是普通文件（指向 prdagent-api:8080）。
+停掉 prdagent-api 后，gateway 会 502（upstream 不存在）。
+
+**解决**：exec_bt.sh 检测到 `default.conf` 是普通文件时：
+1. 备份为 `.standalone-bak.{timestamp}`
+2. 替换为 symlink → `_disconnected.conf`（返回友好 502 JSON）
+3. `nginx -s reload` 让 gateway 立即生效
+
+### 5.5 state.json 容错
+
+**问题**：如果 BT 在写 state.json 时崩溃，文件可能被截断（空文件或不完整 JSON）。
+Node.js `JSON.parse` 会抛异常导致启动失败。
+
+**解决**：启动前验证 JSON 合法性，损坏时备份并重置。
+
+### 5.6 不触碰原则
 
 - **永远不删除** 非 `prdagent-*` 命名的 nginx 配置
 - **永远不修改** docker-compose.yml
 - **永远不操作** 非 prdagent-network 的 Docker 网络
 - **永远不 drop** MongoDB 数据库 (BT 内部有安全检查, exec_bt.sh 不碰 DB)
+- **永远不盲杀** PID — 必须通过 `is_bt_pid()` 验证所有权
 
 ## 6. 测试用例
 
@@ -207,7 +270,7 @@ TEST-14  gateway :5500 响应                    curl -sf http://localhost:5500
 TEST-15  prdagent-api 未运行                   docker inspect (should not be running)
 
 # Branch-Tester
-TEST-20  BT 进程存活                           kill -0 $(cat .bt/bt.pid)
+TEST-20  BT 进程存活 + PID 归属验证             is_bt_pid($(cat .bt/bt.pid))
 TEST-21  BT dashboard :9900 响应               curl -sf http://localhost:9900
 TEST-22  BT state.json 可读                    cat .bt/state.json
 
