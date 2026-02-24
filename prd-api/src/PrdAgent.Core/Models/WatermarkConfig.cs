@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 独立的水印配置文档，每条记录是一个完整的水印配置
 /// </summary>
+[AppOwnership(AppNames.Watermark, AppNames.WatermarkDisplay, IsPrimary = true)]
 public class WatermarkConfig
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -73,6 +76,21 @@ public class WatermarkConfig
     public string? IconImageRef { get; set; }
 
     /// <summary>
+    /// 图标位置: left/right/top/bottom
+    /// </summary>
+    public string IconPosition { get; set; } = "left";
+
+    /// <summary>
+    /// 图标与文字间距（像素）
+    /// </summary>
+    public double IconGapPx { get; set; }
+
+    /// <summary>
+    /// 图标缩放比例（1为原始大小）
+    /// </summary>
+    public double IconScale { get; set; } = 1;
+
+    /// <summary>
     /// 是否启用边框
     /// </summary>
     public bool BorderEnabled { get; set; }
@@ -108,6 +126,11 @@ public class WatermarkConfig
     public int BaseCanvasWidth { get; set; }
 
     /// <summary>
+    /// 自适应缩放模式：0不缩放 1长边 2短边 3宽 4高
+    /// </summary>
+    public int AdaptiveScaleMode { get; set; }
+
+    /// <summary>
     /// 文字颜色
     /// </summary>
     public string? TextColor { get; set; }
@@ -126,6 +149,31 @@ public class WatermarkConfig
     /// 预览图URL
     /// </summary>
     public string? PreviewUrl { get; set; }
+
+    #region 海鲜市场（配置共享）
+
+    /// <summary>是否公开到海鲜市场</summary>
+    public bool IsPublic { get; set; }
+
+    /// <summary>被下载次数（Fork 次数）</summary>
+    public int ForkCount { get; set; }
+
+    /// <summary>来源配置ID（如果是从海鲜市场下载的）</summary>
+    public string? ForkedFromId { get; set; }
+
+    /// <summary>来源用户ID</summary>
+    public string? ForkedFromUserId { get; set; }
+
+    /// <summary>来源用户名（冗余存储，方便展示）</summary>
+    public string? ForkedFromUserName { get; set; }
+
+    /// <summary>来源用户头像URL</summary>
+    public string? ForkedFromUserAvatar { get; set; }
+
+    /// <summary>下载后是否已修改（修改后清除来源标记）</summary>
+    public bool IsModifiedAfterFork { get; set; }
+
+    #endregion
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

@@ -4,6 +4,7 @@
  */
 import { ArrowLeft } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { glassFloatingButton } from '@/lib/glassStyles';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import { GlobalDefectSubmitDialog } from '@/components/ui/GlobalDefectSubmitDialog';
 import VisualAgentWorkspaceListPage from './VisualAgentWorkspaceListPage';
@@ -44,12 +45,8 @@ export default function VisualAgentFullscreenPage() {
         onClick={onBack}
         className="fixed top-5 left-5 z-50 flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200"
         style={{
-          background: 'rgba(18, 18, 22, 0.8)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
+          ...glassFloatingButton,
           color: 'var(--text-primary)',
-          boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = 'rgba(18, 18, 22, 0.95)';
@@ -60,7 +57,7 @@ export default function VisualAgentFullscreenPage() {
           e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
         }}
       >
-        <ArrowLeft size={18} /> 
+        <ArrowLeft size={18} />
       </button>
 
       {/* 根据路由显示列表页或编辑页 */}

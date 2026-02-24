@@ -5,6 +5,7 @@ import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { PlatformAvailableModelsDialog } from '@/components/model/PlatformAvailableModelsDialog';
 import type { AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
+import { ModelListItem } from '@/components/model/ModelListItem';
 import {
   getAppCallers,
   updateAppCaller,
@@ -15,6 +16,7 @@ import {
   updateModelGroup,
   // deleteModelGroup, // 暂时未使用
   getGroupMonitoring,
+  resetModelHealth,
   // simulateDowngrade, // 暂时未使用
   // simulateRecover, // 暂时未使用
   getSchedulerConfig,
@@ -55,6 +57,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import {
@@ -96,6 +99,7 @@ const HEALTH_STATUS_MAP = {
 };
 
 export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (actions: React.ReactNode) => void }) {
+  const { isMobile } = useBreakpoint();
   const token = useAuthStore((s) => s.token);
   const navigate = useNavigate();
   const [appCallers, setAppCallers] = useState<LLMAppCaller[]>([]);
@@ -864,20 +868,20 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const actionsSetRef = useRef(false);
   const actions = useMemo(() => (
         <>
-          <Button variant="secondary" size="sm" onClick={handleInitDefaultApps}>
+          <Button variant="secondary" size="sm" onClick={handleInitDefaultApps} title="初始化应用">
             <RefreshCw size={14} />
-            初始化应用
+            {!isMobile && '初始化应用'}
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => setShowConfigDialog(true)}>
+          <Button variant="secondary" size="sm" onClick={() => setShowConfigDialog(true)} title="系统配置">
             <Settings size={14} />
-            系统配置
+            {!isMobile && '系统配置'}
           </Button>
-          <Button variant="primary" size="sm" onClick={() => window.location.href = '/mds?tab=pools'}>
+          <Button variant="primary" size="sm" onClick={() => window.location.href = '/mds?tab=pools'} title="新建模型池">
             <Plus size={14} />
-            新建模型池
+            {!isMobile && '新建模型池'}
           </Button>
         </>
-  ), [handleInitDefaultApps]);
+  ), [handleInitDefaultApps, isMobile]);
 
   useEffect(() => {
     if (!actionsSetRef.current && onActionsReady) {
@@ -901,8 +905,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   onChange={(e) => setModelTypeFilter(e.target.value)}
                   className="h-9 rounded-[11px] text-[13px]"
                   style={{
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'var(--bg-input)',
+                    border: '1px solid var(--border-subtle)',
                   }}
                 >
                   {MODEL_TYPE_FILTERS.map((type) => (
@@ -921,8 +925,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full h-9 pl-9 pr-3 rounded-[11px] outline-none text-[13px]"
                   style={{
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'var(--bg-input)',
+                    border: '1px solid var(--border-subtle)',
                     color: 'var(--text-primary)',
                   }}
                 />
@@ -959,15 +963,15 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                         }
                       }}
                       className="px-3 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors"
-                      style={isSelected ? { background: 'rgba(255,255,255,0.06)' } : undefined}
+                      style={isSelected ? { background: 'var(--bg-input-hover)' } : undefined}
                     >
                       <div className="flex items-center gap-3">
                         {/* 应用图标 */}
                         <div
                           className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
                           style={{
-                            background: isSelected ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255,255,255,0.06)',
-                            border: isSelected ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid rgba(255,255,255,0.08)',
+                            background: isSelected ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input-hover)',
+                            border: isSelected ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid var(--border-subtle)',
                           }}
                         >
                           <Layers size={18} style={{ color: isSelected ? 'rgba(59, 130, 246, 0.9)' : 'var(--text-muted)' }} />
@@ -1254,12 +1258,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                               {/* 实际使用的模型 */}
                                               <div
                                                 className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors"
-                                                style={{ background: isFallback ? 'rgba(34, 197, 94, 0.05)' : 'rgba(255, 255, 255, 0.02)' }}
+                                                style={{ background: isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--list-item-bg)' }}
                                                 onMouseEnter={(e) => {
-                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.1)' : 'rgba(255, 255, 255, 0.06)';
+                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.1)' : 'var(--bg-input-hover)';
                                                 }}
                                                 onMouseLeave={(e) => {
-                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.05)' : 'rgba(255, 255, 255, 0.02)';
+                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--list-item-bg)';
                                                 }}
                                                 title={isFallback ? `降级回退：${resolvedModel.fallbackReason || ''}` : resolvedModel.source === 'legacy' ? '使用传统配置的单模型' : resolvedModel.modelGroupName ? `使用默认模型池：${resolvedModel.modelGroupName}` : '使用默认模型池'}
                                               >
@@ -1270,7 +1274,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                               {/* 平台 */}
                                               <span
                                                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] shrink-0"
-                                                style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}
+                                                style={{ background: 'var(--bg-card-hover)', color: 'var(--text-muted)' }}
                                               >
                                                 <Server size={10} />
                                                 {resolvedModel.platformName}
@@ -1309,13 +1313,33 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                   暂无统计
                                                 </span>
                                               )}
-                                              {/* 状态 */}
-                                              <span
-                                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
-                                                style={{ background: defaultStatus.bg, color: defaultStatus.color }}
-                                              >
-                                                {defaultStatus.label}
-                                              </span>
+                                              {/* 状态（非 Healthy 时可点击重置） */}
+                                              {resolvedModel.healthStatus !== 'Healthy' && resolvedModel.modelGroupId ? (
+                                                <button
+                                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                                                  style={{ background: defaultStatus.bg, color: defaultStatus.color }}
+                                                  title="点击重置为健康状态"
+                                                  onClick={async (e) => {
+                                                    e.stopPropagation();
+                                                    try {
+                                                      await resetModelHealth(resolvedModel.modelGroupId!, resolvedModel.modelId);
+                                                      toast.success('已重置为健康状态');
+                                                      loadData();
+                                                    } catch (err: any) {
+                                                      toast.error(err.message || '重置失败');
+                                                    }
+                                                  }}
+                                                >
+                                                  {defaultStatus.label} ↻
+                                                </button>
+                                              ) : (
+                                                <span
+                                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
+                                                  style={{ background: defaultStatus.bg, color: defaultStatus.color }}
+                                                >
+                                                  {defaultStatus.label}
+                                                </span>
+                                              )}
                                               {/* 查看日志按钮 - hover 显示 */}
                                               <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                                                 <button
@@ -1462,98 +1486,101 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                             const poolStatsKey = `${selectedApp?.appCode || ''}:${model.platformId}:${model.modelId}`.toLowerCase();
                                             const stats = poolModelStats[poolStatsKey] || null;
                                             return (
-                                              <div
+                                              <ModelListItem
                                                 key={`${poolGroup.id}-${model.platformId}-${model.modelId}`}
-                                                className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors"
-                                                style={{
-                                                  background: 'rgba(255, 255, 255, 0.02)',
+                                                model={{
+                                                  platformId: model.platformId,
+                                                  platformName,
+                                                  modelId: model.modelId,
                                                 }}
-                                                onMouseEnter={(e) => {
-                                                  e.currentTarget.style.background = 'rgba(251, 191, 36, 0.08)';
-                                                }}
-                                                onMouseLeave={(e) => {
-                                                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)';
-                                                }}
-                                              >
-                                                {/* 序号 */}
-                                                <span className="text-[10px] font-medium w-5 text-center shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                                  {modelIdx + 1}
-                                                </span>
-                                                {/* 平台 */}
-                                                <span
-                                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] shrink-0"
-                                                  style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}
-                                                >
-                                                  <Server size={10} />
-                                                  {platformName}
-                                                </span>
-                                                {/* 模型名 */}
-                                                <div className="flex items-center gap-1 min-w-0 flex-1">
-                                                  <Box size={12} style={{ color: 'var(--text-muted)' }} className="shrink-0" />
-                                                  <span className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                                                    {model.modelId}
-                                                  </span>
-                                                </div>
-                                                {/* 调用统计 */}
-                                                {stats ? (
-                                                  <div className="flex items-center gap-2 text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                                    <span title="近7天请求次数">
-                                                      {stats.requestCount.toLocaleString()}次
-                                                    </span>
-                                                    {stats.avgDurationMs != null && (
-                                                      <span title="平均耗时">
-                                                        {stats.avgDurationMs}ms
+                                                index={modelIdx + 1}
+                                                total={poolModels.length}
+                                                size="sm"
+                                                hoverable
+                                                suffix={
+                                                  <>
+                                                    {/* 调用统计 */}
+                                                    {stats ? (
+                                                      <div className="flex items-center gap-2 text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                        <span title="近7天请求次数">
+                                                          {stats.requestCount.toLocaleString()}次
+                                                        </span>
+                                                        {stats.avgDurationMs != null && (
+                                                          <span title="平均耗时">
+                                                            {stats.avgDurationMs}ms
+                                                          </span>
+                                                        )}
+                                                        {stats.avgTtfbMs != null && (
+                                                          <span title="首字延迟(TTFB)">
+                                                            TTFB:{stats.avgTtfbMs}ms
+                                                          </span>
+                                                        )}
+                                                        {(stats.totalInputTokens != null || stats.totalOutputTokens != null) && (
+                                                          <span title="输入/输出Token">
+                                                            {((stats.totalInputTokens || 0) / 1000).toFixed(1)}k/{((stats.totalOutputTokens || 0) / 1000).toFixed(1)}k
+                                                          </span>
+                                                        )}
+                                                      </div>
+                                                    ) : (
+                                                      <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                        暂无统计
                                                       </span>
                                                     )}
-                                                    {stats.avgTtfbMs != null && (
-                                                      <span title="首字延迟(TTFB)">
-                                                        TTFB:{stats.avgTtfbMs}ms
+                                                    {/* 状态（非 Healthy 时可点击重置） */}
+                                                    {model.healthStatus !== 'Healthy' ? (
+                                                      <button
+                                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                                                        style={{ background: status.bg, color: status.color }}
+                                                        title="点击重置为健康状态"
+                                                        onClick={async (e) => {
+                                                          e.stopPropagation();
+                                                          try {
+                                                            await resetModelHealth(poolGroup.id, model.modelId);
+                                                            toast.success('已重置为健康状态');
+                                                            loadData();
+                                                          } catch (err: any) {
+                                                            toast.error(err.message || '重置失败');
+                                                          }
+                                                        }}
+                                                      >
+                                                        {status.label} ↻
+                                                      </button>
+                                                    ) : (
+                                                      <span
+                                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
+                                                        style={{ background: status.bg, color: status.color }}
+                                                      >
+                                                        {status.label}
                                                       </span>
                                                     )}
-                                                    {(stats.totalInputTokens != null || stats.totalOutputTokens != null) && (
-                                                      <span title="输入/输出Token">
-                                                        {((stats.totalInputTokens || 0) / 1000).toFixed(1)}k/{((stats.totalOutputTokens || 0) / 1000).toFixed(1)}k
-                                                      </span>
-                                                    )}
-                                                  </div>
-                                                ) : (
-                                                  <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                                    暂无统计
-                                                  </span>
-                                                )}
-                                                {/* 状态 */}
-                                                <span
-                                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
-                                                  style={{ background: status.bg, color: status.color }}
-                                                >
-                                                  {status.label}
-                                                </span>
-                                                {/* 操作按钮 - hover 显示 */}
-                                                <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                  {/* 查看日志 */}
-                                                  <button
-                                                    className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-blue-500/20"
-                                                    onClick={() => {
-                                                      // 跳转到日志页，带上筛选参数
-                                                      const params = new URLSearchParams();
-                                                      params.set('tab', 'llm');
-                                                      if (model.platformId) params.set('provider', platformName);
-                                                      if (model.modelId) params.set('model', model.modelId);
-                                                      navigate(`/logs?${params.toString()}`);
-                                                    }}
-                                                    title="查看该模型的调用日志"
-                                                  >
-                                                    <Eye size={11} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
-                                                  </button>
-                                                  <button
-                                                    className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-red-500/20"
-                                                    onClick={() => handleRemoveModelFromPool(poolGroup, model.platformId, model.modelId)}
-                                                    title="从模型池中移除"
-                                                  >
-                                                    <Trash2 size={11} style={{ color: 'rgba(239, 68, 68, 0.8)' }} />
-                                                  </button>
-                                                </div>
-                                              </div>
+                                                    {/* 操作按钮 - hover 显示 */}
+                                                    <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                      {/* 查看日志 */}
+                                                      <button
+                                                        className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-blue-500/20"
+                                                        onClick={() => {
+                                                          // 跳转到日志页，带上筛选参数
+                                                          const params = new URLSearchParams();
+                                                          params.set('tab', 'llm');
+                                                          if (model.platformId) params.set('provider', platformName);
+                                                          if (model.modelId) params.set('model', model.modelId);
+                                                          navigate(`/logs?${params.toString()}`);
+                                                        }}
+                                                        title="查看该模型的调用日志"
+                                                      >
+                                                        <Eye size={11} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
+                                                      </button>
+                                                      <button
+                                                        className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-red-500/20"
+                                                        onClick={() => handleRemoveModelFromPool(poolGroup, model.platformId, model.modelId)}
+                                                        title="从模型池中移除"
+                                                      >
+                                                        <Trash2 size={11} style={{ color: 'rgba(239, 68, 68, 0.8)' }} />
+                                                      </button>
+                                                    </div>
+                                                  </>
+                                                }
+                                              />
                                             );
                                           })
                                         ) : (
@@ -1626,48 +1653,47 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
               <div className="space-y-2">
                 {groupModelsDraft.length === 0 ? (
                   <div className="text-center py-6 text-sm" style={{ color: 'var(--text-muted)' }}>
-                    暂无模型，请点击“从平台选择”添加
+                    暂无模型，请点击"从平台选择"添加
                   </div>
                 ) : (
                   [...groupModelsDraft]
                     .sort((a, b) => Number(a.priority ?? 0) - Number(b.priority ?? 0))
-                    .map((m) => (
-                      <div
+                    .map((m, idx, arr) => (
+                      <ModelListItem
                         key={keyOfGroupModel(m)}
-                        className="flex items-center justify-between gap-3 rounded-[12px] px-3 py-2"
-                        style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.03)' }}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                            {m.modelId}
+                        model={{
+                          platformId: m.platformId,
+                          platformName: platforms.find(p => p.id === m.platformId)?.name,
+                          modelId: m.modelId,
+                        }}
+                        index={idx + 1}
+                        total={arr.length}
+                        size="md"
+                        suffix={
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              value={Number(m.priority ?? 0)}
+                              onChange={(e) => {
+                                const v = parseInt(e.target.value) || 0;
+                                setGroupModelsDraft((prev) =>
+                                  prev.map((x) => (keyOfGroupModel(x) === keyOfGroupModel(m) ? { ...x, priority: v } : x))
+                                );
+                              }}
+                              className="h-9 w-24 px-2 rounded-[10px] outline-none text-[12px]"
+                              style={{
+                                background: 'var(--bg-input)',
+                                border: '1px solid var(--border-default)',
+                                color: 'var(--text-primary)',
+                              }}
+                              title="优先级（越小越靠前）"
+                            />
+                            <Button variant="ghost" size="sm" onClick={() => toggleDraftModel(m.platformId, m.modelId)} title="移除">
+                              <Trash2 size={14} />
+                            </Button>
                           </div>
-                          <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                            platformId: {m.platformId}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            value={Number(m.priority ?? 0)}
-                            onChange={(e) => {
-                              const v = parseInt(e.target.value) || 0;
-                              setGroupModelsDraft((prev) =>
-                                prev.map((x) => (keyOfGroupModel(x) === keyOfGroupModel(m) ? { ...x, priority: v } : x))
-                              );
-                            }}
-                            className="h-9 w-24 px-2 rounded-[10px] outline-none text-[12px]"
-                            style={{
-                              background: 'var(--bg-input)',
-                              border: '1px solid rgba(255,255,255,0.12)',
-                              color: 'var(--text-primary)',
-                            }}
-                            title="优先级（越小越靠前）"
-                          />
-                          <Button variant="ghost" size="sm" onClick={() => toggleDraftModel(m.platformId, m.modelId)} title="移除">
-                            <Trash2 size={14} />
-                          </Button>
-                        </div>
-                      </div>
+                        }
+                      />
                     ))
                 )}
               </div>
@@ -1747,7 +1773,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                   style={{
                     background: 'var(--bg-input)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    border: '1px solid var(--border-default)',
                     color: 'var(--text-primary)',
                   }}
                 />
@@ -1759,7 +1785,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                 </label>
                 <div
                   className="rounded-[12px] p-2 max-h-[200px] overflow-auto"
-                  style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'var(--bg-input)' }}
+                  style={{ border: '1px solid var(--border-default)', background: 'var(--bg-input)' }}
                 >
                   {modelGroups.filter(g => g.modelType === requirementForm.modelType).map((group) => (
                     <label
@@ -1838,7 +1864,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                   style={{
                     background: 'var(--bg-input)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    border: '1px solid var(--border-default)',
                     color: 'var(--text-primary)',
                   }}
                 />
@@ -1857,7 +1883,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                   style={{
                     background: 'var(--bg-input)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    border: '1px solid var(--border-default)',
                     color: 'var(--text-primary)',
                     opacity: editingGroup ? 0.6 : 1,
                   }}
@@ -1894,7 +1920,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   className="w-full px-3 py-2 rounded-[12px] outline-none text-[13px] resize-none"
                   style={{
                     background: 'var(--bg-input)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    border: '1px solid var(--border-default)',
                     color: 'var(--text-primary)',
                   }}
                 />
@@ -1952,7 +1978,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-default)',
                       color: 'var(--text-primary)',
                     }}
                   />
@@ -1972,7 +1998,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-default)',
                       color: 'var(--text-primary)',
                     }}
                   />
@@ -1992,7 +2018,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-default)',
                       color: 'var(--text-primary)',
                     }}
                   />
@@ -2012,7 +2038,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-default)',
                       color: 'var(--text-primary)',
                     }}
                   />
@@ -2032,7 +2058,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-default)',
                       color: 'var(--text-primary)',
                     }}
                   />
@@ -2050,7 +2076,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-default)',
                       color: 'var(--text-primary)',
                     }}
                   />
@@ -2068,7 +2094,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
                   style={{
                     background: 'var(--bg-input)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    border: '1px solid var(--border-default)',
                     color: 'var(--text-primary)',
                   }}
                 />
@@ -2143,7 +2169,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
                 <div
                   className="rounded-[12px] p-3 min-h-[200px] max-h-[400px] overflow-auto"
-                  style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}
+                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}
                 >
                   {filteredGroups.length === 0 ? (
                     <div className="py-12 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
@@ -2191,7 +2217,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                   ? 'rgba(59, 130, 246, 0.12)'
                                   : isMatching
                                     ? 'rgba(34, 197, 94, 0.06)'
-                                    : 'rgba(255,255,255,0.04)',
+                                    : 'var(--bg-input)',
                                 border: isSelected
                                   ? '1px solid rgba(59, 130, 246, 0.4)'
                                   : isMatching

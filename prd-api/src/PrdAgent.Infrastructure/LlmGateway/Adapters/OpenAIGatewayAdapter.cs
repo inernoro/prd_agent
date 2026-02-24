@@ -73,93 +73,86 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
         return request;
     }
 
+    /// <summary>
+    /// 解析 SSE chunk — 使用 Utf8JsonReader 单遍扫描提取关键字段
+    /// 不分配 JsonDocument，不嵌套 TryGetProperty，异常由 Gateway 层统一捕获记录
+    /// </summary>
     public GatewayStreamChunk? ParseStreamChunk(string sseData)
     {
         if (string.IsNullOrWhiteSpace(sseData))
             return null;
 
-        try
+        var bytes = Encoding.UTF8.GetBytes(sseData);
+        var reader = new Utf8JsonReader(bytes);
+
+        string? content = null;
+        string? reasoningContent = null;
+        string? finishReason = null;
+        int? promptTokens = null;
+        int? completionTokens = null;
+
+        // 单遍扫描：Utf8JsonReader 自动下沉到所有嵌套层级，
+        // 只提取我们关心的 5 个字段名，不管它们在哪一层
+        while (reader.Read())
         {
-            using var doc = JsonDocument.Parse(sseData);
-            var root = doc.RootElement;
+            if (reader.TokenType != JsonTokenType.PropertyName) continue;
 
-            // 检查是否有 choices
-            if (!root.TryGetProperty("choices", out var choices) ||
-                choices.GetArrayLength() == 0)
-            {
-                // 可能是 usage 块
-                if (root.TryGetProperty("usage", out var usageEl))
-                {
-                    return new GatewayStreamChunk
-                    {
-                        Type = GatewayChunkType.Done,
-                        TokenUsage = ParseUsageElement(usageEl)
-                    };
-                }
-                return null;
-            }
+            var prop = reader.GetString();
+            if (!reader.Read()) break; // 前进到值
 
-            var choice = choices[0];
-
-            // 检查 finish_reason
-            string? finishReason = null;
-            if (choice.TryGetProperty("finish_reason", out var fr) &&
-                fr.ValueKind == JsonValueKind.String)
+            switch (prop)
             {
-                finishReason = fr.GetString();
+                case "content":
+                    if (reader.TokenType == JsonTokenType.String)
+                        content = reader.GetString();
+                    break;
+                case "reasoning_content":
+                    if (reader.TokenType == JsonTokenType.String)
+                        reasoningContent = reader.GetString();
+                    break;
+                case "finish_reason":
+                    if (reader.TokenType == JsonTokenType.String)
+                        finishReason = reader.GetString();
+                    break;
+                case "prompt_tokens":
+                    if (reader.TokenType == JsonTokenType.Number)
+                        promptTokens = reader.GetInt32();
+                    break;
+                case "completion_tokens":
+                    if (reader.TokenType == JsonTokenType.Number)
+                        completionTokens = reader.GetInt32();
+                    break;
             }
-
-            // 提取 delta 内容（优先使用 delta.content，备选 message.content）
-            string? content = null;
-            if (choice.TryGetProperty("delta", out var delta) &&
-                delta.TryGetProperty("content", out var contentEl) &&
-                contentEl.ValueKind == JsonValueKind.String)
-            {
-                content = contentEl.GetString();
-            }
-            // 某些 OpenAI 兼容 API 可能使用 message.content 而不是 delta.content
-            else if (choice.TryGetProperty("message", out var message) &&
-                message.TryGetProperty("content", out var msgContentEl) &&
-                msgContentEl.ValueKind == JsonValueKind.String)
-            {
-                content = msgContentEl.GetString();
-            }
-            // 还有一些 API 可能直接在 choice 下有 text 字段
-            else if (choice.TryGetProperty("text", out var textEl) &&
-                textEl.ValueKind == JsonValueKind.String)
-            {
-                content = textEl.GetString();
-            }
-
-            // 检查 usage（可能在最后一个 chunk）
-            GatewayTokenUsage? usage = null;
-            if (root.TryGetProperty("usage", out var usageEl2))
-            {
-                usage = ParseUsageElement(usageEl2);
-            }
-
-            if (!string.IsNullOrEmpty(finishReason))
-            {
-                return new GatewayStreamChunk
-                {
-                    Type = GatewayChunkType.Done,
-                    Content = content,
-                    FinishReason = finishReason,
-                    TokenUsage = usage
-                };
-            }
-
-            if (!string.IsNullOrEmpty(content))
-            {
-                return GatewayStreamChunk.Text(content);
-            }
-
-            return null;
         }
-        catch
+
+        // 构建 usage（如果有）
+        GatewayTokenUsage? usage = (promptTokens != null || completionTokens != null)
+            ? new GatewayTokenUsage { InputTokens = promptTokens, OutputTokens = completionTokens, Source = "response_body" }
+            : null;
+
+        // 优先级：Done > Thinking > Text > 独立 Usage
+        if (!string.IsNullOrEmpty(finishReason))
         {
-            return null;
+            return new GatewayStreamChunk
+            {
+                Type = GatewayChunkType.Done,
+                Content = content,
+                FinishReason = finishReason,
+                TokenUsage = usage
+            };
         }
+
+        if (!string.IsNullOrEmpty(reasoningContent))
+            return GatewayStreamChunk.Thinking(reasoningContent);
+
+        if (!string.IsNullOrEmpty(content))
+            return GatewayStreamChunk.Text(content);
+
+        // 独立 usage 块（stream_options 最后一个 choices=[] 的块）
+        if (usage != null)
+            return new GatewayStreamChunk { Type = GatewayChunkType.Done, TokenUsage = usage };
+
+        return null;
     }
 
     public GatewayTokenUsage? ParseTokenUsage(string responseBody)
@@ -167,9 +160,24 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
         try
         {
             using var doc = JsonDocument.Parse(responseBody);
-            if (doc.RootElement.TryGetProperty("usage", out var usage))
+            if (doc.RootElement.TryGetProperty("usage", out var usage) &&
+                usage.ValueKind == JsonValueKind.Object)
             {
-                return ParseUsageElement(usage);
+                int? inputTokens = null;
+                int? outputTokens = null;
+
+                if (usage.TryGetProperty("prompt_tokens", out var pt) && pt.ValueKind == JsonValueKind.Number)
+                    inputTokens = pt.GetInt32();
+
+                if (usage.TryGetProperty("completion_tokens", out var ct) && ct.ValueKind == JsonValueKind.Number)
+                    outputTokens = ct.GetInt32();
+
+                return new GatewayTokenUsage
+                {
+                    InputTokens = inputTokens,
+                    OutputTokens = outputTokens,
+                    Source = "response_body"
+                };
             }
         }
         catch
@@ -177,24 +185,5 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
             // ignore
         }
         return null;
-    }
-
-    private static GatewayTokenUsage ParseUsageElement(JsonElement usage)
-    {
-        int? inputTokens = null;
-        int? outputTokens = null;
-
-        if (usage.TryGetProperty("prompt_tokens", out var pt))
-            inputTokens = pt.GetInt32();
-
-        if (usage.TryGetProperty("completion_tokens", out var ct))
-            outputTokens = ct.GetInt32();
-
-        return new GatewayTokenUsage
-        {
-            InputTokens = inputTokens,
-            OutputTokens = outputTokens,
-            Source = "response_body"
-        };
     }
 }

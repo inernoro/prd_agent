@@ -170,7 +170,7 @@ export default function StatsPage() {
           </div>
           <div
             className="mt-3 rounded-[14px] overflow-hidden"
-            style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}
+            style={{ background: 'var(--list-item-bg)', border: '1px solid var(--border-subtle)' }}
           >
             {loading ? (
               <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
@@ -194,7 +194,7 @@ export default function StatsPage() {
           </div>
           <div
             className="mt-3 rounded-[14px] overflow-hidden"
-            style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}
+            style={{ background: 'var(--list-item-bg)', border: '1px solid var(--border-subtle)' }}
           >
             {loading ? (
               <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
@@ -219,7 +219,7 @@ export default function StatsPage() {
         </div>
         <div className="mt-3 overflow-hidden rounded-[14px]" style={{ border: '1px solid var(--border-subtle)' }}>
           <table className="w-full text-sm">
-            <thead style={{ background: 'rgba(255,255,255,0.03)' }}>
+            <thead style={{ background: 'var(--nested-block-bg)' }}>
               <tr>
                 <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>群组</th>
                 <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>成员</th>

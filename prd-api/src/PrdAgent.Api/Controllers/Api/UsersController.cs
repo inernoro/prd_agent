@@ -852,7 +852,7 @@ public class UsersController : ControllerBase
     }
 
     /// <summary>
-    /// 修改用户密码（管理员）
+    /// 修改用户密码（管理员）—— 管理员可设置任意密码，用户下次登录时须强制重置
     /// </summary>
     [HttpPut("{userId}/password")]
     public async Task<IActionResult> UpdatePassword(string userId, [FromBody] UpdatePasswordRequest request)
@@ -862,23 +862,19 @@ public class UsersController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "密码不能为空"));
         }
 
-        var passwordError = PasswordValidator.Validate(request.Password);
-        if (passwordError != null)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.WEAK_PASSWORD, passwordError));
-        }
-
         var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
         var result = await _db.Users.UpdateOneAsync(
             u => u.UserId == userId,
-            Builders<User>.Update.Set(u => u.PasswordHash, passwordHash));
+            Builders<User>.Update
+                .Set(u => u.PasswordHash, passwordHash)
+                .Set(u => u.MustResetPassword, true));
 
         if (result.MatchedCount == 0)
         {
             return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
         }
 
-        _logger.LogInformation("User {UserId} password updated by admin", userId);
+        _logger.LogInformation("Admin updated user {UserId} password, mustResetPassword set to true", userId);
 
         var response = new UserPasswordUpdateResponse
         {

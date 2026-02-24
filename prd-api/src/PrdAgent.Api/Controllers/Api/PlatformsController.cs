@@ -385,7 +385,7 @@ public class PlatformsController : ControllerBase
         // 2) 调用主模型进行分类（可能需要分片）
         var providerId = (string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId!).Trim().ToLowerInvariant();
         var appCallerCode = Admin.Platforms.Reclassify;
-        var llmClient = _gateway.CreateClient(appCallerCode, "chat");
+        var llmClient = _gateway.CreateClient(appCallerCode, "intent");
 
         var requestId = Guid.NewGuid().ToString("N");
         using var _ = _ctxAccessor.BeginScope(new LlmRequestContext(
@@ -762,6 +762,7 @@ public class PlatformsController : ControllerBase
                 TokenUsageSource: "missing",
                 ImageSuccessCount: null,
                 AnswerText: prettyBody,
+                ThinkingText: null,
                 AssembledTextChars: assembledChars,
                 AssembledTextHash: assembledHash,
                 Status: "succeeded",

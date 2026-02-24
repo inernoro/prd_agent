@@ -1,3 +1,5 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -27,6 +29,7 @@ public class LLMModelCapability
 /// <summary>
 /// LLM模型实体
 /// </summary>
+[AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
 public class LLMModel
 {
     /// <summary>模型ID（通过 IIdGenerator 生成）</summary>

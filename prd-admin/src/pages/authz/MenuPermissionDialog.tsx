@@ -1,4 +1,5 @@
 import { X } from 'lucide-react';
+import { glassPanel } from '@/lib/glassStyles';
 import { menuList, allPermissions, type PermissionDef } from '@/lib/authzMenuMapping';
 
 interface MenuPermissionDialogProps {
@@ -50,17 +51,14 @@ export function MenuPermissionDialog({ open, onOpenChange, menuAppKey }: MenuPer
       <div
         className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[420px] max-h-[70vh] overflow-hidden rounded-2xl"
         style={{
-          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+          ...glassPanel,
           boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
         }}
       >
         {/* Header */}
         <div
           className="flex items-center justify-between px-5 py-4"
-          style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
+          style={{ borderBottom: '1px solid var(--nested-block-border)' }}
         >
           <div>
             <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -95,7 +93,7 @@ export function MenuPermissionDialog({ open, onOpenChange, menuAppKey }: MenuPer
                   <div
                     key={perm.key}
                     className="p-3 rounded-xl"
-                    style={{ background: 'rgba(255, 255, 255, 0.03)' }}
+                    style={{ background: 'var(--nested-block-bg)' }}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
@@ -137,7 +135,7 @@ export function MenuPermissionDialog({ open, onOpenChange, menuAppKey }: MenuPer
         <div
           className="px-5 py-3 text-xs"
           style={{
-            borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+            borderTop: '1px solid var(--nested-block-border)',
             color: 'var(--text-muted)',
           }}
         >

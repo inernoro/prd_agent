@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// Desktop 资源皮肤（仅元数据；具体文件落 COS）
 /// </summary>
+[AppOwnership(AppNames.Desktop, AppNames.DesktopDisplay, IsPrimary = true)]
 public class DesktopAssetSkin
 {
     public string Id { get; set; } = string.Empty; // Guid (N)
@@ -16,6 +19,7 @@ public class DesktopAssetSkin
 /// <summary>
 /// Desktop 资源 key（仅元数据；Desktop 内置"需要的 key 清单"，此表用于后台管理与一致性校验）
 /// </summary>
+[AppOwnership(AppNames.Desktop, AppNames.DesktopDisplay, IsPrimary = true)]
 public class DesktopAssetKey
 {
     public string Id { get; set; } = string.Empty; // Guid (N)
@@ -30,6 +34,7 @@ public class DesktopAssetKey
 /// <summary>
 /// Desktop 实际资源记录（存储已上传的文件信息，包含皮肤维度）
 /// </summary>
+[AppOwnership(AppNames.Desktop, AppNames.DesktopDisplay, IsPrimary = true)]
 public class DesktopAsset
 {
     public string Id { get; set; } = string.Empty; // Guid (N)

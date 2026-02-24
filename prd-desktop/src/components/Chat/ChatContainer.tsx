@@ -9,7 +9,7 @@ import ChatInput from './ChatInput';
 import SystemNoticeOverlay from '../Feedback/SystemNoticeOverlay';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useGroupInfoDrawerStore } from '../../stores/groupInfoDrawerStore';
-import type { DocCitation } from '../../types';
+import type { DocCitation, Message } from '../../types';
 import { useGroupStreamReconnect } from '../../hooks/useGroupStreamReconnect';
 
 // 阶段提示文案会造成重复状态块（且与“AI 回复气泡”割裂），这里不再使用。
@@ -113,6 +113,32 @@ function ChatContainerInner() {
         return;
       }
       
+      // 处理 AI 思考过程的增量内容（thinking）
+      if (p?.type === 'thinking' && p?.messageId && p?.thinkingContent) {
+        const store = useMessageStore.getState();
+        const mid = String(p.messageId);
+        if (store.streamingMessageId === mid) {
+          store.appendToStreamingThinking(String(p.thinkingContent));
+        } else {
+          // 容错：thinking 先于占位消息到达时，创建临时占位并启动流式
+          const existingMsg = store.messages.find(m => m.id === mid);
+          if (existingMsg) {
+            store.startStreaming(existingMsg);
+          } else {
+            const tempMessage: Message = {
+              id: mid,
+              role: 'Assistant',
+              content: '',
+              thinking: '',
+              timestamp: new Date(),
+            };
+            store.startStreaming(tempMessage);
+          }
+          store.appendToStreamingThinking(String(p.thinkingContent));
+        }
+        return;
+      }
+
       // 处理 AI 流式输出的增量内容（delta）
       if (p?.type === 'delta' && p?.messageId && p?.deltaContent) {
         const messageId = String(p.messageId);
@@ -215,6 +241,7 @@ function ChatContainerInner() {
         id: String(m.id || ''),
         role: (m.role === 'User' ? 'User' : 'Assistant') as 'User' | 'Assistant',
         content: String(m.content || ''),
+        thinking: (m as any).thinkingContent ? String((m as any).thinkingContent) : undefined,
         timestamp: new Date(m.timestamp || Date.now()),
         viewRole: (m.viewRole as any) || undefined,
         runId: (m as any).runId ? String((m as any).runId) : undefined,

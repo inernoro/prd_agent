@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 大模型实验室 - 实验室分组（仅实验室内部使用，与其它模块无关）
 /// </summary>
+[AppOwnership(AppNames.ModelLab, AppNames.ModelLabDisplay, IsPrimary = true)]
 public class ModelLabGroup
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();

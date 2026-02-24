@@ -3,7 +3,7 @@ mod models;
 mod services;
 
 use commands::session::StreamCancelState;
-use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::Emitter;
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
@@ -87,6 +87,17 @@ pub fn run() {
                 .id("check_update")
                 .build(app)?;
 
+            // macOS 需要 Edit 子菜单才能让 Cmd+C/V/X/A 等快捷键在 WebView 中生效
+            let edit_submenu = SubmenuBuilder::new(app, "编辑")
+                .item(&PredefinedMenuItem::undo(app, None)?)
+                .item(&PredefinedMenuItem::redo(app, None)?)
+                .separator()
+                .item(&PredefinedMenuItem::cut(app, None)?)
+                .item(&PredefinedMenuItem::copy(app, None)?)
+                .item(&PredefinedMenuItem::paste(app, None)?)
+                .item(&PredefinedMenuItem::select_all(app, None)?)
+                .build()?;
+
             let help_submenu = SubmenuBuilder::new(app, "帮助")
                 .item(&settings_item)
                 .separator()
@@ -95,7 +106,9 @@ pub fn run() {
                 .item(&check_update_item)
                 .build()?;
 
-            let menu = MenuBuilder::new(app).items(&[&help_submenu]).build()?;
+            let menu = MenuBuilder::new(app)
+                .items(&[&edit_submenu, &help_submenu])
+                .build()?;
 
             app.set_menu(menu)?;
 
@@ -206,18 +219,49 @@ pub fn run() {
             commands::updater::get_updater_platform_info,
             commands::updater::check_for_update,
             commands::updater::fetch_update_manifests,
+            commands::defect::list_defects,
+            commands::defect::list_defect_users,
+            commands::defect::list_defect_templates,
+            commands::defect::create_defect,
+            commands::defect::submit_defect,
+            commands::defect::get_defect,
+            commands::defect::get_defect_messages,
+            commands::defect::send_defect_message,
+            commands::defect::process_defect,
+            commands::defect::resolve_defect,
+            commands::defect::reject_defect,
+            commands::defect::get_defect_stats,
+            commands::defect::polish_defect,
+            commands::defect::preview_defect_logs,
+            commands::defect::add_defect_attachment,
             commands::devtools::open_devtools,
+            commands::attachment::upload_attachment,
+            commands::skill::get_skills,
+            commands::skill::execute_skill,
+            commands::skill::create_skill,
+            commands::skill::update_skill,
+            commands::skill::delete_skill,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|_app_handle, _event| {
-        // warm-start deep link（macOS/iOS）：应用运行中收到 URL 打开事件
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        if let tauri::RunEvent::Opened { urls } = _event {
-            for url in urls {
-                let _ = _app_handle.emit("deep-link", url.to_string());
+        match &_event {
+            // 应用退出：取消所有 SSE 流 + 停止心跳，确保资源优雅释放
+            tauri::RunEvent::ExitRequested { .. } => {
+                if let Some(cancel_state) = _app_handle.try_state::<StreamCancelState>() {
+                    cancel_state.cancel_all();
+                }
+                services::api_client::stop_desktop_presence_heartbeat();
             }
+            // warm-start deep link（macOS/iOS）：应用运行中收到 URL 打开事件
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            tauri::RunEvent::Opened { urls } => {
+                for url in urls {
+                    let _ = _app_handle.emit("deep-link", url.to_string());
+                }
+            }
+            _ => {}
         }
     });
 }

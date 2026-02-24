@@ -144,26 +144,17 @@ public class MultiImageDomainService : IMultiImageDomainService
             };
         }
 
-        // 多图场景：构建图片对照表，让 nanobanana 理解每张图片
-        // 不做复杂的意图推断，保留用户原始描述
-        var sb = new StringBuilder();
-        sb.AppendLine(prompt);
-        sb.AppendLine();
-        sb.AppendLine("【图片对照表】");
-
-        foreach (var r in refs.OrderBy(x => x.OccurrenceOrder))
-        {
-            var label = string.IsNullOrWhiteSpace(r.Label) ? $"图片{r.RefId}" : r.Label;
-            sb.AppendLine($"- @img{r.RefId} 对应 {label}");
-        }
+        // 多图场景：使用 Transformer 将 @imgN 替换为顺序号
+        var refIdToOrder = refs.ToDictionary(r => r.RefId, r => r.OccurrenceOrder + 1);
+        var cleanPrompt = MultiImagePromptTransformer.Transform(prompt, refIdToOrder);
 
         return new ImageIntentResult
         {
             Success = true,
-            EnhancedPrompt = sb.ToString().TrimEnd(),
+            EnhancedPrompt = cleanPrompt,
             OriginalPrompt = prompt,
             ImageRefCount = refs.Count,
-            Confidence = 0.8
+            Confidence = 1.0
         };
     }
 
@@ -206,14 +197,7 @@ public class MultiImageDomainService : IMultiImageDomainService
             return prompt;
         }
 
-        if (refs.Count == 1)
-        {
-            // 单图场景：可以直接使用原始 prompt
-            // 生图模型会结合图片理解用户意图
-            return prompt;
-        }
-
-        // 多图场景：调用意图分析
+        // 单图/多图场景：都需要调用意图分析来清理 @imgN 标记
         var intent = await AnalyzeIntentAsync(prompt, refs, ct);
         if (intent.Success)
         {

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Models;
@@ -16,9 +17,10 @@ public class WatermarkFontRegistry
 {
     private const string DefaultFontKeyValue = "default";
     private const string DefaultFontFileName = "default.ttf";
-    private const string DefaultRemoteFontUrl = "https://i.pa.759800.com/watermark/font/default.ttf";
+    private const string DefaultFontRelativePath = "watermark/font/default.ttf";
 
     private readonly string _fontDir;
+    private readonly string? _defaultRemoteFontUrl;
     private readonly IWatermarkFontAssetSource _fontAssetSource;
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<WatermarkFontRegistry> _logger;
@@ -31,12 +33,17 @@ public class WatermarkFontRegistry
         IHostEnvironment env,
         IWatermarkFontAssetSource fontAssetSource,
         IAssetStorage assetStorage,
+        IConfiguration cfg,
         ILogger<WatermarkFontRegistry> logger)
     {
         _fontAssetSource = fontAssetSource;
         _assetStorage = assetStorage;
         _logger = logger;
         _fontDir = Path.Combine(env.ContentRootPath, "Assets", "Fonts");
+
+        var cdnBase = (cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
+        _defaultRemoteFontUrl = string.IsNullOrWhiteSpace(cdnBase) ? null : $"{cdnBase}/{DefaultFontRelativePath}";
+
         _defaultDefinitions = new List<WatermarkFontDefinition>
         {
             new(DefaultFontKeyValue, "Default", DefaultFontFileName, "Default")
@@ -192,12 +199,23 @@ public class WatermarkFontRegistry
         return Path.Combine(_fontDir, relative);
     }
 
+    /// <summary>
+    /// 获取默认字体的完整 CDN URL（用于返回给前端）
+    /// </summary>
+    public string? DefaultFontUrl => _defaultRemoteFontUrl;
+
     private byte[]? TryDownloadDefaultFontBytes()
     {
+        if (string.IsNullOrWhiteSpace(_defaultRemoteFontUrl))
+        {
+            _logger.LogWarning("No CDN base URL configured (TENCENT_COS_PUBLIC_BASE_URL), cannot download default watermark font.");
+            return null;
+        }
+
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-            var bytes = client.GetByteArrayAsync(DefaultRemoteFontUrl).GetAwaiter().GetResult();
+            var bytes = client.GetByteArrayAsync(_defaultRemoteFontUrl).GetAwaiter().GetResult();
             return bytes.Length == 0 ? null : bytes;
         }
         catch (Exception ex)

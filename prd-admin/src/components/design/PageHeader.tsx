@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { glassBar, glassBarGold, glassTabContainer } from '@/lib/glassStyles';
 
 /**
  * PageHeader 组件
@@ -23,14 +24,8 @@ export function PageHeader(props: PageHeaderProps) {
 
   const tabsElement = tabs && tabs.length > 0 && (
     <div
-      className="flex items-center gap-2 p-1 rounded-[14px] shrink-0"
-      style={{
-        background: 'rgba(0, 0, 0, 0.32)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
-        boxShadow: '0 8px 20px rgba(0, 0, 0, 0.28), 0 1px 4px rgba(0, 0, 0, 0.20) inset',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
-      }}
+      className="flex items-center gap-2 p-1 rounded-[14px] shrink-0 overflow-x-auto"
+      style={{ ...glassTabContainer, scrollbarWidth: 'none' as const }}
     >
       {tabs.map((tab) => {
         const active = activeTab === tab.key;
@@ -80,29 +75,16 @@ export function PageHeader(props: PageHeaderProps) {
 
   return (
     <div
-      className="h-[46px] rounded-[14px] px-4 transition-all duration-200 relative overflow-hidden"
-      style={{
-        // macOS 风格的多层背景
-        background: variant === 'gold'
-          ? 'linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%)'
-          : 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
-        // 增强的模糊效果
-        backdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
-        WebkitBackdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
-        // 更精致的阴影层次
-        boxShadow: variant === 'gold'
-          ? '0 8px 32px -4px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset, 0 1px 0 0 rgba(255, 255, 255, 0.15) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.1) inset'
-          : '0 8px 32px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 1px 0 0 rgba(255, 255, 255, 0.1) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.08) inset',
-      }}
+      className="min-h-[46px] rounded-[14px] px-4 py-2 transition-all duration-200 relative overflow-hidden"
+      style={variant === 'gold' ? glassBarGold : glassBar}
     >
-      <div className="h-full flex items-center justify-between gap-4">
+      <div className="h-full min-h-[30px] flex items-center justify-between gap-3 flex-wrap">
         {/* 左侧：tabs（如果有的话） */}
         {tabsElement}
 
         {/* 右侧：操作按钮（如果没有tabs，则占据整行右对齐） */}
         {actions && (
-          <div className={`flex items-center gap-2 shrink-0 ${!tabsElement ? 'ml-auto' : ''}`}>
+          <div className={`flex items-center gap-2 shrink-0 flex-wrap ${!tabsElement ? 'ml-auto' : ''}`}>
             {actions}
           </div>
         )}

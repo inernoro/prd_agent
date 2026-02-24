@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Models.Toolbox;
 
 namespace PrdAgent.Infrastructure.Database;
 
@@ -45,6 +46,7 @@ public class MongoDbContext
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
+    public IMongoCollection<AutomationRule> AutomationRules => _database.GetCollection<AutomationRule>("automation_rules");
     /// <summary>
     /// Prompts 配置（集合名保持 promptstages 以兼容历史数据；语义已迁移为“提示词”）
     /// </summary>
@@ -92,6 +94,9 @@ public class MongoDbContext
     public IMongoCollection<WatermarkFontAsset> WatermarkFontAssets => _database.GetCollection<WatermarkFontAsset>("watermark_font_assets");
     public IMongoCollection<WatermarkConfig> WatermarkConfigs => _database.GetCollection<WatermarkConfig>("watermark_configs");
 
+    // 海鲜市场 Fork 下载记录
+    public IMongoCollection<MarketplaceForkLog> MarketplaceForkLogs => _database.GetCollection<MarketplaceForkLog>("marketplace_fork_logs");
+
     // Literary Agent 文学创作配置
     public IMongoCollection<LiteraryAgentConfig> LiteraryAgentConfigs => _database.GetCollection<LiteraryAgentConfig>("literary_agent_configs");
     public IMongoCollection<ReferenceImageConfig> ReferenceImageConfigs => _database.GetCollection<ReferenceImageConfig>("reference_image_configs");
@@ -101,6 +106,50 @@ public class MongoDbContext
     public IMongoCollection<DefectReport> DefectReports => _database.GetCollection<DefectReport>("defect_reports");
     public IMongoCollection<DefectMessage> DefectMessages => _database.GetCollection<DefectMessage>("defect_messages");
     public IMongoCollection<DefectFolder> DefectFolders => _database.GetCollection<DefectFolder>("defect_folders");
+
+    // Channel Adapter 多通道适配器
+    public IMongoCollection<ChannelWhitelist> ChannelWhitelists => _database.GetCollection<ChannelWhitelist>("channel_whitelist");
+    public IMongoCollection<ChannelIdentityMapping> ChannelIdentityMappings => _database.GetCollection<ChannelIdentityMapping>("channel_identity_mappings");
+    public IMongoCollection<ChannelTask> ChannelTasks => _database.GetCollection<ChannelTask>("channel_tasks");
+    public IMongoCollection<ChannelRequestLog> ChannelRequestLogs => _database.GetCollection<ChannelRequestLog>("channel_request_logs");
+    public IMongoCollection<ChannelSettings> ChannelSettings => _database.GetCollection<ChannelSettings>("channel_settings");
+
+    // Email Channel 邮件通道
+    public IMongoCollection<TodoItem> TodoItems => _database.GetCollection<TodoItem>("todo_items");
+    public IMongoCollection<EmailClassification> EmailClassifications => _database.GetCollection<EmailClassification>("email_classifications");
+    public IMongoCollection<EmailWorkflow> EmailWorkflows => _database.GetCollection<EmailWorkflow>("email_workflows");
+
+    // App Registry 应用注册中心
+    public IMongoCollection<RegisteredApp> RegisteredApps => _database.GetCollection<RegisteredApp>("registered_apps");
+    public IMongoCollection<RoutingRule> RoutingRules => _database.GetCollection<RoutingRule>("routing_rules");
+    // AI Toolbox 百宝箱
+    public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
+    public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
+
+    // 技能设置（公共技能定义）
+    public IMongoCollection<SkillSettings> SkillSettings => _database.GetCollection<SkillSettings>("skill_settings");
+
+    // 统一技能集合（替代 prompt_stages + skill_settings）
+    public IMongoCollection<Skill> Skills => _database.GetCollection<Skill>("skills");
+
+    // Workflow Agent 工作流引擎
+    public IMongoCollection<Workflow> Workflows => _database.GetCollection<Workflow>("workflows");
+    public IMongoCollection<WorkflowExecution> WorkflowExecutions => _database.GetCollection<WorkflowExecution>("workflow_executions");
+    public IMongoCollection<WorkflowSchedule> WorkflowSchedules => _database.GetCollection<WorkflowSchedule>("workflow_schedules");
+    public IMongoCollection<WorkflowSecret> WorkflowSecrets => _database.GetCollection<WorkflowSecret>("workflow_secrets");
+    public IMongoCollection<ShareLink> ShareLinks => _database.GetCollection<ShareLink>("share_links");
+
+    // Webhook 通知
+    public IMongoCollection<WebhookDeliveryLog> WebhookDeliveryLogs => _database.GetCollection<WebhookDeliveryLog>("webhook_delivery_logs");
+
+    // 模型中继 (Exchange)
+    public IMongoCollection<ModelExchange> ModelExchanges => _database.GetCollection<ModelExchange>("model_exchanges");
+
+    // Tutorial Email 教程邮件
+    public IMongoCollection<TutorialEmailSequence> TutorialEmailSequences => _database.GetCollection<TutorialEmailSequence>("tutorial_email_sequences");
+    public IMongoCollection<TutorialEmailTemplate> TutorialEmailTemplates => _database.GetCollection<TutorialEmailTemplate>("tutorial_email_templates");
+    public IMongoCollection<TutorialEmailAsset> TutorialEmailAssets => _database.GetCollection<TutorialEmailAsset>("tutorial_email_assets");
+    public IMongoCollection<TutorialEmailEnrollment> TutorialEmailEnrollments => _database.GetCollection<TutorialEmailEnrollment>("tutorial_email_enrollments");
 
     private void CreateIndexes()
     {
@@ -674,5 +723,235 @@ public class MongoDbContext
         DefectMessages.Indexes.CreateOne(new CreateIndexModel<DefectMessage>(
             Builders<DefectMessage>.IndexKeys.Ascending(x => x.DefectId).Ascending(x => x.Seq),
             new CreateIndexOptions { Name = "idx_defect_messages_defect_seq" }));
+
+        // ========== Channel Adapter 多通道适配器索引 ==========
+
+        // ChannelWhitelists：按 channelType + identifierPattern 查询；按 isActive + priority 排序
+        ChannelWhitelists.Indexes.CreateOne(new CreateIndexModel<ChannelWhitelist>(
+            Builders<ChannelWhitelist>.IndexKeys.Ascending(x => x.ChannelType).Ascending(x => x.IdentifierPattern),
+            new CreateIndexOptions { Name = "idx_channel_whitelist_type_pattern" }));
+        ChannelWhitelists.Indexes.CreateOne(new CreateIndexModel<ChannelWhitelist>(
+            Builders<ChannelWhitelist>.IndexKeys.Ascending(x => x.IsActive).Ascending(x => x.Priority),
+            new CreateIndexOptions { Name = "idx_channel_whitelist_active_priority" }));
+        ChannelWhitelists.Indexes.CreateOne(new CreateIndexModel<ChannelWhitelist>(
+            Builders<ChannelWhitelist>.IndexKeys.Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_channel_whitelist_created" }));
+
+        // ChannelIdentityMappings：按 channelType + channelIdentifier 唯一
+        try
+        {
+            ChannelIdentityMappings.Indexes.CreateOne(new CreateIndexModel<ChannelIdentityMapping>(
+                Builders<ChannelIdentityMapping>.IndexKeys.Ascending(x => x.ChannelType).Ascending(x => x.ChannelIdentifier),
+                new CreateIndexOptions
+                {
+                    Name = "uniq_channel_identity_type_identifier",
+                    Unique = true
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        ChannelIdentityMappings.Indexes.CreateOne(new CreateIndexModel<ChannelIdentityMapping>(
+            Builders<ChannelIdentityMapping>.IndexKeys.Ascending(x => x.UserId),
+            new CreateIndexOptions { Name = "idx_channel_identity_user" }));
+
+        // ChannelTasks：按 status + createdAt 查询；按 senderIdentifier + createdAt 查询
+        ChannelTasks.Indexes.CreateOne(new CreateIndexModel<ChannelTask>(
+            Builders<ChannelTask>.IndexKeys.Ascending(x => x.Status).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_channel_tasks_status_created" }));
+        ChannelTasks.Indexes.CreateOne(new CreateIndexModel<ChannelTask>(
+            Builders<ChannelTask>.IndexKeys.Ascending(x => x.ChannelType).Ascending(x => x.SenderIdentifier).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_channel_tasks_type_sender_created" }));
+        ChannelTasks.Indexes.CreateOne(new CreateIndexModel<ChannelTask>(
+            Builders<ChannelTask>.IndexKeys.Ascending(x => x.MappedUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_channel_tasks_user_created" }));
+        // TTL（默认保留 30 天）
+        ChannelTasks.Indexes.CreateOne(new CreateIndexModel<ChannelTask>(
+            Builders<ChannelTask>.IndexKeys.Ascending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "ttl_channel_tasks", ExpireAfter = TimeSpan.FromDays(30) }));
+
+        // ChannelRequestLogs：按 channelType + createdAt 查询；按 mappedUserId + createdAt 查询
+        ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
+            Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.ChannelType).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_channel_request_logs_type_created" }));
+        ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
+            Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.MappedUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_channel_request_logs_user_created" }));
+        ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
+            Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.TaskId),
+            new CreateIndexOptions { Name = "idx_channel_request_logs_task" }));
+        // TTL（默认保留 30 天）
+        ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
+            Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
+            new CreateIndexOptions { Name = "ttl_channel_request_logs", ExpireAfter = TimeSpan.FromDays(30) }));
+        // ToolboxRuns：按 userId + createdAt 查询；按 status + createdAt 查询
+        ToolboxRuns.Indexes.CreateOne(new CreateIndexModel<ToolboxRun>(
+            Builders<ToolboxRun>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_toolbox_runs_user_created" }));
+        ToolboxRuns.Indexes.CreateOne(new CreateIndexModel<ToolboxRun>(
+            Builders<ToolboxRun>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_toolbox_runs_status_created" }));
+
+        // ========== Webhook 通知投递日志索引 ==========
+
+        // WebhookDeliveryLogs：按 appId + createdAt 查询
+        WebhookDeliveryLogs.Indexes.CreateOne(new CreateIndexModel<WebhookDeliveryLog>(
+            Builders<WebhookDeliveryLog>.IndexKeys.Ascending(x => x.AppId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_webhook_delivery_logs_app_created" }));
+        // TTL（默认保留 30 天）
+        WebhookDeliveryLogs.Indexes.CreateOne(new CreateIndexModel<WebhookDeliveryLog>(
+            Builders<WebhookDeliveryLog>.IndexKeys.Ascending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "ttl_webhook_delivery_logs", ExpireAfter = TimeSpan.FromDays(30) }));
+
+        // AutomationRules: 按事件类型 + 启用状态索引
+        AutomationRules.Indexes.CreateOne(new CreateIndexModel<AutomationRule>(
+            Builders<AutomationRule>.IndexKeys.Ascending(x => x.EventType).Ascending(x => x.Enabled),
+            new CreateIndexOptions { Name = "idx_automation_rules_event_enabled" }));
+        // AutomationRules: 按 HookId 唯一索引（传入 Webhook 查询）
+        AutomationRules.Indexes.CreateOne(new CreateIndexModel<AutomationRule>(
+            Builders<AutomationRule>.IndexKeys.Ascending(x => x.HookId),
+            new CreateIndexOptions { Name = "idx_automation_rules_hook_id", Sparse = true }));
+        // ToolboxItems：按 createdByUserId 查询
+        ToolboxItems.Indexes.CreateOne(new CreateIndexModel<ToolboxItem>(
+            Builders<ToolboxItem>.IndexKeys.Ascending(x => x.CreatedByUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_toolbox_items_user_created" }));
+
+        // ========== Workflow Agent 工作流引擎索引 ==========
+
+        // Workflows：按创建者 + 更新时间查询
+        Workflows.Indexes.CreateOne(new CreateIndexModel<Workflow>(
+            Builders<Workflow>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_workflows_creator_updated" }));
+        Workflows.Indexes.CreateOne(new CreateIndexModel<Workflow>(
+            Builders<Workflow>.IndexKeys.Ascending(x => x.IsPublic).Descending(x => x.ForkCount),
+            new CreateIndexOptions { Name = "idx_workflows_public_forkcount" }));
+
+        // WorkflowExecutions：按工作流ID + 创建时间；按状态 + 创建时间
+        WorkflowExecutions.Indexes.CreateOne(new CreateIndexModel<WorkflowExecution>(
+            Builders<WorkflowExecution>.IndexKeys.Ascending(x => x.WorkflowId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_workflow_executions_workflow_created" }));
+        WorkflowExecutions.Indexes.CreateOne(new CreateIndexModel<WorkflowExecution>(
+            Builders<WorkflowExecution>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_workflow_executions_status_created" }));
+        WorkflowExecutions.Indexes.CreateOne(new CreateIndexModel<WorkflowExecution>(
+            Builders<WorkflowExecution>.IndexKeys.Ascending(x => x.TriggeredBy).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_workflow_executions_trigger_created" }));
+
+        // WorkflowSchedules：Worker 轮询（启用 + 下次执行时间）
+        WorkflowSchedules.Indexes.CreateOne(new CreateIndexModel<WorkflowSchedule>(
+            Builders<WorkflowSchedule>.IndexKeys.Ascending(x => x.IsEnabled).Ascending(x => x.NextRunAt),
+            new CreateIndexOptions { Name = "idx_workflow_schedules_enabled_nextrun" }));
+        WorkflowSchedules.Indexes.CreateOne(new CreateIndexModel<WorkflowSchedule>(
+            Builders<WorkflowSchedule>.IndexKeys.Ascending(x => x.WorkflowId),
+            new CreateIndexOptions { Name = "idx_workflow_schedules_workflow" }));
+
+        // WorkflowSecrets：按工作流ID + Key 唯一
+        try
+        {
+            WorkflowSecrets.Indexes.CreateOne(new CreateIndexModel<WorkflowSecret>(
+                Builders<WorkflowSecret>.IndexKeys.Ascending(x => x.WorkflowId).Ascending(x => x.Key),
+                new CreateIndexOptions { Name = "uniq_workflow_secrets_workflow_key", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // ShareLinks：按 Token 唯一
+        try
+        {
+            ShareLinks.Indexes.CreateOne(new CreateIndexModel<ShareLink>(
+                Builders<ShareLink>.IndexKeys.Ascending(x => x.Token),
+                new CreateIndexOptions { Name = "uniq_share_links_token", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        ShareLinks.Indexes.CreateOne(new CreateIndexModel<ShareLink>(
+            Builders<ShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_share_links_creator_created" }));
+        ShareLinks.Indexes.CreateOne(new CreateIndexModel<ShareLink>(
+            Builders<ShareLink>.IndexKeys.Ascending(x => x.ResourceType).Ascending(x => x.ResourceId),
+            new CreateIndexOptions { Name = "idx_share_links_resource" }));
+
+        // Skills：SkillKey 唯一索引
+        try
+        {
+            Skills.Indexes.CreateOne(new CreateIndexModel<Skill>(
+                Builders<Skill>.IndexKeys.Ascending(x => x.SkillKey),
+                new CreateIndexOptions { Name = "uniq_skills_skill_key", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // Skills：按可见性 + 角色 + 启用状态查询
+        Skills.Indexes.CreateOne(new CreateIndexModel<Skill>(
+            Builders<Skill>.IndexKeys.Ascending(x => x.Visibility).Ascending(x => x.IsEnabled).Ascending(x => x.Order),
+            new CreateIndexOptions { Name = "idx_skills_visibility_enabled_order" }));
+        // Skills：个人技能按用户查询
+        Skills.Indexes.CreateOne(new CreateIndexModel<Skill>(
+            Builders<Skill>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_skills_owner_updated" }));
+
+        // ModelExchanges：按 ModelAlias 唯一索引
+        try
+        {
+            ModelExchanges.Indexes.CreateOne(new CreateIndexModel<ModelExchange>(
+                Builders<ModelExchange>.IndexKeys.Ascending(x => x.ModelAlias),
+                new CreateIndexOptions
+                {
+                    Name = "uniq_exchange_model_alias",
+                    Unique = true
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // ========== Tutorial Email 教程邮件索引 ==========
+
+        // TutorialEmailSequences：按 sequenceKey 唯一
+        try
+        {
+            TutorialEmailSequences.Indexes.CreateOne(new CreateIndexModel<TutorialEmailSequence>(
+                Builders<TutorialEmailSequence>.IndexKeys.Ascending(x => x.SequenceKey),
+                new CreateIndexOptions { Name = "uniq_tutorial_email_sequences_key", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // TutorialEmailTemplates：按 createdAt 排序
+        TutorialEmailTemplates.Indexes.CreateOne(new CreateIndexModel<TutorialEmailTemplate>(
+            Builders<TutorialEmailTemplate>.IndexKeys.Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_tutorial_email_templates_created" }));
+
+        // TutorialEmailAssets：按 uploadedAt 排序；按 tags 多值索引
+        TutorialEmailAssets.Indexes.CreateOne(new CreateIndexModel<TutorialEmailAsset>(
+            Builders<TutorialEmailAsset>.IndexKeys.Descending(x => x.UploadedAt),
+            new CreateIndexOptions { Name = "idx_tutorial_email_assets_uploaded" }));
+        TutorialEmailAssets.Indexes.CreateOne(new CreateIndexModel<TutorialEmailAsset>(
+            Builders<TutorialEmailAsset>.IndexKeys.Ascending(x => x.Tags),
+            new CreateIndexOptions { Name = "idx_tutorial_email_assets_tags" }));
+
+        // TutorialEmailEnrollments：按 status + nextSendAt（Worker 轮询）；按 userId + sequenceKey 唯一
+        TutorialEmailEnrollments.Indexes.CreateOne(new CreateIndexModel<TutorialEmailEnrollment>(
+            Builders<TutorialEmailEnrollment>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.NextSendAt),
+            new CreateIndexOptions { Name = "idx_tutorial_email_enrollments_status_next" }));
+        try
+        {
+            TutorialEmailEnrollments.Indexes.CreateOne(new CreateIndexModel<TutorialEmailEnrollment>(
+                Builders<TutorialEmailEnrollment>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.SequenceKey),
+                new CreateIndexOptions { Name = "uniq_tutorial_email_enrollments_user_seq", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
     }
 }

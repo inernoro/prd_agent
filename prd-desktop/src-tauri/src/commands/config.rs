@@ -8,8 +8,6 @@ use uuid::Uuid;
 
 use crate::services::api_client;
 
-const DEFAULT_API_URL_DEV: &str = "http://localhost:5000";
-
 /// 应用配置结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,25 +76,10 @@ fn save_config_to_file(app: &tauri::AppHandle, config: &AppConfig) -> Result<(),
 }
 
 fn sanitize_config_for_release(cfg: &mut AppConfig) -> bool {
-    // 发布版不允许使用“开发者模式”，也不允许默认/历史遗留的 localhost 配置影响线上使用。
-    // 仅在本地调试（debug_assertions）才允许开发者模式与 localhost。
-    if cfg!(debug_assertions) {
-        return false;
-    }
-
-    let mut changed = false;
-    if cfg.is_developer {
-        cfg.is_developer = false;
-        changed = true;
-    }
-
-    let trimmed = cfg.api_base_url.trim();
-    if trimmed == DEFAULT_API_URL_DEV || is_localhost_url(trimmed) {
-        cfg.api_base_url = api_client::get_default_api_url();
-        changed = true;
-    }
-
-    changed
+    // 开发者模式常开：不再在发布版强制关闭 is_developer 或重置 localhost 地址。
+    // 用户可自行在设置中切换开发者模式与 API 地址。
+    let _ = cfg;
+    false
 }
 
 /// 获取当前配置

@@ -7,6 +7,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway.Adapters;
+using PrdAgent.Infrastructure.LlmGateway.Transformers;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
@@ -21,6 +22,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly ILogger<LlmGateway> _logger;
     private readonly ILlmRequestLogWriter? _logWriter;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private const string InvalidAppCallerErrorCode = "APP_CALLER_INVALID";
 
     public LlmGateway(
@@ -42,6 +44,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private void RegisterAdapter(IGatewayAdapter adapter)
     {
         _adapters[adapter.PlatformType] = adapter;
+    }
+
+    /// <summary>
+    /// 计算是否实际允许思考内容透传。
+    /// Intent 模型类型强制禁止思考输出，其他类型尊重请求方的 IncludeThinking 设置。
+    /// </summary>
+    public static bool IsThinkingEffective(bool includeThinking, string modelType)
+    {
+        return includeThinking
+            && !string.Equals(modelType, ModelTypes.Intent, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <inheritdoc />
@@ -94,7 +106,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
 
             _logger.LogInformation(
-                "[LlmGateway] 发送请求\n" +
+                "[LlmGateway] 向 LLM 发起非流式请求\n" +
                 "  AppCallerCode: {AppCallerCode}\n" +
                 "  ExpectedModel: {ExpectedModel}\n" +
                 "  ActualModel: {ActualModel}\n" +
@@ -222,7 +234,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
 
             _logger.LogInformation(
-                "[LlmGateway] 发送流式请求\n" +
+                "[LlmGateway] 向 LLM 发起流式请求\n" +
                 "  AppCallerCode: {AppCallerCode}\n" +
                 "  ExpectedModel: {ExpectedModel}\n" +
                 "  ActualModel: {ActualModel}\n" +
@@ -259,22 +271,19 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 6. 读取流式响应
             using var stream = await response.Content.ReadAsStreamAsync(ct);
             using var reader = new StreamReader(stream);
+            var sseReader = new SseEventReader(reader);
 
             string? finishReason = null;
+            var thinkingBuilder = new StringBuilder(); // 记录思考过程（用于日志）
+            var thinkTagStripper = new ThinkTagStripper(captureThinking: true); // 始终捕获 <think> 内容
+            var thinkingStarted = false; // 调试：标记思考是否已开始
+            var contentStarted = false;  // 调试：标记正文是否已开始
 
-            while (!reader.EndOfStream)
+            // Intent 模型类型强制禁止思考输出，其他类型尊重请求方设置
+            var effectiveIncludeThinking = IsThinkingEffective(request.IncludeThinking, request.ModelType);
+
+            await foreach (var data in sseReader.ReadEventsAsync(ct))
             {
-                var line = await reader.ReadLineAsync(ct);
-                if (string.IsNullOrEmpty(line)) continue;
-
-                if (!line.StartsWith("data:")) continue;
-                var data = line.Substring(5).Trim();
-
-                if (data == "[DONE]")
-                {
-                    break;
-                }
-
                 // 标记首字节
                 if (firstByteAt == null)
                 {
@@ -286,16 +295,73 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
 
                 // 解析 SSE 数据
-                var chunk = adapter.ParseStreamChunk(data);
+                GatewayStreamChunk? chunk;
+                try
+                {
+                    chunk = adapter.ParseStreamChunk(data);
+                }
+                catch (Exception parseEx)
+                {
+                    // Adapter 解析失败（JSON 异常等），记录错误但不中断流
+                    var dataPreview = data.Length > 200 ? data[..200] + "..." : data;
+                    _logger.LogWarning(parseEx, "[LlmGateway] ParseStreamChunk 异常, data: {DataPreview}", dataPreview);
+                    continue;
+                }
                 if (chunk == null)
                 {
-                    // 调试：记录无法解析的 SSE 数据（仅记录前 200 字符）
-                    var dataPreview = data.Length > 200 ? data[..200] + "..." : data;
-                    _logger.LogDebug("[LlmGateway] ParseStreamChunk returned null for data: {DataPreview}", dataPreview);
                     continue;
                 }
 
-                if (!string.IsNullOrEmpty(chunk.Content))
+                // Thinking 类型（来自 reasoning_content 字段）
+                // Gateway 根据 IncludeThinking 决定是否透传给调用方
+                // Intent 模型类型强制禁止思考输出（无论 IncludeThinking 设置如何）
+                if (chunk.Type == GatewayChunkType.Thinking)
+                {
+                    if (!thinkingStarted)
+                    {
+                        thinkingStarted = true;
+                        _logger.LogInformation("[LlmGateway] ✦ 思考开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
+                    }
+                    if (!string.IsNullOrEmpty(chunk.Content))
+                    {
+                        thinkingBuilder.Append(chunk.Content); // 日志始终记录，无论是否透传
+                    }
+                    // 仅在 IncludeThinking=true 且非 Intent 模型类型时透传
+                    if (effectiveIncludeThinking)
+                    {
+                        yield return chunk;
+                    }
+                    continue;
+                }
+
+                if (!string.IsNullOrEmpty(chunk.Content) && chunk.Type == GatewayChunkType.Text)
+                {
+                    if (!contentStarted)
+                    {
+                        contentStarted = true;
+                        _logger.LogInformation("[LlmGateway] ✦ 正文开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
+                    }
+                    // 通过 ThinkTagStripper 过滤 <think>...</think> 标签
+                    var stripped = thinkTagStripper.Process(chunk.Content);
+
+                    // <think> 标签内容：日志始终记录，仅在 effectiveIncludeThinking 时透传
+                    var capturedThink = thinkTagStripper.PopCapturedThinking();
+                    if (!string.IsNullOrEmpty(capturedThink))
+                    {
+                        thinkingBuilder.Append(capturedThink);
+                        if (effectiveIncludeThinking)
+                        {
+                            yield return GatewayStreamChunk.Thinking(capturedThink);
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(stripped))
+                    {
+                        textBuilder.Append(stripped);
+                        yield return GatewayStreamChunk.Text(stripped);
+                    }
+                }
+                else if (!string.IsNullOrEmpty(chunk.Content))
                 {
                     textBuilder.Append(chunk.Content);
                     yield return chunk;
@@ -310,6 +376,24 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     tokenUsage = chunk.TokenUsage;
                 }
+            }
+
+            // 刷新 ThinkTagStripper 缓冲区
+            var flushed = thinkTagStripper.Flush();
+            if (!string.IsNullOrEmpty(flushed))
+            {
+                textBuilder.Append(flushed);
+                yield return GatewayStreamChunk.Text(flushed);
+            }
+
+            // 记录思考过程（如果有）
+            if (thinkingBuilder.Length > 0)
+            {
+                _logger.LogDebug(
+                    "[LlmGateway] 模型思考过程（{ThinkingChars} 字符）。AppCallerCode: {AppCallerCode}, Model: {Model}",
+                    thinkingBuilder.Length,
+                    request.AppCallerCode,
+                    resolution?.ActualModel);
             }
 
             // 7. 更新健康状态（成功）
@@ -337,7 +421,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     resolution?.ActualModel);
             }
 
-            await FinishStreamLogAsync(logId, assembledText, tokenUsage, durationMs, ct);
+            var assembledThinking = thinkingBuilder.ToString();
+            await FinishStreamLogAsync(logId, assembledText, assembledThinking, tokenUsage, durationMs, ct);
         }
         finally
         {
@@ -375,9 +460,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var gatewayResolution = resolution.ToGatewayResolution();
 
             // 2. 选择适配器并构建 endpoint
-            var adapter = GetAdapter(resolution.PlatformType);
+            var isExchange = resolution.IsExchange;
+            var adapter = isExchange ? null : GetAdapter(resolution.PlatformType);
             string endpoint;
-            if (string.IsNullOrWhiteSpace(request.EndpointPath))
+
+            if (isExchange)
+            {
+                // Exchange 模式：直接使用目标 URL
+                endpoint = resolution.ApiUrl!;
+            }
+            else if (string.IsNullOrWhiteSpace(request.EndpointPath))
             {
                 // 使用适配器构建默认 endpoint（处理不同平台的 URL 格式）
                 endpoint = adapter?.BuildEndpoint(resolution.ApiUrl!, request.ModelType)
@@ -409,12 +501,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
                 else
                 {
-                    // baseUrl 没有版本号（如 https://api.vveai.com）
-                    // 需要添加 /v1 前缀
-                    if (endpointPath.StartsWith("/v1/", StringComparison.OrdinalIgnoreCase) ||
-                        endpointPath.StartsWith("v1/", StringComparison.OrdinalIgnoreCase))
+                    // baseUrl 没有版本号（如 https://api.vveai.com 或 https://api.apiyi.com）
+                    // 检测 endpointPath 是否已包含版本号（v1, v1beta, v2 等）
+                    if (System.Text.RegularExpressions.Regex.IsMatch(
+                        endpointPath, @"^/?v\d+", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
                     {
-                        // endpointPath 已包含 v1，直接拼接
+                        // endpointPath 已包含版本号，直接拼接
                         endpoint = $"{baseUrl}{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
                     }
                     else
@@ -429,7 +521,49 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             HttpRequestMessage httpRequest;
             string requestBodyForLog;
 
-            if (request.IsMultipart)
+            if (isExchange)
+            {
+                // ========== Exchange 中继模式 ==========
+                var transformer = _transformerRegistry.Get(resolution.ExchangeTransformerType);
+                if (transformer == null)
+                {
+                    return GatewayRawResponse.Fail("EXCHANGE_TRANSFORMER_NOT_FOUND",
+                        $"Exchange 转换器未找到: {resolution.ExchangeTransformerType}", 400);
+                }
+
+                var rawBody = request.RequestBody ?? new JsonObject();
+
+                // Exchange 模式下处理 multipart 请求：将字段和文件合并到 JSON
+                if (request.IsMultipart)
+                {
+                    rawBody = ConsolidateMultipartToJson(request);
+                    _logger.LogInformation(
+                        "[LlmGateway.Exchange] Multipart → JSON 合并完成，字段数: {FieldCount}, 文件数: {FileCount}",
+                        request.MultipartFields?.Count ?? 0,
+                        request.MultipartFiles?.Count ?? 0);
+                }
+
+                // 智能路由：根据请求内容决定实际目标 URL
+                var resolvedUrl = transformer.ResolveTargetUrl(endpoint, rawBody, resolution.ExchangeTransformerConfig);
+                if (resolvedUrl != null) endpoint = resolvedUrl;
+
+                var transformedBody = transformer.TransformRequest(rawBody, resolution.ExchangeTransformerConfig);
+
+                _logger.LogInformation(
+                    "[LlmGateway.Exchange] 请求转换完成\n" +
+                    "  Exchange: {ExchangeName}\n" +
+                    "  Transformer: {Transformer}\n" +
+                    "  TargetUrl: {TargetUrl}",
+                    resolution.ExchangeName, resolution.ExchangeTransformerType, endpoint);
+
+                var jsonContent = transformedBody.ToJsonString();
+                httpRequest = new HttpRequestMessage(new HttpMethod(request.HttpMethod), endpoint)
+                {
+                    Content = new StringContent(jsonContent, System.Text.Encoding.UTF8, "application/json")
+                };
+                requestBodyForLog = jsonContent;
+            }
+            else if (request.IsMultipart)
             {
                 // multipart/form-data 请求
                 var multipartContent = new MultipartFormDataContent();
@@ -480,11 +614,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 requestBodyForLog = jsonContent;
             }
 
-            // 4. 设置请求头
+            // 4. 设置请求头（支持 Exchange 可配置认证方案）
             if (!string.IsNullOrWhiteSpace(resolution.ApiKey))
             {
-                httpRequest.Headers.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", resolution.ApiKey);
+                var authScheme = isExchange ? resolution.ExchangeAuthScheme : "Bearer";
+                SetAuthHeader(httpRequest, authScheme ?? "Bearer", resolution.ApiKey);
             }
 
             if (request.ExtraHeaders != null)
@@ -503,7 +637,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
 
             _logger.LogInformation(
-                "[LlmGateway.SendRaw] 发送请求\n" +
+                "[LlmGateway.SendRaw] 向 LLM 发起原始请求\n" +
                 "  AppCallerCode: {AppCallerCode}\n" +
                 "  ActualModel: {ActualModel}\n" +
                 "  Platform: {Platform}\n" +
@@ -534,10 +668,40 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
             }
 
-            // 8. 写入日志（完成）
-            await FinishRawLogAsync(logId, (int)response.StatusCode, responseBody, durationMs, ct);
+            // 8. Exchange 响应转换
+            var finalResponseBody = responseBody;
+            if (isExchange && response.IsSuccessStatusCode)
+            {
+                try
+                {
+                    var respTransformer = _transformerRegistry.Get(resolution.ExchangeTransformerType);
+                    if (respTransformer != null)
+                    {
+                        var rawJson = JsonNode.Parse(responseBody);
+                        if (rawJson is JsonObject rawObj)
+                        {
+                            var transformed = respTransformer.TransformResponse(rawObj, resolution.ExchangeTransformerConfig);
+                            finalResponseBody = transformed.ToJsonString();
 
-            // 9. 返回响应
+                            _logger.LogInformation(
+                                "[LlmGateway.Exchange] 响应转换完成: Exchange={ExchangeName}",
+                                resolution.ExchangeName);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "[LlmGateway.Exchange] 响应转换失败，返回原始响应: Exchange={ExchangeName}",
+                        resolution.ExchangeName);
+                    // 转换失败时使用原始响应，不阻断流程
+                }
+            }
+
+            // 9. 写入日志（完成）
+            await FinishRawLogAsync(logId, (int)response.StatusCode, finalResponseBody, durationMs, ct);
+
+            // 10. 返回响应
             var responseHeaders = new Dictionary<string, string>();
             foreach (var header in response.Headers)
             {
@@ -565,7 +729,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 Success = true,
                 StatusCode = (int)response.StatusCode,
-                Content = responseBody,
+                Content = finalResponseBody,
                 ResponseHeaders = responseHeaders,
                 Resolution = gatewayResolution,
                 DurationMs = durationMs,
@@ -620,6 +784,73 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     #region Private Methods
+
+    /// <summary>
+    /// 根据认证方案设置 HTTP 请求头
+    /// </summary>
+    private static void SetAuthHeader(HttpRequestMessage httpRequest, string authScheme, string apiKey)
+    {
+        switch (authScheme.ToLowerInvariant())
+        {
+            case "x-api-key":
+            case "xapikey":
+                httpRequest.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+                break;
+            case "key":
+                httpRequest.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Key", apiKey);
+                break;
+            default: // "bearer" or anything else
+                httpRequest.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// 将 multipart 请求的字段和文件合并为 JSON 对象，供 Exchange 转换器使用。
+    /// MultipartFields → JSON 属性，MultipartFiles 中的图片 → base64 data URI 放入 image_urls。
+    /// </summary>
+    private static JsonObject ConsolidateMultipartToJson(GatewayRawRequest request)
+    {
+        var body = new JsonObject();
+
+        // 合并 MultipartFields 到 JSON
+        if (request.MultipartFields != null)
+        {
+            foreach (var (key, value) in request.MultipartFields)
+            {
+                if (string.Equals(key, "model", StringComparison.OrdinalIgnoreCase))
+                    continue; // model 由 Gateway 调度管理，不透传
+
+                body[key] = value switch
+                {
+                    int i => JsonValue.Create(i),
+                    long l => JsonValue.Create(l),
+                    double d => JsonValue.Create(d),
+                    float f => JsonValue.Create(f),
+                    bool b => JsonValue.Create(b),
+                    string s => JsonValue.Create(s),
+                    _ => JsonValue.Create(value?.ToString())
+                };
+            }
+        }
+
+        // 将 MultipartFiles 中的图片转换为 base64 data URI，放入 image_urls
+        if (request.MultipartFiles is { Count: > 0 })
+        {
+            var imageUrls = new JsonArray();
+            foreach (var (_, fileInfo) in request.MultipartFiles)
+            {
+                var base64 = Convert.ToBase64String(fileInfo.Content);
+                var dataUri = $"data:{fileInfo.MimeType};base64,{base64}";
+                imageUrls.Add(dataUri);
+            }
+            body["image_urls"] = imageUrls;
+        }
+
+        return body;
+    }
 
     private IGatewayAdapter? GetAdapter(string? platformType)
     {
@@ -681,7 +912,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     PlatformName: resolution.ActualPlatformName,
                     ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
-                    ModelGroupName: resolution.ModelGroupName),
+                    ModelGroupName: resolution.ModelGroupName,
+                    IsExchange: resolution.IsExchange ? true : null,
+                    ExchangeId: resolution.ExchangeId,
+                    ExchangeName: resolution.ExchangeName,
+                    ExchangeTransformerType: resolution.ExchangeTransformerType,
+                    ImageReferences: request.Context?.ImageReferences,
+                    IsFallback: resolution.IsFallback ? true : null,
+                    FallbackReason: resolution.FallbackReason,
+                    ExpectedModel: resolution.ExpectedModel),
                 ct);
         }
         catch (Exception ex)
@@ -723,6 +962,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     TokenUsageSource: tokenUsage?.Source ?? "missing",
                     ImageSuccessCount: null,
                     AnswerText: answerText,
+                    ThinkingText: null,
                     AssembledTextChars: responseBody.Length,
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(responseBody),
                     Status: status,
@@ -738,6 +978,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private async Task FinishStreamLogAsync(
         string? logId,
         string assembledText,
+        string assembledThinking,
         GatewayTokenUsage? tokenUsage,
         long durationMs,
         CancellationToken ct)
@@ -761,6 +1002,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     TokenUsageSource: tokenUsage?.Source ?? "missing",
                     ImageSuccessCount: null,
                     AnswerText: assembledText.Length > 5000 ? assembledText.Substring(0, 5000) + "..." : assembledText,
+                    ThinkingText: string.IsNullOrEmpty(assembledThinking) ? null : assembledThinking,
                     AssembledTextChars: assembledText.Length,
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(assembledText),
                     Status: "succeeded",
@@ -822,7 +1064,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     PlatformName: resolution.ActualPlatformName,
                     ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
-                    ModelGroupName: resolution.ModelGroupName),
+                    ModelGroupName: resolution.ModelGroupName,
+                    IsExchange: resolution.IsExchange ? true : null,
+                    ExchangeId: resolution.ExchangeId,
+                    ExchangeName: resolution.ExchangeName,
+                    ExchangeTransformerType: resolution.ExchangeTransformerType,
+                    ImageReferences: request.Context?.ImageReferences,
+                    IsFallback: resolution.IsFallback ? true : null,
+                    FallbackReason: resolution.FallbackReason,
+                    ExpectedModel: resolution.ExpectedModel),
                 ct);
         }
         catch (Exception ex)
@@ -863,6 +1113,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     TokenUsageSource: "missing",
                     ImageSuccessCount: null,
                     AnswerText: answerText,
+                    ThinkingText: null,
                     AssembledTextChars: responseBody.Length,
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(responseBody),
                     Status: status,
@@ -913,11 +1164,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     #region CreateClient
 
     /// <inheritdoc />
-    public Core.Interfaces.ILLMClient CreateClient(
+    public ILLMClient CreateClient(
         string appCallerCode,
         string modelType,
         int maxTokens = 4096,
-        double temperature = 0.2)
+        double temperature = 0.2,
+        bool includeThinking = false)
     {
         if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
         {
@@ -932,7 +1184,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             platformName: null,
             enablePromptCache: true,
             maxTokens: maxTokens,
-            temperature: temperature);
+            temperature: temperature,
+            includeThinking: includeThinking);
     }
 
     private static bool TryValidateAppCaller(string appCallerCode, string modelType, out string error)

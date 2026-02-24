@@ -1,5 +1,5 @@
 export type UserRole = 'PM' | 'DEV' | 'QA' | 'ADMIN';
-export type InteractionMode = 'QA' | 'Knowledge' | 'PrdPreview' | 'AssetsDiag';
+export type InteractionMode = 'QA' | 'Knowledge' | 'PrdPreview' | 'AssetsDiag' | 'Defect';
 export type MessageRole = 'User' | 'Assistant';
 
 export interface DocCitation {
@@ -8,6 +8,9 @@ export interface DocCitation {
   excerpt: string;
   score?: number | null;
   rank?: number | null;
+  documentId?: string | null;
+  documentLabel?: string | null;
+  verified?: boolean;
 }
 
 export interface User {
@@ -58,6 +61,8 @@ export interface Message {
   id: string;
   role: MessageRole;
   content: string;
+  /** AI 思考过程（DeepSeek reasoning_content），在正文输出前展示，正文开始后自动折叠 */
+  thinking?: string;
   blocks?: MessageBlock[];
   citations?: DocCitation[];
   viewRole?: UserRole;
@@ -135,8 +140,106 @@ export interface ApiResponse<T> {
   };
 }
 
+// ━━━ 缺陷管理类型 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+export type DefectStatus = 'draft' | 'submitted' | 'assigned' | 'processing' | 'resolved' | 'rejected' | 'closed';
+export type DefectSeverity = 'critical' | 'major' | 'minor' | 'trivial';
+
+export interface DefectReport {
+  id: string;
+  defectNo: string;
+  title?: string;
+  rawContent: string;
+  status: DefectStatus;
+  severity?: DefectSeverity;
+  reporterId: string;
+  reporterName?: string;
+  assigneeId?: string;
+  assigneeName?: string;
+  resolution?: string;
+  rejectReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  submittedAt?: string;
+}
+
+export interface DefectMessage {
+  id: string;
+  defectId: string;
+  seq: number;
+  role: 'user' | 'assistant';
+  userId?: string;
+  userName?: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface DefectStats {
+  total: number;
+  byStatus: Record<string, number>;
+  bySeverity: Record<string, number>;
+}
+
+// ━━━ 附件类型 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+export interface AttachmentInfo {
+  attachmentId: string;
+  url: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
+// ━━━ 技能类型（统一模型，替代 PromptItem + SkillItem） ━━━━━━━━
+export type ContextScope = 'all' | 'current' | 'prd' | 'none';
+export type OutputMode = 'chat' | 'download' | 'clipboard';
+export type SkillVisibility = 'system' | 'public' | 'personal';
+
+export interface SkillParameter {
+  key: string;
+  label: string;
+  type: 'text' | 'select' | 'number' | 'boolean';
+  defaultValue?: string;
+  options?: { value: string; label: string }[];
+  required: boolean;
+}
+
+export interface SkillInputConfig {
+  contextScope: ContextScope;
+  acceptsUserInput: boolean;
+  userInputPlaceholder?: string;
+  acceptsAttachments: boolean;
+  parameters: SkillParameter[];
+}
+
+export interface SkillOutputConfig {
+  mode: OutputMode;
+  fileNameTemplate?: string;
+  echoToChat: boolean;
+}
+
+/** 统一技能（服务端返回，不含 execution 配置） */
+export interface Skill {
+  skillKey: string;
+  title: string;
+  description: string;
+  icon?: string;
+  category: string;
+  tags: string[];
+  roles: string[];
+  order: number;
+  visibility: SkillVisibility;
+  input: SkillInputConfig;
+  output: SkillOutputConfig;
+  isEnabled: boolean;
+  isBuiltIn: boolean;
+  usageCount: number;
+}
+
+export interface SkillsResponse {
+  skills: Skill[];
+}
+
 export interface StreamEvent {
-  type: 'start' | 'delta' | 'done' | 'error' | 'blockStart' | 'blockDelta' | 'blockEnd' | 'phase' | 'citations';
+  type: 'start' | 'delta' | 'done' | 'error' | 'blockStart' | 'blockDelta' | 'blockEnd' | 'phase' | 'citations' | 'thinking';
   messageId?: string;
   content?: string;
   errorCode?: string;

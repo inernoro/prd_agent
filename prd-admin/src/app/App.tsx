@@ -4,29 +4,40 @@ import { useAuthStore } from '@/stores/authStore';
 import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
 import LoginPage from '@/pages/LoginPage';
-import DashboardPage from '@/pages/DashboardPage';
 import UsersPage from '@/pages/UsersPage';
 import { ModelManageTabsPage } from '@/pages/ModelManageTabsPage';
-import GroupsPage from '@/pages/GroupsPage';
 import LlmLogsPage from '@/pages/LlmLogsPage';
 import LabPage from '@/pages/LabPage';
-import AiChatPage from '@/pages/AiChatPage';
-import DataManagePage from '@/pages/DataManagePage';
 import PromptStagesPage from '@/pages/PromptStagesPage';
+import SkillsPage from '@/pages/SkillsPage';
+import AssetsManagePage from '@/pages/AssetsManagePage';
 import VisualAgentFullscreenPage from '@/pages/visual-agent/VisualAgentFullscreenPage';
 import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
 import { DefectAgentPage } from '@/pages/defect-agent';
-import AssetsManagePage from '@/pages/AssetsManagePage';
-import OpenPlatformPage from '@/pages/OpenPlatformPage';
-import AuthzPage from '@/pages/AuthzPage';
+import { WorkflowListPage, WorkflowEditorPage, WorkflowCanvasPage } from '@/pages/workflow-agent';
+import { MarketplacePage } from '@/pages/marketplace';
+import { AiToolboxPage } from '@/pages/ai-toolbox';
+import { LandingPage } from '@/pages/home';
+import OpenPlatformTabsPage from '@/pages/OpenPlatformTabsPage';
+import AutomationRulesPage from '@/pages/AutomationRulesPage';
 import SettingsPage from '@/pages/SettingsPage';
+import ExecutiveDashboardPage from '@/pages/ExecutiveDashboardPage';
+import { PrdAgentTabsPage } from '@/pages/PrdAgentTabsPage';
+import AgentLauncherPage from '@/pages/AgentLauncherPage';
+import MobileHomePage from '@/pages/MobileHomePage';
+import MobileAssetsPage from '@/pages/MobileAssetsPage';
+import MobileProfilePage from '@/pages/MobileProfilePage';
 import RichComposerLab from '@/pages/_dev/RichComposerLab';
+import MobileAuditPage from '@/pages/_dev/MobileAuditPage';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
+import { AgentSwitcherProvider } from '@/components/agent-switcher';
+import { BranchBadge } from '@/components/BranchBadge';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!isAuthenticated) return <Navigate to="/home" replace />;
   return <>{children}</>;
 }
 
@@ -85,12 +96,28 @@ function RequirePermission({ perm, children }: { perm: string; children: React.R
   return <>{children}</>;
 }
 
+/** 首页路由：移动端渲染 MobileHomePage，桌面端渲染 Agent 选择页。
+ *  首页与总裁面板是独立路由，互不干扰。 */
+function IndexPage() {
+  const loaded = useAuthStore((s) => s.permissionsLoaded);
+  const { isMobile } = useBreakpoint();
+  if (!loaded) return null;
+  if (isMobile) return <MobileHomePage />;
+  return <AgentLauncherPage />;
+}
+
+/** /executive 路由：独立的总裁面板，不与首页绑定。 */
+function ExecutivePage() {
+  return <ExecutiveDashboardPage />;
+}
+
 export default function App() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const setPermissions = useAuthStore((s) => s.setPermissions);
   const permissionsLoaded = useAuthStore((s) => s.permissionsLoaded);
   const setPermissionsLoaded = useAuthStore((s) => s.setPermissionsLoaded);
   const setIsRoot = useAuthStore((s) => s.setIsRoot);
+  const setCdnBaseUrl = useAuthStore((s) => s.setCdnBaseUrl);
   const setMenuCatalog = useAuthStore((s) => s.setMenuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const logout = useAuthStore((s) => s.logout);
@@ -112,9 +139,10 @@ export default function App() {
       }
       setPermissions(res.data.effectivePermissions || []);
       setIsRoot(res.data.isRoot ?? false);
+      if (res.data.cdnBaseUrl) setCdnBaseUrl(res.data.cdnBaseUrl);
       setPermissionsLoaded(true);
     })();
-  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, logout]);
+  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, setCdnBaseUrl, logout]);
 
   // 加载菜单目录
   useEffect(() => {
@@ -129,13 +157,18 @@ export default function App() {
   }, [isAuthenticated, menuCatalogLoaded, setMenuCatalog]);
 
   return (
-    <>
+    <AgentSwitcherProvider>
       <ToastContainer />
+      <BranchBadge />
       <Routes>
+        {/* Landing page - public */}
+        <Route path="/home" element={<LandingPage />} />
+
         <Route path="/login" element={<LoginPage />} />
 
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
+        <Route path="/_dev/mobile-audit" element={<MobileAuditPage />} />
 
         {/* 视觉创作 Agent - 独立全屏页面，不使用 AppShell 布局 */}
         <Route
@@ -180,6 +213,18 @@ export default function App() {
           }
         />
 
+        {/* 海鲜市场 - 独立全屏页面 */}
+        <Route
+          path="/marketplace"
+          element={
+            <RequireAuth>
+              <RequirePermission perm="access">
+                <MarketplacePage />
+              </RequirePermission>
+            </RequireAuth>
+          }
+        />
+
       <Route
         path="/"
         element={
@@ -190,27 +235,37 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route index element={<DashboardPage />} />
+        <Route index element={<IndexPage />} />
+        <Route path="agent-launcher" element={<AgentLauncherPage />} />
         <Route path="users" element={<RequirePermission perm="users.read"><UsersPage /></RequirePermission>} />
-        <Route path="groups" element={<RequirePermission perm="groups.read"><GroupsPage /></RequirePermission>} />
         <Route path="mds" element={<RequirePermission perm="mds.read"><ModelManageTabsPage /></RequirePermission>} />
-        <Route path="prd-agent" element={<RequirePermission perm="prd-agent.use"><AiChatPage /></RequirePermission>} />
+        <Route path="prd-agent" element={<RequirePermission perm="access"><PrdAgentTabsPage /></RequirePermission>} />
         <Route path="literary-agent" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentWorkspaceListPage /></RequirePermission>} />
         <Route path="literary-agent/:workspaceId" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentEditorPageWrapper /></RequirePermission>} />
         <Route path="defect-agent" element={<RequirePermission perm="defect-agent.use"><DefectAgentPage /></RequirePermission>} />
+        <Route path="workflow-agent" element={<RequirePermission perm="workflow-agent.use"><WorkflowListPage /></RequirePermission>} />
+        <Route path="workflow-agent/:workflowId" element={<RequirePermission perm="workflow-agent.use"><WorkflowEditorPage /></RequirePermission>} />
+        <Route path="workflow-agent/:workflowId/canvas" element={<RequirePermission perm="workflow-agent.use"><WorkflowCanvasPage /></RequirePermission>} />
+        <Route path="ai-toolbox" element={<RequirePermission perm="access"><AiToolboxPage /></RequirePermission>} />
         <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />
-        <Route path="data" element={<RequirePermission perm="data.read"><DataManagePage /></RequirePermission>} />
-        <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformPage /></RequirePermission>} />
+        <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
+        <Route path="automations" element={<RequirePermission perm="automations.manage"><AutomationRulesPage /></RequirePermission>} />
         <Route path="prompts" element={<RequirePermission perm="prompts.read"><PromptStagesPage /></RequirePermission>} />
+
+
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
+        <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
-        <Route path="authz" element={<RequirePermission perm="authz.manage"><AuthzPage /></RequirePermission>} />
-        <Route path="settings" element={<RequirePermission perm="settings.read"><SettingsPage /></RequirePermission>} />
+        <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
+        <Route path="executive" element={<RequirePermission perm="access"><ExecutivePage /></RequirePermission>} />
+        {/* 移动端专属路由 */}
+        <Route path="my-assets" element={<RequirePermission perm="access"><MobileAssetsPage /></RequirePermission>} />
+        <Route path="profile" element={<RequirePermission perm="access"><MobileProfilePage /></RequirePermission>} />
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>
 
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
-    </>
+    </AgentSwitcherProvider>
   );
 }

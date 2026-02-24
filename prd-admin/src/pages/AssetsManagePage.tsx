@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { createDesktopAssetKey, createDesktopAssetSkin, deleteDesktopAssetKey, getDesktopBrandingSettings, getDesktopAssetsMatrix, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset, uploadNoHeadAvatar } from '@/services';
 import type { AdminDesktopAssetMatrixRow, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -50,7 +51,7 @@ function appendCacheBust(url: string, cacheBust: number): string {
 const HIDDEN_ASSET_KEYS = new Set<string>([]);
 
 function getBaseAssetsUrl() {
-  return getAvatarBaseUrl() || 'https://i.pa.759800.com';
+  return getAvatarBaseUrl();
 }
 
 function labelForSkin(name: string) {
@@ -134,8 +135,8 @@ function InputField({
           mono && 'font-mono'
         )}
         style={{
-          background: 'rgba(255,255,255,0.04)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'var(--bg-input)',
+          border: '1px solid var(--border-subtle)',
           color: 'var(--text-primary)',
         }}
       />
@@ -197,6 +198,7 @@ function SectionTitle({ icon, title, badge }: { icon: React.ReactNode; title: st
 }
 
 export default function AssetsManagePage() {
+  const { isMobile } = useBreakpoint();
   const [activeTab, setActiveTab] = useState<'desktop' | 'single'>('desktop');
   const [skins, setSkins] = useState<DesktopAssetSkin[]>([]);
   const [matrixData, setMatrixData] = useState<AdminDesktopAssetMatrixRow[]>([]);
@@ -544,22 +546,23 @@ export default function AssetsManagePage() {
             <SectionTitle icon={<User size={16} />} title="无头像兜底" badge="required" />
           </div>
           <p className="text-[12px] mb-5" style={{ color: 'var(--text-muted)' }}>
-            固定路径 <code className="font-mono text-[11px] px-1.5 py-0.5 rounded-[6px]" style={{ background: 'rgba(255,255,255,0.04)' }}>/icon/backups/head/nohead.png</code>
+            固定路径 <code className="font-mono text-[11px] px-1.5 py-0.5 rounded-[6px]" style={{ background: 'var(--bg-input)' }}>/icon/backups/head/nohead.png</code>
           </p>
 
-          <div className="flex items-start gap-5">
+          <div className={cn('flex gap-5', isMobile ? 'flex-col items-stretch' : 'items-start')}>
             {/* 预览 */}
             <div
               className={cn(
-                'relative rounded-[14px] overflow-hidden transition-all duration-200',
-                isNoHeadBroken ? 'ring-2 ring-red-500/30' : 'ring-1 ring-white/8'
+                'relative rounded-[14px] overflow-hidden transition-all duration-200 shrink-0',
+                isNoHeadBroken ? 'ring-2 ring-red-500/30' : 'ring-1 ring-white/8',
+                isMobile && 'mx-auto'
               )}
               style={{
-                width: '120px',
-                height: '120px',
+                width: isMobile ? '100px' : '120px',
+                height: isMobile ? '100px' : '120px',
                 background: isNoHeadBroken
                   ? 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.03) 100%)'
-                  : 'rgba(255,255,255,0.02)',
+                  : 'var(--list-item-bg)',
               }}
             >
                 {noHeadPreviewUrl ? (
@@ -587,12 +590,12 @@ export default function AssetsManagePage() {
               <div className="text-[11px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>当前地址</div>
               <div
                 className="font-mono text-[12px] break-all p-2.5 rounded-[10px]"
-                style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', color: 'var(--text-secondary)' }}
+                style={{ background: 'var(--list-item-bg)', border: '1px solid var(--bg-card-hover)', color: 'var(--text-secondary)' }}
               >
                 {noHeadPreviewUrl || '-'}
               </div>
 
-              <div className="mt-4 flex items-center gap-2">
+              <div className="mt-4 flex items-center gap-2 flex-wrap">
                 <Button
                   variant="primary"
                   size="xs"
@@ -679,14 +682,14 @@ export default function AssetsManagePage() {
           <GlassCard glow className="overflow-hidden">
             <SectionTitle icon={<Plus size={16} />} title="快速创建" />
             <p className="mt-1.5 mb-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              资源根目录：<code className="font-mono text-[10px] px-1.5 py-0.5 rounded-[6px]" style={{ background: 'rgba(255,255,255,0.04)' }}>{desktopRoot || '-'}</code>
+              资源根目录：<code className="font-mono text-[10px] px-1.5 py-0.5 rounded-[6px]" style={{ background: 'var(--bg-input)' }}>{desktopRoot || '-'}</code>
             </p>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* 新建皮肤 */}
               <div
                 className="p-3.5 rounded-[12px]"
-                style={{ background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.05)' }}
+                style={{ background: 'var(--list-item-bg)', border: '1px solid var(--bg-card-hover)' }}
               >
                 <div className="flex items-center gap-2 mb-2.5">
                   <Palette size={13} style={{ color: 'var(--accent-gold)' }} />
@@ -715,18 +718,18 @@ export default function AssetsManagePage() {
                 {/* 新建 Key */}
               <div
                 className="p-3.5 rounded-[12px]"
-                style={{ background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.05)' }}
+                style={{ background: 'var(--list-item-bg)', border: '1px solid var(--bg-card-hover)' }}
               >
                 <div className="flex items-center gap-2 mb-2.5">
                   <FolderOpen size={13} style={{ color: 'var(--accent-gold)' }} />
                   <span className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>新建资源 Key</span>
                 </div>
-                <div className="flex items-end gap-2">
+                <div className="flex items-end gap-2 flex-wrap">
                   <InputField
                     value={newKey}
                     onChange={setNewKey}
                     placeholder="例如 load"
-                    className="flex-1"
+                    className={isMobile ? 'w-full' : 'flex-1'}
                     mono
                   />
                   <SelectField
@@ -744,7 +747,7 @@ export default function AssetsManagePage() {
                     value={newKeyDesc}
                     onChange={setNewKeyDesc}
                     placeholder="描述（可选）"
-                    className="flex-1"
+                    className={isMobile ? 'w-full' : 'flex-1'}
                   />
                   <Button
                     variant="secondary"
@@ -771,18 +774,19 @@ export default function AssetsManagePage() {
             <div
               className="rounded-[12px] overflow-hidden"
               style={{
-                background: 'rgba(255,255,255,0.015)',
-                border: '1px solid rgba(255,255,255,0.05)',
+                background: 'var(--list-item-bg)',
+                border: '1px solid var(--bg-card-hover)',
               }}
             >
               <div className="overflow-x-auto">
+                <div style={{ minWidth: `${180 + columns.length * 100}px` }}>
                 {/* 表头 */}
                 <div
                   className="grid"
                   style={{
                     gridTemplateColumns: `minmax(160px, 1fr) repeat(${columns.length}, minmax(90px, 1fr))`,
-                    borderBottom: '1px solid rgba(255,255,255,0.05)',
-                    background: 'rgba(255,255,255,0.01)',
+                    borderBottom: '1px solid var(--bg-card-hover)',
+                    background: 'var(--list-item-bg)',
                   }}
                 >
                   <div
@@ -826,6 +830,7 @@ export default function AssetsManagePage() {
                     暂无资源项
                   </div>
                 )}
+                </div>
               </div>
             </div>
           </GlassCard>
@@ -856,7 +861,7 @@ function AssetRowBlock(props: {
       className="grid"
       style={{
         gridTemplateColumns: `minmax(180px, 1fr) repeat(${columns.length}, minmax(100px, 1fr))`,
-        borderBottom: '1px solid rgba(255,255,255,0.04)',
+        borderBottom: '1px solid var(--bg-input)',
       }}
     >
       {/* 行标题 */}
@@ -928,7 +933,7 @@ function AssetRowBlock(props: {
                   ? 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.02) 100%)'
                   : isFallback
                     ? 'linear-gradient(135deg, rgba(234,179,8,0.06) 0%, rgba(234,179,8,0.02) 100%)'
-                    : 'linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)',
+                    : 'linear-gradient(135deg, var(--nested-block-bg) 0%, var(--list-item-bg) 100%)',
               }}
               title={isUploading ? '上传中...' : (url ? `点击替换\n${url}` : '点击上传')}
               onClick={() => !isUploading && onUpload(skin, row.key)}

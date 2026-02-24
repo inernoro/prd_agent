@@ -1,4 +1,5 @@
 import { GlassCard } from '@/components/design/GlassCard';
+import { glassPanel, glassToolbar, glassInputArea } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
@@ -32,6 +33,7 @@ import {
   FilePlus,
   Bug,
 } from 'lucide-react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -341,7 +343,7 @@ function CoverMosaic(props: { title: string; assets: VisualAgentWorkspace['cover
         className="h-full w-full"
         style={{
           ...p.style,
-          background: 'rgba(255,255,255,0.03)',
+          background: 'var(--nested-block-bg)',
         }}
       />
     );
@@ -437,7 +439,7 @@ function ToolbarButton(props: {
           style={{
             background: 'rgba(30, 30, 35, 0.95)',
             color: '#fff',
-            border: '1px solid rgba(255,255,255,0.1)',
+            border: '1px solid var(--border-default)',
             boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
           }}
         >
@@ -459,11 +461,8 @@ function FloatingToolbar(props: {
     <div
       className="rounded-2xl p-1.5 flex flex-col gap-1 bg-transparent"
       style={{
+        ...glassToolbar,
         background: 'rgba(18, 18, 22, 0.6)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        backdropFilter: 'blur(16px)',
-        WebkitBackdropFilter: 'blur(16px)',
-        boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
       }}
     >
       <ToolbarButton
@@ -653,14 +652,13 @@ function QuickInputBox(props: {
   const canSubmit = value.trim() && !loading;
 
   return (
-    <div className="max-w-[680px] w-full mx-auto px-6 mt-8">
+    <div className="max-w-full sm:max-w-[680px] w-full mx-auto px-3 sm:px-6 mt-8">
       <div
         className="rounded-[20px] overflow-hidden cursor-text transition-all duration-300"
         style={{
+          ...glassInputArea,
           // 暖褐色调磨砂玻璃，与金色主题协调
           background: 'rgba(28, 24, 20, 0.82)',
-          backdropFilter: 'blur(24px) saturate(1.4)',
-          WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
           // 聚焦时边框变亮 - 使用柔和的琥珀金
           border: isFocused
             ? '1px solid rgba(212, 170, 85, 0.5)'
@@ -690,7 +688,7 @@ function QuickInputBox(props: {
                   borderRadius: 4,
                   overflow: 'hidden',
                   border: '1px solid rgba(255,255,255,0.22)',
-                  background: 'rgba(255,255,255,0.02)',
+                  background: 'var(--list-item-bg)',
                   color: 'rgba(255,255,255,0.82)',
                 }}
                 title={`参考图：${selectedImage.file.name}`}
@@ -727,7 +725,7 @@ function QuickInputBox(props: {
                     borderRadius: 3,
                     overflow: 'hidden',
                     border: '1px solid rgba(255,255,255,0.22)',
-                    background: 'rgba(255,255,255,0.06)',
+                    background: 'var(--bg-input-hover)',
                     display: 'inline-flex',
                     flex: '0 0 auto',
                   }}
@@ -797,7 +795,7 @@ function QuickInputBox(props: {
                           borderRadius: 4,
                           overflow: 'hidden',
                           border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'rgba(255,255,255,0.02)',
+                          background: 'var(--list-item-bg)',
                           color: 'rgba(255,255,255,0.82)',
                         }}
                         title="选择档位"
@@ -828,11 +826,7 @@ function QuickInputBox(props: {
                         style={{
                           outline: 'none',
                           zIndex: 90,
-                          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          ...glassPanel,
                         }}
                       >
                         {(['1k', '2k', '4k'] as const).map((tier) => {
@@ -878,7 +872,7 @@ function QuickInputBox(props: {
                           borderRadius: 4,
                           overflow: 'hidden',
                           border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'rgba(255,255,255,0.02)',
+                          background: 'var(--list-item-bg)',
                           color: 'rgba(255,255,255,0.82)',
                         }}
                         title="选择比例"
@@ -923,11 +917,7 @@ function QuickInputBox(props: {
                         style={{
                           outline: 'none',
                           zIndex: 90,
-                          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          ...glassPanel,
                         }}
                       >
                         {ASPECT_OPTIONS.map((opt) => {
@@ -1034,9 +1024,9 @@ function QuickInputBox(props: {
               onClick={openDefectDialog}
               className="h-9 w-9 rounded-xl flex items-center justify-center transition-all duration-200 hover:bg-white/10"
               style={{
-                background: 'rgba(255,255,255,0.06)',
+                background: 'var(--bg-input-hover)',
                 color: 'rgba(255,255,255,0.5)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                border: '1px solid var(--border-subtle)',
               }}
               title="提交缺陷 (Cmd/Ctrl+B)"
             >
@@ -1050,7 +1040,7 @@ function QuickInputBox(props: {
               style={{
                 background: canSubmit
                   ? 'linear-gradient(135deg, rgba(218,175,75,0.95) 0%, rgba(195,155,65,0.95) 100%)'
-                  : 'rgba(255,255,255,0.08)',
+                  : 'var(--border-subtle)',
                 color: canSubmit ? 'rgba(15,12,5,0.95)' : 'rgba(255,255,255,0.35)',
                 cursor: canSubmit ? 'pointer' : 'not-allowed',
                 boxShadow: canSubmit ? '0 4px 20px rgba(195,155,65,0.3)' : 'none',
@@ -1077,7 +1067,7 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
   const { onSelect, activeKey } = props;
 
   return (
-    <div className="flex items-center justify-center gap-2.5 flex-wrap px-6 mt-6">
+    <div className="flex items-center justify-start sm:justify-center gap-2.5 flex-nowrap overflow-x-auto sm:flex-wrap px-3 sm:px-6 mt-6 no-scrollbar">
       {SCENARIO_TAGS.map((tag) => {
         const Icon = tag.icon;
         const isActive = activeKey === tag.key;
@@ -1089,7 +1079,7 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
             <button
               key={tag.key}
               type="button"
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-all duration-200 hover:scale-[1.02]"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-all duration-200 hover:scale-[1.02] shrink-0"
               style={{
                 background: 'linear-gradient(135deg, rgba(212,170,85,0.12) 0%, rgba(195,155,65,0.06) 100%)',
                 border: '1px solid rgba(212,170,85,0.35)',
@@ -1110,7 +1100,7 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
             key={tag.key}
             type="button"
             onClick={() => onSelect(tag.prompt)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 hover:bg-white/8"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 hover:bg-white/8 shrink-0"
             style={{
               background: isActive ? 'rgba(255,250,240,0.1)' : 'transparent',
               border: isActive ? '1px solid rgba(255,250,240,0.22)' : '1px solid rgba(255,255,255,0.1)',
@@ -1156,8 +1146,8 @@ function ProjectCard(props: {
         data-ws-card="1"
         data-ws-id={ws.id}
         style={{
-          background: hasCover ? 'transparent' : 'rgba(255,255,255,0.04)',
-          border: hasCover ? 'none' : '1px solid rgba(255,255,255,0.1)',
+          background: hasCover ? 'transparent' : 'var(--bg-input)',
+          border: hasCover ? 'none' : '1px solid var(--border-default)',
           boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
         }}
       >
@@ -1234,14 +1224,14 @@ function NewProjectCard(props: { onClick: () => void }) {
         className="h-[160px] rounded-xl flex flex-col items-center justify-center gap-2.5 transition-all duration-300 group-hover:scale-[1.02] group-hover:border-white/25"
         style={{
           border: '1.5px dashed rgba(255,255,255,0.2)',
-          background: 'rgba(255,255,255,0.02)',
+          background: 'var(--list-item-bg)',
         }}
       >
         <div
           className="w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 group-hover:scale-110"
           style={{
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'var(--bg-input-hover)',
+            border: '1px solid var(--border-default)',
           }}
         >
           <Plus size={22} style={{ color: 'rgba(255,255,255,0.6)' }} />
@@ -1282,7 +1272,7 @@ function ProjectCarousel(props: {
       <div className="max-w-[1340px] mx-auto px-5 mb-4">
         <div
           className="flex items-center justify-between py-3"
-          style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
+          style={{ borderTop: '1px solid var(--nested-block-border)' }}
         >
           <h2
             className="text-[14px] font-medium tracking-wide"
@@ -1292,12 +1282,9 @@ function ProjectCarousel(props: {
           </h2>
         </div>
       </div>
-      {/* 网格布局，固定5列，居中 */}
+      {/* 网格布局，响应式列数 */}
       <div
-        className="grid gap-5 pb-6 px-5 max-w-[1340px] mx-auto"
-        style={{
-          gridTemplateColumns: 'repeat(5, 250px)',
-        }}
+        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-5 pb-6 px-5 max-w-[1340px] mx-auto"
       >
         <NewProjectCard onClick={onCreate} />
         {items.map((ws) => (
@@ -1321,6 +1308,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const _fullscreenMode = props.fullscreenMode;
   void _fullscreenMode; // 避免 TS6133 警告
   const navigate = useNavigate();
+  const { isMobile } = useBreakpoint();
 
   // 统一使用 /visual-agent 路径（现在所有模式都是全屏）
   const getEditorPath = (workspaceId: string) => {
@@ -1645,10 +1633,12 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       {/* 夜景背景 */}
       <NightSkyBackground />
 
-      {/* 浮动工具栏 - 页面左侧垂直居中 */}
-      <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
-        <FloatingToolbar onNewProject={onCreate} onNewFolder={onCreateFolder} />
-      </div>
+      {/* 浮动工具栏 - 桌面端页面左侧垂直居中，移动端隐藏 */}
+      {!isMobile && (
+        <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
+          <FloatingToolbar onNewProject={onCreate} onNewFolder={onCreateFolder} />
+        </div>
+      )}
 
       {/* 顶部居中区域 - 调整间距使布局更紧凑 */}
       <div className="flex flex-col items-center justify-center pt-[8vh] pb-4 relative z-10">

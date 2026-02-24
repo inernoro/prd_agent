@@ -1,0 +1,1676 @@
+import { Router } from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { StateService } from '../services/state.js';
+import type { WorktreeService } from '../services/worktree.js';
+import type { ContainerService } from '../services/container.js';
+import type { SwitcherService } from '../services/switcher.js';
+import type { BuilderService } from '../services/builder.js';
+import type { BranchEntry, BtConfig, IShellExecutor, OperationLog, OperationLogEvent } from '../types.js';
+import { combinedOutput } from '../types.js';
+
+export interface RouterDeps {
+  stateService: StateService;
+  worktreeService: WorktreeService;
+  containerService: ContainerService;
+  switcherService: SwitcherService;
+  builderService: BuilderService;
+  shell: IShellExecutor;
+  config: BtConfig;
+}
+
+export function createBranchRouter(deps: RouterDeps): Router {
+  const {
+    stateService,
+    worktreeService,
+    containerService,
+    switcherService,
+    builderService,
+    shell,
+    config,
+  } = deps;
+
+  const router = Router();
+
+  // GET /remote-branches — list remote branches with latest commit info
+  router.get('/remote-branches', async (_req, res) => {
+    try {
+      // Fetch latest refs from remote so for-each-ref has up-to-date data
+      await shell.exec(
+        'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
+        { cwd: config.repoRoot, timeout: 30_000 },
+      );
+
+      // Get rich branch info from remote-tracking refs
+      const SEP = '<SEP>';
+      const format = [
+        '%(refname:lstrip=3)',
+        '%(committerdate:iso8601)',
+        '%(authorname)',
+        '%(subject)',
+      ].join(SEP);
+
+      const result = await shell.exec(
+        `git for-each-ref --sort=-committerdate "refs/remotes/origin/" --format="${format}"`,
+        { cwd: config.repoRoot, timeout: 15_000 },
+      );
+
+      if (result.exitCode !== 0) {
+        res.status(502).json({ error: `git for-each-ref failed: ${combinedOutput(result)}` });
+        return;
+      }
+
+      const existing = new Set(
+        Object.values(stateService.getState().branches).map((b) => b.branch),
+      );
+
+      const branches = result.stdout
+        .split('\n')
+        .filter((line) => line.trim())
+        .map((line) => {
+          const parts = line.split(SEP);
+          return {
+            name: parts[0]?.trim(),
+            date: parts[1]?.trim(),
+            author: parts[2]?.trim(),
+            message: parts.slice(3).join(SEP).trim(),
+          };
+        })
+        .filter((b) => b.name && b.name !== 'HEAD' && !existing.has(b.name));
+
+      res.json({ branches });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // GET /branches — list all (with live container status reconciliation)
+  router.get('/branches', async (_req, res) => {
+    const state = stateService.getState();
+    let dirty = false;
+
+    // Reconcile persisted status with actual Docker container state
+    for (const entry of Object.values(state.branches)) {
+      // Deploy mode: status says "running" but container is dead?
+      if (entry.status === 'running') {
+        const alive = await containerService.isRunning(entry.containerName);
+        if (!alive) {
+          entry.status = 'stopped';
+          entry.errorMessage = '容器已退出（自动检测）';
+          dirty = true;
+        }
+      }
+      // Run mode: runStatus says "running" but container is dead?
+      if (entry.runStatus === 'running' && entry.runContainerName) {
+        const alive = await containerService.isRunning(entry.runContainerName);
+        if (!alive) {
+          entry.runStatus = 'stopped';
+          entry.runErrorMessage = '容器已退出（自动检测）';
+          dirty = true;
+        }
+      }
+    }
+
+    if (dirty) stateService.save();
+
+    res.json({
+      branches: state.branches,
+      activeBranchId: state.activeBranchId,
+      mainDbName: config.mongodb.defaultDbName,
+    });
+  });
+
+  // GET /history — activation history
+  router.get('/history', (_req, res) => {
+    res.json({ history: stateService.getState().history });
+  });
+
+  // GET /config — current config
+  router.get('/config', (_req, res) => {
+    const safe = { ...config, jwt: { ...config.jwt, secret: '***' } };
+    res.json(safe);
+  });
+
+  // GET /nginx-config — read current active nginx config (follows symlink)
+  router.get('/nginx-config', (_req, res) => {
+    try {
+      const content = switcherService.readActiveConfig();
+      if (!content) {
+        res.status(404).json({ error: 'No active nginx config found' });
+        return;
+      }
+      const activeBranch = switcherService.getActiveBranchFromSymlink();
+      res.json({ content, activeBranch });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // GET /branches/:id/nginx-conf — read per-branch nginx config from disk
+  router.get('/branches/:id/nginx-conf', (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+      const content = switcherService.readBranchConfig(id);
+      if (!content) {
+        res.status(404).json({ error: `No nginx config for branch "${id}"` });
+        return;
+      }
+      const isActive = switcherService.getActiveBranchFromSymlink() === id;
+      res.json({ content, branchId: id, isActive });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /branches — add a branch
+  router.post('/branches', async (req, res) => {
+    try {
+      const { branch } = req.body as { branch?: string };
+      if (!branch) {
+        res.status(400).json({ error: 'branch is required' });
+        return;
+      }
+
+      const id = StateService.slugify(branch);
+      if (stateService.getBranch(id)) {
+        res.status(409).json({ error: `Branch "${id}" already exists` });
+        return;
+      }
+
+      const worktreePath = path.join(config.worktreeBase, id);
+      const containerName = `${config.docker.containerPrefix}-${id}`;
+      const imageName = `${config.docker.apiImagePrefix}:${id}`;
+      const dbName = stateService.allocateDbName(id, config.mongodb.defaultDbName);
+
+      await worktreeService.create(branch, worktreePath);
+
+      const entry = {
+        id,
+        branch,
+        worktreePath,
+        containerName,
+        imageName,
+        dbName,
+        status: 'idle' as const,
+        createdAt: new Date().toISOString(),
+      };
+      stateService.addBranch(entry);
+      stateService.save();
+
+      res.status(201).json({ branch: entry });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // DELETE /branches/:id — remove a branch (SSE stream for progress)
+  router.delete('/branches/:id', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `Branch "${id}" not found` });
+      return;
+    }
+
+    const wasActive = stateService.getState().activeBranchId === id;
+
+    // SSE for progress
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (data: Record<string, unknown>) => {
+      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+    };
+
+    try {
+      // Stop deploy container if running
+      if (entry.status === 'running') {
+        send({ step: 'stop-deploy', status: 'running', title: '停止部署容器' });
+        await containerService.stop(entry.containerName);
+        send({ step: 'stop-deploy', status: 'done', title: '停止部署容器' });
+      }
+      // Stop run container if running
+      if (entry.runStatus === 'running' && entry.runContainerName) {
+        send({ step: 'stop-run', status: 'running', title: '停止运行容器' });
+        try { await containerService.stop(entry.runContainerName); } catch { /* may not exist */ }
+        if (entry.runWebContainerName) {
+          try { await containerService.stop(entry.runWebContainerName); } catch { /* may not exist */ }
+        }
+        send({ step: 'stop-run', status: 'done', title: '停止运行容器' });
+      }
+
+      // Disconnect nginx if deleting the active branch
+      if (wasActive) {
+        send({ step: 'nginx', status: 'running', title: '断开网关' });
+        try {
+          await switcherService.disconnect();
+          stateService.getState().activeBranchId = null;
+          stateService.save();
+          send({ step: 'nginx', status: 'done', title: '网关已断开' });
+        } catch {
+          send({ step: 'nginx', status: 'warn', title: '断开网关失败（已忽略）' });
+        }
+      }
+
+      send({ step: 'worktree', status: 'running', title: '删除 Worktree' });
+      try { await worktreeService.remove(entry.worktreePath); } catch { /* may not exist */ }
+      send({ step: 'worktree', status: 'done', title: '删除 Worktree' });
+
+      send({ step: 'image', status: 'running', title: '删除 Docker 镜像' });
+      try { await containerService.removeImage(entry.imageName); } catch { /* may not exist */ }
+      send({ step: 'image', status: 'done', title: '删除 Docker 镜像' });
+
+      // Drop branch database (strict safety checks)
+      const mainDb = config.mongodb.defaultDbName;
+      const branchDb = entry.originalDbName || entry.dbName;
+
+      if (branchDb && branchDb !== mainDb && branchDb.startsWith(`${mainDb}_`)) {
+        const otherBranches = Object.values(stateService.getState().branches)
+          .filter((b) => b.id !== id);
+        const dbInUse = otherBranches.some(
+          (b) => b.dbName === branchDb || b.originalDbName === branchDb,
+        );
+
+        if (!dbInUse) {
+          send({ step: 'db', status: 'running', title: `删除数据库 ${branchDb}` });
+          try {
+            const mongoContainer = 'prdagent-mongodb';
+            const dropCmd = `docker exec ${mongoContainer} mongosh --quiet --eval "db.getMongo().getDB('${branchDb}').dropDatabase()"`;
+            await shell.exec(dropCmd, { timeout: 30_000 });
+            send({ step: 'db', status: 'done', title: `删除数据库 ${branchDb}` });
+          } catch {
+            send({ step: 'db', status: 'warn', title: `删除数据库 ${branchDb} 失败（已忽略）` });
+          }
+        }
+      }
+
+      send({ step: 'state', status: 'running', title: '清理状态' });
+      switcherService.removeBranchConfig(id);
+      stateService.removeBranch(id);
+      stateService.removeLogs(id);
+      stateService.save();
+      send({ step: 'state', status: 'done', title: '清理状态' });
+
+      send({ step: 'complete', status: 'done', title: '删除完成' });
+    } catch (err) {
+      send({ step: 'error', status: 'error', title: `删除失败: ${(err as Error).message}` });
+    } finally {
+      res.end();
+    }
+  });
+
+  // POST /branches/:id/pull — pull latest code for a branch worktree
+  router.post('/branches/:id/pull', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+
+      if (entry.status === 'building') {
+        res.status(409).json({ error: 'Branch is currently building, cannot pull' });
+        return;
+      }
+
+      const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
+      res.json({ success: true, ...pullResult });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // GET /branches/:id/logs — get operation logs for a branch
+  router.get('/branches/:id/logs', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `Branch "${id}" not found` });
+      return;
+    }
+    res.json({ logs: stateService.getLogs(id) });
+  });
+
+  // POST /branches/:id/reset — reset a stuck/error branch status back to idle
+  router.post('/branches/:id/reset', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+
+      // Stop any running containers (best-effort)
+      if (entry.status === 'running') {
+        try { await containerService.stop(entry.containerName); } catch { /* ok */ }
+      }
+      if (entry.runStatus === 'running' && entry.runContainerName) {
+        try { await containerService.stop(entry.runContainerName); } catch { /* ok */ }
+      }
+
+      // Reset statuses
+      entry.status = 'idle';
+      entry.errorMessage = undefined;
+      entry.buildLog = undefined;
+      entry.runStatus = undefined;
+      entry.runErrorMessage = undefined;
+      stateService.save();
+
+      res.json({ success: true, message: 'Branch status reset to idle' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /branches/:id/build — build branch (guarded: rejects if already building)
+  router.post('/branches/:id/build', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+
+      if (entry.status === 'building') {
+        res.status(409).json({ error: 'Build already in progress' });
+        return;
+      }
+
+      stateService.updateStatus(id, 'building');
+      stateService.save();
+
+      const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
+
+      const [apiLog, adminLog] = await Promise.all([
+        builderService.buildApiImage(entry.worktreePath, entry.imageName),
+        builderService.buildAdminStatic(entry.worktreePath, buildsDir),
+      ]);
+
+      stateService.updateStatus(id, 'built');
+      stateService.getBranch(id)!.buildLog = `API: ${apiLog}\nAdmin: ${adminLog}`;
+      stateService.save();
+
+      res.json({ success: true, message: 'Build completed' });
+    } catch (err) {
+      const { id } = req.params;
+      stateService.updateStatus(id, 'error');
+      stateService.getBranch(id)!.buildLog = (err as Error).message;
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /branches/:id/start — start container (guarded: rejects if already running)
+  router.post('/branches/:id/start', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+
+      if (entry.status === 'running') {
+        res.status(409).json({ error: 'Container already running' });
+        return;
+      }
+
+      await containerService.start(entry);
+      stateService.updateStatus(id, 'running');
+      const nginxConf = switcherService.generateConfig(entry.containerName, 'deploy');
+      switcherService.saveBranchConfig(id, nginxConf);
+      stateService.save();
+
+      res.json({ success: true, containerName: entry.containerName });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /branches/:id/stop — stop container
+  router.post('/branches/:id/stop', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+
+      await containerService.stop(entry.containerName);
+      stateService.updateStatus(id, 'stopped');
+      stateService.save();
+
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Helper: determine which container name to use as nginx upstream
+  function resolveUpstream(entry: BranchEntry): { upstream: string; mode: 'deploy' | 'run' } | null {
+    // Prefer deploy container if running
+    if (entry.status === 'running') {
+      return { upstream: entry.containerName, mode: 'deploy' };
+    }
+    // Fallback to source-run container if running
+    if (entry.runStatus === 'running' && entry.runContainerName) {
+      return { upstream: entry.runContainerName, mode: 'run' };
+    }
+    return null;
+  }
+
+  // Helper: perform the activate sequence (sync + nginx switch)
+  interface ActivateResult {
+    upstream: string;
+    gateway: string;
+    nginxConf: string;
+  }
+
+  async function doActivate(id: string): Promise<ActivateResult> {
+    const entry = stateService.getBranch(id)!;
+    const resolved = resolveUpstream(entry);
+    if (!resolved) {
+      throw new Error(`Branch "${id}" has no running container (deploy or source-run)`);
+    }
+
+    // Check per-branch config file exists on disk
+    const nginxConf = switcherService.readBranchConfig(id);
+    if (!nginxConf) {
+      throw new Error(`Branch "${id}" has no nginx config file — was the container started properly?`);
+    }
+
+    // Deploy mode: sync static files before applying config
+    if (resolved.mode === 'deploy') {
+      const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
+      const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
+      if (fs.existsSync(buildsDir)) {
+        await switcherService.syncStaticFiles(buildsDir, distDir);
+      }
+    }
+
+    // Symlink default.conf → branches/{id}.conf + validate + reload
+    await switcherService.activateBranch(id);
+    stateService.activate(id);
+    stateService.save();
+
+    return {
+      upstream: `${resolved.upstream}:8080`,
+      gateway: `http://localhost:${config.gateway.port}`,
+      nginxConf,
+    };
+  }
+
+  // POST /branches/:id/activate — switch active branch
+  router.post('/branches/:id/activate', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+
+      // Check if any container (deploy or source-run) is actually running
+      const resolved = resolveUpstream(entry);
+      if (!resolved) {
+        // Double-check with Docker in case state is stale
+        const deployAlive = await containerService.isRunning(entry.containerName);
+        const runAlive = entry.runContainerName
+          ? await containerService.isRunning(entry.runContainerName)
+          : false;
+
+        if (!deployAlive && !runAlive) {
+          res.status(400).json({
+            error: `分支 "${entry.branch}" 没有运行中的容器（部署和源码都未运行）`,
+          });
+          return;
+        }
+        // State was stale, update it and regenerate nginx config on disk
+        if (deployAlive) {
+          entry.status = 'running';
+          const conf = switcherService.generateConfig(entry.containerName, 'deploy');
+          switcherService.saveBranchConfig(id, conf);
+        }
+        if (runAlive) {
+          entry.runStatus = 'running';
+          const conf = switcherService.generateConfig(
+            entry.runContainerName!, 'run', entry.runWebContainerName,
+          );
+          switcherService.saveBranchConfig(id, conf);
+        }
+        stateService.save();
+      }
+
+      await doActivate(id);
+
+      res.json({
+        success: true,
+        activeBranchId: id,
+        url: `http://localhost:${config.gateway.port}`,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ──────────────────────────────────────────────────────────
+  //  Run / Re-run  (source-based, direct port, no nginx)
+  //  Run  = code, not artifacts.  One branch = one running instance.
+  //  Deploy = artifacts, via nginx gateway.  Separate container.
+  // ──────────────────────────────────────────────────────────
+
+  /** Shared logic for run / rerun SSE endpoints */
+  async function doRun(
+    req: import('express').Request,
+    res: import('express').Response,
+    opts: { forcePull: boolean },
+  ) {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `Branch "${id}" not found` });
+      return;
+    }
+
+    // Branch isolation: one branch can only have one running instance
+    if (!opts.forcePull && entry.runStatus === 'running') {
+      res.status(409).json({ error: 'Branch already running. Use rerun to pull latest and restart.' });
+      return;
+    }
+
+    // Switch to SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const logType = opts.forcePull ? 'rerun' : 'run' as const;
+    const opLog: OperationLog = {
+      type: logType,
+      startedAt: new Date().toISOString(),
+      status: 'running',
+      events: [],
+    };
+
+    const send = (data: Record<string, unknown>) => {
+      // Persist event (skip streaming chunks to keep logs lean)
+      if (!data.chunk) {
+        const event = { ...data, timestamp: new Date().toISOString() } as OperationLogEvent;
+        // Deduplicate: if same step already logged, replace with latest state
+        const existingIdx = data.step
+          ? opLog.events.findIndex((e) => e.step === data.step)
+          : -1;
+        if (existingIdx >= 0) {
+          opLog.events[existingIdx] = event;
+        } else {
+          opLog.events.push(event);
+        }
+      }
+      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+    };
+
+    const portStart = config.run?.portStart ?? 9001;
+    const baseImage = config.run?.baseImage ?? 'mcr.microsoft.com/dotnet/sdk:8.0';
+    const command = config.run?.command ?? 'dotnet watch run --project src/PrdAgent.Api';
+    const sourceDir = config.run?.sourceDir ?? 'prd-api';
+
+    try {
+      // ---- Mode switching: stop deploy container if active before running from source ----
+      if (entry.status === 'running') {
+        send({ step: 'mode_switch', status: 'running', title: '停止部署容器（切换到源码运行模式）' });
+        try { await containerService.stop(entry.containerName); } catch { /* ok */ }
+        entry.status = 'stopped';
+        stateService.save();
+        send({ step: 'mode_switch', status: 'done', title: '已停止部署容器' });
+      }
+
+      // ---- pull (rerun: pull latest code) ----
+      if (opts.forcePull) {
+        send({ step: 'pull', status: 'running', title: '拉取最新代码' });
+
+        const beforeSha = await shell.exec('git rev-parse --short HEAD', { cwd: entry.worktreePath });
+        await worktreeService.pull(entry.branch, entry.worktreePath);
+        const afterSha = await shell.exec('git rev-parse --short HEAD', { cwd: entry.worktreePath });
+
+        const diffStat = await shell.exec(
+          `git diff --stat ${beforeSha.stdout.trim()}..${afterSha.stdout.trim()}`,
+          { cwd: entry.worktreePath },
+        );
+        const diffLog = await shell.exec(
+          `git log --oneline ${beforeSha.stdout.trim()}..${afterSha.stdout.trim()}`,
+          { cwd: entry.worktreePath },
+        );
+
+        send({
+          step: 'pull', status: 'done', title: '拉取最新代码',
+          detail: {
+            before: beforeSha.stdout.trim(),
+            after: afterSha.stdout.trim(),
+            changes: diffStat.stdout.trim(),
+            newCommits: diffLog.stdout.trim(),
+          },
+        });
+      }
+
+      // ---- env info ----
+      const commitResult = await shell.exec('git log --oneline -1', { cwd: entry.worktreePath });
+      const commit = (await shell.exec('git rev-parse --short HEAD', { cwd: entry.worktreePath })).stdout.trim();
+
+      // Allocate port + run container name if not yet assigned
+      if (!entry.hostPort) {
+        entry.hostPort = stateService.allocatePort(portStart);
+      }
+      if (!entry.runContainerName) {
+        entry.runContainerName = `prdagent-run-${id}`;
+      }
+      stateService.save();
+
+      send({
+        step: 'env', status: 'done', title: '环境信息',
+        detail: {
+          mode: 'source',
+          branch: entry.branch,
+          commit,
+          commitLog: commitResult.stdout.trim(),
+          runContainerName: entry.runContainerName,
+          hostPort: entry.hostPort,
+          baseImage,
+          sourceDir,
+          url: `http://localhost:${entry.hostPort}`,
+        },
+      });
+
+      // ---- stop old run containers if running ----
+      if (entry.runStatus === 'running') {
+        send({ step: 'stop', status: 'running', title: '停止旧容器' });
+        try { await containerService.stop(entry.runContainerName); } catch { /* may not exist */ }
+        if (entry.runWebContainerName) {
+          try { await containerService.stop(entry.runWebContainerName); } catch { /* may not exist */ }
+        }
+        entry.runStatus = 'stopped';
+        stateService.save();
+        send({ step: 'stop', status: 'done', title: '停止旧容器' });
+      }
+
+      // ---- start from source (no build step!) ----
+      send({ step: 'start', status: 'running', title: '启动源码容器' });
+
+      await containerService.runFromSource(entry, {
+        hostPort: entry.hostPort,
+        baseImage,
+        command,
+        sourceDir,
+      });
+      entry.runStatus = 'running';
+      entry.runErrorMessage = undefined;
+      stateService.save();
+
+      send({
+        step: 'start', status: 'done', title: '启动源码容器',
+        detail: {
+          runContainerName: entry.runContainerName,
+          hostPort: entry.hostPort,
+          url: `http://localhost:${entry.hostPort}`,
+          sourceMount: `${entry.worktreePath}/${sourceDir} → /src`,
+        },
+      });
+
+      // ---- stream container startup logs (non-blocking background monitor) ----
+      send({ step: 'logs', status: 'running', title: '容器启动日志（监听中）' });
+
+      const logProc = spawn('docker', ['logs', '-f', '--tail', '0', entry.runContainerName!]);
+      let logDone = false;
+
+      const finishLog = (status: 'done' | 'warn' | 'error', title: string) => {
+        if (logDone) return;
+        logDone = true;
+        logProc.kill();
+        send({ step: 'logs', status, title });
+      };
+
+      const logTimeout = setTimeout(
+        () => finishLog('warn', '容器启动日志（等待超时，应用可能仍在启动）'),
+        120_000,
+      );
+
+      const handleLogData = (data: Buffer) => {
+        if (logDone) return;
+        const text = data.toString();
+        send({ step: 'logs', status: 'running', title: '容器启动日志（监听中）', chunk: text });
+        if (text.includes('Now listening on')) {
+          clearTimeout(logTimeout);
+          // Brief delay to capture remaining startup output
+          setTimeout(() => finishLog('done', '应用启动完成'), 1500);
+        }
+      };
+
+      logProc.stdout?.on('data', handleLogData);
+      logProc.stderr?.on('data', handleLogData);
+      logProc.on('close', async () => {
+        clearTimeout(logTimeout);
+        if (logDone) return;
+        const alive = await containerService.isRunning(entry.runContainerName!);
+        if (!alive) {
+          entry.runStatus = 'error';
+          entry.runErrorMessage = '容器在启动过程中退出';
+          stateService.save();
+          finishLog('error', '容器在启动过程中退出');
+        } else {
+          finishLog('done', '容器启动日志');
+        }
+      });
+      req.on('close', () => { clearTimeout(logTimeout); if (!logDone) { logDone = true; logProc.kill(); } });
+
+      // ---- start Vite dev server container for frontend ----
+      send({ step: 'frontend', status: 'running', title: '启动前端开发服务器' });
+
+      if (!entry.runWebContainerName) {
+        entry.runWebContainerName = `prdagent-run-${id}-web`;
+      }
+
+      // Stop existing web container if running
+      try { await containerService.stop(entry.runWebContainerName); } catch { /* may not exist */ }
+
+      const webBaseImage = config.run?.webBaseImage ?? 'node:20-slim';
+      const webSourceDir = config.run?.webSourceDir ?? 'prd-admin';
+      const webPort = config.run?.webPort ?? 8000;
+      // Vite dev server command: install deps + start with host binding so it's accessible from nginx.
+      // allowedHosts is configured in vite.config.ts (not a CLI flag in Vite 6.x).
+      // IMPORTANT: Do NOT set VITE_API_BASE_URL here. The browser cannot resolve Docker-internal
+      // hostnames (e.g. prdagent-run-main:8080). Instead, the frontend should use relative paths
+      // (/api/...) which nginx reverse-proxies to the API container automatically.
+      const webCommand = config.run?.webCommand
+        ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && pnpm dev --host 0.0.0.0"`;
+
+      await containerService.runWebFromSource(entry, {
+        webBaseImage,
+        webCommand,
+        webSourceDir,
+        webPort,
+      });
+
+      // Save per-branch nginx config to disk (run mode)
+      const nginxConf = switcherService.generateConfig(
+        entry.runContainerName!, 'run', entry.runWebContainerName,
+      );
+      switcherService.saveBranchConfig(id, nginxConf);
+      stateService.save();
+
+      send({
+        step: 'frontend', status: 'done', title: '前端开发服务器已启动',
+        detail: {
+          webContainerName: entry.runWebContainerName,
+          webBaseImage,
+          webPort,
+        },
+      });
+
+      // ---- activate nginx (route /api → dotnet, / → Vite) ----
+      send({ step: 'activate', status: 'running', title: '切换 Nginx 网关' });
+      try {
+        const activateResult = await doActivate(id);
+        send({
+          step: 'activate', status: 'done', title: '切换 Nginx 网关',
+          detail: activateResult,
+        });
+      } catch (activateErr) {
+        // Non-fatal: containers are running, just nginx switch failed
+        send({
+          step: 'activate', status: 'warn', title: 'Nginx 切换失败（容器已启动，可手动激活）',
+          log: (activateErr as Error).message,
+        });
+      }
+
+      // ---- done ----
+      send({
+        step: 'complete', status: 'done',
+        detail: { url: `http://localhost:${config.gateway.port}` },
+      });
+
+      opLog.status = 'completed';
+    } catch (err) {
+      const msg = (err as Error).message;
+      send({ step: 'error', status: 'error', title: '运行失败', log: msg });
+      entry.runStatus = 'error';
+      entry.runErrorMessage = msg;
+      stateService.save();
+      opLog.status = 'error';
+    } finally {
+      opLog.finishedAt = new Date().toISOString();
+      stateService.appendLog(id, opLog);
+      stateService.save();
+      res.end();
+    }
+  }
+
+  // POST /branches/:id/run — Run from source: mount worktree + SDK image + dotnet run
+  router.post('/branches/:id/run', (req, res) => {
+    doRun(req, res, { forcePull: false });
+  });
+
+  // POST /branches/:id/rerun — Pull latest code + restart source container
+  router.post('/branches/:id/rerun', (req, res) => {
+    doRun(req, res, { forcePull: true });
+  });
+
+  // POST /branches/:id/stop-run — Stop the source-based run container
+  router.post('/branches/:id/stop-run', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+      if (!entry.runContainerName || entry.runStatus !== 'running') {
+        res.status(400).json({ error: 'No run container is active for this branch' });
+        return;
+      }
+
+      await containerService.stop(entry.runContainerName);
+      // Also stop the web dev container if it exists
+      if (entry.runWebContainerName) {
+        try { await containerService.stop(entry.runWebContainerName); } catch { /* ok */ }
+      }
+      entry.runStatus = 'stopped';
+      stateService.save();
+
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /branches/:id/run-pull — Pull latest code for a running source branch (both containers share the mount)
+  router.post('/branches/:id/run-pull', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+      if (entry.runStatus !== 'running') {
+        res.status(400).json({ error: 'No run container is active for this branch' });
+        return;
+      }
+
+      const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
+      res.json({
+        success: true,
+        before: pullResult.before,
+        after: pullResult.after,
+        updated: pullResult.updated,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /branches/:id/run-restart-api — Restart only the dotnet API container
+  router.post('/branches/:id/run-restart-api', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+      if (!entry.runContainerName || entry.runStatus !== 'running') {
+        res.status(400).json({ error: 'No run container is active for this branch' });
+        return;
+      }
+
+      const result = await shell.exec(`docker restart ${entry.runContainerName}`);
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to restart API container: ${combinedOutput(result)}`);
+      }
+      res.json({ success: true, container: entry.runContainerName });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /branches/:id/run-restart-web — Restart (or recreate) the Vite dev server container
+  router.post('/branches/:id/run-restart-web', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) {
+        res.status(404).json({ error: `Branch "${id}" not found` });
+        return;
+      }
+      if (!entry.runWebContainerName || entry.runStatus !== 'running') {
+        res.status(400).json({ error: 'No web dev container is active for this branch' });
+        return;
+      }
+
+      const exists = await containerService.isRunning(entry.runWebContainerName);
+      if (exists) {
+        // Container exists → simple restart
+        const result = await shell.exec(`docker restart ${entry.runWebContainerName}`);
+        if (result.exitCode !== 0) {
+          throw new Error(`Failed to restart web container: ${combinedOutput(result)}`);
+        }
+        res.json({ success: true, action: 'restarted', container: entry.runWebContainerName });
+      } else {
+        // Container was removed → recreate it with the same config as run-from-source
+        const webBaseImage = config.run?.webBaseImage ?? 'node:20-slim';
+        const webSourceDir = config.run?.webSourceDir ?? 'prd-admin';
+        const webPort = config.run?.webPort ?? 8000;
+        const webCommand = config.run?.webCommand
+          ?? `sh -c "corepack enable && pnpm install --no-frozen-lockfile && pnpm dev --host 0.0.0.0"`;
+
+        await containerService.runWebFromSource(entry, {
+          webBaseImage,
+          webCommand,
+          webSourceDir,
+          webPort,
+        });
+        stateService.save();
+        res.json({ success: true, action: 'recreated', container: entry.runWebContainerName });
+      }
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // GET /branches/:id/run-diagnostics — Comprehensive health check for run mode
+  router.get('/branches/:id/run-diagnostics', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `Branch "${id}" not found` });
+      return;
+    }
+
+    const checks: Array<{ name: string; status: 'pass' | 'fail' | 'warn' | 'skip'; detail: string }> = [];
+
+    // 1. Branch state
+    checks.push({
+      name: 'branch_state',
+      status: entry.runStatus === 'running' ? 'pass' : 'fail',
+      detail: JSON.stringify({
+        runStatus: entry.runStatus,
+        runContainerName: entry.runContainerName ?? '(not set)',
+        runWebContainerName: entry.runWebContainerName ?? '(not set)',
+        hostPort: entry.hostPort ?? '(not set)',
+        deployStatus: entry.status,
+        isActive: stateService.getState().activeBranchId === id,
+      }, null, 2),
+    });
+
+    // 2. API container alive (include crash logs if dead)
+    if (entry.runContainerName) {
+      const alive = await containerService.isRunning(entry.runContainerName);
+      const inspect = await shell.exec(
+        `docker inspect --format '{{.State.Status}} | {{.State.ExitCode}} | {{.Config.Cmd}}' ${entry.runContainerName} 2>&1`,
+      );
+      let detail = `container=${entry.runContainerName}\nalive=${alive}\ninspect=${inspect.stdout.trim()}`;
+      if (!alive) {
+        const logs = await shell.exec(
+          `docker logs --tail 80 ${entry.runContainerName} 2>&1`,
+        );
+        detail += `\n\n--- CRASH LOGS (last 80 lines) ---\n${logs.stdout.trim()}`;
+      }
+      checks.push({
+        name: 'api_container',
+        status: alive ? 'pass' : 'fail',
+        detail,
+      });
+    } else {
+      checks.push({ name: 'api_container', status: 'fail', detail: 'runContainerName not set in state' });
+    }
+
+    // 3. Web container alive (include crash logs if dead)
+    if (entry.runWebContainerName) {
+      const alive = await containerService.isRunning(entry.runWebContainerName);
+      const inspect = await shell.exec(
+        `docker inspect --format '{{.State.Status}} | {{.State.ExitCode}} | {{.Config.Cmd}}' ${entry.runWebContainerName} 2>&1`,
+      );
+      let detail = `container=${entry.runWebContainerName}\nalive=${alive}\ninspect=${inspect.stdout.trim()}`;
+      if (!alive) {
+        // Grab last 80 lines of logs to diagnose crash
+        const logs = await shell.exec(
+          `docker logs --tail 80 ${entry.runWebContainerName} 2>&1`,
+        );
+        detail += `\n\n--- CRASH LOGS (last 80 lines) ---\n${logs.stdout.trim()}`;
+      }
+      checks.push({
+        name: 'web_container',
+        status: alive ? 'pass' : 'fail',
+        detail,
+      });
+    } else {
+      checks.push({ name: 'web_container', status: 'fail', detail: 'runWebContainerName not set in state' });
+    }
+
+    // 4. Nginx config analysis
+    const nginxConf = switcherService.readActiveConfig();
+    if (nginxConf) {
+      // Extract upstream targets from config.
+      // Supports both direct proxy_pass and variable-based (set $var + proxy_pass $var) patterns.
+      const apiSection = nginxConf.match(/location \^~ \/api\/([\s\S]*?)}/)?.[1] ?? '';
+      const webSection = nginxConf.match(/location \/ \{([\s\S]*?)}/)?.[1]
+        ?? nginxConf.match(/location \/[\s\S]*?{([\s\S]*?)}/)?.[1] ?? '';
+
+      const extractTarget = (section: string): string => {
+        // Try variable-based: set $xxx http://host:port; ... proxy_pass $xxx;
+        const varMatch = section.match(/set\s+\$\w+\s+http:\/\/([^;]+);/);
+        if (varMatch) return varMatch[1];
+        // Try direct: proxy_pass http://host:port;
+        const directMatch = section.match(/proxy_pass\s+http:\/\/([^;]+);/);
+        return directMatch?.[1] ?? '(not found)';
+      };
+
+      const apiTarget = extractTarget(apiSection);
+      const webTarget = extractTarget(webSection);
+      const isSameTarget = apiTarget === webTarget;
+      const expectedWebTarget = entry.runWebContainerName
+        ? `${entry.runWebContainerName}:8000`
+        : '(runWebContainerName not set)';
+
+      checks.push({
+        name: 'nginx_routing',
+        status: isSameTarget ? 'fail' : 'pass',
+        detail: [
+          `api_target=${apiTarget}`,
+          `web_target=${webTarget}`,
+          `expected_web_target=${expectedWebTarget}`,
+          isSameTarget ? 'BUG: api and web route to SAME target!' : 'OK: api and web route to different targets',
+          `---\n${nginxConf}`,
+        ].join('\n'),
+      });
+    } else {
+      checks.push({ name: 'nginx_routing', status: 'skip', detail: 'nginx.conf not found' });
+    }
+
+    // 5. HTTP connectivity through gateway
+    const gatewayPort = config.gateway.port;
+    const gatewayContainer = config.gateway.containerName;
+
+    // Test /api/ route → should reach dotnet (any non-502/000 response means API is reachable)
+    const apiTest = await shell.exec(
+      `docker exec ${gatewayContainer} curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:80/api/health 2>&1`,
+    );
+    const apiCode = apiTest.stdout.trim();
+    checks.push({
+      name: 'http_api_route',
+      status: apiCode === '000' || apiCode === '502' ? 'fail'
+            : 'pass',
+      detail: `GET /api/health → HTTP ${apiCode || apiTest.stderr.trim()}`,
+    });
+
+    // Test / route → should reach Vite
+    const webTest = await shell.exec(
+      `docker exec ${gatewayContainer} curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:80/ 2>&1`,
+    );
+    checks.push({
+      name: 'http_web_route',
+      status: webTest.stdout.trim() === '200' ? 'pass'
+            : webTest.stdout.trim() === '000' ? 'fail' : 'warn',
+      detail: `GET / → HTTP ${webTest.stdout.trim() || webTest.stderr.trim()}`,
+    });
+
+    // Test Vite direct (inside docker network)
+    if (entry.runWebContainerName) {
+      const viteUrl = `http://${entry.runWebContainerName}:8000/`;
+      const viteTest = await shell.exec(
+        `docker exec ${gatewayContainer} curl -s -o /dev/null -w "%{http_code}" --max-time 5 ${viteUrl} 2>&1`,
+      );
+      const httpCode = viteTest.stdout.trim();
+      // 200 = reachable, 403 = reachable but blocked by Vite allowedHosts (expected via container name)
+      const reachable = httpCode !== '000' && httpCode !== '';
+      checks.push({
+        name: 'vite_direct',
+        status: reachable ? 'pass' : 'fail',
+        detail: `GET ${viteUrl} → HTTP ${httpCode || viteTest.stderr.trim()}${httpCode === '403' ? ' (allowedHosts — 通过网关访问正常)' : ''}`,
+      });
+    }
+
+    // Summary
+    const allPass = checks.every((c) => c.status === 'pass' || c.status === 'skip');
+    res.json({
+      branchId: id,
+      overall: allPass ? 'healthy' : 'unhealthy',
+      checks,
+    });
+  });
+
+  // POST /branches/:id/deploy — SSE stream: build + start + activate + health check
+  router.post('/branches/:id/deploy', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `Branch "${id}" not found` });
+      return;
+    }
+    if (entry.status === 'building') {
+      res.status(409).json({ error: 'Build already in progress' });
+      return;
+    }
+
+    // Switch to SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const opLog: OperationLog = {
+      type: 'deploy',
+      startedAt: new Date().toISOString(),
+      status: 'running',
+      events: [],
+    };
+
+    const send = (data: Record<string, unknown>) => {
+      // Persist event (skip streaming chunks to keep logs lean)
+      if (!data.chunk) {
+        const event = { ...data, timestamp: new Date().toISOString() } as OperationLogEvent;
+        // Deduplicate: if same step already logged, replace with latest state
+        const existingIdx = data.step
+          ? opLog.events.findIndex((e) => e.step === data.step)
+          : -1;
+        if (existingIdx >= 0) {
+          opLog.events[existingIdx] = event;
+        } else {
+          opLog.events.push(event);
+        }
+      }
+      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+    };
+
+    try {
+      // ---- Mode switching: stop run container if active before deploying ----
+      if (entry.runStatus === 'running' && entry.runContainerName) {
+        send({ step: 'mode_switch', status: 'running', title: '停止源码运行容器（切换到部署模式）' });
+        try { await containerService.stop(entry.runContainerName); } catch { /* ok */ }
+        entry.runStatus = 'stopped';
+        stateService.save();
+        send({ step: 'mode_switch', status: 'done', title: '已停止源码运行容器' });
+      }
+
+      // ---- env info ----
+      const commitResult = await shell.exec(
+        'git log --oneline -1', { cwd: entry.worktreePath },
+      );
+      const shaResult = await shell.exec(
+        'git rev-parse --short HEAD', { cwd: entry.worktreePath },
+      );
+      const commit = shaResult.stdout.trim();
+      const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', id);
+
+      send({
+        step: 'env', status: 'done', title: '环境信息',
+        detail: {
+          mode: 'deploy',
+          branch: entry.branch,
+          commit,
+          commitLog: commitResult.stdout.trim(),
+          worktreePath: entry.worktreePath,
+          containerName: entry.containerName,
+          imageName: entry.imageName,
+          dbName: entry.dbName,
+          network: config.docker.network,
+          gatewayPort: config.gateway.port,
+        },
+      });
+
+      // ---- build ----
+      if (entry.status === 'idle' || entry.status === 'error') {
+        stateService.updateStatus(id, 'building');
+        entry.errorMessage = undefined;
+        stateService.save();
+
+        // API image (stream build output in real-time)
+        send({ step: 'build_api', status: 'running', title: '构建 API 镜像' });
+        const apiLog = await builderService.buildApiImage(
+          entry.worktreePath, entry.imageName,
+          (chunk) => send({ step: 'build_api', status: 'running', title: '构建 API 镜像', chunk }),
+        );
+        send({ step: 'build_api', status: 'done', title: '构建 API 镜像' });
+
+        // Admin static (stream build output in real-time)
+        send({ step: 'build_admin', status: 'running', title: '构建前端静态文件' });
+        const adminLog = await builderService.buildAdminStatic(
+          entry.worktreePath, buildsDir,
+          (chunk) => send({ step: 'build_admin', status: 'running', title: '构建前端静态文件', chunk }),
+        );
+        send({ step: 'build_admin', status: 'done', title: '构建前端静态文件' });
+
+        // Write version file for health check
+        const versionInfo = { commit, branch: entry.branch, builtAt: new Date().toISOString() };
+        fs.mkdirSync(buildsDir, { recursive: true });
+        fs.writeFileSync(path.join(buildsDir, 'bt-version.json'), JSON.stringify(versionInfo));
+
+        stateService.updateStatus(id, 'built');
+        stateService.getBranch(id)!.buildLog = `API:\n${apiLog}\nAdmin:\n${adminLog}`;
+        stateService.save();
+      } else {
+        send({ step: 'build_api', status: 'skip', title: '构建 API 镜像 (已构建，跳过)' });
+        send({ step: 'build_admin', status: 'skip', title: '构建前端静态文件 (已构建，跳过)' });
+      }
+
+      // ---- start ----
+      if (stateService.getBranch(id)!.status !== 'running') {
+        send({ step: 'start', status: 'running', title: '启动容器' });
+        await containerService.start(stateService.getBranch(id)!);
+        stateService.updateStatus(id, 'running');
+        send({
+          step: 'start', status: 'done', title: '启动容器',
+          detail: { containerName: entry.containerName, network: config.docker.network },
+        });
+      } else {
+        send({ step: 'start', status: 'skip', title: '启动容器 (已运行，跳过)' });
+      }
+
+      // Save per-branch nginx config to disk (deploy mode)
+      const nginxConf = switcherService.generateConfig(entry.containerName, 'deploy');
+      switcherService.saveBranchConfig(id, nginxConf);
+      stateService.save();
+
+      // ---- activate nginx ----
+      send({ step: 'activate', status: 'running', title: '切换 Nginx 网关' });
+      const activateResult = await doActivate(id);
+      send({
+        step: 'activate', status: 'done', title: '切换 Nginx 网关',
+        detail: activateResult,
+      });
+
+      // ---- health check ----
+      send({ step: 'health', status: 'running', title: '健康检查' });
+      await new Promise((r) => setTimeout(r, 3000));
+
+      const versionUrl = `http://localhost:${config.gateway.port}/bt-version.json`;
+      const healthResult = await shell.exec(`curl -sf -m 5 "${versionUrl}"`, { timeout: 10_000 });
+
+      let healthStatus: string;
+      let healthDetail: Record<string, unknown>;
+      if (healthResult.exitCode === 0) {
+        try {
+          const actual = JSON.parse(healthResult.stdout);
+          const match = actual.commit === commit;
+          healthStatus = match ? 'done' : 'warn';
+          healthDetail = {
+            url: versionUrl, expected: commit, actual: actual.commit,
+            match, builtAt: actual.builtAt,
+            hint: match ? '' : '版本不匹配 — 可能需要重新构建',
+          };
+        } catch {
+          healthStatus = 'warn';
+          healthDetail = { url: versionUrl, expected: commit, actual: '响应解析失败', match: false };
+        }
+      } else {
+        healthStatus = 'warn';
+        healthDetail = {
+          url: versionUrl, expected: commit, actual: '无法连接',
+          match: false, error: combinedOutput(healthResult).slice(0, 300),
+          hint: '容器可能仍在启动，稍后可手动刷新检查',
+        };
+      }
+      send({ step: 'health', status: healthStatus, title: '健康检查', detail: healthDetail });
+
+      // ---- done ----
+      send({ step: 'complete', status: 'done' });
+      entry.errorMessage = undefined;
+      stateService.save();
+      opLog.status = 'completed';
+    } catch (err) {
+      const msg = (err as Error).message;
+      const e = stateService.getBranch(id);
+      if (e) {
+        // Always set error status on deploy failure, regardless of current status
+        stateService.updateStatus(id, 'error');
+        e.errorMessage = msg;
+        e.buildLog = msg;
+        stateService.save();
+      }
+      send({ step: 'error', status: 'error', title: '部署失败', log: msg });
+      opLog.status = 'error';
+    } finally {
+      opLog.finishedAt = new Date().toISOString();
+      stateService.appendLog(id, opLog);
+      stateService.save();
+      res.end();
+    }
+  });
+
+  // POST /cleanup — one-click cleanup all non-active branches (SSE stream)
+  router.post('/cleanup', async (req, res) => {
+    const state = stateService.getState();
+    const activeId = state.activeBranchId;
+    const toClean = Object.values(state.branches).filter((b) => b.id !== activeId);
+
+    if (!toClean.length) {
+      res.json({ success: true, message: '没有需要清理的分支' });
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (data: Record<string, unknown>) => {
+      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+    };
+
+    send({ step: 'start', status: 'running', title: `即将清理 ${toClean.length} 个分支`, total: toClean.length });
+
+    let cleaned = 0;
+    for (const entry of toClean) {
+      send({ step: entry.id, status: 'running', title: `清理 ${entry.branch}`, progress: cleaned, total: toClean.length });
+
+      try {
+        // Stop containers
+        if (entry.status === 'running') {
+          try { await containerService.stop(entry.containerName); } catch { /* ok */ }
+        }
+        if (entry.runStatus === 'running' && entry.runContainerName) {
+          try { await containerService.stop(entry.runContainerName); } catch { /* ok */ }
+        }
+
+        // Remove worktree + image + nginx config
+        try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+        try { await containerService.removeImage(entry.imageName); } catch { /* ok */ }
+        switcherService.removeBranchConfig(entry.id);
+
+        // Drop branch DB (strict safety)
+        const mainDb = config.mongodb.defaultDbName;
+        const branchDb = entry.originalDbName || entry.dbName;
+        if (branchDb && branchDb !== mainDb && branchDb.startsWith(`${mainDb}_`)) {
+          try {
+            const mongoContainer = 'prdagent-mongodb';
+            const dropCmd = `docker exec ${mongoContainer} mongosh --quiet --eval "db.getMongo().getDB('${branchDb}').dropDatabase()"`;
+            await shell.exec(dropCmd, { timeout: 30_000 });
+          } catch { /* ok */ }
+        }
+
+        stateService.removeBranch(entry.id);
+        stateService.removeLogs(entry.id);
+        cleaned++;
+        send({ step: entry.id, status: 'done', title: `已清理 ${entry.branch}`, progress: cleaned, total: toClean.length });
+      } catch (err) {
+        cleaned++;
+        send({ step: entry.id, status: 'error', title: `清理 ${entry.branch} 失败: ${(err as Error).message}`, progress: cleaned, total: toClean.length });
+      }
+    }
+
+    stateService.save();
+    send({ step: 'complete', status: 'done', title: `清理完成，共清理 ${cleaned} 个分支` });
+    res.end();
+  });
+
+  // POST /rollback — rollback to previous branch
+  router.post('/rollback', async (_req, res) => {
+    try {
+      const history = stateService.getState().history;
+      if (history.length <= 1) {
+        res.status(400).json({ error: 'No history to rollback to' });
+        return;
+      }
+
+      const previousId = history[history.length - 2];
+      const entry = stateService.getBranch(previousId);
+      if (!entry) {
+        res.status(500).json({ error: `Previous branch "${previousId}" no longer exists` });
+        return;
+      }
+
+      // Determine which container to route to
+      const resolved = resolveUpstream(entry);
+      if (!resolved) {
+        // No container running — try starting the deploy container
+        const running = await containerService.isRunning(entry.containerName);
+        if (!running) {
+          await containerService.start(entry);
+          stateService.updateStatus(previousId, 'running');
+        }
+      }
+
+      // Check per-branch config file exists on disk
+      const branchConf = switcherService.readBranchConfig(previousId);
+      if (!branchConf) {
+        throw new Error(`Previous branch "${previousId}" has no nginx config file`);
+      }
+
+      // Deploy mode: sync static files before switching
+      const mode = (resolved ?? { mode: 'deploy' as const }).mode;
+      if (mode === 'deploy') {
+        const buildsDir = path.join(config.repoRoot, config.deployDir, 'web', 'builds', previousId);
+        const distDir = path.join(config.repoRoot, config.deployDir, 'web', 'dist');
+        if (fs.existsSync(buildsDir)) {
+          await switcherService.syncStaticFiles(buildsDir, distDir);
+        }
+      }
+
+      // Symlink-based activation — if this fails, state stays untouched
+      await switcherService.activateBranch(previousId);
+
+      // Nginx succeeded — NOW commit the state change
+      stateService.rollback();
+      stateService.save();
+
+      res.json({
+        success: true,
+        activeBranchId: previousId,
+        url: `http://localhost:${config.gateway.port}`,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /gateway/disconnect — clear active branch, nginx returns 502 for API calls
+  router.post('/gateway/disconnect', async (_req, res) => {
+    try {
+      const state = stateService.getState();
+      if (!state.activeBranchId) {
+        res.json({ success: true, message: '网关已处于断开状态' });
+        return;
+      }
+
+      // Symlink to _disconnected.conf (returns 502 for /api/ calls)
+      await switcherService.disconnect();
+
+      state.activeBranchId = null;
+      stateService.save();
+
+      res.json({ success: true, message: '网关已断开' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ================================================================
+  // Real-time container logs (SSE stream)
+  // ================================================================
+
+  router.post('/branches/:id/container-logs', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `Branch "${id}" not found` });
+      return;
+    }
+
+    // Determine which container to tail (prefer source-run, fallback to deploy)
+    const containerName =
+      entry.runContainerName && entry.runStatus === 'running'
+        ? entry.runContainerName
+        : entry.status === 'running'
+          ? entry.containerName
+          : null;
+
+    if (!containerName) {
+      res.status(400).json({ error: '没有运行中的容器' });
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const proc = spawn('docker', ['logs', '-f', '--tail', '200', containerName]);
+
+    const sendChunk = (data: Buffer) => {
+      try {
+        res.write(`data: ${JSON.stringify({ type: 'log', text: data.toString() })}\n\n`);
+      } catch { /* client gone */ }
+    };
+
+    proc.stdout?.on('data', sendChunk);
+    proc.stderr?.on('data', sendChunk);
+
+    proc.on('close', () => {
+      try {
+        res.write(`data: ${JSON.stringify({ type: 'end' })}\n\n`);
+        res.end();
+      } catch { /* client gone */ }
+    });
+
+    req.on('close', () => {
+      proc.kill();
+    });
+  });
+
+  // ================================================================
+  // Database management
+  // ================================================================
+
+  // POST /branches/:id/db/clone — clone main DB into branch DB (SSE stream)
+  router.post('/branches/:id/db/clone', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) { res.status(404).json({ error: `Branch "${id}" not found` }); return; }
+
+    const mainDbName = config.mongodb.defaultDbName;
+    const targetDb = entry.dbName;
+
+    if (targetDb === mainDbName) {
+      res.status(400).json({ error: '当前分支已在使用主库，无需克隆' });
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (data: Record<string, unknown>) => {
+      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+    };
+
+    try {
+      const mongoContainer = 'prdagent-mongodb';
+
+      // Step 1: Get collection list
+      send({ step: 'list', status: 'running', title: '获取集合列表' });
+      const listCmd = `docker exec ${mongoContainer} mongosh --quiet --eval "db.getMongo().getDB('${mainDbName}').getCollectionNames().filter(c => !c.startsWith('system.')).join('\\n')"`;
+      const listResult = await shell.exec(listCmd, { timeout: 30_000 });
+      if (listResult.exitCode !== 0) throw new Error(`获取集合列表失败: ${combinedOutput(listResult)}`);
+
+      const collections = listResult.stdout.trim().split('\n').filter(Boolean);
+      send({ step: 'list', status: 'done', title: `共 ${collections.length} 个集合`, detail: { collections } });
+
+      // Step 2: Copy each collection
+      let copied = 0;
+      for (const col of collections) {
+        send({ step: 'copy', status: 'running', title: `复制 ${col}`, progress: copied, total: collections.length });
+        const copyCmd = [
+          `docker exec ${mongoContainer} mongosh --quiet --eval`,
+          `"const docs = db.getMongo().getDB('${mainDbName}').getCollection('${col}').find().toArray();`,
+          `db.getMongo().getDB('${targetDb}').getCollection('${col}').drop();`,
+          `if (docs.length > 0) db.getMongo().getDB('${targetDb}').getCollection('${col}').insertMany(docs);`,
+          `print('copied ' + docs.length + ' docs');"`,
+        ].join(' ');
+        const copyResult = await shell.exec(copyCmd, { timeout: 60_000 });
+        copied++;
+        const count = copyResult.stdout.match(/copied (\d+)/)?.[1] || '?';
+        send({ step: 'copy', status: 'running', title: `已复制 ${col} (${count} 条)`, progress: copied, total: collections.length });
+      }
+
+      send({ step: 'complete', status: 'done', title: `克隆完成: ${mainDbName} → ${targetDb}（${collections.length} 个集合）` });
+    } catch (err) {
+      send({ step: 'error', status: 'error', title: `克隆失败: ${(err as Error).message}` });
+    } finally {
+      res.end();
+    }
+  });
+
+  // POST /branches/:id/db/use-main — switch branch to use main DB
+  router.post('/branches/:id/db/use-main', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) { res.status(404).json({ error: `Branch "${id}" not found` }); return; }
+
+      const mainDbName = config.mongodb.defaultDbName;
+      if (entry.dbName === mainDbName) {
+        res.status(400).json({ error: '已在使用主库' });
+        return;
+      }
+
+      // Save the original DB name so we can switch back
+      if (!entry.originalDbName) {
+        entry.originalDbName = entry.dbName;
+      }
+      entry.dbName = mainDbName;
+      stateService.save();
+
+      res.json({
+        success: true,
+        message: `分支已切换到主库 ${mainDbName}（需要重启容器生效）`,
+        dbName: mainDbName,
+        hint: '请重新运行或部署以使用新数据库',
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /branches/:id/db/use-own — switch branch back to its own isolated DB
+  router.post('/branches/:id/db/use-own', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entry = stateService.getBranch(id);
+      if (!entry) { res.status(404).json({ error: `Branch "${id}" not found` }); return; }
+
+      const mainDbName = config.mongodb.defaultDbName;
+      const own = entry.originalDbName;
+
+      if (!own || entry.dbName !== mainDbName) {
+        res.status(400).json({ error: '当前未使用主库，无需切换' });
+        return;
+      }
+
+      entry.dbName = own;
+      delete entry.originalDbName;
+      stateService.save();
+
+      res.json({
+        success: true,
+        message: `分支已切换回独立数据库 ${own}（需要重启容器生效）`,
+        dbName: own,
+        hint: '请重新运行或部署以使用新数据库',
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  return router;
+}

@@ -28,6 +28,9 @@ public static class AdminPermissionCatalog
 
     public const string OpenPlatformManage = "open-platform.manage";
 
+    /// <summary>自动化规则管理权限</summary>
+    public const string AutomationsManage = "automations.manage";
+
     public const string DataRead = "data.read";
     public const string DataWrite = "data.write";
 
@@ -39,6 +42,9 @@ public static class AdminPermissionCatalog
 
     public const string PromptsRead = "prompts.read";
     public const string PromptsWrite = "prompts.write";
+
+    public const string SkillsRead = "skills.read";
+    public const string SkillsWrite = "skills.write";
 
     public const string LabRead = "lab.read";
     public const string LabWrite = "lab.write";
@@ -69,6 +75,51 @@ public static class AdminPermissionCatalog
     public const string DefectAgentManage = "defect-agent.manage";
 
     /// <summary>
+    /// AI 百宝箱权限：使用百宝箱功能
+    /// </summary>
+    public const string AiToolboxUse = "ai-toolbox.use";
+
+    /// <summary>
+    /// AI 百宝箱管理权限：管理工作流、配置等
+    /// </summary>
+    public const string AiToolboxManage = "ai-toolbox.manage";
+
+    /// <summary>
+    /// 数据迁移 Agent 权限（读）：查看实体与集合映射、数据预览
+    /// </summary>
+    public const string DataMigrationAgentUse = "data-migration-agent.use";
+
+    /// <summary>
+    /// 数据迁移 Agent 权限（写）：删除集合、删除文档、修复数据
+    /// </summary>
+    public const string DataMigrationAgentWrite = "data-migration-agent.write";
+
+    /// <summary>
+    /// 总裁面板权限：查看总裁面板和周报
+    /// </summary>
+    public const string ExecutiveRead = "executive.read";
+
+    /// <summary>
+    /// 教程邮件管理权限（读）：查看序列、模板、发送记录
+    /// </summary>
+    public const string TutorialEmailRead = "tutorial-email.read";
+
+    /// <summary>
+    /// 教程邮件管理权限（写）：编辑序列、模板、触发发送
+    /// </summary>
+    public const string TutorialEmailWrite = "tutorial-email.write";
+
+    /// <summary>
+    /// 工作流引擎权限：使用工作流（创建、执行、查看自己的）
+    /// </summary>
+    public const string WorkflowAgentUse = "workflow-agent.use";
+
+    /// <summary>
+    /// 工作流引擎管理权限：管理所有工作流 + 查看所有执行记录
+    /// </summary>
+    public const string WorkflowAgentManage = "workflow-agent.manage";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -82,6 +133,10 @@ public static class AdminPermissionCatalog
         new(LiteraryAgentUse, "文学创作 Agent", "文章配图智能生成"),
         new(DefectAgentUse, "缺陷管理 Agent", "提交和查看缺陷"),
         new(DefectAgentManage, "缺陷管理 Agent-管理", "设置模板、指派处理人"),
+        new(AiToolboxUse, "AI 百宝箱", "使用 AI 百宝箱功能"),
+        new(AiToolboxManage, "AI 百宝箱-管理", "管理工作流、配置等"),
+        new(DataMigrationAgentUse, "数据迁移 Agent-读", "查看实体与集合映射、数据预览"),
+        new(DataMigrationAgentWrite, "数据迁移 Agent-写", "删除集合、删除文档、修复数据"),
 
         new(UsersRead, "用户管理-读", "查看用户列表/详情"),
         new(UsersWrite, "用户管理-写", "创建/编辑/禁用/重置密码等"),
@@ -96,6 +151,8 @@ public static class AdminPermissionCatalog
 
         new(OpenPlatformManage, "开放平台", "管理开放平台 App / 调用方 / 日志"),
 
+        new(AutomationsManage, "自动化", "管理自动化规则与事件通知"),
+
         new(DataRead, "数据管理-读", "查看导入导出/摘要"),
         new(DataWrite, "数据管理-写", "执行导入/清理等危险操作"),
 
@@ -108,8 +165,19 @@ public static class AdminPermissionCatalog
         new(PromptsRead, "提示词-读", "查看提示词配置"),
         new(PromptsWrite, "提示词-写", "编辑提示词配置"),
 
+        new(SkillsRead, "技能-读", "查看技能配置"),
+        new(SkillsWrite, "技能-写", "创建/编辑/删除技能"),
+
         new(LabRead, "实验室-读", "查看实验室功能"),
         new(LabWrite, "实验室-写", "使用实验室功能"),
+
+        new(ExecutiveRead, "总裁面板-读", "查看总裁面板和周报"),
+
+        new(TutorialEmailRead, "教程邮件-读", "查看教程邮件序列、模板与发送记录"),
+        new(TutorialEmailWrite, "教程邮件-写", "编辑序列、模板、触发发送"),
+
+        new(WorkflowAgentUse, "工作流引擎", "创建和执行自动化工作流"),
+        new(WorkflowAgentManage, "工作流引擎-管理", "管理所有工作流与执行记录"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

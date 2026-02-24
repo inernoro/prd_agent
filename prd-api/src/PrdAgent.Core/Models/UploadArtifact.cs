@@ -1,9 +1,12 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 上传/生成产物索引（Mongo 只存引用与元数据；大内容存 COS）。
-/// - 通过 requestId 与 LlmRequestLog.RequestId 关联，用于后台“图片预览”。
+/// - 通过 requestId 与 LlmRequestLog.RequestId 关联，用于后台"图片预览"。
 /// </summary>
+[AppOwnership(AppNames.VisualAgent, AppNames.VisualAgentDisplay, IsPrimary = true)]
 public class UploadArtifact
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

@@ -3,9 +3,10 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, bulkCreateUsers, generateInviteCodes, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit } from '@/services';
-import { CheckCircle2, Circle, MoreVertical, Pencil, Search, XCircle, UserCog, Users, Gauge } from 'lucide-react';
+import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit } from '@/services';
+import { MoreVertical, Pencil, Search, UserCog, Users, Gauge } from 'lucide-react';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { UserProfilePopover } from '@/components/ui/UserProfilePopover';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
@@ -15,6 +16,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
+import { glassPanel } from '@/lib/glassStyles';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 
 type UserRow = {
@@ -59,15 +61,8 @@ function fmtRelativeTime(v?: string | null) {
 // 抑制 unused warning（将在 profile popover 中使用）
 void fmtRelativeTime;
 
-const passwordRules: Array<{ key: string; label: string; test: (pwd: string) => boolean }> = [
-  { key: 'len', label: '长度 8-128 位', test: (pwd) => pwd.length >= 8 && pwd.length <= 128 },
-  { key: 'lower', label: '包含小写字母', test: (pwd) => /[a-z]/.test(pwd) },
-  { key: 'upper', label: '包含大写字母', test: (pwd) => /[A-Z]/.test(pwd) },
-  { key: 'digit', label: '包含数字', test: (pwd) => /\d/.test(pwd) },
-  { key: 'special', label: '包含特殊字符（如 !@#$ 等）', test: (pwd) => /[!@#$%^&*(),.?":{}|<>]/.test(pwd) },
-];
-
 export default function UsersPage() {
+  const { isMobile } = useBreakpoint();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<UserRow[]>([]);
@@ -76,10 +71,6 @@ export default function UsersPage() {
   const [search, setSearch] = useState('');
   const [role, setRole] = useState<UserRow['role'] | ''>('');
   const [status, setStatus] = useState<UserRow['status'] | ''>('');
-
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteCount, setInviteCount] = useState(1);
-  const [inviteCodes, setInviteCodes] = useState<string[]>([]);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createUsername, setCreateUsername] = useState('');
@@ -92,27 +83,9 @@ export default function UsersPage() {
   const [createSubmitting, setCreateSubmitting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  const [bulkOpen, setBulkOpen] = useState(false);
-  const [bulkPrefix, setBulkPrefix] = useState('');
-  const [bulkStart, setBulkStart] = useState(1);
-  const [bulkCount, setBulkCount] = useState(5);
-  const [bulkRole, setBulkRole] = useState<UserRow['role']>('DEV');
-  const [bulkPwd, setBulkPwd] = useState('');
-  const [bulkPwd2, setBulkPwd2] = useState('');
-  const [bulkSubmitting, setBulkSubmitting] = useState(false);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const [bulkResult, setBulkResult] = useState<{
-    requestedCount: number;
-    createdCount: number;
-    failedCount: number;
-    createdItems: Array<{ userId: string; username: string }>;
-    failedItems: Array<{ username: string; code: string; message: string }>;
-  } | null>(null);
-
   const [pwdOpen, setPwdOpen] = useState(false);
   const [pwdUser, setPwdUser] = useState<UserRow | null>(null);
   const [pwd, setPwd] = useState('');
-  const [pwd2, setPwd2] = useState('');
   const [pwdSubmitError, setPwdSubmitError] = useState<string | null>(null);
   const [pwdSubmitting, setPwdSubmitting] = useState(false);
 
@@ -164,22 +137,6 @@ export default function UsersPage() {
   const [rateLimitGlobalMaxRpm, setRateLimitGlobalMaxRpm] = useState(600);
   const [rateLimitGlobalMaxConcurrent, setRateLimitGlobalMaxConcurrent] = useState(100);
 
-  const pwdChecks = useMemo(() => {
-    const v = pwd ?? '';
-    const touched = v.length > 0;
-    return passwordRules.map((r) => ({ ...r, ok: touched ? r.test(v) : false, touched }));
-  }, [pwd]);
-
-  const pwdAllOk = useMemo(() => {
-    if (!pwd) return false;
-    return passwordRules.every((r) => r.test(pwd));
-  }, [pwd]);
-
-  const pwdMatchOk = useMemo(() => {
-    if (!pwd || !pwd2) return false;
-    return pwd === pwd2;
-  }, [pwd, pwd2]);
-
   const createUsernameOk = useMemo(() => {
     const u = (createUsername ?? '').trim();
     if (!u) return false;
@@ -190,43 +147,6 @@ export default function UsersPage() {
   const createPwdNonEmptyOk = useMemo(() => {
     return (createPwd ?? '').trim().length > 0;
   }, [createPwd]);
-
-  const bulkPwdChecks = useMemo(() => {
-    const v = bulkPwd ?? '';
-    const touched = v.length > 0;
-    return passwordRules.map((r) => ({ ...r, ok: touched ? r.test(v) : false, touched }));
-  }, [bulkPwd]);
-
-  const bulkPwdNonEmptyOk = useMemo(() => {
-    return (bulkPwd ?? '').trim().length > 0;
-  }, [bulkPwd]);
-
-  const bulkPwdMatchOk = useMemo(() => {
-    if (!bulkPwd || !bulkPwd2) return false;
-    return bulkPwd === bulkPwd2;
-  }, [bulkPwd, bulkPwd2]);
-
-  const bulkUsernames = useMemo(() => {
-    const prefix = (bulkPrefix ?? '').trim();
-    const count = Math.max(1, Math.min(200, Math.floor(bulkCount || 1)));
-    const start = Math.max(0, Math.floor(bulkStart || 0));
-    if (!prefix) return [];
-    const maxIndex = start + count - 1;
-    const width = Math.max(2, String(maxIndex).length);
-    const arr: string[] = [];
-    for (let i = 0; i < count; i++) {
-      arr.push(`${prefix}${String(start + i).padStart(width, '0')}`);
-    }
-    return arr;
-  }, [bulkPrefix, bulkStart, bulkCount]);
-
-  const bulkUsernamesOk = useMemo(() => {
-    if (bulkUsernames.length === 0) return false;
-    return bulkUsernames.every((u) => {
-      if (u.length < 4 || u.length > 32) return false;
-      return /^[a-zA-Z0-9_]+$/.test(u);
-    });
-  }, [bulkUsernames]);
 
   const query = useMemo(
     () => ({ page, pageSize: 50, search: search.trim() || undefined, role: role || undefined, status: status || undefined }),
@@ -250,15 +170,6 @@ export default function UsersPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query.page, query.search, query.role, query.status]);
-
-  const onGenerate = async () => {
-    const res = await generateInviteCodes(inviteCount);
-    if (res.success) setInviteCodes(res.data.codes);
-  };
-
-  const onCopy = async (text: string) => {
-    await navigator.clipboard.writeText(text);
-  };
 
   const openCreateUser = async () => {
     setCreateUsername('');
@@ -335,52 +246,9 @@ export default function UsersPage() {
     }
   };
 
-  const openBulkCreate = () => {
-    setBulkPrefix('');
-    setBulkStart(1);
-    setBulkCount(5);
-    setBulkRole('DEV');
-    setBulkPwd('');
-    setBulkPwd2('');
-    setBulkError(null);
-    setBulkResult(null);
-    setBulkSubmitting(false);
-    setBulkOpen(true);
-  };
-
-  const submitBulkCreate = async () => {
-    if (!bulkUsernamesOk) {
-      setBulkError('生成的用户名不合法（需 4-32 位，仅字母/数字/下划线）');
-      return;
-    }
-    if (!bulkPwdNonEmptyOk) return;
-    if (!bulkPwdMatchOk) return;
-
-    setBulkSubmitting(true);
-    setBulkError(null);
-    try {
-      const items = bulkUsernames.map((u) => ({
-        username: u,
-        displayName: u,
-        role: bulkRole,
-        password: bulkPwd,
-      }));
-      const res = await bulkCreateUsers(items);
-      if (!res.success) {
-        setBulkError(res.error?.message || '批量创建失败');
-        return;
-      }
-      setBulkResult(res.data);
-      await load();
-    } finally {
-      setBulkSubmitting(false);
-    }
-  };
-
   const openChangePassword = (u: UserRow) => {
     setPwdUser(u);
     setPwd('');
-    setPwd2('');
     setPwdSubmitError(null);
     setPwdOpen(true);
   };
@@ -695,8 +563,7 @@ export default function UsersPage() {
 
   const submitChangePassword = async () => {
     if (!pwdUser) return;
-    if (!pwdAllOk) return;
-    if (!pwdMatchOk) return;
+    if (!pwd.trim()) return;
 
     setPwdSubmitting(true);
     setPwdSubmitError(null);
@@ -788,9 +655,9 @@ export default function UsersPage() {
       />
 
       <GlassCard glow className="flex-1 min-h-0 flex flex-col">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex items-center gap-2.5 flex-nowrap min-w-0">
-            <div className="flex-1 min-w-[200px] max-w-[320px]">
+        <div className={`flex ${isMobile ? 'flex-col gap-2.5' : 'flex-wrap items-center gap-2.5'}`}>
+          <div className={`flex items-center gap-2.5 ${isMobile ? 'w-full' : 'min-w-0'}`}>
+            <div className={`${isMobile ? 'flex-1 min-w-0' : 'flex-1 min-w-[200px] max-w-[320px]'}`}>
               <div className="relative">
                 <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
                 <input
@@ -800,7 +667,7 @@ export default function UsersPage() {
                     setPage(1);
                   }}
                   className="h-[36px] w-full rounded-[10px] pl-9 pr-4 text-[13px] outline-none transition-all duration-200 focus:ring-2 focus:ring-[var(--accent-gold)]/20"
-                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
+                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
                   placeholder="搜索用户名或昵称"
                 />
               </div>
@@ -813,7 +680,7 @@ export default function UsersPage() {
                 setPage(1);
               }}
               uiSize="sm"
-              className="min-w-[88px] font-medium"
+              className="min-w-[72px] font-medium"
             >
               <option value="">角色</option>
               <option value="PM">PM</option>
@@ -829,7 +696,7 @@ export default function UsersPage() {
                 setPage(1);
               }}
               uiSize="sm"
-              className="min-w-[88px] font-medium"
+              className="min-w-[72px] font-medium"
             >
               <option value="">状态</option>
               <option value="Active">正常</option>
@@ -837,22 +704,9 @@ export default function UsersPage() {
             </Select>
           </div>
 
-          <div className="ml-auto flex items-center gap-2 shrink-0 flex-wrap justify-end">
+          <div className={`${isMobile ? '' : 'ml-auto'} flex items-center gap-2 shrink-0 flex-wrap justify-end`}>
             <Button variant="secondary" size="xs" onClick={openCreateUser}>
               创建用户
-            </Button>
-            <Button variant="secondary" size="xs" onClick={openBulkCreate}>
-              批量创建
-            </Button>
-            <Button
-              variant="primary"
-              size="xs"
-              onClick={() => {
-                setInviteOpen(true);
-                setInviteCodes([]);
-              }}
-            >
-              生成邀请码
             </Button>
             <div className="mx-0.5 h-6 w-px bg-white/8" aria-hidden />
             <Button variant="danger" size="xs" onClick={handleInitializeUsers}>
@@ -864,8 +718,8 @@ export default function UsersPage() {
         <div
           className="mt-4 flex-1 min-h-0 overflow-auto rounded-[14px] p-4"
           style={{
-            background: 'rgba(255,255,255,0.015)',
-            border: '1px solid rgba(255,255,255,0.05)',
+            background: 'var(--list-item-bg)',
+            border: '1px solid var(--bg-card-hover)',
           }}
         >
           {loading ? (
@@ -893,16 +747,16 @@ export default function UsersPage() {
                     key={u.userId}
                     className="group relative rounded-[10px] p-2.5 transition-all duration-150"
                     style={{
-                      background: isBot ? 'rgba(34,197,94,0.03)' : 'rgba(255,255,255,0.02)',
-                      border: isBot ? '1px solid rgba(34,197,94,0.15)' : '1px solid rgba(255,255,255,0.06)',
+                      background: isBot ? 'rgba(34,197,94,0.03)' : 'var(--list-item-bg)',
+                      border: isBot ? '1px solid rgba(34,197,94,0.15)' : '1px solid var(--nested-block-border)',
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.06)' : 'rgba(255,255,255,0.04)';
-                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.1)';
+                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.06)' : 'var(--bg-input)';
+                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.25)' : 'var(--border-default)';
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.03)' : 'rgba(255,255,255,0.02)';
-                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.06)';
+                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.03)' : 'var(--list-item-bg)';
+                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.15)' : 'var(--nested-block-border)';
                     }}
                   >
                     {/* 操作按钮：悬浮显示 */}
@@ -912,7 +766,7 @@ export default function UsersPage() {
                           <button
                             type="button"
                             className="inline-flex items-center justify-center h-6 w-6 rounded-[6px] transition-colors hover:bg-white/10"
-                            style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)' }}
+                            style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}
                             aria-label="更多操作"
                           >
                             <MoreVertical size={14} />
@@ -926,11 +780,7 @@ export default function UsersPage() {
                             className="rounded-[10px] p-1 min-w-[160px]"
                             style={{
                               zIndex: 90,
-                              background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                              border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                              boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                              backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                              WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                              ...glassPanel,
                             }}
                           >
                             {/* 状态切换 */}
@@ -946,7 +796,7 @@ export default function UsersPage() {
                               {statusUpdatingUserId === u.userId ? '处理中...' : u.status === 'Active' ? '停用账户' : '启用账户'}
                             </DropdownMenu.Item>
 
-                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
 
                             {/* 角色切换子菜单 */}
                             <DropdownMenu.Sub>
@@ -965,11 +815,7 @@ export default function UsersPage() {
                                   className="rounded-[10px] p-1 min-w-[100px]"
                                   style={{
                                     zIndex: 91,
-                                    background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                                    border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                                    boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                                    backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                                    WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                                    ...glassPanel,
                                   }}
                                 >
                                   {(['PM', 'DEV', 'QA', 'ADMIN'] as const).map((r) => (
@@ -991,7 +837,7 @@ export default function UsersPage() {
                               </DropdownMenu.Portal>
                             </DropdownMenu.Sub>
 
-                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
 
                             {isLockedUser(u) && (
                               <DropdownMenu.Item
@@ -1074,7 +920,7 @@ export default function UsersPage() {
                               限流配置
                             </DropdownMenu.Item>
 
-                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
 
                             <DropdownMenu.Item
                               className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
@@ -1089,7 +935,7 @@ export default function UsersPage() {
                               {switchingUserId === u.userId ? '切换中...' : '切换登录'}
                             </DropdownMenu.Item>
 
-                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
 
                             <DropdownMenu.Item
                               className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
@@ -1293,7 +1139,7 @@ export default function UsersPage() {
               <div className="shrink-0">
                 <div
                   className="h-16 w-16 rounded-[12px] overflow-hidden flex items-center justify-center relative group cursor-pointer"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)' }}
                   title="创建成功后可设置头像"
                   onClick={() => toast.info('提示', '请先完成用户创建，创建成功后将自动弹出头像设置')}
                 >
@@ -1328,7 +1174,7 @@ export default function UsersPage() {
                       }
                     }}
                     className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                     placeholder="4-32位"
                     autoComplete="off"
                   />
@@ -1343,7 +1189,7 @@ export default function UsersPage() {
                       setCreateError(null);
                     }}
                     className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                     placeholder="自动同步"
                     autoComplete="off"
                   />
@@ -1362,7 +1208,7 @@ export default function UsersPage() {
                 }}
                 type="password"
                 className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                 placeholder="设置登录密码"
                 autoComplete="new-password"
               />
@@ -1375,7 +1221,7 @@ export default function UsersPage() {
                 <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>角色</div>
                 <div
                   className="rounded-[10px] p-2 space-y-1 flex-1"
-                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
                 >
                   {([
                     { key: 'PM', label: 'PM', desc: '产品经理' },
@@ -1407,7 +1253,7 @@ export default function UsersPage() {
                 <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>权限</div>
                 <div
                   className="rounded-[10px] p-2 space-y-1 flex-1"
-                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
                 >
                   {(createSystemRoles.length > 0 ? createSystemRoles : [
                     { key: 'admin', name: '管理员' },
@@ -1513,7 +1359,7 @@ export default function UsersPage() {
                   setNameError(null);
                 }}
                 className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                 placeholder="请输入姓名（1-50 字符）"
                 autoComplete="off"
               />
@@ -1541,304 +1387,12 @@ export default function UsersPage() {
       />
 
       <Dialog
-        open={bulkOpen}
-        onOpenChange={(v) => {
-          setBulkOpen(v);
-          if (!v) {
-            setBulkPrefix('');
-            setBulkStart(1);
-            setBulkCount(5);
-            setBulkRole('DEV');
-            setBulkPwd('');
-            setBulkPwd2('');
-            setBulkError(null);
-            setBulkResult(null);
-            setBulkSubmitting(false);
-          }
-        }}
-        title="批量创建用户"
-        description="按前缀 + 数量生成用户名，统一密码与角色"
-        maxWidth={900}
-        content={
-          <div className="space-y-4">
-            <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 140px 140px 180px' }}>
-              <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>用户名前缀</div>
-                <input
-                  value={bulkPrefix}
-                  onChange={(e) => {
-                    setBulkPrefix(e.target.value);
-                    setBulkError(null);
-                    setBulkResult(null);
-                  }}
-                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  placeholder="例如 dev_"
-                  autoComplete="off"
-                />
-              </div>
-              <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>起始编号</div>
-                <input
-                  type="number"
-                  min={0}
-                  value={bulkStart}
-                  onChange={(e) => {
-                    setBulkStart(Number(e.target.value || 0));
-                    setBulkError(null);
-                    setBulkResult(null);
-                  }}
-                  className="mt-2 h-10 w-full rounded-[14px] px-3 text-sm outline-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                />
-              </div>
-              <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>数量</div>
-                <input
-                  type="number"
-                  min={1}
-                  max={200}
-                  value={bulkCount}
-                  onChange={(e) => {
-                    setBulkCount(Number(e.target.value || 1));
-                    setBulkError(null);
-                    setBulkResult(null);
-                  }}
-                  className="mt-2 h-10 w-full rounded-[14px] px-3 text-sm outline-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                />
-              </div>
-              <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>角色</div>
-                <Select
-                  value={bulkRole}
-                  onChange={(e) => setBulkRole(e.target.value as UserRow['role'])}
-                  uiSize="md"
-                  className="mt-2"
-                >
-                  <option value="PM">PM</option>
-                  <option value="DEV">DEV</option>
-                  <option value="QA">QA</option>
-                  <option value="ADMIN">ADMIN</option>
-                </Select>
-              </div>
-            </div>
-
-            <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>统一密码</div>
-                <input
-                  value={bulkPwd}
-                  onChange={(e) => {
-                    setBulkPwd(e.target.value);
-                    setBulkError(null);
-                    setBulkResult(null);
-                  }}
-                  type="password"
-                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  placeholder="任意非空（强烈建议使用复杂密码）"
-                  autoComplete="new-password"
-                />
-              </div>
-              <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>确认密码</div>
-                <input
-                  value={bulkPwd2}
-                  onChange={(e) => {
-                    setBulkPwd2(e.target.value);
-                    setBulkError(null);
-                    setBulkResult(null);
-                  }}
-                  type="password"
-                  className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  placeholder="再次输入密码"
-                  autoComplete="new-password"
-                />
-              </div>
-            </div>
-
-            <div
-              className="rounded-[16px] px-4 py-3"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
-            >
-              <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>预览（最多显示前 30 条）</div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {bulkUsernames.slice(0, 30).map((u) => (
-                  <code
-                    key={u}
-                    className="rounded-[10px] px-2 py-1 text-[12px]"
-                    style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
-                  >
-                    {u}
-                  </code>
-                ))}
-                {bulkUsernames.length > 30 && (
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>… 共 {bulkUsernames.length} 条</span>
-                )}
-              </div>
-              {!bulkUsernamesOk && bulkUsernames.length > 0 && (
-                <div className="mt-2 text-sm" style={{ color: 'rgba(239,68,68,0.95)' }}>
-                  生成的用户名不合法：4-32 位，仅字母/数字/下划线（请检查前缀与长度）
-                </div>
-              )}
-            </div>
-
-            <div
-              className="rounded-[16px] px-4 py-3"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
-            >
-              <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>密码建议（不影响创建）</div>
-              <div className="mt-2 grid gap-1">
-                {bulkPwdChecks.map((r) => {
-                  const ok2 = r.touched ? r.ok : false;
-                  const state: 'todo' | 'ok' | 'bad' = !r.touched ? 'todo' : ok2 ? 'ok' : 'bad';
-                  const color = state === 'ok' ? 'rgba(34,197,94,0.95)' : state === 'bad' ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)';
-                  const Icon = state === 'ok' ? CheckCircle2 : state === 'bad' ? XCircle : Circle;
-                  return (
-                    <div key={r.key} className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
-                      <Icon size={16} style={{ color }} />
-                      <span style={{ color: 'var(--text-primary)' }}>{r.label}</span>
-                    </div>
-                  );
-                })}
-                <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
-                  {bulkPwd2.length === 0 ? (
-                    <Circle size={16} style={{ color: 'var(--text-muted)' }} />
-                  ) : bulkPwdMatchOk ? (
-                    <CheckCircle2 size={16} style={{ color: 'rgba(34,197,94,0.95)' }} />
-                  ) : (
-                    <XCircle size={16} style={{ color: 'rgba(239,68,68,0.95)' }} />
-                  )}
-                  <span style={{ color: 'var(--text-primary)' }}>两次输入一致</span>
-                </div>
-              </div>
-            </div>
-
-            {bulkResult && (
-              <div
-                className="rounded-[14px] px-4 py-3 text-sm"
-                style={{ background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(34,197,94,0.95)' }}
-              >
-                批量创建完成：成功 {bulkResult.createdCount} 个，失败 {bulkResult.failedCount} 个（请求 {bulkResult.requestedCount} 个）
-              </div>
-            )}
-
-            {bulkError && (
-              <div
-                className="rounded-[14px] px-4 py-3 text-sm"
-                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}
-              >
-                {bulkError}
-              </div>
-            )}
-
-            {bulkResult?.failedItems?.length ? (
-              <div
-                className="rounded-[16px] px-4 py-3"
-                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
-              >
-                <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>失败明细（最多显示前 50 条）</div>
-                <div className="mt-2 grid gap-1">
-                  {bulkResult.failedItems.slice(0, 50).map((x) => (
-                    <div key={`${x.username}:${x.code}:${x.message}`} className="text-sm" style={{ color: 'var(--text-primary)' }}>
-                      <span style={{ color: 'rgba(239,68,68,0.95)' }}>{x.username || '(空)'}</span>
-                      <span style={{ color: 'var(--text-muted)' }}> · {x.code}</span>
-                      <span style={{ color: 'var(--text-muted)' }}> · {x.message}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            <div className="flex items-center justify-between gap-2 pt-1">
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={bulkUsernames.length === 0}
-                  onClick={() => onCopy(bulkUsernames.join('\n'))}
-                >
-                  复制账号清单
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={bulkUsernames.length === 0 || !bulkPwd}
-                  onClick={() => onCopy(bulkUsernames.map((u) => `${u}\t${bulkPwd}`).join('\n'))}
-                >
-                  复制账号+密码
-                </Button>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setBulkOpen(false)} disabled={bulkSubmitting}>
-                  取消
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={submitBulkCreate}
-                  disabled={bulkSubmitting || !bulkUsernamesOk || !bulkPwdNonEmptyOk || !bulkPwdMatchOk}
-                >
-                  {bulkSubmitting ? '创建中...' : '确认创建'}
-                </Button>
-              </div>
-            </div>
-          </div>
-        }
-      />
-
-      <Dialog
-        open={inviteOpen}
-        onOpenChange={setInviteOpen}
-        title="生成邀请码"
-        description="生成后可复制分发"
-        content={
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <input
-                type="number"
-                min={1}
-                max={50}
-                value={inviteCount}
-                onChange={(e) => setInviteCount(Number(e.target.value || 1))}
-                className="h-10 w-[120px] rounded-[14px] px-3 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-              />
-              <Button variant="secondary" size="sm" onClick={onGenerate}>
-                生成
-              </Button>
-            </div>
-
-            {inviteCodes.length > 0 && (
-              <div className="grid gap-2">
-                {inviteCodes.map((code) => (
-                  <div
-                    key={code}
-                    className="flex items-center justify-between rounded-[14px] px-4 py-3"
-                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
-                  >
-                    <code className="text-sm" style={{ color: 'var(--accent-green)' }}>{code}</code>
-                    <Button variant="secondary" size="sm" onClick={() => onCopy(code)}>
-                      复制
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        }
-      />
-
-      <Dialog
         open={pwdOpen}
         onOpenChange={(v) => {
           setPwdOpen(v);
           if (!v) {
             setPwdUser(null);
             setPwd('');
-            setPwd2('');
             setPwdSubmitError(null);
             setPwdSubmitting(false);
           }
@@ -1857,109 +1411,14 @@ export default function UsersPage() {
                 }}
                 type="password"
                 className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                placeholder="至少8位，含大小写、数字、特殊字符"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                placeholder="设置登录密码"
                 autoComplete="new-password"
               />
             </div>
 
-            <div>
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>确认新密码</div>
-              <input
-                value={pwd2}
-                onChange={(e) => {
-                  setPwd2(e.target.value);
-                  setPwdSubmitError(null);
-                }}
-                type="password"
-                className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                placeholder="再次输入新密码"
-                autoComplete="new-password"
-              />
-            </div>
-
-            <div
-              className="rounded-[16px] px-4 py-3"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
-            >
-              <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>密码要求（实时校验）</div>
-              <div className="mt-2 rounded-[14px]" style={{ background: 'rgba(0,0,0,0.10)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <ul className="divide-y" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-                  {pwdChecks.map((r) => {
-                    const ok = r.touched ? r.ok : false;
-                    const state: 'todo' | 'ok' | 'bad' = !r.touched ? 'todo' : ok ? 'ok' : 'bad';
-                    const color = state === 'ok' ? 'rgba(34,197,94,0.95)' : state === 'bad' ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)';
-                    const Icon = state === 'ok' ? CheckCircle2 : state === 'bad' ? XCircle : Circle;
-                    const statusText = state === 'ok' ? '通过' : state === 'bad' ? '未通过' : '待输入';
-                    const statusBg =
-                      state === 'ok'
-                        ? 'rgba(34,197,94,0.10)'
-                        : state === 'bad'
-                          ? 'rgba(239,68,68,0.10)'
-                          : 'rgba(255,255,255,0.03)';
-                    const statusBorder =
-                      state === 'ok'
-                        ? 'rgba(34,197,94,0.28)'
-                        : state === 'bad'
-                          ? 'rgba(239,68,68,0.28)'
-                          : 'rgba(255,255,255,0.10)';
-
-                    return (
-                      <li key={r.key} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Icon size={16} style={{ color }} />
-                          <div className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>
-                            {r.label}
-                          </div>
-                        </div>
-                        <span
-                          className="shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold"
-                          style={{ color, background: statusBg, border: `1px solid ${statusBorder}` }}
-                        >
-                          {statusText}
-                        </span>
-                      </li>
-                    );
-                  })}
-
-                  {(() => {
-                    const state: 'todo' | 'ok' | 'bad' = pwd2.length === 0 ? 'todo' : pwdMatchOk ? 'ok' : 'bad';
-                    const color = state === 'ok' ? 'rgba(34,197,94,0.95)' : state === 'bad' ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)';
-                    const Icon = state === 'ok' ? CheckCircle2 : state === 'bad' ? XCircle : Circle;
-                    const statusText = state === 'ok' ? '通过' : state === 'bad' ? '未通过' : '待输入';
-                    const statusBg =
-                      state === 'ok'
-                        ? 'rgba(34,197,94,0.10)'
-                        : state === 'bad'
-                          ? 'rgba(239,68,68,0.10)'
-                          : 'rgba(255,255,255,0.03)';
-                    const statusBorder =
-                      state === 'ok'
-                        ? 'rgba(34,197,94,0.28)'
-                        : state === 'bad'
-                          ? 'rgba(239,68,68,0.28)'
-                          : 'rgba(255,255,255,0.10)';
-
-                    return (
-                      <li className="flex items-center justify-between gap-3 px-3 py-2.5">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Icon size={16} style={{ color }} />
-                          <div className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>
-                            两次输入一致
-                          </div>
-                        </div>
-                        <span
-                          className="shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold"
-                          style={{ color, background: statusBg, border: `1px solid ${statusBorder}` }}
-                        >
-                          {statusText}
-                        </span>
-                      </li>
-                    );
-                  })()}
-                </ul>
-              </div>
+            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              该用户下次登录时将被要求重新设置密码
             </div>
 
             {pwdSubmitError && (
@@ -1979,7 +1438,7 @@ export default function UsersPage() {
                 variant="primary"
                 size="sm"
                 onClick={submitChangePassword}
-                disabled={pwdSubmitting || !pwdAllOk || !pwdMatchOk}
+                disabled={pwdSubmitting || !pwd.trim()}
               >
                 {pwdSubmitting ? '保存中...' : '保存'}
               </Button>
@@ -2090,7 +1549,7 @@ export default function UsersPage() {
               <div className="min-w-0">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>额外允许（勾选 permission）</div>
                 <div className="mt-2 rounded-[14px] p-2 overflow-auto min-h-[160px] max-h-[220px]"
-                     style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)' }}>
+                     style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}>
                   {authzCatalog.map((p) => {
                     const k = String(p.key || '').trim();
                     const checked = authzAllowSet.has(k);
@@ -2121,7 +1580,7 @@ export default function UsersPage() {
               <div className="min-w-0">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>禁止（勾选 permission）</div>
                 <div className="mt-2 rounded-[14px] p-2 overflow-auto min-h-[160px] max-h-[220px]"
-                     style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)' }}>
+                     style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}>
                   {authzCatalog.map((p) => {
                     const k = String(p.key || '').trim();
                     const checked = authzDenySet.has(k);
@@ -2190,7 +1649,7 @@ export default function UsersPage() {
                 {/* 豁免开关 */}
                 <div
                   className="rounded-[14px] p-4"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
                 >
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input
@@ -2215,7 +1674,7 @@ export default function UsersPage() {
                 {!rateLimitIsExempt && (
                   <div
                     className="rounded-[14px] p-4"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)' }}
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
                   >
                     <label className="flex items-center gap-3 cursor-pointer">
                       <input
@@ -2249,7 +1708,7 @@ export default function UsersPage() {
                             min={1}
                             max={100000}
                             className="mt-1 h-10 w-full rounded-[10px] px-3 text-sm outline-none"
-                            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                            style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                           />
                         </div>
                         <div>
@@ -2264,7 +1723,7 @@ export default function UsersPage() {
                             min={1}
                             max={10000}
                             className="mt-1 h-10 w-full rounded-[10px] px-3 text-sm outline-none"
-                            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                            style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                           />
                         </div>
                       </div>

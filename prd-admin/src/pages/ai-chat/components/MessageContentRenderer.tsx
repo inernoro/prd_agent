@@ -14,7 +14,15 @@ interface MessageContentRendererProps {
   onPreview?: (src: string, prompt: string) => void;
 }
 
-const IMG_REF_REGEX = /@img(\d+)/g;
+/**
+ * 统一正则：匹配 @imgN（画布引用）和 [IMG:url|label]（嵌入式图片 URL）
+ *
+ * 支持的格式：
+ * - @img1, @img2, ...          → 从 canvasItems 按 refId 查找
+ * - [IMG:https://...|参考图]    → 直接使用嵌入的 URL
+ * - [IMG:https://...]           → 无 label 时使用默认 "图片"
+ */
+const COMBINED_REGEX = /@img(\d+)|\[IMG:(https?:\/\/[^|\]\s]+)(?:\|([^\]]*))?\]/g;
 
 export function MessageContentRenderer({ content, canvasItems, onPreview }: MessageContentRendererProps) {
   const parts = useMemo(() => {
@@ -22,13 +30,10 @@ export function MessageContentRenderer({ content, canvasItems, onPreview }: Mess
     let lastIndex = 0;
     let match;
 
-    // 重置正则索引
-    IMG_REF_REGEX.lastIndex = 0;
+    COMBINED_REGEX.lastIndex = 0;
 
-    while ((match = IMG_REF_REGEX.exec(content)) !== null) {
-      const fullMatch = match[0]; // @img1
-      const refIdStr = match[1];
-      const refId = parseInt(refIdStr, 10);
+    while ((match = COMBINED_REGEX.exec(content)) !== null) {
+      const fullMatch = match[0];
       const index = match.index;
 
       // 添加前面的文本
@@ -36,27 +41,46 @@ export function MessageContentRenderer({ content, canvasItems, onPreview }: Mess
         result.push(content.slice(lastIndex, index));
       }
 
-      // 查找对应的图片
-      const item = canvasItems.find(it => it.refId === refId);
+      if (match[1]) {
+        // @imgN 引用 → 从 canvas 查找
+        const refId = parseInt(match[1], 10);
+        const item = canvasItems.find(it => it.refId === refId);
 
-      if (item && item.src) {
+        if (item && item.src) {
+          result.push(
+            <ReadOnlyImageChip
+              key={`chip-${index}`}
+              refId={refId}
+              src={item.src}
+              label={item.prompt || '未命名'}
+              style={{ margin: '0 2px', verticalAlign: 'middle', cursor: 'pointer' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onPreview?.(item.src, item.prompt || '');
+              }}
+            />
+          );
+        } else {
+          result.push(fullMatch);
+        }
+      } else if (match[2]) {
+        // [IMG:url|label] → 嵌入式图片 URL
+        const imgUrl = match[2];
+        const imgLabel = match[3] || '图片';
+
         result.push(
           <ReadOnlyImageChip
-            key={`chip-${index}`}
-            refId={refId}
-            src={item.src}
-            label={item.prompt || '未命名'}
-            // 微调样式以匹配文本行高
+            key={`emb-${index}`}
+            refId={0}
+            src={imgUrl}
+            label={imgLabel}
             style={{ margin: '0 2px', verticalAlign: 'middle', cursor: 'pointer' }}
             onClick={(e) => {
               e.stopPropagation();
-              onPreview?.(item.src, item.prompt || '');
+              onPreview?.(imgUrl, imgLabel);
             }}
           />
         );
-      } else {
-        // 找不到图片，原样显示文本
-        result.push(fullMatch);
       }
 
       lastIndex = index + fullMatch.length;

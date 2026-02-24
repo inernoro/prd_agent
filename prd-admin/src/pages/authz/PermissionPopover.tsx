@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Trash2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
+import { glassPanel } from '@/lib/glassStyles';
 import { allPermissions, type PermissionDef } from '@/lib/authzMenuMapping';
 
 interface PermissionPopoverProps {
@@ -91,17 +92,14 @@ export function PermissionPopover({
       <div
         className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[360px] max-h-[80vh] overflow-hidden rounded-2xl"
         style={{
-          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+          ...glassPanel,
           boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
         }}
       >
         {/* Header */}
         <div
           className="flex items-center justify-between px-4 py-3"
-          style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
+          style={{ borderBottom: '1px solid var(--nested-block-border)' }}
         >
           <div>
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -169,7 +167,7 @@ export function PermissionPopover({
         {/* Footer */}
         <div
           className="flex items-center justify-between px-4 py-3"
-          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
+          style={{ borderTop: '1px solid var(--nested-block-border)' }}
         >
           <div className="flex items-center gap-2">
             {!isBuiltIn && permDefs.length > 0 && (

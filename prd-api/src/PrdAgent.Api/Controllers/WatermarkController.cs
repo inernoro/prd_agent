@@ -207,6 +207,16 @@ public class WatermarkController : ControllerBase
             }
         }
 
+        // 如果是从海鲜市场下载的配置，修改后清除来源标记
+        if (existing.ForkedFromId != null)
+        {
+            existing.IsModifiedAfterFork = true;
+            existing.ForkedFromId = null;
+            existing.ForkedFromUserId = null;
+            existing.ForkedFromUserName = null;
+            existing.ForkedFromUserAvatar = null;
+        }
+
         existing.UpdatedAt = DateTime.UtcNow;
 
         await _db.WatermarkConfigs.ReplaceOneAsync(
@@ -483,7 +493,7 @@ public class WatermarkController : ControllerBase
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         }
 
-        var defaultFonts = _fontRegistry.BuildDefaultFontInfos(_ => "https://i.pa.759800.com/watermark/font/default.ttf");
+        var defaultFonts = _fontRegistry.BuildDefaultFontInfos(_ => _fontRegistry.DefaultFontUrl ?? string.Empty);
         var assets = await _db.WatermarkFontAssets
             .Find(Builders<WatermarkFontAsset>.Filter.Empty)
             .SortByDescending(x => x.UpdatedAt)
@@ -795,6 +805,8 @@ public class WatermarkController : ControllerBase
         var fontKey = _fontRegistry.NormalizeFontKey(request.FontKey ?? "default");
         var textColor = request.TextColor ?? "#FFFFFF";
 
+        var fontSize = request.FontSizePx ?? 28;
+        var defaultGap = Math.Max(0, Math.Round(fontSize / 4d, 2));
         return new WatermarkConfig
         {
             UserId = userId,
@@ -802,7 +814,7 @@ public class WatermarkController : ControllerBase
             AppKeys = new List<string>(),
             Text = request.Text ?? "米多AI生成",
             FontKey = fontKey,
-            FontSizePx = request.FontSizePx ?? 28,
+            FontSizePx = fontSize,
             Opacity = request.Opacity ?? 0.6,
             PositionMode = request.PositionMode ?? "pixel",
             Anchor = request.Anchor ?? "bottom-right",
@@ -810,6 +822,9 @@ public class WatermarkController : ControllerBase
             OffsetY = request.OffsetY ?? 24,
             IconEnabled = request.IconEnabled ?? false,
             IconImageRef = request.IconImageRef,
+            IconPosition = request.IconPosition ?? "left",
+            IconGapPx = request.IconGapPx ?? defaultGap,
+            IconScale = request.IconScale ?? 1,
             BorderEnabled = request.BorderEnabled ?? false,
             BorderColor = request.BorderColor,
             BorderWidth = request.BorderWidth ?? 2,
@@ -817,6 +832,7 @@ public class WatermarkController : ControllerBase
             RoundedBackgroundEnabled = request.RoundedBackgroundEnabled ?? false,
             CornerRadius = request.CornerRadius ?? 0,
             BaseCanvasWidth = request.BaseCanvasWidth ?? 320,
+            AdaptiveScaleMode = request.AdaptiveScaleMode ?? 0,
             TextColor = textColor,
             BackgroundColor = request.BackgroundColor ?? "#000000",
             PreviewBackgroundImageRef = request.PreviewBackgroundImageRef,
@@ -838,6 +854,9 @@ public class WatermarkController : ControllerBase
         if (request.OffsetY.HasValue) config.OffsetY = request.OffsetY.Value;
         if (request.IconEnabled.HasValue) config.IconEnabled = request.IconEnabled.Value;
         if (request.IconImageRef != null) config.IconImageRef = request.IconImageRef;
+        if (request.IconPosition != null) config.IconPosition = request.IconPosition;
+        if (request.IconGapPx.HasValue) config.IconGapPx = request.IconGapPx.Value;
+        if (request.IconScale.HasValue) config.IconScale = request.IconScale.Value;
         if (request.BorderEnabled.HasValue) config.BorderEnabled = request.BorderEnabled.Value;
         if (request.BorderColor != null) config.BorderColor = request.BorderColor;
         if (request.BorderWidth.HasValue) config.BorderWidth = request.BorderWidth.Value;
@@ -845,6 +864,7 @@ public class WatermarkController : ControllerBase
         if (request.RoundedBackgroundEnabled.HasValue) config.RoundedBackgroundEnabled = request.RoundedBackgroundEnabled.Value;
         if (request.CornerRadius.HasValue) config.CornerRadius = request.CornerRadius.Value;
         if (request.BaseCanvasWidth.HasValue) config.BaseCanvasWidth = request.BaseCanvasWidth.Value;
+        if (request.AdaptiveScaleMode.HasValue) config.AdaptiveScaleMode = request.AdaptiveScaleMode.Value;
         if (request.TextColor != null) config.TextColor = request.TextColor;
         if (request.BackgroundColor != null) config.BackgroundColor = request.BackgroundColor;
         if (request.PreviewBackgroundImageRef != null) config.PreviewBackgroundImageRef = request.PreviewBackgroundImageRef;
@@ -974,4 +994,233 @@ public class WatermarkController : ControllerBase
             ?? user.FindFirst(ClaimTypes.NameIdentifier)?.Value
             ?? user.FindFirst("nameid")?.Value;
     }
+
+    #region 海鲜市场 API
+
+    /// <summary>
+    /// 获取海鲜市场公开的水印配置列表
+    /// </summary>
+    [HttpGet("/api/watermarks/marketplace")]
+    [HttpGet("/api/v1/watermarks/marketplace")]
+    public async Task<IActionResult> ListMarketplace(
+        [FromQuery] string? keyword,
+        [FromQuery] string? sort,
+        CancellationToken ct)
+    {
+        var filterBuilder = Builders<WatermarkConfig>.Filter;
+        var filter = filterBuilder.Eq(x => x.IsPublic, true);
+
+        // 关键词搜索（按名称）
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            filter = filterBuilder.And(filter, filterBuilder.Regex(x => x.Name, new MongoDB.Bson.BsonRegularExpression(keyword, "i")));
+        }
+
+        var query = _db.WatermarkConfigs.Find(filter);
+
+        // 排序
+        query = sort switch
+        {
+            "hot" => query.SortByDescending(x => x.ForkCount).ThenByDescending(x => x.CreatedAt),
+            "new" => query.SortByDescending(x => x.CreatedAt),
+            _ => query.SortByDescending(x => x.ForkCount).ThenByDescending(x => x.CreatedAt) // 默认热门
+        };
+
+        var items = await query.ToListAsync(ct);
+
+        // 获取所有作者信息
+        var ownerIds = items.Select(x => x.UserId).Distinct().ToList();
+        var owners = await _db.Users
+            .Find(u => ownerIds.Contains(u.UserId))
+            .ToListAsync(ct);
+        var ownerMap = owners.ToDictionary(u => u.UserId, u => new { name = u.DisplayName ?? u.Username, avatar = u.AvatarFileName });
+
+        var result = items.Select(x => new
+        {
+            x.Id,
+            x.Name,
+            x.Text,
+            x.FontKey,
+            x.FontSizePx,
+            x.Anchor,
+            x.Opacity,
+            x.OffsetX,
+            x.OffsetY,
+            x.IconEnabled,
+            x.BorderEnabled,
+            x.BackgroundEnabled,
+            x.RoundedBackgroundEnabled,
+            PreviewUrl = BuildPreviewUrl(x.Id),
+            x.ForkCount,
+            x.CreatedAt,
+            ownerUserId = x.UserId,
+            ownerUserName = ownerMap.TryGetValue(x.UserId, out var o) ? o.name : "未知用户",
+            ownerUserAvatar = ownerMap.TryGetValue(x.UserId, out var o2) ? o2.avatar : null,
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { items = result }));
+    }
+
+    /// <summary>
+    /// 发布水印配置到海鲜市场
+    /// </summary>
+    [HttpPost("/api/watermarks/{id}/publish")]
+    [HttpPost("/api/v1/watermarks/{id}/publish")]
+    public async Task<IActionResult> Publish(string id, CancellationToken ct)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+
+        var config = await _db.WatermarkConfigs.Find(x => x.Id == id && x.UserId == userId).FirstOrDefaultAsync(ct);
+        if (config == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "配置不存在"));
+
+        config.IsPublic = true;
+        config.UpdatedAt = DateTime.UtcNow;
+
+        await _db.WatermarkConfigs.ReplaceOneAsync(x => x.Id == id, config, cancellationToken: ct);
+
+        config.PreviewUrl = BuildPreviewUrl(config.Id);
+        return Ok(ApiResponse<WatermarkConfig>.Ok(config));
+    }
+
+    /// <summary>
+    /// 取消发布水印配置（从海鲜市场下架）
+    /// </summary>
+    [HttpPost("/api/watermarks/{id}/unpublish")]
+    [HttpPost("/api/v1/watermarks/{id}/unpublish")]
+    public async Task<IActionResult> Unpublish(string id, CancellationToken ct)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+
+        var config = await _db.WatermarkConfigs.Find(x => x.Id == id && x.UserId == userId).FirstOrDefaultAsync(ct);
+        if (config == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "配置不存在"));
+
+        config.IsPublic = false;
+        config.UpdatedAt = DateTime.UtcNow;
+
+        await _db.WatermarkConfigs.ReplaceOneAsync(x => x.Id == id, config, cancellationToken: ct);
+
+        config.PreviewUrl = BuildPreviewUrl(config.Id);
+        return Ok(ApiResponse<WatermarkConfig>.Ok(config));
+    }
+
+    /// <summary>
+    /// Fork 请求参数
+    /// </summary>
+    public class ForkRequest
+    {
+        /// <summary>
+        /// 可选的自定义名称，不传则使用原名称
+        /// </summary>
+        public string? Name { get; set; }
+    }
+
+    /// <summary>
+    /// 免费下载（Fork）海鲜市场的水印配置
+    /// </summary>
+    [HttpPost("/api/watermarks/{id}/fork")]
+    [HttpPost("/api/v1/watermarks/{id}/fork")]
+    public async Task<IActionResult> Fork(string id, [FromBody] ForkRequest? request, CancellationToken ct)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+
+        var source = await _db.WatermarkConfigs.Find(x => x.Id == id && x.IsPublic).FirstOrDefaultAsync(ct);
+        if (source == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "配置不存在或未公开"));
+
+        // 获取原作者信息
+        var sourceOwner = await _db.Users.Find(u => u.UserId == source.UserId).FirstOrDefaultAsync(ct);
+        var sourceOwnerName = sourceOwner?.DisplayName ?? sourceOwner?.Username ?? "未知用户";
+        var sourceOwnerAvatar = sourceOwner?.AvatarFileName;
+
+        // 使用自定义名称或原名称
+        var forkedName = !string.IsNullOrWhiteSpace(request?.Name) ? request.Name : source.Name;
+
+        // 创建副本
+        var forked = new WatermarkConfig
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            UserId = userId,
+            Name = forkedName,
+            AppKeys = new List<string>(), // 下载的配置默认不绑定任何应用
+            Text = source.Text,
+            FontKey = source.FontKey,
+            FontSizePx = source.FontSizePx,
+            Opacity = source.Opacity,
+            PositionMode = source.PositionMode,
+            Anchor = source.Anchor,
+            OffsetX = source.OffsetX,
+            OffsetY = source.OffsetY,
+            IconEnabled = source.IconEnabled,
+            IconImageRef = source.IconImageRef,
+            BorderEnabled = source.BorderEnabled,
+            BorderColor = source.BorderColor,
+            BorderWidth = source.BorderWidth,
+            BackgroundEnabled = source.BackgroundEnabled,
+            RoundedBackgroundEnabled = source.RoundedBackgroundEnabled,
+            CornerRadius = source.CornerRadius,
+            BaseCanvasWidth = source.BaseCanvasWidth,
+            TextColor = source.TextColor,
+            BackgroundColor = source.BackgroundColor,
+            PreviewBackgroundImageRef = source.PreviewBackgroundImageRef,
+            IsPublic = false, // 下载的配置默认不公开
+            ForkCount = 0,
+            ForkedFromId = source.Id,
+            ForkedFromUserId = source.UserId,
+            ForkedFromUserName = sourceOwnerName,
+            ForkedFromUserAvatar = sourceOwnerAvatar,
+            IsModifiedAfterFork = false,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        await _db.WatermarkConfigs.InsertOneAsync(forked, cancellationToken: ct);
+
+        // 更新原配置的 ForkCount
+        await _db.WatermarkConfigs.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<WatermarkConfig>.Update.Inc(x => x.ForkCount, 1),
+            cancellationToken: ct);
+
+        // 记录下载日志
+        var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+        var forkLog = new MarketplaceForkLog
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            UserId = userId,
+            UserName = currentUser?.DisplayName ?? currentUser?.Username,
+            UserAvatarFileName = currentUser?.AvatarFileName,
+            ConfigType = "watermark",
+            SourceConfigId = source.Id,
+            SourceConfigName = source.Name,
+            ForkedConfigId = forked.Id,
+            ForkedConfigName = forkedName,
+            SourceOwnerUserId = source.UserId,
+            SourceOwnerName = sourceOwnerName,
+            CreatedAt = DateTime.UtcNow
+        };
+        await _db.MarketplaceForkLogs.InsertOneAsync(forkLog, cancellationToken: ct);
+
+        // 生成预览
+        try
+        {
+            await RenderAndSavePreviewAsync(forked, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to render watermark preview for forked config {Id}", forked.Id);
+        }
+
+        forked.PreviewUrl = BuildPreviewUrl(forked.Id);
+        return Ok(ApiResponse<WatermarkConfig>.Ok(forked));
+    }
+
+    #endregion
 }

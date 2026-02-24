@@ -28,6 +28,8 @@ type AuthState = {
   menuCatalog: AdminMenuItem[];
   /** 菜单目录是否已加载 */
   menuCatalogLoaded: boolean;
+  /** CDN 基础地址（从后端 /api/authz/me 获取） */
+  cdnBaseUrl: string;
   login: (user: AuthUser, token: string) => void;
   setTokens: (token: string, refreshToken: string, sessionKey: string) => void;
   setPermissions: (permissions: string[]) => void;
@@ -35,6 +37,7 @@ type AuthState = {
   setIsRoot: (isRoot: boolean) => void;
   setMenuCatalog: (items: AdminMenuItem[]) => void;
   setMenuCatalogLoaded: (loaded: boolean) => void;
+  setCdnBaseUrl: (url: string) => void;
   patchUser: (patch: Partial<AuthUser>) => void;
   logout: () => void;
 };
@@ -52,6 +55,7 @@ export const useAuthStore = create<AuthState>()(
       isRoot: false,
       menuCatalog: [],
       menuCatalogLoaded: false,
+      cdnBaseUrl: '',
       login: (user, token) => set({ isAuthenticated: true, user, token }),
       setTokens: (token, refreshToken, sessionKey) => set({ token, refreshToken, sessionKey }),
       setPermissions: (permissions) => set({ permissions: Array.isArray(permissions) ? permissions : [] }),
@@ -59,6 +63,7 @@ export const useAuthStore = create<AuthState>()(
       setIsRoot: (isRoot) => set({ isRoot: !!isRoot }),
       setMenuCatalog: (items) => set({ menuCatalog: Array.isArray(items) ? items : [], menuCatalogLoaded: true }),
       setMenuCatalogLoaded: (loaded) => set({ menuCatalogLoaded: !!loaded }),
+      setCdnBaseUrl: (url) => set({ cdnBaseUrl: (url ?? '').trim().replace(/\/+$/, '') }),
       patchUser: (patch) =>
         set((s) => (s.user ? { user: { ...s.user, ...patch } } : ({} as Partial<AuthState>))),
       logout: () => {
@@ -77,6 +82,7 @@ export const useAuthStore = create<AuthState>()(
           isRoot: false,
           menuCatalog: [],
           menuCatalogLoaded: false,
+          cdnBaseUrl: '',
         });
       },
     }),

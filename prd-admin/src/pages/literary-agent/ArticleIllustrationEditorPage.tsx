@@ -1,19 +1,26 @@
+import { glassBadge, glassFloatingButton } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
+import { MarketplaceCard } from '@/components/marketplace';
+import {
+  CONFIG_TYPE_REGISTRY,
+  getCategoryFilterOptions,
+  mergeMarketplaceData,
+  sortMarketplaceItems,
+  filterMarketplaceItems,
+  type MarketplaceItemBase,
+} from '@/lib/marketplaceTypes';
 import {
   createLiteraryAgentImageGenRun,
   generateArticleMarkers,
-  getVisualAgentWorkspaceDetail,
-  getModels,
+  getLiteraryAgentMainModel,
   planImageGen,
   streamLiteraryAgentImageGenRunWithRetry,
-  updateVisualAgentWorkspace,
   updateArticleMarker,
-  uploadVisualAgentWorkspaceAsset,
   listLiteraryPrompts,
   createLiteraryPrompt,
   updateLiteraryPrompt,
@@ -28,17 +35,32 @@ import {
   activateReferenceImageConfig,
   deactivateReferenceImageConfig,
   getLiteraryAgentAllModels,
+  optimizeLiteraryPrompt,
+  getAdapterInfoByModelName,
+  // 海鲜市场 API
+  publishLiteraryPrompt,
+  unpublishLiteraryPrompt,
+  publishReferenceImageConfig,
+  unpublishReferenceImageConfig,
 } from '@/services';
+import {
+  getLiteraryAgentWorkspaceDetailReal as getVisualAgentWorkspaceDetail,
+  updateLiteraryAgentWorkspaceReal as updateVisualAgentWorkspace,
+  uploadLiteraryAgentWorkspaceAssetReal as uploadVisualAgentWorkspaceAsset,
+} from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Check, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings } from 'lucide-react';
+import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
+import type { SizesByResolution } from '@/lib/imageAspectOptions';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2 } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { flushSync } from 'react-dom';
+
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
 import { useDebounce } from '@/hooks/useDebounce';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -73,15 +95,15 @@ const PRD_MD_STYLE = `
   .prd-md p { margin: 10px 0; }
   .prd-md ul,.prd-md ol { margin: 10px 0; padding-left: 18px; }
   .prd-md li { margin: 6px 0; }
-  .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 14px 0; }
+  .prd-md hr { border: 0; border-top: 1px solid var(--border-default); margin: 14px 0; }
   .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
   .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
-  .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
-  .prd-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 12px; overflow: auto; }
+  .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 6px; border-radius: 8px; }
+  .prd-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 14px; padding: 12px; overflow: auto; }
   .prd-md pre code { background: transparent; border: 0; padding: 0; }
   .prd-md table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-  .prd-md th,.prd-md td { border: 1px solid rgba(255,255,255,0.10); padding: 7px 9px; vertical-align: top; }
-  .prd-md th { color: var(--text-primary); background: rgba(255,255,255,0.03); }
+  .prd-md th,.prd-md td { border: 1px solid var(--border-default); padding: 7px 9px; vertical-align: top; }
+  .prd-md th { color: var(--text-primary); background: var(--nested-block-bg); }
   .prd-md .prd-md-marker {
     background: rgba(245, 158, 11, 0.22);
     border: 1px solid rgba(245, 158, 11, 0.32);
@@ -89,7 +111,142 @@ const PRD_MD_STYLE = `
     padding: 0 4px;
     border-radius: 6px;
   }
+  @keyframes marker-insert-glow {
+    0% { background: rgba(245, 158, 11, 0.55); box-shadow: 0 0 12px rgba(245, 158, 11, 0.4); transform: translateY(-2px); opacity: 0.7; }
+    50% { background: rgba(245, 158, 11, 0.35); box-shadow: 0 0 6px rgba(245, 158, 11, 0.2); transform: translateY(0); opacity: 1; }
+    100% { background: rgba(245, 158, 11, 0.22); box-shadow: none; transform: translateY(0); opacity: 1; }
+  }
+  .prd-md .prd-md-marker-new {
+    background: rgba(245, 158, 11, 0.55);
+    border: 1px solid rgba(245, 158, 11, 0.5);
+    color: rgba(255,255,255,0.95);
+    padding: 0 4px;
+    border-radius: 6px;
+    animation: marker-insert-glow 1.2s ease-out forwards;
+  }
+
+  /* 配图卡片入场发光边框 */
+  @property --marker-glow-angle {
+    syntax: "<angle>";
+    initial-value: 0deg;
+    inherits: false;
+  }
+  .marker-card-glow-entrance {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 1;
+    animation: marker-glow-sweep 2s ease-out forwards;
+  }
+  .marker-card-glow-entrance::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    padding: 2px;
+    background: conic-gradient(
+      from var(--marker-glow-angle),
+      transparent 0%,
+      transparent 55%,
+      rgba(168, 85, 247, 0.7) 70%,
+      rgba(99, 102, 241, 0.9) 80%,
+      rgba(147, 197, 253, 0.7) 90%,
+      transparent 100%
+    );
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    animation: marker-glow-spin 2s ease-out forwards;
+  }
+  .marker-card-glow-entrance::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+    border-radius: inherit;
+    background: conic-gradient(
+      from var(--marker-glow-angle),
+      transparent 0%,
+      transparent 55%,
+      rgba(168, 85, 247, 0.15) 70%,
+      rgba(99, 102, 241, 0.25) 80%,
+      rgba(147, 197, 253, 0.15) 90%,
+      transparent 100%
+    );
+    filter: blur(8px);
+    animation: marker-glow-spin 2s ease-out forwards;
+    z-index: -1;
+  }
+  @keyframes marker-glow-spin {
+    0%   { --marker-glow-angle: 0deg;   opacity: 1; }
+    75%  { opacity: 1; }
+    100% { --marker-glow-angle: 360deg; opacity: 0; }
+  }
+  @keyframes marker-glow-sweep {
+    0%   { opacity: 1; }
+    75%  { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  /* 文章内图片显示尺寸控制 */
+  .prd-md img[data-marker-idx] {
+    max-width: var(--img-display-size, 100%) !important;
+    transition: max-width 0.3s ease;
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+  }
 `;
+
+/**
+ * 前端锚点匹配：在文章中找到锚点文本的位置（模仿后端 4 级模糊匹配）
+ * 返回锚点所在行的末尾位置，失败返回 -1
+ */
+function findAnchorInsertPos(article: string, anchor: string): number {
+  const normalizeWs = (s: string) => s.replace(/\s+/g, ' ').trim();
+  const normalizeP = (s: string) =>
+    s.replace(/，/g, ',').replace(/。/g, '.').replace(/！/g, '!').replace(/？/g, '?')
+     .replace(/；/g, ';').replace(/：/g, ':').replace(/\u201c/g, '"').replace(/\u201d/g, '"')
+     .replace(/\u2018/g, "'").replace(/\u2019/g, "'");
+
+  // 1. 精确匹配
+  let idx = article.indexOf(anchor);
+  if (idx < 0) {
+    // 2. 忽略大小写
+    idx = article.toLowerCase().indexOf(anchor.toLowerCase());
+  }
+  if (idx < 0) {
+    // 3. 归一化空白
+    const na = normalizeWs(article);
+    const nc = normalizeWs(anchor);
+    const ni = na.indexOf(nc);
+    if (ni >= 0) idx = Math.min(Math.round((ni / na.length) * article.length), article.length - 1);
+  }
+  if (idx < 0) {
+    // 4. 归一化标点
+    const na = normalizeP(normalizeWs(article));
+    const nc = normalizeP(normalizeWs(anchor));
+    const ni = na.indexOf(nc);
+    if (ni >= 0) idx = Math.min(Math.round((ni / na.length) * article.length), article.length - 1);
+  }
+  if (idx < 0) return -1;
+  // 找到行尾
+  const lineEnd = article.indexOf('\n', idx);
+  return lineEnd >= 0 ? lineEnd : article.length;
+}
+
+/**
+ * 将一个新的 marker 增量插入到当前文章内容中。
+ * 按锚点定位，在对应行后插入 [插图]: text。
+ */
+function insertMarkerIntoArticle(currentArticle: string, anchor: string, markerText: string): string {
+  const pos = findAnchorInsertPos(currentArticle, anchor);
+  if (pos < 0) {
+    // 未匹配时追加到末尾
+    return currentArticle + `\n\n[插图]: ${markerText}\n`;
+  }
+  return currentArticle.slice(0, pos) + `\n\n[插图]: ${markerText}\n` + currentArticle.slice(pos);
+}
 
 // 用户自定义提示词模板类型（对应后端 LiteraryPrompt）
 type PromptTemplate = {
@@ -99,6 +256,14 @@ type PromptTemplate = {
   isSystem?: boolean;
   scenarioType?: string | null;
   order?: number;
+  // 海鲜市场字段
+  isPublic?: boolean;
+  forkCount?: number;
+  forkedFromId?: string | null;
+  forkedFromUserId?: string | null;
+  forkedFromUserName?: string | null;
+  forkedFromUserAvatar?: string | null;
+  isModifiedAfterFork?: boolean;
 };
 
 // 将 PanelCard 移到组件外部定义，避免每次渲染时重新创建组件导致子组件卸载/重新挂载
@@ -120,12 +285,15 @@ const PanelCard = ({ className, children }: { className?: string; children: Reac
 );
 
 export default function ArticleIllustrationEditorPage({ workspaceId }: { workspaceId: string }) {
+  const { isMobile } = useBreakpoint();
+  const [mobileTab, setMobileTab] = useState<'article' | 'markers'>('article');
   const [articleContent, setArticleContent] = useState('');
   const [articleWithMarkers, setArticleWithMarkers] = useState('');
   const [articleWithImages, setArticleWithImages] = useState('');
   const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
   const [generating, setGenerating] = useState(false);
   const [markerStreaming, setMarkerStreaming] = useState(false);
+  const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewIndex, setImagePreviewIndex] = useState(0);
@@ -159,12 +327,25 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const editRefImageInputRef = useRef<HTMLInputElement | null>(null);
   const [editingRefConfig, setEditingRefConfig] = useState<ReferenceImageConfig | null>(null);
   const [editingRefConfigOpen, setEditingRefConfigOpen] = useState(false);
-  
+  const [enlargedRefImageUrl, setEnlargedRefImageUrl] = useState<string | null>(null);
+
+  // 海鲜市场状态（使用类型注册表）
+  const [configViewMode, setConfigViewMode] = useState<'mine' | 'marketplace'>('mine');
+  const [marketplaceSearchKeyword, setMarketplaceSearchKeyword] = useState('');
+  const [marketplaceSortBy, setMarketplaceSortBy] = useState<'hot' | 'new'>('hot');
+  const [marketplaceCategoryFilter, setMarketplaceCategoryFilter] = useState<string>('all');
+  const [marketplaceDataByType, setMarketplaceDataByType] = useState<Record<string, MarketplaceItemBase[]>>({});
+  const [marketplaceLoading, setMarketplaceLoading] = useState(false);
+  const [forkingId, setForkingId] = useState<string | null>(null);
+
   // 文件上传相关状态
   const [uploadedFileName, setUploadedFileName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   
+  // AI 优化提示词状态
+  const [optimizingPromptId, setOptimizingPromptId] = useState<string | null>(null);
+
   // 提取的标记列表
   const [markers, setMarkers] = useState<ArticleMarker[]>([]);
 
@@ -177,6 +358,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 图生图模型池（有风格参考图）
   const [img2ImgPool, setImg2ImgPool] = useState<LiteraryAgentModelPool | null>(null);
 
+  // 生图模型尺寸选项（按分辨率分组，从后端 adapter-info 获取）
+  const [sizesByResolutionForPicker, setSizesByResolutionForPicker] = useState<SizesByResolution>({ '1k': [], '2k': [], '4k': [] });
+
   // 右侧每条配图的运行状态（逐条 parse + gen）
   const [markerRunItems, setMarkerRunItems] = useState<MarkerRunItem[]>([]);
   const [markerRunItemsRestored, setMarkerRunItemsRestored] = useState(false); // 标记是否已从后端恢复
@@ -184,8 +368,31 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const genAbortRef = useRef<AbortController | null>(null);
   const markerListRef = useRef<HTMLDivElement>(null); // 配图列表容器的 ref
   const articlePreviewRef = useRef<HTMLDivElement>(null); // 文章预览区域的 ref
+  const thinkingPanelRef = useRef<HTMLDivElement>(null); // 思考面板的 ref（自动滚动到底部）
   const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
-  
+  const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
+  const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
+  const [imageDisplaySize, setImageDisplaySize] = useState(100); // 文章内图片显示尺寸百分比
+  const [rawMarkerOutput, setRawMarkerOutput] = useState(''); // Anchor 模式下 LLM 原始输出（用于视觉反馈）
+
+  // 当新 marker 卡片出现时，触发入场发光动画
+  useEffect(() => {
+    const newIndices: number[] = [];
+    for (const item of markerRunItems) {
+      if (!knownMarkerIndicesRef.current.has(item.markerIndex)) {
+        knownMarkerIndicesRef.current.add(item.markerIndex);
+        newIndices.push(item.markerIndex);
+      }
+    }
+    if (newIndices.length > 0) {
+      setGlowingMarkers((prev) => {
+        const next = new Set(prev);
+        for (const idx of newIndices) next.add(idx);
+        return next;
+      });
+    }
+  }, [markerRunItems]);
+
   // 当配图列表增加时，只在流式输出过程中自动滚动到底部
   useEffect(() => {
     if (isStreamingRef.current && markerListRef.current && markerRunItems.length > 0) {
@@ -193,12 +400,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [markerRunItems.length]);
   
-  // 当文章内容更新时，只在流式输出过程中自动滚动到底部
+  // 思考/生成面板自动滚动到底部
   useEffect(() => {
-    if (isStreamingRef.current && articlePreviewRef.current && articleWithMarkers) {
-      articlePreviewRef.current.scrollTop = articlePreviewRef.current.scrollHeight;
+    if (thinkingPanelRef.current && (thinkingContent || rawMarkerOutput)) {
+      thinkingPanelRef.current.scrollTop = thinkingPanelRef.current.scrollHeight;
     }
-  }, [articleWithMarkers]);
+  }, [thinkingContent, rawMarkerOutput]);
+
+  // 流式生成期间不滚动文章（AI 视图独占左面板，文章未渲染）
+  // 文章在流式结束后才显示，无需自动滚动到 marker
   
   // 提示词模板管理（只有用户模板）
   const [userPrompts, setUserPrompts] = useState<PromptTemplate[]>([]);
@@ -225,10 +435,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setText2ImgPool(null);
       setImg2ImgPool(null);
 
-      // 并行加载：所有模型池 + 全局模型列表
-      const [allPoolsRes, modelsRes] = await Promise.all([
+      // 并行加载：所有模型池 + 主模型信息
+      const [allPoolsRes, mainModelRes] = await Promise.all([
         getLiteraryAgentAllModels().catch(() => ({ success: false, data: null as LiteraryAgentAllModelsResponse | null })),
-        getModels(),
+        getLiteraryAgentMainModel().catch(() => ({ success: false, data: null as { model: null } | null })),
       ]);
       if (cancelled) return;
 
@@ -236,24 +446,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       if (allPoolsRes.success && allPoolsRes.data) {
         const t2iPools = allPoolsRes.data.text2img?.pools ?? [];
         const i2iPools = allPoolsRes.data.img2img?.pools ?? [];
-        
+
         // 查找专属模型池（isDedicated=true），否则用第一个
         const t2iPool = t2iPools.find((p) => p.isDedicated) ?? t2iPools[0] ?? null;
         const i2iPool = i2iPools.find((p) => p.isDedicated) ?? i2iPools[0] ?? null;
-        
+
         setText2ImgPool(t2iPool);
         setImg2ImgPool(i2iPool);
       }
 
-      if (!modelsRes.success) {
-        setImageGenModel(null);
-        setImageGenModelError(modelsRes.error?.message || '加载生图模型失败');
-        return;
+      // 获取主模型（用于显示标记生成模型名称）
+      if (mainModelRes.success && mainModelRes.data?.model) {
+        const m = mainModelRes.data.model;
+        setMainModel({ id: m.id, name: m.name, modelName: m.modelName, platformId: m.platformId ?? '', enabled: m.enabled, isMain: m.isMain } as Model);
       }
-
-      // 获取主模型（用于生成标记）
-      const mainList = (modelsRes.data ?? []).filter((m) => Boolean(m.enabled) && Boolean(m.isMain));
-      setMainModel(mainList[0] ?? null);
     })();
     return () => {
       cancelled = true;
@@ -285,6 +491,35 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [referenceImageConfigs, text2ImgPool, img2ImgPool]);
 
+  // 从后端获取生图模型的尺寸选项（按分辨率分组，与视觉创作一致）
+  useEffect(() => {
+    const modelName = imageGenModel?.modelName;
+    if (!modelName) {
+      setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await getAdapterInfoByModelName(modelName);
+        if (cancelled) return;
+        if (res.success && res.data?.matched && res.data.sizesByResolution) {
+          const data = res.data.sizesByResolution;
+          setSizesByResolutionForPicker({
+            '1k': Array.isArray(data['1k']) ? data['1k'] : [],
+            '2k': Array.isArray(data['2k']) ? data['2k'] : [],
+            '4k': Array.isArray(data['4k']) ? data['4k'] : [],
+          });
+        } else {
+          setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
+        }
+      } catch {
+        if (!cancelled) setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [imageGenModel?.modelName]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -305,13 +540,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     };
   }, []);
 
-  // 加载风格图配置列表
+  // 加载风格图配置列表（按 ID 稳定排序，避免操作后重排序导致闪烁）
   const loadReferenceImageConfigs = useCallback(async () => {
     setReferenceImageLoading(true);
     try {
       const res = await listReferenceImageConfigs();
       if (res?.success && res.data?.items) {
-        setReferenceImageConfigs(res.data.items);
+        // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
+        const sorted = [...res.data.items].sort((a, b) => a.id.localeCompare(b.id));
+        setReferenceImageConfigs(sorted);
       }
     } finally {
       setReferenceImageLoading(false);
@@ -321,6 +558,74 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   useEffect(() => {
     void loadReferenceImageConfigs();
   }, [loadReferenceImageConfigs]);
+
+  // 将 loadReferenceImageConfigs 赋值给 ref 以便 handleMarketplaceFork 使用
+  useEffect(() => {
+    loadReferenceImageConfigsRef.current = loadReferenceImageConfigs;
+  }, [loadReferenceImageConfigs]);
+
+  // 加载海鲜市场数据（使用类型注册表）
+  const loadMarketplaceData = useCallback(async () => {
+    setMarketplaceLoading(true);
+    try {
+      const typeKeys = Object.keys(CONFIG_TYPE_REGISTRY);
+      const results = await Promise.all(
+        typeKeys.map(async (typeKey) => {
+          const typeDef = CONFIG_TYPE_REGISTRY[typeKey];
+          const res = await typeDef.api.listMarketplace({
+            keyword: marketplaceSearchKeyword || undefined,
+            sort: marketplaceSortBy,
+          });
+          return { typeKey, items: res.success && res.data ? res.data.items : [] };
+        })
+      );
+
+      const dataByType: Record<string, MarketplaceItemBase[]> = {};
+      for (const { typeKey, items } of results) {
+        dataByType[typeKey] = items;
+      }
+      setMarketplaceDataByType(dataByType);
+    } finally {
+      setMarketplaceLoading(false);
+    }
+  }, [marketplaceSearchKeyword, marketplaceSortBy]);
+
+  // 处理 Fork 下载 - 使用 ref 存储回调以避免声明顺序问题
+  const loadLiteraryPromptsRef = useRef<() => Promise<void>>();
+  const loadReferenceImageConfigsRef = useRef<() => Promise<void>>();
+
+  const handleMarketplaceFork = useCallback(async (typeKey: string, id: string, customName?: string) => {
+    const typeDef = CONFIG_TYPE_REGISTRY[typeKey];
+    if (!typeDef) return;
+
+    setForkingId(id);
+    try {
+      const res = await typeDef.api.fork({ id, name: customName });
+      if (res.success) {
+        toast.success('下载成功，已添加到「我的」');
+        // 刷新市场数据
+        void loadMarketplaceData();
+        // 刷新对应类型的"我的"数据
+        if (typeKey === 'prompt' && loadLiteraryPromptsRef.current) {
+          void loadLiteraryPromptsRef.current();
+        } else if (typeKey === 'refImage' && loadReferenceImageConfigsRef.current) {
+          void loadReferenceImageConfigsRef.current();
+        }
+        // watermark 由 WatermarkSettingsPanel 自己管理刷新
+      } else {
+        toast.error('下载失败', res.error?.message || '未知错误');
+      }
+    } finally {
+      setForkingId(null);
+    }
+  }, [loadMarketplaceData]);
+
+  // 当切换到海鲜市场视图或搜索/排序变化时加载数据
+  useEffect(() => {
+    if (promptPreviewOpen && configViewMode === 'marketplace') {
+      void loadMarketplaceData();
+    }
+  }, [promptPreviewOpen, configViewMode, loadMarketplaceData]);
 
   async function loadWorkspace() {
     try {
@@ -463,7 +768,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     });
   }, [markers, markerRunItemsRestored]);
 
-  // 加载文学创作提示词（从后端）
+  // 加载文学创作提示词（从后端，按 ID 稳定排序避免闪烁）
   const loadLiteraryPrompts = useCallback(async () => {
     try {
       const res = await listLiteraryPrompts({ scenarioType: 'article-illustration' });
@@ -476,16 +781,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           scenarioType: p.scenarioType,
           order: p.order,
         }));
+        // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
+        prompts.sort((a, b) => a.id.localeCompare(b.id));
         setUserPrompts(prompts);
-        // 如果有提示词但没有选中，自动选中第一个
-        if (prompts.length > 0 && !selectedPrompt) {
-          setSelectedPrompt(prompts[0]);
-        }
+        // 不再自动选中第一个提示词：未选择时使用系统推断风格
+        // 仅当用户已通过 AI 提取或手动选择了提示词时才保留选中状态
       }
     } catch (error) {
       console.error('Failed to load literary prompts:', error);
     }
-  }, [selectedPrompt]);
+  }, []);
+
+  // 将 loadLiteraryPrompts 赋值给 ref 以便 handleMarketplaceFork 使用
+  useEffect(() => {
+    loadLiteraryPromptsRef.current = loadLiteraryPrompts;
+  }, [loadLiteraryPrompts]);
 
   const isBusy = generating || markerStreaming;
 
@@ -602,314 +912,135 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
 
-    if (!selectedPrompt) {
-      toast.warning('请先选择一个提示词模板');
-      return;
-    }
-
-    // 使用选中的提示词作为系统提示词
-    const systemPrompt = selectedPrompt.content;
+    // 使用选中的风格提示词（可选，不选则后端使用系统推断风格）
+    const systemPrompt = selectedPrompt?.content ?? '';
 
     setMarkerStreaming(true);
+    setThinkingContent('');
+    setRawMarkerOutput(''); // 重置原始输出
+    setGlowingMarkers(new Set()); // 重置入场动画追踪
+    knownMarkerIndicesRef.current.clear();
     isStreamingRef.current = true; // 标记开始流式输出
+
+    // 保存当前滚动位置，phase 切换导致 DOM 重建会丢失 scrollTop
+    const savedScrollTop = articlePreviewRef.current?.scrollTop ?? 0;
+
     // 3 状态模式：生成标记时直接跳到 MarkersGenerated，流式更新内容
     setPhase(2); // MarkersGenerated
-    setArticleWithMarkers(''); // 初始为空，流式逐步填充
     setMarkers([]);
-    
+
+    // 锚点模式：预先显示原文（LLM 不会流式返回文章内容）
+    setArticleWithMarkers(articleContent);
+
+    // 恢复滚动位置（等 React 完成渲染后）
+    requestAnimationFrame(() => {
+      if (articlePreviewRef.current) {
+        articlePreviewRef.current.scrollTop = savedScrollTop;
+      }
+    });
+
     try {
       // 使用 SSE 流式接口
       const stream = generateArticleMarkers({
         id: workspaceId,
         articleContent,
-        userInstruction: systemPrompt, // 将选中的提示词作为系统提示词
+        userInstruction: systemPrompt,
         idempotencyKey: `gen-markers-${Date.now()}`,
+        insertionMode: 'anchor',
       });
 
       let fullText = '';
-      let currentLineBuffer = ''; // 当前行缓冲区
+
       const extractedMarkers: ArticleMarker[] = []; // 已提取的标记
-      
+      let runningArticle = articleContent; // 锚点模式：跟踪增量插入后的文章
+      const newMarkerIndices = new Set<number>(); // 跟踪新插入的 marker 索引（用于动画）
+
+      // 直接设置 marker 为已解析（跳过意图模型，尺寸由 LLM 直接提供）
+      const setMarkerDirectParsed = (markerIndex: number, markerText: string, size: string) => {
+        const planItem = { prompt: markerText, count: 1, size };
+        setMarkerRunItems((prev) => {
+          if (prev.some((x) => x.markerIndex === markerIndex)) return prev;
+          return [
+            ...prev,
+            { markerIndex, markerText, draftText: markerText, status: 'parsed' as MarkerRunStatus, planItem },
+          ];
+        });
+
+        void updateMarkerStatus(markerIndex, {
+          status: 'parsed',
+          draftText: markerText,
+          planItem: { prompt: markerText, count: 1, size },
+        });
+      };
+
       for await (const chunk of stream) {
-        if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
-          fullText += chunk.text;
-          currentLineBuffer += chunk.text;
-          
-          // 检查是否有完整的行（以 \n 结尾）
-          if (currentLineBuffer.includes('\n')) {
-            const lines = currentLineBuffer.split('\n');
-            // 最后一个元素是不完整的行（或空字符串），保留在缓冲区
-            currentLineBuffer = lines.pop() || '';
-            
-            // 处理所有完整的行
-            for (const line of lines) {
-              // 对这一行进行标记匹配
-              const markerRegex = /\[插图\]\s*:\s*(.+)/;
-              const match = markerRegex.exec(line);
-              
-              if (match) {
-                const markerText = match[1].trim();
-                
-                // 只有当 markerText 不为空时才添加
-                if (markerText.length > 0) {
-                  const markerIndex = extractedMarkers.length;
-                  extractedMarkers.push({
-                    index: markerIndex,
-                    text: markerText,
-                    startPos: -1, // 流式输出时不需要精确位置
-                    endPos: -1,
-                  });
-                  
-                  // 更新 UI
-                  setMarkers([...extractedMarkers]);
-                  
-                  // 添加到运行列表（状态为 parsing，立即触发意图解析）
-                  setMarkerRunItems((prev) => {
-                    if (prev.some((x) => x.markerIndex === markerIndex)) {
-                      return prev;
-                    }
-                    return [
-                      ...prev,
-                      {
-                        markerIndex,
-                        markerText,
-                        draftText: markerText,
-                        status: 'parsing' as MarkerRunStatus,
-                      },
-                    ];
-                  });
-                  
-                  // 立即触发意图解析（不等待流式输出完成）
-                  void (async () => {
-                    try {
-                      const planRes = await planImageGen({
-                        text: markerText,
-                        maxItems: 1,
-                      });
-                      
-                      if (planRes.success && planRes.data?.items?.[0]) {
-                        const planItem = planRes.data.items[0];
-                        
-                        setMarkerRunItems((prev) =>
-                          prev.map((x) =>
-                            x.markerIndex === markerIndex
-                              ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
-                              : x
-                          )
-                        );
-                        
-                        // 保存意图解析结果到后端
-                        await updateMarkerStatus(markerIndex, {
-                          status: 'parsed',
-                          draftText: planItem.prompt,
-                          planItem: {
-                            prompt: planItem.prompt,
-                            count: planItem.count,
-                            size: planItem.size,
-                          },
-                        });
-                      } else {
-                        setMarkerRunItems((prev) =>
-                          prev.map((x) =>
-                            x.markerIndex === markerIndex
-                              ? {
-                                  ...x,
-                                  status: 'error' as MarkerRunStatus,
-                                  errorMessage: planRes.error?.message || '意图解析失败',
-                                }
-                              : x
-                          )
-                        );
-                      }
-                    } catch (error) {
-                      console.error('Plan image gen error:', error);
-                      setMarkerRunItems((prev) =>
-                        prev.map((x) =>
-                          x.markerIndex === markerIndex
-                            ? {
-                                ...x,
-                                status: 'error' as MarkerRunStatus,
-                                errorMessage: error instanceof Error ? error.message : '意图解析失败',
-                              }
-                            : x
-                        )
-                      );
-                    }
-                  })();
-                }
-              }
-            }
-          }
-          
-          // 使用 flushSync 强制立即刷新，绕过 React 18 的自动批处理
-          flushSync(() => {
-            setArticleWithMarkers(fullText);
+        // ====== 思考过程：实时追加显示 ======
+        if (chunk.type === 'thinking' && chunk.text) {
+          setThinkingContent((prev) => prev + chunk.text);
+          continue;
+        }
+
+        // ====== Anchor 模式：处理 marker 事件 ======
+        if (chunk.type === 'marker' && chunk.text && chunk.index != null) {
+          const markerIndex = chunk.index;
+          const markerText = chunk.text;
+          extractedMarkers.push({
+            index: markerIndex,
+            text: markerText,
+            startPos: -1,
+            endPos: -1,
           });
-          
-          // 人工延迟 10ms，让用户能看到流式渲染效果（配合后端 10ms 延迟）
-          await new Promise(resolve => setTimeout(resolve, 10));
-        } else if (chunk.type === 'done' && chunk.fullText) {
+          setMarkers([...extractedMarkers]);
+
+          // 增量插入 marker 到文章中（实时反馈）
+          if (chunk.anchor) {
+            runningArticle = insertMarkerIntoArticle(runningArticle, chunk.anchor, markerText);
+            newMarkerIndices.add(markerIndex);
+            setArticleWithMarkers(runningArticle);
+          }
+
+          // Anchor 模式：marker text 即 prompt，无需意图模型解析，统一默认 1:1
+          setMarkerDirectParsed(markerIndex, markerText, '1024x1024');
+        }
+        // ====== Delta 事件：Anchor 模式为原始输出视觉反馈 ======
+        else if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
+          // Anchor 模式：LLM 原始输出仅用于视觉反馈，文章由 marker 事件增量更新
+          setRawMarkerOutput((prev) => prev + chunk.text);
+        }
+        // ====== 后处理中事件 ======
+        else if (chunk.type === 'finalizing') {
+          setRawMarkerOutput((prev) => prev + '\n\n✓ 标记生成完成，正在保存…');
+        }
+        // ====== 完成事件 ======
+        else if (chunk.type === 'done' && chunk.fullText) {
           fullText = chunk.fullText;
           setArticleWithMarkers(fullText);
-          
+
           // 提取标记（确保最终状态一致）
           const extracted = extractMarkers(fullText);
           setMarkers(extracted);
-          
-          // 对于那些还没有被处理的标记（状态为 pending），触发意图解析
-          // 注意：流式输出过程中已经处理过的标记（parsing/parsed/error）不需要重复处理
+
+          // 对于 done 事件中的标记但尚未处理的，补充直接设为 parsed（无需意图模型）
           extracted.forEach((marker) => {
-            const markerIndex = marker.index;
-            const markerText = marker.text;
-            
             setMarkerRunItems((prev) => {
-              const existingItem = prev.find((x) => x.markerIndex === markerIndex);
-              
-              // 如果已经存在且不是 idle 状态，说明已经在流式输出时处理过了，跳过
-              if (existingItem && existingItem.status !== 'idle') {
-                return prev;
-              }
-              
-              // 如果不存在或状态为 pending，则触发意图解析
+              const existingItem = prev.find((x) => x.markerIndex === marker.index);
+              if (existingItem && existingItem.status !== 'idle') return prev;
               if (!existingItem) {
-                // 添加新项并触发解析
-                const newPrev = [
+                return [
                   ...prev,
                   {
-                    markerIndex,
-                    markerText,
-                    draftText: markerText,
-                    status: 'parsing' as MarkerRunStatus,
+                    markerIndex: marker.index,
+                    markerText: marker.text,
+                    draftText: marker.text,
+                    status: 'parsed' as MarkerRunStatus,
+                    planItem: { prompt: marker.text, count: 1, size: '1024x1024' },
                   },
                 ];
-                
-                // 异步调用意图解析
-                void (async () => {
-                  try {
-                    const planRes = await planImageGen({
-                      text: markerText,
-                      maxItems: 1,
-                    });
-                    
-                    if (planRes.success && planRes.data?.items?.[0]) {
-                      const planItem = planRes.data.items[0];
-                      
-                      setMarkerRunItems((p) =>
-                        p.map((x) =>
-                          x.markerIndex === markerIndex
-                            ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
-                            : x
-                        )
-                      );
-                      await updateMarkerStatus(markerIndex, {
-                        status: 'parsed',
-                        draftText: planItem.prompt,
-                        planItem: {
-                          prompt: planItem.prompt,
-                          count: planItem.count,
-                          size: planItem.size,
-                        },
-                      });
-                    } else {
-                      setMarkerRunItems((p) =>
-                        p.map((x) =>
-                          x.markerIndex === markerIndex
-                            ? {
-                                ...x,
-                                status: 'error' as MarkerRunStatus,
-                                errorMessage: planRes.error?.message || '意图解析失败',
-                              }
-                            : x
-                        )
-                      );
-                    }
-                  } catch (error) {
-                    console.error('Plan image gen error:', error);
-                    setMarkerRunItems((p) =>
-                      p.map((x) =>
-                        x.markerIndex === markerIndex
-                          ? {
-                              ...x,
-                              status: 'error' as MarkerRunStatus,
-                              errorMessage: error instanceof Error ? error.message : '意图解析失败',
-                            }
-                          : x
-                      )
-                    );
-                  }
-                })();
-                
-                return newPrev;
-              } else {
-                // 状态为 pending，更新为 parsing 并触发解析
-                const updatedPrev = prev.map((x) =>
-                  x.markerIndex === markerIndex
-                    ? { ...x, markerText, draftText: markerText, status: 'parsing' as MarkerRunStatus }
-                    : x
-                );
-                
-                // 异步调用意图解析
-                void (async () => {
-                  try {
-                    const planRes = await planImageGen({
-                      text: markerText,
-                      maxItems: 1,
-                    });
-                    
-                    if (planRes.success && planRes.data?.items?.[0]) {
-                      const planItem = planRes.data.items[0];
-                      
-                      setMarkerRunItems((p) =>
-                        p.map((x) =>
-                          x.markerIndex === markerIndex
-                            ? { ...x, status: 'parsed' as MarkerRunStatus, planItem }
-                            : x
-                        )
-                      );
-                      await updateMarkerStatus(markerIndex, {
-                        status: 'parsed',
-                        draftText: planItem.prompt,
-                        planItem: {
-                          prompt: planItem.prompt,
-                          count: planItem.count,
-                          size: planItem.size,
-                        },
-                      });
-                    } else {
-                      setMarkerRunItems((p) =>
-                        p.map((x) =>
-                          x.markerIndex === markerIndex
-                            ? {
-                                ...x,
-                                status: 'error' as MarkerRunStatus,
-                                errorMessage: planRes.error?.message || '意图解析失败',
-                              }
-                            : x
-                        )
-                      );
-                    }
-                  } catch (error) {
-                    console.error('Plan image gen error:', error);
-                    setMarkerRunItems((p) =>
-                      p.map((x) =>
-                        x.markerIndex === markerIndex
-                          ? {
-                              ...x,
-                              status: 'error' as MarkerRunStatus,
-                              errorMessage: error instanceof Error ? error.message : '意图解析失败',
-                            }
-                          : x
-                      )
-                    );
-                  }
-                })();
-                
-                return updatedPrev;
               }
+              return prev;
             });
           });
-          
-          // 提交型操作成功：更新阶段
+
           setPhase(2); // MarkersGenerated
         } else if (chunk.type === 'error') {
           throw new Error(chunk.message || '生成失败');
@@ -950,47 +1081,53 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const buildPreviewMarkdownWithImages = useCallback(
     (items: MarkerRunItem[]) => {
       const base = String(articleWithMarkers || articleContent || '');
-      if (!base) return '';
+      if (!base || markers.length === 0) return '';
 
       const byIndex = new Map<number, MarkerRunItem>(items.map((x) => [x.markerIndex, x]));
       const patches: Array<{ start: number; end: number; replacement: string }> = [];
-      let changed = false;
 
-      // 关键：按 markerIndex 精准替换（允许只生成第 N 张，不依赖“前缀完成”）
+      // 关键：按 markerIndex 精准替换，每个 marker 都添加 data-marker-idx 用于定位
       for (let i = 0; i < markers.length; i++) {
         const m = markers[i];
         const it = byIndex.get(m.index);
-        if (!it) continue;
 
-        const url =
+        const url = it ? (
           String(it.assetUrl || it.url || '').trim() ||
-          (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
+          (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '')
+        ) : '';
 
-        // 如果有图片 URL，优先显示图片（无论是 done 还是 running 重新生成中）
+        // 如果有图片 URL，使用 raw <img> 确保 URL 特殊字符不破坏 markdown 语法
         if (url) {
-          changed = true;
+          const safeUrl = url.replace(/"/g, '&quot;');
           patches.push({
             start: m.startPos,
             end: m.endPos,
-            replacement: `![配图 ${i + 1}](${url})`,
+            replacement: `<img data-marker-idx="${i}" alt="配图 ${i + 1}" src="${safeUrl}" style="max-width:100%;border-radius:8px;margin:8px 0" />`,
           });
           continue;
         }
 
         // "立刻插入"：无图时点击生成后，生成中也会在对应 marker 行下方插入占位提示
-        // 注意：只有在 running 状态且没有旧图时才插入提示
-        const isGenerating = it.status === 'running';
+        const isGenerating = it?.status === 'running';
         if (isGenerating) {
-          changed = true;
           patches.push({
             start: m.startPos,
             end: m.endPos,
-            replacement: `[插图] : ${m.text}\n\n> 配图 ${i + 1} 生成中...`,
+            replacement: `<span data-marker-idx="${i}">[插图] : ${m.text}</span>\n\n> 配图 ${i + 1} 生成中...`,
           });
+          continue;
         }
+
+        // 空闲/无运行项 — 包裹 data-marker-idx 用于定位（保留原文供 highlightText 高亮）
+        const originalText = base.slice(m.startPos, m.endPos);
+        patches.push({
+          start: m.startPos,
+          end: m.endPos,
+          replacement: `<span data-marker-idx="${i}">${originalText}</span>`,
+        });
       }
 
-      if (!changed) return '';
+      if (patches.length === 0) return '';
 
       // 从后往前替换，避免偏移
       patches.sort((a, b) => b.start - a.start);
@@ -1013,16 +1150,38 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const locateMarkerInPreview = (markerIndex: number) => {
     const container = articlePreviewRef.current;
     if (!container) return;
-    const markers = container.querySelectorAll('.prd-md-marker');
-    const target = markers[markerIndex] as HTMLElement | undefined;
-    if (target) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    const scrollAndHighlight = (el: HTMLElement) => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.style.outline = '2px solid rgba(245, 158, 11, 0.8)';
+      el.style.outlineOffset = '2px';
+      setTimeout(() => { el.style.outline = ''; el.style.outlineOffset = ''; }, 1500);
+    };
+
+    // 方式 1: data-marker-idx 属性（最可靠，兼容图片/标记/生成中所有状态）
+    const byAttr = container.querySelector(`[data-marker-idx="${markerIndex}"]`) as HTMLElement | null;
+    if (byAttr) {
+      scrollAndHighlight(byAttr);
       return;
     }
+
+    // 方式 2: marker class 按序号（articleWithImages 为空时的回退）
+    const markerEls = container.querySelectorAll('.prd-md-marker, .prd-md-marker-new');
+    const target = markerEls[markerIndex] as HTMLElement | undefined;
+    if (target) {
+      scrollAndHighlight(target);
+      return;
+    }
+
+    // 方式 3: img alt 匹配（宽泛回退）
     const imgAlt = `配图 ${markerIndex + 1}`;
     const img = container.querySelector(`img[alt="${imgAlt}"]`) as HTMLElement | null;
-    if (!img) return;
-    img.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (img) {
+      scrollAndHighlight(img);
+      return;
+    }
+
+    console.warn('[定位] 未找到匹配元素', { markerIndex, markerEls: markerEls.length });
   };
 
   // markerRunItems 状态变化时：立即刷新左侧预览（支持"单条先生成"不乱序）
@@ -1573,6 +1732,35 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setEditingPrompt(null);
   };
 
+  // AI 优化：提取旧提示词中的风格描述，去除格式指令
+  const handleOptimizePrompt = async (mode: 'edit' | 'create') => {
+    const content = mode === 'edit' ? editingPrompt?.content : creatingPrompt?.content;
+    if (!content?.trim()) {
+      toast.warning('请先输入内容');
+      return;
+    }
+    const targetId = mode === 'edit' ? editingPrompt?.id ?? 'new' : 'new';
+    setOptimizingPromptId(targetId);
+    try {
+      const res = await optimizeLiteraryPrompt({ content });
+      if (res.success && res.data?.optimizedContent) {
+        if (mode === 'edit' && editingPrompt) {
+          setEditingPrompt({ ...editingPrompt, content: res.data.optimizedContent });
+        } else if (mode === 'create' && creatingPrompt) {
+          setCreatingPrompt({ ...creatingPrompt, content: res.data.optimizedContent });
+        }
+        toast.success('已提取风格描述');
+      } else {
+        toast.error('优化失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Optimize prompt error:', error);
+      toast.error('优化失败');
+    } finally {
+      setOptimizingPromptId(null);
+    }
+  };
+
   // 删除提示词模板
   const handleDeletePrompt = async (prompt: PromptTemplate) => {
     if (prompt.isSystem) {
@@ -1586,6 +1774,18 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       tone: 'danger',
     });
     if (!ok) return;
+
+    // 已发布到海鲜市场的配置需要二次确认
+    if (prompt.isPublic) {
+      const doubleConfirmed = await systemDialog.confirm({
+        title: '⚠️ 该配置已发布到海鲜市场',
+        message: '删除后其他用户将无法再下载此配置，确定要删除吗？',
+        tone: 'danger',
+        confirmText: '确认删除',
+        cancelText: '取消',
+      });
+      if (!doubleConfirmed) return;
+    }
 
     try {
       const res = await deleteLiteraryPrompt({ id: prompt.id });
@@ -1606,12 +1806,100 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   };
 
+  // 发布提示词到海鲜市场
+  const handlePublishPrompt = async (prompt: PromptTemplate) => {
+    try {
+      const res = await publishLiteraryPrompt({ id: prompt.id });
+      if (res.success) {
+        // 更新本地状态
+        setUserPrompts((prev) =>
+          prev.map((p) =>
+            p.id === prompt.id ? { ...p, isPublic: true, forkCount: res.data.prompt.forkCount ?? 0 } : p
+          )
+        );
+        toast.success('发布成功', '配置已发布到海鲜市场');
+      } else {
+        toast.error('发布失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Failed to publish prompt:', error);
+      toast.error('发布失败');
+    }
+  };
+
+  // 取消发布提示词
+  const handleUnpublishPrompt = async (prompt: PromptTemplate) => {
+    const ok = await systemDialog.confirm({
+      title: '确认取消发布',
+      message: `确定要取消发布「${prompt.title}」吗？取消后其他用户将无法看到此配置。`,
+      tone: 'neutral',
+    });
+    if (!ok) return;
+
+    try {
+      const res = await unpublishLiteraryPrompt({ id: prompt.id });
+      if (res.success) {
+        // 更新本地状态
+        setUserPrompts((prev) =>
+          prev.map((p) =>
+            p.id === prompt.id ? { ...p, isPublic: false } : p
+          )
+        );
+        toast.success('已取消发布');
+      } else {
+        toast.error('取消发布失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Failed to unpublish prompt:', error);
+      toast.error('取消发布失败');
+    }
+  };
+
+  // 发布风格图到海鲜市场
+  const handlePublishRefConfig = async (config: ReferenceImageConfig) => {
+    try {
+      const res = await publishReferenceImageConfig({ id: config.id });
+      if (res.success) {
+        await loadReferenceImageConfigs();
+        toast.success('发布成功', '配置已发布到海鲜市场');
+      } else {
+        toast.error('发布失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Failed to publish reference image config:', error);
+      toast.error('发布失败');
+    }
+  };
+
+  // 取消发布风格图
+  const handleUnpublishRefConfig = async (config: ReferenceImageConfig) => {
+    const ok = await systemDialog.confirm({
+      title: '确认取消发布',
+      message: `确定要取消发布「${config.name}」吗？取消后其他用户将无法看到此配置。`,
+      tone: 'neutral',
+    });
+    if (!ok) return;
+
+    try {
+      const res = await unpublishReferenceImageConfig({ id: config.id });
+      if (res.success) {
+        await loadReferenceImageConfigs();
+        toast.success('已取消发布');
+      } else {
+        toast.error('取消发布失败', res.error?.message || '未知错误');
+      }
+    } catch (error) {
+      console.error('Failed to unpublish reference image config:', error);
+      toast.error('取消发布失败');
+    }
+  };
+
   const buttonConfig = [
     {
       label: '生成配图标记',
       action: handleGenerateMarkers,
       icon: Wand2,
-      disabled: !articleContent.trim() || !selectedPrompt,
+      disabled: !articleContent.trim(),
       show: phase === 1, // Editing
     },
     {
@@ -1650,13 +1938,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     const out: Array<string | JSX.Element> = [];
     let last = 0;
     let m: RegExpExecArray | null;
+    let markerOrdinal = 0;
     markerRegex.lastIndex = 0;
     while ((m = markerRegex.exec(text)) !== null) {
       const start = m.index;
       const end = m.index + m[0].length;
       if (start > last) out.push(text.slice(last, start));
+      // 流式生成中的 marker 使用带动画的 class
+      const isNew = markerStreaming;
       out.push(
-        <mark key={`${start}-${end}`} className="prd-md-marker">
+        <mark key={`m-${markerOrdinal++}-${start}`} className={isNew ? 'prd-md-marker-new' : 'prd-md-marker'}>
           {m[0]}
         </mark>
       );
@@ -1699,9 +1990,38 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
 
   return (
-    <div className="h-full min-h-0 flex gap-4">
+    <div className={cn("h-full min-h-0 flex", isMobile ? "flex-col gap-3" : "gap-4")}>
+      {/* 移动端标签栏 */}
+      {isMobile && (
+        <div className="flex-shrink-0 flex rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border-default)' }}>
+          <button
+            className={cn(
+              "flex-1 px-4 py-2 text-sm font-medium transition-colors",
+              mobileTab === 'article'
+                ? "text-white"
+                : "text-[var(--text-muted)]"
+            )}
+            style={mobileTab === 'article' ? { background: 'var(--accent-primary)' } : { background: 'var(--panel)' }}
+            onClick={() => setMobileTab('article')}
+          >
+            文章预览
+          </button>
+          <button
+            className={cn(
+              "flex-1 px-4 py-2 text-sm font-medium transition-colors",
+              mobileTab === 'markers'
+                ? "text-white"
+                : "text-[var(--text-muted)]"
+            )}
+            style={mobileTab === 'markers' ? { background: 'var(--accent-primary)' } : { background: 'var(--panel)' }}
+            onClick={() => setMobileTab('markers')}
+          >
+            配图工作台
+          </button>
+        </div>
+      )}
       {/* 左侧：文章编辑器 */}
-      <div className="flex-1 min-w-0 flex flex-col gap-4">
+      <div className={cn("flex-1 min-w-0 flex flex-col gap-4", isMobile && mobileTab !== 'article' && "hidden")}>
         <GlassCard glow className="flex-1 min-h-0 flex flex-col">
           {/* 精简头部：标题 + 模型信息 */}
           <div className="mb-2 flex items-center justify-between">
@@ -1741,7 +2061,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       </span>
                     )}
                     <span className="text-[8px] opacity-60 mr-0.5">T2I</span>
-                    {text2ImgPool.models?.[0]?.modelId || text2ImgPool.code || '?'}
+                    {text2ImgPool.name || text2ImgPool.code}
                   </div>
                 ) : (
                   <div className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-500/10" title="文生图模型未配置">
@@ -1764,7 +2084,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       </span>
                     )}
                     <span className="text-[8px] opacity-60 mr-0.5">I2I</span>
-                    {img2ImgPool.models?.[0]?.modelId || img2ImgPool.code || '?'}
+                    {img2ImgPool.name || img2ImgPool.code}
                   </div>
                 ) : (
                   <div className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-500/10" title="图生图模型未配置">
@@ -1804,9 +2124,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <div 
                 className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none"
                 style={{
+                  ...glassBadge,
                   background: 'rgba(147, 197, 253, 0.15)',
                   border: '2px dashed rgba(147, 197, 253, 0.6)',
-                  backdropFilter: 'blur(4px)',
                 }}
               >
                 <div className="text-center">
@@ -1901,9 +2221,153 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             )}
 
-            {/* 标记生成中/完成/生图等阶段：显示 markdown 预览（流式更新） */}
-            {phase === 2 && ( // MarkersGenerated
-              <div className="p-4 relative">
+            {/* 标记生成中：全屏 AI 输出视图（Thinking + Raw Output） */}
+            {phase === 2 && markerStreaming && (
+              <div
+                ref={thinkingPanelRef}
+                className="h-full overflow-auto p-4"
+              >
+                {/* Thinking 区域 */}
+                {thinkingContent && (
+                  <div className="mb-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span
+                        className="inline-block w-2 h-2 rounded-full"
+                        style={{
+                          background: 'rgba(168, 85, 247, 0.8)',
+                          animation: 'pulse 1.5s ease-in-out infinite',
+                        }}
+                      />
+                      <span
+                        className="text-[11px] font-semibold tracking-wide uppercase"
+                        style={{ color: 'rgba(168, 85, 247, 0.85)' }}
+                      >
+                        Thinking
+                      </span>
+                    </div>
+                    <div
+                      className="rounded-xl px-3 py-2 text-[12px] leading-relaxed prd-md"
+                      style={{
+                        background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(99, 102, 241, 0.06) 100%)',
+                        border: '1px solid rgba(168, 85, 247, 0.15)',
+                        color: 'rgba(255, 255, 255, 0.7)',
+                      }}
+                    >
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {thinkingContent}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                )}
+
+                {/* Raw LLM 输出区域 */}
+                {rawMarkerOutput && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span
+                        className="inline-block w-2 h-2 rounded-full"
+                        style={{
+                          background: 'rgba(99, 102, 241, 0.8)',
+                          animation: 'pulse 1.5s ease-in-out infinite',
+                        }}
+                      />
+                      <span
+                        className="text-[11px] font-semibold tracking-wide uppercase"
+                        style={{ color: 'rgba(99, 102, 241, 0.85)' }}
+                      >
+                        Output
+                      </span>
+                    </div>
+                    <pre
+                      className="rounded-xl px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-all font-mono"
+                      style={{
+                        background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(34, 197, 94, 0.06) 100%)',
+                        border: '1px solid rgba(99, 102, 241, 0.15)',
+                        color: 'rgba(147, 197, 253, 0.75)',
+                        margin: 0,
+                      }}
+                    >
+                      {rawMarkerOutput}
+                    </pre>
+                  </div>
+                )}
+
+                {/* 空状态：等待 LLM 响应 */}
+                {!thinkingContent && !rawMarkerOutput && (
+                  <div className="h-full flex items-center justify-center">
+                    <div className="flex flex-col items-center gap-3">
+                      <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(168, 85, 247, 0.6)' }} />
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>等待 AI 响应…</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 标记生成完成：文章预览视图 */}
+            {phase === 2 && !markerStreaming && (
+              <div className="p-4 relative" style={{ '--img-display-size': `${imageDisplaySize}%` } as React.CSSProperties}>
+                {/* 图片显示尺寸控制 - 右上角浮动 */}
+                {markerRunItems.some(x => x.assetUrl || x.url || x.base64) && (
+                  <div
+                    className="sticky top-2 float-right z-10 flex items-center gap-0.5 rounded-lg px-1.5 py-1"
+                    style={{
+                      ...glassFloatingButton,
+                      background: 'rgba(0,0,0,0.55)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                    }}
+                  >
+                    <ImageIcon size={11} style={{ color: 'var(--text-muted)', marginRight: 2 }} />
+                    {[30, 50, 75, 100].map(size => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={() => setImageDisplaySize(size)}
+                        className="px-1.5 py-0.5 text-[10px] rounded transition-colors"
+                        style={{
+                          background: imageDisplaySize === size ? 'rgba(147, 197, 253, 0.2)' : 'transparent',
+                          color: imageDisplaySize === size ? '#93C5FD' : 'rgba(255,255,255,0.45)',
+                          border: imageDisplaySize === size ? '1px solid rgba(147, 197, 253, 0.3)' : '1px solid transparent',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {size}%
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* 折叠的思考面板 */}
+                {thinkingContent && (
+                  <details
+                    className="mb-4 rounded-xl overflow-hidden"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.06) 0%, rgba(99, 102, 241, 0.04) 100%)',
+                      border: '1px solid rgba(168, 85, 247, 0.15)',
+                    }}
+                  >
+                    <summary
+                      className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none text-[11px] font-semibold tracking-wide uppercase"
+                      style={{ color: 'rgba(168, 85, 247, 0.7)' }}
+                    >
+                      Thinking
+                    </summary>
+                    <div
+                      className="px-3 py-2 text-[12px] leading-relaxed prd-md"
+                      style={{
+                        color: 'rgba(255, 255, 255, 0.6)',
+                        maxHeight: 200,
+                        overflowY: 'auto',
+                        borderTop: '1px solid rgba(168, 85, 247, 0.1)',
+                      }}
+                    >
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {thinkingContent}
+                      </ReactMarkdown>
+                    </div>
+                  </details>
+                )}
+
                 <div className="prd-md">
                   <ReactMarkdown
                     key="article-preview-main"
@@ -1928,7 +2392,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       </div>
 
       {/* 右侧：工作台 */}
-      <div className="w-96 flex flex-col gap-3">
+      <div className={cn("flex flex-col gap-3", isMobile ? "w-full" : "w-96", isMobile && mobileTab !== 'markers' && "hidden")}>
         {/* 顶部：工作流进度 + 配置折叠区 */}
         <PanelCard>
           <WorkflowProgressBar
@@ -1963,24 +2427,27 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               {/* 提示词 */}
               <div
                 className={configPillBaseClass}
-                style={{ background: 'rgba(147, 197, 253, 0.08)', border: '1px solid rgba(147, 197, 253, 0.15)' }}
+                style={{
+                  background: selectedPrompt ? 'rgba(147, 197, 253, 0.08)' : 'var(--nested-block-bg)',
+                  border: selectedPrompt ? '1px solid rgba(147, 197, 253, 0.15)' : '1px solid var(--border-subtle)'
+                }}
                 onClick={() => {
                   if (selectedPrompt) handleEditPrompt(selectedPrompt);
                   else setPromptPreviewOpen(true);
                 }}
-                title={selectedPrompt?.title || '未选择提示词'}
+                title={selectedPrompt?.title || '系统推断风格（点击自定义）'}
               >
-                <FileText size={12} style={{ color: '#93C5FD', flexShrink: 0 }} />
+                <FileText size={12} style={{ color: selectedPrompt ? '#93C5FD' : '#9CA3AF', flexShrink: 0 }} />
                 <span className={configPillTextClass} style={{ color: selectedPrompt ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {selectedPrompt?.title || '提示词'}
+                  {selectedPrompt?.title || '自动风格'}
                 </span>
               </div>
               {/* 风格图 */}
               <div
                 className={configPillBaseClass}
                 style={{ 
-                  background: referenceImageConfigs.find(c => c.isActive) ? 'rgba(192, 132, 252, 0.08)' : 'rgba(255,255,255,0.03)', 
-                  border: referenceImageConfigs.find(c => c.isActive) ? '1px solid rgba(192, 132, 252, 0.15)' : '1px solid rgba(255,255,255,0.08)' 
+                  background: referenceImageConfigs.find(c => c.isActive) ? 'rgba(192, 132, 252, 0.08)' : 'var(--nested-block-bg)',
+                  border: referenceImageConfigs.find(c => c.isActive) ? '1px solid rgba(192, 132, 252, 0.15)' : '1px solid var(--border-subtle)' 
                 }}
                 onClick={() => {
                   const activeRefConfig = referenceImageConfigs.find(c => c.isActive);
@@ -2002,8 +2469,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <div
                 className={configPillBaseClass}
                 style={{ 
-                  background: watermarkStatus.enabled ? 'rgba(251, 191, 36, 0.08)' : 'rgba(255,255,255,0.03)', 
-                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid rgba(255,255,255,0.08)' 
+                  background: watermarkStatus.enabled ? 'rgba(251, 191, 36, 0.08)' : 'var(--nested-block-bg)',
+                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid var(--border-subtle)' 
                 }}
                 onClick={() => {
                   setPendingWatermarkEdit(true);
@@ -2038,7 +2505,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>配图标记</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
+                <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
                   {markerRunItems.filter(x => x.status === 'done').length}/{markerRunItems.length}
                 </span>
               </div>
@@ -2158,7 +2625,22 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
 
-            <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-2">
+            <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-1.5">
+              {/* 标记生成中的进度提示 */}
+              {markerStreaming && (
+                <div
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+                  style={{
+                    background: 'rgba(245, 158, 11, 0.08)',
+                    border: '1px solid rgba(245, 158, 11, 0.2)',
+                    color: 'rgba(245, 158, 11, 0.95)',
+                    animation: 'pulse 2s ease-in-out infinite',
+                  }}
+                >
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>AI 正在分析文章并生成配图标记…已识别 {markerRunItems.length} 个位置</span>
+                </div>
+              )}
               {markerRunItems.map((it, idx) => {
                 const statusLabel =
                   it.status === 'parsing'
@@ -2176,40 +2658,57 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 const src =
                   String(it.assetUrl || it.url || '').trim() ||
                   (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
-                const showPlaceholder = it.status === 'running'; // 只在生图时显示呼吸动画，解析时不显示
+                const showPlaceholder = it.status === 'running' || it.status === 'parsing'; // 生图和解析时都显示动画
                 const canShow = Boolean(src) && it.status === 'done';
                 const hasImage = Boolean(String(it.assetUrl || it.url || '').trim() || it.base64);
                 const genLabel = hasImage ? '重新生成' : '生成图片';
                 const genTitle = hasImage ? '重新生成该配图（会替换左侧预览中的对应插图）' : '生成该配图（会插入左侧预览中对应 [插图] 位置）';
 
+                const isGlowing = glowingMarkers.has(it.markerIndex);
+
                 return (
                   <div
                   key={it.markerIndex}
-                  className="p-3 rounded"
+                  className="p-2.5 rounded"
                   style={{
                     background: 'var(--bg-elevated)',
                     border: '1px solid var(--border-subtle)',
+                    position: 'relative',
                   }}
                 >
+                  {/* 入场发光边框动画 */}
+                  {isGlowing && (
+                    <div
+                      className="marker-card-glow-entrance"
+                      onAnimationEnd={() => {
+                        setGlowingMarkers((prev) => {
+                          const next = new Set(prev);
+                          next.delete(it.markerIndex);
+                          return next;
+                        });
+                      }}
+                    />
+                  )}
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
                       配图 {idx + 1}
                     </div>
                     <div className="flex items-center gap-2">
-                      {/* 显示图片尺寸（如果已解析） */}
-                      {it.planItem?.size && (
-                        <div
-                          className="text-[11px] px-2 py-0.5 rounded-full font-medium"
-                          style={{
-                            background: 'rgba(99, 102, 241, 0.12)',
-                            border: '1px solid rgba(99, 102, 241, 0.24)',
-                            color: 'rgba(99, 102, 241, 0.95)',
-                          }}
-                          title={`图片尺寸：${it.planItem.size}`}
-                        >
-                          {it.planItem.size}
-                        </div>
-                      )}
+                      {/* 尺寸选择器 */}
+                      <ImageSizePicker
+                        sizesByResolution={sizesByResolutionForPicker}
+                        value={it.planItem?.size || '1024x1024'}
+                        onChange={(s) => {
+                          setMarkerRunItems((prev) =>
+                            prev.map((x) =>
+                              x.markerIndex === it.markerIndex
+                                ? { ...x, planItem: { ...(x.planItem || { prompt: x.draftText || x.markerText, count: 1 }), size: s } }
+                                : x
+                            )
+                          );
+                        }}
+                        disabled={it.status === 'running' || it.status === 'parsing'}
+                      />
                       {/* 状态标签 */}
                       <div
                         className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
@@ -2221,7 +2720,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 ? 'rgba(239, 68, 68, 0.12)'
                                 : it.status === 'running' || it.status === 'parsing'
                                   ? 'rgba(250, 204, 21, 0.12)'
-                                  : 'rgba(255,255,255,0.06)',
+                                  : 'var(--bg-input-hover)',
                           border:
                             it.status === 'done'
                               ? '1px solid rgba(34, 197, 94, 0.28)'
@@ -2229,7 +2728,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 ? '1px solid rgba(239, 68, 68, 0.28)'
                                 : it.status === 'running' || it.status === 'parsing'
                                   ? '1px solid rgba(250, 204, 21, 0.24)'
-                                  : '1px solid rgba(255,255,255,0.10)',
+                                  : '1px solid var(--border-default)',
                           color:
                             it.status === 'done'
                               ? 'rgba(34, 197, 94, 0.95)'
@@ -2253,11 +2752,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   ) : null}
 
                   <div
-                    className="mt-2 rounded-[12px] overflow-hidden relative group"
+                    className="mt-1.5 rounded-[10px] overflow-hidden relative group"
                     style={{
-                      height: 160,
+                      height: 120,
                       background: 'rgba(0,0,0,0.18)',
-                      border: '1px solid rgba(255,255,255,0.10)',
+                      border: '1px solid var(--border-default)',
                       cursor: canShow ? 'pointer' : 'default',
                     }}
                     onClick={() => {
@@ -2277,11 +2776,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     }}
                   >
                     {showPlaceholder ? (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        {/* 使用 fill 模式适应容器，内层正方形保持花瓣比例 */}
-                        <div style={{ width: '100%', height: '100%', maxWidth: 160, maxHeight: 160, aspectRatio: '1' }}>
-                          <PrdPetalBreathingLoader fill />
-                        </div>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                        {it.status === 'parsing' ? (
+                          <>
+                            <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(250, 204, 21, 0.7)' }} />
+                            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>解析尺寸…</span>
+                          </>
+                        ) : (
+                          <div style={{ width: '100%', height: '100%', maxWidth: 120, maxHeight: 120, aspectRatio: '1' }}>
+                            <PrdPetalBreathingLoader fill />
+                          </div>
+                        )}
                       </div>
                     ) : null}
                     {canShow ? (
@@ -2296,9 +2801,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           <button
                             className="p-2 rounded-lg"
                             style={{
+                              ...glassFloatingButton,
                               background: 'rgba(0, 0, 0, 0.6)',
                               border: '1px solid rgba(255, 255, 255, 0.2)',
-                              backdropFilter: 'blur(10px)',
                             }}
                             onClick={async () => {
                               try {
@@ -2315,9 +2820,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           <button
                             className="p-2 rounded-lg"
                             style={{
+                              ...glassFloatingButton,
                               background: 'rgba(0, 0, 0, 0.6)',
                               border: '1px solid rgba(255, 255, 255, 0.2)',
-                              backdropFilter: 'blur(10px)',
                             }}
                             onClick={async () => {
                               try {
@@ -2347,15 +2852,39 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         </div>
                       </>
                     ) : !showPlaceholder ? (
-                      <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                        <div
-                          className="w-10 h-10 rounded-lg flex items-center justify-center"
-                          style={{ background: 'rgba(255,255,255,0.05)', border: '1px dashed rgba(255,255,255,0.15)' }}
-                        >
-                          <ImageIcon size={18} style={{ opacity: 0.5 }} />
-                        </div>
-                        <div>待生成配图</div>
-                      </div>
+                      (() => {
+                        // 显示按当前选中尺寸的比例预览框
+                        const cs = it.planItem?.size || '1024x1024';
+                        const [cw, ch] = cs.split(/[xX×]/).map(Number);
+                        const cRatio = (cw && ch) ? cw / ch : 1;
+                        const containerH = 100; // 预留上下 padding
+                        const containerW = 280; // 约等于卡片宽度
+                        // 在容器内按比例显示，不超出边界
+                        let previewW: number, previewH: number;
+                        if (cRatio >= containerW / containerH) {
+                          previewW = Math.min(containerW, 240);
+                          previewH = Math.round(previewW / cRatio);
+                        } else {
+                          previewH = Math.min(containerH, 90);
+                          previewW = Math.round(previewH * cRatio);
+                        }
+                        return (
+                          <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                            <div
+                              className="rounded-lg flex items-center justify-center"
+                              style={{
+                                width: previewW,
+                                height: previewH,
+                                background: 'var(--nested-block-bg)',
+                                border: '1.5px dashed rgba(99, 102, 241, 0.3)',
+                                transition: 'width 0.2s, height 0.2s',
+                              }}
+                            >
+                              <ImageIcon size={18} style={{ opacity: 0.4 }} />
+                            </div>
+                          </div>
+                        );
+                      })()
                     ) : null}
                   </div>
 
@@ -2365,13 +2894,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       const v = e.target.value;
                       setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === it.markerIndex ? { ...x, draftText: v } : x)));
                     }}
-                    className="mt-2 w-full rounded-[12px] px-3 py-2 text-[12px] outline-none resize-none prd-field"
-                    style={{ minHeight: 84 }}
+                    className="mt-1.5 w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none resize-none prd-field"
+                    style={{ minHeight: 56 }}
                     placeholder="可编辑后右下角生成图片 / 重新生成"
                     disabled={it.status === 'running' || it.status === 'parsing'}
                   />
 
-                  <div className="mt-2 flex items-center justify-between gap-2">
+                  <div className="mt-1.5 flex items-center justify-between gap-2">
                     <Button
                       size="sm"
                       variant="secondary"
@@ -2417,8 +2946,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       <Dialog
         open={!!creatingPrompt}
         onOpenChange={(open) => !open && handleCancelCreate()}
-        title="新建提示词模板"
-        description="输入模板名称和内容"
+        title="新建风格模板"
+        description="输入模板名称和风格描述（系统指令由系统自动提供，此处只需描述配图风格偏好）"
         maxWidth={1040}
         content={
           creatingPrompt ? (
@@ -2455,6 +2984,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         预览
                       </Button>
                     </div>
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      onClick={() => void handleOptimizePrompt('create')}
+                      disabled={!creatingPrompt.content?.trim() || optimizingPromptId === 'new'}
+                      title="AI 自动提取风格描述，去除旧格式指令"
+                    >
+                      <Sparkles size={12} />
+                      {optimizingPromptId === 'new' ? '优化中...' : 'AI 提取风格'}
+                    </Button>
                   </div>
 
                   {/* 编辑模式：显示 textarea */}
@@ -2462,7 +3001,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <textarea
                       value={creatingPrompt.content}
                       onChange={(e) => setCreatingPrompt({ ...creatingPrompt, content: e.target.value })}
-                      placeholder="请输入提示词模板内容（所有文学创作 Agent 全局共享）..."
+                      placeholder="描述配图风格偏好，例如：水彩风格、暖色调、注重细节表现、偏向写实..."
                       rows={14}
                       className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
                     />
@@ -2487,8 +3026,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         .create-prompt-md p { margin: 6px 0; }
                         .create-prompt-md ul,.create-prompt-md ol { margin: 6px 0; padding-left: 18px; }
                         .create-prompt-md li { margin: 3px 0; }
-                        .create-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-                        .create-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
+                        .create-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 4px; border-radius: 4px; }
+                        .create-prompt-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
                         .create-prompt-md pre code { background: transparent; border: 0; padding: 0; }
                       `}</style>
                       <div className="create-prompt-md">
@@ -2525,8 +3064,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       <Dialog
         open={!!editingPrompt}
         onOpenChange={(open) => !open && handleCancelEdit()}
-        title="编辑提示词模板"
-        description="同时编辑标题和内容"
+        title="编辑风格模板"
+        description="编辑标题和风格描述（系统指令由系统自动提供，此处只需描述配图风格偏好）"
         maxWidth={1040}
         content={
           editingPrompt ? (
@@ -2562,6 +3101,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         预览
                       </Button>
                     </div>
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      onClick={() => void handleOptimizePrompt('edit')}
+                      disabled={!editingPrompt.content?.trim() || optimizingPromptId === editingPrompt.id}
+                      title="AI 自动提取风格描述，去除旧格式指令"
+                    >
+                      <Sparkles size={12} />
+                      {optimizingPromptId === editingPrompt.id ? '优化中...' : 'AI 提取风格'}
+                    </Button>
                   </div>
 
                   {/* 编辑模式：显示 textarea */}
@@ -2569,7 +3118,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <textarea
                       value={editingPrompt.content}
                       onChange={(e) => setEditingPrompt({ ...editingPrompt, content: e.target.value })}
-                      placeholder="输入模板内容..."
+                      placeholder="描述配图风格偏好，例如：水彩风格、暖色调、注重细节表现、偏向写实..."
                       rows={14}
                       className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-5 outline-none resize-none font-mono select-text prd-field"
                     />
@@ -2594,8 +3143,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         .edit-prompt-md p { margin: 6px 0; }
                         .edit-prompt-md ul,.edit-prompt-md ol { margin: 6px 0; padding-left: 18px; }
                         .edit-prompt-md li { margin: 3px 0; }
-                        .edit-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-                        .edit-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
+                        .edit-prompt-md code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 4px; border-radius: 4px; }
+                        .edit-prompt-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 8px; padding: 10px; overflow: auto; margin: 6px 0; }
                         .edit-prompt-md pre code { background: transparent; border: 0; padding: 0; }
                       `}</style>
                       <div className="edit-prompt-md">
@@ -2628,22 +3177,51 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
       />
 
-      {/* 系统提示词、底图与水印配置对话框 */}
+      {/* 风格提示词、底图与水印配置对话框 */}
       <Dialog
         open={promptPreviewOpen}
-        onOpenChange={setPromptPreviewOpen}
+        onOpenChange={(open) => {
+          setPromptPreviewOpen(open);
+          if (!open) setConfigViewMode('mine'); // 关闭时重置为"我的"视图
+        }}
         title="配置管理"
-        description="系统提示词、风格图与水印设置"
-        maxWidth={1400}
+        maxWidth={1500}
         contentClassName="overflow-hidden !p-4"
-        contentStyle={{ maxHeight: '70vh', height: '70vh' }}
+        contentStyle={{ maxHeight: '75vh', height: '75vh' }}
+        titleCenter={
+          <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
+            <button
+              type="button"
+              onClick={() => setConfigViewMode('mine')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                configViewMode === 'mine' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
+              }`}
+            >
+              <User size={14} />
+              我的
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfigViewMode('marketplace')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                configViewMode === 'marketplace' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
+              }`}
+            >
+              <Globe size={14} />
+              海鲜市场
+            </button>
+          </div>
+        }
         content={
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-2 h-full min-h-0">
-            {/* 左侧：系统提示词 */}
+          <div className="flex flex-col h-full min-h-0">
+            {/* 我的配置视图 */}
+            {configViewMode === 'mine' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
+            {/* 左侧：风格提示词 */}
             <div className="min-h-0 flex flex-col h-full">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  系统提示词
+                  风格提示词
                 </div>
                 <Button
                   size="xs"
@@ -2659,13 +3237,28 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
               {allPrompts.length === 0 ? (
                 <div className="text-xs py-4 text-center" style={{ color: 'var(--text-muted)' }}>
-                  还没有提示词模板，点击上方「新建」创建第一个模板
+                  未选择风格时系统将自动推断，点击上方「新建」可自定义风格
                 </div>
               ) : (
                 <div className="flex-1 min-h-0 overflow-auto pr-1">
+                  {!selectedPrompt && (
+                    <div className="text-[11px] mb-2 px-2 py-1.5 rounded-md" style={{ background: 'rgba(34, 197, 94, 0.06)', border: '1px solid rgba(34, 197, 94, 0.15)', color: 'rgba(34, 197, 94, 0.85)' }}>
+                      当前使用系统推断风格，可点击下方卡片选择自定义风格
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 gap-3">
-                    {allPrompts.map((prompt) => (
-                      <GlassCard glow key={prompt.id} className="p-0 overflow-hidden">
+                    {allPrompts.map((prompt) => {
+                      const isPromptSelected = selectedPrompt?.id === prompt.id;
+                      return (
+                      <GlassCard
+                        glow
+                        key={prompt.id}
+                        className="p-0 overflow-hidden"
+                        style={isPromptSelected ? {
+                          border: '2px solid rgba(34, 197, 94, 0.8)',
+                          boxShadow: '0 0 16px rgba(34, 197, 94, 0.3)',
+                        } : undefined}
+                      >
                         <div className="group relative flex flex-col h-full">
                           {/* 上栏：标题区 */}
                           <div className="p-2 pb-1 flex-shrink-0">
@@ -2685,74 +3278,36 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 >
                                   {prompt.title}
                                 </div>
-                              </div>
-
-                              <div className="flex items-center gap-1 flex-shrink-0">
-                                {/* 分类标签 */}
-                                {(!prompt.scenarioType || prompt.scenarioType === 'global') ? (
-                                  <span
-                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                    style={{
-                                      background: 'rgba(168, 85, 247, 0.12)',
-                                      color: 'rgba(168, 85, 247, 0.95)',
-                                      border: '1px solid rgba(168, 85, 247, 0.28)',
-                                    }}
-                                    title="全局共享（所有场景可用）"
-                                  >
-                                    全局
-                                  </span>
-                                ) : prompt.scenarioType === 'article-illustration' ? (
-                                  <span
-                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                    style={{
-                                      background: 'rgba(34, 197, 94, 0.12)',
-                                      color: 'rgba(34, 197, 94, 0.95)',
-                                      border: '1px solid rgba(34, 197, 94, 0.28)',
-                                    }}
-                                    title="文章配图专用"
-                                  >
-                                    文章配图
-                                  </span>
-                                ) : null}
-
-                                {/* 当前选中标签 */}
-                                {selectedPrompt?.id === prompt.id && (
-                                  <span
-                                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                    style={{
-                                      background: 'var(--accent-primary)',
-                                      color: 'white',
-                                    }}
-                                  >
-                                    当前
+                                {prompt.isSystem && (
+                                  <span className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(251, 191, 36, 0.12)', color: 'rgba(251, 191, 36, 0.85)', border: '1px solid rgba(251, 191, 36, 0.2)' }}>
+                                    系统
                                   </span>
                                 )}
                               </div>
                             </div>
                           </div>
 
-                          {/* 中栏：内容预览区 */}
-                          <div className="px-2 pb-1 flex-1 min-h-0 overflow-hidden">
+                          {/* 中栏：内容预览区（压缩高度以与风格图卡片等高） */}
+                          <div className="px-2 pb-1 flex-shrink-0">
                             <div
-                              className="h-full overflow-auto border rounded-[6px]"
+                              className="overflow-auto border rounded-[6px]"
                               style={{
                                 borderColor: 'var(--border-subtle)',
-                                background: 'rgba(255,255,255,0.02)',
-                                minHeight: '120px',
-                                maxHeight: '160px',
+                                background: 'var(--list-item-bg)',
+                                height: '100px',
                               }}
                             >
                               <style>{`
-                                .modal-prompt-md { font-size: 11px; line-height: 1.5; color: var(--text-secondary); padding: 8px; }
-                                .modal-prompt-md h1,.modal-prompt-md h2,.modal-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 8px 0 4px; }
-                                .modal-prompt-md h1 { font-size: 13px; }
-                                .modal-prompt-md h2 { font-size: 12px; }
+                                .modal-prompt-md { font-size: 11px; line-height: 1.4; color: var(--text-secondary); padding: 6px 8px; white-space: pre-wrap; }
+                                .modal-prompt-md h1,.modal-prompt-md h2,.modal-prompt-md h3 { color: var(--text-primary); font-weight: 600; margin: 4px 0 2px; }
+                                .modal-prompt-md h1 { font-size: 12px; }
+                                .modal-prompt-md h2 { font-size: 11px; }
                                 .modal-prompt-md h3 { font-size: 11px; }
-                                .modal-prompt-md p { margin: 4px 0; }
-                                .modal-prompt-md ul,.modal-prompt-md ol { margin: 4px 0; padding-left: 16px; }
-                                .modal-prompt-md li { margin: 2px 0; }
-                                .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 4px; border-radius: 4px; }
-                                .modal-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; padding: 8px; overflow: auto; margin: 4px 0; }
+                                .modal-prompt-md p { margin: 2px 0; white-space: pre-wrap; }
+                                .modal-prompt-md ul,.modal-prompt-md ol { margin: 2px 0; padding-left: 14px; }
+                                .modal-prompt-md li { margin: 1px 0; }
+                                .modal-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 3px; border-radius: 3px; }
+                                .modal-prompt-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 4px; padding: 4px 6px; overflow: auto; margin: 2px 0; }
                                 .modal-prompt-md pre code { background: transparent; border: 0; padding: 0; }
                               `}</style>
                               <div className="modal-prompt-md">
@@ -2767,62 +3322,76 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
 
-                          {/* 下栏：操作按钮区 */}
+                          {/* 下栏：操作按钮区（图标化布局） */}
                           <div className="px-2 pb-2 pt-1 flex-shrink-0">
-                            <div className="flex gap-1.5 justify-end">
-                              {selectedPrompt?.id !== prompt.id ? (
-                                <Button
-                                  size="xs"
-                                  variant="secondary"
-                                  onClick={() => {
-                                    setSelectedPrompt(prompt);
-                                    // 不关闭配置管理弹窗，选择后仍可继续配置其他项
-                                  }}
-                                >
-                                  <Check size={12} />
-                                  选择
-                                </Button>
-                              ) : (
+                            <div className="flex items-center gap-1 justify-between">
+                              {/* 左侧：发布图标 + 下载次数 */}
+                              <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
                                   style={{
-                                    background: 'rgba(34, 197, 94, 0.15)',
-                                    border: '1px solid rgba(34, 197, 94, 0.3)',
-                                    color: 'rgba(34, 197, 94, 0.95)',
+                                    color: prompt.isPublic ? 'rgba(251, 146, 60, 0.9)' : 'var(--text-muted)',
+                                    background: prompt.isPublic ? 'rgba(251, 146, 60, 0.1)' : 'transparent',
                                   }}
-                                  title="当前选中"
+                                  onClick={() => prompt.isPublic ? void handleUnpublishPrompt(prompt) : void handlePublishPrompt(prompt)}
+                                  title={prompt.isPublic ? '点击取消发布' : '发布到海鲜市场'}
                                 >
-                                  <CheckCircle2 size={12} />
-                                  已选择
+                                  <Share2 size={14} />
                                 </button>
-                              )}
-                              <Button
-                                size="xs"
-                                variant="secondary"
-                                onClick={() => {
-                                  handleEditPrompt(prompt);
-                                  // 不关闭配置管理弹窗，编辑完成后仍可继续配置
-                                }}
-                              >
-                                <Edit2 size={12} />
-                                编辑
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant="danger"
-                                onClick={() => {
-                                  void handleDeletePrompt(prompt);
-                                }}
-                              >
-                                <Trash2 size={12} />
-                                删除
-                              </Button>
+                                {/* 下载次数 */}
+                                {typeof prompt.forkCount === 'number' && (
+                                  <span className="flex items-center gap-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                    <GitFork size={10} />
+                                    {prompt.forkCount}
+                                  </span>
+                                )}
+                              </div>
+                              {/* 右侧：选择 | 编辑/删除（用分隔线区分功能组） */}
+                              <div className="flex items-center gap-1">
+                                {/* 选择按钮 */}
+                                <button
+                                  type="button"
+                                  className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                                  style={{
+                                    color: isPromptSelected ? 'white' : 'rgba(156, 163, 175, 0.6)',
+                                    background: isPromptSelected ? 'rgba(34, 197, 94, 0.95)' : 'transparent',
+                                    border: isPromptSelected ? '1px solid rgba(34, 197, 94, 0.95)' : 'none',
+                                    minWidth: 40,
+                                  }}
+                                  onClick={() => setSelectedPrompt(isPromptSelected ? null : prompt)}
+                                  title={isPromptSelected ? '取消选择（将使用系统推断风格）' : '选择此风格'}
+                                >
+                                  <CheckCircle2 size={16} />
+                                </button>
+                                {/* 分隔线 */}
+                                <div className="h-4 w-px mx-0.5" style={{ background: 'var(--border-subtle)' }} />
+                                {/* 编辑/删除按钮组 */}
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                                  style={{ color: 'var(--text-muted)' }}
+                                  onClick={() => handleEditPrompt(prompt)}
+                                  title="编辑"
+                                >
+                                  <Edit2 size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-red-500/10"
+                                  style={{ color: 'rgba(239, 68, 68, 0.7)' }}
+                                  onClick={() => void handleDeletePrompt(prompt)}
+                                  title="删除"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </div>
                           </div>
                         </div>
                       </GlassCard>
-                    ))}
+                    );
+                    })}
                   </div>
                 </div>
               )}
@@ -2894,12 +3463,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 ) : (
                   <div className="grid grid-cols-1 gap-3">
                     {referenceImageConfigs.map((config) => (
-                      <GlassCard key={config.id} className="p-0 overflow-hidden">
+                      <GlassCard
+                        key={config.id}
+                        className="p-0 overflow-hidden"
+                        style={config.isActive ? {
+                          border: '2px solid rgba(34, 197, 94, 0.8)',
+                          boxShadow: '0 0 16px rgba(34, 197, 94, 0.3)',
+                        } : undefined}
+                      >
                         <div className="flex flex-col">
                           {/* 标题栏 */}
                           <div className="p-2 pb-1 flex-shrink-0">
                             <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
+                              <div className="min-w-0 flex-1 flex items-center gap-1.5">
+                                <ImageIcon size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
                                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                                   {config.name}
                                 </div>
@@ -2907,40 +3484,37 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
 
-                          {/* 内容区：左侧提示词 + 右侧图片预览 */}
+                          {/* 内容区：左侧提示词 + 右侧图片预览（统一高度100px） */}
                           <div className="px-2 pb-1 flex-shrink-0">
-                            <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px' }}>
+                            <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: '100px' }}>
                               {/* 左侧：提示词预览 */}
                               <div
                                 className="overflow-auto border rounded-[6px] p-2"
                                 style={{
                                   borderColor: 'var(--border-subtle)',
-                                  background: 'rgba(255,255,255,0.02)',
-                                  minHeight: '80px',
-                                  maxHeight: '100px',
+                                  background: 'var(--list-item-bg)',
                                 }}
                               >
                                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                                   {config.prompt || '（无提示词）'}
                                 </div>
                               </div>
-                              {/* 右侧：图片预览 */}
+                              {/* 右侧：图片预览（风格图使用简单边框，点击放大） */}
                               <div
-                                className="relative flex items-center justify-center overflow-hidden rounded-[6px]"
+                                className="flex items-center justify-center overflow-hidden rounded-[6px]"
                                 style={{
-                                  background: config.imageUrl
-                                    ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                                    : 'rgba(255,255,255,0.02)',
-                                  border: config.imageUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
-                                  minHeight: '80px',
-                                  maxHeight: '100px',
+                                  background: 'var(--list-item-bg)',
+                                  border: '1px solid var(--border-subtle)',
+                                  cursor: config.imageUrl ? 'zoom-in' : 'default',
                                 }}
+                                onClick={() => config.imageUrl && setEnlargedRefImageUrl(config.imageUrl)}
+                                title={config.imageUrl ? '点击放大' : undefined}
                               >
                                 {config.imageUrl ? (
                                   <img
                                     src={config.imageUrl}
                                     alt={config.name}
-                                    className="block w-full h-full object-contain"
+                                    className="block w-full h-full object-cover"
                                   />
                                 ) : (
                                   <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
@@ -2949,43 +3523,50 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </div>
                           </div>
 
-                          {/* 操作按钮区 */}
+                          {/* 操作按钮区（图标化布局） */}
                           <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                            <div className="flex flex-wrap gap-1.5 justify-end">
-                              {config.isActive ? (
+                            <div className="flex items-center gap-1 justify-between">
+                              {/* 左侧：发布图标 + 下载次数 */}
+                              <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
                                   style={{
-                                    background: 'rgba(34, 197, 94, 0.15)',
-                                    border: '1px solid rgba(34, 197, 94, 0.3)',
-                                    color: 'rgba(34, 197, 94, 0.95)',
+                                    color: config.isPublic ? 'rgba(251, 146, 60, 0.9)' : 'var(--text-muted)',
+                                    background: config.isPublic ? 'rgba(251, 146, 60, 0.1)' : 'transparent',
                                   }}
-                                  onClick={async () => {
-                                    setReferenceImageSaving(true);
-                                    try {
-                                      const res = await deactivateReferenceImageConfig({ id: config.id });
-                                      if (res.success) {
-                                        await loadReferenceImageConfigs();
-                                      }
-                                    } finally {
-                                      setReferenceImageSaving(false);
-                                    }
-                                  }}
+                                  onClick={() => config.isPublic ? void handleUnpublishRefConfig(config) : void handlePublishRefConfig(config)}
                                   disabled={referenceImageSaving}
-                                  title="点击取消选择"
+                                  title={config.isPublic ? '点击取消发布' : '发布到海鲜市场'}
                                 >
-                                  <CheckCircle2 size={12} />
-                                  已选择
+                                  <Share2 size={14} />
                                 </button>
-                              ) : (
-                                <Button
-                                  size="xs"
-                                  variant="secondary"
+                                {/* 下载次数 */}
+                                {typeof config.forkCount === 'number' && (
+                                  <span className="flex items-center gap-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                    <GitFork size={10} />
+                                    {config.forkCount}
+                                  </span>
+                                )}
+                              </div>
+                              {/* 右侧：选择 | 编辑/删除（用分隔线区分功能组） */}
+                              <div className="flex items-center gap-1">
+                                {/* 选择按钮 */}
+                                <button
+                                  type="button"
+                                  className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
+                                  style={{
+                                    color: config.isActive ? 'white' : 'rgba(156, 163, 175, 0.6)',
+                                    background: config.isActive ? 'rgba(34, 197, 94, 0.95)' : 'transparent',
+                                    border: config.isActive ? '1px solid rgba(34, 197, 94, 0.95)' : 'none',
+                                    minWidth: 40,
+                                  }}
                                   onClick={async () => {
                                     setReferenceImageSaving(true);
                                     try {
-                                      const res = await activateReferenceImageConfig({ id: config.id });
+                                      const res = config.isActive
+                                        ? await deactivateReferenceImageConfig({ id: config.id })
+                                        : await activateReferenceImageConfig({ id: config.id });
                                       if (res.success) {
                                         await loadReferenceImageConfigs();
                                       }
@@ -2994,51 +3575,66 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     }
                                   }}
                                   disabled={referenceImageSaving}
+                                  title={config.isActive ? '取消选择' : '选择'}
                                 >
-                                  <Check size={12} />
-                                  选择
-                                </Button>
-                              )}
-                              <Button
-                                size="xs"
-                                variant="secondary"
-                                onClick={() => {
-                                  setEditingRefConfig({ ...config });
-                                  setEditingRefConfigOpen(true);
-                                }}
-                              >
-                                <Pencil size={12} />
-                                编辑
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant="danger"
-                                onClick={async () => {
-                                  const confirmed = await systemDialog.confirm({
-                                    title: '删除风格图配置',
-                                    message: `确定要删除「${config.name}」吗？`,
-                                    confirmText: '确定删除',
-                                    tone: 'danger',
-                                  });
-                                  if (!confirmed) return;
-                                  setReferenceImageSaving(true);
-                                  try {
-                                    const res = await deleteReferenceImageConfig({ id: config.id });
-                                    if (res.success) {
-                                      await loadReferenceImageConfigs();
-                                      toast.success('已删除');
-                                    } else {
-                                      toast.error('删除失败', res.error?.message || '未知错误');
+                                  <CheckCircle2 size={16} />
+                                </button>
+                                {/* 分隔线 */}
+                                <div className="h-4 w-px mx-0.5" style={{ background: 'var(--border-subtle)' }} />
+                                {/* 编辑/删除按钮组 */}
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                                  style={{ color: 'var(--text-muted)' }}
+                                  onClick={() => {
+                                    setEditingRefConfig({ ...config });
+                                    setEditingRefConfigOpen(true);
+                                  }}
+                                  title="编辑"
+                                >
+                                  <Pencil size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-red-500/10 disabled:opacity-50"
+                                  style={{ color: 'rgba(239, 68, 68, 0.7)' }}
+                                  onClick={async () => {
+                                    const confirmed = await systemDialog.confirm({
+                                      title: '删除风格图配置',
+                                      message: `确定要删除「${config.name}」吗？`,
+                                      confirmText: '确定删除',
+                                      tone: 'danger',
+                                    });
+                                    if (!confirmed) return;
+                                    if (config.isPublic) {
+                                      const doubleConfirmed = await systemDialog.confirm({
+                                        title: '⚠️ 该配置已发布到海鲜市场',
+                                        message: '删除后其他用户将无法再下载此配置，确定要删除吗？',
+                                        tone: 'danger',
+                                        confirmText: '确认删除',
+                                        cancelText: '取消',
+                                      });
+                                      if (!doubleConfirmed) return;
                                     }
-                                  } finally {
-                                    setReferenceImageSaving(false);
-                                  }
-                                }}
-                                disabled={referenceImageSaving}
-                              >
-                                <Trash2 size={12} />
-                                删除
-                              </Button>
+                                    setReferenceImageSaving(true);
+                                    try {
+                                      const res = await deleteReferenceImageConfig({ id: config.id });
+                                      if (res.success) {
+                                        await loadReferenceImageConfigs();
+                                        toast.success('已删除');
+                                      } else {
+                                        toast.error('删除失败', res.error?.message || '未知错误');
+                                      }
+                                    } finally {
+                                      setReferenceImageSaving(false);
+                                    }
+                                  }}
+                                  disabled={referenceImageSaving}
+                                  title="删除"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -3069,6 +3665,110 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
           </div>
+            )}
+
+            {/* 海鲜市场视图 - 使用类型注册表实现扩展性 */}
+            {configViewMode === 'marketplace' && (
+              <div className="flex flex-col h-full min-h-0 flex-1">
+                {/* 搜索、分类筛选和排序栏 */}
+                <div className="flex items-center gap-3 mb-4 flex-shrink-0 flex-wrap">
+                  {/* 搜索框 */}
+                  <div className="relative flex-1 min-w-[180px] max-w-xs">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                    <input
+                      type="text"
+                      placeholder="搜索配置名称..."
+                      value={marketplaceSearchKeyword}
+                      onChange={(e) => setMarketplaceSearchKeyword(e.target.value)}
+                      className="w-full h-8 pl-9 pr-3 rounded-lg text-sm"
+                      style={{ background: 'var(--input-bg)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    />
+                  </div>
+                  {/* 分类筛选 - 使用类型注册表动态生成 */}
+                  <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
+                    {getCategoryFilterOptions().map(({ key, label, icon: Icon }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setMarketplaceCategoryFilter(key)}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
+                          marketplaceCategoryFilter === key ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                        }`}
+                        style={{ color: marketplaceCategoryFilter === key ? undefined : 'var(--text-muted)' }}
+                      >
+                        {Icon && <Icon size={11} />}
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* 排序 */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setMarketplaceSortBy('hot')}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        marketplaceSortBy === 'hot' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                      }`}
+                      style={{ color: marketplaceSortBy === 'hot' ? undefined : 'var(--text-muted)' }}
+                    >
+                      <TrendingUp size={12} />
+                      热门
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMarketplaceSortBy('new')}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        marketplaceSortBy === 'new' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                      }`}
+                      style={{ color: marketplaceSortBy === 'new' ? undefined : 'var(--text-muted)' }}
+                    >
+                      <Clock size={12} />
+                      最新
+                    </button>
+                  </div>
+                </div>
+
+                {marketplaceLoading ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+                  </div>
+                ) : (
+                  <div className="flex-1 min-h-0 overflow-auto">
+                    {/* 使用类型注册表合并、过滤、排序数据 */}
+                    {(() => {
+                      // 1. 合并数据
+                      const merged = mergeMarketplaceData(marketplaceDataByType, marketplaceCategoryFilter);
+                      // 2. 排序
+                      const sorted = sortMarketplaceItems(merged, marketplaceSortBy);
+                      // 3. 搜索过滤
+                      const filtered = filterMarketplaceItems(sorted, marketplaceSearchKeyword);
+
+                      if (filtered.length === 0) {
+                        return (
+                          <div className="text-sm py-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                            暂无公开配置
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                          {filtered.map((item) => (
+                            <MarketplaceCard
+                              key={`${item.type}-${item.data.id}`}
+                              item={item}
+                              onFork={handleMarketplaceFork}
+                              forking={forkingId === item.data.id}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         }
       />
 
@@ -3083,6 +3783,25 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         initialIndex={imagePreviewIndex}
         open={imagePreviewOpen}
         onClose={() => setImagePreviewOpen(false)}
+      />
+
+      {/* 风格图放大预览对话框 */}
+      <Dialog
+        open={!!enlargedRefImageUrl}
+        onOpenChange={(open) => !open && setEnlargedRefImageUrl(null)}
+        title="图片预览"
+        maxWidth={800}
+        content={
+          enlargedRefImageUrl && (
+            <div className="flex items-center justify-center p-4">
+              <img
+                src={enlargedRefImageUrl}
+                alt="Preview"
+                className="max-w-full max-h-[70vh] object-contain rounded-lg"
+              />
+            </div>
+          )
+        }
       />
 
       {/* 风格图配置编辑对话框 */}
@@ -3174,7 +3893,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <div
                     className="flex-1 rounded-lg overflow-hidden relative group cursor-pointer"
                     style={{
-                      background: editingRefConfig.imageUrl ? 'transparent' : 'rgba(255,255,255,0.02)',
+                      background: editingRefConfig.imageUrl ? 'transparent' : 'var(--list-item-bg)',
                       border: editingRefConfig.imageUrl ? 'none' : '1px dashed var(--border-subtle)',
                       minHeight: '200px',
                     }}
@@ -3192,8 +3911,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           <div
                             className="w-1/3 aspect-square rounded-xl flex items-center justify-center"
                             style={{
+                              ...glassBadge,
                               background: 'rgba(0, 0, 0, 0.6)',
-                              backdropFilter: 'blur(4px)',
                             }}
                           >
                             <Upload size={32} style={{ color: 'rgba(255, 255, 255, 0.9)' }} />

@@ -1,3 +1,5 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -15,6 +17,7 @@ public enum OpenPlatformProxyMode
 /// <summary>
 /// 开放平台应用实体
 /// </summary>
+[AppOwnership(AppNames.OpenPlatform, AppNames.OpenPlatformDisplay, IsPrimary = true)]
 public class OpenPlatformApp
 {
     /// <summary>应用唯一标识（Guid 字符串）</summary>
@@ -60,4 +63,35 @@ public class OpenPlatformApp
     
     /// <summary>总请求数</summary>
     public long TotalRequests { get; set; }
+
+    // ========== Webhook 通知配置 ==========
+
+    /// <summary>Webhook 通知地址（仅支持 HTTPS）</summary>
+    public string? WebhookUrl { get; set; }
+
+    /// <summary>Webhook 接口凭证（可选，将以 Bearer 方式添加到请求头）</summary>
+    public string? WebhookSecret { get; set; }
+
+    /// <summary>是否启用 Webhook 通知</summary>
+    public bool WebhookEnabled { get; set; }
+
+    /// <summary>Token 额度上限（0 = 不限制）</summary>
+    public long TokenQuotaLimit { get; set; }
+
+    /// <summary>已使用的 Token 总量</summary>
+    public long TokensUsed { get; set; }
+
+    /// <summary>额度预警阈值（剩余 token 数低于此值时触发通知，默认 100000）</summary>
+    public long QuotaWarningThreshold { get; set; } = 100000;
+
+    /// <summary>上次发送额度预警的时间（用于防重复发送）</summary>
+    public DateTime? LastQuotaWarningAt { get; set; }
+
+    /// <summary>
+    /// 站内信通知目标。
+    /// - "owner"：仅通知应用绑定用户
+    /// - "all"：全局通知（所有用户可见）
+    /// - "none"：不发送站内信（默认）
+    /// </summary>
+    public string NotifyTarget { get; set; } = "none";
 }

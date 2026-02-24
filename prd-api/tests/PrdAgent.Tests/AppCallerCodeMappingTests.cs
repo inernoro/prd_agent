@@ -26,7 +26,7 @@ public class AppCallerCodeMappingTests
         return appKey switch
         {
             "visual-agent" => AppCallerRegistry.VisualAgent.Image.Text2Img,  // 默认文生图
-            "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Generation,
+            "literary-agent" => AppCallerRegistry.LiteraryAgent.Illustration.Text2Img,
             _ => $"{appKey}.image::generation"
         };
     }
@@ -47,18 +47,18 @@ public class AppCallerCodeMappingTests
     }
 
     [Fact]
-    public void LiteraryAgent_ShouldMapTo_LiteraryAgentIllustrationGeneration()
+    public void LiteraryAgent_ShouldMapTo_LiteraryAgentIllustrationText2Img()
     {
         // Arrange
         var appKey = "literary-agent";
-        var expectedCode = "literary-agent.illustration::generation"; // 注意：是 illustration，不是 image
+        var expectedCode = "literary-agent.illustration.text2img::generation"; // 默认文生图
 
         // Act
         var actualCode = ResolveAppCallerCode(appKey);
 
         // Assert
         Assert.Equal(expectedCode, actualCode);
-        Assert.Equal(AppCallerRegistry.LiteraryAgent.Illustration.Generation, actualCode);
+        Assert.Equal(AppCallerRegistry.LiteraryAgent.Illustration.Text2Img, actualCode);
     }
 
     [Fact]
@@ -112,8 +112,8 @@ public class AppCallerCodeMappingTests
     /// 验证 AppCallerRegistry 中定义的常量值正确
     /// </summary>
     [Theory]
-    [InlineData("visual-agent.image::generation")]
-    [InlineData("literary-agent.illustration::generation")]
+    [InlineData("visual-agent.image.text2img::generation")]
+    [InlineData("literary-agent.illustration.text2img::generation")]
     [InlineData("prd-agent-web.lab::generation")]
     public void AppCallerRegistry_ShouldContainExpectedCodes(string expectedCode)
     {
@@ -155,9 +155,12 @@ public class AppCallerCodeMappingTests
         // 文学创作使用 "illustration" 而不是 "image"
         // 因为文学创作的生图场景是"配图"，不是通用的"图片生成"
         
-        var literaryAgentCode = AppCallerRegistry.LiteraryAgent.Illustration.Generation;
+        var literaryAgentText2Img = AppCallerRegistry.LiteraryAgent.Illustration.Text2Img;
+        var literaryAgentImg2Img = AppCallerRegistry.LiteraryAgent.Illustration.Img2Img;
         
-        Assert.Contains("illustration", literaryAgentCode);
-        Assert.DoesNotContain(".image::", literaryAgentCode);
+        Assert.Contains("illustration", literaryAgentText2Img);
+        Assert.Contains("illustration", literaryAgentImg2Img);
+        Assert.DoesNotContain(".image::", literaryAgentText2Img);
+        Assert.DoesNotContain(".image::", literaryAgentImg2Img);
     }
 }

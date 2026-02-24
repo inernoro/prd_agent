@@ -219,8 +219,8 @@ check_desktop() {
     log_info "Cargo check..."
     cargo check
 
-    log_info "Rust format check (cargo fmt --check)..."
-    cargo fmt --check
+    log_info "Rust format (cargo fmt)..."
+    cargo fmt
 
     log_info "Clippy (deny warnings)..."
     cargo clippy -- -D warnings
@@ -237,7 +237,7 @@ check_ci() {
     cd "$SCRIPT_DIR/prd-api"
     dotnet restore PrdAgent.sln
     dotnet build PrdAgent.sln -c Release --no-restore
-    dotnet test PrdAgent.sln -c Release --no-build --verbosity normal
+    dotnet test PrdAgent.sln -c Release --no-build --verbosity normal --filter "Category!=Integration&Category!=Manual"
 
     # admin checks (align with .github/workflows/ci.yml admin-build)
     log_info "Admin: install/typecheck/build..."

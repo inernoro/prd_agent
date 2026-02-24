@@ -268,7 +268,24 @@ public class ImageGenRunWorker : BackgroundService
                         var loadedImageRefs = new List<Core.Models.MultiImage.ImageRefData>();
                         var isMultiImageVisionMode = false;
 
-                        // 1. 如果有 ImageRefs（新架构），使用 MultiImageDomainService 处理
+                        // ========== 兼容层：统一 InitImageAssetSha256 → ImageRefs ==========
+                        // 如果 ImageRefs 为空但 InitImageAssetSha256 存在，自动转换为 ImageRefs
+                        // 这样后续逻辑只需处理 ImageRefs，无需分支
+                        if ((run.ImageRefs == null || run.ImageRefs.Count == 0) &&
+                            !string.IsNullOrWhiteSpace(run.InitImageAssetSha256))
+                        {
+                            var initSha = run.InitImageAssetSha256.Trim().ToLowerInvariant();
+                            if (initSha.Length == 64 && Regex.IsMatch(initSha, "^[0-9a-f]{64}$"))
+                            {
+                                run.ImageRefs = new List<ImageRefInput>
+                                {
+                                    new() { RefId = 1, AssetSha256 = initSha, Label = "参考图" }
+                                };
+                                _logger.LogDebug("[兼容层] 已将 InitImageAssetSha256 转换为 ImageRefs[0]: sha={Sha}", initSha);
+                            }
+                        }
+
+                        // 1. 统一使用 ImageRefs 处理所有图片场景
                         if (run.ImageRefs != null && run.ImageRefs.Count > 0)
                         {
                             var parseResult = multiImageService.ParsePromptRefs(curPrompt, run.ImageRefs);
@@ -346,21 +363,95 @@ public class ImageGenRunWorker : BackgroundService
                             {
                                 _logger.LogWarning("[多图处理] 解析警告: {Warnings}", string.Join("; ", parseResult.Warnings));
                             }
-                        }
-                        // 2. 回退：使用 InitImageAssetSha256（单图兼容）
-                        else
-                        {
-                            var initSha = (run.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
-                            if (!string.IsNullOrWhiteSpace(initSha) && initSha.Length == 64 && Regex.IsMatch(initSha, "^[0-9a-f]{64}$"))
+
+                            // ========== 无 @imgN 但有图片的场景 ==========
+                            // 如果 ImageRefs 有图但 prompt 没有 @imgN，直接加载所有图片使用
+                            // 这种场景下不做 prompt 增强（因为没有 @imgN 可以替换）
+                            if (parseResult.ResolvedRefs.Count == 0 && run.ImageRefs.Count > 0)
                             {
-                                var found = await assetStorage.TryReadByShaAsync(initSha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                                if (found != null && found.Value.bytes.Length > 0)
+                                _logger.LogInformation("[无@imgN场景] prompt 无 @imgN 引用，但有 {Count} 张图片，直接加载使用", run.ImageRefs.Count);
+
+                                foreach (var imgRef in run.ImageRefs)
                                 {
-                                    var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
-                                    var b64 = Convert.ToBase64String(found.Value.bytes);
-                                    initImageBase64 = $"data:{mime};base64,{b64}";
+                                    if (string.IsNullOrWhiteSpace(imgRef.AssetSha256)) continue;
+
+                                    var sha = imgRef.AssetSha256.Trim().ToLowerInvariant();
+                                    if (sha.Length != 64 || !Regex.IsMatch(sha, "^[0-9a-f]{64}$")) continue;
+
+                                    var found = await assetStorage.TryReadByShaAsync(sha, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                                    if (found != null && found.Value.bytes.Length > 0)
+                                    {
+                                        var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? "image/png" : found.Value.mime.Trim();
+                                        var b64 = Convert.ToBase64String(found.Value.bytes);
+                                        var dataUrl = $"data:{mime};base64,{b64}";
+                                        var cosUrl = assetStorage.TryBuildUrlBySha(sha, mime, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+
+                                        loadedImageRefs.Add(new Core.Models.MultiImage.ImageRefData
+                                        {
+                                            RefId = imgRef.RefId,
+                                            Base64 = dataUrl,
+                                            MimeType = mime,
+                                            Label = imgRef.Label ?? $"图片{imgRef.RefId}",
+                                            Sha256 = sha,
+                                            CosUrl = cosUrl
+                                        });
+                                    }
+                                }
+
+                                // 根据加载的图片数量决定模式
+                                if (loadedImageRefs.Count > 1)
+                                {
+                                    isMultiImageVisionMode = true;
+                                    _logger.LogInformation("[无@imgN场景] 启用 Vision API，共 {Count} 张图片", loadedImageRefs.Count);
+                                }
+                                else if (loadedImageRefs.Count == 1)
+                                {
+                                    initImageBase64 = loadedImageRefs[0].Base64;
+                                    _logger.LogInformation("[无@imgN场景] 单图模式，使用参考图 sha={Sha}", loadedImageRefs[0].Sha256);
                                 }
                             }
+                        }
+                        // 2. 无图片场景：text2img（兼容层已处理 InitImageAssetSha256，这里只剩真正的无图情况）
+                        else
+                        {
+                            _logger.LogDebug("[text2img] 无参考图，使用纯文生图模式");
+                        }
+
+                        // ========== 守卫：检查 prompt 中是否有未解析的 @imgN 引用 ==========
+                        // 如果 finalPrompt 仍包含 @imgN 但没有加载到对应图片，说明图片引用未能解析
+                        // 此时不应静默退化为 text2img（会把 "@img5@img1结合这两个" 原样发给文生图 API）
+                        var unresolvedImgRefs = Regex.Matches(finalPrompt, @"@img\d+");
+                        if (unresolvedImgRefs.Count > 0 && loadedImageRefs.Count == 0 && initImageBase64 == null)
+                        {
+                            var unresolvedTags = string.Join(", ", unresolvedImgRefs.Select(m => m.Value).Distinct());
+                            _logger.LogWarning(
+                                "[ImageGenRunWorker] prompt 包含未解析的图片引用 {Tags}，但无可用图片数据。RunId={RunId}, ImageRefsCount={RefsCount}",
+                                unresolvedTags, run.Id, run.ImageRefs?.Count ?? 0);
+
+                            var guardMsg = $"图片引用 {unresolvedTags} 无法解析：参考图数据缺失或已过期，请重新选择图片后再试";
+                            await UpsertRunItemAsync(run, curItemIndex, imageIndex, curPrompt, reqSize, ImageGenRunItemStatus.Error, null, null, null, "IMAGE_REF_UNRESOLVED", guardMsg, ct);
+                            await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Failed, 1), cancellationToken: ct);
+
+                            var guardGenType = "unresolved";
+                            var guardPayload = JsonSerializer.Serialize(new { msg = guardMsg, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = guardGenType }, JsonOptions);
+                            var errMsgContent = $"[GEN_ERROR]{guardPayload}";
+                            var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
+
+                            await AppendEventAsync(run, "image", new
+                            {
+                                type = "imageError",
+                                runId = run.Id,
+                                itemIndex = curItemIndex,
+                                imageIndex,
+                                prompt = curPrompt,
+                                requestedSize = reqSize,
+                                modelId = run.ModelId,
+                                platformId = run.PlatformId,
+                                errorCode = "IMAGE_REF_UNRESOLVED",
+                                errorMessage = guardMsg,
+                                savedMessageId = errMsgId
+                            }, ct);
+                            return;
                         }
 
                         _logger.LogInformation("[ImageGenRunWorker Debug] Run {RunId}: AppKey={AppKey}, UserId={UserId}, AppCallerCode={AppCallerCode}",
@@ -416,43 +507,33 @@ public class ImageGenRunWorker : BackgroundService
                             isMultiImageVisionMode,
                             loadedImageRefs.Count);
 
-                        // 根据图片数量选择 API：
-                        // - 0张：文生图（GenerateAsync）
-                        // - 1张：图生图（GenerateAsync with initImageBase64）
-                        // - 2+张：多图Vision API（GenerateWithVisionAsync）
-                        ApiResponse<ImageGenResult> res;
-                        if (isMultiImageVisionMode && loadedImageRefs.Count > 1)
+                        // 统一图片生成：根据 images 数量自动路由（文生图/图生图/多图）
+                        // 将所有已加载的图片（含 initImageBase64 单图兼容）合并为 data URI 列表
+                        var allImages = new List<string>();
+                        if (loadedImageRefs.Count > 0)
                         {
-                            _logger.LogInformation(
-                                "[多图Vision] 使用 Vision API 发送 {Count} 张图片到模型",
-                                loadedImageRefs.Count);
+                            allImages.AddRange(loadedImageRefs.Select(r =>
+                                r.Base64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                                    ? r.Base64
+                                    : $"data:{r.MimeType ?? "image/png"};base64,{r.Base64}"));
+                        }
+                        else if (!string.IsNullOrWhiteSpace(initImageBase64))
+                        {
+                            allImages.Add(initImageBase64);
+                        }
 
-                            res = await imageClient.GenerateWithVisionAsync(
-                                finalPrompt,
-                                loadedImageRefs,
-                                reqSize,
-                                ct,
-                                appCallerCode,
-                                modelId: requestedModelId,
-                                platformId: run.PlatformId,
-                                modelName: run.ModelId);
-                        }
-                        else
-                        {
-                            // 使用传统 API（文生图或单图图生图）
-                            res = await imageClient.GenerateAsync(
-                                finalPrompt,
-                                n: 1,
-                                size: reqSize,
-                                responseFormat: run.ResponseFormat,
-                                ct,
-                                appCallerCode,
-                                modelId: requestedModelId,
-                                platformId: run.PlatformId,
-                                modelName: run.ModelId,
-                                initImageBase64: initImageBase64,
-                                initImageProvided: initImageBase64 != null);
-                        }
+                        var res = await imageClient.GenerateUnifiedAsync(
+                            finalPrompt,
+                            n: 1,
+                            size: reqSize,
+                            responseFormat: run.ResponseFormat,
+                            ct,
+                            appCallerCode,
+                            images: allImages.Count > 0 ? allImages : null,
+                            modelId: requestedModelId,
+                            platformId: run.PlatformId,
+                            modelName: run.ModelId,
+                            maskBase64: run.MaskBase64);
 
                         if (!res.Success || res.Data == null)
                         {
@@ -460,6 +541,17 @@ public class ImageGenRunWorker : BackgroundService
                             var msg = res.Error?.Message ?? "生图失败";
                             await UpsertRunItemAsync(run, curItemIndex, imageIndex, curPrompt, reqSize, ImageGenRunItemStatus.Error, null, null, null, code, msg, ct);
                             await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Failed, 1), cancellationToken: ct);
+
+                            // 服务器权威性：后端自动保存错误消息
+                            var errRefSrc = loadedImageRefs.FirstOrDefault()?.CosUrl;
+                            var errImageRefShas = loadedImageRefs.Count > 0 ? loadedImageRefs.Select(r => r.Sha256).Where(s => !string.IsNullOrEmpty(s)).ToList() : null;
+                            var errGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
+                            var errMsgContent = $"[GEN_ERROR]{JsonSerializer.Serialize(new { msg, refSrc = errRefSrc, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = errGenType, imageRefShas = errImageRefShas }, JsonOptions)}";
+
+                            // 失败时也记录 input images（方便日志排查参考图问题）
+                            await PatchLogImagesAsync(run, curItemIndex, imageIndex, loadedImageRefs, null, ct);
+                            var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
+
                             await AppendEventAsync(run, "image", new
                             {
                                 type = "imageError",
@@ -471,7 +563,8 @@ public class ImageGenRunWorker : BackgroundService
                                 modelId = run.ModelId,
                                 platformId = run.PlatformId,
                                 errorCode = code,
-                                errorMessage = msg
+                                errorMessage = msg,
+                                savedMessageId = errMsgId
                             }, ct);
 
                             // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 error
@@ -508,6 +601,16 @@ public class ImageGenRunWorker : BackgroundService
 
                         await UpsertRunItemAsync(run, curItemIndex, imageIndex, curPrompt, reqSize, ImageGenRunItemStatus.Done, base64, url, revisedPrompt, null, null, ct, effSize, sizeAdjusted, ratioAdjusted);
                         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Done, 1), cancellationToken: ct);
+                        // 服务器权威性：后端自动保存 Assistant 消息到 image_master_messages
+                        var doneRefSrc = loadedImageRefs.FirstOrDefault()?.CosUrl;
+                        var doneImageRefShas = loadedImageRefs.Count > 0 ? loadedImageRefs.Select(r => r.Sha256).Where(s => !string.IsNullOrEmpty(s)).ToList() : null;
+                        var doneGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
+                        var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
+                        var doneMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", doneMsgContent, ct);
+
+                        // ===== 日志图片填充：input 来自前端 COS URL，output 来自生成结果 =====
+                        await PatchLogImagesAsync(run, curItemIndex, imageIndex, loadedImageRefs, res.Data.Images, ct);
+
                         await AppendEventAsync(run, "image", new
                         {
                             type = "imageDone",
@@ -533,7 +636,8 @@ public class ImageGenRunWorker : BackgroundService
                                 url = persisted.Url,
                                 originalUrl = persisted.OriginalUrl,
                                 originalSha256 = persisted.OriginalSha256
-                            }
+                            },
+                            savedMessageId = doneMsgId
                         }, ct);
 
                         // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 done
@@ -602,6 +706,121 @@ public class ImageGenRunWorker : BackgroundService
     {
         // 高频事件：写入 RunStore（Redis），避免每个 delta 都更新 Mongo 的 LastSeq / events
         _ = await _runStore.AppendEventAsync(RunKinds.ImageGen, run.Id, eventName, payload, ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
+    }
+
+    /// <summary>
+    /// 将输入参考图 / 输出生成图的 COS URL 写入 LLM 日志（按 requestId 匹配）。
+    /// 输入图来自前端传递的 COS URL（零重复存储），输出图来自生成结果。
+    /// </summary>
+    private async Task PatchLogImagesAsync(
+        ImageGenRun run,
+        int curItemIndex,
+        int imageIndex,
+        List<ImageRefData> loadedImageRefs,
+        List<ImageGenImage>? outputImages,
+        CancellationToken ct)
+    {
+        try
+        {
+            var logRequestId = $"{run.Id}-{curItemIndex}-{imageIndex}";
+
+            // input：优先用前端传入的 COS URL（run.ImageRefs），回退到 loadedImageRefs
+            var inputs = new List<LlmLogImage>();
+            if (run.ImageRefs is { Count: > 0 })
+            {
+                foreach (var r in run.ImageRefs)
+                {
+                    var cosUrl = !string.IsNullOrWhiteSpace(r.Url) ? r.Url
+                        : loadedImageRefs.FirstOrDefault(lr => lr.RefId == r.RefId)?.CosUrl;
+                    if (string.IsNullOrWhiteSpace(cosUrl)) continue;
+                    inputs.Add(new LlmLogImage
+                    {
+                        Url = cosUrl,
+                        Label = r.Label,
+                        Sha256 = !string.IsNullOrWhiteSpace(r.AssetSha256) ? r.AssetSha256
+                            : loadedImageRefs.FirstOrDefault(lr => lr.RefId == r.RefId)?.Sha256
+                    });
+                }
+            }
+
+            // 蒙版：将 MaskBase64 作为额外的输入图记录（data URI 可直接用于前端 <img> 展示）
+            if (!string.IsNullOrWhiteSpace(run.MaskBase64))
+            {
+                var maskUrl = run.MaskBase64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                    ? run.MaskBase64
+                    : $"data:image/png;base64,{run.MaskBase64}";
+                inputs.Add(new LlmLogImage
+                {
+                    Url = maskUrl,
+                    Label = "蒙版"
+                });
+            }
+
+            // output：生成结果图
+            var outputs = new List<LlmLogImage>();
+            if (outputImages is { Count: > 0 })
+            {
+                foreach (var img in outputImages)
+                {
+                    var displayUrl = img.Url;
+                    if (string.IsNullOrWhiteSpace(displayUrl)) continue;
+                    outputs.Add(new LlmLogImage
+                    {
+                        Url = displayUrl,
+                        OriginalUrl = img.OriginalUrl,
+                        Label = "生成结果",
+                        Sha256 = img.OriginalSha256
+                    });
+                }
+            }
+
+            if (inputs.Count == 0 && outputs.Count == 0) return;
+
+            var update = Builders<LlmRequestLog>.Update;
+            var updates = new List<UpdateDefinition<LlmRequestLog>>();
+            if (inputs.Count > 0) updates.Add(update.Set(x => x.InputImages, inputs));
+            if (outputs.Count > 0) updates.Add(update.Set(x => x.OutputImages, outputs));
+
+            await _db.LlmRequestLogs.UpdateOneAsync(
+                x => x.RequestId == logRequestId,
+                update.Combine(updates),
+                cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[ImageGenRunWorker] PatchLogImages 失败: RunId={RunId}", run.Id);
+        }
+    }
+
+    /// <summary>
+    /// 在 image_master_messages 中保存一条消息（服务器权威性：消息由后端保存，不依赖前端补存）
+    /// </summary>
+    private async Task<string?> SaveWorkspaceMessageAsync(string workspaceId, string ownerUserId, string role, string content, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(workspaceId)) return null;
+        try
+        {
+            var m = new ImageMasterMessage
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                WorkspaceId = workspaceId,
+                OwnerUserId = ownerUserId,
+                Role = role,
+                Content = content.Length > 64 * 1024 ? content[..(64 * 1024)] : content,
+                CreatedAt = DateTime.UtcNow
+            };
+            await _db.ImageMasterMessages.InsertOneAsync(m, cancellationToken: ct);
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                x => x.Id == workspaceId,
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+            return m.Id;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[ImageGenRunWorker] 保存消息失败: workspaceId={WorkspaceId}", workspaceId);
+            return null;
+        }
     }
 
     private async Task UpsertRunItemAsync(
@@ -830,6 +1049,8 @@ public class ImageGenRunWorker : BackgroundService
                     ["sha256"] = asset.Sha256,
                     ["createdAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 };
+                // 占位元素缺失时，必须分配新的唯一 refId，避免复用输入图 refId 导致 @imgN 解析命中错误图片。
+                o["refId"] = AllocateNextCanvasRefId(elements);
                 if (run.TargetX.HasValue) o["x"] = run.TargetX.Value;
                 if (run.TargetY.HasValue) o["y"] = run.TargetY.Value;
                 if (run.TargetW.HasValue) o["w"] = run.TargetW.Value;
@@ -856,6 +1077,54 @@ public class ImageGenRunWorker : BackgroundService
                 cancellationToken: ct);
             if (res.ModifiedCount > 0) return;
         }
+    }
+
+    private static int AllocateNextCanvasRefId(JsonArray elements)
+    {
+        var maxRefId = 0;
+        foreach (var n in elements)
+        {
+            if (n is not JsonObject o) continue;
+            if (!TryGetPositiveIntFromNode(o["refId"], out var refId)) continue;
+            if (refId > maxRefId) maxRefId = refId;
+        }
+
+        // 约定 refId 从 1 开始递增
+        return maxRefId + 1;
+    }
+
+    private static bool TryGetPositiveIntFromNode(JsonNode? node, out int value)
+    {
+        value = 0;
+        if (node is not JsonValue v) return false;
+
+        if (v.TryGetValue<int>(out var intVal) && intVal > 0)
+        {
+            value = intVal;
+            return true;
+        }
+
+        if (v.TryGetValue<long>(out var longVal) && longVal > 0 && longVal <= int.MaxValue)
+        {
+            value = (int)longVal;
+            return true;
+        }
+
+        if (v.TryGetValue<double>(out var doubleVal) && doubleVal > 0 && doubleVal <= int.MaxValue)
+        {
+            value = (int)Math.Floor(doubleVal);
+            return true;
+        }
+
+        if (v.TryGetValue<string>(out var strVal)
+            && int.TryParse(strVal, out var parsed)
+            && parsed > 0)
+        {
+            value = parsed;
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>

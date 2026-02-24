@@ -24,5 +24,6 @@ public interface ILlmGateway
         string appCallerCode,
         string modelType,
         int maxTokens = 4096,
-        double temperature = 0.2);
+        double temperature = 0.2,
+        bool includeThinking = false);
 }

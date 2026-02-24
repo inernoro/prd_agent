@@ -103,6 +103,17 @@ public static class Desktop
         )]
         public const string SectionChat = "prd-agent-desktop.preview-ask.section::chat";
     }
+
+    public static class Skill
+    {
+        [AppCallerMetadata(
+            "技能执行-对话",
+            "通过技能系统执行用户技能",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Skill"
+        )]
+        public const string ExecuteChat = "prd-agent-desktop.skill.execute::chat";
+    }
 }
     
 /// <summary>
@@ -174,6 +185,17 @@ public static class VisualAgent
             Category = "Workspace"
         )]
         public const string Title = "visual-agent.workspace-title::intent";
+    }
+
+    public static class DrawingBoard
+    {
+        [AppCallerMetadata(
+            "手绘板对话",
+            "手绘板中的创意对话交互，AI 生成字符画参考",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "DrawingBoard"
+        )]
+        public const string Chat = "visual-agent.drawing-board::chat";
     }
 
     public static class Compose
@@ -275,6 +297,17 @@ public static class LiteraryAgent
         )]
         public const string Img2Img = "literary-agent.illustration.img2img::generation";
     }
+
+    public static class Prompt
+    {
+        [AppCallerMetadata(
+            "风格提示词优化",
+            "AI 提取旧提示词中的风格描述，去除格式指令",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Prompt"
+        )]
+        public const string Optimize = "literary-agent.prompt.optimize::chat";
+    }
 }
 
 /// <summary>
@@ -319,6 +352,25 @@ public static class DefectAgent
 }
 
 /// <summary>
+/// Tutorial Email 教程邮件
+/// </summary>
+public static class TutorialEmail
+{
+    public const string AppName = "Tutorial Email";
+
+    public static class Generate
+    {
+        [AppCallerMetadata(
+            "教程邮件生成",
+            "AI 自动生成教程邮件 HTML 内容",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Email"
+        )]
+        public const string Chat = "tutorial-email.generate::chat";
+    }
+}
+
+/// <summary>
 /// Open Platform 开放平台
 /// </summary>
 public static class OpenPlatform
@@ -350,6 +402,136 @@ public static class OpenPlatform
             Category = "Proxy"
         )]
         public const string Rerank = "open-platform-agent.proxy::rerank";
+    }
+}
+
+/// <summary>
+/// AI Toolbox 百宝箱
+/// </summary>
+public static class AiToolbox
+{
+    public const string AppName = "AI Toolbox";
+
+    public static class Orchestration
+    {
+        [AppCallerMetadata(
+            "意图识别",
+            "识别用户输入的意图，决定调用哪个 Agent",
+            ModelTypes = new[] { ModelTypes.Intent },
+            Category = "Orchestration"
+        )]
+        public const string Intent = "ai-toolbox.orchestration::intent";
+
+        [AppCallerMetadata(
+            "任务规划",
+            "将复杂任务分解为多个子任务",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Orchestration"
+        )]
+        public const string Planning = "ai-toolbox.orchestration.planning::chat";
+
+        [AppCallerMetadata(
+            "对话交互",
+            "百宝箱对话交互",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Orchestration"
+        )]
+        public const string Chat = "ai-toolbox.orchestration::chat";
+    }
+
+    public static class Agent
+    {
+        [AppCallerMetadata(
+            "Agent 执行",
+            "调用具体 Agent 执行任务",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string Execute = "ai-toolbox.agent.execute::chat";
+    }
+
+    /// <summary>
+    /// 各 Agent 的 AppCallerCode
+    /// </summary>
+    public static class Agents
+    {
+        [AppCallerMetadata(
+            "PRD Agent 对话",
+            "PRD 分析、缺口检测、问题解答",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string PrdChat = "ai-toolbox.agent.prd::chat";
+
+        [AppCallerMetadata(
+            "Visual Agent 对话",
+            "视觉创作对话交互",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string VisualChat = "ai-toolbox.agent.visual::chat";
+
+        [AppCallerMetadata(
+            "Visual Agent 视觉理解",
+            "图片描述、视觉理解",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Agent"
+        )]
+        public const string VisualVision = "ai-toolbox.agent.visual::vision";
+
+        [AppCallerMetadata(
+            "Visual Agent 图片生成",
+            "文生图、图生图",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Agent"
+        )]
+        public const string VisualGeneration = "ai-toolbox.agent.visual::generation";
+
+        [AppCallerMetadata(
+            "Literary Agent 对话",
+            "文学创作、写作、润色",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string LiteraryChat = "ai-toolbox.agent.literary::chat";
+
+        [AppCallerMetadata(
+            "Defect Agent 对话",
+            "缺陷提取、分类、报告",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string DefectChat = "ai-toolbox.agent.defect::chat";
+    }
+}
+
+/// <summary>
+/// Workflow Agent 工作流自动化
+/// </summary>
+public static class WorkflowAgent
+{
+    public const string AppName = "Workflow Agent";
+
+    public static class LlmAnalyzer
+    {
+        [AppCallerMetadata(
+            "工作流-LLM分析",
+            "工作流中使用大语言模型对数据进行智能分析、总结、分类",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "workflow-agent.llm-analyzer::chat";
+    }
+
+    public static class ReportGenerator
+    {
+        [AppCallerMetadata(
+            "工作流-报告生成",
+            "工作流中使用LLM将结构化数据渲染为可读报告",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "workflow-agent.report-generator::chat";
     }
 }
 
@@ -402,11 +584,11 @@ public static class Admin
     {
         [AppCallerMetadata(
             "模型重分类",
-            "使用 AI 对平台可用模型进行分类",
-            ModelTypes = new[] { ModelTypes.Chat },
+            "使用 AI 对平台可用模型进行分类（严格 JSON 输出）",
+            ModelTypes = new[] { ModelTypes.Intent },
             Category = "Management"
         )]
-        public const string Reclassify = "prd-agent-web.platforms.reclassify::chat";
+        public const string Reclassify = "prd-agent-web.platforms.reclassify::intent";
     }
 
     public static class Prompts

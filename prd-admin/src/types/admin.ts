@@ -128,6 +128,10 @@ export type LlmRequestLogListItem = {
   questionPreview?: string | null;
   /** 列表预览：模型回答（短文本，可用于 UI 滚动） */
   answerPreview?: string | null;
+  /** 是否发生了模型降级 */
+  isFallback?: boolean | null;
+  /** 期望使用的模型 */
+  expectedModel?: string | null;
 };
 
 export type LlmRequestLog = {
@@ -170,6 +174,8 @@ export type LlmRequestLog = {
   responseHeaders?: Record<string, string> | null;
   questionText?: string | null;
   answerText?: string | null;
+  /** AI 思考过程文本（DeepSeek reasoning_content） */
+  thinkingText?: string | null;
   answerTextChars?: number | null;
   answerTextHash?: string | null;
   assembledTextChars?: number | null;
@@ -184,6 +190,33 @@ export type LlmRequestLog = {
   endedAt?: string | null;
   durationMs?: number | null;
   status: string;
+  /** 图片引用列表（参考图 COS URL 等元数据，用于日志页展示） */
+  imageReferences?: LlmImageReference[] | null;
+  /** 输入参考图（COS URL，来自前端上传） */
+  inputImages?: LlmLogImage[] | null;
+  /** 输出生成图（COS URL，来自生图结果） */
+  outputImages?: LlmLogImage[] | null;
+  /** 是否发生了模型降级 */
+  isFallback?: boolean | null;
+  /** 降级原因 */
+  fallbackReason?: string | null;
+  /** 期望使用的模型 */
+  expectedModel?: string | null;
+};
+
+export type LlmImageReference = {
+  sha256?: string | null;
+  cosUrl?: string | null;
+  label?: string | null;
+  mimeType?: string | null;
+  sizeBytes?: number | null;
+};
+
+export type LlmLogImage = {
+  url: string;
+  originalUrl?: string | null;
+  label?: string | null;
+  sha256?: string | null;
 };
 
 export type UploadArtifact = {

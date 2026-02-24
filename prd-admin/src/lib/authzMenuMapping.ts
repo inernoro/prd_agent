@@ -104,6 +104,12 @@ export const menuList: MenuDef[] = [
     icon: 'FlaskConical',
     permissions: ['lab.read', 'lab.write'],
   },
+  {
+    appKey: 'executive',
+    label: '总裁面板',
+    icon: 'Crown',
+    permissions: ['executive.read'],
+  },
 ];
 
 /**
@@ -165,6 +171,9 @@ export const allPermissions: PermissionDef[] = [
   { key: 'prd-agent.use', label: '米多智能体平台', description: '智能解读与问答', category: 'use' },
   { key: 'visual-agent.use', label: '视觉创作 Agent', description: '高级视觉创作工作区', category: 'use' },
   { key: 'literary-agent.use', label: '文学创作 Agent', description: '文章配图智能生成', category: 'use' },
+
+  // 总裁面板
+  { key: 'executive.read', label: '总裁面板 - 读', description: '查看总裁面板和周报', category: 'read' },
 
   // 超级权限
   { key: 'super', label: '超级权限', description: '绕过所有权限检查', category: 'super' },

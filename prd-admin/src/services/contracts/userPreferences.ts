@@ -8,10 +8,23 @@ export type ThemeConfigResponse = {
   opacity?: string;
   enableGlow?: boolean;
   sidebarGlass?: string;
+  performanceMode?: string;
 };
 
 /** 视觉代理生成类型 */
 export type VisualAgentGenerationType = 'all' | 'text2img' | 'img2img' | 'vision';
+
+/** 快捷指令配置 */
+export type QuickActionConfig = {
+  /** 唯一标识 */
+  id: string;
+  /** 显示名称 */
+  name: string;
+  /** 提示词模板 */
+  prompt: string;
+  /** 图标名称（lucide-react 图标 key，可选） */
+  icon?: string;
+};
 
 /** 视觉代理偏好设置 */
 export type VisualAgentPreferences = {
@@ -23,6 +36,8 @@ export type VisualAgentPreferences = {
   generationType?: VisualAgentGenerationType;
   /** 是否启用直连模式（跳过 prompt 解析） */
   directPrompt?: boolean;
+  /** 用户自定义快捷指令（最多 10 个） */
+  quickActions?: QuickActionConfig[];
 };
 
 export type UserPreferences = {

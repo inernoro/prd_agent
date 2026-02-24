@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { check as checkUpdate } from '@tauri-apps/plugin-updater';
 import { invoke } from '../../lib/tauri';
@@ -20,6 +20,13 @@ interface ApiTestResult {
 
 const DEFAULT_API_URL_NON_DEV = 'https://pa.759800.com';
 const DEFAULT_API_URL_DEV = 'http://localhost:5000';
+
+/** 预设服务器列表（用户可直接选择，无需手动输入） */
+const PRESET_SERVERS = [
+  { label: 'pa.759800.com', url: 'https://pa.759800.com' },
+  { label: 'miduo.org', url: 'https://miduo.org' },
+  { label: 'sassagent.com', url: 'https://sassagent.com' },
+];
 
 function getDefaultApiUrl(isDeveloper: boolean) {
   return isDeveloper ? DEFAULT_API_URL_DEV : DEFAULT_API_URL_NON_DEV;
@@ -91,6 +98,9 @@ export default function SettingsModal() {
   // 网络诊断模态框
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
 
+  // 缓存 checkUpdate 返回的 update 对象，避免 downloadAndInstall 时重复请求
+  const pendingUpdateRef = useRef<any>(null);
+
   useEffect(() => {
     if (isModalOpen) {
       loadConfig();
@@ -98,6 +108,7 @@ export default function SettingsModal() {
       setUpdateStatus('idle');
       setUpdateInfo(null);
       setUpdateError('');
+      pendingUpdateRef.current = null;
       setClearConfirmStep(0);
       setCacheBytes(null);
       setCacheNote('');
@@ -252,11 +263,10 @@ export default function SettingsModal() {
     // 注意：公钥是编译时嵌入的，这里打印的是源代码中的值，运行中的客户端可能不同
     console.log('[Updater] Expected pubkey (from source):', 'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU2RThCQjIzRDhDOTAwQTIKUldTaUFNbllJN3ZvNWgxR3lnZWZNZ09ZbEZYMC9WVCthL0w3NW5CejRrdW53STEzc1FvcEE0dTUK');
     // 打印配置的 endpoints（这是源代码中的值，编译后会嵌入到二进制中）
-    console.log('[Updater] Configured endpoints (from source):');
-    console.log('  1. https://github.com/inernoro/prd_agent/releases/latest/download/latest-{{target}}.json');
-    console.log('  2. https://github.com/inernoro/prd_agent/releases/latest/download/latest.json');
+    console.log('[Updater] Configured endpoint (from source):');
+    console.log('  https://github.com/inernoro/prd_agent/releases/latest/download/latest-{{target}}.json');
     console.log(
-      '[Updater] Note: In our build pipeline, {{target}} is set to Rust target triple (e.g. aarch64-apple-darwin, x86_64-pc-windows-msvc)'
+      '[Updater] Note: {{target}} is Rust target triple (e.g. aarch64-apple-darwin, x86_64-pc-windows-msvc)'
     );
     
     // 通过 Tauri 后端 fetch manifest（绕过浏览器 CORS 限制）
@@ -320,6 +330,7 @@ export default function SettingsModal() {
         console.log('[Updater] No update available, current version is latest');
         return;
       }
+      pendingUpdateRef.current = res;
       setUpdateInfo({
         version: typeof res?.version === 'string' ? res.version : undefined,
         notes: typeof res?.body === 'string' ? res.body : typeof res?.notes === 'string' ? res.notes : undefined,
@@ -357,9 +368,12 @@ export default function SettingsModal() {
     setUpdateStatus('installing');
 
     try {
-      const res: any = await checkUpdate();
-      const available = Boolean(res?.available);
-      if (!available) {
+      // 优先使用 handleCheckUpdate 缓存的 update 对象，避免重复请求
+      let res: any = pendingUpdateRef.current;
+      if (!res || !Boolean(res?.available)) {
+        res = await checkUpdate();
+      }
+      if (!Boolean(res?.available)) {
         setUpdateStatus('no-update');
         return;
       }
@@ -371,12 +385,26 @@ export default function SettingsModal() {
       }
 
       // 大多数情况下 updater 会自动重启；这里提供兜底提示
+      pendingUpdateRef.current = null;
       setUpdateStatus('idle');
       setUpdateInfo(null);
       alert('更新已完成。如未自动重启，请手动关闭并重新打开应用。');
     } catch (e) {
       setUpdateStatus('error');
       const raw = String(e);
+      console.error('[Updater] downloadAndInstall error:', raw);
+      // ACL 权限不足：通常是 Tauri capabilities 缺少 dialog:allow-message 等权限
+      if (/not allowed by ACL/i.test(raw)) {
+        setUpdateError(
+          [
+            '更新失败：应用权限配置不足（ACL 错误）。',
+            '请升级到最新版本以修复此问题，可前往 GitHub Releases 手动下载。',
+            '',
+            `原始错误：${raw}`,
+          ].join('\n')
+        );
+        return;
+      }
       // 下载阶段 404：通常是 manifest 里写的安装包 URL 与 Release 实际资产文件名不一致（空格/点号/大小写）
       if (/status:\s*404/i.test(raw) || /\b404\b/.test(raw)) {
         setUpdateError(
@@ -588,29 +616,27 @@ export default function SettingsModal() {
             </div>
           </div>
 
-          {/* 开发者选项：仅本地调试可见（发布版默认关闭且不提供入口） */}
-          {import.meta.env.DEV && (
-            <div className="space-y-3">
-              <label className="block text-sm font-medium text-text-secondary">
-                开发者选项
-              </label>
+          {/* 开发者选项：常开，不受构建模式限制 */}
+          <div className="space-y-3">
+            <label className="block text-sm font-medium text-text-secondary">
+              开发者选项
+            </label>
 
-              <label className="flex items-center gap-3 cursor-pointer">
-                <div className="relative">
-                  <input
-                    type="checkbox"
-                    checked={isDeveloper}
-                    onChange={(e) => handleDeveloperChange(e.target.checked)}
-                    className="sr-only"
-                  />
-                  <div className={`w-10 h-6 rounded-full transition-colors ${isDeveloper ? 'bg-cyan-500' : 'bg-black/10 dark:bg-white/20'}`}>
-                    <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${isDeveloper ? 'translate-x-4' : ''}`} />
-                  </div>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  checked={isDeveloper}
+                  onChange={(e) => handleDeveloperChange(e.target.checked)}
+                  className="sr-only"
+                />
+                <div className={`w-10 h-6 rounded-full transition-colors ${isDeveloper ? 'bg-cyan-500' : 'bg-black/10 dark:bg-white/20'}`}>
+                  <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${isDeveloper ? 'translate-x-4' : ''}`} />
                 </div>
-                <span className="text-sm text-text-secondary">我是开发者（默认地址切换到本地）</span>
-              </label>
-            </div>
-          )}
+              </div>
+              <span className="text-sm text-text-secondary">我是开发者（默认地址切换到本地）</span>
+            </label>
+          </div>
 
           {/* API 地址配置 */}
           <div className="space-y-3">
@@ -618,10 +644,10 @@ export default function SettingsModal() {
               API 服务地址
             </label>
 
-            {/* 地址输入框（始终可编辑） */}
+            {/* 预设服务器选择 + 自定义输入 */}
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <label className="block text-xs text-text-secondary">API 地址</label>
+                <label className="block text-xs text-text-secondary">选择服务器</label>
                 <button
                   type="button"
                   onClick={() => {
@@ -633,6 +659,25 @@ export default function SettingsModal() {
                   恢复默认
                 </button>
               </div>
+              {!isDeveloper && (
+                <select
+                  value={PRESET_SERVERS.some((s) => s.url === apiUrl.trim()) ? apiUrl.trim() : '__custom__'}
+                  onChange={(e) => {
+                    if (e.target.value !== '__custom__') {
+                      setApiUrl(e.target.value);
+                      setTestResult(null);
+                    }
+                  }}
+                  className="w-full px-4 py-3 ui-control transition-colors"
+                >
+                  {PRESET_SERVERS.map((s) => (
+                    <option key={s.url} value={s.url}>{s.label}</option>
+                  ))}
+                  {!PRESET_SERVERS.some((s) => s.url === apiUrl.trim()) && (
+                    <option value="__custom__">自定义: {apiUrl.trim()}</option>
+                  )}
+                </select>
+              )}
               <input
                 type="url"
                 value={apiUrl}
@@ -642,6 +687,7 @@ export default function SettingsModal() {
                 }}
                 placeholder={getDefaultApiUrl(isDeveloper)}
                 className="w-full px-4 py-3 ui-control transition-colors"
+                style={!isDeveloper && PRESET_SERVERS.some((s) => s.url === apiUrl.trim()) ? { display: 'none' } : undefined}
               />
             </div>
           </div>

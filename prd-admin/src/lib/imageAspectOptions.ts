@@ -92,3 +92,39 @@ export function detectTierFromSize(size: string): '1k' | '2k' | '4k' | null {
   }
   return null;
 }
+
+// 辅助函数：从尺寸字符串检测比例（精确匹配 ASPECT_OPTIONS）
+export function detectAspectFromSize(size: string): AspectOptionId | null {
+  const s = (size || '').trim().toLowerCase();
+  for (const opt of ASPECT_OPTIONS) {
+    if (opt.size1k.toLowerCase() === s || opt.size2k.toLowerCase() === s || opt.size4k.toLowerCase() === s) {
+      return opt.id;
+    }
+  }
+  return null;
+}
+
+// 按分辨率分组的尺寸类型
+export type SizesByResolution = Record<'1k' | '2k' | '4k', Array<{ size: string; aspectRatio: string }>>;
+
+// 将扁平尺寸数组转换为按分辨率分组的格式
+export function sizesToSizesByResolution(sizes: string[]): SizesByResolution {
+  const result: SizesByResolution = { '1k': [], '2k': [], '4k': [] };
+  for (const size of sizes) {
+    const tier = detectTierFromSize(size);
+    const aspect = detectAspectFromSize(size);
+    if (tier && aspect) {
+      result[tier].push({ size, aspectRatio: aspect });
+    } else {
+      // 未知尺寸：根据像素总数猜测档位，使用宽高比
+      const [w, h] = size.split(/[xX×]/).map(Number);
+      if (!w || !h) continue;
+      const pixels = w * h;
+      const guessedTier: '1k' | '2k' | '4k' = pixels > 6_000_000 ? '4k' : pixels > 2_000_000 ? '2k' : '1k';
+      const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
+      const g = gcd(w, h);
+      result[guessedTier].push({ size, aspectRatio: `${w / g}:${h / g}` });
+    }
+  }
+  return result;
+}

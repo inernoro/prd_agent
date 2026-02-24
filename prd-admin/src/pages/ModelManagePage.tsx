@@ -36,12 +36,15 @@ import type { Model, Platform } from '@/types/admin';
 import { ModelHealthStatus } from '@/types/modelGroup';
 import type { ModelGroupItem } from '@/types/modelGroup';
 import { Activity, Check, ChevronLeft, ChevronRight, Clock, Database, DatabaseZap, Eye, EyeOff, ImagePlus, LayoutGrid, Link2, Loader2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
+import { glassPanel } from '@/lib/glassStyles';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { apiRequest } from '@/services/real/apiClient';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
 import { ModelKpiRail } from '@/components/model/ModelKpiRail';
 import { ModelTokensDisplay } from '@/components/model/ModelTokensDisplay';
 import { PlatformAvailableModelsDialog, type AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
+import { ModelListItem } from '@/components/model/ModelListItem';
 import { formatDuration } from '@/lib/formatStats';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -238,6 +241,7 @@ function aggregateModelStats(items: LlmModelStatsItem[]): Record<string, Aggrega
 }
 
 export default function ModelManagePage() {
+  const { isMobile } = useBreakpoint();
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [loading, setLoading] = useState(true);
@@ -918,7 +922,7 @@ export default function ModelManagePage() {
     // 右键时顺便选中，符合用户预期（菜单操作作用于当前行）
     setSelectedPlatformId(p.id);
     const menuW = 220;
-    const menuH = 96;
+    const menuH = 140;
     const x = Math.min(e.clientX, Math.max(8, window.innerWidth - menuW - 8));
     const y = Math.min(e.clientY, Math.max(8, window.innerHeight - menuH - 8));
     setPlatformCtxMenu({ open: true, x, y, platform: p });
@@ -994,7 +998,7 @@ export default function ModelManagePage() {
               ? 'rgba(168,85,247,0.18)'
               : t.includes('deepseek')
                 ? 'rgba(239,68,68,0.16)'
-                : 'rgba(255,255,255,0.08)';
+                : 'var(--border-subtle)';
     const fg =
       t.includes('openai')
         ? 'rgba(16,185,129,0.95)'
@@ -1146,7 +1150,7 @@ export default function ModelManagePage() {
 
   const inputStyle: React.CSSProperties = {
     background: 'var(--bg-input)',
-    border: '1px solid rgba(255,255,255,0.12)',
+    border: '1px solid var(--border-default)',
     color: 'var(--text-primary)',
   };
 
@@ -1159,9 +1163,9 @@ export default function ModelManagePage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5">
-      <div className={`grid gap-5 flex-1 min-h-0 transition-all ${platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[256px_1fr]'}`}>
-        {/* 左侧：平台列表（导航风格） */}
-        <GlassCard glow className="p-0 overflow-hidden flex flex-col">
+      <div className={`grid gap-5 flex-1 min-h-0 transition-all ${isMobile ? 'grid-cols-1' : platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[256px_1fr]'}`}>
+        {/* 左侧：平台列表（导航风格），移动端隐藏 */}
+        <GlassCard glow className={`p-0 overflow-hidden flex flex-col ${isMobile ? 'hidden' : ''}`}>
           {/* 折叠/展开按钮 */}
           <div className="p-2 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             {!platformSidebarCollapsed && (
@@ -1172,7 +1176,7 @@ export default function ModelManagePage() {
               onClick={() => setPlatformSidebarCollapsed((prev) => !prev)}
               className="inline-flex items-center justify-center h-8 w-8 rounded-[8px] transition-colors hover:bg-white/6 shrink-0 ml-auto"
               style={{
-                border: '1px solid rgba(255,255,255,0.12)',
+                border: '1px solid var(--border-default)',
                 color: 'var(--text-secondary)',
               }}
               title={platformSidebarCollapsed ? '展开平台列表' : '折叠平台列表'}
@@ -1221,13 +1225,13 @@ export default function ModelManagePage() {
               }}
               className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition-colors hover:bg-white/2 cursor-pointer select-none"
               style={{
-                background: selectedPlatformId === '__all__' ? 'rgba(255,255,255,0.04)' : 'transparent',
+                background: selectedPlatformId === '__all__' ? 'var(--bg-input)' : 'transparent',
                 border: selectedPlatformId === '__all__' ? '1px solid var(--border-default)' : '1px solid transparent',
               }}
             >
               <div
                 className="h-9 w-9 rounded-full flex items-center justify-center text-[12px] font-extrabold"
-                style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(247,247,251,0.78)', border: '1px solid var(--border-subtle)' }}
+                style={{ background: 'var(--border-subtle)', color: 'rgba(247,247,251,0.78)', border: '1px solid var(--border-subtle)' }}
               >
                 <LayoutGrid size={16} />
               </div>
@@ -1257,7 +1261,7 @@ export default function ModelManagePage() {
                     }}
                     className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition-colors hover:bg-white/2 cursor-pointer select-none"
                     style={{
-                      background: isSelected ? 'rgba(255,255,255,0.04)' : 'transparent',
+                      background: isSelected ? 'var(--bg-input)' : 'transparent',
                       border: isSelected ? '1px solid var(--border-default)' : '1px solid transparent',
                     }}
                   >
@@ -1288,7 +1292,7 @@ export default function ModelManagePage() {
                       style={
                         p.enabled
                           ? { background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(34,197,94,0.95)' }
-                          : { background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-secondary)' }
+                          : { background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }
                       }
                       disabled={loading || platformTogglingId === p.id}
                       aria-label={p.enabled ? '点击禁用平台' : '点击启用平台'}
@@ -1370,9 +1374,23 @@ export default function ModelManagePage() {
                 }}
               >
                 <Pencil size={16} />
-                重命名
+                编辑
               </button>
-              <div className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
+              <button
+                type="button"
+                className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
+                style={{ color: 'rgba(239,68,68,0.9)' }}
+                onClick={() => {
+                  const p = platformCtxMenu.platform;
+                  closePlatformCtxMenu();
+                  if (!p) return;
+                  onDeletePlatform(p);
+                }}
+              >
+                <Trash2 size={16} />
+                删除
+              </button>
+              <div className="h-px my-1" style={{ background: 'var(--border-subtle)' }} />
               <button
                 type="button"
                 className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
@@ -1387,7 +1405,7 @@ export default function ModelManagePage() {
 
         {/* 右侧：平台详情 + 模型列表 */}
         <GlassCard glow variant={selectedPlatform ? 'gold' : 'default'} className="p-0 overflow-hidden flex flex-col">
-          <div className="p-4 flex items-start justify-between gap-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <div className={`p-4 flex ${isMobile ? 'flex-col gap-3' : 'items-start justify-between gap-4'}`} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             <div className="min-w-0">
               <div className="flex items-center gap-2 min-w-0">
                 <div className="text-lg font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -1401,14 +1419,14 @@ export default function ModelManagePage() {
                 </div>
               ) : (
                 <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  从左侧选择一个平台以查看配置与模型列表
+                  {isMobile ? '点击上方"平台管理"选择平台' : '从左侧选择一个平台以查看配置与模型列表'}
                 </div>
               )}
             </div>
 
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="flex items-center gap-2">
-                <div className="relative">
+            <div className={`flex items-center gap-3 ${isMobile ? 'flex-wrap' : 'shrink-0'}`}>
+              <div className={`flex items-center gap-2 ${isMobile ? 'w-full' : ''}`}>
+                <div className={`relative ${isMobile ? 'flex-1' : ''}`}>
                   <Search
                     size={16}
                     className="absolute left-3 top-1/2 -translate-y-1/2"
@@ -1426,8 +1444,8 @@ export default function ModelManagePage() {
                     data-lpignore="true"
                     data-1p-ignore="true"
                     data-bwignore="true"
-                    className="h-10 rounded-[14px] pl-9 pr-4 text-sm outline-none"
-                    style={{ ...inputStyle, width: 260 }}
+                    className={`h-10 rounded-[14px] pl-9 pr-4 text-sm outline-none ${isMobile ? 'w-full' : ''}`}
+                    style={{ ...inputStyle, ...(isMobile ? {} : { width: 260 }) }}
                     placeholder="搜索模型..."
                   />
                 </div>
@@ -1495,8 +1513,8 @@ export default function ModelManagePage() {
                     }}
                     className="relative h-7 w-12 rounded-full transition-colors"
                     style={{
-                      background: selectedPlatform.enabled ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.10)',
-                      border: selectedPlatform.enabled ? '1px solid rgba(34,197,94,0.35)' : '1px solid rgba(255,255,255,0.14)',
+                      background: selectedPlatform.enabled ? 'rgba(34,197,94,0.22)' : 'var(--border-default)',
+                      border: selectedPlatform.enabled ? '1px solid rgba(34,197,94,0.35)' : '1px solid var(--border-default)',
                     }}
                     aria-label={selectedPlatform.enabled ? '已启用，点击关闭' : '已禁用，点击启用'}
                   >
@@ -1527,7 +1545,7 @@ export default function ModelManagePage() {
                           className="flex h-[30px] box-border items-center overflow-hidden rounded-[14px]"
                           style={{
                             background: 'var(--bg-input)',
-                            border: '1px solid rgba(255,255,255,0.12)',
+                            border: '1px solid var(--border-default)',
                           }}
                         >
                           <input
@@ -1558,7 +1576,7 @@ export default function ModelManagePage() {
                             {showApiKey ? <EyeOff size={18} /> : <Eye size={18} />}
                           </button>
 
-                          <div className="h-6 w-px" style={{ background: 'rgba(255,255,255,0.12)' }} />
+                          <div className="h-6 w-px" style={{ background: 'var(--border-default)' }} />
 
                           <button
                             type="button"
@@ -1619,7 +1637,7 @@ export default function ModelManagePage() {
                               <div
                                 key={m.id}
                                 className={[
-                                  'px-4 py-3 flex items-center justify-between hover:bg-white/2',
+                                  `px-4 py-3 flex ${isMobile ? 'flex-col gap-2' : 'items-center justify-between'} hover:bg-white/2`,
                                   mainJustSetId === m.id ? 'main-row-flash' : '',
                                 ].join(' ')}
                               >
@@ -1749,8 +1767,8 @@ export default function ModelManagePage() {
                                             text={`请求 ${formatCompactZh(s.requestCount)}`}
                                             title={`${titlePrefix} · 请求次数${sFromLogs ? '' : '（模型计数）'}`}
                                             style={{
-                                              background: 'rgba(255,255,255,0.05)',
-                                              border: '1px solid rgba(255,255,255,0.12)',
+                                              background: 'var(--bg-card-hover)',
+                                              border: '1px solid var(--border-default)',
                                               color: white,
                                             }}
                                           />
@@ -1791,13 +1809,13 @@ export default function ModelManagePage() {
                                     })()}
                                   </div>
 
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-2 flex-wrap">
                                     {/* 一键添加到模型池按钮 */}
                                     <button
                                       type="button"
                                       className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed hover:bg-white/6"
                                       style={{
-                                        border: '1px solid rgba(255,255,255,0.10)',
+                                        border: '1px solid var(--border-default)',
                                         color: 'var(--text-secondary)',
                                       }}
                                       title="一键添加到模型池"
@@ -1817,7 +1835,7 @@ export default function ModelManagePage() {
                                           ? testResult.ok
                                             ? { background: 'rgba(34,197,94,0.18)', border: '1px solid rgba(34,197,94,0.35)', color: 'rgba(34,197,94,0.95)' }
                                             : { background: 'rgba(239,68,68,0.14)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }
-                                          : { border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-secondary)' }
+                                          : { border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }
                                       }
                                       title={testResult?.modelId === m.id && !testResult.ok ? testResult.msg : `测试：${m.name}`}
                                     >
@@ -1831,7 +1849,7 @@ export default function ModelManagePage() {
                                     </button>
 
                                     {/* 操作按钮组（主/意图/识图/生图）- 用圆角矩形框框选 */}
-                                    <div className="inline-flex items-center gap-1 rounded-[10px] px-1.5 py-1" style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.03)' }}>
+                                    <div className="inline-flex items-center gap-1 rounded-[10px] px-1.5 py-1" style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)' }}>
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -1914,7 +1932,7 @@ export default function ModelManagePage() {
                                           onClick={(e) => e.stopPropagation()}
                                           className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors hover:bg-white/6"
                                           style={{
-                                            border: '1px solid rgba(255,255,255,0.10)',
+                                            border: '1px solid var(--border-default)',
                                             color: 'var(--text-secondary)',
                                           }}
                                           aria-label="更多操作"
@@ -1931,11 +1949,7 @@ export default function ModelManagePage() {
                                           className="rounded-[12px] p-1 min-w-[140px]"
                                           style={{
                                             zIndex: 90,
-                                            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                                            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                                            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                                            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                                            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                                            ...glassPanel,
                                           }}
                                           onClick={(e) => e.stopPropagation()}
                                         >
@@ -1953,7 +1967,7 @@ export default function ModelManagePage() {
                                             <DatabaseZap size={14} />
                                             {m.enablePromptCache ? 'Prompt Cache: 开' : 'Prompt Cache: 关'}
                                           </DropdownMenu.Item>
-                                          <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
+                                          <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--border-subtle)' }} />
                                           <DropdownMenu.Item
                                             className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
                                             style={{ color: 'var(--text-primary)' }}
@@ -1966,7 +1980,7 @@ export default function ModelManagePage() {
                                             <Pencil size={14} />
                                             编辑
                                           </DropdownMenu.Item>
-                                          <DropdownMenu.Separator className="h-px my-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
+                                          <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--border-subtle)' }} />
                                           <ConfirmTip
                                             title={`确认删除模型"${m.name}"？`}
                                             description="该操作不可撤销"
@@ -2009,7 +2023,7 @@ export default function ModelManagePage() {
             )}
           </div>
 
-          <div className="p-3 flex items-center gap-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+          <div className="p-3 flex items-center gap-2 flex-wrap" style={{ borderTop: '1px solid var(--border-subtle)' }}>
             {isAll ? (
               <Button
                 variant="secondary"
@@ -2432,19 +2446,20 @@ export default function ModelManagePage() {
               </label>
 
               {/* 预览将添加的模型 */}
-              <div className="rounded-[12px] p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div className="rounded-[12px] p-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}>
                 <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
                   将添加的模型
                 </div>
-                <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                  <span className="text-[10px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>#1</span>
-                  <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                    {addToPoolModel.modelName}
-                  </span>
-                  <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                    ({platforms.find(p => p.id === addToPoolModel.platformId)?.name || addToPoolModel.platformId})
-                  </span>
-                </div>
+                <ModelListItem
+                  model={{
+                    platformId: addToPoolModel.platformId,
+                    platformName: platforms.find(p => p.id === addToPoolModel.platformId)?.name,
+                    modelId: addToPoolModel.modelName,
+                  }}
+                  index={1}
+                  total={1}
+                  size="sm"
+                />
               </div>
 
               <div className="flex justify-end gap-2 pt-2">

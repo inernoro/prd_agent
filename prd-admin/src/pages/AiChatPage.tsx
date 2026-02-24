@@ -1,6 +1,5 @@
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
-import { TabBar } from '@/components/design/TabBar';
 import { GlassSwitch } from '@/components/design/GlassSwitch';
 import { Dialog } from '@/components/ui/Dialog';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
@@ -9,7 +8,8 @@ import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 import { readSseStream } from '@/lib/sse';
 import { apiRequest } from '@/services/real/apiClient';
-import { MessageSquare, Paperclip, Plus, Send, Square } from 'lucide-react';
+import { api } from '@/services/api';
+import { Paperclip, Plus, Send, Square } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
@@ -17,7 +17,6 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
 import { toast } from '@/lib/toast';
-import { getAdminPrompts, getAdminSystemPrompts } from '@/services';
 import { useLocation } from 'react-router-dom';
 
 type LocalSession = {
@@ -76,10 +75,14 @@ function StreamingDot() {
  * LLM 经常用 ```markdown / ```md 包裹"本来就想渲染的 Markdown"，
  * 这会导致 ReactMarkdown 将其当作代码块显示（<pre><code>），而非解析内部的 markdown 语法。
  * 这里仅解包 markdown/md 语言标记，其它代码块保持不动。
+ * 同时去除文本开头的空白行（换行符），避免渲染出额外空白。
  */
 function unwrapMarkdownFences(text: string): string {
   if (!text) return text;
-  return text.replace(/```(?:markdown|md)\s*\n([\s\S]*?)\n```/g, '$1');
+  let result = text.replace(/```(?:markdown|md)\s*\n([\s\S]*?)\n```/g, '$1');
+  // 去除开头的空白行（连续的换行符、空格、制表符组成的行）
+  result = result.replace(/^[\s\n\r]+/, '');
+  return result;
 }
 
 const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content: string }) {
@@ -514,7 +517,7 @@ export default function AiChatPage() {
   // 加载提示词列表（用于底部快捷标签）
   useEffect(() => {
     if (!token) return;
-    getAdminPrompts()
+    apiRequest<any>(api.prdAgent.prompts())
       .then((res) => {
         if (!res.success) return;
         const items = Array.isArray(res.data?.settings?.prompts) ? res.data.settings.prompts : [];
@@ -530,7 +533,7 @@ export default function AiChatPage() {
               role,
             };
           })
-          .filter((x) => x.promptKey && x.title && x.role === currentRole);
+          .filter((x: any) => x.promptKey && x.title && x.role === currentRole);
         // 按 order 排序
         mapped.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
         setPrompts(mapped);
@@ -548,7 +551,7 @@ export default function AiChatPage() {
   // 加载角色系统提示词（用于查看“系统提示词内容”）
   useEffect(() => {
     if (!token) return;
-    getAdminSystemPrompts()
+    apiRequest<any>(api.prdAgent.systemPrompts())
       .then((res) => {
         if (!res.success) return;
         const entries = Array.isArray(res.data?.settings?.entries) ? res.data.settings.entries : [];
@@ -1006,7 +1009,7 @@ export default function AiChatPage() {
                   key={s.sessionId}
                   className="flex items-center gap-2 px-2 py-1 rounded-[10px] group"
                   style={{
-                    background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent',
+                    background: isActive ? 'var(--bg-input-hover)' : 'transparent',
                   }}
                 >
                   <button
@@ -1080,7 +1083,7 @@ export default function AiChatPage() {
         <button
           type="button"
           className="px-3 h-[28px] rounded-[9px] text-[12px] font-semibold hover:bg-white/5 transition-colors truncate flex items-center gap-1.5"
-          style={{ border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)', maxWidth: '280px', background: 'rgba(255,255,255,0.04)' }}
+          style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)', maxWidth: '280px', background: 'var(--bg-input)' }}
           onClick={() => {
             if (sessions.length === 0) {
               setCreateOpen(true);
@@ -1132,9 +1135,9 @@ export default function AiChatPage() {
         type="button"
         className="text-[11px] h-[28px] px-2.5 rounded-[9px] transition-colors"
         style={{ 
-          border: '1px solid rgba(255,255,255,0.12)', 
+          border: '1px solid var(--border-default)',
           color: isTestMode ? 'var(--accent-gold)' : 'var(--text-secondary)',
-          background: isTestMode ? 'rgba(214, 178, 106, 0.08)' : 'rgba(255,255,255,0.04)',
+          background: isTestMode ? 'rgba(214, 178, 106, 0.08)' : 'var(--bg-input)',
           cursor: isTestMode ? 'default' : 'pointer',
         }}
         onClick={() => !isTestMode && setDebugMode((v) => !v)}
@@ -1164,18 +1167,14 @@ export default function AiChatPage() {
   );
 
   const chatPanel = (
-    <div className="h-full min-h-0 flex flex-col gap-4">
-      {/* 头部 TabBar */}
-      <TabBar
-        title="PRD Agent"
-        icon={<MessageSquare size={16} />}
-        actions={
-          <>
-            {headerLeftContent}
-            {headerRightActions}
-          </>
-        }
-      />
+    <div className="h-full min-h-0 flex flex-col gap-2">
+      {/* 紧凑操作栏（不再使用独立 TabBar，由父级 PrdAgentTabsPage 提供标签栏） */}
+      <div className="flex items-center justify-between gap-3 flex-wrap px-1">
+        {headerLeftContent}
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {headerRightActions}
+        </div>
+      </div>
 
       {/* 内容区 */}
       <GlassCard className="flex-1 min-h-0 flex flex-col" overflow="hidden" padding="none" glow accentHue={210}>
@@ -1199,7 +1198,7 @@ export default function AiChatPage() {
                   className="w-full max-w-[520px] rounded-[20px] p-6 flex flex-col items-center gap-4 transition-colors"
                   style={{
                     border: `2px dashed ${prdDragOver ? 'var(--accent-gold)' : 'var(--border-subtle)'}`,
-                    background: prdDragOver ? 'rgba(214,178,106,0.08)' : 'rgba(255,255,255,0.02)',
+                    background: prdDragOver ? 'rgba(214,178,106,0.08)' : 'var(--list-item-bg)',
                   }}
                   onDragOver={(e) => { e.preventDefault(); setPrdDragOver(true); }}
                   onDragLeave={() => setPrdDragOver(false)}
@@ -1240,7 +1239,7 @@ export default function AiChatPage() {
                   <div
                     className="max-w-[85%] rounded-[14px] px-3.5 py-2.5 relative group"
                     style={{
-                      background: isUser ? 'rgba(214, 178, 106, 0.12)' : 'rgba(255,255,255,0.03)',
+                      background: isUser ? 'rgba(214, 178, 106, 0.12)' : 'var(--nested-block-bg)',
                       border: isUser ? '1px solid rgba(214, 178, 106, 0.30)' : '1px solid var(--border-subtle)',
                       color: 'var(--text-primary)',
                       wordBreak: 'break-word',
@@ -1254,7 +1253,7 @@ export default function AiChatPage() {
                           style={{
                             border: '1px solid var(--border-subtle)',
                             color: 'var(--text-secondary)',
-                            background: 'rgba(255,255,255,0.02)',
+                            background: 'var(--list-item-bg)',
                           }}
                           title="本轮回答角色"
                         >
@@ -1292,7 +1291,7 @@ export default function AiChatPage() {
                           <button
                             type="button"
                             className="text-[11px] rounded-full px-2 py-1 hover:bg-white/5"
-                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.02)' }}
+                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--list-item-bg)' }}
                             onClick={() => {
                               setComposer(m.content || '');
                               setResendTargetMessageId(m.id);
@@ -1319,16 +1318,18 @@ export default function AiChatPage() {
                           .prd-md h2 { font-size: 16px; }
                           .prd-md h3 { font-size: 14px; }
                           .prd-md p { margin: 10px 0; }
+                          .prd-md > *:first-child { margin-top: 0; }
+                          .prd-md > *:last-child { margin-bottom: 0; }
                           .prd-md ul, .prd-md ol { margin: 10px 0; padding-left: 20px; }
                           .prd-md li { margin: 5px 0; }
                           .prd-md strong { font-weight: 600; color: var(--text-primary); }
                           .prd-md em { font-style: italic; color: var(--text-secondary); }
-                          .prd-md code { font-family: ui-monospace, monospace; font-size: 12px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); padding: 2px 6px; border-radius: 6px; }
-                          .prd-md pre { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 12px; overflow: auto; margin: 12px 0; }
+                          .prd-md code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--border-subtle); border: 1px solid var(--border-default); padding: 2px 6px; border-radius: 6px; }
+                          .prd-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 12px; padding: 12px; overflow: auto; margin: 12px 0; }
                           .prd-md pre code { background: transparent; border: 0; padding: 0; }
                           .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(214, 178, 106, 0.40); background: rgba(214, 178, 106, 0.06); color: var(--text-primary); border-radius: 10px; }
                           .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
-                          .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.12); margin: 16px 0; }
+                          .prd-md hr { border: 0; border-top: 1px solid var(--border-default); margin: 16px 0; }
 
                           /* 流式输出“高级感”：高帧率灰度尾巴（未提交部分） */
                           .prd-md-stream-live { margin-top: 8px; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.6; color: var(--text-muted); opacity: 0.92; filter: saturate(0.55); }
@@ -1340,9 +1341,12 @@ export default function AiChatPage() {
                           @keyframes prd-md-block-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
                         `}</style>
                         {/* 简化渲染：直接渲染 content，借鉴文学创作的流畅体验 */}
-                        <AssistantMarkdown content={unwrapMarkdownFences(m.content || '')} />
+                        {/* 当内容为空时不渲染 markdown，避免显示空气泡 */}
+                        {(m.content || '').trim() ? (
+                          <AssistantMarkdown content={unwrapMarkdownFences(m.content || '')} />
+                        ) : null}
                         {isThisStreaming ? (
-                          <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                          <div className={`text-[12px] ${(m.content || '').trim() ? 'mt-2' : ''}`} style={{ color: 'var(--text-muted)' }}>
                             输出中
                             <StreamingDot />
                           </div>
@@ -1370,7 +1374,7 @@ export default function AiChatPage() {
                           <button
                             type="button"
                             className="text-[11px] rounded-full px-2 py-1 hover:bg-white/5"
-                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.02)' }}
+                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--list-item-bg)' }}
                             onClick={() => openCitationDrawer(m.citations || [], 0)}
                             title="右侧展开引用内容"
                           >
@@ -1383,7 +1387,7 @@ export default function AiChatPage() {
                               key={`${c.headingId || c.headingTitle || 'c'}-${idx}`}
                               type="button"
                               className="inline-flex items-center rounded-full px-2 py-1 text-[11px] hover:bg-white/5"
-                              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.02)' }}
+                              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--list-item-bg)' }}
                               title={c.excerpt || c.headingTitle || c.headingId || ''}
                               onClick={() => openCitationDrawer(m.citations || [], idx)}
                             >
@@ -1617,7 +1621,7 @@ export default function AiChatPage() {
             <pre
               className="w-full rounded-[14px] p-3 text-[12px] overflow-auto"
               style={{
-                background: 'rgba(255,255,255,0.03)',
+                background: 'var(--nested-block-bg)',
                 border: '1px solid var(--border-subtle)',
                 color: 'var(--text-primary)',
                 whiteSpace: 'pre-wrap',
@@ -1635,7 +1639,7 @@ export default function AiChatPage() {
             <pre
               className="w-full rounded-[14px] p-3 text-[12px] overflow-auto"
               style={{
-                background: 'rgba(255,255,255,0.03)',
+                background: 'var(--nested-block-bg)',
                 border: '1px solid var(--border-subtle)',
                 color: 'var(--text-primary)',
                 whiteSpace: 'pre-wrap',
@@ -1677,7 +1681,7 @@ export default function AiChatPage() {
                 onChange={(e) => setPrdTitle(e.target.value)}
                 className="flex-1 h-10 rounded-[10px] px-3 text-sm outline-none"
                 style={{
-                  background: 'rgba(255,255,255,0.03)',
+                  background: 'var(--nested-block-bg)',
                   border: '1px solid var(--border-subtle)',
                   color: 'var(--text-primary)',
                 }}
@@ -1707,7 +1711,7 @@ export default function AiChatPage() {
               onChange={(e) => setPrdText(e.target.value)}
               className="w-full flex-1 min-h-[420px] rounded-[16px] px-4 py-3 text-sm outline-none resize-y"
               style={{
-                background: 'rgba(255,255,255,0.03)',
+                background: 'var(--nested-block-bg)',
                 border: '1px solid var(--border-subtle)',
                 color: 'var(--text-primary)',
                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
@@ -1779,7 +1783,7 @@ export default function AiChatPage() {
                     className="w-full text-left rounded-[14px] px-3 py-2"
                     style={{
                       border: '1px solid var(--border-subtle)',
-                      background: active ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)',
+                      background: active ? 'var(--bg-input-hover)' : 'var(--list-item-bg)',
                       color: 'var(--text-primary)',
                     }}
                     onClick={() => setCitationDrawerActiveIndex(idx)}

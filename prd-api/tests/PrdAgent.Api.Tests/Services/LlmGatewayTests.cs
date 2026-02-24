@@ -25,6 +25,7 @@ public class LlmGatewayTests
         var gateway = CreateTestGateway();
 
         // Act - Use registered appCallerCode from AppCallerRegistry
+        // Act
         var client = gateway.CreateClient(AppCallerRegistry.Admin.Lab.Chat, "chat");
 
         // Assert
@@ -42,6 +43,7 @@ public class LlmGatewayTests
         // Act
         var client = gateway.CreateClient(
             appCallerCode,
+            AppCallerRegistry.Admin.Lab.Chat,
             "chat",
             maxTokens: 8192,
             temperature: 0.7);
@@ -50,6 +52,7 @@ public class LlmGatewayTests
         Assert.NotNull(client);
         var gatewayClient = Assert.IsType<GatewayLLMClient>(client);
         Assert.Equal(appCallerCode, gatewayClient.AppCallerCode);
+        Assert.Equal(AppCallerRegistry.Admin.Lab.Chat, gatewayClient.AppCallerCode);
         Assert.Equal("chat", gatewayClient.ModelType);
         Assert.Equal(8192, gatewayClient.MaxTokens);
         Assert.Equal(0.7, gatewayClient.Temperature, precision: 2);
@@ -62,6 +65,7 @@ public class LlmGatewayTests
         var gateway = CreateTestGateway();
 
         // Act - Use registered appCallerCode from AppCallerRegistry
+        // Act
         var client = gateway.CreateClient(AppCallerRegistry.Admin.Lab.Chat, "chat");
 
         // Assert
@@ -112,9 +116,21 @@ public class LlmGatewayTests
     [InlineData("open-platform-agent.proxy::chat", "chat", true)]              // OpenPlatform Proxy
     [InlineData("", "chat", false)]
     public void CreateClient_ShouldAcceptVariousAppCallerCodeFormats(string appCallerCode, string modelType, bool shouldSucceed)
+    [InlineData("prd-agent-desktop.chat.sendmessage::chat", true)]
+    [InlineData("visual-agent.image.text2img::generation", true)]
+    [InlineData("prd-agent-web.prompts.optimize::chat", true)]
+    [InlineData("open-platform-agent.proxy::chat", true)]
+    [InlineData("", false)]
+    public void CreateClient_ShouldAcceptVariousAppCallerCodeFormats(string appCallerCode, bool shouldSucceed)
     {
         // Arrange
         var gateway = CreateTestGateway();
+        // 从 appCallerCode 中提取 modelType（:: 后的部分）
+        var modelType = "chat";
+        if (!string.IsNullOrEmpty(appCallerCode) && appCallerCode.Contains("::"))
+        {
+            modelType = appCallerCode.Split("::").Last();
+        }
 
         // Act & Assert
         if (shouldSucceed)
@@ -134,12 +150,14 @@ public class LlmGatewayTests
     [InlineData("vision", "prd-agent-web.lab::vision")]
     [InlineData("generation", "prd-agent-web.lab::generation")]
     [InlineData("intent", "prd-agent-desktop.chat.sendmessage::intent")]
+    [InlineData("intent", "visual-agent.image-gen.plan::intent")]
     public void CreateClient_ShouldAcceptAllModelTypes(string modelType, string appCallerCode)
     {
         // Arrange
         var gateway = CreateTestGateway();
 
         // Act - Use registered appCallerCode that matches the model type
+        // Act
         var client = gateway.CreateClient(appCallerCode, modelType);
 
         // Assert
@@ -178,6 +196,7 @@ public class LlmGatewayTests
 
         // Act
         var client = gateway.CreateClient(appCallerCode, "vision");
+        var client = gateway.CreateClient(AppCallerRegistry.VisualAgent.Image.Vision, "vision");
         var gatewayClient = (GatewayLLMClient)client;
 
         // Assert
@@ -196,6 +215,163 @@ public class LlmGatewayTests
         Assert.Equal("vision", ModelTypes.Vision);
         Assert.Equal("generation", ModelTypes.ImageGen);
         Assert.Equal("intent", ModelTypes.Intent);
+    }
+
+    #endregion
+
+    #region Thinking Isolation Tests
+
+    /// <summary>
+    /// 验证 IncludeThinking 默认为 false（思考内容默认不透传）
+    /// 验证点 1/8：Gateway 默认行为
+    /// </summary>
+    [Fact]
+    public void CreateClient_DefaultIncludeThinking_ShouldBeFalse()
+    {
+        // Arrange
+        var gateway = CreateTestGateway();
+
+        // Act
+        var client = gateway.CreateClient(AppCallerRegistry.Admin.Lab.Chat, "chat");
+        var gatewayClient = Assert.IsType<GatewayLLMClient>(client);
+
+        // Assert - 默认不包含思考
+        Assert.False(gatewayClient.IncludeThinking);
+    }
+
+    /// <summary>
+    /// 验证 CreateClient 传递 includeThinking=true 时正确保留
+    /// 验证点 2/8：Chat 模型显式启用思考
+    /// </summary>
+    [Fact]
+    public void CreateClient_WithIncludeThinkingTrue_ShouldPreserveValue()
+    {
+        // Arrange
+        var gateway = CreateTestGateway();
+
+        // Act
+        var client = gateway.CreateClient(
+            AppCallerRegistry.Desktop.Chat.SendMessageChat,
+            "chat",
+            includeThinking: true);
+        var gatewayClient = Assert.IsType<GatewayLLMClient>(client);
+
+        // Assert - 显式启用思考
+        Assert.True(gatewayClient.IncludeThinking);
+    }
+
+    /// <summary>
+    /// 验证 IsThinkingEffective：IncludeThinking=false → 始终不透传
+    /// 验证点 3/8：默认行为（所有 ModelType）
+    /// </summary>
+    [Theory]
+    [InlineData("chat")]
+    [InlineData("intent")]
+    [InlineData("vision")]
+    [InlineData("generation")]
+    [InlineData("embedding")]
+    [InlineData("rerank")]
+    public void IsThinkingEffective_WhenIncludeThinkingFalse_ShouldAlwaysReturnFalse(string modelType)
+    {
+        // Act
+        var result = LlmGateway.IsThinkingEffective(includeThinking: false, modelType);
+
+        // Assert - 无论什么 ModelType，IncludeThinking=false 时始终不透传
+        Assert.False(result);
+    }
+
+    /// <summary>
+    /// 验证 IsThinkingEffective：Intent 模型强制禁止思考
+    /// 验证点 4/8：Intent 强制隔离（核心安全保障）
+    /// </summary>
+    [Theory]
+    [InlineData("intent")]
+    [InlineData("Intent")]
+    [InlineData("INTENT")]
+    public void IsThinkingEffective_WhenIntentModelType_ShouldAlwaysReturnFalse_RegardlessOfIncludeThinking(string modelType)
+    {
+        // Act - 即使 IncludeThinking=true，Intent 也强制禁止
+        var result = LlmGateway.IsThinkingEffective(includeThinking: true, modelType);
+
+        // Assert
+        Assert.False(result);
+    }
+
+    /// <summary>
+    /// 验证 IsThinkingEffective：Chat 模型 + IncludeThinking=true → 允许透传
+    /// 验证点 5/8：推理场景正常启用思考
+    /// </summary>
+    [Theory]
+    [InlineData("chat")]
+    [InlineData("Chat")]
+    public void IsThinkingEffective_WhenChatModelWithIncludeThinking_ShouldReturnTrue(string modelType)
+    {
+        // Act
+        var result = LlmGateway.IsThinkingEffective(includeThinking: true, modelType);
+
+        // Assert - Chat 模型显式请求思考时允许透传
+        Assert.True(result);
+    }
+
+    /// <summary>
+    /// 验证 IsThinkingEffective：Vision/Generation 等模型 + IncludeThinking=true → 允许透传
+    /// 验证点 6/8：非 Intent 模型类型在显式请求时均允许思考
+    /// </summary>
+    [Theory]
+    [InlineData("vision")]
+    [InlineData("generation")]
+    [InlineData("embedding")]
+    [InlineData("code")]
+    [InlineData("long-context")]
+    public void IsThinkingEffective_WhenNonIntentModelWithIncludeThinking_ShouldReturnTrue(string modelType)
+    {
+        // Act
+        var result = LlmGateway.IsThinkingEffective(includeThinking: true, modelType);
+
+        // Assert - 所有非 Intent 模型在 IncludeThinking=true 时均允许
+        Assert.True(result);
+    }
+
+    /// <summary>
+    /// 验证所有 Intent 类型的 AppCallerCode 注册都使用 Intent ModelType
+    /// 验证点 7/8：确保 AppCallerRegistry 中所有 intent 调用者都被 Gateway 保护
+    /// </summary>
+    [Theory]
+    [InlineData(AppCallerRegistry.Desktop.Chat.SendMessageIntent)]
+    [InlineData(AppCallerRegistry.Desktop.GroupName.SuggestIntent)]
+    [InlineData(AppCallerRegistry.VisualAgent.Workspace.Title)]
+    [InlineData(AppCallerRegistry.VisualAgent.ImageGen.Plan)]
+    [InlineData(AppCallerRegistry.AiToolbox.Orchestration.Intent)]
+    public void AllIntentAppCallerCodes_ShouldEndWithIntentSuffix(string appCallerCode)
+    {
+        // Assert - 所有 intent AppCallerCode 以 ::intent 结尾
+        Assert.EndsWith("::intent", appCallerCode);
+
+        // 验证 Gateway 会强制禁止这些调用者的思考输出
+        var modelType = appCallerCode.Split("::").Last();
+        var result = LlmGateway.IsThinkingEffective(includeThinking: true, modelType);
+        Assert.False(result);
+    }
+
+    /// <summary>
+    /// 验证唯一启用思考的 AppCallerCode 是 Desktop Chat
+    /// 验证点 8/8：只有聊天推理场景启用思考，其他场景默认关闭
+    /// </summary>
+    [Fact]
+    public void OnlyChatServiceShouldEnableThinking()
+    {
+        // 目前唯一使用 includeThinking=true 的是 ChatService
+        // AppCallerCode: prd-agent-desktop.chat.sendmessage::chat
+        var appCallerCode = AppCallerRegistry.Desktop.Chat.SendMessageChat;
+
+        // 验证该 AppCallerCode 的 ModelType 是 chat（不是 intent）
+        Assert.EndsWith("::chat", appCallerCode);
+
+        // 验证 chat ModelType + includeThinking=true 时思考允许透传
+        Assert.True(LlmGateway.IsThinkingEffective(includeThinking: true, "chat"));
+
+        // 验证 intent 即使被误配也会被拦截
+        Assert.False(LlmGateway.IsThinkingEffective(includeThinking: true, "intent"));
     }
 
     #endregion

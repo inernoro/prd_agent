@@ -66,7 +66,7 @@
 | `literary_prompts` | `LiteraryPrompt` | 文学创作提示词模板 | `(ownerAdminId, updatedAt desc)` |
 | `openplatformapps` | `OpenPlatformApp` | 开放平台应用（第三方接入） | `appKey` 唯一 |
 | `openplatformrequestlogs` | `OpenPlatformRequestLog` | 开放平台请求日志 | `(appId, createdAt desc)`；**TTL** |
-| `model_groups` | `ModelGroup` | 模型分组（用于业务隔离） | `name` 唯一 |
+| `model_groups` | `ModelGroup` | 模型分组（用于业务隔离）。关键字段：`StrategyType`（int, 默认 0=FailFast, 可选 1=Race/2=Sequential/3=RoundRobin/4=WeightedRandom/5=LeastLatency）控制池内调度策略 | `name` 唯一 |
 | `llm_app_callers` | `LLMAppCaller` | LLM 应用调用者配置 | `appCode` 唯一；`lastCalledAt` |
 | `model_scheduler_config` | `ModelSchedulerConfig` | 模型调度策略配置 | - |
 | `model_test_stubs` | `ModelTestStub` | 模型测试桩（Stub OpenAI 兼容） | - |

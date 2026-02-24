@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 用户实体
 /// </summary>
+[AppOwnership(AppNames.System, AppNames.SystemDisplay, IsPrimary = true)]
 public class User
 {
     /// <summary>
@@ -80,4 +83,13 @@ public class User
     /// 当此标志为 true 时，登录成功后前端应强制用户修改密码。
     /// </summary>
     public bool MustResetPassword { get; set; } = false;
+
+    /// <summary>邮箱地址（用于教程邮件等通知场景）</summary>
+    public string? Email { get; set; }
+
+    /// <summary>邮箱是否已验证</summary>
+    public bool EmailVerified { get; set; }
+
+    /// <summary>是否订阅教程邮件（默认订阅）</summary>
+    public bool TutorialEmailOptIn { get; set; } = true;
 }

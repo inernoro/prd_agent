@@ -1,3 +1,4 @@
+using PrdAgent.Core.Attributes;
 using PrdAgent.Core.Interfaces;
 
 namespace PrdAgent.Core.Models;
@@ -5,6 +6,7 @@ namespace PrdAgent.Core.Models;
 /// <summary>
 /// 大模型请求日志（用于调试与监控；注意：不得存储 PRD 原文与敏感信息）
 /// </summary>
+[AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
 public class LlmRequestLog
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
@@ -98,6 +100,10 @@ public class LlmRequestLog
     // - 单条上限 200k 字符（超出会被截断；并记录 hash/长度用于对照）
     public string? QuestionText { get; set; }
     public string? AnswerText { get; set; }
+    /// <summary>
+    /// AI 思考过程文本（DeepSeek reasoning_content / &lt;think&gt; 标签内容），与 AnswerText 分开存储。
+    /// </summary>
+    public string? ThinkingText { get; set; }
     public int? AnswerTextChars { get; set; }
     public string? AnswerTextHash { get; set; }
 
@@ -114,6 +120,36 @@ public class LlmRequestLog
     public int? CacheCreationInputTokens { get; set; }
     public int? CacheReadInputTokens { get; set; }
 
+    // Exchange 中继信息
+    /// <summary>是否为 Exchange 中继请求</summary>
+    public bool? IsExchange { get; set; }
+    /// <summary>Exchange 配置 ID</summary>
+    public string? ExchangeId { get; set; }
+    /// <summary>Exchange 显示名称（自包含）</summary>
+    public string? ExchangeName { get; set; }
+    /// <summary>Exchange 转换器类型</summary>
+    public string? ExchangeTransformerType { get; set; }
+
+    // 模型降级/回退信息
+    /// <summary>是否发生了模型降级（期望模型与实际模型不一致，或模型池回退）</summary>
+    public bool? IsFallback { get; set; }
+    /// <summary>降级原因（如：模型池中所有模型不可用，回退到直连模型）</summary>
+    public string? FallbackReason { get; set; }
+    /// <summary>期望使用的模型名称</summary>
+    public string? ExpectedModel { get; set; }
+
+    // 图片引用（用于管理后台日志页展示参考图 COS URL，不存 base64）
+    /// <summary>
+    /// 本次请求涉及的图片引用列表（参考图、蒙版等），仅存元数据和 COS URL
+    /// </summary>
+    public List<LlmImageReference>? ImageReferences { get; set; }
+
+    // ===== 新版图片日志（简化架构：前端传 URL → 直写日志，无需 UploadArtifact 中转） =====
+    /// <summary>输入参考图列表（COS URL 来自前端上传）</summary>
+    public List<LlmLogImage>? InputImages { get; set; }
+    /// <summary>生成结果图列表（COS URL 来自生图结果）</summary>
+    public List<LlmLogImage>? OutputImages { get; set; }
+
     // 时序
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
     public DateTime? FirstByteAt { get; set; }
@@ -122,5 +158,31 @@ public class LlmRequestLog
 
     // 状态
     public string Status { get; set; } = "running"; // running/succeeded/failed/cancelled
+}
+
+/// <summary>
+/// LLM 请求日志中的图片引用（不存 base64，仅存 COS URL 和元数据）
+/// </summary>
+public class LlmImageReference
+{
+    public string? Sha256 { get; set; }
+    public string? CosUrl { get; set; }
+    public string? Label { get; set; }
+    public string? MimeType { get; set; }
+    public long? SizeBytes { get; set; }
+}
+
+/// <summary>
+/// 日志中的图片记录（输入参考图 / 输出生成图），仅存 COS URL
+/// </summary>
+public class LlmLogImage
+{
+    /// <summary>COS 地址（展示用，有水印时为水印版）</summary>
+    public string Url { get; set; } = string.Empty;
+    /// <summary>原图 COS 地址（无水印）</summary>
+    public string? OriginalUrl { get; set; }
+    /// <summary>标签（如"手绘草图"、"参考图"、"生成结果"）</summary>
+    public string? Label { get; set; }
+    public string? Sha256 { get; set; }
 }
 

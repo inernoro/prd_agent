@@ -1,24 +1,36 @@
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
+import { glassPanel, glassTooltip, glassInputArea, glassPopoverCompact } from '@/lib/glassStyles';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
+import {
+  ConfigManagementDialogBase,
+  MarketplaceWatermarkCard,
+  type ConfigManagementDialogHandle as ConfigDialogHandle,
+  type ConfigColumn,
+  type MarketplaceCardContext,
+} from '@/components/config-management';
+import type { MarketplaceWatermarkConfig } from '@/services/contracts/watermark';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Popover from '@radix-ui/react-popover';
 import {
-  addVisualAgentWorkspaceMessage,
   deleteVisualAgentWorkspaceAsset,
   createWorkspaceImageGenRun,
   generateVisualAgentWorkspaceTitle,
   getVisualAgentWorkspaceDetail,
-  getAdapterInfoByModelName,
-  getModels,
+  listVisualAgentWorkspaceMessages,
+  getImageGenRun,
   getUserPreferences,
+  getVisualAgentAdapterInfo,
+  getVisualAgentImageGenModels,
   getWatermarkByApp,
-  modelGroupsService,
+  listWatermarksMarketplace,
+  forkWatermark,
   planImageGen,
   refreshVisualAgentWorkspaceCover,
   saveVisualAgentWorkspaceCanvas,
@@ -26,14 +38,22 @@ import {
   uploadVisualAgentWorkspaceAsset,
 } from '@/services';
 import type { ModelGroupForApp } from '@/types/modelGroup';
-import type { VisualAgentGenerationType } from '@/services/contracts/userPreferences';
+import type { QuickActionConfig } from '@/services/contracts/userPreferences';
+import {
+  ImageQuickActionBar,
+  ImageQuickEditInput,
+  QuickActionConfigPanel,
+  MaskPaintCanvas,
+  DrawingBoardDialog,
+  BUILTIN_QUICK_ACTIONS,
+  type QuickAction,
+} from '@/components/visual-agent';
 import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
-import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
+import { ASPECT_OPTIONS, getSizeForTier } from '@/lib/imageAspectOptions';
 import {
   computeRequestedSizeByRefRatio,
-  extractInlineImageToken,
   extractSizeToken,
   parseInlinePrompt,
   readImageSizeFromFile,
@@ -45,31 +65,37 @@ import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/image
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
-import type { ImageAsset, VisualAgentCanvas, VisualAgentMessage, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
+import type { ImageAsset, VisualAgentCanvas, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import type { Model } from '@/types/admin';
 import {
   ArrowUpToLine,
   ArrowDownToLine,
   Bug,
   Check,
+  ChevronRight,
   ChevronUp,
   ChevronDown,
+  Clipboard,
   Copy,
   Download,
-  Droplet,
   Eye,
+  FileImage,
   Grid3X3,
   Hand,
   ImagePlus,
   MapPin,
   Maximize2,
+  MessageSquare,
   MousePointer2,
   Plus,
   Send,
+  Settings,
+  Share,
   Sparkles,
   Square,
   Type,
   Trash,
+  PenTool,
   Video,
   ZoomIn,
   ZoomOut,
@@ -80,7 +106,9 @@ import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 
 import { MessageContentRenderer } from './components/MessageContentRenderer';
+import { ChatMessageItem } from './components/ChatMessageItem';
 import { LlmLogsPanel } from '@/pages/LlmLogsPage';
+import { getVisualAgentLogsReal, getVisualAgentLogsMetaReal, getVisualAgentLogDetailReal } from '@/services/real/visualAgent';
 
 type CanvasImageItem = {
   key: string;
@@ -89,6 +117,8 @@ type CanvasImageItem = {
   src: string;
   status: 'done' | 'error' | 'running';
   kind?: 'image' | 'generator' | 'shape' | 'text';
+  /** 关联的生图任务 ID，用于刷新页面后同步状态 */
+  runId?: string;
   /** 用户手动调整过尺寸（避免 onLoad 用 natural 覆盖 w/h） */
   userResized?: boolean;
   errorMessage?: string | null;
@@ -465,31 +495,32 @@ type UiMsg = {
 // 图片生成结果/错误的富消息编码 —— 持久化在 content 字符串中
 const GEN_ERROR_PREFIX = '[GEN_ERROR]';
 const GEN_DONE_PREFIX = '[GEN_DONE]';
-type GenErrorMeta = { msg: string; refSrc?: string; prompt?: string; runId?: string; modelPool?: string };
-type GenDoneMeta = { src: string; refSrc?: string; prompt?: string; runId?: string; modelPool?: string };
+// genType: 生成类型 - text2img(纯文生图) | img2img(单图参考) | vision(多图)
+// imageRefShas: 所有参考图的 sha256 数组（用于重试时恢复图片引用）
+type GenErrorMeta = {
+  msg: string;
+  refSrc?: string;
+  prompt?: string;
+  runId?: string;
+  modelPool?: string;
+  genType?: 'text2img' | 'img2img' | 'vision';
+  imageRefShas?: string[];
+};
+type GenDoneMeta = {
+  src: string;
+  refSrc?: string;
+  prompt?: string;
+  runId?: string;
+  modelPool?: string;
+  genType?: 'text2img' | 'img2img' | 'vision';
+  imageRefShas?: string[];
+};
 function buildGenErrorContent(meta: GenErrorMeta): string {
   return `${GEN_ERROR_PREFIX}${JSON.stringify(meta)}`;
 }
 function buildGenDoneContent(meta: GenDoneMeta): string {
   return `${GEN_DONE_PREFIX}${JSON.stringify(meta)}`;
 }
-function parseGenError(content: string): GenErrorMeta | null {
-  if (!content.startsWith(GEN_ERROR_PREFIX)) return null;
-  try { return JSON.parse(content.slice(GEN_ERROR_PREFIX.length)) as GenErrorMeta; } catch { return null; }
-}
-function parseGenDone(content: string): GenDoneMeta | null {
-  if (!content.startsWith(GEN_DONE_PREFIX)) return null;
-  try { return JSON.parse(content.slice(GEN_DONE_PREFIX.length)) as GenDoneMeta; } catch { return null; }
-}
-
-// 提取用户消息中的模型池标记 (@model:xxx)
-function extractModelToken(text: string): { model: string | null; cleanText: string } {
-  const re = /\(@model:([^)]+)\)\s*/i;
-  const match = re.exec(text);
-  if (!match) return { model: null, cleanText: text };
-  return { model: match[1].trim(), cleanText: text.replace(re, '').trim() };
-}
-
 type CanvasTool = 'select' | 'hand' | 'mark';
 type CanvasPlacing =
   | null
@@ -499,19 +530,6 @@ type CanvasPlacing =
 const clampZoom = (z: number) => Math.max(0.05, Math.min(3, z));
 const clampZoomFactor = (f: number) => Math.max(0.93, Math.min(1.07, f));
 
-/** 格式化时间戳为 yyyy.MM.dd HH:mm:ss */
-function formatMsgTimestamp(ts: number): string {
-  const d = new Date(ts);
-  if (!d || Number.isNaN(d.getTime())) return '';
-  const pad2 = (n: number) => String(n).padStart(2, '0');
-  const y = d.getFullYear();
-  const mo = pad2(d.getMonth() + 1);
-  const day = pad2(d.getDate());
-  const h = pad2(d.getHours());
-  const mi = pad2(d.getMinutes());
-  const s = pad2(d.getSeconds());
-  return `${y}.${mo}.${day} ${h}:${mi}:${s}`;
-}
 const zoomFactorFromDeltaY = (deltaY: number) => {
   // 更细腻：factor = exp(-dy*k)，并限制单次变化幅度，避免"一滚就跳"
   // k=0.0024 适配 macOS 触控板手势（原 0.0016 提速 1.5 倍）
@@ -615,6 +633,131 @@ async function downloadImage(src: string, filename: string) {
   }
 }
 
+async function copyImageToClipboard(src: string) {
+  if (!src) return;
+  try {
+    const response = await fetch(src, { mode: 'cors' });
+    if (!response.ok) throw new Error('Fetch failed');
+    const blob = await response.blob();
+    // ClipboardItem 要求 image/png 格式
+    let pngBlob = blob;
+    if (blob.type !== 'image/png') {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      const loaded = await new Promise<HTMLImageElement>((resolve, reject) => {
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = URL.createObjectURL(blob);
+      });
+      const cvs = document.createElement('canvas');
+      cvs.width = loaded.naturalWidth;
+      cvs.height = loaded.naturalHeight;
+      const ctx = cvs.getContext('2d')!;
+      ctx.drawImage(loaded, 0, 0);
+      URL.revokeObjectURL(img.src);
+      pngBlob = await new Promise<Blob>((resolve, reject) =>
+        cvs.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png')
+      );
+    }
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+  } catch {
+    // fallback：复制图片链接
+    await copyToClipboard(src);
+  }
+}
+
+async function exportImageAs(src: string, filename: string, format: 'jpg' | 'png' | 'svg') {
+  if (!src) return;
+  const safe = String(filename || 'image')
+    .trim()
+    .replaceAll('/', '-')
+    .replaceAll('\\', '-')
+    .replaceAll(':', '-')
+    .replaceAll('*', '-')
+    .replaceAll('?', '-')
+    .replaceAll('"', '-')
+    .replaceAll('<', '-')
+    .replaceAll('>', '-')
+    .replaceAll('|', '-')
+    .slice(0, 80);
+
+  if (format === 'svg') {
+    // SVG 导出：将图片嵌入 SVG 内联
+    try {
+      const response = await fetch(src, { mode: 'cors' });
+      if (!response.ok) throw new Error('Fetch failed');
+      const blob = await response.blob();
+      const dataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = reject;
+        img.src = dataUrl;
+      });
+      const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="${img.naturalWidth}" height="${img.naturalHeight}"><image href="${dataUrl}" width="${img.naturalWidth}" height="${img.naturalHeight}"/></svg>`;
+      const svgBlob = new Blob([svgContent], { type: 'image/svg+xml' });
+      const blobUrl = URL.createObjectURL(svgBlob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `${safe || 'image'}.svg`;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } catch {
+      // fallback
+      void downloadImage(src, safe);
+    }
+    return;
+  }
+
+  // PNG / JPG 导出
+  try {
+    const response = await fetch(src, { mode: 'cors' });
+    if (!response.ok) throw new Error('Fetch failed');
+    const blob = await response.blob();
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const loaded = await new Promise<HTMLImageElement>((resolve, reject) => {
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = URL.createObjectURL(blob);
+    });
+    const cvs = document.createElement('canvas');
+    cvs.width = loaded.naturalWidth;
+    cvs.height = loaded.naturalHeight;
+    const ctx = cvs.getContext('2d')!;
+    if (format === 'jpg') {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, cvs.width, cvs.height);
+    }
+    ctx.drawImage(loaded, 0, 0);
+    URL.revokeObjectURL(img.src);
+    const mime = format === 'jpg' ? 'image/jpeg' : 'image/png';
+    const ext = format === 'jpg' ? 'jpg' : 'png';
+    const exported = await new Promise<Blob>((resolve, reject) =>
+      cvs.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), mime, format === 'jpg' ? 0.92 : undefined)
+    );
+    const blobUrl = URL.createObjectURL(exported);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `${safe || 'image'}.${ext}`;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  } catch {
+    void downloadImage(src, safe);
+  }
+}
+
 
 // 从尺寸字符串检测档位
 function detectTierFromSize(size: string): '1k' | '2k' | '4k' {
@@ -671,91 +814,24 @@ function buildTemplate(name: string) {
   return '';
 }
 
-// 提取元数据渲染组件
-function MessageMetadata({
-  size,
-  model,
-  className,
-  style,
-  sizeToAspectMap,
-}: {
-  size?: string;
-  model?: string;
-  className?: string;
-  style?: React.CSSProperties;
-  sizeToAspectMap?: Map<string, string>;
-}) {
-  if (!size && !model) return null;
-
-  const tier = detectTierFromSize(size || '');
-  const aspect = size ? ((sizeToAspectMap?.get(size.toLowerCase())) || detectAspectFromSize(size)) : '';
-  const tierLabel = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
-  const sizeLabel = aspect ? `${tierLabel} · ${aspect}` : size;
-
-  return (
-    <div className={`flex flex-wrap items-center justify-between w-full gap-1.5 mt-1 ${className || ''}`} style={style}>
-      {size ? (
-        <span
-          className="inline-flex items-center gap-1 px-1.5 rounded-full shrink-0"
-          style={{
-            height: 22, // 比编辑器底部按钮 (28px) 小一号
-            border: '1px solid rgba(255,255,255,0.1)',
-            background: 'rgba(255,255,255,0.04)',
-            color: 'var(--text-secondary)',
-            fontSize: 10,
-            fontWeight: 600,
-          }}
-          title={`尺寸：${size}`}
-        >
-          <span className="tabular-nums" style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>
-            {sizeLabel}
-          </span>
-        </span>
-      ) : <div />}
-
-      {/* 模型池标签 */}
-      {model ? (
-        <span
-          className="inline-flex items-center gap-1 px-1.5 rounded-full shrink-0 ml-auto"
-          style={{
-            height: 22, // 保持与尺寸标签高度一致，且比底部 (24px) 略小
-            border: '1px solid rgba(99, 102, 241, 0.35)',
-            background: 'rgba(99, 102, 241, 0.12)',
-            color: 'rgba(129, 140, 248, 0.95)',
-            fontSize: 10,
-            fontWeight: 500,
-          }}
-          title={`模型池：${model}`}
-        >
-          <Sparkles size={10} className="shrink-0" />
-          <span style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>
-            {model}
-          </span>
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
 export default function AdvancedVisualAgentTab(props: { workspaceId: string; initialPrompt?: string }) {
   // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
   const workspaceId = String(props.workspaceId ?? '').trim();
   const initialPromptFromProps = String(props.initialPrompt ?? '').trim();
+  const { isMobile } = useBreakpoint();
+  const [mobileShowChat, setMobileShowChat] = useState(false);
+  // 移动端默认使用 hand 工具，以便直接拖拽画布
+  const [activeTool, setActiveTool] = useState<CanvasTool>(
+    typeof window !== 'undefined' && window.innerWidth < 768 ? 'hand' : 'select'
+  );
   // 固定默认参数：用户不需要选择
   // 输入区已移除“大小/比例”控制按钮：v1 固定用 1K 方形，避免过多配置干扰
   const imageGenSize = '1024x1024' as const;
   const DEFAULT_ZOOM = 0.5;
 
-  const [models, setModels] = useState<Model[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  // 按生成类型存储模型池：text2img, img2img, vision
-  const [imageGenPoolsByType, setImageGenPoolsByType] = useState<{
-    text2img: ModelGroupForApp[];
-    img2img: ModelGroupForApp[];
-    vision: ModelGroupForApp[];
-  }>({ text2img: [], img2img: [], vision: [] });
-  // 生成类型筛选：all=所有, text2img=文生图, img2img=图生图, vision=多图参考
-  const [generationType, setGenerationType] = useState<VisualAgentGenerationType>('all');
+  // 统一模型池列表（合并所有生成类型，去重）
+  const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
 
   // 将模型池转换为 Model 兼容对象，用于选择器展示
   // 扩展 Model 类型以包含来源标记
@@ -767,20 +843,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     /** 模型池中第一个模型的实际 modelId（用于查询适配器信息） */
     actualModelId?: string;
   };
-  // 根据 generationType 筛选模型池
+  // 直接使用统一的模型池列表
   const filteredPools = useMemo(() => {
-    if (generationType === 'text2img') return imageGenPoolsByType.text2img;
-    if (generationType === 'img2img') return imageGenPoolsByType.img2img;
-    if (generationType === 'vision') return imageGenPoolsByType.vision;
-    // 默认 'all'：合并所有类型并去重（按 id 去重）
-    const all = [...imageGenPoolsByType.text2img, ...imageGenPoolsByType.img2img, ...imageGenPoolsByType.vision];
-    const seen = new Set<string>();
-    return all.filter((p) => {
-      if (seen.has(p.id)) return false;
-      seen.add(p.id);
-      return true;
-    });
-  }, [imageGenPoolsByType, generationType]);
+    return imageGenPools;
+  }, [imageGenPools]);
 
   const poolModels = useMemo<ModelWithSource[]>(() => {
     if (filteredPools.length === 0) return [];
@@ -810,11 +876,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       });
   }, [filteredPools]);
 
-  // 合并模型列表：优先使用模型池；如果没有池则回退到 llm_models
+  // 模型列表：使用模型池（后端已包含 3 级回退：专属池 > 默认池 > 传统配置）
   const allImageGenModels = useMemo<ModelWithSource[]>(() => {
-    if (poolModels.length > 0) return poolModels;
-    return (models ?? []).filter((m) => m.isImageGen) as ModelWithSource[];
-  }, [poolModels, models]);
+    return poolModels;
+  }, [poolModels]);
 
   const serverDefaultModel = useMemo(() => {
     // 后端已按 priority + createdAt 排序，直接取第一个启用的模型
@@ -861,8 +926,23 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     setWatermarkStatus({ enabled: status.hasActiveConfig, name: status.activeName ?? null });
   }, []);
   const watermarkPanelRef = useRef<WatermarkSettingsPanelHandle | null>(null);
-  const [watermarkSettingsOpen, setWatermarkSettingsOpen] = useState(false);
+  const configDialogRef = useRef<ConfigDialogHandle | null>(null);
   const enabledImageModels = useMemo(() => allImageGenModels.filter((m) => m.enabled), [allImageGenModels]);
+
+  // ── 快捷操作 (Quick Actions) ──
+  const [diyQuickActions, setDiyQuickActions] = useState<QuickActionConfig[]>([]);
+  const diyQuickActionsReadyRef = useRef(false);
+  /** 合并后的快捷操作列表：内置 + DIY */
+  const mergedQuickActions = useMemo<QuickAction[]>(() => {
+    const diyMapped: QuickAction[] = diyQuickActions
+      .filter((a) => a.name.trim() && a.prompt.trim())
+      .map((a) => ({ ...a, isDiy: true }));
+    return [...BUILTIN_QUICK_ACTIONS, ...diyMapped];
+  }, [diyQuickActions]);
+  const [quickEditRunning, setQuickEditRunning] = useState(false);
+  const [quickActionDialogOpen, setQuickActionDialogOpen] = useState(false);
+  // 局部重绘（Inpainting）状态
+  const [inpaintTarget, setInpaintTarget] = useState<CanvasImageItem | null>(null);
   // 提示词模式：按账号持久化（不写 DB）
   // - 关闭：先调用 planImageGen 解析/改写成候选提示词，再生图
   // - 开启：跳过解析，直接把输入原样作为 prompt 发给生图模型
@@ -889,7 +969,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return;
     }
 
-    getAdapterInfoByModelName(modelCode)
+    getVisualAgentAdapterInfo(modelCode)
       .then((res) => {
         if (res.success && res.data?.matched && res.data.sizesByResolution) {
           const data = res.data.sizesByResolution;
@@ -960,17 +1040,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     };
   }, []);
 
+  const INITIAL_MSG_LIMIT = 50;
+  const LOAD_MORE_LIMIT = 50;
+
   const [messages, setMessages] = useState<UiMsg[]>([
     {
       id: 'assistant-hello',
       role: 'Assistant',
       content:
-        'Hi，我是你的 AI 设计师。描述你的需求，我会把它转成可执行的生图提示词并把结果放到左侧画板。若你想让输入直接作为提示词发送（不再二次解析/改写），可在“模型偏好”里开启“直连”。',
+        'Hi，我是你的 AI 设计师。描述你的需求，我会把它转成可执行的生图提示词并把结果放到左侧画板。若你想让输入直接作为提示词发送（不再二次解析/改写），可在"模型偏好"里开启"直连"。',
       ts: Date.now(),
     },
   ]);
-
-  const [expandedMsgIds, setExpandedMsgIds] = useState<Set<string>>(new Set());
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const loadingMoreRef = useRef(false);
 
   const [uploadToast, setUploadToast] = useState<{ text: string } | null>(null);
   const uploadToastTimerRef = useRef<number | null>(null);
@@ -1015,6 +1098,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [mentionAtPos, setMentionAtPos] = useState<number | null>(null);
   const [asciiOpen, setAsciiOpen] = useState(false);
   const [asciiSource, setAsciiSource] = useState('');
+  const [drawingBoardOpen, setDrawingBoardOpen] = useState(false);
 
   const [canvas, setCanvas] = useState<CanvasImageItem[]>([]);
   const canvasRef = useRef<CanvasImageItem[]>([]);
@@ -1190,7 +1274,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const HOVER_MENU_CLOSE_DELAY_MS = 320;
 
-  const [activeTool, setActiveTool] = useState<CanvasTool>('select');
+  // activeTool 已在上方通过 isMobile 初始化：移动端默认 'hand'，桌面端默认 'select'
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const toolMenuCloseTimerRef = useRef<number | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -1644,6 +1728,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (mode === 'replace') setSelection(keys);
     else if (mode === 'add') addSelection(keys);
     else removeSelection(keys);
+    // chip 插入会触发 Lexical 编辑器抢焦点，延迟恢复画布焦点
+    requestAnimationFrame(() => {
+      try { stageRef.current?.focus({ preventScroll: true }); } catch { /* ignore */ }
+    });
   }, [setSelection, addSelection, removeSelection]);
 
   const focusComposer = useCallback(() => {
@@ -1744,14 +1832,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     workspaceRef.current = workspace;
   }, [workspace]);
 
+  // pushMsg：仅更新本地 UI 状态（消息持久化由后端 CreateRun / Worker 自动完成）
   const pushMsg = useCallback((role: UiMsg['role'], content: string) => {
     const msg: UiMsg = { id: `${role}-${Date.now()}`, role, content, ts: Date.now() };
     setMessages((prev) => prev.concat(msg));
-    const ws = workspaceRef.current;
-    if (ws?.id) {
-      const backendRole: VisualAgentMessage['role'] = role === 'User' ? 'User' : 'Assistant';
-      void addVisualAgentWorkspaceMessage({ id: ws.id, role: backendRole, content });
-    }
   }, []);
 
   const MAX_GEN_CONCURRENCY = 3;
@@ -1813,6 +1897,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [preview, setPreview] = useState<{ open: boolean; src: string; prompt: string; runId?: string }>({ open: false, src: '', prompt: '' });
 
+  // ── Stable callbacks for memoized ChatMessageItem ──────────────────
+  const handleMsgPreview = useCallback((src: string, prompt: string, runId?: string) => {
+    setPreview({ open: true, src, prompt, runId });
+  }, []);
+
+  // Retry: uses a ref so the callback identity never changes even when sendText/canvas update
+  const retryRef = useRef<(prompt: string, imageRefShas: string[], canvasSnapshot: { key: string; sha256?: string; originalSha256?: string; src: string; refId?: number }[]) => void>(() => {});
+
+  const handleMsgRetry = useCallback(
+    (prompt: string, imageRefShas: string[], canvasSnapshot: { key: string; sha256?: string; originalSha256?: string; src: string; refId?: number }[]) => {
+      retryRef.current(prompt, imageRefShas, canvasSnapshot);
+    },
+    [],
+  );
+
   // 图片右键菜单状态
   const [imgContextMenu, setImgContextMenu] = useState<{
     open: boolean;
@@ -1838,9 +1937,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const reloadWorkspace = useCallback(async () => {
     if (!workspaceId) return;
-    const detail = await getVisualAgentWorkspaceDetail({ id: workspaceId, messageLimit: 200, assetLimit: 200 });
+    const detail = await getVisualAgentWorkspaceDetail({ id: workspaceId, messageLimit: INITIAL_MSG_LIMIT, assetLimit: 200 });
     if (!detail.success) return;
     setWorkspace(detail.data.workspace);
+    setHasMoreMessages(!!detail.data.hasMoreMessages);
 
     // 服务器下发视口（缩放/相机）：优先回放（避免每次回到默认 50%）
     const vp = detail.data.viewport;
@@ -1932,27 +2032,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   useEffect(() => {
     setModelsLoading(true);
-    // 按生成类型加载模型池：text2img, img2img, vision
-    // 每种类型对应不同的 appCallerCode
-    const appCallerCodes = {
-      text2img: 'visual-agent.image.text2img::generation',
-      img2img: 'visual-agent.image.img2img::generation',
-      vision: 'visual-agent.image.vision::generation',
-    };
-    const emptyPools = { success: false, data: [] as ModelGroupForApp[] };
-    Promise.all([
-      getModels(),
-      modelGroupsService.getModelGroupsForApp(appCallerCodes.text2img, 'generation').catch(() => emptyPools),
-      modelGroupsService.getModelGroupsForApp(appCallerCodes.img2img, 'generation').catch(() => emptyPools),
-      modelGroupsService.getModelGroupsForApp(appCallerCodes.vision, 'generation').catch(() => emptyPools),
-    ])
-      .then(([modelsRes, text2imgRes, img2imgRes, visionRes]) => {
-        if (modelsRes.success) setModels(modelsRes.data ?? []);
-        setImageGenPoolsByType({
-          text2img: text2imgRes.success ? text2imgRes.data ?? [] : [],
-          img2img: img2imgRes.success ? img2imgRes.data ?? [] : [],
-          vision: visionRes.success ? visionRes.data ?? [] : [],
-        });
+    // 通过视觉创作专属端点获取模型池（后端已合并去重所有生成类型，含 3 级回退）
+    getVisualAgentImageGenModels()
+      .then((poolsRes) => {
+        if (poolsRes.success) setImageGenPools(poolsRes.data ?? []);
       })
       .finally(() => setModelsLoading(false));
   }, []);
@@ -1969,15 +2052,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           const prefs = res.data.visualAgentPreferences;
           setModelPrefAuto(prefs.modelAuto ?? true);
           setModelPrefModelId(prefs.modelId ?? '');
-          // 加载生成类型偏好
-          if (prefs.generationType && ['all', 'text2img', 'img2img', 'vision'].includes(prefs.generationType)) {
-            setGenerationType(prefs.generationType as VisualAgentGenerationType);
+          // 加载 DIY 快捷指令
+          if (Array.isArray(prefs.quickActions)) {
+            setDiyQuickActions(prefs.quickActions);
           }
+          diyQuickActionsReadyRef.current = true;
         }
       } catch {
         // ignore
       } finally {
-        if (!cancelled) setModelPrefReady(true);
+        if (!cancelled) {
+          setModelPrefReady(true);
+          diyQuickActionsReadyRef.current = true;
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -1996,7 +2083,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       void updateVisualAgentPreferences({
         modelAuto: modelPrefAuto,
         modelId: modelPrefModelId || undefined,
-        generationType,
+        quickActions: diyQuickActions,
       }).catch(() => {
         // 静默失败，不影响用户操作
       });
@@ -2006,7 +2093,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         clearTimeout(modelPrefSaveRef.current);
       }
     };
-  }, [modelPrefAuto, modelPrefModelId, generationType, modelPrefReady, userId]);
+  }, [modelPrefAuto, modelPrefModelId, modelPrefReady, userId, diyQuickActions]);
 
   // 读取直连模式（仅在有 userId 时）
   useEffect(() => {
@@ -2065,13 +2152,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     let cancelled = false;
     setBooting(true);
     (async () => {
-      const detail = await getVisualAgentWorkspaceDetail({ id: workspaceId, messageLimit: 200, assetLimit: 200 });
+      const detail = await getVisualAgentWorkspaceDetail({ id: workspaceId, messageLimit: INITIAL_MSG_LIMIT, assetLimit: 200 });
       if (!detail.success) {
         if (!cancelled) setError(detail.error?.message || '加载 Workspace 失败');
         return;
       }
       if (cancelled) return;
       setWorkspace(detail.data.workspace);
+      setHasMoreMessages(!!detail.data.hasMoreMessages);
 
       // 服务器下发视口（缩放/相机）：首次进入也要回放，否则会永远停在 DEFAULT_ZOOM=0.5
       const vp = detail.data.viewport;
@@ -2130,6 +2218,55 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           // 为没有 refId 的图片分配新的 refId（老数据迁移）
           const refIdChanged = assignMissingRefIds(restored.canvas);
           applyCanvasFocus(restored.canvas);
+
+          // 同步 running 状态的元素：查询后端实际状态
+          const runningElements = restored.canvas.filter((el) => el.status === 'running' && el.runId);
+          if (runningElements.length > 0) {
+            void (async () => {
+              for (const el of runningElements) {
+                try {
+                  const res = await getImageGenRun({ runId: el.runId!, includeItems: true });
+                  if (!res.success || !res.data?.run) continue;
+                  const run = res.data.run;
+                  if (run.status === 'Failed' || run.status === 'Cancelled') {
+                    // 后端已失败，更新前端状态
+                    setCanvas((prev) =>
+                      prev.map((x) =>
+                        x.key === el.key
+                          ? { ...x, status: 'error', errorMessage: run.status === 'Failed' ? '生成失败（后端）' : '已取消' }
+                          : x
+                      )
+                    );
+                  } else if (run.status === 'Completed') {
+                    // 后端已完成，尝试获取图片 URL
+                    const item = res.data.items?.find((it) => it.url);
+                    if (item?.url) {
+                      setCanvas((prev) =>
+                        prev.map((x) =>
+                          x.key === el.key
+                            ? { ...x, status: 'done', src: item.url!, kind: 'image' }
+                            : x
+                        )
+                      );
+                    } else {
+                      // 完成但没有 URL，标记为错误
+                      setCanvas((prev) =>
+                        prev.map((x) =>
+                          x.key === el.key
+                            ? { ...x, status: 'error', errorMessage: '生成完成但无图片 URL' }
+                            : x
+                        )
+                      );
+                    }
+                  }
+                  // 如果是 Queued/Running，保持 running 状态，用户可以等待或重试
+                } catch {
+                  // 查询失败，保持原状态
+                }
+              }
+            })();
+          }
+
           if (restored.missingAssets > 0 || restored.localOnlyImages > 0) {
             pushMsg(
               'Assistant',
@@ -2339,19 +2476,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [rightWidth, splitKey]);
 
   // 滚动到消息列表底部
-  // 使用 ResizeObserver 监听消息内容高度变化（图片加载会导致高度增加），自动滚动到底部
+  // ResizeObserver 监听消息内容高度变化（图片加载 / 新消息追加），自动滚动到底部
   const shouldAutoScrollRef = useRef(true);
   const programmaticScrollRef = useRef(false); // 标记是否为程序触发的滚动
+
+  // 稳定 effect：只在 mount 时创建一次 ResizeObserver + scroll listener
   useEffect(() => {
     const scrollEl = scrollRef.current;
     const contentEl = msgContentRef.current;
     if (!scrollEl || !contentEl) return;
 
-    // 判断用户是否手动滚动过（如果用户往上滚动了，就不自动滚动）
     const checkAutoScroll = () => {
-      // 如果是程序触发的滚动，不更新 shouldAutoScrollRef
       if (programmaticScrollRef.current) return;
-      const threshold = 100; // 距离底部 100px 以内视为"在底部"
+      const threshold = 100;
       shouldAutoScrollRef.current = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < threshold;
     };
 
@@ -2359,16 +2496,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (!shouldAutoScrollRef.current) return;
       programmaticScrollRef.current = true;
       scrollEl.scrollTop = scrollEl.scrollHeight;
-      // 延迟重置标记，确保 scroll 事件已处理完
       requestAnimationFrame(() => {
         programmaticScrollRef.current = false;
       });
     };
 
-    // 监听用户滚动
     scrollEl.addEventListener('scroll', checkAutoScroll);
 
-    // 监听消息内容高度变化（图片加载会触发 contentEl 高度增加）
+    // ResizeObserver 自动捕捉新消息 DOM 插入和图片加载导致的高度变化
     const ro = new ResizeObserver(() => {
       scrollToBottom();
     });
@@ -2382,7 +2517,74 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       scrollEl.removeEventListener('scroll', checkAutoScroll);
       ro.disconnect();
     };
-  }, [messages]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- mount-only, ResizeObserver handles dynamic content
+
+  // ── 向上滚动加载更早消息 ──────────────────────────────────────────
+  const loadOlderMessages = useCallback(async () => {
+    if (loadingMoreRef.current || !hasMoreMessages || !workspaceId) return;
+    loadingMoreRef.current = true;
+
+    try {
+      // 取最早消息的时间戳作为游标
+      const oldest = messages[0];
+      if (!oldest) return;
+      const beforeTs = new Date(oldest.ts).toISOString();
+
+      const res = await listVisualAgentWorkspaceMessages({
+        id: workspaceId,
+        before: beforeTs,
+        limit: LOAD_MORE_LIMIT,
+      });
+
+      if (!res.success || !Array.isArray(res.data?.messages)) return;
+
+      const olderMsgs: UiMsg[] = res.data.messages.map((m) => ({
+        id: m.id,
+        role: m.role === 'Assistant' ? ('Assistant' as const) : ('User' as const),
+        content: String(m.content ?? ''),
+        ts: Number.isFinite(Date.parse(m.createdAt)) ? Date.parse(m.createdAt) : Date.now(),
+      }));
+
+      if (olderMsgs.length === 0) {
+        setHasMoreMessages(false);
+        return;
+      }
+
+      setHasMoreMessages(res.data.hasMore);
+
+      // 保留滚动位置：记住 prepend 前的 scrollHeight
+      const scrollEl = scrollRef.current;
+      const prevScrollHeight = scrollEl?.scrollHeight ?? 0;
+
+      setMessages((prev) => [...olderMsgs, ...prev]);
+
+      // Prepend 后恢复滚动位置（保持用户看到的内容不跳动）
+      requestAnimationFrame(() => {
+        if (scrollEl) {
+          const newScrollHeight = scrollEl.scrollHeight;
+          scrollEl.scrollTop += newScrollHeight - prevScrollHeight;
+        }
+      });
+    } finally {
+      loadingMoreRef.current = false;
+    }
+  }, [hasMoreMessages, messages, workspaceId]);
+
+  // 滚动到顶部时触发加载
+  useEffect(() => {
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+
+    const onScroll = () => {
+      // 距离顶部 80px 以内时触发加载
+      if (scrollEl.scrollTop < 80 && hasMoreMessages && !loadingMoreRef.current) {
+        void loadOlderMessages();
+      }
+    };
+
+    scrollEl.addEventListener('scroll', onScroll, { passive: true });
+    return () => scrollEl.removeEventListener('scroll', onScroll);
+  }, [hasMoreMessages, loadOlderMessages]);
 
   // 监听画布尺寸变化（用于居中/适配）
   useEffect(() => {
@@ -2950,7 +3152,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const uiSizeToken = forcedSize ? `(@size:${forcedSize}) ` : '';
     const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
     const uiModelToken = modelPoolName ? `(@model:${modelPoolName}) ` : '';
-    pushMsg('User', `${uiSizeToken}${uiModelToken}${display || reqText}`);
+    const userMsgForBackend = `${uiSizeToken}${uiModelToken}${display || reqText}`;
+    pushMsg('User', userMsgForBackend);
+
+    // ========== 统一图片引用：如果有选中图片但没有 @imgN，也加入 imageRefs ==========
+    // 这样后端只需处理 imageRefs，无需区分 initImageAssetSha256
+    let unifiedImageRefs = [...imageRefs];
+    if (unifiedImageRefs.length === 0 && selectedAtSend) {
+      const selSha = selectedAtSend.originalSha256 || selectedAtSend.sha256 || '';
+      if (selSha.length === 64) {
+        // 将选中的图片作为隐式的 @img1 加入引用列表
+        unifiedImageRefs = [{ ...selectedAtSend, refId: 1 } as CanvasImageItem];
+      }
+    }
+
+    // 收集所有参考图的 sha256（用于重试时恢复）
+    const imageRefShas = unifiedImageRefs
+      .map((img) => img.originalSha256 || img.sha256 || '')
+      .filter((sha) => sha.length === 64);
 
     let items: Array<{ prompt: string }> = [];
     let firstPrompt = '';
@@ -2958,7 +3177,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
       if (!firstPrompt) {
         const msg = '内容为空';
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined, imageRefShas }));
         return;
       }
     } else {
@@ -2967,13 +3186,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         const pres = await planImageGen({ text: reqText, maxItems: 8 });
         if (!pres.success) {
           const msg = pres.error?.message || '解析失败';
-          pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined }));
+          pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined, imageRefShas }));
           return;
         }
         plan = pres.data ?? null;
       } catch (e) {
         const msg = e instanceof Error ? e.message : '网络错误';
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined, imageRefShas }));
         return;
       }
 
@@ -3236,14 +3455,23 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }
       }
 
-      // 构建多图引用数组（新架构）
-      const imageRefsForBackend = imageRefs
+      // ========== 统一构建 imageRefs（使用 unifiedImageRefs）==========
+      // 如果通过选中图片触发且刚上传成功，需要更新 unifiedImageRefs 中的 sha256
+      if (initImageAssetSha256 && unifiedImageRefs.length > 0 && !unifiedImageRefs[0].sha256) {
+        unifiedImageRefs = unifiedImageRefs.map((img, idx) =>
+          idx === 0 ? { ...img, sha256: initImageAssetSha256, originalSha256: initImageAssetSha256 } : img
+        );
+      }
+
+      // 构建发送给后端的 imageRefs
+      // label 使用顺序号（第1张图、第2张图），避免 VLM 描述与用户称呼不一致导致语义混乱
+      const imageRefsForBackend = unifiedImageRefs
         .filter((img) => img.sha256 || img.originalSha256) // 只传有 sha256 的图片
         .map((img, idx) => ({
           refId: img.refId ?? (idx + 1),
           assetSha256: img.originalSha256 || img.sha256 || '',
           url: img.originalSrc || img.src || '',
-          label: img.prompt || `图片${idx + 1}`,
+          label: `第${idx + 1}张图`,
         }));
 
       const runRes = await createWorkspaceImageGenRun({
@@ -3260,17 +3488,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             : { configModelId: pickedModel!.id }),
           size: resolvedSizeForGen,
           responseFormat: 'url',
-          // 向后兼容：单图场景使用 initImageAssetSha256
-          initImageAssetSha256: initImageAssetSha256,
-          // 多图引用（新架构）
+          // 统一使用 imageRefs（后端兼容层会处理 initImageAssetSha256）
           imageRefs: imageRefsForBackend.length > 0 ? imageRefsForBackend : undefined,
+          userMessageContent: userMsgForBackend,
         },
         idempotencyKey: `imRun_${workspaceId}_${key}`,
       });
       if (!runRes.success) {
         const msg = runRes.error?.message || '生成失败';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, imageRefShas }));
         triggerDefectFlash();
         return;
       }
@@ -3279,10 +3506,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (!runId) {
         const msg = '未返回 runId';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, imageRefShas }));
         triggerDefectFlash();
         return;
       }
+
+      // 保存 runId 到画布元素，用于刷新页面后同步状态
+      setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, runId } : x)));
 
       // 可选：订阅进度并实时替换（关闭页面也没关系，服务端会最终回填）
       const ac = new AbortController();
@@ -3335,33 +3565,300 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               )
             );
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName }));
+            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
           } else if (t === 'imageError' || t === 'error') {
             const msg = String(o.errorMessage ?? '生成失败');
             setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName }));
+            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
             triggerDefectFlash();
           }
         },
       }).then(() => {
         // SSE 流结束后，检查该图片是否还在 running 状态
         // 如果是，说明服务端没有返回最终状态，需要标记为 error
-        setCanvas((prev) =>
-          prev.map((x) =>
+        setCanvas((prev) => {
+          const item = prev.find((x) => x.key === key);
+          if (item && item.status === 'running') {
+            pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: pickedModel?.name || pickedModel?.modelName || '', imageRefShas }));
+            triggerDefectFlash();
+          }
+          return prev.map((x) =>
             x.key === key && x.status === 'running'
               ? { ...x, status: 'error', errorMessage: '生成超时或连接中断，请重试' }
               : x
-          )
-        );
+          );
+        });
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : '生成失败';
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-      pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined }));
+      pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, imageRefShas }));
       triggerDefectFlash();
     }
   };
+
+  // ── 快捷操作执行（写入消息列表以便追溯） ──
+  const executeQuickAction = useCallback(
+    async (prompt: string, sourceItem: CanvasImageItem, sizeOverride?: string, maskBase64?: string, actionLabel?: string) => {
+      if (!prompt.trim()) return;
+      const pickedModel = effectiveModel;
+      if (!pickedModel) {
+        toast.error('暂无可用生图模型');
+        return;
+      }
+      // 记录用户操作到消息面板（包含参考图引用，便于追溯）
+      const label = actionLabel || '快捷编辑';
+      const refSrc = sourceItem.originalSrc || sourceItem.src || '';
+      const refTag = sourceItem.refId ? ` @img${sourceItem.refId}` : '';
+      const qaUserMsg = `[${label}]${refTag} ${prompt}`;
+      pushMsg('User', qaUserMsg);
+      // 标记：后端消息会在上传后用 COS URL 重新构建（qaMsgForBackend）
+      let qaMsgForBackend = qaUserMsg;
+      // 尺寸自适应：基于源图原始尺寸（支持外部覆盖，如 HD 放大需要升档）
+      const refDim =
+        sourceItem.naturalW && sourceItem.naturalH
+          ? { w: sourceItem.naturalW, h: sourceItem.naturalH }
+          : null;
+      const resolvedSize = sizeOverride ?? computeRequestedSizeByRefRatio(refDim) ?? imageGenSize;
+      const parsedSize = tryParseWxH(resolvedSize);
+      const genW = parsedSize?.w ?? 1024;
+      const genH = parsedSize?.h ?? 1024;
+
+      // 确保源图有 sha256（若未持久化，先上传）
+      let assetSha256 = sourceItem.originalSha256 || sourceItem.sha256 || '';
+      if (!assetSha256 || assetSha256.length !== 64) {
+        const srcUrl = sourceItem.src || '';
+        let data: string | undefined;
+        if (srcUrl.startsWith('data:')) {
+          data = srcUrl;
+        } else if (srcUrl) {
+          try {
+            const r = await fetch(srcUrl);
+            if (r.ok) {
+              const b = await r.blob();
+              const d = await blobToDataUrl(b);
+              if (d?.startsWith('data:')) data = d;
+            }
+          } catch { /* ignore */ }
+        }
+        if (data) {
+          const up = await uploadVisualAgentWorkspaceAsset({
+            id: workspaceId,
+            data,
+            prompt: sourceItem.prompt || 'reference',
+            width: sourceItem.naturalW,
+            height: sourceItem.naturalH,
+          });
+          if (up.success) {
+            assetSha256 = up.data.asset.sha256;
+            // 用 COS URL 重建后端消息（刷新后不再依赖 canvas refId）
+            const cosUrl = up.data.asset.url || '';
+            if (cosUrl) {
+              const imgTag = maskBase64 ? `[IMG:${cosUrl}|参考图] [蒙版已应用]` : `[IMG:${cosUrl}|参考图]`;
+              qaMsgForBackend = `[${label}] ${imgTag} ${prompt}`;
+            }
+            // 更新源图的 syncStatus
+            setCanvas((prev) =>
+              prev.map((x) =>
+                x.key === sourceItem.key
+                  ? { ...x, assetId: up.data.asset.id, sha256: up.data.asset.sha256, syncStatus: 'synced' as const, syncError: null }
+                  : x
+              )
+            );
+          } else {
+            toast.error('参考图上传失败：' + (up.error?.message || '未知错误'));
+            return;
+          }
+        } else {
+          toast.error('无法获取参考图数据');
+          return;
+        }
+      }
+
+      // 画布占位：固定放在源图右侧（间距 24px），与源图顶部对齐
+      const key = `qa_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const sourceX = sourceItem.x ?? 0;
+      const sourceY = sourceItem.y ?? 0;
+      const sourceW = sourceItem.w ?? 320;
+      const newX = sourceX + sourceW + 24;
+      const newY = sourceY;
+
+      setCanvas((prev) => {
+        const placeholder: CanvasImageItem = {
+          key,
+          kind: 'image',
+          createdAt: Date.now(),
+          prompt: prompt,
+          src: '',
+          status: 'running',
+          w: genW,
+          h: genH,
+          x: newX,
+          y: newY,
+        };
+        return [...prev, placeholder].slice(-60);
+      });
+      setSelectionWithoutChip([key]);
+
+      // 强制保存 canvas（确保占位元素已持久化）
+      {
+        const built = canvasToPersistedV1(canvasRef.current ?? []);
+        const json = JSON.stringify(built.state);
+        if (json !== lastSavedJsonRef.current) {
+          lastSavedJsonRef.current = json;
+          lastSaveAtRef.current = Date.now();
+          await saveVisualAgentWorkspaceCanvas({
+            id: workspaceId,
+            schemaVersion: PERSIST_SCHEMA_VERSION,
+            payloadJson: json,
+            idempotencyKey: `qaPreSave_${key}`,
+          });
+        }
+      }
+
+      // 调用后端生成
+      try {
+        const runRes = await createWorkspaceImageGenRun({
+          id: workspaceId,
+          input: {
+            prompt,
+            targetKey: key,
+            ...(pickedModel.id.startsWith('pool_')
+              ? { platformId: pickedModel.platformId, modelId: pickedModel.modelName }
+              : { configModelId: pickedModel.id }),
+            size: resolvedSize,
+            responseFormat: 'url',
+            imageRefs: [
+              {
+                refId: 1,
+                assetSha256,
+                url: sourceItem.originalSrc || sourceItem.src || '',
+                label: '原图',
+              },
+            ],
+            maskBase64: maskBase64 || undefined,
+            userMessageContent: qaMsgForBackend,
+          },
+          idempotencyKey: `qaRun_${workspaceId}_${key}`,
+        });
+        if (!runRes.success) {
+          const msg = runRes.error?.message || '快捷操作失败';
+          setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
+          pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt }));
+          return;
+        }
+        const runId = String(runRes.data?.runId ?? '').trim();
+        if (!runId) {
+          setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: '未返回 runId' } : x)));
+          pushMsg('Assistant', buildGenErrorContent({ msg: '未返回 runId', refSrc: refSrc || undefined, prompt }));
+          return;
+        }
+        const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
+        setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, runId } : x)));
+
+        // 订阅 SSE 流
+        const ac = new AbortController();
+        void streamImageGenRunWithRetry({
+          runId,
+          signal: ac.signal,
+          onEvent: (evt) => {
+            const data = String(evt.data ?? '').trim();
+            if (!data) return;
+            let obj: unknown = null;
+            try { obj = JSON.parse(data); } catch { return; }
+            const o = obj as ImageGenRunStreamPayload;
+            const t = String(o.type ?? '');
+            if (t === 'imageDone') {
+              const assetRaw = o.asset ?? null;
+              const asset = assetRaw
+                ? { id: String(assetRaw.id ?? ''), sha256: String(assetRaw.sha256 ?? ''), url: String(assetRaw.url ?? ''), originalUrl: String(assetRaw.originalUrl ?? ''), originalSha256: String(assetRaw.originalSha256 ?? '') }
+                : null;
+              const u = String(asset?.url ?? o.url ?? '');
+              const originalU = String(asset?.originalUrl || o.originalUrl || u || '');
+              const originalSha = String(asset?.originalSha256 || o.originalSha256 || asset?.sha256 || '');
+              if (!u) return;
+              setCanvas((prev) =>
+                prev.map((x) =>
+                  x.key === key
+                    ? { ...x, kind: 'image', status: 'done', src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, syncStatus: 'synced', syncError: null }
+                    : x
+                )
+              );
+              pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt, runId, modelPool: modelPoolName }));
+            } else if (t === 'imageError' || t === 'error') {
+              const msg = String(o.errorMessage ?? '快捷操作失败');
+              setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
+              pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt, runId, modelPool: modelPoolName }));
+            }
+          },
+        }).then(() => {
+          setCanvas((prev) => {
+            const item = prev.find((x) => x.key === key);
+            if (item && item.status === 'running') {
+              pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc: refSrc || undefined, prompt, modelPool: modelPoolName }));
+            }
+            return prev.map((x) =>
+              x.key === key && x.status === 'running'
+                ? { ...x, status: 'error', errorMessage: '生成超时或连接中断，请重试' }
+                : x
+            );
+          });
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : '快捷操作失败';
+        setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt }));
+      }
+    },
+    [effectiveModel, imageGenSize, workspaceId, setSelectionWithoutChip, pushMsg],
+  );
+
+  /** 快捷操作栏：点击内置/DIY 操作 */
+  const handleQuickAction = useCallback(
+    (action: QuickAction) => {
+      if (!selected || selected.status !== 'done' || !selected.src) {
+        toast.error('请先选中一张已完成的图片');
+        return;
+      }
+      // HD 放大：自动升级尺寸档位（1K→2K, 2K→4K）
+      let sizeOverride: string | undefined;
+      if (action.id === 'hd-upscale') {
+        const refDim =
+          selected.naturalW && selected.naturalH
+            ? { w: selected.naturalW, h: selected.naturalH }
+            : null;
+        const currentSize = computeRequestedSizeByRefRatio(refDim) ?? imageGenSize;
+        const currentTier = detectTierFromSize(currentSize);
+        if (currentTier) {
+          // 找到当前比例
+          const matchedAspect = ASPECT_OPTIONS.find((opt) => {
+            const s = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
+            return s.toLowerCase() === currentSize.toLowerCase();
+          });
+          if (matchedAspect) {
+            const nextTier = currentTier === '1k' ? '2k' : currentTier === '2k' ? '4k' : '4k';
+            sizeOverride = getSizeForTier(matchedAspect.id, nextTier);
+          }
+        }
+      }
+      void executeQuickAction(action.prompt, selected, sizeOverride, undefined, action.name);
+    },
+    [selected, executeQuickAction, imageGenSize],
+  );
+
+  /** 快捷编辑：用户在输入框描述编辑内容 */
+  const handleQuickEditSubmit = useCallback(
+    (text: string) => {
+      if (!selected || selected.status !== 'done' || !selected.src) {
+        toast.error('请先选中一张已完成的图片');
+        return;
+      }
+      setQuickEditRunning(true);
+      void executeQuickAction(text, selected, undefined, undefined, '快捷编辑').finally(() => setQuickEditRunning(false));
+    },
+    [selected, executeQuickAction],
+  );
 
   // 处理初始 prompt（从首页快捷输入跳转过来，或从 sessionStorage 读取）
   const initialPromptHandledRef = useRef(false);
@@ -3556,6 +4053,30 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           }
         }).catch(() => { /* ignore */ });
       }
+    }
+  };
+
+  // ── Keep retryRef in sync with latest sendText + canvas ──────────
+  retryRef.current = (prompt, imageRefShas, canvasSnapshot) => {
+    if (!prompt) return;
+    const shas = imageRefShas || [];
+    if (shas.length === 0) {
+      void sendText(prompt);
+      return;
+    }
+    const refIdMatches = [...prompt.matchAll(/@img(\d+)/gi)];
+    const originalRefIds = refIdMatches.map((m) => parseInt(m[1], 10));
+    const foundItems = shas
+      .map((sha) => canvasSnapshot.find((c) => c.sha256 === sha || c.originalSha256 === sha))
+      .filter((c): c is NonNullable<typeof c> => !!c && !!c.src);
+    if (foundItems.length > 0) {
+      const chipRefs = foundItems.map((c, idx) => ({
+        refId: originalRefIds[idx] ?? c.refId ?? (idx + 1),
+        canvasKey: c.key,
+      }));
+      void sendText(prompt, { chipRefs });
+    } else {
+      void sendText(prompt);
     }
   };
 
@@ -4297,12 +4818,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           <div
             className="inline-flex items-center gap-2 rounded-full px-4 h-10 text-[13px] font-semibold"
             style={{
+              ...glassTooltip,
               background: 'rgba(0,0,0,0.50)',
               border: '1px solid rgba(255,255,255,0.18)',
               color: 'rgba(255,255,255,0.92)',
               boxShadow: '0 20px 60px rgba(0,0,0,0.45)',
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
             }}
           >
             <Check size={16} />
@@ -4585,6 +5105,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
               const isMod = e.metaKey || e.ctrlKey;
               if (!isMod) return;
+
+              // Ctrl/Cmd + C：复制选中图片到剪贴板
+              if (e.key === 'c' || e.key === 'C') {
+                if (selectedKeys.length === 1) {
+                  const it = canvas.find((x) => x.key === selectedKeys[0]);
+                  if (it && (it.kind ?? 'image') === 'image' && it.src) {
+                    e.preventDefault();
+                    void copyImageToClipboard(it.src);
+                  }
+                }
+                return;
+              }
+
               if (e.key === '+' || e.key === '=') {
                 e.preventDefault();
                 const c = stageCenterClient();
@@ -4650,7 +5183,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 return (
                   <div
                     key={it.key}
-                    className="absolute rounded-[16px]"
+                    className="absolute rounded-[16px] group/citem"
                     style={{
                       left: Math.round(x),
                       top: Math.round(y),
@@ -5047,6 +5580,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       </div>
                     )}
 
+                    {/* 鼠标悬停边框效果（仅未选中 + 非 pending 时显示） */}
+                    {!active && !isPending && (kind === 'image' || kind === 'generator') && it.src ? (
+                      <div
+                        className="absolute rounded-[14px] opacity-0 group-hover/citem:opacity-100 transition-all duration-200 pointer-events-none"
+                        style={{
+                          left: selX,
+                          top: selY,
+                          width: selW,
+                          height: selH,
+                          border: '2px solid rgba(147,197,253,0.55)',
+                          boxShadow: '0 0 16px rgba(96,165,250,0.18), inset 0 0 8px rgba(96,165,250,0.06)',
+                          zIndex: 30,
+                        }}
+                      />
+                    ) : null}
+
                     {/* 两阶段选择：pending 状态遮罩（灰色边框 + 对勾标记） */}
                     {isPending && kind === 'image' ? (
                       <div
@@ -5398,6 +5947,96 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         );
                       })
                   : null}
+
+                {/* ── 快捷操作栏 + 快捷编辑输入框（世界坐标，跟随画布 transform） ── */}
+                {selectedKeys.length === 1 &&
+                  !imgContextMenu.open &&
+                  effectiveTool !== 'hand' &&
+                  !panning
+                  ? canvas
+                      .filter(
+                        (it) =>
+                          (it.kind ?? 'image') === 'image' &&
+                          isSelectedKey(it.key) &&
+                          it.status === 'done' &&
+                          Boolean(it.src),
+                      )
+                      .map((it) => {
+                        const ix = it.x ?? 0;
+                        const iy = it.y ?? 0;
+                        const iw = it.w ?? 320;
+                        const ih = it.h ?? 220;
+                        const bW = Math.max(40, Math.round(iw));
+                        const bH = Math.max(40, Math.round(ih));
+                        const nw = typeof it.naturalW === 'number' ? it.naturalW : 0;
+                        const nh = typeof it.naturalH === 'number' ? it.naturalH : 0;
+                        const hasN = nw > 0 && nh > 0;
+                        const fitImg = it.status === 'done' && Boolean(it.src) && hasN;
+                        const inn = fitImg ? computeObjectFitContainRect(bW, bH, nw, nh) : { x: 0, y: 0, w: bW, h: bH };
+                        const sX = inn.x;
+                        const sY = inn.y;
+                        const sW = Math.max(1, inn.w);
+                        const sH = Math.max(1, inn.h);
+                        return (
+                          <div
+                            key={`quickbar_${it.key}`}
+                            className="absolute"
+                            style={{
+                              left: Math.round(ix) + sX,
+                              top: Math.round(iy) + sY,
+                              width: sW,
+                              height: sH,
+                              pointerEvents: 'none',
+                            }}
+                          >
+                            {/* 快捷操作栏：选区上方居中 */}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: '50%',
+                                top: 0,
+                                transform: 'translate(-50%, calc(-100% - 104px)) scale(var(--invZoom))',
+                                transformOrigin: 'center bottom',
+                                pointerEvents: 'auto',
+                              }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                            >
+                              <ImageQuickActionBar
+                                actions={mergedQuickActions}
+                                onAction={handleQuickAction}
+                                onDownload={() => void downloadImage(it.src, it.prompt || 'image')}
+                                onOpenConfig={() => setQuickActionDialogOpen(true)}
+                                onInpaint={() => {
+                                  if (it.status !== 'done' || !it.src) {
+                                    toast.error('请先选中一张已完成的图片');
+                                    return;
+                                  }
+                                  setInpaintTarget(it);
+                                }}
+                              />
+                            </div>
+
+                            {/* 快捷编辑输入框：选区下方居中 */}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: '50%',
+                                bottom: 0,
+                                transform: 'translate(-50%, calc(100% + 26px)) scale(var(--invZoom))',
+                                transformOrigin: 'center top',
+                                pointerEvents: 'auto',
+                              }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                            >
+                              <ImageQuickEditInput
+                                onSubmit={handleQuickEditSubmit}
+                                running={quickEditRunning}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })
+                  : null}
               </div>
             </div>
 
@@ -5425,11 +6064,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div
                   className="w-[560px] max-w-[82vw] rounded-[12px] p-3"
                   style={{
+                    ...glassInputArea,
                     background: 'rgba(0,0,0,0.14)',
                     border: '1px solid var(--border-subtle, rgba(255,255,255,0.12))',
                     boxShadow: '0 24px 90px rgba(0,0,0,0.45)',
-                    backdropFilter: 'blur(20px) saturate(180%)',
-                    WebkitBackdropFilter: 'blur(20px) saturate(180%)',
                     minHeight: 148,
                   }}
                 >
@@ -5554,11 +6192,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           className="z-50 rounded-[16px] p-3"
                           style={{
                             width: 280,
-                            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                            ...glassPanel,
                           }}
                           onPointerDownOutside={(e) => e.preventDefault()}
                           onInteractOutside={(e) => e.preventDefault()}
@@ -5686,11 +6320,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           className="z-50 rounded-[18px] p-3"
                           style={{
                             minWidth: 320,
-                            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                            ...glassPanel,
                           }}
                         >
                           <div className="px-2 py-1 text-[11px] font-semibold" style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}>
@@ -5810,19 +6440,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           {/* 顶部居中：缩放浮层 */}
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
             <div
-              className="h-9 rounded-[999px] px-1.5 inline-flex items-center gap-1"
+              className="h-9 rounded-[999px] px-1.5 inline-flex items-center gap-1 whitespace-nowrap"
               style={{
+                ...glassTooltip,
                 border: '1px solid rgba(255,255,255,0.12)',
                 background: 'rgba(0,0,0,0.25)',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
                 boxShadow: '0 18px 60px rgba(0,0,0,0.50)',
                 color: 'var(--text-secondary)',
               }}
             >
               <button
                 type="button"
-                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
+                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5 shrink-0"
                 onClick={() => {
                   const c = stageCenterClient();
                   zoomAt(c.x, c.y, clampZoom(zoomRef.current / 1.07));
@@ -5833,12 +6462,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               >
                 <ZoomOut size={16} />
               </button>
-              <div className="px-1 text-[10px] font-semibold tabular-nums" title="缩放比例">
+              <div className="px-1 text-[10px] font-semibold tabular-nums shrink-0" title="缩放比例">
                 {Math.round(zoom * 100)}%
               </div>
               <button
                 type="button"
-                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
+                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5 shrink-0"
                 onClick={() => {
                   const c = stageCenterClient();
                   zoomAt(c.x, c.y, clampZoom(zoomRef.current * 1.07));
@@ -5849,50 +6478,52 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               >
                 <ZoomIn size={16} />
               </button>
+              {/* 移动端精简：只保留 适配 按钮，隐藏 100% 和排列 */}
               <button
                 type="button"
-                className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5"
+                className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5 whitespace-nowrap shrink-0"
                 onClick={fitToSelection}
                 disabled={canvas.length === 0}
                 title="适配选中/全部 (Shift+2) | 适配全部 (Shift+1) | 100% (Shift+0)"
               >
                 适配
               </button>
-              <button
-                type="button"
-                className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5"
-                onClick={() => {
-                  const c = stageCenterClient();
-                  zoomAt(c.x, c.y, 1);
-                }}
-                disabled={canvas.length === 0}
-                title="回到 100%"
-              >
-                100%
-              </button>
-              <div className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.15)' }} />
-              <button
-                type="button"
-                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5"
-                onClick={arrangeGrid}
-                disabled={canvas.length === 0}
-                title="自动排列（网格布局）"
-                aria-label="自动排列"
-              >
-                <Grid3X3 size={14} />
-              </button>
+              {!isMobile && (
+                <>
+                  <button
+                    type="button"
+                    className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5 whitespace-nowrap shrink-0"
+                    onClick={() => {
+                      const c = stageCenterClient();
+                      zoomAt(c.x, c.y, 1);
+                    }}
+                    disabled={canvas.length === 0}
+                    title="回到 100%"
+                  >
+                    100%
+                  </button>
+                  <div className="w-px h-4 mx-0.5 shrink-0" style={{ background: 'rgba(255,255,255,0.15)' }} />
+                  <button
+                    type="button"
+                    className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5 shrink-0"
+                    onClick={arrangeGrid}
+                    disabled={canvas.length === 0}
+                    title="自动排列（网格布局）"
+                    aria-label="自动排列"
+                  >
+                    <Grid3X3 size={14} />
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
-          {/* 左侧工具栏（液态大玻璃风格，上下半圆圆角） */}
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 z-20">
+          {/* 左侧工具栏（液态大玻璃风格，上下半圆圆角）— 移动端隐藏 */}
+          <div className={`absolute left-3 top-1/2 -translate-y-1/2 z-20 ${isMobile ? 'hidden' : ''}`}>
             <div
               className="rounded-full p-1.5 flex flex-col gap-1.5 bg-transparent"
               style={{
-                border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                backdropFilter: 'blur(40px) saturate(180%)',
-                WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+                ...glassPanel,
                 boxShadow: '0 18px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
               }}
             >
@@ -5950,12 +6581,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       sideOffset={8}
                       className="z-50 rounded-[18px] p-2"
                       style={{
+                        ...glassPanel,
                         minWidth: 220,
                         background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
                         border: '1px solid rgba(0, 0, 0, 0.08)',
                         boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
-                        backdropFilter: 'blur(40px) saturate(180%)',
-                        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                         color: '#0b0b0f',
                       }}
                       onPointerEnter={() => {
@@ -6078,12 +6708,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       sideOffset={8}
                       className="z-50 rounded-[18px] p-3"
                       style={{
+                        ...glassPanel,
                         minWidth: 260,
                         background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
                         border: '1px solid rgba(0, 0, 0, 0.08)',
                         boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
-                        backdropFilter: 'blur(40px) saturate(180%)',
-                        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                         color: '#0b0b0f',
                       }}
                       onPointerEnter={() => {
@@ -6202,12 +6831,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       sideOffset={8}
                       className="z-50 rounded-[18px] p-3"
                       style={{
+                        ...glassPanel,
                         minWidth: 320,
                         background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
                         border: '1px solid rgba(0, 0, 0, 0.08)',
                         boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
-                        backdropFilter: 'blur(40px) saturate(180%)',
-                        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
                       }}
                       onPointerEnter={() => {
                         if (shapeMenuCloseTimerRef.current != null) {
@@ -6378,18 +7006,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <ImagePlus size={18} />
               </button>
 
-              {/* 视频生成器 */}
+              {/* 手绘板 */}
               <button
                 type="button"
                 className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
                 style={{ color: 'rgba(255,255,255,0.86)' }}
-                title="视频生成器"
-                aria-label="视频生成器"
-                onClick={() => {
-                  pushMsg('Assistant', '视频生成器：占位（后续接入后端）。');
-                }}
+                title="手绘板"
+                aria-label="手绘板"
+                onClick={() => setDrawingBoardOpen(true)}
               >
-                <Video size={18} />
+                <PenTool size={18} />
               </button>
 
               {/* 删除选中（放到底部） */}
@@ -6424,22 +7050,108 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         </div>
           </div>
 
-          {/* 右侧：浮动对话面板（液态大玻璃效果） */}
+          {/* 移动端：底部工具栏 (替代隐藏的左侧工具栏) */}
+          {isMobile && (
+            <div
+              className="absolute left-1/2 -translate-x-1/2 bottom-3 z-40 inline-flex items-center gap-1 px-1.5 rounded-full h-12"
+              style={{
+                ...glassTooltip,
+                border: '1px solid rgba(255,255,255,0.14)',
+                background: 'rgba(0,0,0,0.45)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+              }}
+            >
+              {/* 手型工具 — 拖拽画布 */}
+              <button
+                type="button"
+                onClick={() => { setActiveTool('hand'); setMobileShowChat(false); }}
+                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: activeTool === 'hand' && !mobileShowChat ? 'rgba(255,255,255,0.15)' : 'transparent',
+                  color: activeTool === 'hand' && !mobileShowChat ? 'var(--text-primary)' : 'var(--text-muted)',
+                }}
+                aria-label="拖拽画布"
+              >
+                <Hand size={18} />
+              </button>
+              {/* 选择工具 — 选中/移动图片 */}
+              <button
+                type="button"
+                onClick={() => { setActiveTool('select'); setMobileShowChat(false); }}
+                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: activeTool === 'select' && !mobileShowChat ? 'rgba(255,255,255,0.15)' : 'transparent',
+                  color: activeTool === 'select' && !mobileShowChat ? 'var(--text-primary)' : 'var(--text-muted)',
+                }}
+                aria-label="选择/移动"
+              >
+                <MousePointer2 size={18} />
+              </button>
+              <div className="w-px h-5 shrink-0" style={{ background: 'rgba(255,255,255,0.15)' }} />
+              {/* 上传图片 */}
+              <button
+                type="button"
+                onClick={() => openImageFilePicker()}
+                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                }}
+                aria-label="上传图片"
+              >
+                <ImagePlus size={18} />
+              </button>
+              {/* 手绘板 */}
+              <button
+                type="button"
+                onClick={() => setDrawingBoardOpen(true)}
+                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                }}
+                aria-label="手绘板"
+              >
+                <PenTool size={18} />
+              </button>
+              <div className="w-px h-5 shrink-0" style={{ background: 'rgba(255,255,255,0.15)' }} />
+              {/* 聊天面板切换 */}
+              <button
+                type="button"
+                onClick={() => setMobileShowChat((v) => !v)}
+                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: mobileShowChat ? 'var(--accent-gold)' : 'transparent',
+                  color: mobileShowChat ? '#1a1a1a' : 'var(--text-muted)',
+                }}
+                aria-label={mobileShowChat ? '返回画布' : '打开聊天'}
+              >
+                <MessageSquare size={18} />
+              </button>
+            </div>
+          )}
+
+          {/* 右侧：浮动对话面板（液态大玻璃效果）— 移动端全屏覆盖 / 桌面端浮动 */}
           <div
-            className="absolute right-3 top-1/2 -translate-y-1/2 z-30 flex flex-col"
+            className={`${isMobile ? 'absolute inset-0' : 'absolute right-3 top-3'} z-30 flex flex-col`}
             style={{
-              width: 350,
-              height: '75%',
+              width: isMobile ? '100%' : 420,
+              height: isMobile ? '100%' : 'calc(100% - 24px)',
+              display: isMobile && !mobileShowChat ? 'none' : undefined,
+              // 移动端：底部留出工具栏空间
+              paddingBottom: isMobile ? 60 : undefined,
             }}
           >
             <div
-              className="flex flex-col p-2.5 rounded-[14px] h-full"
+              className={`flex flex-col h-full ${isMobile ? 'p-3' : 'p-2.5 rounded-[14px]'}`}
               style={{
-                background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(30, 30, 35, 0.85)) 0%, var(--glass-bg-end, rgba(25, 25, 30, 0.80)) 100%)',
-                border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
-                boxShadow: '0 12px 40px rgba(0,0,0,0.50), 0 0 0 1px rgba(255, 255, 255, 0.05) inset',
-                backdropFilter: 'blur(40px) saturate(180%)',
-                WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+                ...glassPanel,
+                background: isMobile
+                  ? 'linear-gradient(180deg, rgba(18, 18, 22, 0.96) 0%, rgba(14, 14, 18, 0.98) 100%)'
+                  : 'linear-gradient(180deg, var(--glass-bg-start, rgba(30, 30, 35, 0.85)) 0%, var(--glass-bg-end, rgba(25, 25, 30, 0.80)) 100%)',
+                border: isMobile ? 'none' : '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
+                boxShadow: isMobile ? 'none' : '0 12px 40px rgba(0,0,0,0.50), 0 0 0 1px rgba(255, 255, 255, 0.05) inset',
+                borderRadius: isMobile ? 0 : 14,
               }}
             >
             <div className="flex items-start justify-between gap-2">
@@ -6447,33 +7159,49 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                   Hi，我是你的 AI 设计师
                 </div>
-                <div className="mt-0.5 text-[9px] leading-tight" style={{ color: 'var(--text-muted)' }}>
-                  点画板图片即可选中，未来可作为图生图首帧。
-                </div>
+                {!isMobile && (
+                  <div className="mt-0.5 text-[9px] leading-tight" style={{ color: 'var(--text-muted)' }}>
+                    点画板图片即可选中，未来可作为图生图首帧。
+                  </div>
+                )}
               </div>
-              <button
-                type="button"
-                onClick={() => setShowLogs(true)}
-                className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
-                style={{ color: 'var(--text-muted)' }}
-                aria-label="查看 LLM 日志"
-                title="查看 LLM 日志"
-              >
-                <Eye size={14} />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDefectFlash(false); // 用户点击后停止闪烁
-                  useGlobalDefectStore.getState().openDialog();
-                }}
-                className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
-                style={{ color: 'var(--text-muted)' }}
-                aria-label="提交缺陷"
-                title="提交缺陷"
-              >
-                <Bug size={14} className={defectFlash ? 'defect-submit-flash' : ''} />
-              </button>
+              <div className="flex items-center gap-0.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowLogs(true)}
+                  className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
+                  style={{ color: 'var(--text-muted)' }}
+                  aria-label="查看 LLM 日志"
+                  title="查看 LLM 日志"
+                >
+                  <Eye size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDefectFlash(false);
+                    useGlobalDefectStore.getState().openDialog();
+                  }}
+                  className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
+                  style={{ color: 'var(--text-muted)' }}
+                  aria-label="提交缺陷"
+                  title="提交缺陷"
+                >
+                  <Bug size={14} className={defectFlash ? 'defect-submit-flash' : ''} />
+                </button>
+                {/* 移动端：关闭聊天面板按钮 */}
+                {isMobile && (
+                  <button
+                    type="button"
+                    onClick={() => setMobileShowChat(false)}
+                    className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
+                    style={{ color: 'var(--text-muted)' }}
+                    aria-label="关闭聊天"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                )}
+              </div>
             </div>
 
             {(!input.trim() && messages.length === 0) ? (
@@ -6503,283 +7231,30 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
             <div ref={scrollRef} className="mt-2 flex-1 min-h-0 overflow-auto pr-1">
               <div ref={msgContentRef} className="space-y-1.5">
-              {messages.map((m) => {
-                const isUser = m.role === 'User';
-                // 过滤历史遗留的"本次使用模型/直连模式..."提示（用户要求移除）
-                if (!isUser && String(m.content ?? '').trim().startsWith('本次使用模型：')) return null;
-
-                // Assistant 富消息：生成错误
-                const genError = !isUser ? parseGenError(m.content) : null;
-                if (genError) {
-                  return (
-                    <div key={m.id} className="flex flex-col items-start gap-0.5">
-                      <div
-                        className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
-                        style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgb(45, 30, 30)' }}
-                      >
-                        {/* 引用用户提示词 + 重试按钮 */}
-                        {genError.prompt ? (
-                          <div className="px-2.5 pt-2 pb-1.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
-                            <div className="text-[11px] min-w-0 flex-1 line-clamp-2" style={{ color: 'rgba(255,255,255,0.5)' }} title={genError.prompt}>
-                              <MessageContentRenderer
-                                content={genError.prompt}
-                                canvasItems={canvas}
-                                onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
-                              />
-                            </div>
-                            <button
-                              type="button"
-                              className="shrink-0 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:bg-white/10"
-                              style={{
-                                border: '1px solid rgba(255,255,255,0.15)',
-                                background: 'rgba(255,255,255,0.05)',
-                                color: 'rgba(255,255,255,0.7)',
-                              }}
-                              title="重试生成"
-                              onClick={() => { if (genError.prompt) void sendText(genError.prompt); }}
-                            >
-                              重试
-                            </button>
-                          </div>
-                        ) : null}
-                        <div className="px-2.5 pt-2 pb-2 flex items-start gap-2.5">
-                          {/* 参考图缩略图 */}
-                          {genError.refSrc ? (
-                            <button
-                              type="button"
-                              className="shrink-0 rounded-[6px] overflow-hidden"
-                              style={{ width: 48, height: 48, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.2)' }}
-                              onClick={() => setPreview({ open: true, src: genError.refSrc!, prompt: '参照图' })}
-                              title="点击预览参照图"
-                            >
-                              <img src={genError.refSrc} alt="参照图" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                            </button>
-                          ) : null}
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[12px] font-medium" style={{ color: 'rgba(239,68,68,0.92)' }}>生成失败</div>
-                            <div className="mt-0.5 text-[11px]" style={{ color: 'rgba(239,68,68,0.72)', wordBreak: 'break-word' }}>
-                              {genError.msg}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <span
-                        className="text-[9px] tabular-nums select-none pl-1"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
-                      >
-                        {formatMsgTimestamp(m.ts)}
-                      </span>
-                    </div>
-                  );
-                }
-
-                // Assistant 富消息：生成成功
-                const genDone = !isUser ? parseGenDone(m.content) : null;
-                if (genDone) {
-                  return (
-                    <div key={m.id} className="flex flex-col items-start gap-0.5">
-                      <div
-                        className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
-                        style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgb(35, 35, 40)' }}
-                      >
-                        {/* 引用用户提示词 + 重试按钮（Top） */}
-                        {(genDone.prompt || genDone.refSrc) ? (
-                          <div className="px-2.5 pb-2 pt-1 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                            <div className="text-[11px] min-w-0 flex-1 line-clamp-1" style={{ color: 'rgba(255,255,255,0.5)' }} title={genDone.prompt}>
-                              <MessageContentRenderer
-                                content={genDone.prompt || ''}
-                                canvasItems={canvas}
-                                onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
-                              />
-                            </div>
-                            <button
-                              type="button"
-                              className="shrink-0 px-2 py-0.5 text-[10px] rounded-md transition-all hover:brightness-110"
-                              style={{
-                                border: '1px solid rgba(255,255,255,0.15)',
-                                background: 'rgba(255,255,255,0.05)',
-                                color: 'rgba(255,255,255,0.7)',
-                              }}
-                              title="使用相同提示词重新生成"
-                              onClick={() => { if (genDone.prompt) void sendText(genDone.prompt); }}
-                            >
-                              重试
-                            </button>
-                          </div>
-                        ) : null}
-
-                        {/* 生成的图片（Middle） */}
-                        <button
-                          type="button"
-                          className="block w-full"
-                          onClick={() => setPreview({ open: true, src: genDone.src, prompt: genDone.prompt || '', runId: genDone.runId })}
-                          title="点击放大"
-                        >
-                  <img
-                    src={genDone.src}
-                    alt={genDone.prompt || '生成结果'}
-                    style={{ width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block' }}
-                  />
-                        </button>
-
-                        {/* 元数据（Bottom） */}
-                        {(() => {
-                          const originalUserMsg = messages.find(om => om.id === m.id.replace('msg_a', 'msg_u')) || messages[messages.indexOf(m) - 1];
-                          // 强制渲染元数据（即使用户消息中没有显式 token，也显示默认值或提取的值）
-                          // 如果用户消息没找到，或者 role 不是 User，我们仍然尝试从 m.content (GenDoneMeta) 中找线索，
-                          // 但 GenDoneMeta 里通常没有 size/model。
-                          // 回退逻辑：如果提取不到，就使用当前上下文的 effectiveModel 和默认尺寸。
-                          // 但这里是在渲染历史消息，不能直接用当前 effectiveModel（因为可能已经变了）。
-                          // 只能依赖 originalUserMsg。如果 originalUserMsg 存在，就提取。
-                          
-                          let msgSize = '';
-                          let msgModel = '';
-
-                          if (originalUserMsg && originalUserMsg.role === 'User') {
-                            const parsed = extractInlineImageToken(originalUserMsg.content);
-                            const contentText = parsed ? parsed.clean : originalUserMsg.content;
-                            const sizedMsg = extractSizeToken(contentText);
-                            msgSize = String(sizedMsg.size ?? '').trim();
-                            const modeledMsg = extractModelToken(sizedMsg.cleanText);
-                            msgModel = String(modeledMsg.model ?? '').trim();
-                          }
-
-                          // 如果没提取到，尝试使用默认值（仅当有 originalUserMsg 时，避免凭空捏造）
-                          if (originalUserMsg && !msgSize) {
-                             // 如果消息里没写尺寸，系统通常默认用 1024x1024。
-                             // 这里硬编码回退显示，以保证 UI 一致性（用户要求“下栏”）
-                             msgSize = '1024x1024';
-                          }
-                          
-                          // 如果没提取到模型，尝试从 GenDoneMeta 中获取 modelPool
-                          if (!msgModel) {
-                            const meta = parseGenDone(m.content);
-                            if (meta && meta.modelPool) {
-                              msgModel = meta.modelPool;
-                            }
-                          }
-
-                          // 如果还是没有，且有 originalUserMsg，尝试回退到 effectiveModel（仅作参考，可能不准）
-                          // 但为了准确性，如果不确定，最好不显示。
-                          // 不过用户想要“模型呢？”，我们可以尝试显示 serverDefaultModel 或 effectiveModel 的名称作为兜底
-                          // 注意：这里无法准确知道当时生图用了哪个模型（除非后端返回在 GenDoneMeta 里）
-                          // 目前 GenDoneMeta 有 modelPool 字段，应该能取到。
-                          
-                          // 只有在明确有数据时才渲染元数据栏
-                          if (msgSize || msgModel) {
-                            return (
-                              <div className="px-2.5 pt-2 pb-1.5 flex" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                                <MessageMetadata 
-                                  size={msgSize} 
-                                  model={msgModel} 
-                                  className="!mt-0 w-full" 
-                                  sizeToAspectMap={sizeToAspectMap} 
-                                />
-                              </div>
-                            );
-                          }
-                          return null;
-                        })()}
-                      </div>
-                      <span
-                        className="text-[9px] tabular-nums select-none pl-1"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
-                      >
-                        {formatMsgTimestamp(m.ts)}
-                      </span>
-                    </div>
-                  );
-                }
-
-                // 兼容旧格式的纯文本错误消息（"生成失败：..." / "解析失败：..."）
-                const legacyErrorMatch = !isUser ? /^(?:生成失败|解析失败)[：:](.+)$/s.exec(String(m.content ?? '').trim()) : null;
-                if (legacyErrorMatch) {
-                  const legacyMsg = legacyErrorMatch[1].trim();
-                  return (
-                    <div key={m.id} className="flex flex-col items-start gap-0.5">
-                      <div
-                        className="group relative max-w-[85%] rounded-[10px] overflow-hidden px-2.5 pt-2 pb-2"
-                        style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgb(45, 30, 30)' }}
-                      >
-                        <div className="text-[12px] font-medium" style={{ color: 'rgba(239,68,68,0.92)' }}>生成失败</div>
-                        <div className="mt-0.5 text-[11px]" style={{ color: 'rgba(239,68,68,0.72)', wordBreak: 'break-word' }}>
-                          {legacyMsg}
-                        </div>
-                      </div>
-                      <span
-                        className="text-[9px] tabular-nums select-none pl-1"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
-                      >
-                        {formatMsgTimestamp(m.ts)}
-                      </span>
-                    </div>
-                  );
-                }
-
-                // 普通消息（用户/助手纯文本）
-                const parsed = isUser ? extractInlineImageToken(m.content) : null;
-                const contentText = parsed ? parsed.clean : m.content;
-                const sizedMsg = isUser ? extractSizeToken(contentText) : { size: null as string | null, cleanText: String(contentText ?? '') };
-                const msgSize = String(sizedMsg.size ?? '').trim();
-                // 解析模型池标记
-                const modeledMsg = isUser ? extractModelToken(sizedMsg.cleanText) : { model: null as string | null, cleanText: String(sizedMsg.cleanText ?? '') };
-                const msgModel = String(modeledMsg.model ?? '').trim();
-                const msgBody = String(modeledMsg.cleanText ?? '');
-                const MSG_COLLAPSE_THRESHOLD = 100;
-                const isLongMsg = msgBody.length > MSG_COLLAPSE_THRESHOLD;
-                const isExpanded = expandedMsgIds.has(m.id);
-                return (
-                  <div key={m.id} className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'}`}>
-                    <div
-                      className="group relative max-w-[85%] rounded-[10px] px-2.5 py-1.5 text-[12px] leading-[16px]"
-                      style={{
-                        background: isUser
-                          ? 'rgb(50, 45, 35)'
-                          : 'rgb(35, 35, 40)',
-                        border: '1px solid var(--border-subtle)',
-                        color: 'var(--text-primary)',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      <div style={{ maxHeight: isLongMsg && !isExpanded ? 64 : undefined, overflow: isLongMsg && !isExpanded ? 'hidden' : undefined }}>
-                        <MessageContentRenderer
-                          content={msgBody}
-                          canvasItems={canvas}
-                          onPreview={(src, prompt) => setPreview({ open: true, src, prompt })}
-                        />
-                        
-                        {/* 气泡底部元数据：尺寸/模型 */}
-                        {isUser && (msgSize || msgModel) ? (
-                          null // 移除用户消息中的元数据
-                        ) : null}
-                      </div>
-                      {isLongMsg ? (
-                        <button
-                          type="button"
-                          className="mt-0.5 text-[10px] font-medium"
-                          style={{ color: 'rgba(99, 102, 241, 0.85)' }}
-                          onClick={() => setExpandedMsgIds((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(m.id)) next.delete(m.id);
-                            else next.add(m.id);
-                            return next;
-                          })}
-                        >
-                          {isExpanded ? '收起' : '展开'}
-                        </button>
-                      ) : null}
-                    </div>
-                    {/* 时间在气泡下方 */}
-                    <span
-                      className={`text-[9px] tabular-nums select-none ${isUser ? 'pr-1' : 'pl-1'}`}
-                      style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
-                    >
-                      {formatMsgTimestamp(m.ts)}
-                    </span>
-                  </div>
-                );
-              })}
+              {/* 向上滚动加载指示器 */}
+              {hasMoreMessages ? (
+                <div className="flex justify-center py-2">
+                  <button
+                    type="button"
+                    className="text-[10px] px-3 py-1 rounded-full transition-colors hover:bg-white/10"
+                    style={{ color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.1)' }}
+                    onClick={() => void loadOlderMessages()}
+                  >
+                    {loadingMoreRef.current ? '加载中…' : '加载更早的消息'}
+                  </button>
+                </div>
+              ) : null}
+              {messages.map((m) => (
+                <ChatMessageItem
+                  key={m.id}
+                  msg={m}
+                  allMessages={messages}
+                  canvas={canvas}
+                  sizeToAspectMap={sizeToAspectMap}
+                  onPreview={handleMsgPreview}
+                  onRetry={handleMsgRetry}
+                />
+              ))}
               <div ref={bottomRef} />
               </div>
             </div>
@@ -6794,8 +7269,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               ref={inputPanelRef}
               className="mt-2 rounded-[12px] p-2 relative shrink-0"
               style={{
+                ...glassTooltip,
                 border: directPrompt ? '1px solid var(--border-subtle)' : '1px solid rgba(251,146,60,0.55)',
-                background: directPrompt ? 'rgba(0,0,0,0.14)' : 'rgba(251,146,60,0.06)',
+                background: directPrompt ? 'rgba(20,20,24,0.72)' : 'rgba(251,146,60,0.06)',
+                boxShadow: undefined,
               }}
             >
               {/* 若直连被关闭（auto/解析模式）：做明显提示，避免用户误以为"直连默认开启" */}
@@ -6893,12 +7370,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div
                   className="absolute left-2 right-2 z-30 rounded-[14px] overflow-hidden"
                   style={{
+                    ...glassTooltip,
                     bottom: 56, // 让出底部工具条高度，避免挤压
                     border: '1px solid rgba(255,255,255,0.12)',
                     background: 'rgba(0,0,0,0.32)',
                     boxShadow: '0 24px 90px rgba(0,0,0,0.65)',
-                    backdropFilter: 'blur(10px)',
-                    WebkitBackdropFilter: 'blur(10px)',
                   }}
                 >
                   <div className="px-3 py-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
@@ -6910,8 +7386,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       const showModel = q === '' || 'model'.startsWith(q) || q.startsWith('m');
                       const showVision = q === '' || 'vision'.startsWith(q) || q.startsWith('v');
                       const showAscii = q === '' || 'ascii'.startsWith(q) || q.startsWith('a');
-                      const visionModels = (models ?? []).filter((m) => m.enabled && m.isVision);
-                      const imageModels = (models ?? []).filter((m) => m.enabled && m.isImageGen);
+                      const visionModels: ModelWithSource[] = []; // 视觉模型通过 Gateway 自动调度，暂不支持 @mention 选择
+                      const imageModels = enabledImageModels;
                       return (
                         <div className="p-2 space-y-2">
                           {showModel ? (
@@ -7038,12 +7514,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       <div
                         className="absolute bottom-full right-0 mb-2 z-50 rounded-[14px] p-3"
                         style={{
+                          ...glassPopoverCompact,
                           width: 260,
                           background: 'rgba(32, 32, 36, 0.96)',
                           border: '1px solid rgba(255, 255, 255, 0.18)',
                           boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.08) inset',
-                          backdropFilter: 'blur(24px)',
-                          WebkitBackdropFilter: 'blur(24px)',
                         }}
                       >
                         {/* 分辨率（档位）- 只显示模型支持的分辨率 */}
@@ -7145,7 +7620,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     <DropdownMenu.Trigger asChild>
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 rounded-full px-2 h-7 text-[11px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
+                        className="inline-flex items-center gap-1 rounded-full px-2 h-7 text-[11px] font-medium truncate max-w-[140px] cursor-pointer hover:opacity-80 transition-opacity"
                         style={{
                           background: 'rgba(99, 102, 241, 0.12)',
                           border: '1px solid rgba(99, 102, 241, 0.35)',
@@ -7168,11 +7643,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         style={{
                           width: 360,
                           maxWidth: 'min(92vw, 360px)',
-                          background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-                          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-                          backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-                          WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+                          ...glassPanel,
                         }}
                       >
                         <div className="flex items-center justify-between gap-3">
@@ -7216,33 +7687,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               ariaLabel="直连模式（固定开启）"
                             />
                           </div>
-                        </div>
-
-                        <div className="mt-3 flex items-center gap-1 rounded-[14px] p-1" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.03)' }}>
-                          {([
-                            { key: 'all', label: '默认' },
-                            { key: 'text2img', label: '文生图' },
-                            { key: 'img2img', label: '图生图' },
-                            { key: 'vision', label: '多图生图' },
-                          ] as const).map((tab) => (
-                            <button
-                              key={tab.key}
-                              type="button"
-                              className="h-8 px-2.5 rounded-[12px] text-[12px] font-semibold transition-all"
-                              style={generationType === tab.key ? {
-                                background: 'rgba(255,255,255,0.06)',
-                                border: '1px solid rgba(255,255,255,0.10)',
-                                color: 'var(--text-primary)',
-                              } : {
-                                background: 'transparent',
-                                border: '1px solid transparent',
-                                color: 'rgba(255,255,255,0.55)',
-                              }}
-                              onClick={() => setGenerationType(tab.key)}
-                            >
-                              {tab.label}
-                            </button>
-                          ))}
                         </div>
 
                         <div className="mt-3 max-h-[360px] overflow-auto pr-1">
@@ -7300,7 +7744,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
 
-                  {/* 水印设置按钮 */}
+                  {/* 设置按钮 */}
                   <button
                     type="button"
                     className="h-7 w-7 rounded-full inline-flex items-center justify-center"
@@ -7309,11 +7753,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       background: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.12)' : 'rgba(255,255,255,0.04)',
                       color: watermarkStatus.enabled ? 'rgba(245, 158, 11, 0.85)' : 'var(--text-secondary)',
                     }}
-                    aria-label="水印设置"
-                    title={watermarkStatus.enabled ? `水印: ${watermarkStatus.name || '已启用'}` : '水印设置'}
-                    onClick={() => setWatermarkSettingsOpen(true)}
+                    aria-label="设置"
+                    title={watermarkStatus.enabled ? `设置 (水印: ${watermarkStatus.name || '已启用'})` : '设置'}
+                    onClick={() => configDialogRef.current?.open()}
                   >
-                    <Droplet size={14} />
+                    <Settings size={14} />
                   </button>
 
                   {(runningCount > 0 || pendingCount > 0) ? (
@@ -7362,6 +7806,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         </div>
       </div>
 
+      {/* 快捷操作栏 + 快捷编辑输入框 已移至 worldUiRef 层 */}
+
       {/* 图片右键菜单 */}
       {imgContextMenu.open ? (
         <div
@@ -7373,14 +7819,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           }}
         >
           <div
-            className="absolute rounded-[12px] py-1.5 min-w-[140px] shadow-2xl"
+            className="absolute rounded-[12px] py-1.5 min-w-[170px] shadow-2xl"
             style={{
+              ...glassTooltip,
               left: imgContextMenu.x,
               top: imgContextMenu.y,
               background: 'rgba(32,32,38,0.96)',
               border: '1px solid rgba(255,255,255,0.12)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -7396,6 +7841,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               <Download size={16} />
               下载图片
             </button>
+            {imgContextMenu.src ? (
+              <button
+                type="button"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+                style={{ color: 'rgba(255,255,255,0.88)' }}
+                onClick={() => {
+                  void copyImageToClipboard(imgContextMenu.src);
+                  setImgContextMenu((p) => ({ ...p, open: false }));
+                }}
+              >
+                <Clipboard size={16} />
+                复制到剪贴板
+              </button>
+            ) : null}
             <button
               type="button"
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
@@ -7421,6 +7880,69 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <Maximize2 size={16} />
                 预览大图
               </button>
+            ) : null}
+
+            {/* 导出子菜单 */}
+            {imgContextMenu.src ? (
+              <>
+                <div className="my-1.5 mx-2 h-px" style={{ background: 'rgba(255,255,255,0.12)' }} />
+                <div className="group/export relative">
+                  <button
+                    type="button"
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+                    style={{ color: 'rgba(255,255,255,0.88)' }}
+                  >
+                    <Share size={16} />
+                    导出
+                    <ChevronRight size={14} className="ml-auto opacity-50" />
+                  </button>
+                  <div
+                    className="absolute left-full top-0 ml-1 rounded-[10px] py-1 min-w-[120px] shadow-2xl opacity-0 pointer-events-none group-hover/export:opacity-100 group-hover/export:pointer-events-auto transition-opacity duration-150"
+                    style={{
+                      ...glassTooltip,
+                      background: 'rgba(32,32,38,0.96)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
+                      style={{ color: 'rgba(255,255,255,0.88)' }}
+                      onClick={() => {
+                        void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'png');
+                        setImgContextMenu((p) => ({ ...p, open: false }));
+                      }}
+                    >
+                      <FileImage size={14} />
+                      PNG
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
+                      style={{ color: 'rgba(255,255,255,0.88)' }}
+                      onClick={() => {
+                        void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'jpg');
+                        setImgContextMenu((p) => ({ ...p, open: false }));
+                      }}
+                    >
+                      <FileImage size={14} />
+                      JPG
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
+                      style={{ color: 'rgba(255,255,255,0.88)' }}
+                      onClick={() => {
+                        void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'svg');
+                        setImgContextMenu((p) => ({ ...p, open: false }));
+                      }}
+                    >
+                      <FileImage size={14} />
+                      SVG
+                    </button>
+                  </div>
+                </div>
+              </>
             ) : null}
 
             {/* 分隔线 */}
@@ -7661,37 +8183,299 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           <LlmLogsPanel
             embedded
             defaultAppKey="visual-agent"
+            customApis={{
+              getLogs: getVisualAgentLogsReal,
+              getMeta: getVisualAgentLogsMetaReal,
+              getDetail: getVisualAgentLogDetailReal,
+            }}
           />
         }
       />
       </GlassCard>
 
-      {/* 水印设置对话框 */}
-      <Dialog
-        open={watermarkSettingsOpen}
-        onOpenChange={setWatermarkSettingsOpen}
-        title="水印设置"
-        titleAction={
-          <Button variant="secondary" size="xs" onClick={() => watermarkPanelRef.current?.addSpec()}>
-            <Plus size={14} />
-            新增配置
-          </Button>
-        }
-        content={
-          <div className="flex flex-col h-full min-h-0">
-            <div className="text-[12px] mb-3" style={{ color: 'var(--text-muted)' }}>
-              配置生成图片时自动叠加的水印。水印配置与"视觉创作"应用绑定。
-            </div>
-            <div className="flex-1 min-h-0 overflow-hidden">
+      {/* 设置对话框 - 使用通用 ConfigManagementDialogBase */}
+      <ConfigManagementDialogBase
+        ref={configDialogRef}
+        mineTitle="配置管理"
+        mineDescription="水印设置"
+        maxWidth={1200}
+        showColumnDividers={false}
+        columns={[
+          {
+            key: 'watermark',
+            title: '水印设置',
+            filterLabel: '水印',
+            titleAction: (
+              <Button variant="secondary" size="xs" onClick={() => watermarkPanelRef.current?.addSpec()}>
+                <Plus size={14} />
+                新增配置
+              </Button>
+            ),
+            renderMineContent: () => (
               <WatermarkSettingsPanel
                 ref={watermarkPanelRef}
                 appKey="visual-agent"
                 onStatusChange={handleWatermarkStatusChange}
                 hideAddButton
+                cardWidth={460}
               />
-            </div>
-          </div>
-        }
+            ),
+            loadMarketplace: async ({ keyword, sort }) => {
+              const res = await listWatermarksMarketplace({ keyword, sort });
+              return res.success && res.data?.items ? res.data.items : [];
+            },
+            renderMarketplaceCard: (config: MarketplaceWatermarkConfig, ctx: MarketplaceCardContext) => (
+              <MarketplaceWatermarkCard
+                key={config.id}
+                config={config}
+                ctx={ctx}
+                onFork={async () => {
+                  const res = await forkWatermark({ id: config.id });
+                  if (res.success) {
+                    toast.success('下载成功，已添加到「我的」');
+                    return true;
+                  }
+                  return false;
+                }}
+              />
+            ),
+          } as ConfigColumn<MarketplaceWatermarkConfig>,
+        ]}
+      />
+
+      {/* 快捷指令管理弹窗 */}
+      <QuickActionConfigPanel
+        open={quickActionDialogOpen}
+        onOpenChange={setQuickActionDialogOpen}
+        actions={diyQuickActions}
+        onChange={setDiyQuickActions}
+      />
+
+      {/* 局部重绘蒙版编辑器 */}
+      {inpaintTarget && inpaintTarget.src && (
+        <MaskPaintCanvas
+          imageSrc={inpaintTarget.originalSrc || inpaintTarget.src}
+          imageWidth={inpaintTarget.naturalW || inpaintTarget.w || 1024}
+          imageHeight={inpaintTarget.naturalH || inpaintTarget.h || 1024}
+          onCancel={() => setInpaintTarget(null)}
+          onConfirm={async (maskDataUri) => {
+            const target = inpaintTarget;
+            setInpaintTarget(null);
+            // 弹出提示词输入
+            const desc = await systemDialog.prompt({
+              title: '局部重绘',
+              message: '请输入重绘区域的描述',
+              placeholder: '如：将这里替换为蓝色的天空',
+            });
+            if (!desc?.trim()) {
+              toast.error('请输入重绘描述');
+              return;
+            }
+            void executeQuickAction(desc.trim(), target, undefined, maskDataUri, '局部重绘');
+          }}
+        />
+      )}
+
+      {/* 手绘板 */}
+      <DrawingBoardDialog
+        open={drawingBoardOpen}
+        onOpenChange={setDrawingBoardOpen}
+        onConfirm={async (dataUri, chatHistory, sizeHint) => {
+          setDrawingBoardOpen(false);
+
+          // 同步手绘板 AI 对话记录到消息面板（可追溯）
+          if (chatHistory.length > 0) {
+            const chatSummary = chatHistory.map(m => `${m.role === 'user' ? '我' : 'AI'}: ${m.content.length > 200 ? m.content.slice(0, 200) + '…' : m.content}`).join('\n');
+            pushMsg('User', `[手绘板对话]\n${chatSummary}`);
+          }
+
+          // 弹出提示词输入
+          const desc = await systemDialog.prompt({
+            title: '草图生成',
+            message: '请描述你想基于这张草图生成的图片',
+            placeholder: '如：一只猫坐在窗台上，水彩风格',
+          });
+          if (!desc?.trim()) {
+            toast.error('请输入生成描述');
+            return;
+          }
+
+          const pickedModel = effectiveModel;
+          if (!pickedModel) {
+            toast.error('暂无可用生图模型');
+            return;
+          }
+          const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
+          const sketchUserMsg = `[手绘板生图] ${desc.trim()}`;
+          pushMsg('User', sketchUserMsg);
+          // 后端消息会在上传后用 COS URL 重建
+          let sketchMsgForBackend = sketchUserMsg;
+
+          // 添加草图到画布（用于展示参考）
+          const sketchKey = `sketch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+          const near = stageCenterWorld();
+          const sketchParsed = tryParseWxH(sizeHint);
+          const sketchW = sketchParsed?.w ?? 640;
+          const sketchH = sketchParsed?.h ?? 480;
+          setCanvas(prev => [
+            ...prev,
+            {
+              key: sketchKey,
+              kind: 'image' as const,
+              createdAt: Date.now(),
+              prompt: `手绘草图: ${desc.trim()}`,
+              src: dataUri,
+              status: 'done' as const,
+              syncStatus: 'pending' as const,
+              syncError: null,
+              w: sketchW,
+              h: sketchH,
+              naturalW: sketchW,
+              naturalH: sketchH,
+              x: near.x - sketchW / 2 - sketchW / 2 - 16,
+              y: near.y - sketchH / 2,
+            },
+          ].slice(-60));
+
+          // 上传草图作为资产
+          const up = await uploadVisualAgentWorkspaceAsset({
+            id: workspaceId,
+            data: dataUri,
+            prompt: `手绘草图: ${desc.trim()}`,
+            width: sketchW,
+            height: sketchH,
+          });
+
+          if (!up.success) {
+            const msg = '草图上传失败：' + (up.error?.message || '未知错误');
+            pushMsg('Assistant', buildGenErrorContent({ msg, prompt: desc.trim() }));
+            return;
+          }
+
+          const assetSha256 = up.data.asset.sha256;
+          const refSrc = up.data.asset.url || '';
+          // 用 COS URL 重建后端消息（刷新后可直接展示草图缩略图）
+          if (refSrc) {
+            sketchMsgForBackend = `[手绘板生图] [IMG:${refSrc}|手绘草图] ${desc.trim()}`;
+          }
+          setCanvas(prev =>
+            prev.map(x =>
+              x.key === sketchKey
+                ? { ...x, assetId: up.data.asset.id, sha256: up.data.asset.sha256, src: refSrc || x.src, syncStatus: 'synced' as const, syncError: null }
+                : x
+            )
+          );
+
+          // 生成占位
+          const genKey = `sketch_gen_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+          const resolvedSize = sizeHint || imageGenSize;
+          const parsedSize = tryParseWxH(resolvedSize);
+          const genW = parsedSize?.w ?? 1024;
+          const genH = parsedSize?.h ?? 1024;
+
+          setCanvas(prev => [
+            ...prev,
+            {
+              key: genKey,
+              kind: 'image' as const,
+              createdAt: Date.now(),
+              prompt: desc.trim(),
+              src: '',
+              status: 'running' as const,
+              w: genW,
+              h: genH,
+              x: near.x - genW / 2 + genW / 2 + 16,
+              y: near.y - genH / 2,
+            },
+          ].slice(-60));
+          setSelectionWithoutChip([genKey]);
+
+          // 创建生图任务
+          try {
+            const runRes = await createWorkspaceImageGenRun({
+              id: workspaceId,
+              input: {
+                prompt: desc.trim(),
+                targetKey: genKey,
+                ...(pickedModel.id.startsWith('pool_')
+                  ? { platformId: pickedModel.platformId, modelId: pickedModel.modelName }
+                  : { configModelId: pickedModel.id }),
+                size: resolvedSize,
+                responseFormat: 'url',
+                imageRefs: [
+                  {
+                    refId: 1,
+                    assetSha256,
+                    url: refSrc,
+                    label: '手绘草图',
+                  },
+                ],
+                userMessageContent: sketchMsgForBackend,
+              },
+              idempotencyKey: `sketchRun_${workspaceId}_${genKey}`,
+            });
+
+            if (!runRes.success) {
+              const msg = runRes.error?.message || '草图生图失败';
+              setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, status: 'error' as const } : x));
+              pushMsg('Assistant', buildGenErrorContent({ msg, refSrc, prompt: desc.trim() }));
+              return;
+            }
+
+            // 订阅 Run 事件流
+            const runId = runRes.data.runId;
+            setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, runId } : x));
+            const sketchAc = new AbortController();
+            void streamImageGenRunWithRetry({
+              runId,
+              signal: sketchAc.signal,
+              onEvent: (evt) => {
+                const evData = String(evt.data ?? '').trim();
+                if (!evData) return;
+                let obj: unknown = null;
+                try { obj = JSON.parse(evData); } catch { return; }
+                const o = obj as ImageGenRunStreamPayload;
+                const t = String(o.type ?? '');
+                if (t === 'imageDone') {
+                  const assetRaw = o.asset ?? null;
+                  const asset = assetRaw
+                    ? { id: String(assetRaw.id ?? ''), sha256: String(assetRaw.sha256 ?? ''), url: String(assetRaw.url ?? ''), originalUrl: String(assetRaw.originalUrl ?? ''), originalSha256: String(assetRaw.originalSha256 ?? '') }
+                    : null;
+                  const u = String(asset?.url ?? o.url ?? '');
+                  const originalU = String(asset?.originalUrl || o.originalUrl || u || '');
+                  const originalSha = String(asset?.originalSha256 || o.originalSha256 || asset?.sha256 || '');
+                  if (!u) return;
+                  setCanvas(prev => prev.map(x =>
+                    x.key === genKey
+                      ? { ...x, kind: 'image' as const, status: 'done' as const, src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, syncStatus: 'synced' as const, syncError: null }
+                      : x
+                  ));
+                  pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc, prompt: desc.trim(), runId, modelPool: modelPoolName }));
+                } else if (t === 'imageError' || t === 'error') {
+                  const msg = String(o.errorMessage ?? '草图生图失败');
+                  setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, status: 'error' as const, errorMessage: msg } : x));
+                  pushMsg('Assistant', buildGenErrorContent({ msg, refSrc, prompt: desc.trim(), runId, modelPool: modelPoolName }));
+                }
+              },
+            }).then(() => {
+              setCanvas(prev => {
+                const item = prev.find(x => x.key === genKey);
+                if (item && item.status === 'running') {
+                  pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc, prompt: desc.trim(), modelPool: modelPoolName }));
+                }
+                return prev.map(x =>
+                  x.key === genKey && x.status === 'running'
+                    ? { ...x, status: 'error' as const, errorMessage: '生成超时或连接中断，请重试' }
+                    : x
+                );
+              });
+            });
+          } catch (e) {
+            const msg = (e as Error).message || '草图生图异常';
+            setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, status: 'error' as const } : x));
+            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc, prompt: desc.trim() }));
+          }
+        }}
       />
     </div>
   );

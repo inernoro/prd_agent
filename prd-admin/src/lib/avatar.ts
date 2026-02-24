@@ -1,3 +1,5 @@
+import { useAuthStore } from '@/stores/authStore';
+
 export const AVATAR_PATH_PREFIX = 'icon/backups/head';
 export const DEFAULT_BOT_AVATAR_FILES: Record<string, string> = {
   pm: 'bot_pm.gif',
@@ -49,12 +51,12 @@ function joinUrl(base: string, path: string) {
   return `${b}/${p}`;
 }
 
-const DEFAULT_COS_BASE_URL = 'https://i.pa.759800.com';
-
+/**
+ * 获取 CDN 基础地址：从 authStore 读取（后端 /api/authz/me 下发）。
+ * 前端不硬编码任何域名，域名迁移只需改后端环境变量。
+ */
 export function getAvatarBaseUrl(): string {
-  const raw = (import.meta.env.TENCENT_COS_PUBLIC_BASE_URL as string | undefined) ?? '';
-  const trimmed = raw.trim().replace(/\/+$/, '');
-  return trimmed || DEFAULT_COS_BASE_URL;
+  return useAuthStore.getState().cdnBaseUrl ?? '';
 }
 
 export function resolveAvatarUrl(args: {

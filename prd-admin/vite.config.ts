@@ -2,9 +2,21 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
+import { execSync } from 'child_process';
+
+function getGitBranch(): string {
+  try {
+    return execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim();
+  } catch {
+    return '';
+  }
+}
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
+  define: {
+    __GIT_BRANCH__: JSON.stringify(process.env.VITE_GIT_BRANCH || getGitBranch()),
+  },
   // 默认 Vite 只暴露 VITE_ 前缀；这里额外暴露 TENCENT_ 前缀，便于前端拼接 COS 公网资源地址（如头像）
   envPrefix: ['VITE_', 'TENCENT_'],
   server: {
@@ -12,6 +24,9 @@ export default defineConfig({
     // 默认 8000（与后端 5000 端口区分开，便于联调）
     port: Number.parseInt(process.env.PORT || '', 10) || 8000,
     strictPort: false,
+    // Allow all hosts — the dev server runs behind nginx reverse-proxy whose Host header
+    // won't match the container hostname. Security is enforced at the nginx layer.
+    allowedHosts: true,
     // 本地联调：通过同源 /api 反代到后端，彻底避免 CORS/OPTIONS 预检 403
     proxy: {
       '/api': {

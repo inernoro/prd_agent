@@ -128,6 +128,8 @@ public class GroupsController : ControllerBase
             stats.MessageCounts.TryGetValue(g.GroupId, out var messageCount);
             stats.PendingGaps.TryGetValue(g.GroupId, out var pendingGapCount);
             stats.LastMessageAt.TryGetValue(g.GroupId, out var lastMessageAt);
+            stats.TopMembers.TryGetValue(g.GroupId, out var topMembers);
+            stats.RoleDistributions.TryGetValue(g.GroupId, out var roleDistribution);
 
             return new AdminGroupListItem
             {
@@ -152,7 +154,9 @@ public class GroupsController : ControllerBase
                 CreatedAt = g.CreatedAt,
                 LastMessageAt = lastMessageAt == default ? null : lastMessageAt,
                 MessageCount = (int)(messageCount == 0 ? 0 : messageCount),
-                PendingGapCount = (int)(pendingGapCount == 0 ? 0 : pendingGapCount)
+                PendingGapCount = (int)(pendingGapCount == 0 ? 0 : pendingGapCount),
+                TopMembers = topMembers,
+                RoleDistribution = roleDistribution
             };
         }).ToList();
 
@@ -184,6 +188,8 @@ public class GroupsController : ControllerBase
         stats.MessageCounts.TryGetValue(groupId, out var messageCount);
         stats.PendingGaps.TryGetValue(groupId, out var pendingGapCount);
         stats.LastMessageAt.TryGetValue(groupId, out var lastMessageAt);
+        stats.TopMembers.TryGetValue(groupId, out var topMembers);
+        stats.RoleDistributions.TryGetValue(groupId, out var roleDistribution);
 
         var dto = new AdminGroupListItem
         {
@@ -208,7 +214,9 @@ public class GroupsController : ControllerBase
             CreatedAt = group.CreatedAt,
             LastMessageAt = lastMessageAt == default ? null : lastMessageAt,
             MessageCount = (int)messageCount,
-            PendingGapCount = (int)pendingGapCount
+            PendingGapCount = (int)pendingGapCount,
+            TopMembers = topMembers,
+            RoleDistribution = roleDistribution
         };
 
         return Ok(ApiResponse<AdminGroupListItem>.Ok(dto));
@@ -495,12 +503,73 @@ public class GroupsController : ControllerBase
             .Group(g => g.GroupId, gg => new { GroupId = gg.Key, Count = gg.Count() })
             .ToListAsync();
 
+        // 加载每个群组的前5名成员（按加入时间排序）
+        var allMembers = await _db.GroupMembers
+            .Find(m => groupIds.Contains(m.GroupId))
+            .SortBy(m => m.JoinedAt)
+            .ToListAsync();
+
+        var topMembersByGroup = allMembers
+            .GroupBy(m => m.GroupId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Take(5).Select(m => m.UserId).ToList()
+            );
+
+        // 批量获取用户信息
+        var allUserIds = topMembersByGroup.Values.SelectMany(x => x).Distinct().ToList();
+        var usersForTop = await _db.Users
+            .Find(u => allUserIds.Contains(u.UserId))
+            .Project(u => new { u.UserId, u.DisplayName, u.AvatarFileName })
+            .ToListAsync();
+        var userInfoMap = usersForTop.ToDictionary(u => u.UserId, u => u);
+
+        var topMembers = topMembersByGroup.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value
+                .Where(uid => userInfoMap.ContainsKey(uid))
+                .Select(uid => new AdminGroupTopMember
+                {
+                    UserId = uid,
+                    DisplayName = userInfoMap[uid].DisplayName ?? "",
+                    AvatarFileName = userInfoMap[uid].AvatarFileName
+                })
+                .ToList()
+        );
+
+        // 计算角色分布：获取所有成员的用户信息（包含角色）
+        var allMemberUserIds = allMembers.Select(m => m.UserId).Distinct().ToList();
+        var allMemberUsers = await _db.Users
+            .Find(u => allMemberUserIds.Contains(u.UserId))
+            .Project(u => new { u.UserId, u.Role })
+            .ToListAsync();
+        var userRoleMap = allMemberUsers.ToDictionary(u => u.UserId, u => u.Role);
+
+        var roleDistributions = allMembers
+            .GroupBy(m => m.GroupId)
+            .ToDictionary(
+                g => g.Key,
+                g =>
+                {
+                    var roles = g.Select(m => userRoleMap.GetValueOrDefault(m.UserId, UserRole.DEV)).ToList();
+                    return new RoleDistribution
+                    {
+                        Pm = roles.Count(r => r == UserRole.PM),
+                        Dev = roles.Count(r => r == UserRole.DEV),
+                        Qa = roles.Count(r => r == UserRole.QA),
+                        Admin = roles.Count(r => r == UserRole.ADMIN)
+                    };
+                }
+            );
+
         return new AdminGroupStatsMaps
         {
             MemberCounts = memberCounts.ToDictionary(x => x.GroupId, x => (long)x.Count),
             MessageCounts = messageAgg.ToDictionary(x => x.GroupId, x => (long)x.Count),
             LastMessageAt = messageAgg.ToDictionary(x => x.GroupId, x => x.Last),
-            PendingGaps = pendingGaps.ToDictionary(x => x.GroupId, x => (long)x.Count)
+            PendingGaps = pendingGaps.ToDictionary(x => x.GroupId, x => (long)x.Count),
+            TopMembers = topMembers,
+            RoleDistributions = roleDistributions
         };
     }
 }
@@ -537,6 +606,25 @@ public class AdminGroupListItem
     public DateTime? LastMessageAt { get; set; }
     public int MessageCount { get; set; }
     public int PendingGapCount { get; set; }
+    /// <summary>前几名成员（用于头像堆叠展示）</summary>
+    public List<AdminGroupTopMember>? TopMembers { get; set; }
+    /// <summary>成员角色分布</summary>
+    public RoleDistribution? RoleDistribution { get; set; }
+}
+
+public class RoleDistribution
+{
+    public int Pm { get; set; }
+    public int Dev { get; set; }
+    public int Qa { get; set; }
+    public int Admin { get; set; }
+}
+
+public class AdminGroupTopMember
+{
+    public string UserId { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public string? AvatarFileName { get; set; }
 }
 
 public class AdminGroupMemberDto
@@ -573,6 +661,8 @@ internal class AdminGroupStatsMaps
     public Dictionary<string, long> MessageCounts { get; set; } = new();
     public Dictionary<string, DateTime> LastMessageAt { get; set; } = new();
     public Dictionary<string, long> PendingGaps { get; set; } = new();
+    public Dictionary<string, List<AdminGroupTopMember>> TopMembers { get; set; } = new();
+    public Dictionary<string, RoleDistribution> RoleDistributions { get; set; } = new();
 }
 
 public class AdminMessageDto

@@ -5,15 +5,17 @@ import { useContextMenu, type ContextMenuItem } from '@/components/ui/ContextMen
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import {
-  createVisualAgentWorkspace,
-  deleteVisualAgentWorkspace,
-  listVisualAgentWorkspaces,
-  updateVisualAgentWorkspace,
-} from '@/services';
+  listLiteraryAgentWorkspacesReal as listLiteraryAgentWorkspaces,
+  createLiteraryAgentWorkspaceReal as createLiteraryAgentWorkspace,
+  updateLiteraryAgentWorkspaceReal as updateLiteraryAgentWorkspace,
+  deleteLiteraryAgentWorkspaceReal as deleteLiteraryAgentWorkspace,
+} from '@/services/real/literaryAgentConfig';
 import type { VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import { Plus, Pencil, Trash2, FileText, SquarePen, FolderOpen, ChevronDown, ChevronRight, FolderPlus, MoveRight, BookOpen } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { cn } from '@/lib/cn';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -66,7 +68,7 @@ function ArticlePreview({ markdown }: { markdown: string }) {
           .literary-preview-md ul,.literary-preview-md ol { margin: 2px 0; padding-left: 12px; }
           .literary-preview-md li { margin: 1px 0; }
           .literary-preview-md blockquote { margin: 2px 0; padding: 2px 6px; border-left: 2px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); border-radius: 4px; }
-          .literary-preview-md code { font-size: 9px; background: rgba(255,255,255,0.06); padding: 0 3px; border-radius: 3px; }
+          .literary-preview-md code { font-size: 9px; background: var(--bg-input-hover); padding: 0 3px; border-radius: 3px; }
         `}</style>
         <div className="literary-preview-md">
           <ReactMarkdown
@@ -98,6 +100,7 @@ type FolderGroup = {
 
 export default function LiteraryAgentWorkspaceListPage() {
   const navigate = useNavigate();
+  const { isMobile } = useBreakpoint();
   const [items, setItems] = useState<VisualAgentWorkspace[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
@@ -109,7 +112,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await listVisualAgentWorkspaces({ limit: 100 });
+      const res = await listLiteraryAgentWorkspaces({ limit: 100 });
       if (!res.success) {
         setError(res.error?.message || '加载失败');
         return;
@@ -165,7 +168,7 @@ export default function LiteraryAgentWorkspaceListPage() {
       cancelText: '取消',
     });
     if (!title) return;
-    const res = await createVisualAgentWorkspace({
+    const res = await createLiteraryAgentWorkspace({
       title,
       scenarioType: 'article-illustration',
       idempotencyKey: `create-literary-${Date.now()}`,
@@ -176,7 +179,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     }
     // 如果指定了文件夹，设置 folderName
     if (folderName && res.data?.workspace?.id) {
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: res.data.workspace.id,
         folderName,
         idempotencyKey: `set-folder-${res.data.workspace.id}-${Date.now()}`,
@@ -198,13 +201,13 @@ export default function LiteraryAgentWorkspaceListPage() {
     });
     if (!name) return;
     // 创建一个新文章并设置 folderName
-    const res = await createVisualAgentWorkspace({
+    const res = await createLiteraryAgentWorkspace({
       title: '未命名',
       scenarioType: 'article-illustration',
       idempotencyKey: `create-literary-folder-${Date.now()}`,
     });
     if (res.success && res.data?.workspace?.id) {
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: res.data.workspace.id,
         folderName: name,
         idempotencyKey: `set-folder-${res.data.workspace.id}-${Date.now()}`,
@@ -226,7 +229,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     // 批量更新所有同名文章的 folderName
     const toUpdate = items.filter((ws) => ws.folderName === oldName);
     for (const ws of toUpdate) {
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: ws.id,
         folderName: newName,
         idempotencyKey: `rename-folder-${ws.id}-${Date.now()}`,
@@ -247,7 +250,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     if (!ok) return;
     const toUpdate = items.filter((ws) => ws.folderName === folderName);
     for (const ws of toUpdate) {
-      await updateVisualAgentWorkspace({
+      await updateLiteraryAgentWorkspace({
         id: ws.id,
         folderName: null,
         idempotencyKey: `delete-folder-${ws.id}-${Date.now()}`,
@@ -266,7 +269,7 @@ export default function LiteraryAgentWorkspaceListPage() {
       cancelText: '取消',
     });
     if (!title || title === ws.title) return;
-    const res = await updateVisualAgentWorkspace({ id: ws.id, title, idempotencyKey: `rename-${ws.id}-${Date.now()}` });
+    const res = await updateLiteraryAgentWorkspace({ id: ws.id, title, idempotencyKey: `rename-${ws.id}-${Date.now()}` });
     if (!res.success) {
       toast.error('重命名失败', res.error?.message || '未知错误');
       return;
@@ -283,7 +286,7 @@ export default function LiteraryAgentWorkspaceListPage() {
       cancelText: '取消',
     });
     if (!ok) return;
-    const res = await deleteVisualAgentWorkspace({ id: ws.id, idempotencyKey: `delete-${ws.id}-${Date.now()}` });
+    const res = await deleteLiteraryAgentWorkspace({ id: ws.id, idempotencyKey: `delete-${ws.id}-${Date.now()}` });
     if (!res.success) {
       toast.error('删除失败', res.error?.message || '未知错误');
       return;
@@ -292,7 +295,7 @@ export default function LiteraryAgentWorkspaceListPage() {
   };
 
   const onMoveToFolder = async (ws: VisualAgentWorkspace, targetFolder: string | null) => {
-    await updateVisualAgentWorkspace({
+    await updateLiteraryAgentWorkspace({
       id: ws.id,
       folderName: targetFolder,
       idempotencyKey: `move-${ws.id}-${Date.now()}`,
@@ -421,8 +424,8 @@ export default function LiteraryAgentWorkspaceListPage() {
         </div>
         <div className="px-2 pb-2 flex-1 min-h-0 overflow-hidden">
           <div
-            className="h-full overflow-hidden border rounded-[5px] text-[10px] flex flex-col"
-            style={{ borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+            className="h-full overflow-hidden border rounded-[5px] text-[12px] md:text-[10px] flex flex-col"
+            style={{ borderColor: 'var(--border-subtle)', background: 'var(--list-item-bg)' }}
           >
             <div className="p-1.5 flex-1 overflow-hidden">
               <ArticlePreview markdown={getArticlePreviewText(ws)} />
@@ -436,6 +439,7 @@ export default function LiteraryAgentWorkspaceListPage() {
                   'flex items-center gap-0.5',
                   'opacity-0 pointer-events-none transition-opacity duration-100',
                   'group-hover:opacity-100 group-hover:pointer-events-auto',
+                  'mobile-show-actions',
                 ].join(' ')}
               >
                 <Button
@@ -509,7 +513,7 @@ export default function LiteraryAgentWorkspaceListPage() {
         </div>
         {/* 文章网格 */}
         {!isCollapsed && (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 pl-6">
+          <div className={cn("grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2", isMobile ? '' : 'pl-6')}>
             {groupItems.map(renderCard)}
           </div>
         )}

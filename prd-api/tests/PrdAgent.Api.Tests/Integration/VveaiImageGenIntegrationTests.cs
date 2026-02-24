@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using PrdAgent.Api.Tests;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -15,6 +16,7 @@ namespace PrdAgent.Api.Tests.Integration;
 /// cd prd-api
 /// dotnet test --filter "VveaiImageGenIntegrationTests" --logger "console;verbosity=detailed"
 /// </summary>
+[Trait("Category", TestCategories.Manual)]
 public class VveaiImageGenIntegrationTests : IDisposable
 {
     private readonly ITestOutputHelper _output;

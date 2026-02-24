@@ -5,7 +5,13 @@ import type {
   CreateLiteraryPromptContract,
   UpdateLiteraryPromptContract,
   DeleteLiteraryPromptContract,
+  ListLiteraryPromptsMarketplaceContract,
+  PublishLiteraryPromptContract,
+  UnpublishLiteraryPromptContract,
+  ForkLiteraryPromptContract,
+  OptimizeLiteraryPromptContract,
   LiteraryPrompt,
+  MarketplaceLiteraryPrompt,
 } from '../contracts/literaryPrompts';
 
 export const listLiteraryPromptsReal: ListLiteraryPromptsContract = async (input) => {
@@ -48,5 +54,54 @@ export const deleteLiteraryPromptReal: DeleteLiteraryPromptContract = async (inp
   return await apiRequest<{ deleted: boolean }>(
     api.literaryAgent.prompts.byId(encodeURIComponent(input.id)),
     { method: 'DELETE' }
+  );
+};
+
+// 海鲜市场 API
+
+export const listLiteraryPromptsMarketplaceReal: ListLiteraryPromptsMarketplaceContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.scenarioType) qs.set('scenarioType', input.scenarioType);
+  if (input.keyword) qs.set('keyword', input.keyword);
+  if (input.sort) qs.set('sort', input.sort);
+  const q = qs.toString();
+  return await apiRequest<{ items: MarketplaceLiteraryPrompt[] }>(
+    `${api.literaryAgent.prompts.list()}/marketplace${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const publishLiteraryPromptReal: PublishLiteraryPromptContract = async (input) => {
+  return await apiRequest<{ prompt: LiteraryPrompt }>(
+    `${api.literaryAgent.prompts.byId(encodeURIComponent(input.id))}/publish`,
+    { method: 'POST' }
+  );
+};
+
+export const unpublishLiteraryPromptReal: UnpublishLiteraryPromptContract = async (input) => {
+  return await apiRequest<{ prompt: LiteraryPrompt }>(
+    `${api.literaryAgent.prompts.byId(encodeURIComponent(input.id))}/unpublish`,
+    { method: 'POST' }
+  );
+};
+
+export const optimizeLiteraryPromptReal: OptimizeLiteraryPromptContract = async (input) => {
+  return await apiRequest<{ optimizedContent: string }>(
+    `${api.literaryAgent.prompts.list()}/optimize`,
+    {
+      method: 'POST',
+      body: { content: input.content },
+    }
+  );
+};
+
+export const forkLiteraryPromptReal: ForkLiteraryPromptContract = async (input) => {
+  const body = input.name ? { Name: input.name } : {};
+  return await apiRequest<{ prompt: LiteraryPrompt }>(
+    `${api.literaryAgent.prompts.byId(encodeURIComponent(input.id))}/fork`,
+    { 
+      method: 'POST',
+      body,
+    }
   );
 };

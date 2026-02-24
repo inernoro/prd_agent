@@ -389,6 +389,7 @@ public class ClaudeClient : ILLMClient
                         TokenUsageSource: usageSeen ? "reported" : "missing",
                         ImageSuccessCount: null,
                         AnswerText: answerText,
+                        ThinkingText: null,
                         AssembledTextChars: assembledChars,
                         AssembledTextHash: hash,
                         Status: status,

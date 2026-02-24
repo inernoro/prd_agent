@@ -100,12 +100,11 @@ public class GroupsController : ControllerBase
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         }
 
-        // 检查用户角色（仅PM可创建）
+        // 验证用户存在
         var user = await _userService.GetByIdAsync(userId);
-        if (user == null || (user.Role != UserRole.PM && user.Role != UserRole.ADMIN))
+        if (user == null)
         {
-            return StatusCode(StatusCodes.Status403Forbidden,
-                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅产品经理可创建群组"));
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "用户不存在"));
         }
 
         var prdDocumentId = string.IsNullOrWhiteSpace(request.PrdDocumentId) ? null : request.PrdDocumentId!.Trim();
@@ -819,6 +818,7 @@ public class GroupsController : ControllerBase
                 SenderTags = senderTags,
             Role = m.Role,
             Content = m.Content,
+            ThinkingContent = m.ThinkingContent,
             ReplyToMessageId = m.ReplyToMessageId,
             ResendOfMessageId = m.ResendOfMessageId,
             ViewRole = m.ViewRole,
@@ -1076,6 +1076,21 @@ public class GroupsController : ControllerBase
                     continue;
                 }
 
+                // thinking：AI 思考过程的增量内容（不参与 seq 排序，直接推送）
+                if (string.Equals(ev.Type, "thinking", StringComparison.OrdinalIgnoreCase))
+                {
+                    var thinkingEvent = new GroupMessageStreamEventDto
+                    {
+                        Type = "thinking",
+                        MessageId = ev.MessageId,
+                        ThinkingContent = ev.ThinkingContent
+                    };
+                    var json = JsonSerializer.Serialize(thinkingEvent, AppJsonContext.Default.GroupMessageStreamEventDto);
+                    await WriteSseAsync(id: null, eventName: "message", dataJson: json, ct: cancellationToken);
+                    lastKeepAliveAt = DateTime.UtcNow;
+                    continue;
+                }
+
                 // blockEnd：Block 结束事件（不参与 seq 排序，直接推送）
                 if (string.Equals(ev.Type, "blockEnd", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1125,7 +1140,17 @@ public class GroupsController : ControllerBase
 
                 // message：严格按 afterSeq 去重/推进
                 if (ev.Seq <= afterSeq) continue;
-                var info2 = await ResolveSenderInfoAsync(ev.Message!.SenderId);
+                // Fast path: 占位消息（空内容）跳过 DB 查询，减少 thinking 事件的竞争窗口
+                var isPlaceholder = ev.Message != null && string.IsNullOrEmpty(ev.Message.Content);
+                (string? Name, UserRole? Role, string? AvatarUrl, List<GroupMemberTag>? Tags) info2;
+                if (isPlaceholder)
+                {
+                    info2 = (null, null, null, null);
+                }
+                else
+                {
+                    info2 = await ResolveSenderInfoAsync(ev.Message!.SenderId);
+                }
                 var json2 = JsonSerializer.Serialize(ToStreamEvent(ev.Message!, "message", info2.Name, info2.Role, info2.AvatarUrl, info2.Tags), AppJsonContext.Default.GroupMessageStreamEventDto);
                 await WriteSseAsync(id: ev.Seq.ToString(), eventName: "message", dataJson: json2, ct: cancellationToken);
                 afterSeq = ev.Seq;
@@ -1162,6 +1187,7 @@ public class GroupsController : ControllerBase
                 SenderTags = senderTags,
                 Role = m.Role,
                 Content = shouldHideContent ? string.Empty : m.Content,
+                ThinkingContent = shouldHideContent ? null : m.ThinkingContent,
                 ReplyToMessageId = m.ReplyToMessageId,
                 ResendOfMessageId = m.ResendOfMessageId,
                 ViewRole = m.ViewRole,

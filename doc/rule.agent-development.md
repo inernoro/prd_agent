@@ -167,6 +167,77 @@ public class DefectReport
 }
 ```
 
+### 2.1.1 数据关联标识（AppOwnership 特性）
+
+**文件**：`PrdAgent.Core/Attributes/AppOwnershipAttribute.cs`
+
+**规范说明**：
+每个 MongoDB 实体类**必须**添加 `[AppOwnership]` 特性，用于标识该实体所属的应用。这是数据迁移 Agent 进行数据管理和清理的依据。
+
+**可用的应用标识（AppNames 枚举）**：
+
+| 常量 | 值 | 显示名称 | 说明 |
+|------|-----|---------|------|
+| `AppNames.PrdAgent` | `prd-agent` | PRD Agent | PRD 解读与问答功能 |
+| `AppNames.VisualAgent` | `visual-agent` | 视觉创作 Agent | 高级视觉创作工作区 |
+| `AppNames.LiteraryAgent` | `literary-agent` | 文学创作 Agent | 文章配图智能生成 |
+| `AppNames.ModelLab` | `model-lab` | 模型实验室 | 模型测试与调试 |
+| `AppNames.OpenPlatform` | `open-platform` | 开放平台 | 开放 API 调用方管理 |
+| `AppNames.Desktop` | `desktop` | 桌面客户端 | Tauri 桌面端功能 |
+| `AppNames.System` | `system` | 系统核心 | 用户/角色等核心数据 |
+| `AppNames.Watermark` | `watermark` | 水印服务 | 水印配置与字体资产 |
+| `AppNames.Llm` | `llm` | LLM 服务 | 平台/模型/调度配置 |
+
+**使用示例**：
+
+```csharp
+using PrdAgent.Core.Attributes;
+
+// 单应用归属
+[AppOwnership(AppNames.PrdAgent, AppDisplayNames.PrdAgent)]
+public class ParsedPrd
+{
+    // ...
+}
+
+// 多应用共享（实体被多个应用使用）
+[AppOwnership(AppNames.PrdAgent, AppDisplayNames.PrdAgent, IsPrimary = true)]
+[AppOwnership(AppNames.VisualAgent, AppDisplayNames.VisualAgent)]
+public class Session
+{
+    // ...
+}
+
+// 核心系统实体
+[AppOwnership(AppNames.System, AppDisplayNames.System)]
+public class User
+{
+    // ...
+}
+```
+
+**特性参数说明**：
+- `appName`：应用标识（使用 `AppNames` 常量）
+- `displayName`：显示名称（使用 `AppDisplayNames` 常量）
+- `IsPrimary`（可选）：当实体被多个应用共享时，标记主要归属应用
+
+**注册新应用标识**：
+如需新增应用，在 `AppOwnershipAttribute.cs` 文件的 `AppNames` 和 `AppDisplayNames` 类中添加对应常量：
+
+```csharp
+public static class AppNames
+{
+    // 已有定义...
+    public const string YourAgent = "your-agent";  // 新增
+}
+
+public static class AppDisplayNames
+{
+    // 已有定义...
+    public const string YourAgent = "Your Agent 名称";  // 新增
+}
+```
+
 ### 2.2 权限注册
 
 **文件**：`PrdAgent.Core/Security/AdminPermissionCatalog.cs`
@@ -462,6 +533,7 @@ _logger.LogError(ex, "[{AppKey}:Worker] Run {RunId} failed", AppKey, runId);
 - [ ] 权限点已注册
 - [ ] 菜单定义已添加
 - [ ] AppCaller 标识已注册
+- [ ] **实体类已添加 AppOwnership 特性**
 - [ ] 前端路由已配置
 - [ ] 权限守卫已添加
 

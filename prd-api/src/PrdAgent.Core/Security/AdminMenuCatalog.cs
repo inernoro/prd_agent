@@ -16,45 +16,41 @@ public static class AdminMenuCatalog
     /// </summary>
     public static readonly IReadOnlyList<AdminMenuDef> All = new List<AdminMenuDef>
     {
-        // 仪表盘：所有登录用户可见（只需 admin.access）
-        new("dashboard", "/", "仪表盘", "LLM 可观测性与数据概览", "LayoutDashboard", 10),
+        // 总裁面板（替代原仪表盘）
+        new("executive", "/executive", "总裁面板", null, "Crown", 5),
 
-        // 用户与群组管理
-        new("users", "/users", "用户管理", "账号、角色与权限管理", "Users", 20),
-        new("groups", "/groups", "群组管理", "协作群组与成员管理", "Users2", 30),
+        // AI 百宝箱（Agent 统一入口，PRD协作已合并至此）
+        new("ai-toolbox", "/ai-toolbox", "AI 百宝箱", null, "Sparkles", 8),
+
+        // 用户管理
+        new("users", "/users", "用户管理", null, "Users", 20),
 
         // 模型管理
-        new("mds", "/mds", "模型管理", "平台、模型与配置管理", "Cpu", 40),
+        new("mds", "/mds", "模型管理", null, "Cpu", 40),
 
         // 提示词管理
-        new("prompts", "/prompts", "提示词管理", "PRD 问答提示词配置", "FileText", 50),
+        new("prompts", "/prompts", "提示词管理", null, "FileText", 50),
 
-        // Agent 体验类菜单
-        new("prd-agent", "/prd-agent", "PRD Agent", "PRD 智能解读与问答", "MessagesSquare", 60),
-        new("defect-agent", "/defect-agent", "缺陷管理 Agent", "缺陷提交与跟踪", "Bug", 65),
-        new("visual-agent", "/visual-agent", "视觉创作 Agent", "高级视觉创作工作区", "Wand2", 70),
-        new("literary-agent", "/literary-agent", "文学创作 Agent", "文章配图智能生成", "PenLine", 80),
-
-        // 资源管理
-        new("assets", "/assets", "资源管理", "Desktop 资源与品牌配置", "Image", 90),
+        // 技能管理
+        new("skills", "/skills", "技能管理", null, "Zap", 55),
 
         // 日志
-        new("logs", "/logs", "请求日志", "LLM 请求与系统日志", "ScrollText", 100),
+        new("logs", "/logs", "请求日志", null, "ScrollText", 100),
 
-        // 数据管理
-        new("data", "/data", "数据管理", "数据概览、清理与迁移", "Database", 110),
-
-        // 系统设置
-        new("settings", "/settings", "系统设置", "系统初始化与配置", "Settings", 115),
+        // 系统设置（含资源管理、权限管理、数据管理页签，仅管理员可见）
+        new("settings", "/settings", "系统设置", null, "Settings", 115),
 
         // 开放平台
-        new("open-platform", "/open-platform", "开放平台", "API 应用与调用日志", "Plug", 120),
+        new("open-platform", "/open-platform", "开放平台", null, "Plug", 120),
 
-        // 权限管理
-        new("authz", "/authz", "权限管理", "系统角色与用户权限", "UserCog", 130),
+        // 工作流引擎
+        new("workflow-agent", "/workflow-agent", "工作流引擎", null, "Workflow", 124),
+
+        // 自动化
+        new("automations", "/automations", "自动化", null, "Zap", 125),
 
         // 实验室
-        new("lab", "/lab", "实验室", "模型测试与实验功能", "FlaskConical", 140),
+        new("lab", "/lab", "实验室", null, "FlaskConical", 140),
     };
 
     /// <summary>
@@ -74,10 +70,21 @@ public static class AdminMenuCatalog
 
         foreach (var menu in All)
         {
-            // 特殊菜单：仪表盘和系统设置，只需要基础访问权限
-            if (menu.AppKey is "dashboard" or "settings")
+            // AI 百宝箱 / 系统设置：只需要基础访问权限
+            if (menu.AppKey is "ai-toolbox" or "settings")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
+                {
+                    result.Add(menu);
+                }
+                continue;
+            }
+
+            // 总裁面板：需要独立权限
+            if (menu.AppKey is "executive")
+            {
+                if (permSet.Contains(AdminPermissionCatalog.ExecutiveRead) ||
+                    permSet.Contains(AdminPermissionCatalog.Super))
                 {
                     result.Add(menu);
                 }

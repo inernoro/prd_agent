@@ -708,13 +708,13 @@ select optgroup {
 }
 
 .prd-login-card {
-  /* 登录窗：稍微更“实”一点，避免在动效背景上看不清 */
-  background: linear-gradient(180deg, rgba(255,255,255,0.075) 0%, rgba(255,255,255,0.040) 100%);
-  border: 1px solid rgba(255,255,255,0.16);
+  /* 登录窗：微磨砂玻璃，透而不虚 */
+  background: linear-gradient(180deg, rgba(18, 18, 24, 0.82) 0%, rgba(14, 14, 20, 0.88) 100%);
+  border: 1px solid rgba(255,255,255,0.12);
   box-shadow:
     0 24px 90px rgba(0,0,0,0.55),
     0 1px 0 rgba(255,255,255,0.06) inset;
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(40px) saturate(160%);
 }
 
 .prd-login-leftGlow {
@@ -1044,4 +1044,277 @@ select optgroup {
   cursor: text;
   /* 移除 margin */
   margin: 0;
+}
+
+/* ========================================
+   Landing Page Animations
+   ======================================== */
+
+/* Typewriter cursor blink */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.animate-blink {
+  animation: blink 1s step-end infinite;
+}
+
+/* Slow pulse for glow orbs */
+@keyframes pulse-slow {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.05); }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 4s ease-in-out infinite;
+}
+
+/* Scroll indicator animation */
+@keyframes scroll-down {
+  0% { transform: translateY(0); opacity: 1; }
+  50% { transform: translateY(4px); opacity: 0.5; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+.animate-scroll-down {
+  animation: scroll-down 1.5s ease-in-out infinite;
+}
+
+/* Gradient text shimmer effect */
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.animate-shimmer {
+  background-size: 200% auto;
+  animation: shimmer 3s linear infinite;
+}
+
+/* Float animation for decorative elements */
+@keyframes float {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-10px) rotate(1deg); }
+  75% { transform: translateY(5px) rotate(-1deg); }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+/* Fade in up animation */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.6s ease-out forwards;
+}
+
+/* Staggered fade in */
+.animate-stagger-1 { animation-delay: 0.1s; }
+.animate-stagger-2 { animation-delay: 0.2s; }
+.animate-stagger-3 { animation-delay: 0.3s; }
+.animate-stagger-4 { animation-delay: 0.4s; }
+
+/* Glow pulse for CTA buttons */
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 40px rgba(214, 178, 106, 0.3), 0 8px 32px rgba(0,0,0,0.4);
+  }
+  50% {
+    box-shadow: 0 0 60px rgba(214, 178, 106, 0.5), 0 8px 32px rgba(0,0,0,0.4);
+  }
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+/* Rotate animation for decorative elements */
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 20s linear infinite;
+}
+
+/* Line draw animation */
+@keyframes line-draw {
+  from { stroke-dashoffset: 1000; }
+  to { stroke-dashoffset: 0; }
+}
+
+.animate-line-draw {
+  stroke-dasharray: 1000;
+  animation: line-draw 2s ease-out forwards;
+}
+
+/* ========================================
+   Performance Mode — Obsidian 实底暗色风格
+
+   Windows 平台 backdrop-filter 使用 CPU 光栅化（非 GPU），
+   blur(40px) + saturate + brightness 组合极度消耗性能。
+
+   设计理念：不是"降级的玻璃"，而是完全不同的「Obsidian」视觉风格 —
+   用实底暗色表面 + 精致边框 + 干净阴影替代模糊玻璃，
+   类似 Linear / Notion / Vercel Dashboard 的现代暗色 UI。
+
+   CSS 变量已在 themeComputed.ts 中按性能模式切换为实底值，
+   此处仅需清除 backdrop-filter 并微调视觉细节。
+   ======================================== */
+
+/* 核心：彻底清除所有 backdrop-filter（inline 和 CSS 均覆盖） */
+html[data-perf-mode="performance"] * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 减少过渡持续时间，让操作更干脆 */
+html[data-perf-mode="performance"] .transition-all {
+  transition-duration: 120ms !important;
+}
+
+/* 减少合成层数量 */
+html[data-perf-mode="performance"] [style*="will-change"] {
+  will-change: auto !important;
+}
+
+/* 尊重系统级别的减少动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ========================================
+   移动端适配动画 & 工具类
+   ======================================== */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+/* Dialog 居中动画 (已有的 prd-dialog-content 不带动画时的兜底) */
+.prd-dialog-content {
+  transform: translate(-50%, -50%);
+}
+
+.prd-dialog-overlay {
+  animation: fadeIn 150ms ease-out;
+}
+
+/* 移动端 hover 替代: 触控设备上始终显示原本 hover 才可见的操作按钮 */
+@media (hover: none) and (pointer: coarse) {
+  .mobile-show-actions {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+  /* 触控设备上确保卡片内操作按钮有足够的可点击面积 (≥36px) */
+  .mobile-show-actions button,
+  .mobile-show-actions [role="button"] {
+    min-height: 36px;
+    min-width: 36px;
+  }
+}
+
+/* ========================================
+   React Flow (Workflow Canvas) — 暗色覆盖
+   ======================================== */
+
+.workflow-canvas .react-flow__node {
+  cursor: grab;
+}
+
+.workflow-canvas .react-flow__node:active {
+  cursor: grabbing;
+}
+
+/* 连线吸附时端口高亮 */
+.workflow-canvas .react-flow__handle.connecting {
+  background: rgba(59, 130, 246, 0.6) !important;
+  border-color: rgba(59, 130, 246, 0.8) !important;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
+}
+
+/* 选中节点环 */
+.workflow-canvas .react-flow__node.selected .react-flow__handle {
+  border-color: rgba(214, 178, 106, 0.5) !important;
+}
+
+/* 控件面板暗色 */
+.workflow-canvas .react-flow__controls button {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+  width: 28px;
+  height: 28px;
+}
+
+.workflow-canvas .react-flow__controls button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.workflow-canvas .react-flow__controls button svg {
+  fill: currentColor;
+}
+
+/* 选区框 */
+.workflow-canvas .react-flow__selection {
+  background: rgba(59, 130, 246, 0.06);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+/* 小地图节点 */
+.workflow-canvas .react-flow__minimap-node {
+  fill: rgba(255, 255, 255, 0.08);
+  stroke: rgba(255, 255, 255, 0.15);
+  stroke-width: 1;
+  rx: 4;
+}
+
+/* 连线路径动画 */
+.workflow-canvas .react-flow__edge.animated path {
+  stroke-dasharray: 5;
+  animation: wfEdgeDash 0.5s linear infinite;
+}
+
+@keyframes wfEdgeDash {
+  to { stroke-dashoffset: -10; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-canvas .react-flow__edge.animated path {
+    animation: none !important;
+  }
 }

@@ -12,3 +12,6 @@ export type { TabBarItem } from './TabBar';
 export { GlassCard } from './GlassCard';
 export type { GlassCardProps, GlassCardVariant } from './GlassCard';export { GlassSwitch } from './GlassSwitch';
 export type { GlassSwitchProps, GlassSwitchOption } from './GlassSwitch';
+export { ResponsiveGrid } from './ResponsiveGrid';
+export { SplitToTabLayout } from './SplitToTabLayout';
+export type { SplitToTabPanel } from './SplitToTabLayout';

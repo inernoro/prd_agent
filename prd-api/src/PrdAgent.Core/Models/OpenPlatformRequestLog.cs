@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 开放平台请求日志
 /// </summary>
+[AppOwnership(AppNames.OpenPlatform, AppNames.OpenPlatformDisplay, IsPrimary = true)]
 public class OpenPlatformRequestLog
 {
     /// <summary>日志唯一标识（Guid 字符串）</summary>

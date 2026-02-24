@@ -127,15 +127,20 @@ builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAcces
 builder.Services.AddSingleton<LlmRequestLogBackground>();
 builder.Services.AddSingleton<ILlmRequestLogWriter, LlmRequestLogWriter>();
 builder.Services.AddHostedService<LlmRequestLogWatchdog>();
+builder.Services.AddHostedService<PrdAgent.Api.Middleware.ApiRequestLogWatchdog>();
 
 // 应用设置服务（带缓存）
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPromptService, PrdAgent.Infrastructure.Services.PromptService>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISystemPromptService, PrdAgent.Infrastructure.Services.SystemPromptService>();
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillService, PrdAgent.Infrastructure.Services.SkillService>();
 
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
+
+// 模型池查询服务（三级互斥解析：专属池 > 默认池 > 传统配置）
+builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
 
 // 模型调度执行器（支持单元测试 Mock）
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
@@ -159,14 +164,48 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.Services.VisualAgent.IMultiIm
 // 多图领域服务（解析 @imgN 引用 + 意图分析）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IMultiImageDomainService, PrdAgent.Infrastructure.Services.MultiImageDomainService>();
 
+// AI 百宝箱服务
+builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IIntentClassifier, PrdAgent.Api.Services.Toolbox.IntentClassifier>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent.Api.Services.Toolbox.Adapters.PrdAgentAdapter>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent.Api.Services.Toolbox.Adapters.VisualAgentAdapter>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent.Api.Services.Toolbox.Adapters.LiteraryAgentAdapter>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent.Api.Services.Toolbox.Adapters.DefectAgentAdapter>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IToolboxOrchestrator, PrdAgent.Api.Services.Toolbox.SimpleOrchestrator>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.Toolbox.IToolboxEventStore>(sp =>
+{
+    var redis = sp.GetRequiredService<StackExchange.Redis.ConnectionMultiplexer>();
+    var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger<PrdAgent.Api.Services.Toolbox.RedisToolboxEventStore>();
+    return new PrdAgent.Api.Services.Toolbox.RedisToolboxEventStore(redis, logger);
+});
+
+// 百宝箱后台任务执行器
+builder.Services.AddHostedService<PrdAgent.Api.Services.Toolbox.ToolboxRunWorker>();
+
 // 生图后台任务执行器（可断线继续）
 builder.Services.AddHostedService<ImageGenRunWorker>();
 
 // 对话 Run 后台任务执行器（断线不影响服务端闭环）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 
+// 工作流后台执行器（DAG 拓扑排序 → 逐节点推进）
+builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
+
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
+
+// 邮件通道服务
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailIntentDetector, PrdAgent.Infrastructure.Services.Email.EmailIntentDetector>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailHandler, PrdAgent.Infrastructure.Services.Email.ClassifyEmailHandler>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailHandler, PrdAgent.Infrastructure.Services.Email.TodoEmailHandler>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailChannelService, PrdAgent.Infrastructure.Services.EmailChannelService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.EmailChannelWorker>();
+
+// 教程邮件服务
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.ITutorialEmailService, PrdAgent.Infrastructure.Services.TutorialEmailService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.TutorialEmailWorker>();
+
+// 应用注册中心服务
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAppRegistryService, PrdAgent.Infrastructure.Services.AppRegistryService>();
 
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>
@@ -834,6 +873,23 @@ builder.Services.AddScoped<IOpenPlatformService>(sp =>
     return new PrdAgent.Infrastructure.Services.OpenPlatformServiceImpl(db, idGenerator);
 });
 
+// 注册 Webhook 通知服务
+builder.Services.AddHttpClient("WebhookClient");
+// 注册自动化引擎（需要在 WebhookNotificationService 之前注册）
+builder.Services.AddScoped<IActionExecutor, PrdAgent.Infrastructure.Services.Automation.WebhookActionExecutor>();
+builder.Services.AddScoped<IActionExecutor, PrdAgent.Infrastructure.Services.Automation.AdminNotificationActionExecutor>();
+builder.Services.AddScoped<IAutomationHub, PrdAgent.Infrastructure.Services.Automation.AutomationHub>();
+
+builder.Services.AddScoped<IWebhookNotificationService>(sp =>
+{
+    var db = sp.GetRequiredService<MongoDbContext>();
+    var openPlatformService = sp.GetRequiredService<IOpenPlatformService>();
+    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    var automationHub = sp.GetRequiredService<IAutomationHub>();
+    var logger = sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.Services.WebhookNotificationService>>();
+    return new PrdAgent.Infrastructure.Services.WebhookNotificationService(db, openPlatformService, httpClientFactory, automationHub, logger);
+});
+
 // 注册缺口通知服务
 builder.Services.AddScoped<IGapNotificationService>(sp =>
 {
@@ -919,3 +975,6 @@ static IResult HealthCheck()
     };
     return Results.Ok(response);
 }
+
+// 使 Program 类可被测试项目访问（用于 WebApplicationFactory<Program>）
+public partial class Program { }

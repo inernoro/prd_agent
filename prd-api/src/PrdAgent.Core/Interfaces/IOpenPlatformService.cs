@@ -96,4 +96,16 @@ public interface IOpenPlatformService
     /// 更新应用使用统计
     /// </summary>
     Task UpdateAppUsageAsync(string appId);
+
+    /// <summary>
+    /// 更新应用 Webhook 配置
+    /// </summary>
+    Task<bool> UpdateWebhookConfigAsync(
+        string appId,
+        string? webhookUrl,
+        string? webhookSecret,
+        bool webhookEnabled,
+        long tokenQuotaLimit,
+        long quotaWarningThreshold,
+        string notifyTarget = "none");
 }

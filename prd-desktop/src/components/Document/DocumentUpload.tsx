@@ -16,7 +16,7 @@ interface UploadResponse {
 export default function DocumentUpload() {
   const { setSession } = useSessionStore();
   const { logout } = useAuthStore();
-  const { loadGroups } = useGroupListStore();
+  const { loadGroups, addGroup } = useGroupListStore();
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -54,6 +54,7 @@ export default function DocumentUpload() {
             logout();
             return;
           }
+          setError(createResp.error?.message || '创建群组失败');
           // 退化：仅进入上传会话（旧行为）
           const session: Session = {
             sessionId: response.data.sessionId,
@@ -65,11 +66,18 @@ export default function DocumentUpload() {
           return;
         }
 
-        // 先设置 activeGroupId，避免 loadGroups 后 GroupList 自动选择第一个群组导致重复切换
+        // 先设置 activeGroupId，避免 GroupList 自动选择第一个群组导致重复切换
         useSessionStore.getState().setActiveGroupId(createResp.data.groupId);
 
-        // 创建群组后强制刷新列表，确保新群组立即显示
-        await loadGroups({ force: true });
+        // 直接把新群组加入 store（无全量刷新，无 loading 状态，零闪烁）
+        addGroup({
+          groupId: createResp.data.groupId,
+          groupName: groupName || '未命名群组',
+          prdDocumentId: response.data.document.id,
+          prdTitle: response.data.document.title,
+          inviteCode: createResp.data.inviteCode,
+          memberCount: 1,
+        });
 
         // 打开群组会话，后续所有对话都基于该群组/session
         const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; currentRole: string }>>(
@@ -100,17 +108,19 @@ export default function DocumentUpload() {
 
         setSession(session, response.data.document);
 
-        // 启动短期轮询以获取后台生成的群名（轮询 3 次，每次间隔 3 秒）
-        // 在后台执行，不阻塞用户操作
-        // 注意：首次延迟 5 秒，避免刚创建群组时立即刷新导致订阅被打断
+        // 后台静默获取 AI 生成的群名（不触发 loading，零闪烁）
         const newGroupId = createResp.data.groupId;
+        const heuristicName = groupName;
         (async () => {
-          await new Promise((resolve) => setTimeout(resolve, 5000)); // 首次等待 5 秒
+          await new Promise((resolve) => setTimeout(resolve, 5000));
           for (let i = 0; i < 3; i++) {
-            // 检查当前是否仍在该群组，避免用户已切换群组时继续刷新
             const currentGroupId = useSessionStore.getState().activeGroupId;
             if (currentGroupId !== newGroupId) break;
-            await loadGroups({ force: true });
+            // 静默刷新：不设置 loading，不卸载 ChatContainer
+            await loadGroups({ force: true, silent: true });
+            // 检查群名是否已更新
+            const group = useGroupListStore.getState().groups.find((g) => g.groupId === newGroupId);
+            if (group && group.groupName !== heuristicName) break;
             if (i < 2) {
               await new Promise((resolve) => setTimeout(resolve, 3000));
             }

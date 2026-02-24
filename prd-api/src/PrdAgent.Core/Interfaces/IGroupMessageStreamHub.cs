@@ -34,6 +34,12 @@ public interface IGroupMessageStreamHub
     void PublishBlockEnd(string groupId, string messageId, string blockId);
 
     /// <summary>
+    /// 发布 AI 思考过程的增量内容（thinking）。
+    /// 用于实时推送 DeepSeek 等模型的 reasoning_content，在正文输出前展示给用户。
+    /// </summary>
+    void PublishThinking(string groupId, string messageId, string thinkingContent);
+
+    /// <summary>
     /// 发布引用/注脚（citations）事件。
     /// 用于通知前端该消息关联的 PRD 文档引用信息。
     /// </summary>

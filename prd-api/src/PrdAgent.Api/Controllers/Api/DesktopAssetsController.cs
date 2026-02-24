@@ -505,7 +505,7 @@ public class DesktopAssetsController : ControllerBase
         }
 
         // 2. 更新/创建 DesktopAsset 实际资源记录（key + skin 唯一）
-        var url = "https://i.pa.759800.com/" + objectKey;
+        var url = cos.BuildPublicUrl(objectKey);
         var skinForQuery = string.IsNullOrWhiteSpace(skinFinal) ? null : skinFinal;
         var existedAsset = await _db.DesktopAssets
             .Find(x => x.Key == keyNorm && x.Skin == skinForQuery)

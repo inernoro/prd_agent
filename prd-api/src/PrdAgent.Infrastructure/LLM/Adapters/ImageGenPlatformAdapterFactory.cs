@@ -8,6 +8,7 @@ public static class ImageGenPlatformAdapterFactory
 {
     private static readonly OpenAIPlatformAdapter OpenAIAdapter = new();
     private static readonly VolcesPlatformAdapter VolcesAdapter = new();
+    private static readonly GooglePlatformAdapter GoogleAdapter = new();
 
     /// <summary>
     /// 获取适配器
@@ -55,6 +56,7 @@ public static class ImageGenPlatformAdapterFactory
         return platformType.ToLowerInvariant() switch
         {
             "volces" => VolcesAdapter,
+            "google" or "gemini" => GoogleAdapter,
             "openai" => OpenAIAdapter,
             _ => OpenAIAdapter
         };
@@ -80,5 +82,6 @@ public static class ImageGenPlatformAdapterFactory
     {
         yield return OpenAIAdapter;
         yield return VolcesAdapter;
+        yield return GoogleAdapter;
     }
 }

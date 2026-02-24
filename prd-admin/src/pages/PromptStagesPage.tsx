@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -37,9 +38,9 @@ function SegmentedTabs<T extends string>(props: {
   return (
     <div
       className="inline-flex items-center max-w-full p-1 rounded-[14px] overflow-x-auto"
-      style={{ 
-        background: 'rgba(0,0,0,0.20)', 
-        border: '1px solid rgba(255,255,255,0.08)',
+      style={{
+        background: 'var(--nested-block-bg)',
+        border: '1px solid var(--border-subtle)',
         boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.3) inset',
       }}
       aria-label={ariaLabel}
@@ -202,6 +203,7 @@ function validatePrompts(prompts: PromptEntry[]) {
 export default function PromptStagesPage() {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
+  const { isMobile } = useBreakpoint();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -858,14 +860,14 @@ export default function PromptStagesPage() {
       />
 
       {uiErr && (
-        <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'rgba(255,120,120,0.95)' }}>
+        <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)', color: 'rgba(255,120,120,0.95)' }}>
           {uiErr}
         </div>
       )}
       {uiMsg && (
         <div
           className="rounded-[14px] px-4 py-3 text-sm relative overflow-hidden"
-          style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'rgba(34,197,94,0.95)' }}
+          style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)', color: 'rgba(34,197,94,0.95)' }}
         >
           {uiMsg}
           {uiMsg === '已保存' && saveAnimKey ? (
@@ -907,7 +909,7 @@ export default function PromptStagesPage() {
       </style>
 
       {showUserPrompts && (
-        <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}>
+        <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: isMobile ? '1fr' : '320px minmax(0, 1fr)' }}>
         <GlassCard glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
           <div className="flex items-center justify-between gap-3 min-w-0">
             <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>快捷指令</div>
@@ -946,8 +948,8 @@ export default function PromptStagesPage() {
                       : 'var(--bg-input)',
                     border: active
                       ? '1px solid rgba(214, 178, 106, 0.40)'
-                      : '1px solid rgba(255, 255, 255, 0.08)',
-                    boxShadow: active 
+                      : '1px solid var(--border-subtle)',
+                    boxShadow: active
                       ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
                       : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
                   }}
@@ -1011,8 +1013,8 @@ export default function PromptStagesPage() {
                             height: 28,
                             borderRadius: 10,
                             color: active ? '#1a1206' : 'var(--text-secondary)',
-                            background: active ? 'var(--gold-gradient)' : 'rgba(255,255,255,0.06)',
-                            border: active ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.10)',
+                            background: active ? 'var(--gold-gradient)' : 'var(--bg-input-hover)',
+                            border: active ? '1px solid rgba(0,0,0,0.08)' : '1px solid var(--border-default)',
                             boxShadow: active ? 'var(--shadow-gold)' : 'none',
                             cursor: 'grab',
                           }}
@@ -1028,7 +1030,7 @@ export default function PromptStagesPage() {
                       <button
                         type="button"
                         className="h-[28px] px-2.5 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0"
-                        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                        style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                         onClick={(e) => {
                           e.stopPropagation();
                           goTest({ role: roleEnum, promptKey: s.promptKey });
@@ -1046,7 +1048,7 @@ export default function PromptStagesPage() {
         </GlassCard>
 
         <GlassCard glow className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
-          <div className="flex items-start justify-between gap-3">
+          <div className={`flex ${isMobile ? 'flex-col gap-2' : 'items-start justify-between gap-3'}`}>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -1064,9 +1066,11 @@ export default function PromptStagesPage() {
                   ariaLabel="切换角色（PM/DEV/QA）"
                 />
               </div>
-              <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                提示词模板用于"聚焦指令"：点击 Desktop 的提示词按钮会触发注入，输出应严格遵守结构与约束。
-              </div>
+              {!isMobile && (
+                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  提示词模板用于"聚焦指令"：点击 Desktop 的提示词按钮会触发注入，输出应严格遵守结构与约束。
+                </div>
+              )}
               <div className="mt-3 flex items-center gap-2 flex-wrap">
                 <Button
                   variant="secondary"
@@ -1126,27 +1130,48 @@ export default function PromptStagesPage() {
                     恢复默认
                   </Button>
                 </ConfirmTip>
+                {/* 移动端：删除按钮内联到操作行 */}
+                {isMobile && (
+                  <ConfirmTip
+                    title="删除提示词？"
+                    description="将删除当前提示词（不可恢复）。建议先保存导出或复制内容。"
+                    confirmText="确认删除"
+                    onConfirm={() => {
+                      if (stage?.promptKey) removePrompt(stage.promptKey);
+                    }}
+                    disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}
+                    side="top"
+                    align="end"
+                  >
+                    <Button variant="danger" size="sm" disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}>
+                      <Trash2 size={14} />
+                      删除
+                    </Button>
+                  </ConfirmTip>
+                )}
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
-              <ConfirmTip
-                title="删除提示词？"
-                description="将删除当前提示词（不可恢复）。建议先保存导出或复制内容。"
-                confirmText="确认删除"
-                onConfirm={() => {
-                  if (stage?.promptKey) removePrompt(stage.promptKey);
-                }}
-                disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}
-                side="top"
-                align="end"
-              >
-                <Button variant="danger" size="xs" disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}>
-                  <Trash2 size={14} />
-                  删除
-                </Button>
-              </ConfirmTip>
-            </div>
+            {!isMobile && (
+              <div className="flex items-center gap-2 shrink-0">
+                <ConfirmTip
+                  title="删除提示词？"
+                  description="将删除当前提示词（不可恢复）。建议先保存导出或复制内容。"
+                  confirmText="确认删除"
+                  onConfirm={() => {
+                    if (stage?.promptKey) removePrompt(stage.promptKey);
+                  }}
+                  disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}
+                  side="top"
+                  align="end"
+                >
+                  <Button variant="danger" size="xs" disabled={loading || saving || !stage?.promptKey || roleStages.length <= 1}>
+                    <Trash2 size={14} />
+                    删除
+                  </Button>
+                </ConfirmTip>
+              </div>
+            )}
           </div>
 
           <div className="mt-4 flex-1 min-h-0 flex flex-col gap-3">
@@ -1183,7 +1208,7 @@ export default function PromptStagesPage() {
                   className="h-full w-full rounded-[14px] px-3 py-3 pr-12 text-sm outline-none resize-none"
                   style={{
                     border: '1px solid var(--border-subtle)',
-                    background: 'linear-gradient(180deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.03) 100%)',
+                    background: 'var(--nested-block-bg)',
                     color: 'var(--text-primary)',
                     lineHeight: 1.6,
                     fontFamily:
@@ -1202,8 +1227,8 @@ export default function PromptStagesPage() {
                   }}
                   className="absolute bottom-2 right-2 h-9 w-9 inline-flex items-center justify-center rounded-[12px] transition-colors"
                   style={{
-                    background: optBusy ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)',
-                    border: optBusy ? '1px solid rgba(239,68,68,0.28)' : '1px solid rgba(255,255,255,0.12)',
+                    background: optBusy ? 'rgba(239,68,68,0.12)' : 'var(--bg-input-hover)',
+                    border: optBusy ? '1px solid rgba(239,68,68,0.28)' : '1px solid var(--border-default)',
                     color: optBusy ? 'rgba(239,68,68,0.95)' : 'var(--text-secondary)',
                   }}
                   title={optBusy ? '停止优化' : '魔法棒：优化提示词（大模型）'}
@@ -1225,13 +1250,8 @@ export default function PromptStagesPage() {
       {showSystemPrompts && (
         <div
           className="grid gap-6 flex-1 min-h-0 overflow-x-hidden"
-          style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px' }}
+          style={{ gridTemplateColumns: isMobile ? '1fr' : '320px minmax(0, 1fr)' }}
         >
-          <div className="min-h-0 flex flex-col">
-            <div
-              className="grid gap-6 flex-1 min-h-0 overflow-x-hidden"
-              style={{ gridTemplateColumns: '320px minmax(0, 1fr)' }}
-            >
               <GlassCard glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
             <div className="flex items-center justify-between gap-3 min-w-0">
               <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>系统指令</div>
@@ -1267,7 +1287,7 @@ export default function PromptStagesPage() {
                         : 'var(--bg-input)',
                       border: active
                         ? '1px solid rgba(214, 178, 106, 0.40)'
-                        : '1px solid rgba(255, 255, 255, 0.08)',
+                        : '1px solid var(--border-subtle)',
                       boxShadow: active
                         ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
                         : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
@@ -1291,7 +1311,7 @@ export default function PromptStagesPage() {
                       <button
                         type="button"
                         className="h-[28px] px-2.5 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0"
-                        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                        style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                         onClick={(e) => {
                           e.stopPropagation();
                           goTest({ role: r, promptKey: null });
@@ -1362,7 +1382,7 @@ export default function PromptStagesPage() {
                       disabled={sysLoading || sysSaving || !sysSettings}
                       className="flex-1 min-h-0 w-full rounded-[14px] px-3 py-2.5 text-[13px] outline-none resize-none transition-all duration-200 focus:ring-2 focus:ring-offset-0"
                       style={{
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        border: '1px solid var(--border-subtle)',
                         background: 'linear-gradient(135deg, var(--bg-input) 0%, rgba(20, 20, 22, 0.98) 100%)',
                         color: 'var(--text-primary)',
                         lineHeight: 1.6,
@@ -1373,7 +1393,7 @@ export default function PromptStagesPage() {
                         e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(214, 178, 106, 0.2) inset, 0 0 0 2px rgba(214, 178, 106, 0.1)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+                        e.currentTarget.style.borderColor = 'var(--border-subtle)';
                         e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(255, 255, 255, 0.02) inset';
                       }}
                     />
@@ -1390,7 +1410,7 @@ export default function PromptStagesPage() {
                   className="h-full w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
                   style={{
                     border: '1px solid var(--border-subtle)',
-                    background: 'linear-gradient(180deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.03) 100%)',
+                    background: 'var(--nested-block-bg)',
                     color: 'var(--text-primary)',
                     lineHeight: 1.6,
                     fontFamily:
@@ -1404,8 +1424,6 @@ export default function PromptStagesPage() {
               生效范围：仅 PRD 问答（会话问答 / 本章提问）。不影响 gaps/分析等需要 JSON 输出的内部任务。
             </div>
           </GlassCard>
-            </div>
-          </div>
         </div>
       )}
 
@@ -1413,7 +1431,7 @@ export default function PromptStagesPage() {
       {showLiterary && (
         <div className="flex-1 min-h-0 flex flex-col gap-4">
           {literaryError && (
-            <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'rgba(255,120,120,0.95)' }}>
+            <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)', color: 'rgba(255,120,120,0.95)' }}>
               {literaryError}
             </div>
           )}
@@ -1564,8 +1582,8 @@ export default function PromptStagesPage() {
               <div
                 className="rounded-[14px] px-4 py-3 text-sm"
                 style={{
-                  border: '1px solid rgba(255,255,255,0.10)',
-                  background: 'rgba(0,0,0,0.20)',
+                  border: '1px solid var(--border-default)',
+                  background: 'var(--nested-block-bg)',
                   color: 'rgba(255,120,120,0.95)',
                 }}
               >
@@ -1620,7 +1638,7 @@ export default function PromptStagesPage() {
                   className="mt-3 flex-1 min-h-[360px] w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
                   style={{
                     border: '1px solid var(--border-subtle)',
-                    background: 'rgba(255,255,255,0.03)',
+                    background: 'var(--nested-block-bg)',
                     color: 'var(--text-primary)',
                     lineHeight: 1.6,
                     fontFamily:
@@ -1642,7 +1660,7 @@ export default function PromptStagesPage() {
                   className="mt-3 flex-1 min-h-[360px] w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
                   style={{
                     border: '1px solid var(--border-subtle)',
-                    background: 'linear-gradient(180deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.03) 100%)',
+                    background: 'var(--nested-block-bg)',
                     color: 'var(--text-primary)',
                     lineHeight: 1.6,
                     fontFamily:

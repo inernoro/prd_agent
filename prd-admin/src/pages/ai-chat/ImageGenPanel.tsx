@@ -1,9 +1,9 @@
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Dialog } from '@/components/ui/Dialog';
-import { cancelImageGenRun, createImageGenRun, generateImageGen, getModels, planImageGen, streamImageGenRunWithRetry } from '@/services';
+import { cancelImageGenRun, createImageGenRun, generateImageGen, getVisualAgentImageGenModels, planImageGen, streamImageGenRunWithRetry } from '@/services';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
-import type { Model } from '@/types/admin';
+import type { ModelGroupForApp } from '@/types/modelGroup';
 import { Copy, Download, Loader2, Maximize2, Square, Wand2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from '@/lib/toast';
@@ -117,20 +117,25 @@ export default function ImageGenPanel() {
   const DEFAULT_SIZE = '1024x1024';
   const DEFAULT_RESPONSE_FORMAT = 'b64_json' as const;
 
-  const [models, setModels] = useState<Model[]>([]);
+  const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
 
-  const imageGenModels = useMemo(() => {
-    const list = (models ?? []).filter((m) => m.enabled && m.isImageGen);
-    list.sort(
-      (a, b) =>
-        Number(a.priority ?? 1e9) - Number(b.priority ?? 1e9) ||
-        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-    );
-    return list;
-  }, [models]);
-
-  const activeModel = useMemo(() => imageGenModels[0] ?? null, [imageGenModels]);
+  // 从模型池中提取第一个可用模型（后端已按 priority 排序，含 3 级回退）
+  const activeModel = useMemo(() => {
+    for (const pool of imageGenPools) {
+      if (pool.models && pool.models.length > 0) {
+        const sorted = [...pool.models].sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
+        const m = sorted[0];
+        return {
+          name: pool.name,
+          modelName: m.modelId,
+          platformId: m.platformId,
+          poolId: pool.id,
+        };
+      }
+    }
+    return null;
+  }, [imageGenPools]);
 
   const [prompt, setPrompt] = useState('生成一张 Hello Kitty 的图片，卡通风格，纯色背景，高清。');
   const [singleLoading, setSingleLoading] = useState(false);
@@ -162,10 +167,10 @@ export default function ImageGenPanel() {
 
   useEffect(() => {
     setModelsLoading(true);
-    getModels()
+    getVisualAgentImageGenModels()
       .then((res) => {
         if (!res.success) return;
-        setModels(res.data ?? []);
+        setImageGenPools(res.data ?? []);
       })
       .finally(() => setModelsLoading(false));
   }, []);
@@ -201,7 +206,8 @@ export default function ImageGenPanel() {
     setSingleLoading(true);
     try {
       const res = await generateImageGen({
-        modelId: activeModel.id,
+        modelId: activeModel.modelName,
+        platformId: activeModel.platformId,
         prompt: p,
         n: DEFAULT_N,
         size: DEFAULT_SIZE,
@@ -269,7 +275,8 @@ export default function ImageGenPanel() {
     const idem = `img_run_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const created = await createImageGenRun({
       input: {
-        configModelId: activeModel.id,
+        modelId: activeModel.modelName,
+        platformId: activeModel.platformId,
         items,
         size: DEFAULT_SIZE,
         responseFormat: DEFAULT_RESPONSE_FORMAT,
@@ -623,7 +630,7 @@ export default function ImageGenPanel() {
 
         <div className="mt-4 flex items-center justify-between gap-3">
           <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-            {modelsLoading ? '加载模型中...' : activeModel ? `默认模型：${activeModel.name || activeModel.modelName}` : '暂无生图模型（请先在“模型管理”启用 isImageGen 模型）'}
+            {modelsLoading ? '加载模型中...' : activeModel ? `默认模型：${activeModel.name || activeModel.modelName}` : '暂无生图模型（请配置模型池）'}
           </div>
           <div className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
             {`默认参数：${DEFAULT_SIZE} · ${DEFAULT_N} 张 · base64`}

@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import * as Popover from '@radix-ui/react-popover';
+import { glassPanel } from '@/lib/glassStyles';
 import { getUserProfile, getUserAuthz, getSystemRoles } from '@/services';
 import type { UserProfileResponse } from '@/services/contracts/adminUsers';
 import type { AdminUserAuthzSnapshot, SystemRoleDto } from '@/services/contracts/authz';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
-import { Users2, Zap, Clock, Image, Eye, ChevronDown, ChevronUp, Shield, Pencil, Bug, Palette, BookOpen, FileText, LayoutDashboard, Settings, Database, ScrollText } from 'lucide-react';
+import { Users2, Zap, Clock, Image, Eye, ChevronDown, ChevronUp, Shield, Pencil, Bug, Palette, BookOpen, FileText, LayoutDashboard, Settings, Database, ScrollText, Store, Droplets, Type, ImageIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -288,13 +289,7 @@ export function UserProfilePopover({
           align="start"
           sideOffset={8}
           className="rounded-[12px] p-3 w-[260px] z-[100] outline-none"
-          style={{
-            background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.03)) 100%)',
-            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-            boxShadow: '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-            backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-            WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-          }}
+          style={glassPanel}
           onMouseEnter={handleContentMouseEnter}
           onMouseLeave={handleContentMouseLeave}
         >
@@ -493,6 +488,45 @@ export function UserProfilePopover({
                         </span>
                       </button>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* 海鲜市场统计 */}
+              {profile.marketplaceStats && profile.marketplaceStats.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <Store size={12} style={{ color: 'var(--text-muted)' }} />
+                    <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                      海鲜市场
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {profile.marketplaceStats.map((item) => {
+                      const typeConfig = {
+                        watermark: { label: '水印', icon: <Droplets size={10} /> },
+                        prompt: { label: '提示词', icon: <Type size={10} /> },
+                        refImage: { label: '风格', icon: <ImageIcon size={10} /> },
+                      }[item.configType] || { label: item.configType, icon: null };
+                      return (
+                        <div
+                          key={item.configType}
+                          className="flex items-center gap-1 px-1.5 py-0.5 rounded-[4px]"
+                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                          title={`${typeConfig.label}：发布量/下载量`}
+                        >
+                          <span style={{ color: 'var(--text-muted)' }}>{typeConfig.icon}</span>
+                          <span className="text-[10px]" style={{ color: 'var(--text-primary)' }}>
+                            {typeConfig.label}
+                          </span>
+                          <span className="text-[9px] flex items-center gap-0.5">
+                            <span style={{ color: 'rgba(59,130,246,0.9)' }}>{item.publishedCount}</span>
+                            <span style={{ color: 'var(--text-muted)' }}>/</span>
+                            <span style={{ color: 'rgba(239,68,68,0.9)' }}>{item.downloadedCount}</span>
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

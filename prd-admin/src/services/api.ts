@@ -92,6 +92,11 @@ export const api = {
       list: () => '/api/mds/model-groups',
       byId: (id: string) => `/api/mds/model-groups/${id}`,
       forApp: () => '/api/mds/model-groups/for-app',
+      predict: (id: string) => `/api/mds/model-groups/${id}/predict`,
+      resetModelHealth: (groupId: string, modelId: string) =>
+        `/api/mds/model-groups/${groupId}/models/${encodeURIComponent(modelId)}/reset-health`,
+      resetAllHealth: (groupId: string) =>
+        `/api/mds/model-groups/${groupId}/reset-all-health`,
     },
 
     // LLM 配置
@@ -99,6 +104,15 @@ export const api = {
       list: () => '/api/mds/llm-configs',
       byId: (id: string) => `/api/mds/llm-configs/${id}`,
       activate: (id: string) => `/api/mds/llm-configs/${id}/activate`,
+    },
+
+    // 模型中继 (Exchange)
+    exchanges: {
+      list: () => '/api/mds/exchanges',
+      byId: (id: string) => `/api/mds/exchanges/${id}`,
+      test: (id: string) => `/api/mds/exchanges/${id}/test`,
+      transformerTypes: () => '/api/mds/exchanges/transformer-types',
+      forPool: () => '/api/mds/exchanges/for-pool',
     },
 
     // 调度器配置
@@ -151,6 +165,7 @@ export const api = {
     llm: {
       list: () => '/api/logs/llm',
       byId: (id: string) => `/api/logs/llm/${id}`,
+      replayCurl: (id: string) => `/api/logs/llm/${id}/replay-curl`,
       meta: () => '/api/logs/llm/meta',
       modelStats: () => '/api/logs/llm/model-stats',
       batchModelStats: () => '/api/logs/llm/model-stats/batch',
@@ -162,6 +177,12 @@ export const api = {
     settings: {
       llm: () => '/api/logs/settings/llm',
     },
+  },
+
+  // ============ Skills 技能管理 ============
+  skills: {
+    list: () => '/api/skills',
+    byKey: (skillKey: string) => `/api/skills/${encodeURIComponent(skillKey)}`,
   },
 
   // ============ Prompts 提示词 ============
@@ -198,6 +219,20 @@ export const api = {
     },
   },
 
+  // ============ Data Migration 数据迁移 ============
+  dataMigration: {
+    mappings: () => '/api/data-migration/mappings',
+    collections: {
+      data: (collectionName: string) => `/api/data-migration/collections/${collectionName}/data`,
+      validation: (collectionName: string) => `/api/data-migration/collections/${collectionName}/validation`,
+      delete: (collectionName: string) => `/api/data-migration/collections/${collectionName}`,
+      document: (collectionName: string, documentId: string) => `/api/data-migration/collections/${collectionName}/documents/${documentId}`,
+    },
+    apps: {
+      delete: (appName: string) => `/api/data-migration/apps/${appName}`,
+    },
+  },
+
   // ============ Assets 资源管理 ============
   assets: {
     desktop: {
@@ -216,6 +251,16 @@ export const api = {
     avatars: {
       nohead: () => '/api/assets/avatars/nohead',
     },
+  },
+
+  // ============ Executive 总裁面板 ============
+  executive: {
+    overview: () => '/api/executive/overview',
+    trends: () => '/api/executive/trends',
+    team: () => '/api/executive/team',
+    agents: () => '/api/executive/agents',
+    models: () => '/api/executive/models',
+    leaderboard: () => '/api/executive/leaderboard',
   },
 
   // ============ Dashboard 仪表盘 ============
@@ -272,11 +317,22 @@ export const api = {
         upload: () => '/api/visual-agent/image-master/assets',
         byId: (id: string) => `/api/visual-agent/image-master/assets/${id}`,
       },
+      drawingBoard: {
+        chat: () => '/api/visual-agent/image-master/drawing-board/chat',
+      },
     },
     imageGen: {
       plan: () => '/api/visual-agent/image-gen/plan',
       generate: () => '/api/visual-agent/image-gen/generate',
       sizeCaps: () => '/api/visual-agent/image-gen/size-caps',
+      /** 获取所有生图场景的模型池（合并去重） */
+      models: () => '/api/visual-agent/image-gen/models',
+      /** 根据平台侧模型ID获取适配信息（尺寸选项等） */
+      adapterInfo: (modelId: string) => `/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
+      /** Visual Agent 域内日志查询（避免跨权限调用 /api/logs/llm） */
+      logs: () => '/api/visual-agent/image-gen/logs',
+      logsMeta: () => '/api/visual-agent/image-gen/logs/meta',
+      logDetail: (id: string) => `/api/visual-agent/image-gen/logs/${id}`,
       runs: {
         create: () => '/api/visual-agent/image-gen/runs',
         byId: (runId: string) => `/api/visual-agent/image-gen/runs/${runId}`,
@@ -289,11 +345,31 @@ export const api = {
     uploadArtifacts: () => '/api/visual-agent/upload-artifacts',
   },
 
+  // ============ PRD Agent ============
+  prdAgent: {
+    /** 提示词（只读，供 PRD Agent 页面快捷标签使用） */
+    prompts: () => '/api/prd-agent/prompts',
+    /** 系统提示词（只读，供 PRD Agent 页面展示系统提示词内容） */
+    systemPrompts: () => '/api/prd-agent/prompts/system',
+  },
+
   // ============ Literary Agent 文学创作 ============
   literaryAgent: {
     prompts: {
       list: () => '/api/literary-agent/prompts',
       byId: (id: string) => `/api/literary-agent/prompts/${id}`,
+      // 海鲜市场
+      marketplace: () => '/api/literary-agent/prompts/marketplace',
+      publish: (id: string) => `/api/literary-agent/prompts/${id}/publish`,
+      unpublish: (id: string) => `/api/literary-agent/prompts/${id}/unpublish`,
+      fork: (id: string) => `/api/literary-agent/prompts/${id}/fork`,
+    },
+    /** 文学创作工作区（应用身份隔离，避免跨权限调用 visual-agent） */
+    workspaces: {
+      list: () => '/api/literary-agent/workspaces',
+      byId: (id: string) => `/api/literary-agent/workspaces/${id}`,
+      detail: (id: string) => `/api/literary-agent/workspaces/${id}/detail`,
+      assets: (id: string) => `/api/literary-agent/workspaces/${id}/assets`,
     },
     config: {
       get: () => '/api/literary-agent/config',
@@ -305,6 +381,11 @@ export const api = {
         activate: (id: string) => `/api/literary-agent/config/reference-images/${id}/activate`,
         deactivate: (id: string) => `/api/literary-agent/config/reference-images/${id}/deactivate`,
         active: () => '/api/literary-agent/config/reference-images/active',
+        // 海鲜市场
+        marketplace: () => '/api/literary-agent/config/reference-images/marketplace',
+        publish: (id: string) => `/api/literary-agent/config/reference-images/${id}/publish`,
+        unpublish: (id: string) => `/api/literary-agent/config/reference-images/${id}/unpublish`,
+        fork: (id: string) => `/api/literary-agent/config/reference-images/${id}/fork`,
       },
       /** 获取文生图模型池（无参考图场景） */
       modelsText2Img: () => '/api/literary-agent/config/models/text2img',
@@ -314,6 +395,8 @@ export const api = {
       modelsAll: () => '/api/literary-agent/config/models/all',
       /** 兼容旧接口，根据是否有参考图自动选择 */
       modelsImageGen: () => '/api/literary-agent/config/models/image-gen',
+      /** 获取主模型信息（用于显示标记生成使用的模型名称） */
+      modelsMain: () => '/api/literary-agent/config/models/main',
     },
     /** 文学创作图片生成（应用身份隔离） */
     imageGen: {
@@ -380,6 +463,38 @@ export const api = {
     },
   },
 
+  // ============ Channels 多通道适配器 ============
+  channels: {
+    settings: {
+      get: () => '/api/admin/channels/settings',
+      update: () => '/api/admin/channels/settings',
+      test: () => '/api/admin/channels/settings/test',
+      poll: () => '/api/admin/channels/settings/poll',
+    },
+    workflows: {
+      list: () => '/api/admin/channels/workflows',
+      byId: (id: string) => `/api/admin/channels/workflows/${id}`,
+      toggle: (id: string) => `/api/admin/channels/workflows/${id}/toggle`,
+    },
+    whitelists: {
+      list: () => '/api/admin/channels/whitelist',
+      byId: (id: string) => `/api/admin/channels/whitelist/${id}`,
+      toggle: (id: string) => `/api/admin/channels/whitelist/${id}/toggle`,
+    },
+    identityMappings: {
+      list: () => '/api/admin/channels/identity-mappings',
+      byId: (id: string) => `/api/admin/channels/identity-mappings/${id}`,
+    },
+    tasks: {
+      list: () => '/api/admin/channels/tasks',
+      byId: (id: string) => `/api/admin/channels/tasks/${id}`,
+      retry: (id: string) => `/api/admin/channels/tasks/${id}/retry`,
+      cancel: (id: string) => `/api/admin/channels/tasks/${id}/cancel`,
+      stats: () => '/api/admin/channels/tasks/stats',
+    },
+    stats: () => '/api/admin/channels/stats',
+  },
+
   // ============ Watermark 水印 ============
   watermark: {
     list: () => '/api/watermarks',
@@ -392,10 +507,40 @@ export const api = {
       list: () => '/api/watermark/fonts',
       byKey: (fontKey: string) => `/api/watermark/fonts/${fontKey}`,
     },
+    // 海鲜市场
+    marketplace: () => '/api/watermarks/marketplace',
+    publish: (id: string) => `/api/watermarks/${id}/publish`,
+    unpublish: (id: string) => `/api/watermarks/${id}/unpublish`,
+    fork: (id: string) => `/api/watermarks/${id}/fork`,
   },
 
   // ============ Model Sizes ============
   modelSizes: (modelKey: string) => `/api/model/${modelKey}/sizes`,
+
+  // ============ Tutorial Email 教程邮件 ============
+  tutorialEmail: {
+    sequences: {
+      list: () => '/api/tutorial-email/sequences',
+      byId: (id: string) => `/api/tutorial-email/sequences/${id}`,
+    },
+    templates: {
+      list: () => '/api/tutorial-email/templates',
+      byId: (id: string) => `/api/tutorial-email/templates/${id}`,
+    },
+    assets: {
+      list: () => '/api/tutorial-email/assets',
+      byId: (id: string) => `/api/tutorial-email/assets/${id}`,
+    },
+    enrollments: {
+      list: () => '/api/tutorial-email/enrollments',
+      byId: (id: string) => `/api/tutorial-email/enrollments/${id}`,
+      unsubscribe: (id: string) => `/api/tutorial-email/enrollments/${id}/unsubscribe`,
+      batch: () => '/api/tutorial-email/enrollments/batch',
+    },
+    testSend: () => '/api/tutorial-email/test-send',
+    generate: () => '/api/tutorial-email/generate',
+    quickSend: () => '/api/tutorial-email/quick-send',
+  },
 
   // ============ Settings 系统设置 ============
   settings: {
@@ -408,6 +553,25 @@ export const api = {
       scan: () => '/api/settings/init/scan',
       migratePermissions: () => '/api/settings/init/migrate-permissions',
     },
+  },
+
+  // ============ AI Toolbox 百宝箱 ============
+  aiToolbox: {
+    // 工具管理
+    items: () => '/api/ai-toolbox/items',
+    item: (id: string) => `/api/ai-toolbox/items/${id}`,
+    runItem: (itemId: string) => `/api/ai-toolbox/items/${itemId}/run`,
+    agents: () => '/api/ai-toolbox/agents',
+    // 直接对话 (SSE)
+    directChat: () => '/api/ai-toolbox/direct-chat',
+    capabilityChat: (key: string) => `/api/ai-toolbox/capabilities/${key}/chat`,
+    // Legacy - 运行记录
+    chat: () => '/api/ai-toolbox/chat',
+    analyze: () => '/api/ai-toolbox/analyze',
+    runs: () => '/api/ai-toolbox/runs',
+    run: (runId: string) => `/api/ai-toolbox/runs/${runId}`,
+    execute: (runId: string) => `/api/ai-toolbox/runs/${runId}/execute`,
+    stream: (runId: string) => `/api/ai-toolbox/runs/${runId}/stream`,
   },
 
   // ============ V1 API (用户端) ============
@@ -441,6 +605,43 @@ export const api = {
       groupName: () => '/api/v1/intent/group-name',
     },
     prompts: () => '/api/v1/prompts',
+  },
+
+  // ============ Workflow Agent 工作流引擎 ============
+  workflowAgent: {
+    workflows: {
+      list: () => '/api/workflow-agent/workflows',
+      byId: (id: string) => `/api/workflow-agent/workflows/${id}`,
+      execute: (id: string) => `/api/workflow-agent/workflows/${id}/execute`,
+    },
+    executions: {
+      list: () => '/api/workflow-agent/executions',
+      byId: (id: string) => `/api/workflow-agent/executions/${id}`,
+      cancel: (id: string) => `/api/workflow-agent/executions/${id}/cancel`,
+      resumeFrom: (executionId: string, nodeId: string) =>
+        `/api/workflow-agent/executions/${executionId}/resume-from/${nodeId}`,
+      nodeLogs: (executionId: string, nodeId: string) =>
+        `/api/workflow-agent/executions/${executionId}/nodes/${nodeId}/logs`,
+      stream: (executionId: string) =>
+        `/api/workflow-agent/executions/${executionId}/stream`,
+    },
+    shares: {
+      list: () => '/api/workflow-agent/shares',
+      create: (executionId: string) => `/api/workflow-agent/executions/${executionId}/share`,
+      revoke: (shareId: string) => `/api/workflow-agent/shares/${shareId}`,
+    },
+    capsules: {
+      types: () => '/api/workflow-agent/capsule-types',
+      typeByKey: (typeKey: string) => `/api/workflow-agent/capsule-types/${typeKey}`,
+      testRun: () => '/api/workflow-agent/capsules/test-run',
+    },
+  },
+
+  // ─── 移动端仪表盘 ───
+  mobile: {
+    feed: () => '/api/mobile/feed',
+    stats: () => '/api/mobile/stats',
+    assets: () => '/api/mobile/assets',
   },
 } as const;
 
