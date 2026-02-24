@@ -112,6 +112,7 @@ export function ToolCard({ item }: ToolCardProps) {
 
   return (
     <GlassCard
+      animated
       variant="subtle"
       padding="none"
       interactive

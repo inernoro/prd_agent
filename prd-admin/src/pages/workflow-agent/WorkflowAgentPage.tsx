@@ -337,6 +337,7 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
   return (
     <div>
       <GlassCard
+        animated
         accentHue={meta.accentHue}
         glow={isActive}
         padding="md"
@@ -598,7 +599,7 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
                   const Icon = getIconForCapsule(meta.icon);
                   const emoji = getEmojiForCapsule(meta.typeKey);
                   return (
-                    <GlassCard key={meta.typeKey} accentHue={meta.accentHue} padding="sm">
+                    <GlassCard key={meta.typeKey} animated accentHue={meta.accentHue} padding="sm">
                       <div className="flex items-start gap-3">
                         <div
                           className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
@@ -653,7 +654,7 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
 
         {/* 测试结果：执行结果 */}
         {testResult && (
-          <GlassCard accentHue={testResult.status === 'completed' ? 150 : 0} padding="sm">
+          <GlassCard animated accentHue={testResult.status === 'completed' ? 150 : 0} padding="sm">
             <div className="flex items-center gap-2 mb-2">
               <FlaskConical className="w-4 h-4" style={{ color: testResult.status === 'completed' ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)' }} />
               <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -699,7 +700,7 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
           </GlassCard>
         )}
         {testError && (
-          <GlassCard accentHue={0} padding="sm">
+          <GlassCard animated accentHue={0} padding="sm">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4" style={{ color: 'rgba(239,68,68,0.9)' }} />
               <span className="text-[12px]" style={{ color: 'rgba(239,68,68,0.9)' }}>测试失败: {testError}</span>
@@ -1093,7 +1094,7 @@ export function WorkflowAgentPage() {
         {!pageLoading && (
           <>
             {/* ──── 数据源配置 ──── */}
-            <GlassCard>
+            <GlassCard animated>
               <h2 className="text-[14px] font-semibold flex items-center gap-2 mb-4" style={{ color: 'var(--text-primary)' }}>
                 <Settings2 className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
                 数据源配置
@@ -1123,7 +1124,7 @@ export function WorkflowAgentPage() {
             <div className="flex items-center gap-3">
               {isRunning ? (
                 <>
-                  <GlassCard padding="none" className="flex-1" accentHue={40} glow>
+                  <GlassCard animated padding="none" className="flex-1" accentHue={40} glow>
                     <div className="flex items-center gap-3 px-4 py-3">
                       <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" style={{ color: 'var(--accent-gold)' }} />
                       <span className="text-[12px] font-medium" style={{ color: 'var(--accent-gold)' }}>
@@ -1183,6 +1184,7 @@ export function WorkflowAgentPage() {
             {/* ──── 执行完成总结 ──── */}
             {isTerminal && latestExec && (
               <GlassCard
+                animated
                 accentHue={latestExec.status === 'completed' ? 150 : 0}
                 glow={latestExec.status === 'completed'}
               >

@@ -577,6 +577,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   return (
     <div>
       <GlassCard
+        animated
         accentHue={accentHue}
         glow={isActive}
         padding="md"
@@ -1502,7 +1503,7 @@ export function WorkflowEditorPage() {
 
             {/* 舱列表 */}
             {workflow.nodes.length === 0 ? (
-              <GlassCard>
+              <GlassCard animated>
                 <div className="flex flex-col items-center py-8 gap-3">
                   <span className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
                     从左侧目录选择舱添加到工作流
@@ -1542,7 +1543,7 @@ export function WorkflowEditorPage() {
 
             {/* 最终产物 */}
             {latestExec && ['completed', 'failed', 'cancelled'].includes(latestExec.status) && latestExec.finalArtifacts.length > 0 && (
-              <GlassCard accentHue={latestExec.status === 'completed' ? 150 : 0} glow={latestExec.status === 'completed'}>
+              <GlassCard animated accentHue={latestExec.status === 'completed' ? 150 : 0} glow={latestExec.status === 'completed'}>
                 <div className="flex items-center gap-2 mb-3">
                   {latestExec.status === 'completed'
                     ? <CheckCircle2 className="w-5 h-5" style={{ color: 'rgba(34,197,94,0.9)' }} />
@@ -1604,7 +1605,7 @@ function VariablesSection({ variables, values, onChange, disabled }: {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <GlassCard>
+    <GlassCard animated>
       <div
         className="flex items-center gap-2 cursor-pointer select-none"
         onClick={() => setCollapsed(!collapsed)}

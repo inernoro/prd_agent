@@ -275,6 +275,7 @@ const panelCardStyle: React.CSSProperties = {
 
 const PanelCard = ({ className, children }: { className?: string; children: React.ReactNode }) => (
   <GlassCard
+    animated
     variant="subtle"
     padding="sm"
     className={cn('rounded-[16px]', className)}
@@ -2022,7 +2023,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       )}
       {/* 左侧：文章编辑器 */}
       <div className={cn("flex-1 min-w-0 flex flex-col gap-4", isMobile && mobileTab !== 'article' && "hidden")}>
-        <GlassCard glow className="flex-1 min-h-0 flex flex-col">
+        <GlassCard animated glow className="flex-1 min-h-0 flex flex-col">
           {/* 精简头部：标题 + 模型信息 */}
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -3251,6 +3252,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       const isPromptSelected = selectedPrompt?.id === prompt.id;
                       return (
                       <GlassCard
+                        animated
                         glow
                         key={prompt.id}
                         className="p-0 overflow-hidden"
@@ -3464,6 +3466,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <div className="grid grid-cols-1 gap-3">
                     {referenceImageConfigs.map((config) => (
                       <GlassCard
+                        animated
                         key={config.id}
                         className="p-0 overflow-hidden"
                         style={config.isActive ? {

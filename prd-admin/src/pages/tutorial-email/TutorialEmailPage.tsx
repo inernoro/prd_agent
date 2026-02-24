@@ -137,7 +137,7 @@ function SequencesTab() {
       </div>
 
       {showCreate && (
-        <GlassCard className="p-4">
+        <GlassCard animated className="p-4">
           <SequenceForm
             onSubmit={handleCreate}
             onCancel={() => setShowCreate(false)}
@@ -153,7 +153,7 @@ function SequencesTab() {
         </div>
       ) : (
         sequences.map((seq) => (
-          <GlassCard key={seq.id} className="p-4">
+          <GlassCard key={seq.id} animated className="p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div
@@ -351,7 +351,7 @@ function TemplatesTab() {
       </div>
 
       {showCreate && (
-        <GlassCard className="p-4">
+        <GlassCard animated className="p-4">
           <TemplateForm
             onSubmit={handleCreate}
             onCancel={() => setShowCreate(false)}
@@ -386,7 +386,7 @@ function TemplatesTab() {
         </div>
       ) : (
         templates.map((tpl) => (
-          <GlassCard key={tpl.id} className="p-4">
+          <GlassCard key={tpl.id} animated className="p-4">
             {editingId === tpl.id ? (
               <TemplateForm
                 initial={tpl}
@@ -533,7 +533,7 @@ function AssetsTab() {
       </div>
 
       {showCreate && (
-        <GlassCard className="p-4">
+        <GlassCard animated className="p-4">
           <AssetForm onSubmit={handleCreate} onCancel={() => setShowCreate(false)} />
         </GlassCard>
       )}
@@ -547,7 +547,7 @@ function AssetsTab() {
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           {assets.map((asset) => (
-            <GlassCard key={asset.id} className="p-3">
+            <GlassCard key={asset.id} animated className="p-3">
               <div className="aspect-video rounded-md overflow-hidden mb-2"
                 style={{ background: 'var(--bg-base)' }}>
                 <img
@@ -729,7 +729,7 @@ function EnrollmentsTab() {
       ) : (
         <div className="space-y-2">
           {enrollments.map((enr) => (
-            <GlassCard key={enr.id} className="p-3">
+            <GlassCard key={enr.id} animated className="p-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   {statusIcon(enr.status)}

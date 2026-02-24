@@ -4831,7 +4831,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         </div>
       ) : null}
       {/* 单一框架：左右无缝拼接 */}
-      <GlassCard glow className="h-full min-h-0 overflow-hidden p-0!">
+      <GlassCard animated glow className="h-full min-h-0 overflow-hidden p-0!">
         <div className="h-full min-h-0 flex">
           {/* 左侧：画板 */}
           <div className="flex-1 min-w-0 min-h-0">

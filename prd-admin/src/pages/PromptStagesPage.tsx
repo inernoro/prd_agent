@@ -910,7 +910,7 @@ export default function PromptStagesPage() {
 
       {showUserPrompts && (
         <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: isMobile ? '1fr' : '320px minmax(0, 1fr)' }}>
-        <GlassCard glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
+        <GlassCard animated glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
           <div className="flex items-center justify-between gap-3 min-w-0">
             <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>快捷指令</div>
             <div className="shrink-0">
@@ -1047,7 +1047,7 @@ export default function PromptStagesPage() {
           </div>
         </GlassCard>
 
-        <GlassCard glow className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
+        <GlassCard animated glow className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
           <div className={`flex ${isMobile ? 'flex-col gap-2' : 'items-start justify-between gap-3'}`}>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -1252,7 +1252,7 @@ export default function PromptStagesPage() {
           className="grid gap-6 flex-1 min-h-0 overflow-x-hidden"
           style={{ gridTemplateColumns: isMobile ? '1fr' : '320px minmax(0, 1fr)' }}
         >
-              <GlassCard glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
+              <GlassCard animated glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
             <div className="flex items-center justify-between gap-3 min-w-0">
               <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>系统指令</div>
               <div className="shrink-0">
@@ -1327,7 +1327,7 @@ export default function PromptStagesPage() {
             </div>
           </GlassCard>
 
-              <GlassCard glow className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
+              <GlassCard animated glow className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-3">
@@ -1436,7 +1436,7 @@ export default function PromptStagesPage() {
             </div>
           )}
 
-          <GlassCard glow className="p-5 flex-shrink-0">
+          <GlassCard animated glow className="p-5 flex-shrink-0">
             <div className="flex items-center justify-between gap-3 mb-4">
               <div>
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>文学创作提示词</div>
@@ -1470,7 +1470,7 @@ export default function PromptStagesPage() {
 
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
               {literaryPrompts.map((prompt) => (
-                <GlassCard glow key={prompt.id} className="p-4">
+                <GlassCard animated glow key={prompt.id} className="p-4">
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -1630,7 +1630,7 @@ export default function PromptStagesPage() {
             </div>
 
             <div className="grid gap-4 min-h-0" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              <GlassCard glow className="p-4 min-h-0 flex flex-col">
+              <GlassCard animated glow className="p-4 min-h-0 flex flex-col">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>原文</div>
                 <textarea
                   value={optOriginal}
@@ -1647,7 +1647,7 @@ export default function PromptStagesPage() {
                 />
               </GlassCard>
 
-              <GlassCard glow className="p-4 min-h-0 flex flex-col" variant="gold">
+              <GlassCard animated glow className="p-4 min-h-0 flex flex-col" variant="gold">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>优化结果（流式）</div>
                   <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>

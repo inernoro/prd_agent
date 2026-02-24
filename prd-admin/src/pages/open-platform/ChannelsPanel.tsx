@@ -120,7 +120,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
 
   return (
     <div className="h-full overflow-auto p-1">
-      <GlassCard glow className="min-h-full">
+      <GlassCard animated glow className="min-h-full">
         {/* 顶部提示栏 */}
         <div className="p-4 border-b border-white/10" style={{ background: 'var(--list-item-bg)' }}>
           <div className="flex items-center justify-between">

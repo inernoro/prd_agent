@@ -226,7 +226,7 @@ export default function AiToolboxPage() {
             </div>
           </div>
         ) : filteredItems.length === 0 ? (
-          <GlassCard variant="subtle" className="flex flex-col items-center justify-center h-48 gap-3">
+          <GlassCard animated variant="subtle" className="flex flex-col items-center justify-center h-48 gap-3">
             <div
               className="w-14 h-14 rounded-xl flex items-center justify-center"
               style={{

@@ -164,7 +164,7 @@ export default function StatsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <GlassCard glow className="lg:col-span-2">
+        <GlassCard glow animated className="lg:col-span-2">
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
             消息趋势（近{days}天）
           </div>
@@ -188,7 +188,7 @@ export default function StatsPage() {
           </div>
         </GlassCard>
 
-        <GlassCard glow>
+        <GlassCard glow animated>
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
             内容缺失统计（共{gapStats?.total ?? 0}条）
           </div>
@@ -213,7 +213,7 @@ export default function StatsPage() {
         </GlassCard>
       </div>
 
-      <GlassCard glow>
+      <GlassCard glow animated>
         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
           活跃群组 TOP 10
         </div>

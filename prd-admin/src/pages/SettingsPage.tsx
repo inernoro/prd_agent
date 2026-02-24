@@ -133,7 +133,7 @@ function NavOrderSettings() {
 
       {/* 导航顺序设置 */}
       <div className="flex-1 min-h-0 flex flex-col max-w-lg">
-        <GlassCard glow accentHue={210} className="h-full flex flex-col overflow-hidden">
+        <GlassCard animated glow accentHue={210} className="h-full flex flex-col overflow-hidden">
           <div className="flex items-center justify-between gap-3 mb-4 shrink-0">
             <div>
               <h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>

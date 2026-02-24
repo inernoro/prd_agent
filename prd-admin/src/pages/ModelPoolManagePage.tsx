@@ -424,7 +424,7 @@ export function ModelPoolManagePage() {
       />
 
       {/* 模型池列表 */}
-      <GlassCard variant="subtle" className="flex-1 min-h-0">
+      <GlassCard animated variant="subtle" className="flex-1 min-h-0">
         <div className="h-full min-h-0 overflow-auto">
           {loading ? (
             <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>

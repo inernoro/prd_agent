@@ -430,7 +430,7 @@ export default function DesktopLabTab() {
 
       <div className="grid gap-5" style={{ gridTemplateColumns: '420px 1fr' }}>
         <div className="space-y-5">
-          <GlassCard glow>
+          <GlassCard glow animated>
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                 演员（冒充用户）
@@ -516,7 +516,7 @@ export default function DesktopLabTab() {
             </div>
           </GlassCard>
 
-          <GlassCard glow>
+          <GlassCard glow animated>
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               群组
             </div>
@@ -560,7 +560,7 @@ export default function DesktopLabTab() {
             </div>
           </GlassCard>
 
-          <GlassCard glow>
+          <GlassCard glow animated>
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               PRD（上传与绑定）
             </div>
@@ -593,7 +593,7 @@ export default function DesktopLabTab() {
         </div>
 
         <div className="space-y-5">
-          <GlassCard glow>
+          <GlassCard glow animated>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -661,7 +661,7 @@ export default function DesktopLabTab() {
             </div>
           </GlassCard>
 
-          <GlassCard glow>
+          <GlassCard glow animated>
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                 内容缺失（Gaps）
@@ -686,7 +686,7 @@ export default function DesktopLabTab() {
             </div>
           </GlassCard>
 
-          <GlassCard glow>
+          <GlassCard glow animated>
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               原始返回（最近一次）
             </div>

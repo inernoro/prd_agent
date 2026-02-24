@@ -426,7 +426,7 @@ export default function AutomationRulesPage() {
   return (
     <div className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden">
       {/* 主从面板 */}
-      <GlassCard glow className="flex-1 min-h-0 overflow-hidden">
+      <GlassCard animated glow className="flex-1 min-h-0 overflow-hidden">
         <div className="grid h-full" style={{ gridTemplateColumns: isMobile ? '1fr' : '280px minmax(0, 1fr)', gridTemplateRows: isMobile ? 'auto minmax(0, 1fr)' : undefined }}>
 
           {/* ── 左侧：规则列表 ── */}

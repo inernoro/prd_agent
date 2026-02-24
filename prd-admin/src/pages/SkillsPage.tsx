@@ -248,7 +248,7 @@ export default function SkillsPage() {
     <div className={`flex gap-4 h-[calc(100vh-6rem)] ${isMobile ? 'flex-col' : ''}`}>
       {/* ━━━ 左侧列表 ━━━ */}
       {(!isMobile || !mobileShowEditor) && (
-      <GlassCard className={`${isMobile ? 'w-full' : 'w-80'} shrink-0 flex flex-col overflow-hidden`}>
+      <GlassCard animated className={`${isMobile ? 'w-full' : 'w-80'} shrink-0 flex flex-col overflow-hidden`}>
         <div className="p-4 border-b border-white/10 flex items-center justify-between">
           <h2 className="text-sm font-semibold opacity-80">技能列表</h2>
           <button
@@ -299,7 +299,7 @@ export default function SkillsPage() {
 
       {/* ━━━ 右侧编辑器 ━━━ */}
       {(!isMobile || mobileShowEditor) && (
-      <GlassCard className="flex-1 flex flex-col overflow-hidden">
+      <GlassCard animated className="flex-1 flex flex-col overflow-hidden">
         {!showEditor ? (
           <div className="flex-1 flex items-center justify-center text-sm opacity-30">
             选择左侧技能编辑，或点击"+ 新增"

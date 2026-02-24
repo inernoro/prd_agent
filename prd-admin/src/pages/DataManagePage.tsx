@@ -456,7 +456,7 @@ export default function DataManagePage() {
       {msg && <div className="rounded-[12px] px-4 py-2.5 text-[13px] flex items-center gap-2.5" style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.08) 0%, rgba(34,197,94,0.04) 100%)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}><Zap size={15} />{msg}</div>}
 
       {/* 上栏：统计 */}
-      <GlassCard variant="gold" glow accentHue={45}>
+      <GlassCard variant="gold" glow animated accentHue={45}>
         <div className="flex items-center justify-between gap-3 mb-4">
           <div><h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>数据统计</h2><p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>系统核心配置与业务数据概览</p></div>
           <div className="flex items-center gap-2">
@@ -473,7 +473,7 @@ export default function DataManagePage() {
       </GlassCard>
 
       {/* 中栏：实体与集合对比 */}
-      <GlassCard glow accentHue={210}>
+      <GlassCard glow animated accentHue={210}>
         <div className="flex items-center justify-between gap-3 mb-4">
           <div><h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>实体与集合对比</h2><p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>MongoDB 集合与 C# 实体类的映射关系</p></div>
           <div className="flex items-center gap-2">
@@ -516,7 +516,7 @@ export default function DataManagePage() {
       </GlassCard>
 
       {/* 下栏：危险操作 */}
-      <GlassCard glow accentHue={0} padding="lg">
+      <GlassCard glow animated accentHue={0} padding="lg">
         <div className="flex items-center gap-2 mb-4"><AlertTriangle size={16} style={{ color: 'rgba(239,68,68,0.75)' }} /><h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>危险操作</h2></div>
         <div className="grid gap-3 md:grid-cols-2">
           <DangerActionCard title="清理非管理员账号" description="删除所有非管理员用户账号及其关联数据，管理员账号将保留。此操作需要预览确认。" buttonText="预览并删除" onAction={openUsersPurge} loading={loading} />

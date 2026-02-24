@@ -127,7 +127,7 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
 
   return (
     <div className="h-full overflow-auto p-1">
-      <GlassCard glow className="min-h-full flex flex-col">
+      <GlassCard animated glow className="min-h-full flex flex-col">
         <div className="flex-1 grid grid-cols-12">
           {/* 左栏：配置 */}
           <div className="col-span-7 p-5 space-y-5 border-r border-white/10">

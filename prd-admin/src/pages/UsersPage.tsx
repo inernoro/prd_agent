@@ -654,7 +654,7 @@ export default function UsersPage() {
         icon={<Users size={16} />}
       />
 
-      <GlassCard glow className="flex-1 min-h-0 flex flex-col">
+      <GlassCard animated glow className="flex-1 min-h-0 flex flex-col">
         <div className={`flex ${isMobile ? 'flex-col gap-2.5' : 'flex-wrap items-center gap-2.5'}`}>
           <div className={`flex items-center gap-2.5 ${isMobile ? 'w-full' : 'min-w-0'}`}>
             <div className={`${isMobile ? 'flex-1 min-w-0' : 'flex-1 min-w-[200px] max-w-[320px]'}`}>

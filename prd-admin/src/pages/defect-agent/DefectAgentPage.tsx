@@ -107,7 +107,7 @@ export default function DefectAgentPage() {
 
       {/* Error */}
       {error && (
-        <GlassCard glow className="py-2 px-3">
+        <GlassCard animated glow className="py-2 px-3">
           <div className="flex items-center justify-between">
             <div
               className="text-[12px]"
@@ -125,7 +125,7 @@ export default function DefectAgentPage() {
 
       {/* Loading */}
       {loading && !error && (
-        <GlassCard glow className="py-3 px-3">
+        <GlassCard animated glow className="py-3 px-3">
           <div
             className="text-[12px] flex items-center gap-2"
             style={{ color: 'var(--text-muted)' }}
@@ -137,7 +137,7 @@ export default function DefectAgentPage() {
       )}
 
       {/* Content - 用 GlassCard 包裹整个列表区域 */}
-      <GlassCard variant="subtle" className="flex-1 min-h-0">
+      <GlassCard animated variant="subtle" className="flex-1 min-h-0">
         <div className="h-full min-h-0 overflow-auto">
           <DefectList />
         </div>

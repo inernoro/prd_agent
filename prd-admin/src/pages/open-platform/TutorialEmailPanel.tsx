@@ -281,7 +281,7 @@ function ComposeView() {
         </div>
 
         {/* Preview content */}
-        <GlassCard className="flex-1 min-h-0 flex flex-col" padding="none" overflow="hidden">
+        <GlassCard animated className="flex-1 min-h-0 flex flex-col" padding="none" overflow="hidden">
           {htmlContent ? (
             showCode ? (
               <textarea
@@ -312,7 +312,7 @@ function ComposeView() {
 
         {/* Send bar (only when content exists) */}
         {htmlContent && (
-          <GlassCard className="flex-shrink-0 p-3">
+          <GlassCard animated className="flex-shrink-0 p-3">
             <div className="flex items-center gap-3">
               <input
                 placeholder="收件邮箱"
@@ -347,7 +347,7 @@ function ComposeView() {
       </div>
 
       {/* Right: Chat Interface */}
-      <GlassCard className="w-96 flex-shrink-0 flex flex-col" padding="none" overflow="hidden">
+      <GlassCard animated className="w-96 flex-shrink-0 flex flex-col" padding="none" overflow="hidden">
         {/* Chat header */}
         <div className="flex items-center justify-between px-4 py-3 flex-shrink-0"
           style={{ borderBottom: '1px solid var(--border-default)' }}>
@@ -558,7 +558,7 @@ function TemplatesView() {
         </div>
       ) : (
         templates.map((tpl) => (
-          <GlassCard key={tpl.id} className="p-4">
+          <GlassCard animated key={tpl.id} className="p-4">
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -703,7 +703,7 @@ function RecordsView() {
       ) : (
         <div className="space-y-2">
           {enrollments.map((enr) => (
-            <GlassCard key={enr.id} className="p-3">
+            <GlassCard animated key={enr.id} className="p-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   {statusIcon(enr.status)}

@@ -896,7 +896,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       {/* 固定三栏布局：左侧320px，右侧分上下两栏（上栏60px固定，下栏占满） */}
       <div className="grid gap-4 flex-1 min-h-0 lg:grid-cols-[320px_1fr]">
         {/* 左侧：应用列表 */}
-        <GlassCard glow className="flex flex-col min-h-0 p-0 overflow-hidden">
+        <GlassCard animated glow className="flex flex-col min-h-0 p-0 overflow-hidden">
           <div className="p-4 border-b border-white/10">
             <div className="flex items-center gap-2">
               <div className="w-[140px] shrink-0">
@@ -1002,7 +1002,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         {/* 右侧：固定上下两栏布局（上栏60px，下栏占满剩余空间） */}
         <div className="grid grid-rows-[60px_1fr] gap-4 min-h-0">
           {/* 上栏：应用信息卡片（固定60px高度） */}
-          <GlassCard glow className="p-4 overflow-hidden">
+          <GlassCard animated glow className="p-4 overflow-hidden">
             {isLoading ? (
               <div className="h-full flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
                 <Loader2 size={20} className="animate-spin mr-2" />
@@ -1050,21 +1050,21 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
           {/* 下栏：功能列表（占满剩余空间） */}
           {isLoading ? (
-            <GlassCard glow className="flex items-center justify-center overflow-hidden">
+            <GlassCard animated glow className="flex items-center justify-center overflow-hidden">
               <div className="text-center" style={{ color: 'var(--text-muted)' }}>
                 <Loader2 size={48} className="mx-auto mb-4 opacity-40 animate-spin" />
                 <div className="text-sm">加载中...</div>
               </div>
             </GlassCard>
           ) : !selectedAppGroup ? (
-            <GlassCard glow className="flex items-center justify-center overflow-hidden">
+            <GlassCard animated glow className="flex items-center justify-center overflow-hidden">
               <div className="text-center" style={{ color: 'var(--text-muted)' }}>
                 <Activity size={48} className="mx-auto mb-4 opacity-40" />
                 <div className="text-sm">请选择一个应用</div>
               </div>
             </GlassCard>
           ) : (
-            <GlassCard glow className="min-h-0 overflow-auto p-0">
+            <GlassCard animated glow className="min-h-0 overflow-auto p-0">
                 {selectedAppFeatures.length === 0 ? (
                   <div className="flex-1 flex items-center justify-center py-12">
                     <div className="text-center" style={{ color: 'var(--text-muted)' }}>

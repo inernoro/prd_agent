@@ -221,6 +221,7 @@ export function DefectSubmitPanel() {
     >
       <GlassCard
         glow
+        animated
         variant="default"
         className="w-full max-w-[760px] max-h-[90vh] flex flex-col"
         overflow="hidden"

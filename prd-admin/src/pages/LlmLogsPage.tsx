@@ -1323,7 +1323,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
         />
       )}
 
-      <GlassCard glow className="p-4">
+      <GlassCard animated glow className="p-4">
         <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 md:grid-cols-8">
           <SearchableSelect
             value={qModel}
@@ -1410,7 +1410,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
         </div>
       </GlassCard>
 
-      <GlassCard glow className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
+      <GlassCard animated glow className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="divide-y divide-white/10">
           {loading ? (
@@ -1767,7 +1767,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无详情</div>
           ) : (
             <div className="h-full min-h-0 grid gap-3 grid-cols-1 md:grid-cols-2 overflow-auto md:overflow-hidden">
-              <GlassCard glow className="p-3 overflow-hidden flex flex-col min-h-0">
+              <GlassCard animated glow className="p-3 overflow-hidden flex flex-col min-h-0">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Request（密钥已隐藏）</div>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -1976,7 +1976,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                 </div>
               </GlassCard>
 
-              <GlassCard glow className="p-3 overflow-hidden flex flex-col min-h-0">
+              <GlassCard animated glow className="p-3 overflow-hidden flex flex-col min-h-0">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>Response</div>
                   <div className="flex items-center gap-1.5 flex-wrap justify-end">

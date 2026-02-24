@@ -2496,7 +2496,7 @@ export default function LlmLabTab() {
       <div className="h-full min-h-0 grid grid-cols-1 gap-x-5 gap-y-4 lg:grid-cols-[360px_1fr] lg:grid-rows-[auto_1fr]">
         {/* 左上：试验区 */}
         <div className="min-w-0 min-h-0 lg:col-start-1 lg:row-start-1">
-          <GlassCard glow accentHue={210} className="lg:h-full">
+          <GlassCard glow animated accentHue={210} className="lg:h-full">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -2573,7 +2573,7 @@ export default function LlmLabTab() {
 
         {/* 左下：自定义模型集合 + 大模型实验 */}
         <div className="min-w-0 min-h-0 lg:col-start-1 lg:row-start-2">
-          <GlassCard glow accentHue={270} className="overflow-hidden flex flex-col min-h-0 lg:h-full">
+          <GlassCard glow animated accentHue={270} className="overflow-hidden flex flex-col min-h-0 lg:h-full">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -2765,7 +2765,7 @@ export default function LlmLabTab() {
 
         {/* 右上：提示词 */}
         <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-1">
-          <GlassCard glow variant="gold" className="lg:h-full">
+          <GlassCard glow animated variant="gold" className="lg:h-full">
           {/* Row 1: 一行放所有“切换/动作”按钮（避免堆叠） */}
           <div className="flex items-start justify-between gap-3 min-w-0">
             <div className="min-w-0 flex-1 overflow-x-auto pr-1">
@@ -3176,7 +3176,7 @@ export default function LlmLabTab() {
 
         {/* 右下：实时结果 */}
         <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-2">
-          <GlassCard glow accentHue={150} className="overflow-hidden flex flex-col min-h-0 lg:h-full">
+          <GlassCard glow animated accentHue={150} className="overflow-hidden flex flex-col min-h-0 lg:h-full">
           {mainMode === 'infer' ? (
             <>
           <div className="flex items-center justify-between shrink-0">

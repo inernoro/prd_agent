@@ -418,7 +418,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
             <div className="flex-1 min-h-0 overflow-auto pr-1">
               <div className="grid grid-cols-1 gap-3">
                 {myPrompts.map((prompt) => (
-                  <GlassCard glow key={prompt.id} className="p-0 overflow-hidden">
+                  <GlassCard animated glow key={prompt.id} className="p-0 overflow-hidden">
                     <div className="group relative flex flex-col h-full">
                       {/* 标题区 */}
                       <div className="p-2 pb-1 flex-shrink-0">
@@ -523,7 +523,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
           return res.success && res.data ? res.data.items : [];
         },
         renderMarketplaceCard: (prompt: MarketplaceLiteraryPrompt, ctx: MarketplaceCardContext) => (
-          <GlassCard key={prompt.id} className="p-0 overflow-hidden">
+          <GlassCard animated key={prompt.id} className="p-0 overflow-hidden">
             <div className="flex flex-col">
               <div className="p-2 pb-1">
                 <div className="flex items-start justify-between gap-2">
@@ -605,7 +605,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
             <div className="flex-1 min-h-0 overflow-auto pr-1">
               <div className="grid grid-cols-1 gap-3">
                 {myReferenceImages.map((config) => (
-                  <GlassCard key={config.id} className="p-0 overflow-hidden">
+                  <GlassCard animated key={config.id} className="p-0 overflow-hidden">
                     <div className="flex flex-col">
                       {/* 标题栏 */}
                       <div className="p-2 pb-1 flex-shrink-0">
@@ -704,7 +704,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
           return res.success && res.data ? res.data.items : [];
         },
         renderMarketplaceCard: (config: MarketplaceReferenceImageConfig, ctx: MarketplaceCardContext) => (
-          <GlassCard key={config.id} className="p-0 overflow-hidden">
+          <GlassCard animated key={config.id} className="p-0 overflow-hidden">
             <div className="flex flex-col">
               <div className="p-2 pb-1">
                 <div className="flex items-start justify-between gap-2">

@@ -23,7 +23,7 @@ export function ThemeSkinEditor() {
   const { config, setConfig, reset, saving } = useThemeStore();
 
   return (
-    <GlassCard glow accentHue={45} className="h-full flex flex-col">
+    <GlassCard glow animated accentHue={45} className="h-full flex flex-col">
       {/* 标题栏 */}
       <div className="flex items-center justify-between gap-3 mb-6">
         <div>

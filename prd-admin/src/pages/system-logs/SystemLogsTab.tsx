@@ -285,7 +285,7 @@ export default function SystemLogsTab() {
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <GlassCard glow className="p-4 flex-1 min-h-0 flex flex-col">
+      <GlassCard glow animated className="p-4 flex-1 min-h-0 flex flex-col">
         <div className="grid gap-3 grid-cols-2 md:grid-cols-7">
           <Select
             value={qUserId}

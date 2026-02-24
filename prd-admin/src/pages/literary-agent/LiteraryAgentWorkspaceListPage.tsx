@@ -392,7 +392,7 @@ export default function LiteraryAgentWorkspaceListPage() {
   };
 
   const renderCard = (ws: VisualAgentWorkspace) => (
-    <GlassCard glow key={ws.id} className="p-0 overflow-hidden">
+    <GlassCard animated glow key={ws.id} className="p-0 overflow-hidden">
       <div
         role="button"
         tabIndex={0}
@@ -545,18 +545,18 @@ export default function LiteraryAgentWorkspaceListPage() {
       />
 
       {error && (
-        <GlassCard glow className="py-2 px-3">
+        <GlassCard animated glow className="py-2 px-3">
           <div className="text-[12px]" style={{ color: 'rgba(255,120,120,0.95)' }}>{error}</div>
         </GlassCard>
       )}
 
       <div className="flex-1 min-h-0 overflow-auto">
         {loading ? (
-          <GlassCard glow className="py-2 px-3">
+          <GlassCard animated glow className="py-2 px-3">
             <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</div>
           </GlassCard>
         ) : items.length === 0 ? (
-          <GlassCard glow className="py-6 px-3">
+          <GlassCard animated glow className="py-6 px-3">
             <div className="text-center">
               <FileText size={36} className="mx-auto mb-2" style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
               <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>

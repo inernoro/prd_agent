@@ -1177,7 +1177,7 @@ export default function AiChatPage() {
       </div>
 
       {/* 内容区 */}
-      <GlassCard className="flex-1 min-h-0 flex flex-col" overflow="hidden" padding="none" glow accentHue={210}>
+      <GlassCard animated className="flex-1 min-h-0 flex flex-col" overflow="hidden" padding="none" glow accentHue={210}>
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 pr-3 space-y-3">
           {messages.length === 0 ? (
             activeSessionId ? (

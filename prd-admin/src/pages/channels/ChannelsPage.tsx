@@ -179,7 +179,7 @@ export default function ChannelsPage() {
       {/* 通道状态卡片 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {(statsResponse?.channels || []).map((stat) => (
-          <GlassCard key={stat.channelType} className="p-4">
+          <GlassCard animated key={stat.channelType} className="p-4">
             <div className="flex items-center gap-3">
               <div
                 className="w-10 h-10 rounded-lg flex items-center justify-center"
@@ -223,7 +223,7 @@ export default function ChannelsPage() {
       </div>
 
       {/* 白名单列表 */}
-      <GlassCard glow className="flex-1 flex flex-col">
+      <GlassCard animated glow className="flex-1 flex flex-col">
         <div className="p-4 border-b flex items-center gap-4" style={{ borderColor: 'var(--nested-block-border)' }}>
           <div className="flex items-center gap-2 flex-1">
             <Search size={16} className="text-muted-foreground" />

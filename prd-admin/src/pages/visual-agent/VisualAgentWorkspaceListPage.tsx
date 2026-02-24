@@ -1669,7 +1669,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       {/* 错误提示 */}
       {error ? (
         <div className="px-5 mt-4">
-          <GlassCard glow>
+          <GlassCard animated glow>
             <div className="text-sm" style={{ color: 'rgba(255,120,120,0.95)' }}>
               {error}
             </div>

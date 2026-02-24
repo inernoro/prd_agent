@@ -262,7 +262,7 @@ export default function OpenPlatformPage() {
         }
       />
 
-      <GlassCard glow className="mt-6">
+      <GlassCard animated glow className="mt-6">
         <div className="p-4 border-b" style={{ borderColor: 'var(--nested-block-border)' }}>
           <input
             type="text"

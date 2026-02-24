@@ -211,20 +211,20 @@ function OverviewTab({ overview, trends, agents, loading }: {
         <KpiCard title="总用户数" value={overview.totalUsers} accent="blue" animated />
         <KpiCard title="活跃用户" value={overview.activeUsers} accent="green" trend={activeTrend.direction} trendLabel={`${activeTrend.label} vs 上期`} animated />
         <KpiCard title="对话消息" value={overview.periodMessages} accent="gold" trend={msgTrend.direction} trendLabel={`${msgTrend.label} vs 上期`} animated />
-        <KpiCard title="Token 消耗" value={formatTokens(overview.periodTokens)} accent="purple" trend={tokenTrend.direction} trendLabel={`${tokenTrend.label} vs 上期`} />
+        <KpiCard title="Token 消耗" value={formatTokens(overview.periodTokens)} accent="purple" trend={tokenTrend.direction} trendLabel={`${tokenTrend.label} vs 上期`} animated />
         <KpiCard title="LLM 调用" value={overview.llmCalls} accent="blue" animated />
-        <KpiCard title="缺陷解决率" value={`${overview.defectResolutionRate}%`} accent="gold" />
+        <KpiCard title="缺陷解决率" value={`${overview.defectResolutionRate}%`} accent="gold" animated />
       </div>
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <GlassCard glow className="lg:col-span-2">
+        <GlassCard glow animated className="lg:col-span-2">
           <SectionTitle>消息趋势</SectionTitle>
           {trends.length > 0 ? (
             <EChart option={makeTrendOption(trends, 'messages', 'rgba(59,130,246,0.95)', '条消息')} height={260} />
           ) : <EmptyHint text="暂无趋势数据" />}
         </GlassCard>
-        <GlassCard glow>
+        <GlassCard glow animated>
           <SectionTitle>Agent 调用分布</SectionTitle>
           {agents.length > 0 ? (
             <EChart option={makeAgentPieOption(agents)} height={260} />
@@ -234,13 +234,13 @@ function OverviewTab({ overview, trends, agents, loading }: {
 
       {/* Token Trend + Overview Stats */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <GlassCard glow>
+        <GlassCard glow animated>
           <SectionTitle>Token 消耗趋势</SectionTitle>
           {trends.length > 0 ? (
             <EChart option={makeTrendOption(trends, 'tokens', 'rgba(168,85,247,0.95)', 'tokens')} height={260} />
           ) : <EmptyHint text="暂无趋势数据" />}
         </GlassCard>
-        <GlassCard glow>
+        <GlassCard glow animated>
           <SectionTitle>业务统计</SectionTitle>
           <div className="space-y-1">
             <StatRow icon={Users} label="总用户数" value={overview.totalUsers} />
@@ -357,7 +357,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
   return (
     <div className="space-y-4">
       {/* ── Top 3 inline badges ── */}
-      <GlassCard glow className="!py-3 !px-4">
+      <GlassCard glow animated className="!py-3 !px-4">
         <div className="flex items-center gap-4">
           {scored.slice(0, Math.min(3, scored.length)).map((u, i) => {
             const mc = MEDAL_COLORS[i];
@@ -383,7 +383,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
       </GlassCard>
 
       {/* ── Full Ranking Table ── */}
-      <GlassCard glow>
+      <GlassCard glow animated>
         <SectionTitle>综合排行榜</SectionTitle>
         <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
@@ -498,7 +498,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
           const maxVal = sortedEntries[0]?.val ?? 1;
 
           return (
-            <GlassCard key={dim.key} glow className="!p-3">
+            <GlassCard key={dim.key} glow animated className="!p-3">
               <div className="flex items-center gap-2 mb-2">
                 <DimIcon size={14} style={{ color: meta.color }} />
                 <span className="text-[13px] font-bold" style={{ color: 'var(--text-primary)' }}>{dim.name}</span>
@@ -564,7 +564,7 @@ function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]
         {agents.map(agent => {
           const color = AGENT_COLORS[agent.appKey] ?? 'rgba(148,163,184,0.7)';
           return (
-            <GlassCard key={agent.appKey} glow>
+            <GlassCard key={agent.appKey} glow animated>
               <div className="flex items-center gap-2 mb-3">
                 <Bot size={16} style={{ color }} />
                 <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{agent.name}</span>
@@ -584,7 +584,7 @@ function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]
         })}
       </div>
 
-      <GlassCard glow>
+      <GlassCard glow animated>
         <SectionTitle>Agent 调用排名</SectionTitle>
         <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
@@ -630,17 +630,17 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KpiCard title="总调用次数" value={totalCalls} accent="gold" animated />
-        <KpiCard title="总 Token" value={formatTokens(totalTokens)} accent="purple" />
+        <KpiCard title="总 Token" value={formatTokens(totalTokens)} accent="purple" animated />
         <KpiCard title="模型种类" value={models.length} accent="blue" animated />
-        <KpiCard title="平均响应" value={models.length > 0 ? `${(models.reduce((s, m) => s + m.avgDurationMs, 0) / models.length / 1000).toFixed(1)}s` : '-'} accent="green" />
+        <KpiCard title="平均响应" value={models.length > 0 ? `${(models.reduce((s, m) => s + m.avgDurationMs, 0) / models.length / 1000).toFixed(1)}s` : '-'} accent="green" animated />
       </div>
 
-      <GlassCard glow>
+      <GlassCard glow animated>
         <SectionTitle>按模型调用量</SectionTitle>
         <EChart option={makeModelBarOption(models.slice(0, 15))} height={300} />
       </GlassCard>
 
-      <GlassCard glow>
+      <GlassCard glow animated>
         <SectionTitle>模型使用明细</SectionTitle>
         <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
@@ -691,7 +691,7 @@ function IntegrationsTab() {
     <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {integrations.map(int => (
-          <GlassCard key={int.source} glow>
+          <GlassCard key={int.source} glow animated>
             <div className="flex items-center gap-2.5 mb-2.5">
               <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${int.color}15` }}>
                 <int.icon size={16} style={{ color: int.color }} />
@@ -707,7 +707,7 @@ function IntegrationsTab() {
         ))}
       </div>
 
-      <GlassCard glow>
+      <GlassCard glow animated>
         <SectionTitle>集成路线图</SectionTitle>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
           {roadmap.map((phase, idx) => (

@@ -211,6 +211,7 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
 }) {
   return (
     <GlassCard
+      animated
       interactive
       padding="none"
       onClick={onEdit}
@@ -336,7 +337,7 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
 
 function EmptyState({ onCreate, creating }: { onCreate: () => void; creating: boolean }) {
   return (
-    <GlassCard>
+    <GlassCard animated>
       <div className="flex flex-col items-center py-12 gap-5">
         <div
           className="w-20 h-20 rounded-[20px] flex items-center justify-center text-[36px]"
