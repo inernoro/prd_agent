@@ -1,5 +1,7 @@
 import { cn } from '@/lib/cn';
 import { useEffect, useState } from 'react';
+import ShinyText from '@/components/reactbits/ShinyText';
+import BlurText from '@/components/reactbits/BlurText';
 
 // Simple model badges grid - clean and no overlap
 function ModelCarousel() {
@@ -53,7 +55,7 @@ function ModelCarousel() {
       {/* Status indicator */}
       <div className="flex items-center justify-center gap-2 text-xs text-white/50">
         <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: models[activeIndex].color }} />
-        <span>智能调度至 <span style={{ color: models[activeIndex].color }}>{models[activeIndex].name}</span></span>
+        <span>智能调度至 <ShinyText text={models[activeIndex].name} color={`${models[activeIndex].color}99`} shineColor={models[activeIndex].color} speed={2.5} className="font-medium" /></span>
       </div>
     </div>
   );
@@ -325,9 +327,14 @@ export function FeatureBento({ className }: FeatureBentoProps) {
               MAP
             </span>
           </h2>
-          <p className="text-lg text-white/40 max-w-2xl mx-auto">
-            企业级 AI 基础设施，为您的智能化转型提供坚实保障
-          </p>
+          <BlurText
+            text="企业级 AI 基础设施，为您的智能化转型提供坚实保障"
+            delay={30}
+            animateBy="letters"
+            direction="bottom"
+            className="justify-center text-lg text-white/40 max-w-2xl mx-auto"
+            stepDuration={0.3}
+          />
         </div>
 
         {/* Bento grid - improved layout */}

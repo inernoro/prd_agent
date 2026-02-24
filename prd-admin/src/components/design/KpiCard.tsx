@@ -1,4 +1,5 @@
 import { GlassCard } from '@/components/design/GlassCard';
+import CountUp from '@/components/reactbits/CountUp';
 
 type Accent = 'default' | 'green' | 'gold' | 'blue' | 'purple';
 
@@ -18,6 +19,7 @@ export function KpiCard({
   accent = 'default',
   trend,
   trendLabel,
+  animated = false,
 }: {
   title: string;
   value: number | string;
@@ -26,6 +28,7 @@ export function KpiCard({
   accent?: Accent;
   trend?: 'up' | 'down' | 'neutral';
   trendLabel?: string;
+  animated?: boolean;
 }) {
   const display = typeof value === 'number' ? value.toLocaleString() : value;
   const colors = accentColors[accent];
@@ -61,6 +64,8 @@ export function KpiCard({
               className="inline-block w-16 h-7 rounded-lg animate-pulse"
               style={{ background: 'rgba(255,255,255,0.06)' }}
             />
+          ) : animated && typeof value === 'number' ? (
+            <CountUp to={value} duration={2} separator="," />
           ) : (
             display
           )}

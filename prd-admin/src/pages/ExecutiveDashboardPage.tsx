@@ -208,11 +208,11 @@ function OverviewTab({ overview, trends, agents, loading }: {
     <div className="space-y-6">
       {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        <KpiCard title="总用户数" value={overview.totalUsers} accent="blue" />
-        <KpiCard title="活跃用户" value={overview.activeUsers} accent="green" trend={activeTrend.direction} trendLabel={`${activeTrend.label} vs 上期`} />
-        <KpiCard title="对话消息" value={overview.periodMessages} accent="gold" trend={msgTrend.direction} trendLabel={`${msgTrend.label} vs 上期`} />
+        <KpiCard title="总用户数" value={overview.totalUsers} accent="blue" animated />
+        <KpiCard title="活跃用户" value={overview.activeUsers} accent="green" trend={activeTrend.direction} trendLabel={`${activeTrend.label} vs 上期`} animated />
+        <KpiCard title="对话消息" value={overview.periodMessages} accent="gold" trend={msgTrend.direction} trendLabel={`${msgTrend.label} vs 上期`} animated />
         <KpiCard title="Token 消耗" value={formatTokens(overview.periodTokens)} accent="purple" trend={tokenTrend.direction} trendLabel={`${tokenTrend.label} vs 上期`} />
-        <KpiCard title="LLM 调用" value={overview.llmCalls} accent="blue" />
+        <KpiCard title="LLM 调用" value={overview.llmCalls} accent="blue" animated />
         <KpiCard title="缺陷解决率" value={`${overview.defectResolutionRate}%`} accent="gold" />
       </div>
 
@@ -629,9 +629,9 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KpiCard title="总调用次数" value={totalCalls} accent="gold" />
+        <KpiCard title="总调用次数" value={totalCalls} accent="gold" animated />
         <KpiCard title="总 Token" value={formatTokens(totalTokens)} accent="purple" />
-        <KpiCard title="模型种类" value={models.length} accent="blue" />
+        <KpiCard title="模型种类" value={models.length} accent="blue" animated />
         <KpiCard title="平均响应" value={models.length > 0 ? `${(models.reduce((s, m) => s + m.avgDurationMs, 0) / models.length / 1000).toFixed(1)}s` : '-'} accent="green" />
       </div>
 

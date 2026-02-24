@@ -158,9 +158,9 @@ export default function StatsPage() {
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <KpiCard title="总输入Token" value={token?.totalInput ?? 0} loading={loading} accent="green" suffix="tokens" />
-        <KpiCard title="总输出Token" value={token?.totalOutput ?? 0} loading={loading} suffix="tokens" />
-        <KpiCard title="总Token消耗" value={token?.totalTokens ?? 0} loading={loading} suffix="tokens" />
+        <KpiCard title="总输入Token" value={token?.totalInput ?? 0} loading={loading} accent="green" suffix="tokens" animated />
+        <KpiCard title="总输出Token" value={token?.totalOutput ?? 0} loading={loading} suffix="tokens" animated />
+        <KpiCard title="总Token消耗" value={token?.totalTokens ?? 0} loading={loading} suffix="tokens" animated />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

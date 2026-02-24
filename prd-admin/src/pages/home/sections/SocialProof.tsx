@@ -1,5 +1,5 @@
 import { cn } from '@/lib/cn';
-import { CountUp } from '@/components/reactbits';
+import { CountUp, BlurText } from '@/components/reactbits';
 
 interface Stat {
   value: number;
@@ -80,12 +80,21 @@ export function SocialProof({ className }: SocialProofProps) {
           <div className="inline-flex items-center gap-2 px-4 py-2 mb-6 rounded-full border border-white/10 bg-white/[0.03]">
             <span className="text-sm text-white/50">数据说话</span>
           </div>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-white/90 mb-4">
-            值得信赖的选择
-          </h2>
-          <p className="text-lg text-white/40 max-w-2xl mx-auto">
-            已有数千家企业选择我们，一起见证 AI 的力量
-          </p>
+          <BlurText
+            text="值得信赖的选择"
+            delay={80}
+            animateBy="letters"
+            direction="top"
+            className="justify-center text-3xl sm:text-4xl md:text-5xl font-bold text-white/90 mb-4"
+          />
+          <BlurText
+            text="已有数千家企业选择我们，一起见证 AI 的力量"
+            delay={30}
+            animateBy="letters"
+            direction="bottom"
+            className="justify-center text-lg text-white/40 max-w-2xl mx-auto"
+            stepDuration={0.3}
+          />
         </div>
 
         {/* Stats grid */}

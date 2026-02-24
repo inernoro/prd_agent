@@ -1,4 +1,5 @@
 import { cn } from '@/lib/cn';
+import BlurText from '@/components/reactbits/BlurText';
 
 interface CtaFooterProps {
   className?: string;
@@ -95,9 +96,14 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
           </span>
         </h2>
 
-        <p className="text-lg sm:text-xl text-white/50 max-w-2xl mx-auto mb-10">
-          立即注册，免费体验智能 Agent 平台的强大能力
-        </p>
+        <BlurText
+          text="立即注册，免费体验智能 Agent 平台的强大能力"
+          delay={30}
+          animateBy="letters"
+          direction="bottom"
+          className="justify-center text-lg sm:text-xl text-white/50 max-w-2xl mx-auto mb-10"
+          stepDuration={0.3}
+        />
 
         {/* Quick stats */}
         <div className="flex items-center justify-center gap-8 sm:gap-12 mb-10">
