@@ -70,6 +70,7 @@ public static class BsonClassMapRegistration
             RegisterWatermarkFontAsset();
             RegisterWatermarkConfig();
             RegisterToolboxRun();
+            RegisterReportAgent();
 
             _registered = true;
         }
@@ -882,6 +883,57 @@ public static class BsonClassMapRegistration
             BsonClassMap.RegisterClassMap<IntentResult>(cm =>
             {
                 cm.AutoMap();
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+    }
+
+    private static void RegisterReportAgent()
+    {
+        if (!BsonClassMap.IsClassMapRegistered(typeof(ReportTeam)))
+        {
+            BsonClassMap.RegisterClassMap<ReportTeam>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapIdMember(x => x.Id)
+                    .SetSerializer(new StringOrObjectIdSerializer())
+                    .SetIdGenerator(GuidStringIdGenerator.Instance);
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(ReportTeamMember)))
+        {
+            BsonClassMap.RegisterClassMap<ReportTeamMember>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapIdMember(x => x.Id)
+                    .SetSerializer(new StringOrObjectIdSerializer())
+                    .SetIdGenerator(GuidStringIdGenerator.Instance);
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(ReportTemplate)))
+        {
+            BsonClassMap.RegisterClassMap<ReportTemplate>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapIdMember(x => x.Id)
+                    .SetSerializer(new StringOrObjectIdSerializer())
+                    .SetIdGenerator(GuidStringIdGenerator.Instance);
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(WeeklyReport)))
+        {
+            BsonClassMap.RegisterClassMap<WeeklyReport>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapIdMember(x => x.Id)
+                    .SetSerializer(new StringOrObjectIdSerializer())
+                    .SetIdGenerator(GuidStringIdGenerator.Instance);
                 cm.SetIgnoreExtraElements(true);
             });
         }

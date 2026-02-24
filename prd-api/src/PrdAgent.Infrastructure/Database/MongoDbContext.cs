@@ -107,6 +107,12 @@ public class MongoDbContext
     public IMongoCollection<DefectMessage> DefectMessages => _database.GetCollection<DefectMessage>("defect_messages");
     public IMongoCollection<DefectFolder> DefectFolders => _database.GetCollection<DefectFolder>("defect_folders");
 
+    // Report Agent 周报管理
+    public IMongoCollection<ReportTeam> ReportTeams => _database.GetCollection<ReportTeam>("report_teams");
+    public IMongoCollection<ReportTeamMember> ReportTeamMembers => _database.GetCollection<ReportTeamMember>("report_team_members");
+    public IMongoCollection<ReportTemplate> ReportTemplates => _database.GetCollection<ReportTemplate>("report_templates");
+    public IMongoCollection<WeeklyReport> WeeklyReports => _database.GetCollection<WeeklyReport>("report_weekly_reports");
+
     // Channel Adapter 多通道适配器
     public IMongoCollection<ChannelWhitelist> ChannelWhitelists => _database.GetCollection<ChannelWhitelist>("channel_whitelist");
     public IMongoCollection<ChannelIdentityMapping> ChannelIdentityMappings => _database.GetCollection<ChannelIdentityMapping>("channel_identity_mappings");
@@ -953,5 +959,56 @@ public class MongoDbContext
         {
             // ignore
         }
+
+        // ========== Report Agent 周报管理索引 ==========
+
+        // ReportTeams：按 LeaderUserId 查询
+        ReportTeams.Indexes.CreateOne(new CreateIndexModel<ReportTeam>(
+            Builders<ReportTeam>.IndexKeys.Ascending(x => x.LeaderUserId),
+            new CreateIndexOptions { Name = "idx_report_teams_leader" }));
+
+        // ReportTeamMembers：(TeamId, UserId) 唯一；按 UserId 查询
+        try
+        {
+            ReportTeamMembers.Indexes.CreateOne(new CreateIndexModel<ReportTeamMember>(
+                Builders<ReportTeamMember>.IndexKeys.Ascending(x => x.TeamId).Ascending(x => x.UserId),
+                new CreateIndexOptions { Name = "uniq_report_team_members_team_user", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        ReportTeamMembers.Indexes.CreateOne(new CreateIndexModel<ReportTeamMember>(
+            Builders<ReportTeamMember>.IndexKeys.Ascending(x => x.UserId),
+            new CreateIndexOptions { Name = "idx_report_team_members_user" }));
+
+        // ReportTemplates：按 IsDefault + CreatedAt 查询默认模板
+        ReportTemplates.Indexes.CreateOne(new CreateIndexModel<ReportTemplate>(
+            Builders<ReportTemplate>.IndexKeys.Descending(x => x.IsDefault).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_report_templates_default" }));
+
+        // WeeklyReports：(UserId, TeamId, WeekYear, WeekNumber) 唯一，防止重复周报
+        try
+        {
+            WeeklyReports.Indexes.CreateOne(new CreateIndexModel<WeeklyReport>(
+                Builders<WeeklyReport>.IndexKeys
+                    .Ascending(x => x.UserId)
+                    .Ascending(x => x.TeamId)
+                    .Ascending(x => x.WeekYear)
+                    .Ascending(x => x.WeekNumber),
+                new CreateIndexOptions { Name = "uniq_weekly_reports_user_team_week", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // WeeklyReports：按 TeamId + Status + PeriodEnd 查询团队周报
+        WeeklyReports.Indexes.CreateOne(new CreateIndexModel<WeeklyReport>(
+            Builders<WeeklyReport>.IndexKeys.Ascending(x => x.TeamId).Ascending(x => x.Status).Descending(x => x.PeriodEnd),
+            new CreateIndexOptions { Name = "idx_weekly_reports_team_status" }));
+        // WeeklyReports：按 UserId + PeriodEnd 查询个人周报
+        WeeklyReports.Indexes.CreateOne(new CreateIndexModel<WeeklyReport>(
+            Builders<WeeklyReport>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.PeriodEnd),
+            new CreateIndexOptions { Name = "idx_weekly_reports_user_period" }));
     }
 }

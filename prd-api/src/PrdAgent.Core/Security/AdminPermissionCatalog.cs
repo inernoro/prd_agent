@@ -120,6 +120,26 @@ public static class AdminPermissionCatalog
     public const string WorkflowAgentManage = "workflow-agent.manage";
 
     /// <summary>
+    /// 周报 Agent 权限：基础使用周报功能
+    /// </summary>
+    public const string ReportAgentUse = "report-agent.use";
+
+    /// <summary>
+    /// 周报 Agent 模板管理权限：创建/编辑周报模板
+    /// </summary>
+    public const string ReportAgentTemplateManage = "report-agent.template.manage";
+
+    /// <summary>
+    /// 周报 Agent 团队管理权限：管理周报团队与成员
+    /// </summary>
+    public const string ReportAgentTeamManage = "report-agent.team.manage";
+
+    /// <summary>
+    /// 周报 Agent 全局查看权限：查看所有团队周报
+    /// </summary>
+    public const string ReportAgentViewAll = "report-agent.view.all";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -177,6 +197,11 @@ public static class AdminPermissionCatalog
         new(TutorialEmailWrite, "教程邮件-写", "编辑序列、模板、触发发送"),
 
         new(WorkflowAgentUse, "工作流引擎", "创建和执行自动化工作流"),
+
+        new(ReportAgentUse, "周报 Agent", "基础使用周报功能"),
+        new(ReportAgentTemplateManage, "周报-模板管理", "创建/编辑周报模板"),
+        new(ReportAgentTeamManage, "周报-团队管理", "管理周报团队与成员"),
+        new(ReportAgentViewAll, "周报-查看全部", "查看所有团队周报"),
         new(WorkflowAgentManage, "工作流引擎-管理", "管理所有工作流与执行记录"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),

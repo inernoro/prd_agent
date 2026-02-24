@@ -1,0 +1,213 @@
+import { apiRequest } from './apiClient';
+import { api } from '@/services/api';
+import type {
+  ListReportTeamsContract,
+  GetReportTeamContract,
+  CreateReportTeamContract,
+  UpdateReportTeamContract,
+  DeleteReportTeamContract,
+  AddReportTeamMemberContract,
+  RemoveReportTeamMemberContract,
+  UpdateReportTeamMemberContract,
+  ListReportUsersContract,
+  ListReportTemplatesContract,
+  GetReportTemplateContract,
+  CreateReportTemplateContract,
+  UpdateReportTemplateContract,
+  DeleteReportTemplateContract,
+  ListWeeklyReportsContract,
+  GetWeeklyReportContract,
+  CreateWeeklyReportContract,
+  UpdateWeeklyReportContract,
+  DeleteWeeklyReportContract,
+  SubmitWeeklyReportContract,
+  ReviewWeeklyReportContract,
+  ReturnWeeklyReportContract,
+  GetTeamDashboardContract,
+  ReportTeam,
+  ReportTeamMember,
+  ReportTemplate,
+  WeeklyReport,
+  ReportUser,
+  TeamDashboardData,
+} from '../contracts/reportAgent';
+
+// ========== Teams ==========
+
+export const listReportTeamsReal: ListReportTeamsContract = async () => {
+  return await apiRequest<{ items: ReportTeam[] }>(api.reportAgent.teams.list(), { method: 'GET' });
+};
+
+export const getReportTeamReal: GetReportTeamContract = async (input) => {
+  return await apiRequest<{ team: ReportTeam; members: ReportTeamMember[] }>(
+    api.reportAgent.teams.byId(encodeURIComponent(input.id)),
+    { method: 'GET' }
+  );
+};
+
+export const createReportTeamReal: CreateReportTeamContract = async (input) => {
+  return await apiRequest<{ team: ReportTeam }>(api.reportAgent.teams.list(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const updateReportTeamReal: UpdateReportTeamContract = async (input) => {
+  const { id, ...body } = input;
+  return await apiRequest<{ team: ReportTeam }>(
+    api.reportAgent.teams.byId(encodeURIComponent(id)),
+    { method: 'PUT', body }
+  );
+};
+
+export const deleteReportTeamReal: DeleteReportTeamContract = async (input) => {
+  return await apiRequest<object>(
+    api.reportAgent.teams.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+// ========== Team Members ==========
+
+export const addReportTeamMemberReal: AddReportTeamMemberContract = async (input) => {
+  const { teamId, ...body } = input;
+  return await apiRequest<{ member: ReportTeamMember }>(
+    api.reportAgent.teams.members(encodeURIComponent(teamId)),
+    { method: 'POST', body }
+  );
+};
+
+export const removeReportTeamMemberReal: RemoveReportTeamMemberContract = async (input) => {
+  return await apiRequest<object>(
+    api.reportAgent.teams.member(encodeURIComponent(input.teamId), encodeURIComponent(input.userId)),
+    { method: 'DELETE' }
+  );
+};
+
+export const updateReportTeamMemberReal: UpdateReportTeamMemberContract = async (input) => {
+  const { teamId, userId, ...body } = input;
+  return await apiRequest<{ member: ReportTeamMember }>(
+    api.reportAgent.teams.member(encodeURIComponent(teamId), encodeURIComponent(userId)),
+    { method: 'PUT', body }
+  );
+};
+
+// ========== Users ==========
+
+export const listReportUsersReal: ListReportUsersContract = async () => {
+  return await apiRequest<{ items: ReportUser[] }>(api.reportAgent.users(), { method: 'GET' });
+};
+
+// ========== Templates ==========
+
+export const listReportTemplatesReal: ListReportTemplatesContract = async () => {
+  return await apiRequest<{ items: ReportTemplate[] }>(api.reportAgent.templates.list(), { method: 'GET' });
+};
+
+export const getReportTemplateReal: GetReportTemplateContract = async (input) => {
+  return await apiRequest<{ template: ReportTemplate }>(
+    api.reportAgent.templates.byId(encodeURIComponent(input.id)),
+    { method: 'GET' }
+  );
+};
+
+export const createReportTemplateReal: CreateReportTemplateContract = async (input) => {
+  return await apiRequest<{ template: ReportTemplate }>(api.reportAgent.templates.list(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const updateReportTemplateReal: UpdateReportTemplateContract = async (input) => {
+  const { id, ...body } = input;
+  return await apiRequest<{ template: ReportTemplate }>(
+    api.reportAgent.templates.byId(encodeURIComponent(id)),
+    { method: 'PUT', body }
+  );
+};
+
+export const deleteReportTemplateReal: DeleteReportTemplateContract = async (input) => {
+  return await apiRequest<object>(
+    api.reportAgent.templates.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+// ========== Reports ==========
+
+export const listWeeklyReportsReal: ListWeeklyReportsContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.scope) qs.set('scope', input.scope);
+  if (input?.teamId) qs.set('teamId', input.teamId);
+  if (input?.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input?.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  const q = qs.toString();
+  return await apiRequest<{ items: WeeklyReport[] }>(
+    `${api.reportAgent.reports.list()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const getWeeklyReportReal: GetWeeklyReportContract = async (input) => {
+  return await apiRequest<{ report: WeeklyReport }>(
+    api.reportAgent.reports.byId(encodeURIComponent(input.id)),
+    { method: 'GET' }
+  );
+};
+
+export const createWeeklyReportReal: CreateWeeklyReportContract = async (input) => {
+  return await apiRequest<{ report: WeeklyReport }>(api.reportAgent.reports.list(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const updateWeeklyReportReal: UpdateWeeklyReportContract = async (input) => {
+  const { id, ...body } = input;
+  return await apiRequest<{ report: WeeklyReport }>(
+    api.reportAgent.reports.byId(encodeURIComponent(id)),
+    { method: 'PUT', body }
+  );
+};
+
+export const deleteWeeklyReportReal: DeleteWeeklyReportContract = async (input) => {
+  return await apiRequest<object>(
+    api.reportAgent.reports.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+export const submitWeeklyReportReal: SubmitWeeklyReportContract = async (input) => {
+  return await apiRequest<{ report: WeeklyReport }>(
+    api.reportAgent.reports.submit(encodeURIComponent(input.id)),
+    { method: 'POST' }
+  );
+};
+
+export const reviewWeeklyReportReal: ReviewWeeklyReportContract = async (input) => {
+  return await apiRequest<{ report: WeeklyReport }>(
+    api.reportAgent.reports.review(encodeURIComponent(input.id)),
+    { method: 'POST' }
+  );
+};
+
+export const returnWeeklyReportReal: ReturnWeeklyReportContract = async (input) => {
+  const { id, ...body } = input;
+  return await apiRequest<{ report: WeeklyReport }>(
+    api.reportAgent.reports.return(encodeURIComponent(id)),
+    { method: 'POST', body }
+  );
+};
+
+// ========== Dashboard ==========
+
+export const getTeamDashboardReal: GetTeamDashboardContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  const q = qs.toString();
+  return await apiRequest<TeamDashboardData>(
+    `${api.reportAgent.teams.dashboard(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};

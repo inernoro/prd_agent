@@ -483,6 +483,56 @@ import {
   getMobileStatsReal,
   getMobileAssetsReal,
 } from '@/services/real/mobile';
+import type {
+  ListReportTeamsContract,
+  GetReportTeamContract,
+  CreateReportTeamContract,
+  UpdateReportTeamContract,
+  DeleteReportTeamContract,
+  AddReportTeamMemberContract,
+  RemoveReportTeamMemberContract,
+  UpdateReportTeamMemberContract,
+  ListReportUsersContract,
+  ListReportTemplatesContract,
+  GetReportTemplateContract,
+  CreateReportTemplateContract,
+  UpdateReportTemplateContract,
+  DeleteReportTemplateContract,
+  ListWeeklyReportsContract,
+  GetWeeklyReportContract,
+  CreateWeeklyReportContract,
+  UpdateWeeklyReportContract,
+  DeleteWeeklyReportContract,
+  SubmitWeeklyReportContract,
+  ReviewWeeklyReportContract,
+  ReturnWeeklyReportContract,
+  GetTeamDashboardContract,
+} from '@/services/contracts/reportAgent';
+import {
+  listReportTeamsReal,
+  getReportTeamReal,
+  createReportTeamReal,
+  updateReportTeamReal,
+  deleteReportTeamReal,
+  addReportTeamMemberReal,
+  removeReportTeamMemberReal,
+  updateReportTeamMemberReal,
+  listReportUsersReal,
+  listReportTemplatesReal,
+  getReportTemplateReal,
+  createReportTemplateReal,
+  updateReportTemplateReal,
+  deleteReportTemplateReal,
+  listWeeklyReportsReal,
+  getWeeklyReportReal,
+  createWeeklyReportReal,
+  updateWeeklyReportReal,
+  deleteWeeklyReportReal,
+  submitWeeklyReportReal,
+  reviewWeeklyReportReal,
+  returnWeeklyReportReal,
+  getTeamDashboardReal,
+} from '@/services/real/reportAgent';
 
 function withAuth<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<ApiResponse<TResult>>
@@ -771,6 +821,31 @@ export const previewApiLogs: PreviewApiLogsContract = withAuth(previewApiLogsRea
 export const getMobileFeed: GetMobileFeedContract = withAuth(getMobileFeedReal);
 export const getMobileStats: GetMobileStatsContract = withAuth(getMobileStatsReal);
 export const getMobileAssets: GetMobileAssetsContract = withAuth(getMobileAssetsReal);
+
+// ─── Report Agent 周报管理 ───
+export const listReportTeams: ListReportTeamsContract = withAuth(listReportTeamsReal);
+export const getReportTeam: GetReportTeamContract = withAuth(getReportTeamReal);
+export const createReportTeam: CreateReportTeamContract = withAuth(createReportTeamReal);
+export const updateReportTeam: UpdateReportTeamContract = withAuth(updateReportTeamReal);
+export const deleteReportTeam: DeleteReportTeamContract = withAuth(deleteReportTeamReal);
+export const addReportTeamMember: AddReportTeamMemberContract = withAuth(addReportTeamMemberReal);
+export const removeReportTeamMember: RemoveReportTeamMemberContract = withAuth(removeReportTeamMemberReal);
+export const updateReportTeamMember: UpdateReportTeamMemberContract = withAuth(updateReportTeamMemberReal);
+export const listReportUsers: ListReportUsersContract = withAuth(listReportUsersReal);
+export const listReportTemplates: ListReportTemplatesContract = withAuth(listReportTemplatesReal);
+export const getReportTemplate: GetReportTemplateContract = withAuth(getReportTemplateReal);
+export const createReportTemplate: CreateReportTemplateContract = withAuth(createReportTemplateReal);
+export const updateReportTemplate: UpdateReportTemplateContract = withAuth(updateReportTemplateReal);
+export const deleteReportTemplate: DeleteReportTemplateContract = withAuth(deleteReportTemplateReal);
+export const listWeeklyReports: ListWeeklyReportsContract = withAuth(listWeeklyReportsReal);
+export const getWeeklyReport: GetWeeklyReportContract = withAuth(getWeeklyReportReal);
+export const createWeeklyReport: CreateWeeklyReportContract = withAuth(createWeeklyReportReal);
+export const updateWeeklyReport: UpdateWeeklyReportContract = withAuth(updateWeeklyReportReal);
+export const deleteWeeklyReport: DeleteWeeklyReportContract = withAuth(deleteWeeklyReportReal);
+export const submitWeeklyReport: SubmitWeeklyReportContract = withAuth(submitWeeklyReportReal);
+export const reviewWeeklyReport: ReviewWeeklyReportContract = withAuth(reviewWeeklyReportReal);
+export const returnWeeklyReport: ReturnWeeklyReportContract = withAuth(returnWeeklyReportReal);
+export const getTeamDashboard: GetTeamDashboardContract = withAuth(getTeamDashboardReal);
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
 export const automationsService: IAutomationsService = new AutomationsService();

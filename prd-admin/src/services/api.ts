@@ -446,6 +446,29 @@ export const api = {
     },
   },
 
+  // ============ Report Agent 周报管理 ============
+  reportAgent: {
+    teams: {
+      list: () => '/api/report-agent/teams',
+      byId: (id: string) => `/api/report-agent/teams/${id}`,
+      members: (id: string) => `/api/report-agent/teams/${id}/members`,
+      member: (id: string, userId: string) => `/api/report-agent/teams/${id}/members/${userId}`,
+      dashboard: (id: string) => `/api/report-agent/teams/${id}/dashboard`,
+    },
+    templates: {
+      list: () => '/api/report-agent/templates',
+      byId: (id: string) => `/api/report-agent/templates/${id}`,
+    },
+    reports: {
+      list: () => '/api/report-agent/reports',
+      byId: (id: string) => `/api/report-agent/reports/${id}`,
+      submit: (id: string) => `/api/report-agent/reports/${id}/submit`,
+      review: (id: string) => `/api/report-agent/reports/${id}/review`,
+      return: (id: string) => `/api/report-agent/reports/${id}/return`,
+    },
+    users: () => '/api/report-agent/users',
+  },
+
   // ============ Open Platform 开放平台 ============
   openPlatform: {
     apps: {
