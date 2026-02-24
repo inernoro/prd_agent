@@ -163,41 +163,35 @@ docker compose restart api
 
 ## 配置 Nginx 公网转发
 
-### 安装宿主机 Nginx
+### 一键配置（推荐）
 
 ```bash
-apt update && apt install -y nginx
+# 自动检测公网 IP，配置应用(:80) + Dashboard(:9900)
+./exec_nginx_setup.sh
+
+# 指定域名
+./exec_nginx_setup.sh --domain your-domain.com
+
+# 指定 IP
+./exec_nginx_setup.sh --ip 1.2.3.4
+
+# 自定义端口
+NGINX_APP_PORT=8080 NGINX_DASHBOARD_PORT=58000 ./exec_nginx_setup.sh
+
+# 只配置应用，不暴露 dashboard
+NGINX_DASHBOARD_PORT=0 ./exec_nginx_setup.sh
+
+# 卸载
+./exec_nginx_setup.sh --remove
 ```
 
-### 配置反向代理
+脚本会自动：安装 nginx → 生成配置 → 验证 → reload。
 
-```bash
-# 复制示例配置
-cp deploy/nginx/public-nginx.example.conf /etc/nginx/sites-available/prdagent.conf
+### 手动配置
 
-# 修改域名
-vim /etc/nginx/sites-available/prdagent.conf
-# 将 your-domain.com 替换为你的域名或公网 IP
-
-# 启用站点
-ln -sf /etc/nginx/sites-available/prdagent.conf /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default  # 移除默认站点（可选）
-
-# 验证 & 重载
-nginx -t && systemctl reload nginx
-```
+如需手动配置，参考 `deploy/nginx/public-nginx.example.conf` 模板。
 
 核心逻辑：**宿主机 Nginx(:80) → gateway(:5500) → 当前激活分支 / 固定 API**
-
-### 无域名直接用 IP
-
-修改 `server_name` 为 `_`：
-
-```nginx
-server_name _;
-```
-
-通过 `http://公网IP` 访问。
 
 ### 配置 HTTPS（推荐）
 
@@ -207,10 +201,12 @@ certbot --nginx -d your-domain.com
 certbot renew --dry-run
 ```
 
-### 公网暴露 Branch-Tester Dashboard（可选）
+### 防火墙
 
-在 `public-nginx.example.conf` 中取消 dashboard server block 的注释，并配置子域名。
-**强烈建议**加 IP 白名单或 BasicAuth，避免公网直接暴露管理面板。
+```bash
+ufw allow 80/tcp     # 应用
+ufw allow 9900/tcp   # Dashboard（如果暴露了）
+```
 
 ---
 
