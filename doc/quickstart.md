@@ -1,247 +1,137 @@
 # PRD Agent 快速部署指南
 
-从零到公网可访问的完整步骤。
+## Branch-Tester 一键部署
 
-## 前置条件
+```bash
+# 最简一条命令：基础设施 + Dashboard + Nginx 公网全搞定
+./exec_bt.sh
 
-- Linux 服务器（Ubuntu 20.04+）
-- Docker + Docker Compose
-- 公网 IP 或域名（可选）
-- Nginx（宿主机，用于公网转发）
+# 后台运行
+./exec_bt.sh --background
+
+# 查看状态
+./exec_bt.sh --status
+
+# 停止
+./exec_bt.sh --stop
+```
+
+默认会：
+1. 检查/安装 Node.js 20+、pnpm、nginx
+2. 启动 MongoDB、Redis、Gateway 容器
+3. 配置公网 Nginx（应用 :80 + Dashboard :9900）
+4. 启动 Branch-Tester
+
+默认账号：`admin` / `PrdAgent123!`
+
+### 自定义
+
+```bash
+# 自定义账号密码
+ROOT_ACCESS_USERNAME="myuser" ROOT_ACCESS_PASSWORD="MyPass123!" ./exec_bt.sh
+
+# 自定义端口
+NGINX_APP_PORT=8080 NGINX_DASH_PORT=58000 ./exec_bt.sh
+
+# 跳过 nginx（已有自己的 nginx 配置）
+SKIP_NGINX=1 ./exec_bt.sh
+
+# Dashboard 加认证
+BT_USERNAME=admin BT_PASSWORD=secret ./exec_bt.sh
+```
 
 ---
 
-## 部署模式选择
-
-| 模式 | 说明 | 适用场景 |
-|------|------|----------|
-| **Branch-Tester** | 多分支同时运行，dashboard 切换激活分支 | 开发/测试环境 |
-| **独立部署** | docker-compose 单实例，固定 gateway | 生产环境 |
-
-两种模式都通过 **gateway(:5500)** 对外提供服务，区别在于 gateway 内部如何路由。
-
----
-
-## 模式 A：Branch-Tester（你当前的环境）
-
-### 架构
+## 架构
 
 ```
 公网用户
   │
-  ▼
-[宿主机 Nginx :80/:443]          ← 公网入口，SSL 终止
+  ├─ :80 (应用) ──→ [宿主机 Nginx] ──→ [gateway :5500] ──→ 当前激活分支
+  │                                           │
+  │                                           ├─ main:       API(:9001) + Vite
+  │                                           ├─ feature-x:  API(:9002) + Vite
+  │                                           └─ [未激活 → 502]
   │
-  ▼
-[prdagent-gateway :5500]         ← 可切换网关（symlink 指向激活分支的 nginx conf）
-  │
-  ├─ 分支 main:
-  │   ├─ prdagent-run-main        (:9001 → :8080)  API
-  │   └─ prdagent-run-main-web                      Vite dev server
-  │
-  ├─ 分支 feature-x:
-  │   ├─ prdagent-run-feature-x   (:9002 → :8080)  API
-  │   └─ prdagent-run-feature-x-web                 Vite dev server
-  │
-  └─ [未激活时返回 502: "No active branch connected"]
-
-[Branch-Tester Dashboard :9900]  ← 分支管理面板（启动/停止/切换分支）
+  └─ :9900 (Dashboard) ──→ [宿主机 Nginx] ──→ [Branch-Tester :9900]
 ```
 
-**关键理解**：
-- `:5500` 不是某个固定应用，而是**可切换网关**
-- 在 dashboard(:9900) 中"激活"某个分支后，gateway 才会路由到该分支
-- 每个分支的 API 也有直连端口（如 `:9001`），但建议通过 gateway 访问
+### 关键理解
 
-### 启动步骤
+- **:5500** = 可切换网关，在 Dashboard 中激活某个分支后才有内容
+- **:9900** = 分支管理面板，启动/停止/切换分支
+- **:9001+** = 各分支 API 直连端口（调试用）
 
-```bash
-cd branch-tester
+---
 
-# 设置环境变量（会透传给所有分支容器）
-export ROOT_ACCESS_USERNAME="admin"
-export ROOT_ACCESS_PASSWORD="YourStrongPassword123!"
-
-# 启动 branch-tester
-./exec_branch_tester.sh
-# 或后台启动
-./exec_branch_tester.sh --background
-```
+## 部署后操作
 
 ### 激活分支
 
-1. 浏览器访问 `http://服务器IP:9900`（dashboard）
-2. 选择要激活的分支，点击 "Activate"
-3. gateway(:5500) 开始路由到该分支
+1. 浏览器访问 `http://公网IP:9900`（Dashboard）
+2. 选择分支，点击 Run 或 Deploy
+3. 激活后通过 `http://公网IP` 访问应用
 
----
+### 登录应用
 
-## 模式 B：独立部署（生产环境）
-
-### 架构
-
-```
-公网用户
-  │
-  ▼
-[宿主机 Nginx :80/:443]  ← 公网入口，SSL 终止
-  │
-  ▼
-[prdagent-gateway :5500]  ← 固定网关（SPA 静态文件 + API 反代）
-  │
-  ├─ 静态文件 → /usr/share/nginx/html (prd-admin dist)
-  │
-  └─ /api/* → [prdagent-api :8080]
-                  │
-                  ├─ MongoDB
-                  └─ Redis
-```
-
-### 启动步骤
-
-```bash
-# 创建 Docker 网络
-docker network create prdagent-network 2>/dev/null || true
-
-# 设置环境变量
-export JWT_SECRET="$(openssl rand -base64 32)"
-export ROOT_ACCESS_USERNAME="admin"
-export ROOT_ACCESS_PASSWORD="YourStrongPassword123!"
-export ASSETS_PROVIDER="local"  # 不用腾讯 COS 则设为 local
-
-# 方式 1：一键部署（拉取远程镜像 + 下载前端 dist）
-./exec_dep.sh
-
-# 方式 2：本地构建部署（无需远程镜像）
-./local_exec_dep.sh up
-
-# 方式 3：开发环境（暴露所有端口）
-docker compose -f docker-compose.dev.yml up -d --build
-```
-
----
-
-## 设置账号密码
-
-### Root 破窗账户（首次登录）
-
-通过环境变量设置，不入库，容器重启即生效：
-
-```bash
-export ROOT_ACCESS_USERNAME="admin"
-export ROOT_ACCESS_PASSWORD="YourStrongPassword123!"
-```
-
-- **独立部署**：在 `docker compose up` 之前设置
-- **Branch-Tester**：在 `exec_branch_tester.sh` 之前设置，会自动透传给所有分支容器
-
-登录方式：
-1. 浏览器访问应用地址
-2. 用户名 / 密码填上面设置的值
+1. 访问 `http://公网IP`
+2. 用户名 / 密码：`admin` / `PrdAgent123!`（或你自定义的）
 3. clientType 选 `admin`
 
 ### 创建正式用户
 
-Root 登录管理后台后，在 **用户管理** 页面创建正式账号。
+Root 登录管理后台 → **用户管理** 创建正式账号。
 
-> Root 账户仅作为"破窗"用途，建议创建正式管理员账号后移除 `ROOT_ACCESS_*` 环境变量。
+### 初始化应用配置
 
-### 忘记密码？
+首次部署后：管理后台 → **模型管理** → **初始化应用**。
+
+---
+
+## 独立部署（生产环境）
+
+不需要 Branch-Tester 时，直接用 docker-compose：
 
 ```bash
-# 重新设置环境变量并重启
+export JWT_SECRET="$(openssl rand -base64 32)"
 export ROOT_ACCESS_USERNAME="admin"
-export ROOT_ACCESS_PASSWORD="NewPassword123!"
+export ROOT_ACCESS_PASSWORD="YourStrongPassword123!"
+export ASSETS_PROVIDER="local"
 
-# 独立部署
-docker compose restart api
+# 一键部署（拉取远程镜像）
+./exec_dep.sh
 
-# Branch-Tester：重启 branch-tester 即可
+# 或本地构建
+./local_exec_dep.sh up
 ```
 
----
-
-## 配置 Nginx 公网转发
-
-### 一键配置（推荐）
-
-```bash
-# 自动检测公网 IP，配置应用(:80) + Dashboard(:9900)
-./exec_nginx_setup.sh
-
-# 指定域名
-./exec_nginx_setup.sh --domain your-domain.com
-
-# 指定 IP
-./exec_nginx_setup.sh --ip 1.2.3.4
-
-# 自定义端口
-NGINX_APP_PORT=8080 NGINX_DASHBOARD_PORT=58000 ./exec_nginx_setup.sh
-
-# 只配置应用，不暴露 dashboard
-NGINX_DASHBOARD_PORT=0 ./exec_nginx_setup.sh
-
-# 卸载
-./exec_nginx_setup.sh --remove
-```
-
-脚本会自动：安装 nginx → 生成配置 → 验证 → reload。
-
-### 手动配置
-
-如需手动配置，参考 `deploy/nginx/public-nginx.example.conf` 模板。
-
-核心逻辑：**宿主机 Nginx(:80) → gateway(:5500) → 当前激活分支 / 固定 API**
-
-### 配置 HTTPS（推荐）
-
-```bash
-apt install -y certbot python3-certbot-nginx
-certbot --nginx -d your-domain.com
-certbot renew --dry-run
-```
-
-### 防火墙
-
-```bash
-ufw allow 80/tcp     # 应用
-ufw allow 9900/tcp   # Dashboard（如果暴露了）
-```
-
----
-
-## 验证部署
-
-```bash
-# 检查容器状态
-docker ps | grep prdagent
-
-# 测试 API（通过 gateway）
-curl http://localhost:5500/api/v1/health
-
-# 测试登录
-curl -X POST http://localhost:5500/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"YourStrongPassword123!","clientType":"admin"}'
-
-# 测试公网
-curl http://your-domain.com/api/v1/health
-```
+公网 Nginx 手动配置参考 `deploy/nginx/public-nginx.example.conf`。
 
 ---
 
 ## 环境变量速查
 
-| 变量 | 必填 | 说明 | 示例 |
-|------|------|------|------|
-| `JWT_SECRET` | 生产必填 | JWT 签名密钥（32+ 字符） | `openssl rand -base64 32` |
-| `ROOT_ACCESS_USERNAME` | 首次 | 破窗管理员用户名 | `admin` |
-| `ROOT_ACCESS_PASSWORD` | 首次 | 破窗管理员密码 | `YourStrongPassword123!` |
-| `ASSETS_PROVIDER` | 否 | 资产存储：`local` / `tencentCos` | `local` |
-| `TENCENT_COS_*` | COS 时 | 腾讯云 COS 配置 | 见 docker-compose.yml |
-| `BT_USERNAME` | BT 时 | Branch-Tester dashboard 认证用户名 | `admin` |
-| `BT_PASSWORD` | BT 时 | Branch-Tester dashboard 认证密码 | `secret` |
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `ROOT_ACCESS_USERNAME` | `admin` | 管理员用户名 |
+| `ROOT_ACCESS_PASSWORD` | `PrdAgent123!` | 管理员密码 |
+| `JWT_SECRET` | 自动生成 | JWT 签名密钥 |
+| `ASSETS_PROVIDER` | `local` | 资产存储：`local` / `tencentCos` |
+| `NGINX_APP_PORT` | `80` | 应用公网端口 |
+| `NGINX_DASH_PORT` | `9900` | Dashboard 公网端口 |
+| `SKIP_NGINX` | — | 设为 `1` 跳过 nginx 配置 |
+| `BT_USERNAME` | — | Dashboard 认证用户名 |
+| `BT_PASSWORD` | — | Dashboard 认证密码 |
 
-## 初始化应用配置
+## HTTPS
 
-首次部署后，Root 登录管理后台 → **模型管理** → 点击 **初始化应用** 按钮。
+```bash
+apt install -y certbot python3-certbot-nginx
+certbot --nginx -d your-domain.com
+```
+
+## 忘记密码？
+
+```bash
+ROOT_ACCESS_PASSWORD="NewPass123!" ./exec_bt.sh --stop && ./exec_bt.sh --background
+```
