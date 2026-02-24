@@ -2,29 +2,14 @@
 # ══════════════════════════════════════════════════════════
 # PRD Agent Branch-Tester 一键部署
 #
-# 一条命令完成：基础设施 + Branch-Tester + 公网 Nginx
-#
 # 用法：
-#   ./exec_bt.sh                              # 默认前台运行
-#   ./exec_bt.sh --background                 # 后台运行
-#   ./exec_bt.sh --stop                       # 停止所有服务
-#   ./exec_bt.sh --status                     # 查看运行状态
+#   ./exec_bt.sh                # 前台运行
+#   ./exec_bt.sh -d             # 后台运行
+#   ./exec_bt.sh --test         # 自检（不启动，只验证所有组件）
+#   ./exec_bt.sh --status       # 查看状态
+#   ./exec_bt.sh --stop         # 停止
 #
-# 环境变量：
-#   ROOT_ACCESS_USERNAME  — Root 管理员用户名（默认 admin）
-#   ROOT_ACCESS_PASSWORD  — Root 管理员密码（默认 PrdAgent123!）
-#   JWT_SECRET            — JWT 密钥（默认自动生成）
-#   ASSETS_PROVIDER       — 资产存储：local / tencentCos（默认 local）
-#   BT_USERNAME           — Dashboard 认证用户名（不设则不启用）
-#   BT_PASSWORD           — Dashboard 认证密码
-#   NGINX_APP_PORT        — 应用公网端口（默认 80）
-#   SKIP_NGINX            — 设为 1 跳过 nginx 配置
-#
-# 端口分配：
-#   :80   — 宿主机 Nginx → gateway(:5500)     应用入口
-#   :5500 — Docker gateway（内部 nginx）       可切换网关
-#   :9900 — Branch-Tester dashboard（直连）    分支管理面板
-#   :9001+— 各分支 API 容器直连端口           调试用
+# 架构文档：doc/arch.exec-bt.md
 # ══════════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -36,28 +21,25 @@ PID_FILE="${BT_DIR}/.bt/bt.pid"
 BACKGROUND=false
 ACTION="start"
 
-# ── Parse args ──
 for arg in "$@"; do
   case "$arg" in
     --background|-d) BACKGROUND=true ;;
     --stop)          ACTION="stop" ;;
     --status)        ACTION="status" ;;
+    --test)          ACTION="test" ;;
   esac
 done
 
 # ── Colors ──
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 warn() { echo -e "  ${YELLOW}⚠${NC} $1"; }
-fail() { echo -e "  ${RED}✗${NC} $1"; exit 1; }
+fail() { echo -e "  ${RED}✗${NC} $1"; }
+die()  { echo -e "  ${RED}✗${NC} $1"; exit 1; }
 info() { echo -e "  ${CYAN}▸${NC} $1"; }
 
 # ══════════════════════════════════════════
-# Stop
+# --stop
 # ══════════════════════════════════════════
 do_stop() {
   echo ""
@@ -79,22 +61,20 @@ do_stop() {
   fi
 
   echo ""
-  read -p "  Also stop infrastructure containers (mongo/redis/gateway)? [y/N] " -n 1 -r
+  read -rp "  Also stop infrastructure containers (mongo/redis/gateway)? [y/N] " -n 1
   echo ""
-  if [[ $REPLY =~ ^[Yy]$ ]]; then
+  if [[ ${REPLY:-} =~ ^[Yy]$ ]]; then
     cd "$REPO_ROOT"
-    if command -v docker-compose >/dev/null 2>&1; then
-      docker-compose stop mongodb redis gateway 2>/dev/null || true
-    else
-      docker compose stop mongodb redis gateway 2>/dev/null || true
-    fi
+    docker compose stop mongodb redis gateway 2>/dev/null \
+      || docker-compose stop mongodb redis gateway 2>/dev/null \
+      || true
     ok "Infrastructure stopped"
   fi
   exit 0
 }
 
 # ══════════════════════════════════════════
-# Status
+# --status
 # ══════════════════════════════════════════
 do_status() {
   echo ""
@@ -109,30 +89,29 @@ do_status() {
 
   for name in prdagent-mongodb prdagent-redis prdagent-gateway; do
     if docker inspect --format='{{.State.Running}}' "$name" 2>/dev/null | grep -q true; then
-      ok "$name: running"
+      ok "$name"
     else
       warn "$name: not running"
     fi
   done
 
+  if docker inspect --format='{{.State.Running}}' prdagent-api 2>/dev/null | grep -q true; then
+    warn "prdagent-api: running (独立部署残留, BT 模式下应停止)"
+  fi
+
   if command -v nginx >/dev/null 2>&1 && systemctl is-active --quiet nginx 2>/dev/null; then
-    ok "Nginx: running"
-    # Show our config status
-    for f in /etc/nginx/conf.d/prdagent-app.conf /etc/nginx/sites-enabled/prdagent-app.conf; do
-      [ -f "$f" ] && ok "  App config: $f" && break
-    done
+    ok "Host Nginx: running"
   else
-    warn "Nginx: not running or not installed"
+    warn "Host Nginx: not running"
   fi
 
   echo ""
   info "Ports:"
   for port in 80 5500 9900; do
-    PID_INFO=$(ss -tlnp 2>/dev/null | grep ":${port} " | head -1)
-    if [ -n "$PID_INFO" ]; then
-      ok "  :${port} — listening"
+    if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
+      ok "  :${port} listening"
     else
-      warn "  :${port} — not listening"
+      warn "  :${port} not listening"
     fi
   done
 
@@ -140,8 +119,109 @@ do_status() {
   exit 0
 }
 
+# ══════════════════════════════════════════
+# --test
+# ══════════════════════════════════════════
+do_test() {
+  echo ""
+  echo "  Branch-Tester Self-Test"
+  echo "  ═══════════════════════"
+  echo ""
+  PASS=0; TOTAL=0
+
+  t() {
+    TOTAL=$((TOTAL + 1))
+    local id="$1"; local desc="$2"; shift 2
+    if "$@" >/dev/null 2>&1; then
+      ok "[$id] $desc"; PASS=$((PASS + 1))
+    else
+      fail "[$id] $desc"
+    fi
+  }
+
+  t_not() {
+    TOTAL=$((TOTAL + 1))
+    local id="$1"; local desc="$2"; shift 2
+    if ! "$@" >/dev/null 2>&1; then
+      ok "[$id] $desc"; PASS=$((PASS + 1))
+    else
+      fail "[$id] $desc"
+    fi
+  }
+
+  echo "  Pre-flight"
+  echo "  ----------"
+  t "T01" "docker daemon"                docker info
+  t "T02" "docker compose"               docker compose version
+  t "T03" "node >= 20"                   node -e "process.exit(parseInt(process.version.slice(1))>=20?0:1)"
+  t "T04" "pnpm"                         pnpm -v
+  t "T05" "git"                          git --version
+
+  echo ""
+  echo "  Infrastructure"
+  echo "  --------------"
+  t     "T10" "prdagent-network"              docker network inspect prdagent-network
+  t     "T11" "prdagent-mongodb running"      docker inspect --format='{{.State.Running}}' prdagent-mongodb
+  t     "T12" "prdagent-redis running"        docker inspect --format='{{.State.Running}}' prdagent-redis
+  t     "T13" "prdagent-gateway running"      docker inspect --format='{{.State.Running}}' prdagent-gateway
+  t     "T14" "gateway :5500 responds"        curl -sf --max-time 3 http://localhost:5500
+  t_not "T15" "prdagent-api not running"      docker inspect --format='{{.State.Running}}' prdagent-api
+
+  echo ""
+  echo "  Branch-Tester"
+  echo "  -------------"
+  if [ -f "$PID_FILE" ]; then
+    t "T20" "BT process alive"            kill -0 "$(cat "$PID_FILE")"
+  else
+    TOTAL=$((TOTAL + 1)); fail "[T20] BT PID file not found"
+  fi
+  t "T21" "dashboard :9900 responds"      curl -sf --max-time 3 http://localhost:9900
+  t "T22" "state.json exists"             test -f "${REPO_ROOT}/.bt/state.json"
+
+  echo ""
+  echo "  Host Nginx"
+  echo "  ----------"
+  if command -v nginx >/dev/null 2>&1; then
+    t "T30" "nginx running"               systemctl is-active --quiet nginx
+    TOTAL=$((TOTAL + 1))
+    if [ -f /etc/nginx/sites-available/prdagent-app.conf ] || [ -f /etc/nginx/conf.d/prdagent-app.conf ]; then
+      ok "[T31] prdagent-app.conf exists"; PASS=$((PASS + 1))
+    else
+      fail "[T31] prdagent-app.conf not found"
+    fi
+    t "T32" "nginx -t passes"             nginx -t
+    t "T33" ":80 responds"                curl -sf --max-time 3 http://localhost:80
+  else
+    for id in T30 T31 T32 T33; do
+      TOTAL=$((TOTAL + 1)); warn "[$id] nginx not installed (skipped)"
+    done
+  fi
+
+  echo ""
+  echo "  End-to-End"
+  echo "  ----------"
+  PUBLIC_IP=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || echo "")
+  if [ -n "$PUBLIC_IP" ]; then
+    t "T40" "public :80 ($PUBLIC_IP)"     curl -sf --max-time 5 "http://${PUBLIC_IP}"
+    t "T41" "public :9900 ($PUBLIC_IP)"   curl -sf --max-time 5 "http://${PUBLIC_IP}:9900"
+  else
+    TOTAL=$((TOTAL + 2)); warn "[T40] cannot detect public IP"; warn "[T41] skipped"
+  fi
+
+  echo ""
+  echo "  ────────────────────"
+  if [ "$PASS" -eq "$TOTAL" ]; then
+    echo -e "  ${GREEN}${PASS}/${TOTAL} ALL PASSED${NC}"
+  else
+    echo -e "  ${YELLOW}${PASS}/${TOTAL} passed${NC}"
+  fi
+  echo ""
+  [ "$PASS" -eq "$TOTAL" ] && exit 0 || exit 1
+}
+
 [ "$ACTION" = "stop" ] && do_stop
 [ "$ACTION" = "status" ] && do_status
+[ "$ACTION" = "test" ] && do_test
 
 # ══════════════════════════════════════════
 # Defaults
@@ -152,185 +232,143 @@ export JWT_SECRET="${JWT_SECRET:-$(openssl rand -base64 32 2>/dev/null || echo '
 export ASSETS_PROVIDER="${ASSETS_PROVIDER:-local}"
 APP_PORT="${NGINX_APP_PORT:-80}"
 
-# ══════════════════════════════════════════
-# Banner
-# ══════════════════════════════════════════
 echo ""
-echo -e "  ${CYAN}PRD Agent Branch-Tester — 一键部署${NC}"
-echo "  ══════════════════════════════════════"
-echo ""
-info "Repo root:     $REPO_ROOT"
-info "Branch-Tester: $BT_DIR"
-info "Mode:          $([ "$BACKGROUND" = true ] && echo 'background' || echo 'foreground')"
-info "Root account:  ${ROOT_ACCESS_USERNAME} / ****"
-info "Assets:        ${ASSETS_PROVIDER}"
+echo -e "  ${CYAN}PRD Agent Branch-Tester${NC}"
+echo "  ══════════════════════"
 echo ""
 
 # ══════════════════════════════════════════
-# Step 1: Prerequisites
+# PRE-FLIGHT: 在做任何变更前检查冲突
 # ══════════════════════════════════════════
-echo "  [1/5] Checking prerequisites..."
+echo "  [PRE] Pre-flight..."
 
-if ! command -v docker >/dev/null 2>&1; then
-  fail "Docker not found. Install: https://docs.docker.com/engine/install/"
-fi
-ok "Docker"
-
-if command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE="docker-compose"
-elif docker compose version >/dev/null 2>&1; then
-  COMPOSE="docker compose"
-else
-  fail "Docker Compose not found"
-fi
-ok "Docker Compose ($COMPOSE)"
-
-command -v git >/dev/null 2>&1 || fail "Git not found"
-ok "Git"
+command -v docker >/dev/null 2>&1       || die "docker not found"
+docker compose version >/dev/null 2>&1 \
+  || command -v docker-compose >/dev/null 2>&1 \
+  || die "docker compose not found"
+command -v git >/dev/null 2>&1          || die "git not found"
 
 if ! command -v node >/dev/null 2>&1; then
-  warn "Node.js not found, installing via NodeSource..."
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-  apt-get install -y nodejs
+  warn "Node.js not found, installing..."
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs \
+    || die "Failed to install Node.js"
 fi
 NODE_V=$(node -v | sed 's/v//' | cut -d. -f1)
-if [ "$NODE_V" -lt 20 ]; then
-  fail "Node.js >= 20 required (found: v${NODE_V})"
-fi
-ok "Node.js $(node -v)"
+[ "$NODE_V" -ge 20 ] || die "Node.js >= 20 required (found: v${NODE_V})"
 
 if ! command -v pnpm >/dev/null 2>&1; then
   warn "pnpm not found, installing..."
-  npm install -g pnpm
+  npm install -g pnpm || die "Failed to install pnpm"
 fi
-ok "pnpm $(pnpm -v)"
 
+# Port :5500 — ours or free?
+if ss -tlnp 2>/dev/null | grep -q ":5500 "; then
+  if docker inspect --format='{{.Name}}' prdagent-gateway 2>/dev/null | grep -q prdagent-gateway; then
+    ok ":5500 = prdagent-gateway"
+  else
+    die ":5500 occupied by unknown process"
+  fi
+fi
+
+# Port :9900 — ours or free?
+if ss -tlnp 2>/dev/null | grep -q ":9900 "; then
+  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    ok ":9900 = previous BT (will replace)"
+  else
+    warn ":9900 occupied, BT may fail to bind"
+  fi
+fi
+
+ok "Pre-flight passed"
 echo ""
 
 # ══════════════════════════════════════════
-# Step 2: Infrastructure (Mongo + Redis + Gateway)
+# [1/4] Infrastructure
 # ══════════════════════════════════════════
-echo "  [2/5] Starting infrastructure..."
-
+echo "  [1/4] Infrastructure..."
 cd "$REPO_ROOT"
 
-docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
-ok "Docker network: prdagent-network"
+docker network inspect prdagent-network >/dev/null 2>&1 \
+  || docker network create prdagent-network >/dev/null 2>&1
 
-$COMPOSE up -d mongodb redis gateway
+if docker compose version >/dev/null 2>&1; then COMPOSE="docker compose"; else COMPOSE="docker-compose"; fi
+
+# compose up 会因 gateway.depends_on 尝试拉 api 镜像
+# 即使 api 拉取失败, gateway 仍启动 (soft dependency)
+$COMPOSE up -d mongodb redis gateway 2>&1 | tail -5
 sleep 2
 
 for name in prdagent-mongodb prdagent-redis prdagent-gateway; do
-  if docker inspect --format='{{.State.Running}}' "$name" 2>/dev/null | grep -q true; then
-    ok "$name"
-  else
-    fail "$name failed to start"
-  fi
+  docker inspect --format='{{.State.Running}}' "$name" 2>/dev/null | grep -q true \
+    || die "$name failed to start. Check: docker logs $name"
+  ok "$name"
 done
 
+# S1: 停掉独立部署的 prdagent-api (BT 接管 API 生命周期)
+if docker inspect --format='{{.State.Running}}' prdagent-api 2>/dev/null | grep -q true; then
+  warn "Stopping standalone prdagent-api (BT manages its own)"
+  docker stop prdagent-api >/dev/null 2>&1 || true
+  ok "prdagent-api stopped"
+fi
 echo ""
 
 # ══════════════════════════════════════════
-# Step 3: Install Branch-Tester dependencies
+# [2/4] Dependencies
 # ══════════════════════════════════════════
-echo "  [3/5] Preparing Branch-Tester..."
-
+echo "  [2/4] Dependencies..."
 cd "$BT_DIR"
-
-if [ ! -d "node_modules" ] || [ "package.json" -nt "node_modules/.package-lock.json" ] 2>/dev/null; then
-  info "Installing dependencies..."
-  pnpm install --frozen-lockfile 2>/dev/null || pnpm install
-fi
-ok "Dependencies installed"
-
+[ -d "node_modules" ] || { info "Installing..."; pnpm install --frozen-lockfile 2>/dev/null || pnpm install; }
+ok "Ready"
 mkdir -p .bt
 echo ""
 
 # ══════════════════════════════════════════
-# Step 4: Nginx — 只代理应用(:80 → :5500)
-#
-# Dashboard(:9900) 不需要 Nginx 代理：
-#   branch-tester 直接监听 0.0.0.0:9900，公网已可访问。
-#   套一层 nginx 反而会端口冲突（两个进程都 listen :9900）。
+# [3/4] Host Nginx
+# 只写一个文件: prdagent-app.conf
+# Dashboard(:9900) 直连, 不代理
 # ══════════════════════════════════════════
 if [ "${SKIP_NGINX:-}" = "1" ]; then
-  echo "  [4/5] Nginx: skipped (SKIP_NGINX=1)"
+  echo "  [3/4] Nginx: skipped"
 else
-  echo "  [4/5] Configuring Nginx (app :${APP_PORT} → gateway :5500)..."
+  echo "  [3/4] Nginx (:${APP_PORT} → :5500)..."
 
-  # Install nginx if missing
   if ! command -v nginx >/dev/null 2>&1; then
     info "Installing nginx..."
-    apt-get update -qq && apt-get install -y -qq nginx
-  fi
-  ok "Nginx installed"
-
-  # Detect conf directory
-  if [ -d "/etc/nginx/sites-available" ]; then
-    CONF_DIR="/etc/nginx/sites-available"
-    ENABLED_DIR="/etc/nginx/sites-enabled"
-  else
-    CONF_DIR="/etc/nginx/conf.d"
-    ENABLED_DIR=""
+    apt-get update -qq && apt-get install -y -qq nginx 2>/dev/null || { warn "Failed, skipping nginx"; SKIP_NGINX=1; }
   fi
 
-  CONF_FILE="$CONF_DIR/prdagent-app.conf"
-  CONF_NAME="prdagent-app.conf"
-
-  # ── Safety check: port conflict ──
-  # Check if anything else already listens on APP_PORT
-  EXISTING_LISTENER=""
-  if [ -n "$ENABLED_DIR" ] && [ -d "$ENABLED_DIR" ]; then
-    # Scan enabled configs for 'listen APP_PORT' (excluding our own config)
-    for f in "$ENABLED_DIR"/*; do
-      [ -f "$f" ] || continue
-      REAL_F=$(readlink -f "$f" 2>/dev/null || echo "$f")
-      # Skip our own config
-      case "$(basename "$REAL_F")" in prdagent-*) continue ;; esac
-      if grep -qE "listen\s+${APP_PORT}(\s|;)" "$f" 2>/dev/null; then
-        EXISTING_LISTENER="$f"
-        break
-      fi
-    done
-  fi
-  if [ -d "/etc/nginx/conf.d" ]; then
-    for f in /etc/nginx/conf.d/*.conf; do
-      [ -f "$f" ] || continue
-      case "$(basename "$f")" in prdagent-*) continue ;; esac
-      if grep -qE "listen\s+${APP_PORT}(\s|;)" "$f" 2>/dev/null; then
-        EXISTING_LISTENER="$f"
-        break
-      fi
-    done
-  fi
-
-  if [ -n "$EXISTING_LISTENER" ]; then
-    warn "Port ${APP_PORT} already in use by: $EXISTING_LISTENER"
-    warn "Skipping nginx config to avoid conflict."
-    warn "Options:"
-    warn "  1. NGINX_APP_PORT=8080 ./exec_bt.sh  (use different port)"
-    warn "  2. Remove $EXISTING_LISTENER manually, then re-run"
-    warn "  3. SKIP_NGINX=1 ./exec_bt.sh  (skip nginx entirely)"
-  else
-    # Detect public IP
-    PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || curl -s --max-time 5 ipinfo.io/ip 2>/dev/null || echo "")
-    if [ -n "$PUBLIC_IP" ]; then
-      ok "Public IP: $PUBLIC_IP"
+  if [ "${SKIP_NGINX:-}" != "1" ]; then
+    if [ -d "/etc/nginx/sites-available" ]; then
+      CONF_DIR="/etc/nginx/sites-available"; ENABLED_DIR="/etc/nginx/sites-enabled"
     else
-      PUBLIC_IP="_"
-      warn "Could not detect public IP, using server_name _"
+      CONF_DIR="/etc/nginx/conf.d"; ENABLED_DIR=""
     fi
 
-    # Write app config (only this one file, never touch others)
-    cat > "$CONF_FILE" <<NGINX_APP
-# PRD Agent 应用入口 — exec_bt.sh 自动生成
-# :${APP_PORT} → gateway(:5500) → 当前激活分支
-# Dashboard(:9900) 由 branch-tester 直接提供，无需代理
+    # P3/P4: port conflict scan
+    PORT_CONFLICT=""
+    for d in /etc/nginx/sites-enabled /etc/nginx/conf.d; do
+      [ -d "$d" ] || continue
+      for f in "$d"/*; do
+        [ -f "$f" ] || continue
+        BASENAME=$(basename "$(readlink -f "$f" 2>/dev/null || echo "$f")")
+        case "$BASENAME" in prdagent-*) continue ;; esac
+        grep -qE "listen\s+${APP_PORT}(\s|;)" "$f" 2>/dev/null && { PORT_CONFLICT="$f"; break 2; }
+      done
+    done
+    [ -z "$PORT_CONFLICT" ] && ss -tlnp 2>/dev/null | grep -q ":${APP_PORT} " && PORT_CONFLICT="(non-nginx process)"
+
+    if [ -n "$PORT_CONFLICT" ]; then
+      warn ":${APP_PORT} conflict: $PORT_CONFLICT"
+      warn "Try: NGINX_APP_PORT=8080 ./exec_bt.sh -d"
+    else
+      PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || curl -s --max-time 5 ipinfo.io/ip 2>/dev/null || echo "_")
+
+      cat > "$CONF_DIR/prdagent-app.conf" <<NGINX_CONF
+# exec_bt.sh auto-generated $(date -Iseconds)
 server {
     listen ${APP_PORT};
     server_name ${PUBLIC_IP};
     client_max_body_size 30m;
-
     location / {
         proxy_pass http://127.0.0.1:5500;
         proxy_http_version 1.1;
@@ -346,97 +384,75 @@ server {
         proxy_send_timeout 60s;
     }
 }
-NGINX_APP
-    ok "Config written: $CONF_FILE"
+NGINX_CONF
 
-    # Enable (sites-available → sites-enabled pattern)
-    if [ -n "$ENABLED_DIR" ] && [ -d "$ENABLED_DIR" ]; then
-      ln -sf "$CONF_FILE" "$ENABLED_DIR/$CONF_NAME"
-      ok "Symlink: $ENABLED_DIR/$CONF_NAME"
-
-      # Check if default site conflicts on same port
-      DEFAULT_CONF="$ENABLED_DIR/default"
-      if [ -f "$DEFAULT_CONF" ] && grep -qE "listen\s+${APP_PORT}(\s|;)" "$DEFAULT_CONF" 2>/dev/null; then
-        warn "default site also listens on :${APP_PORT}"
-        warn "Disabling default (backed up to $DEFAULT_CONF.bak)"
-        cp "$DEFAULT_CONF" "$DEFAULT_CONF.bak"
-        rm -f "$DEFAULT_CONF"
+      if [ -n "$ENABLED_DIR" ] && [ -d "$ENABLED_DIR" ]; then
+        ln -sf "$CONF_DIR/prdagent-app.conf" "$ENABLED_DIR/prdagent-app.conf"
+        # N3: default conflict → backup then disable
+        if [ -f "$ENABLED_DIR/default" ] && grep -qE "listen\s+${APP_PORT}(\s|;)" "$ENABLED_DIR/default" 2>/dev/null; then
+          cp "$ENABLED_DIR/default" "$ENABLED_DIR/default.bak.$(date +%s)"
+          rm -f "$ENABLED_DIR/default"
+          warn "Disabled default site (backed up)"
+        fi
       fi
-    fi
 
-    # Validate & reload
-    if nginx -t 2>&1; then
-      systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true
-      ok "Nginx reloaded"
-    else
-      warn "Nginx config test failed — check: nginx -t"
+      if nginx -t 2>&1; then
+        systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true
+        ok ":${APP_PORT} → :5500"
+        [ "$PUBLIC_IP" != "_" ] && ok "Public IP: $PUBLIC_IP"
+      else
+        warn "nginx -t failed"
+      fi
     fi
   fi
 fi
-
 echo ""
 
 # ══════════════════════════════════════════
-# Step 5: Start Branch-Tester
+# [4/4] Start Branch-Tester
 # ══════════════════════════════════════════
-echo "  [5/5] Starting Branch-Tester..."
-
+echo "  [4/4] Branch-Tester..."
 cd "$BT_DIR"
 
-# Stop old instance if running
 if [ -f "$PID_FILE" ]; then
   OLD_PID=$(cat "$PID_FILE")
   if kill -0 "$OLD_PID" 2>/dev/null; then
-    info "Stopping old instance (PID: $OLD_PID)..."
+    info "Replacing (PID: $OLD_PID)"
     kill "$OLD_PID" 2>/dev/null || true
     sleep 1
   fi
+  rm -f "$PID_FILE"
 fi
 
 if [ "$BACKGROUND" = true ]; then
   nohup pnpm dev > "$LOG_FILE" 2>&1 &
-  BT_PID=$!
-  echo "$BT_PID" > "$PID_FILE"
-  ok "Branch-Tester started (PID: $BT_PID)"
+  echo "$!" > "$PID_FILE"
+  ok "Started (PID: $(cat "$PID_FILE"))"
 fi
 
 # ══════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════
 echo ""
-echo -e "  ${GREEN}══════════════════════════════════════${NC}"
-echo -e "  ${GREEN}  Deployment complete!${NC}"
-echo -e "  ${GREEN}══════════════════════════════════════${NC}"
+echo -e "  ${GREEN}Done!${NC}"
 echo ""
-
-if [ -n "${PUBLIC_IP:-}" ] && [ "$PUBLIC_IP" != "_" ]; then
-  echo "  Public access:"
-  echo "    Application:  http://${PUBLIC_IP}:${APP_PORT}"
-  echo "    Dashboard:    http://${PUBLIC_IP}:9900   (直连，无需 nginx)"
-  echo ""
+if [ -n "${PUBLIC_IP:-}" ] && [ "${PUBLIC_IP:-}" != "_" ]; then
+echo "  Application  http://${PUBLIC_IP}:${APP_PORT}"
+echo "  Dashboard    http://${PUBLIC_IP}:9900"
+else
+echo "  Application  http://localhost:${APP_PORT}      (activate a branch first)"
+echo "  Dashboard    http://localhost:9900"
 fi
-
-echo "  Internal access:"
-echo "    Gateway:      http://localhost:5500   (Docker nginx, 可切换分支)"
-echo "    Dashboard:    http://localhost:9900   (分支管理面板)"
 echo ""
-echo "  Login (激活分支后):"
-echo "    Username: ${ROOT_ACCESS_USERNAME}"
-echo "    Password: ${ROOT_ACCESS_PASSWORD}"
+echo "  Login: ${ROOT_ACCESS_USERNAME} / ${ROOT_ACCESS_PASSWORD}"
 echo ""
-
 if [ "$BACKGROUND" = true ]; then
-  echo "  Next steps:"
-  echo "    1. 访问 Dashboard 激活一个分支"
-  echo "    2. 访问应用入口登录"
-  echo ""
-  echo "  Management:"
-  echo "    Logs:     tail -f ${LOG_FILE}"
-  echo "    Status:   $0 --status"
-  echo "    Stop:     $0 --stop"
+  echo "  tail -f ${LOG_FILE}"
+  echo "  ./exec_bt.sh --test"
+  echo "  ./exec_bt.sh --stop"
   echo ""
 else
-  echo "  Starting in foreground (Ctrl+C to stop)..."
+  echo "  Foreground mode (Ctrl+C to stop)..."
   echo ""
   exec pnpm dev
 fi
