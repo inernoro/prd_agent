@@ -1,7 +1,7 @@
 import { cn } from '@/lib/cn';
 import { useEffect, useState } from 'react';
 import ShinyText from '@/components/reactbits/ShinyText';
-import BlurText from '@/components/reactbits/BlurText';
+import { SectionHeader } from '@/components/design/SectionHeader';
 
 // Simple model badges grid - clean and no overlap
 function ModelCarousel() {
@@ -306,36 +306,30 @@ export function FeatureBento({ className }: FeatureBentoProps) {
 
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">
-        {/* Section header */}
-        <div className="text-center mb-16">
-          <div className="inline-flex items-center gap-2 px-4 py-2 mb-6 rounded-full border border-white/10 bg-white/[0.03]">
+        <SectionHeader
+          badge="平台优势"
+          badgeIcon={
             <svg className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
-            <span className="text-sm text-white/50">平台优势</span>
-          </div>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-4">
-            <span className="text-white/90">为什么选择</span>{' '}
-            <span
-              style={{
-                background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
-                backgroundClip: 'text',
-              }}
-            >
-              MAP
-            </span>
-          </h2>
-          <BlurText
-            text="企业级 AI 基础设施，为您的智能化转型提供坚实保障"
-            delay={30}
-            animateBy="letters"
-            direction="bottom"
-            className="justify-center text-lg text-white/40 max-w-2xl mx-auto"
-            stepDuration={0.3}
-          />
-        </div>
+          }
+          title={
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-4">
+              <span className="text-white/90">为什么选择</span>{' '}
+              <span
+                style={{
+                  background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                  backgroundClip: 'text',
+                }}
+              >
+                MAP
+              </span>
+            </h2>
+          }
+          subtitle="企业级 AI 基础设施，为您的智能化转型提供坚实保障"
+        />
 
         {/* Bento grid - improved layout */}
         <div className="grid grid-cols-1 md:grid-cols-6 gap-4 lg:gap-5">

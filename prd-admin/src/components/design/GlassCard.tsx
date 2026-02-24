@@ -1,5 +1,5 @@
 import { cn } from '@/lib/cn';
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useEffect, useState } from 'react';
 import { shouldReduceEffects } from '@/lib/themeApplier';
 import { useThemeStore } from '@/stores/themeStore';
 
@@ -30,6 +30,13 @@ export interface GlassCardProps {
   style?: React.CSSProperties;
   /** 是否隐藏溢出内容（默认 false，不裁剪内容） */
   overflow?: 'hidden' | 'visible' | 'auto';
+  /**
+   * 是否启用入场动画（进入视口时 fade-in + 上移）
+   * 性能模式下自动禁用
+   */
+  animated?: boolean;
+  /** 入场动画延迟（毫秒），用于同一区域多卡片错开 */
+  animationDelay?: number;
 }
 
 /**
@@ -50,9 +57,31 @@ export function GlassCard({
   onClick,
   style,
   overflow = 'visible',
+  animated = false,
+  animationDelay = 0,
 }: GlassCardProps) {
   const perfMode = useThemeStore((s) => s.config.performanceMode);
   const isPerf = shouldReduceEffects({ performanceMode: perfMode } as Parameters<typeof shouldReduceEffects>[0]);
+
+  // ── 入场动画：IntersectionObserver + CSS transition ──
+  const ref = useRef<HTMLDivElement>(null);
+  const [isVisible, setIsVisible] = useState(!animated || isPerf);
+
+  useEffect(() => {
+    if (!animated || isPerf || !ref.current) return;
+    const el = ref.current;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.unobserve(el);
+        }
+      },
+      { threshold: 0.08 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [animated, isPerf]);
 
   // 使用 useMemo 缓存样式计算
   const cardStyle = useMemo((): React.CSSProperties => {
@@ -64,20 +93,31 @@ export function GlassCard({
     return buildGlassStyle(variant, accentHue, glow, style);
   }, [variant, accentHue, glow, isPerf, style]);
 
+  // 入场动画样式
+  const animatedStyle: React.CSSProperties = animated && !isPerf
+    ? {
+        ...cardStyle,
+        opacity: isVisible ? 1 : 0,
+        transform: isVisible ? (cardStyle.transform || 'none') : `translateY(24px) ${cardStyle.transform || ''}`.trim(),
+        transition: `opacity 0.5s cubic-bezier(0.25, 0.1, 0.25, 1) ${animationDelay}ms, transform 0.5s cubic-bezier(0.25, 0.1, 0.25, 1) ${animationDelay}ms, border-color 0.2s, box-shadow 0.2s`,
+      }
+    : cardStyle;
+
   const paddingClass = { none: '', sm: 'p-3', md: 'p-4', lg: 'p-6' };
   const overflowClass = { hidden: 'overflow-hidden', visible: 'overflow-visible', auto: 'overflow-auto' };
 
   return (
     <div
+      ref={ref}
       className={cn(
         'rounded-[16px] relative no-focus-ring',
-        'transition-[border-color,box-shadow,opacity] duration-200',
+        !animated && 'transition-[border-color,box-shadow,opacity] duration-200',
         overflowClass[overflow],
         paddingClass[padding],
         interactive && 'cursor-pointer',
         className
       )}
-      style={cardStyle}
+      style={animatedStyle}
       onClick={onClick}
       tabIndex={interactive ? 0 : undefined}
     >

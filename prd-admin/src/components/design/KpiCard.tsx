@@ -39,6 +39,7 @@ export function KpiCard({
       glow
       variant={accent === 'gold' ? 'gold' : 'default'}
       accentHue={colors.hue}
+      animated={animated}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>

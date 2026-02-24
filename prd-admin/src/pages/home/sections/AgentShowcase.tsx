@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/cn';
-import BlurText from '@/components/reactbits/BlurText';
+import { SectionHeader } from '@/components/design/SectionHeader';
 
 // SVG Icons for features
 const Icons = {
@@ -675,27 +675,11 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
 
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">
-        {/* Section header */}
-        <div className="text-center mb-16">
-          <div className="inline-flex items-center gap-2 px-4 py-2 mb-6 rounded-full border border-white/10 bg-white/[0.03]">
-            <span className="text-sm text-white/50">六大核心产品</span>
-          </div>
-          <BlurText
-            text="为不同场景量身定制"
-            delay={80}
-            animateBy="letters"
-            direction="top"
-            className="justify-center text-3xl sm:text-4xl md:text-5xl font-bold text-white/90 mb-4"
-          />
-          <BlurText
-            text="覆盖创作、设计、需求、质量、开发全流程的 AI 助手矩阵"
-            delay={30}
-            animateBy="letters"
-            direction="bottom"
-            className="justify-center text-lg text-white/40 max-w-2xl mx-auto"
-            stepDuration={0.3}
-          />
-        </div>
+        <SectionHeader
+          badge="六大核心产品"
+          title="为不同场景量身定制"
+          subtitle="覆盖创作、设计、需求、质量、开发全流程的 AI 助手矩阵"
+        />
 
         {/* Agent tabs */}
         <div className="flex justify-center gap-2 mb-12 flex-wrap">
