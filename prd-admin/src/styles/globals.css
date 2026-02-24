@@ -1190,6 +1190,14 @@ html[data-perf-mode="performance"] [style*="will-change"] {
   will-change: auto !important;
 }
 
+/* ReactBits 组件：性能模式下简化动画 */
+html[data-perf-mode="performance"] .blur-text span {
+  filter: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  transition: none !important;
+}
+
 /* 尊重系统级别的减少动画偏好 */
 @media (prefers-reduced-motion: reduce) {
   * {

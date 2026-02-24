@@ -1,5 +1,5 @@
 import { cn } from '@/lib/cn';
-import { TypewriterText } from '../components/TypewriterText';
+import { DecryptedText, BlurText, ShinyText } from '@/components/reactbits';
 import { useEffect, useState } from 'react';
 
 interface HeroSectionProps {
@@ -8,7 +8,7 @@ interface HeroSectionProps {
   onWatchDemo?: () => void;
 }
 
-// Rotating text component for the headline
+// Rotating text component for the headline — uses ShinyText for golden shine
 function RotatingText() {
   const texts = ['重塑创作', '提升效率', '释放潜能', '驱动创新'];
   const [index, setIndex] = useState(0);
@@ -31,15 +31,43 @@ function RotatingText() {
         'inline-block transition-all duration-300',
         isAnimating ? 'opacity-0 translate-y-4' : 'opacity-100 translate-y-0'
       )}
-      style={{
-        background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
-        WebkitBackgroundClip: 'text',
-        WebkitTextFillColor: 'transparent',
-        backgroundClip: 'text',
-      }}
     >
-      {texts[index]}
+      <ShinyText
+        text={texts[index]}
+        color="#d6b26a"
+        shineColor="#f4e2b8"
+        speed={3}
+        className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold"
+      />
     </span>
+  );
+}
+
+// Cycles through text array with DecryptedText animation
+function DecryptedTextCycler({ texts }: { texts: string[] }) {
+  const [index, setIndex] = useState(0);
+  const [key, setKey] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setIndex((prev) => (prev + 1) % texts.length);
+      setKey((prev) => prev + 1);
+    }, 3500);
+    return () => clearInterval(interval);
+  }, [texts.length]);
+
+  return (
+    <DecryptedText
+      key={key}
+      text={texts[index]}
+      speed={40}
+      maxIterations={12}
+      sequential
+      revealDirection="center"
+      animateOn="view"
+      className="text-white/50"
+      encryptedClassName="text-white/20"
+    />
   );
 }
 
@@ -68,10 +96,9 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
             <span className="text-sm font-medium text-amber-400/90">新一代 AI Agent 平台</span>
           </div>
 
-          {/* Main headline with underline decoration */}
+          {/* Main headline with BlurText entrance + underline decoration */}
           <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight mb-4">
             <span
-              className="block"
               style={{
                 background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
                 WebkitBackgroundClip: 'text',
@@ -79,9 +106,28 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
                 backgroundClip: 'text',
               }}
             >
-              MAP
+              <BlurText
+                text="MAP"
+                delay={150}
+                animateBy="letters"
+                direction="top"
+                className="justify-center text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight"
+                animationFrom={{ filter: 'blur(12px)', opacity: 0, y: -30 }}
+                animationTo={[
+                  { filter: 'blur(6px)', opacity: 0.6, y: 5 },
+                  { filter: 'blur(0px)', opacity: 1, y: 0 },
+                ]}
+                stepDuration={0.4}
+              />
             </span>
-            <span className="block text-white/70 text-3xl sm:text-4xl md:text-5xl lg:text-6xl mt-2">米多Agent平台</span>
+            <BlurText
+              text="米多Agent平台"
+              delay={100}
+              animateBy="letters"
+              direction="bottom"
+              className="justify-center text-white/70 text-3xl sm:text-4xl md:text-5xl lg:text-6xl mt-2"
+              stepDuration={0.35}
+            />
             <span className="relative inline-block mt-2">
               <RotatingText />
               {/* Golden underline decoration */}
@@ -104,20 +150,20 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
             </span>
           </h1>
 
-          {/* Typewriter subtitle */}
+          {/* Decrypted subtitle — cycles through agent descriptions */}
           <div className="text-xl sm:text-2xl md:text-3xl text-white/50 mb-6 h-[1.5em]">
-            <TypewriterText
-              texts={typewriterTexts}
-              typingSpeed={80}
-              deletingSpeed={40}
-              pauseDuration={2500}
-            />
+            <DecryptedTextCycler texts={typewriterTexts} />
           </div>
 
-          {/* Description */}
-          <p className="text-base sm:text-lg text-white/40 max-w-2xl mx-auto mb-8 leading-relaxed">
-            融合大语言模型与多模态能力，为您提供文学创作、视觉生成、需求分析、缺陷管理等全方位智能助手服务
-          </p>
+          {/* Description with BlurText entrance */}
+          <BlurText
+            text="融合大语言模型与多模态能力，为您提供文学创作、视觉生成、需求分析、缺陷管理等全方位智能助手服务"
+            delay={30}
+            animateBy="letters"
+            direction="bottom"
+            className="justify-center text-base sm:text-lg text-white/40 max-w-2xl mx-auto mb-8 leading-relaxed"
+            stepDuration={0.3}
+          />
 
           {/* Key Stats */}
           <div className="flex items-center justify-center gap-8 sm:gap-12 mb-10">

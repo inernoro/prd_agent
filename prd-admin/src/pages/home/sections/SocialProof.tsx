@@ -1,5 +1,5 @@
 import { cn } from '@/lib/cn';
-import { CountUpNumber } from '../components/CountUpNumber';
+import { CountUp } from '@/components/reactbits';
 
 interface Stat {
   value: number;
@@ -121,10 +121,11 @@ export function SocialProof({ className }: SocialProofProps) {
                       backgroundClip: 'text',
                     }}
                   >
-                    <CountUpNumber
-                      end={stat.value}
+                    <CountUp
+                      to={stat.value}
+                      duration={2.5}
                       suffix={stat.suffix}
-                      duration={2500}
+                      separator=","
                       decimals={stat.suffix === '%' ? 1 : 0}
                     />
                   </span>
