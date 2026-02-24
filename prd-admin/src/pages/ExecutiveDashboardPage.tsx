@@ -280,14 +280,13 @@ type ScoredUser = {
   totalScore: number; dimScores: Record<string, number>; normalizedScores: Record<string, number>;
 };
 
-/** Normalize each dimension to 0-100 and compute weighted composite score */
+/** Normalize each dimension to 0-100 and compute equal-weighted composite score */
 function computeScores(data: ExecutiveLeaderboard): ScoredUser[] {
   const { users, dimensions } = data;
-  const activeDims = dimensions.filter(d => Object.values(d.values).some(v => v > 0));
 
-  // Find max per dimension for normalization
+  // Find max per dimension for normalization (all dimensions, including zero-only ones)
   const dimMax: Record<string, number> = {};
-  for (const dim of activeDims) {
+  for (const dim of dimensions) {
     dimMax[dim.key] = Math.max(1, ...Object.values(dim.values));
   }
 
@@ -296,7 +295,7 @@ function computeScores(data: ExecutiveLeaderboard): ScoredUser[] {
     const normalizedScores: Record<string, number> = {};
     let totalScore = 0;
 
-    for (const dim of activeDims) {
+    for (const dim of dimensions) {
       const raw = dim.values[u.userId] ?? 0;
       dimScores[dim.key] = raw;
       const normalized = (raw / dimMax[dim.key]) * 100;
@@ -327,9 +326,9 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
   const data = leaderboard;
   if (!data || data.users.length === 0) return <EmptyHint text="暂无团队成员数据" />;
 
-  const { dimensions } = data;
-  const activeDims = dimensions.filter(d => Object.values(d.values).some(v => v > 0));
+  const { dimensions: allDims } = data;
   const scored = computeScores(data);
+  const weightPct = allDims.length > 0 ? (100 / allDims.length).toFixed(1) : '0';
 
   // Sorted for table
   const tableSorted = [...scored].sort((a, b) => {
@@ -386,7 +385,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
       <GlassCard glow>
         <SectionTitle>综合排行榜</SectionTitle>
         <div className="overflow-x-auto">
-          <table className="w-full text-[12px]">
+          <table className="w-full text-[12px]" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                 <th className="text-left py-2.5 pr-2 font-medium w-8" style={{ color: 'var(--text-muted)' }}>#</th>
@@ -398,7 +397,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                 >
                   <span className="inline-flex items-center gap-1">综合分 <SortIcon col="total" /></span>
                 </th>
-                {activeDims.map(dim => {
+                {allDims.map(dim => {
                   const meta = DIMENSION_META[dim.key];
                   return (
                     <th
@@ -408,6 +407,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                       onClick={() => toggleSort(dim.key)}
                     >
                       <span className="inline-flex items-center gap-1">{meta?.short ?? dim.name} <SortIcon col={dim.key} /></span>
+                      <div className="text-[9px] font-normal" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>权重 {weightPct}%</div>
                     </th>
                   );
                 })}
@@ -423,16 +423,16 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                   <tr
                     key={user.userId}
                     className="transition-colors hover:bg-white/[0.02]"
-                    style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: isTop3 ? 'rgba(214,178,106,0.04)' : undefined }}
+                    style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
                   >
-                    <td className="py-2.5 pr-2">
+                    <td className="py-2.5 pr-2" style={{ background: isTop3 ? 'rgba(214,178,106,0.04)' : undefined, borderRadius: isTop3 ? '8px 0 0 8px' : undefined }}>
                       {isTop3 ? (
                         <span className="text-[14px]">{medals[idx]}</span>
                       ) : (
                         <span className="text-[11px] font-bold tabular-nums" style={{ color: 'var(--text-muted)' }}>{idx + 1}</span>
                       )}
                     </td>
-                    <td className="py-2.5 pr-4">
+                    <td className="py-2.5 pr-4" style={{ background: isTop3 ? 'rgba(214,178,106,0.04)' : undefined }}>
                       <div className="flex items-center gap-2">
                         {user.avatarFileName ? (
                           <img src={resolveAvatarUrl({ avatarFileName: user.avatarFileName })} className="w-6 h-6 rounded-full object-cover" alt="" />
@@ -448,7 +448,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                         </div>
                       </div>
                     </td>
-                    <td className="py-2.5 px-2 text-right">
+                    <td className="py-2.5 px-2 text-right" style={{ background: isTop3 ? 'rgba(214,178,106,0.04)' : undefined }}>
                       <div className="flex items-center justify-end gap-2">
                         <div className="w-16 h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-input-hover)' }}>
                           <div className="h-full rounded-full" style={{ width: `${(user.totalScore / maxScore) * 100}%`, background: 'linear-gradient(90deg, rgba(214,178,106,0.6), rgba(214,178,106,0.9))' }} />
@@ -458,20 +458,21 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                         </span>
                       </div>
                     </td>
-                    {activeDims.map(dim => {
+                    {allDims.map((dim, dimIdx) => {
                       const raw = user.dimScores[dim.key] ?? 0;
                       const meta = DIMENSION_META[dim.key];
                       const dimMax = Math.max(1, ...Object.values(dim.values));
                       const pct = (raw / dimMax) * 100;
+                      const isLastCol = dimIdx === allDims.length - 1;
 
                       return (
-                        <td key={dim.key} className="py-2.5 px-2 text-right">
+                        <td key={dim.key} className="py-2.5 px-2 text-right" style={{ background: isTop3 ? 'rgba(214,178,106,0.04)' : undefined, borderRadius: isTop3 && isLastCol ? '0 8px 8px 0' : undefined }}>
                           <div className="flex items-center justify-end gap-1.5">
                             <div className="w-10 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-input-hover)' }}>
                               <div className="h-full rounded-full" style={{ width: `${pct}%`, background: meta?.barColor ?? 'rgba(148,163,184,0.5)' }} />
                             </div>
                             <span className="tabular-nums text-[11px] w-8 text-right" style={{ color: raw > 0 ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
-                              {raw > 0 ? raw.toLocaleString() : '-'}
+                              {raw.toLocaleString()}
                             </span>
                           </div>
                         </td>
@@ -487,7 +488,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
 
       {/* ── Per-dimension Leaderboard Cards ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        {activeDims.map(dim => {
+        {allDims.map(dim => {
           const meta = DIMENSION_META[dim.key] ?? { icon: Bot, color: 'rgba(148,163,184,0.7)', barColor: 'rgba(148,163,184,0.4)', short: dim.name };
           const DimIcon = meta.icon;
           const sortedEntries = scored
@@ -506,36 +507,42 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                   {sortedEntries.length} 人参与 · 总计 {total.toLocaleString()}
                 </span>
               </div>
-              <div className="space-y-1">
-                {sortedEntries.map((u, idx) => {
-                  const mc = idx < 3 ? MEDAL_COLORS[idx] : null;
-                  const roleColor = ROLE_COLORS[u.role] ?? 'rgba(148,163,184,0.8)';
-                  const pct = (u.val / maxVal) * 100;
-                  return (
-                    <div key={u.userId} className="flex items-center gap-2 py-0.5">
-                      <span className="w-5 text-center flex-shrink-0">
-                        {mc ? <span className="text-[12px]">{mc.medal}</span> : <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>{idx + 1}</span>}
-                      </span>
-                      {u.avatarFileName ? (
-                        <img src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-5 h-5 rounded-full object-cover flex-shrink-0" alt="" />
-                      ) : (
-                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold flex-shrink-0"
-                          style={{ background: `${roleColor}22`, color: roleColor }}>{u.displayName[0]}</div>
-                      )}
-                      <div className="w-12 flex-shrink-0">
-                        <div className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{u.displayName}</div>
-                        <div className="text-[8px]" style={{ color: roleColor }}>{u.role}</div>
+              {sortedEntries.length === 0 ? (
+                <div className="flex items-center justify-center py-6 rounded-lg" style={{ background: 'var(--bg-input)', opacity: 0.6 }}>
+                  <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>本周期暂无数据</span>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {sortedEntries.map((u, idx) => {
+                    const mc = idx < 3 ? MEDAL_COLORS[idx] : null;
+                    const roleColor = ROLE_COLORS[u.role] ?? 'rgba(148,163,184,0.8)';
+                    const pct = (u.val / maxVal) * 100;
+                    return (
+                      <div key={u.userId} className="flex items-center gap-2 py-0.5">
+                        <span className="w-5 text-center flex-shrink-0">
+                          {mc ? <span className="text-[12px]">{mc.medal}</span> : <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>{idx + 1}</span>}
+                        </span>
+                        {u.avatarFileName ? (
+                          <img src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-5 h-5 rounded-full object-cover flex-shrink-0" alt="" />
+                        ) : (
+                          <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold flex-shrink-0"
+                            style={{ background: `${roleColor}22`, color: roleColor }}>{u.displayName[0]}</div>
+                        )}
+                        <div className="w-12 flex-shrink-0">
+                          <div className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{u.displayName}</div>
+                          <div className="text-[8px]" style={{ color: roleColor }}>{u.role}</div>
+                        </div>
+                        <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'var(--bg-input)' }}>
+                          <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: meta.barColor }} />
+                        </div>
+                        <span className="text-[11px] font-bold tabular-nums w-10 text-right flex-shrink-0" style={{ color: meta.color }}>
+                          {u.val.toLocaleString()}
+                        </span>
                       </div>
-                      <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'var(--bg-input)' }}>
-                        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: meta.barColor }} />
-                      </div>
-                      <span className="text-[11px] font-bold tabular-nums w-10 text-right flex-shrink-0" style={{ color: meta.color }}>
-                        {u.val.toLocaleString()}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </GlassCard>
           );
         })}
