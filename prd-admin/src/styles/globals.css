@@ -1326,3 +1326,34 @@ html[data-perf-mode="performance"] .blur-text span {
     animation: none !important;
   }
 }
+
+/* ── AI-Native UI: Chat Page Styles ───────────────────────────────── */
+
+/* Typing indicator: 3-dot pulse */
+.ai-typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #818CF8;
+  animation: ai-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes ai-dot-pulse {
+  0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+/* Chat card subtle border glow on focus-within */
+.ai-chat-card:focus-within {
+  border-color: rgba(99, 102, 241, 0.25) !important;
+}
+
+/* Chat input focus ring */
+.ai-chat-card textarea:focus {
+  border-color: rgba(99, 102, 241, 0.40) !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-typing-dot { animation: none; opacity: 0.6; }
+}
