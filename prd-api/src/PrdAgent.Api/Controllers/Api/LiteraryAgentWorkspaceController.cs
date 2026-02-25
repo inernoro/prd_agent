@@ -200,6 +200,11 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         if (request?.FolderName != null) update = update.Set(x => x.FolderName, request.FolderName.Trim());
         if (request?.MemberUserIds != null) update = update.Set(x => x.MemberUserIds, request.MemberUserIds.Select(x => x.Trim()).Where(x => x != adminId).Distinct().ToList());
         if (request?.CoverAssetId != null) update = update.Set(x => x.CoverAssetId, request.CoverAssetId.Trim());
+        if (request?.SelectedPromptId != null)
+        {
+            var pid = request.SelectedPromptId.Trim();
+            update = update.Set(x => x.SelectedPromptId, string.IsNullOrEmpty(pid) ? null : pid);
+        }
 
         await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == ws.Id, update, cancellationToken: ct);
         var updated = await _db.ImageMasterWorkspaces.Find(x => x.Id == ws.Id).FirstOrDefaultAsync(ct);

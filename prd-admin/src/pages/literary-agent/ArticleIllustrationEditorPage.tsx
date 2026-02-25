@@ -412,7 +412,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   
   // 提示词模板管理（只有用户模板）
   const [userPrompts, setUserPrompts] = useState<PromptTemplate[]>([]);
-  const [selectedPrompt, setSelectedPrompt] = useState<PromptTemplate | null>(null);
+  const [selectedPrompt, setSelectedPromptRaw] = useState<PromptTemplate | null>(null);
+  // 从 workspace 加载的 selectedPromptId（用于 loadLiteraryPrompts 后恢复选中状态）
+  const pendingSelectedPromptIdRef = useRef<string | null>(null);
+
+  // 选择/取消提示词时同步持久化到后端
+  const setSelectedPrompt = useCallback((prompt: PromptTemplate | null) => {
+    setSelectedPromptRaw(prompt);
+    // 异步持久化，不阻塞 UI
+    void updateVisualAgentWorkspace({
+      id: workspaceId,
+      selectedPromptId: prompt?.id ?? '',
+    }).catch((err) => console.error('Failed to persist selectedPromptId:', err));
+  }, [workspaceId]);
 
   // 所有提示词（只有用户模板）
   const allPrompts = userPrompts;
@@ -723,6 +735,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           }
         }
         
+        // 记录 workspace 中的 selectedPromptId，加载提示词后恢复选中状态
+        pendingSelectedPromptIdRef.current = ws.selectedPromptId || null;
         // 加载文学创作提示词（从后端）
         await loadLiteraryPrompts();
       }
@@ -784,8 +798,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
         prompts.sort((a, b) => a.id.localeCompare(b.id));
         setUserPrompts(prompts);
-        // 不再自动选中第一个提示词：未选择时使用系统推断风格
-        // 仅当用户已通过 AI 提取或手动选择了提示词时才保留选中状态
+        // 从 workspace 恢复选中的提示词（仅首次加载时）
+        const pendingId = pendingSelectedPromptIdRef.current;
+        if (pendingId) {
+          const matched = prompts.find(p => p.id === pendingId);
+          if (matched) setSelectedPromptRaw(matched);
+          pendingSelectedPromptIdRef.current = null;
+        }
       }
     } catch (error) {
       console.error('Failed to load literary prompts:', error);
