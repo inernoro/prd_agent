@@ -190,7 +190,7 @@ const PRD_MD_STYLE = `
 
   /* 文章内图片显示尺寸控制 */
   .prd-md img[data-marker-idx] {
-    max-width: var(--img-display-size, 100%) !important;
+    max-width: var(--img-display-size, 50%) !important;
     transition: max-width 0.3s ease;
     display: block;
     margin-left: auto;
@@ -372,7 +372,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
   const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
   const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
-  const [imageDisplaySize, setImageDisplaySize] = useState(100); // 文章内图片显示尺寸百分比
+  const [imageDisplaySize, setImageDisplaySize] = useState(50); // 文章内图片显示尺寸百分比
   const [rawMarkerOutput, setRawMarkerOutput] = useState(''); // Anchor 模式下 LLM 原始输出（用于视觉反馈）
 
   // 当新 marker 卡片出现时，触发入场发光动画
