@@ -113,6 +113,7 @@ export type UpdateVisualAgentWorkspaceContract = (input: {
   articleContent?: string;
   scenarioType?: string;
   folderName?: string | null;
+  selectedPromptId?: string | null;
   idempotencyKey?: string;
 }) => Promise<ApiResponse<{ workspace: VisualAgentWorkspace }>>;
 export type DeleteVisualAgentWorkspaceContract = (input: { id: string; idempotencyKey?: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
