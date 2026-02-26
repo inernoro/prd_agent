@@ -1124,7 +1124,7 @@ export function WorkflowAgentPage() {
             <div className="flex items-center gap-3">
               {isRunning ? (
                 <>
-                  <GlassCard animated padding="none" className="flex-1" accentHue={40} glow>
+                  <GlassCard animated padding="none" className="flex-1" accentHue={234} glow>
                     <div className="flex items-center gap-3 px-4 py-3">
                       <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" style={{ color: 'var(--accent-gold)' }} />
                       <span className="text-[12px] font-medium" style={{ color: 'var(--accent-gold)' }}>

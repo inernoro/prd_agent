@@ -550,12 +550,12 @@ export default function SystemLogsTab() {
                 {(it.requestBodyPreview || it.curlPreview) && (
                   <div className="mt-2 text-[11px] grid gap-1">
                     {it.requestBodyPreview && (
-                      <div className="truncate" style={{ color: 'rgba(231,206,151,0.85)' }}>
+                      <div className="truncate" style={{ color: 'rgba(165,180,252,0.85)' }}>
                         req：{it.requestBodyPreview}{it.requestBodyTruncated ? '（截断）' : ''}
                       </div>
                     )}
                     {it.curlPreview && (
-                      <div className="truncate" style={{ color: 'rgba(231,206,151,0.65)' }}>
+                      <div className="truncate" style={{ color: 'rgba(165,180,252,0.65)' }}>
                         curl：{it.curlPreview}
                       </div>
                     )}

@@ -830,8 +830,8 @@ function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
     <div
       className="mt-2 rounded-[12px] px-3 py-2"
       style={{
-        border: '1px solid rgba(231,206,151,0.18)',
-        background: 'rgba(231,206,151,0.045)',
+        border: '1px solid rgba(165,180,252,0.18)',
+        background: 'rgba(165,180,252,0.045)',
       }}
     >
       <div className={isMobile ? "flex flex-col gap-1.5" : "grid items-center gap-3"} style={isMobile ? undefined : { gridTemplateColumns: '2fr 3fr 1fr' }}>
@@ -855,7 +855,7 @@ function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
           </div>
         </div>
 
-        <div className={`min-w-0 ${isMobile ? 'text-left' : 'text-right'} text-[11px] truncate`} style={{ color: 'rgba(231,206,151,0.75)' }}>
+        <div className={`min-w-0 ${isMobile ? 'text-left' : 'text-right'} text-[11px] truncate`} style={{ color: 'rgba(165,180,252,0.75)' }}>
           {rightText}
         </div>
       </div>
@@ -1987,8 +1987,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         className="h-7 px-2.5 rounded-[6px] text-[11px] font-semibold"
                         style={{
                           color: answerView === 'preview' ? 'var(--text-primary)' : 'var(--text-muted)',
-                          background: answerView === 'preview' ? 'rgba(231,206,151,0.10)' : 'transparent',
-                          border: answerView === 'preview' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                          background: answerView === 'preview' ? 'rgba(165,180,252,0.10)' : 'transparent',
+                          border: answerView === 'preview' ? '1px solid rgba(165,180,252,0.22)' : '1px solid transparent',
                         }}
                       >
                         预览
@@ -1999,8 +1999,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         className="h-7 px-2.5 rounded-[6px] text-[11px] font-semibold"
                         style={{
                           color: answerView === 'raw' ? 'var(--text-primary)' : 'var(--text-muted)',
-                          background: answerView === 'raw' ? 'rgba(231,206,151,0.10)' : 'transparent',
-                          border: answerView === 'raw' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                          background: answerView === 'raw' ? 'rgba(165,180,252,0.10)' : 'transparent',
+                          border: answerView === 'raw' ? '1px solid rgba(165,180,252,0.22)' : '1px solid transparent',
                         }}
                       >
                         Raw
@@ -2013,8 +2013,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           title="当内容包含 \\uXXXX 时，可一键转换为真实字符，避免 Raw 难以阅读"
                           style={{
                             color: answerVisibleChars ? 'var(--text-primary)' : 'var(--text-muted)',
-                            background: answerVisibleChars ? 'rgba(231,206,151,0.10)' : 'transparent',
-                            border: answerVisibleChars ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                            background: answerVisibleChars ? 'rgba(165,180,252,0.10)' : 'transparent',
+                            border: answerVisibleChars ? '1px solid rgba(165,180,252,0.22)' : '1px solid transparent',
                           }}
                         >
                           可见字符
@@ -2399,7 +2399,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           .prd-md ul,.prd-md ol { margin: 8px 0; padding-left: 18px; }
                           .prd-md li { margin: 4px 0; }
                           .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 12px 0; }
-                          .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
+                          .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: rgba(165,180,252,0.92); border-radius: 10px; }
                           .prd-md a { color: #E7CE97; text-decoration: underline; }
                           .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
                           .prd-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 12px; overflow: auto; }

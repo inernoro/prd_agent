@@ -456,7 +456,7 @@ export default function DataManagePage() {
       {msg && <div className="rounded-[12px] px-4 py-2.5 text-[13px] flex items-center gap-2.5" style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.08) 0%, rgba(34,197,94,0.04) 100%)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}><Zap size={15} />{msg}</div>}
 
       {/* 上栏：统计 */}
-      <GlassCard variant="gold" glow animated accentHue={45}>
+      <GlassCard variant="gold" glow animated accentHue={234}>
         <div className="flex items-center justify-between gap-3 mb-4">
           <div><h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>数据统计</h2><p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>系统核心配置与业务数据概览</p></div>
           <div className="flex items-center gap-2">

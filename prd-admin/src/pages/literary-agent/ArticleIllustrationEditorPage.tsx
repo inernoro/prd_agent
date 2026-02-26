@@ -96,7 +96,7 @@ const PRD_MD_STYLE = `
   .prd-md ul,.prd-md ol { margin: 10px 0; padding-left: 18px; }
   .prd-md li { margin: 6px 0; }
   .prd-md hr { border: 0; border-top: 1px solid var(--border-default); margin: 14px 0; }
-  .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
+  .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: rgba(165,180,252,0.92); border-radius: 10px; }
   .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
   .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 6px; border-radius: 8px; }
   .prd-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 14px; padding: 12px; overflow: auto; }

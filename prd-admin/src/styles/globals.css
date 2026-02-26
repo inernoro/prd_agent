@@ -736,7 +736,7 @@ select optgroup {
   /* defaults */
   --prd-recgrid-scale: 0.97;
   /* 注意：canvas 不支持 color-mix()，这里用可解析的 rgba，组件也可通过 prop 覆盖 */
-  --prd-recgrid-stroke: rgba(231, 206, 151, 0.55);
+  --prd-recgrid-stroke: rgba(165, 180, 252, 0.55);
 }
 
 .prd-recgrid-canvas {
@@ -1158,6 +1158,34 @@ select optgroup {
 .animate-line-draw {
   stroke-dasharray: 1000;
   animation: line-draw 2s ease-out forwards;
+}
+
+/* ========================================
+   AI-Native Card Interactive Effects
+
+   提供卡片悬停动效：微上浮 + 强调色光晕 + 边框提亮。
+   通过 CSS 自定义属性 --card-accent-border / --card-accent-glow
+   实现每张卡片独立的强调色。
+   ======================================== */
+
+.glass-card-interactive {
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.25s ease,
+              box-shadow 0.3s ease !important;
+}
+
+.glass-card-interactive:hover {
+  transform: translateY(-3px);
+  border-color: var(--card-accent-border, rgba(255, 255, 255, 0.15)) !important;
+  box-shadow:
+    0 12px 40px -12px var(--card-accent-glow, rgba(0, 0, 0, 0.5)),
+    0 4px 16px -4px rgba(0, 0, 0, 0.4),
+    0 1px 0 0 rgba(255, 255, 255, 0.08) inset !important;
+}
+
+.glass-card-interactive:active {
+  transform: translateY(-1px);
+  transition-duration: 0.1s;
 }
 
 /* ========================================

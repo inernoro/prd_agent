@@ -67,7 +67,7 @@ function ArticlePreview({ markdown }: { markdown: string }) {
           .literary-preview-md p { margin: 2px 0; }
           .literary-preview-md ul,.literary-preview-md ol { margin: 2px 0; padding-left: 12px; }
           .literary-preview-md li { margin: 1px 0; }
-          .literary-preview-md blockquote { margin: 2px 0; padding: 2px 6px; border-left: 2px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); border-radius: 4px; }
+          .literary-preview-md blockquote { margin: 2px 0; padding: 2px 6px; border-left: 2px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); border-radius: 4px; }
           .literary-preview-md code { font-size: 9px; background: var(--bg-input-hover); padding: 0 3px; border-radius: 3px; }
         `}</style>
         <div className="literary-preview-md">

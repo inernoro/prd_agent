@@ -114,7 +114,7 @@ export function GlassCard({
         !animated && 'transition-[border-color,box-shadow,opacity] duration-200',
         overflowClass[overflow],
         paddingClass[padding],
-        interactive && 'cursor-pointer',
+        interactive && 'cursor-pointer glass-card-interactive',
         className
       )}
       style={animatedStyle}
@@ -137,32 +137,38 @@ function buildObsidianStyle(
   // 背景：使用 CSS 变量（已在 themeComputed 中切换为实底值）
   let background = `linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)`;
 
-  // 顶部微光：用 linear-gradient 模拟顶边高光，不用 blur
-  const topHighlight = 'linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 40%)';
+  // 顶部微光：用 linear-gradient 模拟顶边高光
+  const topHighlight = variant === 'gold'
+    ? 'linear-gradient(180deg, rgba(99, 102, 241, 0.08) 0%, transparent 50%)'
+    : accentHue !== undefined
+      ? `linear-gradient(180deg, hsla(${accentHue}, 50%, 60%, 0.06) 0%, transparent 50%)`
+      : 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, transparent 50%)';
   background = `${topHighlight}, ${background}`;
 
   // 光晕效果（radial-gradient，GPU-friendly，不需要 backdrop-filter）
   if (glow) {
-    let glowColor = 'rgba(255, 255, 255, 0.08)';
+    let glowColor = 'rgba(255, 255, 255, 0.10)';
     if (variant === 'gold') {
-      glowColor = 'rgba(99, 102, 241, 0.18)';
+      glowColor = 'rgba(99, 102, 241, 0.20)';
     } else if (accentHue !== undefined) {
-      glowColor = `hsla(${accentHue}, 60%, 60%, 0.14)`;
+      glowColor = `hsla(${accentHue}, 60%, 60%, 0.16)`;
     }
     background = `radial-gradient(ellipse 100% 50% at 50% -5%, ${glowColor} 0%, transparent 55%), ${background}`;
   }
 
   // 边框：顶部略亮，模拟光照
   const borderColor = variant === 'gold'
-    ? 'rgba(99, 102, 241, 0.18)'
-    : 'var(--glass-border, rgba(255, 255, 255, 0.07))';
+    ? 'rgba(99, 102, 241, 0.22)'
+    : accentHue !== undefined
+      ? `hsla(${accentHue}, 50%, 60%, 0.15)`
+      : 'var(--glass-border, rgba(255, 255, 255, 0.09))';
 
-  // 阴影：干净的单层投影 + 顶部内高光
-  let boxShadow = '0 2px 12px -2px rgba(0, 0, 0, 0.4), 0 1px 0 0 rgba(255, 255, 255, 0.04) inset';
+  // 阴影：多层投影 + 顶部内高光
+  let boxShadow = '0 2px 16px -2px rgba(0, 0, 0, 0.5), 0 1px 0 0 rgba(255, 255, 255, 0.06) inset';
   if (variant === 'gold') {
-    boxShadow = '0 2px 16px -4px rgba(99, 102, 241, 0.15), 0 2px 12px -2px rgba(0, 0, 0, 0.4), 0 1px 0 0 rgba(99, 102, 241, 0.08) inset';
+    boxShadow = '0 4px 20px -4px rgba(99, 102, 241, 0.18), 0 2px 12px -2px rgba(0, 0, 0, 0.5), 0 1px 0 0 rgba(99, 102, 241, 0.10) inset';
   } else if (accentHue !== undefined) {
-    boxShadow = `0 2px 16px -4px hsla(${accentHue}, 60%, 50%, 0.12), 0 2px 12px -2px rgba(0, 0, 0, 0.4), 0 1px 0 0 rgba(255, 255, 255, 0.04) inset`;
+    boxShadow = `0 4px 20px -4px hsla(${accentHue}, 60%, 50%, 0.14), 0 2px 12px -2px rgba(0, 0, 0, 0.5), 0 1px 0 0 rgba(255, 255, 255, 0.06) inset`;
   }
 
   return {

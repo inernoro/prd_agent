@@ -2777,7 +2777,7 @@ export default function LlmLabTab() {
                   ]}
                   value={mainMode}
                   onChange={(key) => onMainModeChange(key as MainMode)}
-                  accentHue={45}
+                  accentHue={234}
                 />
 
                 {mainMode === 'infer' ? (
@@ -2791,7 +2791,7 @@ export default function LlmLabTab() {
                     ]}
                     value={mode}
                     onChange={(key) => onModeClick(key as LabMode)}
-                    accentHue={45}
+                    accentHue={234}
                   />
                 ) : (
                   <div className="inline-flex items-center gap-2 w-max">
@@ -2803,7 +2803,7 @@ export default function LlmLabTab() {
                       ]}
                       value={imageSubMode}
                       onChange={(key) => setImageSubMode(key as ImageSubMode)}
-                      accentHue={45}
+                      accentHue={234}
                     />
                     {imageSubMode === 'single' ? (
                       <label className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
@@ -3206,7 +3206,7 @@ export default function LlmLabTab() {
                 }
                 value={sortBy}
                 onChange={(key) => setSortBy(key as SortBy)}
-                accentHue={45}
+                accentHue={234}
               />
               {!running && failedRunCount > 0 ? (
                 <Button

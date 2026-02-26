@@ -244,7 +244,7 @@ function NightSkyBackground() {
     terrains.push(
       new Terrain({
         mHeight: height / 2 - 100,
-        fillStyle: 'rgba(85, 65, 45, 0.35)',  // 最远层：暖金褐色，较亮
+        fillStyle: 'rgba(45, 50, 85, 0.35)',  // 最远层：冷靛蓝色，较亮
         displacement: 160,
         scrollDelay: 120,
       })
@@ -253,7 +253,7 @@ function NightSkyBackground() {
       new Terrain({
         displacement: 130,
         scrollDelay: 70,
-        fillStyle: 'rgba(55, 42, 28, 0.55)',  // 中间层：深琥珀色
+        fillStyle: 'rgba(30, 35, 60, 0.55)',  // 中间层：深靛蓝色
         mHeight: height / 2 - 40,
       })
     );
@@ -261,7 +261,7 @@ function NightSkyBackground() {
       new Terrain({
         displacement: 100,
         scrollDelay: 35,
-        fillStyle: 'rgba(30, 22, 15, 0.85)',  // 最近层：深褐黑
+        fillStyle: 'rgba(15, 18, 35, 0.85)',  // 最近层：深靛黑
         mHeight: height / 2 + 20,
       })
     );
@@ -270,9 +270,9 @@ function NightSkyBackground() {
       // 背景渐变 - 顶部深邃，底部微暖褐调配合金色山川
       const gradient = ctx!.createLinearGradient(0, 0, 0, height);
       gradient.addColorStop(0, '#080808');      // 顶部：纯黑
-      gradient.addColorStop(0.3, '#0a0908');    // 中上：微暖黑
-      gradient.addColorStop(0.6, '#12100c');    // 中下：暖褐黑
-      gradient.addColorStop(1, '#0d0b08');      // 底部：深褐
+      gradient.addColorStop(0.3, '#08080c');    // 中上：微冷黑
+      gradient.addColorStop(0.6, '#0c0c14');    // 中下：冷靛黑
+      gradient.addColorStop(1, '#08080e');      // 底部：深靛
       ctx!.fillStyle = gradient;
       ctx!.fillRect(0, 0, width, height);
 
@@ -501,7 +501,7 @@ function HeroSection() {
       <h1
         className="text-[42px] font-bold tracking-tight mb-3 visual-agent-title-breath"
         style={{
-          background: 'linear-gradient(135deg, rgba(255, 250, 240, 1) 0%, rgba(255, 240, 200, 1) 50%, rgba(218, 175, 75, 0.95) 100%)',
+          background: 'linear-gradient(135deg, rgba(230, 235, 255, 1) 0%, rgba(199, 210, 254, 1) 50%, rgba(99, 102, 241, 0.95) 100%)',
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
           backgroundClip: 'text',
@@ -515,7 +515,7 @@ function HeroSection() {
       <p
         className="text-[15px]"
         style={{
-          color: 'rgba(255,248,235,0.58)',  // 暖白
+          color: 'rgba(199,210,254,0.58)',  // 暖白
           letterSpacing: '0.01em',
         }}
       >
@@ -661,11 +661,11 @@ function QuickInputBox(props: {
           background: 'rgba(28, 24, 20, 0.82)',
           // 聚焦时边框变亮 - 使用柔和的琥珀金
           border: isFocused
-            ? '1px solid rgba(212, 170, 85, 0.5)'
-            : '1px solid rgba(180, 150, 100, 0.18)',
+            ? '1px solid rgba(99, 102, 241, 0.5)'
+            : '1px solid rgba(99, 102, 241, 0.18)',
           boxShadow: isFocused
-            ? '0 24px 64px rgba(0,0,0,0.5), 0 0 0 3px rgba(212, 170, 85, 0.15), 0 1px 0 rgba(255,240,200,0.08) inset'
-            : '0 24px 64px rgba(0,0,0,0.5), 0 1px 0 rgba(255,240,200,0.05) inset',
+            ? '0 24px 64px rgba(0,0,0,0.5), 0 0 0 3px rgba(99, 102, 241, 0.15), 0 1px 0 rgba(199,210,254,0.08) inset'
+            : '0 24px 64px rgba(0,0,0,0.5), 0 1px 0 rgba(199,210,254,0.05) inset',
         }}
         onClick={handleContainerClick}
       >
@@ -982,7 +982,7 @@ function QuickInputBox(props: {
           {!value && !selectedImage && (
             <div
               className="absolute top-4 left-5 right-5 pointer-events-none text-[15px] leading-relaxed"
-              style={{ color: 'rgba(255,248,235,0.42)' }}
+              style={{ color: 'rgba(199,210,254,0.42)' }}
             >
               {typingPlaceholder}
               <span className="animate-pulse">|</span>
@@ -1007,9 +1007,9 @@ function QuickInputBox(props: {
               disabled={loading}
               className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
-                background: 'rgba(180, 150, 100, 0.1)',
-                color: 'rgba(255, 240, 210, 0.55)',
-                border: '1px solid rgba(180, 150, 100, 0.15)',
+                background: 'rgba(99, 102, 241, 0.1)',
+                color: 'rgba(199, 210, 254, 0.55)',
+                border: '1px solid rgba(99, 102, 241, 0.15)',
               }}
               title="添加图片参考"
             >
@@ -1039,11 +1039,11 @@ function QuickInputBox(props: {
               className="h-9 px-5 rounded-xl flex items-center gap-2 text-[13px] font-semibold transition-all duration-200"
               style={{
                 background: canSubmit
-                  ? 'linear-gradient(135deg, rgba(218,175,75,0.95) 0%, rgba(195,155,65,0.95) 100%)'
+                  ? 'linear-gradient(135deg, rgba(99,102,241,0.95) 0%, rgba(79,82,221,0.95) 100%)'
                   : 'var(--border-subtle)',
-                color: canSubmit ? 'rgba(15,12,5,0.95)' : 'rgba(255,255,255,0.35)',
+                color: canSubmit ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
                 cursor: canSubmit ? 'pointer' : 'not-allowed',
-                boxShadow: canSubmit ? '0 4px 20px rgba(195,155,65,0.3)' : 'none',
+                boxShadow: canSubmit ? '0 4px 20px rgba(99,102,241,0.3)' : 'none',
               }}
             >
               {loading ? (
@@ -1081,10 +1081,10 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
               type="button"
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-all duration-200 hover:scale-[1.02] shrink-0"
               style={{
-                background: 'linear-gradient(135deg, rgba(212,170,85,0.12) 0%, rgba(195,155,65,0.06) 100%)',
-                border: '1px solid rgba(212,170,85,0.35)',
-                color: 'rgba(218,180,95,0.95)',
-                boxShadow: '0 0 24px rgba(195,155,65,0.08)',
+                background: 'linear-gradient(135deg, rgba(99,102,241,0.12) 0%, rgba(79,82,221,0.06) 100%)',
+                border: '1px solid rgba(99,102,241,0.35)',
+                color: 'rgba(165,180,252,0.95)',
+                boxShadow: '0 0 24px rgba(99,102,241,0.08)',
               }}
               onClick={() => {}}
             >
@@ -1102,9 +1102,9 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
             onClick={() => onSelect(tag.prompt)}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 hover:bg-white/8 shrink-0"
             style={{
-              background: isActive ? 'rgba(255,250,240,0.1)' : 'transparent',
-              border: isActive ? '1px solid rgba(255,250,240,0.22)' : '1px solid rgba(255,255,255,0.1)',
-              color: isActive ? 'rgba(255,252,245,0.95)' : 'rgba(255,248,235,0.55)',
+              background: isActive ? 'rgba(99,102,241,0.1)' : 'transparent',
+              border: isActive ? '1px solid rgba(99,102,241,0.22)' : '1px solid rgba(255,255,255,0.1)',
+              color: isActive ? 'rgba(255,255,255,0.95)' : 'rgba(199,210,254,0.55)',
             }}
           >
             <Icon size={14} style={{ opacity: isActive ? 1 : 0.65 }} />

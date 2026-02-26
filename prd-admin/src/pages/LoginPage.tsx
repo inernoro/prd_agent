@@ -177,8 +177,8 @@ export default function LoginPage() {
         // 必须 readwrite：登出回登录页要读取主页面保存的角度，实现"续着以前的状态"
         persistMode="readwrite"
         // 登录页 idle 也希望更"深"：除非明确刹车（shouldRun===false），否则用实色
-        strokeRunning={shouldRun === false ? 'rgba(231, 206, 151, 0.30)' : 'rgba(231, 206, 151, 1)'}
-        strokeBraking={'rgba(231, 206, 151, 0.30)'}
+        strokeRunning={shouldRun === false ? 'rgba(165, 180, 252, 0.30)' : 'rgba(165, 180, 252, 1)'}
+        strokeBraking={'rgba(165, 180, 252, 0.30)'}
         brakeStrokeFadeMs={2000}
       />
 
