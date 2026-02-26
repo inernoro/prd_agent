@@ -5,6 +5,7 @@ public static class RunKinds
     public const string Chat = "chat";
     public const string ImageGen = "imageGen";
     public const string Workflow = "workflow";
+    public const string VideoGen = "videoGen";
 }
 
 public static class RunStatuses

@@ -70,6 +70,7 @@ public static class BsonClassMapRegistration
             RegisterWatermarkFontAsset();
             RegisterWatermarkConfig();
             RegisterToolboxRun();
+            RegisterVideoGenRun();
 
             _registered = true;
         }
@@ -880,6 +881,28 @@ public static class BsonClassMapRegistration
         if (!BsonClassMap.IsClassMapRegistered(typeof(IntentResult)))
         {
             BsonClassMap.RegisterClassMap<IntentResult>(cm =>
+            {
+                cm.AutoMap();
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+    }
+
+    private static void RegisterVideoGenRun()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(VideoGenRun))) return;
+        BsonClassMap.RegisterClassMap<VideoGenRun>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(VideoGenScene)))
+        {
+            BsonClassMap.RegisterClassMap<VideoGenScene>(cm =>
             {
                 cm.AutoMap();
                 cm.SetIgnoreExtraElements(true);

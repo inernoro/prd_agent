@@ -92,6 +92,20 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     route: '/defect-agent',
     statLabel: '缺陷',
   },
+  {
+    key: 'video-agent',
+    appKey: 'video-agent',
+    name: '视频 Agent',
+    icon: 'Video',
+    color: {
+      bg: 'rgba(236, 72, 153, 0.08)',
+      border: 'rgba(236, 72, 153, 0.2)',
+      iconBg: 'rgba(236, 72, 153, 0.15)',
+      text: '#EC4899',
+    },
+    route: '/video-agent',
+    statLabel: '视频',
+  },
 ];
 
 /** Store 状态类型 */

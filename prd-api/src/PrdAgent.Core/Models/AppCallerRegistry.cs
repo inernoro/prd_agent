@@ -536,6 +536,25 @@ public static class WorkflowAgent
 }
 
 /// <summary>
+/// Video Agent 文章转视频
+/// </summary>
+public static class VideoAgent
+{
+    public const string AppName = "Video Agent";
+
+    public static class Script
+    {
+        [AppCallerMetadata(
+            "视频脚本生成",
+            "将文章内容拆分为视频镜头脚本",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Video"
+        )]
+        public const string Chat = "video-agent.script::chat";
+    }
+}
+
+/// <summary>
 /// Admin 管理后台
 /// </summary>
 public static class Admin

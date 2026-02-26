@@ -190,6 +190,9 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 // 工作流后台执行器（DAG 拓扑排序 → 逐节点推进）
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
 
+// 视频生成后台执行器（文章→脚本→Remotion渲染→字幕→打包）
+builder.Services.AddHostedService<PrdAgent.Api.Services.VideoGenRunWorker>();
+
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
 
