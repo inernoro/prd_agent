@@ -430,9 +430,13 @@ else
         fi
       done
     done
-    # 非 nginx 进程占端口
+    # 非 nginx 进程占端口 (但如果是我们自己的 nginx 则不算冲突)
     if [ -z "$PORT_CONFLICT" ] && [ -z "$DEFAULT_CONFLICT" ]; then
-      ss -tlnp 2>/dev/null | grep -q ":${APP_PORT} " && PORT_CONFLICT="(non-nginx process)"
+      if ss -tlnp 2>/dev/null | grep -q ":${APP_PORT} "; then
+        if ! ss -tlnp 2>/dev/null | grep ":${APP_PORT} " | grep -qi "nginx"; then
+          PORT_CONFLICT="(non-nginx process)"
+        fi
+      fi
     fi
 
     if [ -n "$PORT_CONFLICT" ]; then
@@ -514,12 +518,22 @@ if [ -f "$PID_FILE" ]; then
   OLD_PID=$(cat "$PID_FILE")
   if is_bt_pid "$OLD_PID"; then
     info "Replacing (PID: $OLD_PID)"
+    # Kill parent + all children (pnpm spawns node child processes)
+    pkill -P "$OLD_PID" 2>/dev/null || true
     kill "$OLD_PID" 2>/dev/null || true
     # Wait for port 9900 to be released (max 5s)
     if ! wait_port_free 9900 5; then
-      warn ":9900 still occupied after kill. Force killing..."
+      warn ":9900 still occupied after SIGTERM. Force killing..."
+      pkill -9 -P "$OLD_PID" 2>/dev/null || true
       kill -9 "$OLD_PID" 2>/dev/null || true
-      wait_port_free 9900 3 || warn ":9900 still occupied, BT may fail to bind"
+      # Last resort: find and kill whatever holds :9900
+      if ! wait_port_free 9900 3; then
+        PORT_HOLDER=$(ss -tlnp 2>/dev/null | grep ":9900 " | grep -oP 'pid=\K\d+' | head -1)
+        if [ -n "$PORT_HOLDER" ]; then
+          kill -9 "$PORT_HOLDER" 2>/dev/null || true
+          wait_port_free 9900 2 || warn ":9900 still occupied, BT may fail to bind"
+        fi
+      fi
     fi
     ok "Old instance stopped"
   elif kill -0 "$OLD_PID" 2>/dev/null; then
