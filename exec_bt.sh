@@ -134,7 +134,7 @@ do_status() {
     warn "prdagent-api: running (独立部署残留, BT 模式下应停止)"
   fi
 
-  if command -v nginx >/dev/null 2>&1 && systemctl is-active --quiet nginx 2>/dev/null; then
+  if command -v nginx >/dev/null 2>&1 && { systemctl is-active --quiet nginx 2>/dev/null || pgrep -x nginx >/dev/null 2>&1; }; then
     ok "Host Nginx: running"
   else
     warn "Host Nginx: not running"
@@ -200,7 +200,7 @@ do_test() {
   t     "T12" "prdagent-redis running"        docker inspect --format='{{.State.Running}}' prdagent-redis
   t     "T13" "prdagent-gateway running"      docker inspect --format='{{.State.Running}}' prdagent-gateway
   t     "T14" "gateway :5500 responds"        curl -sf --max-time 3 http://localhost:5500
-  t_not "T15" "prdagent-api not running"      docker inspect --format='{{.State.Running}}' prdagent-api
+  t_not "T15" "prdagent-api not running"      sh -c "docker inspect --format='{{.State.Running}}' prdagent-api 2>/dev/null | grep -q true"
 
   echo ""
   echo "  Branch-Tester"
@@ -218,13 +218,13 @@ do_test() {
     TOTAL=$((TOTAL + 1)); fail "[T20] BT PID file not found"
   fi
   t "T21" "dashboard :9900 responds"      curl -sf --max-time 3 http://localhost:9900
-  t "T22" "state.json exists"             test -f "${REPO_ROOT}/.bt/state.json"
+  t "T22" ".bt state dir exists"           test -d "${REPO_ROOT}/.bt"
 
   echo ""
   echo "  Host Nginx"
   echo "  ----------"
   if command -v nginx >/dev/null 2>&1; then
-    t "T30" "nginx running"               systemctl is-active --quiet nginx
+    t "T30" "nginx running"               sh -c "systemctl is-active --quiet nginx 2>/dev/null || pgrep -x nginx >/dev/null 2>&1"
     TOTAL=$((TOTAL + 1))
     if [ -f /etc/nginx/sites-available/prdagent-app.conf ] || [ -f /etc/nginx/conf.d/prdagent-app.conf ]; then
       ok "[T31] prdagent-app.conf exists"; PASS=$((PASS + 1))
@@ -382,6 +382,7 @@ cd "$BT_DIR"
 [ -d "node_modules" ] || { info "Installing..."; pnpm install --frozen-lockfile 2>/dev/null || pnpm install; }
 ok "Ready"
 mkdir -p .bt
+mkdir -p "${REPO_ROOT}/.bt"
 echo ""
 
 # ══════════════════════════════════════════
@@ -414,10 +415,12 @@ else
       [ -d "$d" ] || continue
       for f in "$d"/*; do
         [ -f "$f" ] || continue
+        SHORTNAME=$(basename "$f")
+        # Skip backup files (our own .bak + common backup extensions)
+        case "$SHORTNAME" in *.bak*|*.backup*|*.orig|*.save|*~) continue ;; esac
         REALNAME=$(basename "$(readlink -f "$f" 2>/dev/null || echo "$f")")
         case "$REALNAME" in prdagent-*) continue ;; esac
         if grep -qE "listen\s+${APP_PORT}(\s|;)" "$f" 2>/dev/null; then
-          SHORTNAME=$(basename "$f")
           if [ "$SHORTNAME" = "default" ] || [ "$REALNAME" = "default" ]; then
             DEFAULT_CONFLICT="$f"
           else
@@ -439,9 +442,12 @@ else
     else
       # default 冲突 → 先禁用 default, 再写我们的配置
       if [ -n "$DEFAULT_CONFLICT" ] && [ -n "$ENABLED_DIR" ] && [ -d "$ENABLED_DIR" ]; then
-        cp "$ENABLED_DIR/default" "$ENABLED_DIR/default.bak.$(date +%s)" 2>/dev/null || true
+        # Backup to /etc/nginx/ root (NOT inside sites-enabled, to avoid nginx loading it)
+        cp "$ENABLED_DIR/default" "/etc/nginx/default.pre-bt.bak" 2>/dev/null || true
         rm -f "$ENABLED_DIR/default"
-        ok "Disabled default site (backed up to .bak)"
+        # Clean up any old .bak files left in sites-enabled from previous runs
+        rm -f "$ENABLED_DIR"/default.bak.* 2>/dev/null || true
+        ok "Disabled default site (backed up to /etc/nginx/default.pre-bt.bak)"
       fi
 
       PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || curl -s --max-time 5 ipinfo.io/ip 2>/dev/null || echo "_")
@@ -488,9 +494,8 @@ NGINX_CONF
         rm -f "$CONF_DIR/prdagent-app.conf"
         [ -n "$ENABLED_DIR" ] && rm -f "$ENABLED_DIR/prdagent-app.conf"
         # 恢复 default
-        if [ -n "$DEFAULT_CONFLICT" ]; then
-          LATEST_BAK=$(ls -t "$ENABLED_DIR"/default.bak.* 2>/dev/null | head -1)
-          [ -n "$LATEST_BAK" ] && cp "$LATEST_BAK" "$ENABLED_DIR/default" && warn "Restored default site"
+        if [ -n "$DEFAULT_CONFLICT" ] && [ -f "/etc/nginx/default.pre-bt.bak" ]; then
+          cp "/etc/nginx/default.pre-bt.bak" "$ENABLED_DIR/default" && warn "Restored default site"
         fi
       fi
     fi

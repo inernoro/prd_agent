@@ -430,7 +430,7 @@ T_MATCH "I03" "prdagent-redis running"             "true" docker inspect --forma
 T_MATCH "I04" "prdagent-gateway running"           "true" docker inspect --format='{{.State.Running}}' prdagent-gateway
 
 # 2.2 prdagent-api 不应在运行 (S1 场景)
-T_NOT "I05" "prdagent-api 未运行 (BT 接管)"       docker inspect --format='{{.State.Running}}' prdagent-api
+T_NOT "I05" "prdagent-api 未运行 (BT 接管)"       sh -c "docker inspect --format='{{.State.Running}}' prdagent-api 2>/dev/null | grep -q true"
 
 # 2.3 端口占用
 T_MATCH "I06" ":5500 listening"                    ":5500" ss -tlnp
@@ -602,7 +602,7 @@ if should_run && [ "$LIST_ONLY" != true ]; then
 fi
 
 if [ "${HAS_HOST_NGINX:-false}" = true ]; then
-  T "N01" "Host nginx running"                     systemctl is-active --quiet nginx
+  T "N01" "Host nginx running"                     sh -c "systemctl is-active --quiet nginx 2>/dev/null || pgrep -x nginx >/dev/null 2>&1"
   T "N02" "nginx -t 通过"                          nginx -t
   T "N03" "prdagent-app.conf 存在"                 test -f /etc/nginx/sites-available/prdagent-app.conf -o -f /etc/nginx/conf.d/prdagent-app.conf
   T_HTTP "N04" "Host :80 可达"                     "502" "http://localhost:80/api/health"
