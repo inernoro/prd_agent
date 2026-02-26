@@ -772,6 +772,39 @@ export const getMobileFeed: GetMobileFeedContract = withAuth(getMobileFeedReal);
 export const getMobileStats: GetMobileStatsContract = withAuth(getMobileStatsReal);
 export const getMobileAssets: GetMobileAssetsContract = withAuth(getMobileAssetsReal);
 
+// Arena 竞技场
+import {
+  listArenaGroupsReal,
+  createArenaGroupReal,
+  updateArenaGroupReal,
+  deleteArenaGroupReal,
+  listArenaSlotsReal,
+  createArenaSlotReal,
+  updateArenaSlotReal,
+  deleteArenaSlotReal,
+  toggleArenaSlotReal,
+  getArenaLineupReal,
+  revealArenaSlotsReal,
+  saveArenaBattleReal,
+  listArenaBattlesReal,
+  getArenaBattleReal,
+} from '@/services/real/arena';
+
+export const listArenaGroups = withAuth(listArenaGroupsReal);
+export const createArenaGroup = withAuth(createArenaGroupReal);
+export const updateArenaGroup = withAuth(updateArenaGroupReal);
+export const deleteArenaGroup = withAuth(deleteArenaGroupReal);
+export const listArenaSlots = withAuth(listArenaSlotsReal);
+export const createArenaSlot = withAuth(createArenaSlotReal);
+export const updateArenaSlot = withAuth(updateArenaSlotReal);
+export const deleteArenaSlot = withAuth(deleteArenaSlotReal);
+export const toggleArenaSlot = withAuth(toggleArenaSlotReal);
+export const getArenaLineup = withAuth(getArenaLineupReal);
+export const revealArenaSlots = withAuth(revealArenaSlotsReal);
+export const saveArenaBattle = withAuth(saveArenaBattleReal);
+export const listArenaBattles = withAuth(listArenaBattlesReal);
+export const getArenaBattle = withAuth(getArenaBattleReal);
+
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
 export const automationsService: IAutomationsService = new AutomationsService();
 export const modelGroupsService: IModelGroupsService = new ModelGroupsService();

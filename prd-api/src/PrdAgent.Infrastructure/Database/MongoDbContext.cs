@@ -142,6 +142,11 @@ public class MongoDbContext
     // Webhook 通知
     public IMongoCollection<WebhookDeliveryLog> WebhookDeliveryLogs => _database.GetCollection<WebhookDeliveryLog>("webhook_delivery_logs");
 
+    // Arena 竞技场（盲评对战）
+    public IMongoCollection<ArenaGroup> ArenaGroups => _database.GetCollection<ArenaGroup>("arena_groups");
+    public IMongoCollection<ArenaSlot> ArenaSlots => _database.GetCollection<ArenaSlot>("arena_slots");
+    public IMongoCollection<ArenaBattle> ArenaBattles => _database.GetCollection<ArenaBattle>("arena_battles");
+
     // 模型中继 (Exchange)
     public IMongoCollection<ModelExchange> ModelExchanges => _database.GetCollection<ModelExchange>("model_exchanges");
 
@@ -953,5 +958,23 @@ public class MongoDbContext
         {
             // ignore
         }
+
+        // Arena 竞技场索引
+        try
+        {
+            ArenaGroups.Indexes.CreateOne(new CreateIndexModel<ArenaGroup>(
+                Builders<ArenaGroup>.IndexKeys.Ascending(x => x.Key),
+                new CreateIndexOptions { Name = "uniq_arena_groups_key", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        ArenaSlots.Indexes.CreateOne(new CreateIndexModel<ArenaSlot>(
+            Builders<ArenaSlot>.IndexKeys.Ascending(x => x.Group).Ascending(x => x.SortOrder),
+            new CreateIndexOptions { Name = "idx_arena_slots_group_sort" }));
+        ArenaBattles.Indexes.CreateOne(new CreateIndexModel<ArenaBattle>(
+            Builders<ArenaBattle>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_arena_battles_user_created" }));
     }
 }

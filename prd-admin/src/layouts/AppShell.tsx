@@ -27,6 +27,7 @@ import {
   Crown,
   Sparkles,
   Workflow,
+  Swords,
   Menu,
   ChevronDown,
   type LucideIcon,
@@ -74,6 +75,7 @@ const iconMap: Record<string, LucideIcon> = {
   Crown,
   Sparkles,
   Workflow,
+  Swords,
 };
 
 const notificationTone = {
