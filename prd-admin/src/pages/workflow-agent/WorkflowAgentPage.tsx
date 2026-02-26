@@ -289,7 +289,7 @@ function ArtifactCard({ artifact, isExpanded, onToggle }: {
             className="p-1 rounded-[6px] flex-shrink-0 transition-colors"
             title="下载文件"
             style={{ color: 'var(--accent-gold)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(214,178,106,0.12)')}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(99,102,241,0.12)')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           >
             <Download className="w-3 h-3" />
@@ -351,7 +351,7 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
               status === 'completed'
                 ? { background: 'rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.95)' }
                 : status === 'running'
-                  ? { background: 'rgba(214,178,106,0.18)', color: 'var(--accent-gold)' }
+                  ? { background: 'rgba(99,102,241,0.18)', color: 'var(--accent-gold)' }
                   : status === 'failed'
                     ? { background: 'rgba(239,68,68,0.15)', color: 'rgba(239,68,68,0.9)' }
                     : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }
@@ -424,7 +424,7 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
             <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
               <div
                 className="h-full rounded-full animate-pulse"
-                style={{ width: '60%', background: 'var(--gold-gradient, linear-gradient(90deg, rgba(214,178,106,0.6), rgba(214,178,106,0.3)))' }}
+                style={{ width: '60%', background: 'var(--gold-gradient, linear-gradient(90deg, rgba(99,102,241,0.6), rgba(99,102,241,0.3)))' }}
               />
             </div>
             <span className="text-[10px]" style={{ color: 'var(--accent-gold)' }}>处理中...</span>

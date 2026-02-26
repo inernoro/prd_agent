@@ -460,10 +460,10 @@ const SECTION_STYLES = {
     title: 'rgba(59,130,246,0.85)',
   },
   config: {
-    bg: 'rgba(214,178,106,0.02)',
-    border: 'rgba(214,178,106,0.12)',
-    headerBg: 'rgba(214,178,106,0.05)',
-    title: 'rgba(214,178,106,0.85)',
+    bg: 'rgba(99,102,241,0.02)',
+    border: 'rgba(99,102,241,0.12)',
+    headerBg: 'rgba(99,102,241,0.05)',
+    title: 'rgba(99,102,241,0.85)',
   },
   output: {
     bg: 'rgba(34,197,94,0.03)',
@@ -595,7 +595,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
               status === 'completed'
                 ? { background: 'rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.95)' }
                 : status === 'running'
-                  ? { background: 'rgba(214,178,106,0.18)', color: 'var(--accent-gold)' }
+                  ? { background: 'rgba(99,102,241,0.18)', color: 'var(--accent-gold)' }
                   : status === 'failed'
                     ? { background: 'rgba(239,68,68,0.15)', color: 'rgba(239,68,68,0.9)' }
                     : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }
@@ -674,7 +674,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
             <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
               <div
                 className="h-full rounded-full animate-pulse"
-                style={{ width: '60%', background: 'var(--gold-gradient, linear-gradient(90deg, rgba(214,178,106,0.6), rgba(214,178,106,0.3)))' }}
+                style={{ width: '60%', background: 'var(--gold-gradient, linear-gradient(90deg, rgba(99,102,241,0.6), rgba(99,102,241,0.3)))' }}
               />
             </div>
             <span className="text-[10px]" style={{ color: 'var(--accent-gold)' }}>处理中...</span>
@@ -1400,7 +1400,7 @@ export function WorkflowEditorPage() {
                 if (e.key === 'Escape') { setEditingTitle(false); }
               }}
               className="text-[14px] font-semibold bg-transparent outline-none px-1 rounded-[6px]"
-              style={{ color: 'var(--text-primary)', border: '1px solid rgba(214,178,106,0.3)', minWidth: 120 }}
+              style={{ color: 'var(--text-primary)', border: '1px solid rgba(99,102,241,0.3)', minWidth: 120 }}
             />
           ) : (
             <span

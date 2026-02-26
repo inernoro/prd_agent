@@ -226,8 +226,8 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
             <div
               className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0 text-[18px]"
               style={{
-                background: 'rgba(214,178,106,0.08)',
-                border: '1px solid rgba(214,178,106,0.12)',
+                background: 'rgba(99,102,241,0.08)',
+                border: '1px solid rgba(99,102,241,0.12)',
               }}
             >
               {workflow.icon || '⚡'}
@@ -291,12 +291,12 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
         <button
           className="flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
           style={{
-            background: 'rgba(214,178,106,0.08)',
-            border: '1px solid rgba(214,178,106,0.15)',
-            color: 'rgba(214,178,106,0.85)',
+            background: 'rgba(99,102,241,0.08)',
+            border: '1px solid rgba(99,102,241,0.15)',
+            color: 'rgba(99,102,241,0.85)',
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(214,178,106,0.15)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(214,178,106,0.08)'; }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.15)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.08)'; }}
           onClick={(e) => { e.stopPropagation(); onEdit(); }}
         >
           ✎ 编辑
@@ -342,8 +342,8 @@ function EmptyState({ onCreate, creating }: { onCreate: () => void; creating: bo
         <div
           className="w-20 h-20 rounded-[20px] flex items-center justify-center text-[36px]"
           style={{
-            background: 'linear-gradient(135deg, rgba(214,178,106,0.1) 0%, rgba(59,130,246,0.08) 100%)',
-            border: '1px solid rgba(214,178,106,0.12)',
+            background: 'linear-gradient(135deg, rgba(99,102,241,0.1) 0%, rgba(59,130,246,0.08) 100%)',
+            border: '1px solid rgba(99,102,241,0.12)',
           }}
         >
           ⚡

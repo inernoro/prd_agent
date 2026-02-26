@@ -344,10 +344,10 @@ export function DefectSubmitPanel() {
             style={{
               background: 'rgba(0,0,0,0.14)',
               border: focused
-                ? '1px solid rgba(214, 178, 106, 0.55)'
+                ? '1px solid rgba(99, 102, 241, 0.55)'
                 : '1px solid var(--border-subtle)',
               boxShadow: focused 
-                ? '0 0 0 2px rgba(214, 178, 106, 0.15)' 
+                ? '0 0 0 2px rgba(99, 102, 241, 0.15)' 
                 : 'none',
             }}
           >
@@ -453,8 +453,8 @@ export function DefectSubmitPanel() {
                         onClick={() => setSeverity(opt.value)}
                         className="px-2 py-1 rounded-[7px] text-[11px] font-medium transition-colors"
                         style={{
-                          background: active ? 'rgba(214, 178, 106, 0.18)' : 'var(--bg-input-hover)',
-                          border: active ? '1px solid rgba(214, 178, 106, 0.35)' : '1px solid var(--border-subtle)',
+                          background: active ? 'rgba(99, 102, 241, 0.18)' : 'var(--bg-input-hover)',
+                          border: active ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid var(--border-subtle)',
                           color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                         }}
                       >

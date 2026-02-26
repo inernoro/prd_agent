@@ -418,7 +418,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                       {/* 应用图标 */}
                       <div
                         className="w-9 h-9 rounded-lg flex items-center justify-center text-base font-bold flex-shrink-0"
-                        style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}
+                        style={{ background: 'var(--gold-gradient)', color: '#ffffff' }}
                       >
                         {app.appName.charAt(0).toUpperCase()}
                       </div>
@@ -680,7 +680,7 @@ function CreateAppDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
           <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)' }}>
             <div
               className="w-10 h-10 rounded-lg flex items-center justify-center text-lg font-bold"
-              style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}
+              style={{ background: 'var(--gold-gradient)', color: '#ffffff' }}
             >
               {appName ? appName.charAt(0).toUpperCase() : 'A'}
             </div>

@@ -375,7 +375,7 @@ export function HttpConfigPanel({ values, onBatchChange, disabled }: {
               className="px-3 py-2 text-[11px] font-medium relative transition-colors"
               style={{
                 color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
-                borderBottom: isActive ? '2px solid rgba(214,178,106,0.7)' : '2px solid transparent',
+                borderBottom: isActive ? '2px solid rgba(99,102,241,0.7)' : '2px solid transparent',
               }}
             >
               {tab.label}

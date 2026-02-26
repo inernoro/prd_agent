@@ -81,7 +81,7 @@ function StatCard({
 }) {
   const accentColors = {
     default: { bg: 'var(--bg-input)', border: 'var(--nested-block-border)', icon: 'rgba(255,255,255,0.5)', text: 'var(--text-primary)' },
-    gold: { bg: 'rgba(214,178,106,0.06)', border: 'rgba(214,178,106,0.12)', icon: 'var(--accent-gold)', text: 'var(--accent-gold)' },
+    gold: { bg: 'rgba(99,102,241,0.06)', border: 'rgba(99,102,241,0.12)', icon: 'var(--accent-gold)', text: 'var(--accent-gold)' },
     blue: { bg: 'rgba(59,130,246,0.06)', border: 'rgba(59,130,246,0.12)', icon: 'rgba(59,130,246,0.9)', text: 'rgba(59,130,246,0.95)' },
     green: { bg: 'rgba(34,197,94,0.06)', border: 'rgba(34,197,94,0.12)', icon: 'rgba(34,197,94,0.9)', text: 'rgba(34,197,94,0.95)' },
     purple: { bg: 'rgba(168,85,247,0.06)', border: 'rgba(168,85,247,0.12)', icon: 'rgba(168,85,247,0.9)', text: 'rgba(168,85,247,0.95)' },

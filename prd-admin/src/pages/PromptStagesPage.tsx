@@ -53,9 +53,9 @@ function SegmentedTabs<T extends string>(props: {
             type="button"
             className="h-[32px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap"
             style={{
-              color: active ? '#1a1206' : 'var(--text-secondary)',
+              color: active ? '#ffffff' : 'var(--text-secondary)',
               background: active ? 'var(--gold-gradient)' : 'transparent',
-              boxShadow: active ? '0 2px 8px -2px rgba(214, 178, 106, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset' : 'none',
+              boxShadow: active ? '0 2px 8px -2px rgba(99, 102, 241, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset' : 'none',
               opacity: disabled ? 0.5 : 1,
               cursor: disabled ? 'not-allowed' : 'pointer',
               transform: active ? 'scale(1)' : 'scale(0.98)',
@@ -944,13 +944,13 @@ export default function PromptStagesPage() {
                   className="rounded-[16px] transition-all duration-200 min-w-0 overflow-hidden relative cursor-pointer hover:scale-[1.01]"
                   style={{
                     background: active
-                      ? 'linear-gradient(135deg, rgba(214, 178, 106, 0.12) 0%, rgba(214, 178, 106, 0.08) 100%)'
+                      ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(99, 102, 241, 0.08) 100%)'
                       : 'var(--bg-input)',
                     border: active
-                      ? '1px solid rgba(214, 178, 106, 0.40)'
+                      ? '1px solid rgba(99, 102, 241, 0.40)'
                       : '1px solid var(--border-subtle)',
                     boxShadow: active
-                      ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
+                      ? '0 4px 16px -4px rgba(99, 102, 241, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
                       : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
                   }}
                 >
@@ -1012,7 +1012,7 @@ export default function PromptStagesPage() {
                             width: 28,
                             height: 28,
                             borderRadius: 10,
-                            color: active ? '#1a1206' : 'var(--text-secondary)',
+                            color: active ? '#ffffff' : 'var(--text-secondary)',
                             background: active ? 'var(--gold-gradient)' : 'var(--bg-input-hover)',
                             border: active ? '1px solid rgba(0,0,0,0.08)' : '1px solid var(--border-default)',
                             boxShadow: active ? 'var(--shadow-gold)' : 'none',
@@ -1283,13 +1283,13 @@ export default function PromptStagesPage() {
                     className="rounded-[16px] px-4 py-3.5 transition-all duration-200 min-w-0 overflow-hidden cursor-pointer hover:scale-[1.01]"
                     style={{
                       background: active
-                        ? 'linear-gradient(135deg, rgba(214, 178, 106, 0.12) 0%, rgba(214, 178, 106, 0.08) 100%)'
+                        ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(99, 102, 241, 0.08) 100%)'
                         : 'var(--bg-input)',
                       border: active
-                        ? '1px solid rgba(214, 178, 106, 0.40)'
+                        ? '1px solid rgba(99, 102, 241, 0.40)'
                         : '1px solid var(--border-subtle)',
                       boxShadow: active
-                        ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
+                        ? '0 4px 16px -4px rgba(99, 102, 241, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
                         : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
                     }}
                     role="button"
@@ -1389,8 +1389,8 @@ export default function PromptStagesPage() {
                         boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
                       }}
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(214, 178, 106, 0.40)';
-                        e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(214, 178, 106, 0.2) inset, 0 0 0 2px rgba(214, 178, 106, 0.1)';
+                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.40)';
+                        e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(99, 102, 241, 0.2) inset, 0 0 0 2px rgba(99, 102, 241, 0.1)';
                       }}
                       onBlur={(e) => {
                         e.currentTarget.style.borderColor = 'var(--border-subtle)';

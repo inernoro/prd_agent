@@ -47,7 +47,7 @@ export function GlowOrb({
       )}
       style={{
         background: color === 'gold'
-          ? 'radial-gradient(circle, rgba(214, 178, 106, 0.4) 0%, rgba(214, 178, 106, 0.1) 40%, transparent 70%)'
+          ? 'radial-gradient(circle, rgba(99, 102, 241, 0.4) 0%, rgba(99, 102, 241, 0.1) 40%, transparent 70%)'
           : color === 'purple'
           ? 'radial-gradient(circle, rgba(139, 92, 246, 0.4) 0%, rgba(139, 92, 246, 0.1) 40%, transparent 70%)'
           : color === 'blue'

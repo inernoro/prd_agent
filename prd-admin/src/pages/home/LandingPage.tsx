@@ -13,9 +13,9 @@ function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
     <svg className={className} viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="goldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style={{ stopColor: '#f4e2b8', stopOpacity: 1 }} />
-          <stop offset="45%" style={{ stopColor: '#d6b26a', stopOpacity: 1 }} />
-          <stop offset="100%" style={{ stopColor: '#f2d59b', stopOpacity: 1 }} />
+          <stop offset="0%" style={{ stopColor: '#c7d2fe', stopOpacity: 1 }} />
+          <stop offset="45%" style={{ stopColor: '#6366f1', stopOpacity: 1 }} />
+          <stop offset="100%" style={{ stopColor: '#a5b4fc', stopOpacity: 1 }} />
         </linearGradient>
       </defs>
       <rect x="0" y="0" width="512" height="512" rx="102" ry="102" fill="url(#goldGradient)" />
@@ -27,7 +27,7 @@ function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
         fontWeight="900"
         textAnchor="middle"
         dominantBaseline="middle"
-        fill="#1a1206"
+        fill="#ffffff"
         letterSpacing="-6"
       >
         MAP
@@ -129,7 +129,7 @@ export default function LandingPage() {
               onClick={handleGetStarted}
               className="px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 hover:scale-105"
               style={{
-                background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+                background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
                 color: '#0b0b0d',
               }}
             >

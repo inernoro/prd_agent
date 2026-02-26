@@ -1066,10 +1066,10 @@ export function DefectDetailPanel() {
                   style={{
                     background: 'var(--bg-input)',
                     border: commentFocused
-                      ? '1px solid rgba(214, 178, 106, 0.55)'
+                      ? '1px solid rgba(99, 102, 241, 0.55)'
                       : '1px solid var(--border-subtle)',
                     boxShadow: commentFocused 
-                      ? '0 0 0 2px rgba(214, 178, 106, 0.15)' 
+                      ? '0 0 0 2px rgba(99, 102, 241, 0.15)' 
                       : 'none',
                   }}
                   onDrop={handleCommentDrop}

@@ -635,7 +635,7 @@ export function parseGlowColor(glowColor: string): [number, number, number] {
   if (match) {
     return [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])];
   }
-  return [214, 178, 106]; // default gold
+  return [99, 102, 241]; // default indigo
 }
 
 interface AgentShowcaseProps {

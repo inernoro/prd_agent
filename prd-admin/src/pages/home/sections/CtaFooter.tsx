@@ -15,7 +15,7 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
 
       {/* Decorative glow orbs */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full opacity-20 blur-[100px]"
-        style={{ background: 'radial-gradient(circle, rgba(214, 178, 106, 0.6) 0%, transparent 70%)' }}
+        style={{ background: 'radial-gradient(circle, rgba(99, 102, 241, 0.6) 0%, transparent 70%)' }}
       />
       <div className="absolute top-0 right-0 w-80 h-80 rounded-full opacity-10 blur-[80px]"
         style={{ background: 'radial-gradient(circle, rgba(139, 92, 246, 0.8) 0%, transparent 70%)' }}
@@ -70,7 +70,7 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
           <span
             className="relative inline-block"
             style={{
-              background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+              background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
               backgroundClip: 'text',
@@ -87,9 +87,9 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
               />
               <defs>
                 <linearGradient id="goldGradient" x1="0" y1="0" x2="200" y2="0" gradientUnits="userSpaceOnUse">
-                  <stop offset="0%" stopColor="#f4e2b8" />
-                  <stop offset="50%" stopColor="#d6b26a" />
-                  <stop offset="100%" stopColor="#f2d59b" />
+                  <stop offset="0%" stopColor="#c7d2fe" />
+                  <stop offset="50%" stopColor="#6366f1" />
+                  <stop offset="100%" stopColor="#a5b4fc" />
                 </linearGradient>
               </defs>
             </svg>
@@ -125,9 +125,9 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
             onClick={onGetStarted}
             className="group relative px-10 py-4 rounded-xl font-semibold text-lg transition-all duration-300 hover:scale-105 active:scale-95"
             style={{
-              background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+              background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
               color: '#0b0b0d',
-              boxShadow: '0 0 60px rgba(214, 178, 106, 0.4), 0 8px 32px rgba(0,0,0,0.4)',
+              boxShadow: '0 0 60px rgba(99, 102, 241, 0.4), 0 8px 32px rgba(0,0,0,0.4)',
             }}
           >
             <span className="relative z-10 flex items-center gap-2">

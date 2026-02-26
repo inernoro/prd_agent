@@ -177,11 +177,11 @@ export function PermissionMatrix({
                 style={{
                   background:
                     highlightRoleKey === role.key
-                      ? 'rgba(214, 178, 106, 0.12)'
+                      ? 'rgba(99, 102, 241, 0.12)'
                       : role.isBuiltIn
                         ? 'var(--list-item-bg)'
                         : 'transparent',
-                  color: highlightRoleKey === role.key ? 'rgba(214, 178, 106, 0.95)' : 'var(--text-primary)',
+                  color: highlightRoleKey === role.key ? 'rgba(99, 102, 241, 0.95)' : 'var(--text-primary)',
                   minWidth: 88,
                   borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
                 }}
@@ -190,10 +190,10 @@ export function PermissionMatrix({
                   <div
                     className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
                     style={{
-                      background: role.isBuiltIn ? 'rgba(214, 178, 106, 0.08)' : 'var(--bg-input)',
+                      background: role.isBuiltIn ? 'rgba(99, 102, 241, 0.08)' : 'var(--bg-input)',
                     }}
                   >
-                    {role.isBuiltIn && <ShieldCheck size={11} style={{ color: 'rgba(214, 178, 106, 0.7)' }} />}
+                    {role.isBuiltIn && <ShieldCheck size={11} style={{ color: 'rgba(99, 102, 241, 0.7)' }} />}
                     <span className="text-[12px] font-semibold">{role.name}</span>
                   </div>
                   <span
@@ -232,7 +232,7 @@ export function PermissionMatrix({
                   style={{
                     background: hoveredRow === menu.appKey ? 'rgba(38, 38, 44, 0.98)' : 'var(--bg-card)',
                     borderBottom: '1px solid rgba(255, 255, 255, 0.03)',
-                    borderRight: hoveredRow === menu.appKey ? '2px solid rgba(214, 178, 106, 0.35)' : '1px solid transparent',
+                    borderRight: hoveredRow === menu.appKey ? '2px solid rgba(99, 102, 241, 0.35)' : '1px solid transparent',
                     width: 168,
                     minWidth: 168,
                     maxWidth: 168,
@@ -247,16 +247,16 @@ export function PermissionMatrix({
                     <div
                       className="w-8 h-8 rounded-[10px] flex items-center justify-center transition-all duration-250 ease-out shrink-0"
                       style={{
-                        background: hoveredRow === menu.appKey ? 'rgba(214, 178, 106, 0.18)' : 'var(--bg-card-hover)',
+                        background: hoveredRow === menu.appKey ? 'rgba(99, 102, 241, 0.18)' : 'var(--bg-card-hover)',
                         transform: hoveredRow === menu.appKey ? 'scale(1.08)' : 'scale(1)',
-                        boxShadow: hoveredRow === menu.appKey ? '0 4px 16px rgba(214, 178, 106, 0.25)' : '0 2px 8px rgba(0, 0, 0, 0.1)',
-                        border: hoveredRow === menu.appKey ? '1px solid rgba(214, 178, 106, 0.25)' : '1px solid var(--nested-block-border)',
+                        boxShadow: hoveredRow === menu.appKey ? '0 4px 16px rgba(99, 102, 241, 0.25)' : '0 2px 8px rgba(0, 0, 0, 0.1)',
+                        border: hoveredRow === menu.appKey ? '1px solid rgba(99, 102, 241, 0.25)' : '1px solid var(--nested-block-border)',
                       }}
                     >
                       <Icon
                         size={16}
                         style={{
-                          color: hoveredRow === menu.appKey ? 'rgba(214, 178, 106, 1)' : 'var(--text-muted)',
+                          color: hoveredRow === menu.appKey ? 'rgba(99, 102, 241, 1)' : 'var(--text-muted)',
                           transition: 'color 0.25s ease-out',
                         }}
                       />
@@ -287,7 +287,7 @@ export function PermissionMatrix({
                       className="p-1 text-center transition-colors duration-150"
                       style={{
                         background: isHighlighted
-                          ? 'rgba(214, 178, 106, 0.08)'
+                          ? 'rgba(99, 102, 241, 0.08)'
                           : isRowHovered
                             ? 'var(--nested-block-bg)'
                             : 'transparent',
@@ -325,11 +325,11 @@ export function PermissionMatrix({
         <span className="flex items-center gap-2">
           <span
             className="w-5 h-5 rounded-md flex items-center justify-center"
-            style={{ background: 'rgba(214, 178, 106, 0.1)' }}
+            style={{ background: 'rgba(99, 102, 241, 0.1)' }}
           >
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r="5" stroke="rgba(214, 178, 106, 0.8)" strokeWidth="1.5" />
-              <circle cx="8" cy="8" r="2.5" fill="rgba(214, 178, 106, 0.8)" />
+              <circle cx="8" cy="8" r="5" stroke="rgba(99, 102, 241, 0.8)" strokeWidth="1.5" />
+              <circle cx="8" cy="8" r="2.5" fill="rgba(99, 102, 241, 0.8)" />
             </svg>
           </span>
           <span style={{ color: 'var(--text-secondary)' }}>完全访问</span>
@@ -337,11 +337,11 @@ export function PermissionMatrix({
         <span className="flex items-center gap-2">
           <span
             className="w-5 h-5 rounded-md flex items-center justify-center"
-            style={{ background: 'rgba(214, 178, 106, 0.06)' }}
+            style={{ background: 'rgba(99, 102, 241, 0.06)' }}
           >
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r="5" stroke="rgba(214, 178, 106, 0.5)" strokeWidth="1.5" />
-              <circle cx="8" cy="8" r="1.5" fill="rgba(214, 178, 106, 0.5)" />
+              <circle cx="8" cy="8" r="5" stroke="rgba(99, 102, 241, 0.5)" strokeWidth="1.5" />
+              <circle cx="8" cy="8" r="1.5" fill="rgba(99, 102, 241, 0.5)" />
             </svg>
           </span>
           <span style={{ color: 'var(--text-secondary)' }}>部分访问</span>

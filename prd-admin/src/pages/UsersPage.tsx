@@ -739,7 +739,7 @@ export default function UsersPage() {
                   PM: { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)', text: 'rgba(59,130,246,0.95)' },
                   DEV: { bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.25)', text: 'rgba(34,197,94,0.95)' },
                   QA: { bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.25)', text: 'rgba(168,85,247,0.95)' },
-                  ADMIN: { bg: 'rgba(214,178,106,0.12)', border: 'rgba(214,178,106,0.25)', text: 'var(--accent-gold)' },
+                  ADMIN: { bg: 'rgba(99,102,241,0.12)', border: 'rgba(99,102,241,0.25)', text: 'var(--accent-gold)' },
                 };
                 const rc = roleColors[u.role] || roleColors.DEV;
                 return (
@@ -1038,7 +1038,7 @@ export default function UsersPage() {
                                 icon: <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" /></svg>,
                               },
                               ADMIN: {
-                                bg: 'rgba(214,178,106,0.95)',
+                                bg: 'rgba(99,102,241,0.95)',
                                 color: '#000',
                                 icon: <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z" /></svg>,
                               },

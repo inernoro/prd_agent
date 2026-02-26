@@ -447,7 +447,7 @@ select optgroup {
 
 @keyframes modelMapLineGlow {
   0%, 100% { opacity: 1; filter: drop-shadow(0 10px 22px rgba(0,0,0,0.45)); }
-  50% { opacity: 1; filter: drop-shadow(0 16px 32px rgba(214, 178, 106, 0.26)); }
+  50% { opacity: 1; filter: drop-shadow(0 16px 32px rgba(99, 102, 241, 0.26)); }
 }
 
 @keyframes modelMapNodeIn {
@@ -719,7 +719,7 @@ select optgroup {
 
 .prd-login-leftGlow {
   background:
-    radial-gradient(900px 640px at 50% 46%, rgba(214, 178, 106, 0.10) 0%, transparent 66%),
+    radial-gradient(900px 640px at 50% 46%, rgba(99, 102, 241, 0.10) 0%, transparent 66%),
     radial-gradient(760px 520px at 55% 60%, rgba(124, 252, 0, 0.05) 0%, transparent 64%);
 }
 
@@ -730,7 +730,7 @@ select optgroup {
   overflow: hidden;
   pointer-events: none;
   background:
-    radial-gradient(1000px 820px at 68% 52%, rgba(214, 178, 106, 0.06) 0%, transparent 64%),
+    radial-gradient(1000px 820px at 68% 52%, rgba(99, 102, 241, 0.06) 0%, transparent 64%),
     radial-gradient(900px 760px at 32% 56%, rgba(92, 134, 255, 0.05) 0%, transparent 68%),
     linear-gradient(180deg, #050507 0%, #07070a 55%, #050507 100%);
   /* defaults */
@@ -1128,10 +1128,10 @@ select optgroup {
 /* Glow pulse for CTA buttons */
 @keyframes glow-pulse {
   0%, 100% {
-    box-shadow: 0 0 40px rgba(214, 178, 106, 0.3), 0 8px 32px rgba(0,0,0,0.4);
+    box-shadow: 0 0 40px rgba(99, 102, 241, 0.3), 0 8px 32px rgba(0,0,0,0.4);
   }
   50% {
-    box-shadow: 0 0 60px rgba(214, 178, 106, 0.5), 0 8px 32px rgba(0,0,0,0.4);
+    box-shadow: 0 0 60px rgba(99, 102, 241, 0.5), 0 8px 32px rgba(0,0,0,0.4);
   }
 }
 
@@ -1276,7 +1276,7 @@ html[data-perf-mode="performance"] .blur-text span {
 
 /* 选中节点环 */
 .workflow-canvas .react-flow__node.selected .react-flow__handle {
-  border-color: rgba(214, 178, 106, 0.5) !important;
+  border-color: rgba(99, 102, 241, 0.5) !important;
 }
 
 /* 控件面板暗色 */

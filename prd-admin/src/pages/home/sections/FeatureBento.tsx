@@ -318,7 +318,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
               <span className="text-white/90">为什么选择</span>{' '}
               <span
                 style={{
-                  background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+                  background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
                   WebkitBackgroundClip: 'text',
                   WebkitTextFillColor: 'transparent',
                   backgroundClip: 'text',
@@ -526,7 +526,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
-                background: 'radial-gradient(circle at 50% 50%, rgba(214, 178, 106, 0.1) 0%, transparent 60%)',
+                background: 'radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.1) 0%, transparent 60%)',
               }}
             />
             <div className="relative z-10">
@@ -534,10 +534,10 @@ export function FeatureBento({ className }: FeatureBentoProps) {
                 <div className="flex-1 text-center lg:text-left">
                   <div className="inline-flex p-3 rounded-2xl mb-4 shadow-lg group-hover:scale-105 transition-all duration-300"
                     style={{
-                      background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+                      background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
                     }}
                   >
-                    <svg className="w-7 h-7 text-[#1a1206]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="w-7 h-7 text-[#ffffff]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                   </div>

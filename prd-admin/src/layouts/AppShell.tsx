@@ -722,7 +722,7 @@ export default function AppShell() {
                   {notificationCount > 0 && (
                     <span
                       className="ml-auto rounded-full px-2 py-0.5 text-[10px]"
-                      style={{ background: 'rgba(214, 178, 106, 0.18)', color: 'var(--accent-gold)' }}
+                      style={{ background: 'rgba(99, 102, 241, 0.18)', color: 'var(--accent-gold)' }}
                     >
                       {notificationCount}
                     </span>

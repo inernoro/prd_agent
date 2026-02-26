@@ -70,7 +70,7 @@ const roleIconConfig: Record<string, { bg: string; color: string; label: string;
     icon: <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" /></svg>,
   },
   ADMIN: {
-    bg: 'rgba(214,178,106,0.95)',
+    bg: 'rgba(99,102,241,0.95)',
     color: '#000',
     label: '管理员',
     icon: <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z" /></svg>,
@@ -353,8 +353,8 @@ export function UserProfilePopover({
                     <span
                       className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-[4px]"
                       style={{
-                        background: currentRole === 'ADMIN' ? 'rgba(214,178,106,0.12)' : 'rgba(59,130,246,0.12)',
-                        border: `1px solid ${currentRole === 'ADMIN' ? 'rgba(214,178,106,0.25)' : 'rgba(59,130,246,0.25)'}`,
+                        background: currentRole === 'ADMIN' ? 'rgba(99,102,241,0.12)' : 'rgba(59,130,246,0.12)',
+                        border: `1px solid ${currentRole === 'ADMIN' ? 'rgba(99,102,241,0.25)' : 'rgba(59,130,246,0.25)'}`,
                         color: currentRole === 'ADMIN' ? 'var(--accent-gold)' : 'rgba(59,130,246,0.95)',
                       }}
                     >
@@ -568,7 +568,7 @@ export function UserProfilePopover({
                               className="text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]"
                               style={{ 
                                 background: authz.effectiveSystemRoleKey && authz.effectiveSystemRoleKey !== 'none' 
-                                  ? 'rgba(214,178,106,0.12)' 
+                                  ? 'rgba(99,102,241,0.12)' 
                                   : 'rgba(255,255,255,0.04)',
                                 color: authz.effectiveSystemRoleKey && authz.effectiveSystemRoleKey !== 'none'
                                   ? 'var(--accent-gold)'

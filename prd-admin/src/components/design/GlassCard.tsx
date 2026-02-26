@@ -145,7 +145,7 @@ function buildObsidianStyle(
   if (glow) {
     let glowColor = 'rgba(255, 255, 255, 0.08)';
     if (variant === 'gold') {
-      glowColor = 'rgba(214, 178, 106, 0.18)';
+      glowColor = 'rgba(99, 102, 241, 0.18)';
     } else if (accentHue !== undefined) {
       glowColor = `hsla(${accentHue}, 60%, 60%, 0.14)`;
     }
@@ -154,13 +154,13 @@ function buildObsidianStyle(
 
   // 边框：顶部略亮，模拟光照
   const borderColor = variant === 'gold'
-    ? 'rgba(214, 178, 106, 0.18)'
+    ? 'rgba(99, 102, 241, 0.18)'
     : 'var(--glass-border, rgba(255, 255, 255, 0.07))';
 
   // 阴影：干净的单层投影 + 顶部内高光
   let boxShadow = '0 2px 12px -2px rgba(0, 0, 0, 0.4), 0 1px 0 0 rgba(255, 255, 255, 0.04) inset';
   if (variant === 'gold') {
-    boxShadow = '0 2px 16px -4px rgba(214, 178, 106, 0.15), 0 2px 12px -2px rgba(0, 0, 0, 0.4), 0 1px 0 0 rgba(214, 178, 106, 0.08) inset';
+    boxShadow = '0 2px 16px -4px rgba(99, 102, 241, 0.15), 0 2px 12px -2px rgba(0, 0, 0, 0.4), 0 1px 0 0 rgba(99, 102, 241, 0.08) inset';
   } else if (accentHue !== undefined) {
     boxShadow = `0 2px 16px -4px hsla(${accentHue}, 60%, 50%, 0.12), 0 2px 12px -2px rgba(0, 0, 0, 0.4), 0 1px 0 0 rgba(255, 255, 255, 0.04) inset`;
   }
@@ -194,7 +194,7 @@ function buildGlassStyle(
   let glowColor = 'rgba(255, 255, 255, 0.05)';
   if (glow) {
     if (variant === 'gold') {
-      glowColor = 'rgba(214, 178, 106, 0.25)';
+      glowColor = 'rgba(99, 102, 241, 0.25)';
     } else if (accentHue !== undefined) {
       glowColor = `hsla(${accentHue}, 70%, 65%, 0.2)`;
     } else {
@@ -222,7 +222,7 @@ function buildGlassStyle(
     '0 -1px 0 0 rgba(0, 0, 0, 0.12) inset',
   ];
   if (variant === 'gold') {
-    shadowLayers.push('0 6px 32px -8px rgba(214, 178, 106, 0.3)');
+    shadowLayers.push('0 6px 32px -8px rgba(99, 102, 241, 0.3)');
   } else if (accentHue !== undefined) {
     shadowLayers.push(`0 6px 32px -8px hsla(${accentHue}, 75%, 55%, 0.25)`);
   }

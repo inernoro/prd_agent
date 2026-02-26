@@ -83,7 +83,7 @@ export default function StatsPage() {
           data: trend.map((t) => t.count),
           smooth: true,
           showSymbol: false,
-          lineStyle: { width: 2, color: 'rgba(214,178,106,0.95)' },
+          lineStyle: { width: 2, color: 'rgba(99,102,241,0.95)' },
           areaStyle: {
             color: {
               type: 'linear',
@@ -92,8 +92,8 @@ export default function StatsPage() {
               x2: 0,
               y2: 1,
               colorStops: [
-                { offset: 0, color: 'rgba(214,178,106,0.22)' },
-                { offset: 1, color: 'rgba(214,178,106,0.02)' },
+                { offset: 0, color: 'rgba(99,102,241,0.22)' },
+                { offset: 1, color: 'rgba(99,102,241,0.02)' },
               ],
             },
           },

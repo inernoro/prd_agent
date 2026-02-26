@@ -222,9 +222,9 @@ export default function AuthzPage() {
       onClick={() => setUserDropdownOpen(true)}
       className="h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors"
       style={{
-        background: activeUser ? 'rgba(214, 178, 106, 0.15)' : 'var(--bg-input-hover)',
-        border: activeUser ? '1px solid rgba(214, 178, 106, 0.3)' : '1px solid var(--border-default)',
-        color: activeUser ? 'rgba(214, 178, 106, 0.95)' : 'var(--text-secondary)',
+        background: activeUser ? 'rgba(99, 102, 241, 0.15)' : 'var(--bg-input-hover)',
+        border: activeUser ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid var(--border-default)',
+        color: activeUser ? 'rgba(99, 102, 241, 0.95)' : 'var(--text-secondary)',
       }}
     >
       <User size={12} />
@@ -278,9 +278,9 @@ export default function AuthzPage() {
         }}
         className="h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors hover:bg-white/10"
         style={{
-          background: activeUser ? 'rgba(214, 178, 106, 0.12)' : 'var(--bg-input-hover)',
-          border: activeUser ? '1px solid rgba(214, 178, 106, 0.25)' : '1px solid var(--border-default)',
-          color: activeUser ? 'rgba(214, 178, 106, 0.95)' : 'var(--text-secondary)',
+          background: activeUser ? 'rgba(99, 102, 241, 0.12)' : 'var(--bg-input-hover)',
+          border: activeUser ? '1px solid rgba(99, 102, 241, 0.25)' : '1px solid var(--border-default)',
+          color: activeUser ? 'rgba(99, 102, 241, 0.95)' : 'var(--text-secondary)',
         }}
       >
         <UserCog size={12} />
@@ -456,15 +456,15 @@ export default function AuthzPage() {
                         }}
                         className="w-full px-4 py-3 text-left rounded-xl transition-all duration-200"
                         style={{
-                          background: isSelected ? 'rgba(214, 178, 106, 0.15)' : 'var(--list-item-bg)',
-                          border: isSelected ? '1px solid rgba(214, 178, 106, 0.3)' : '1px solid transparent',
+                          background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'var(--list-item-bg)',
+                          border: isSelected ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid transparent',
                         }}
                       >
                         <div className="flex items-center justify-between">
                           <div>
                             <div
                               className="text-sm font-medium"
-                              style={{ color: isSelected ? 'rgba(214, 178, 106, 0.95)' : 'var(--text-primary)' }}
+                              style={{ color: isSelected ? 'rgba(99, 102, 241, 0.95)' : 'var(--text-primary)' }}
                             >
                               {user.displayName || user.username}
                             </div>
@@ -475,8 +475,8 @@ export default function AuthzPage() {
                           <span
                             className="text-[11px] px-2 py-0.5 rounded-md"
                             style={{
-                              background: userRole?.isBuiltIn ? 'rgba(214, 178, 106, 0.1)' : 'var(--bg-card-hover)',
-                              color: userRole?.isBuiltIn ? 'rgba(214, 178, 106, 0.8)' : 'var(--text-muted)',
+                              background: userRole?.isBuiltIn ? 'rgba(99, 102, 241, 0.1)' : 'var(--bg-card-hover)',
+                              color: userRole?.isBuiltIn ? 'rgba(99, 102, 241, 0.8)' : 'var(--text-muted)',
                             }}
                           >
                             {userRole?.name || userRoleKey}
@@ -506,7 +506,7 @@ export default function AuthzPage() {
                     setUserDropdownOpen(false);
                   }}
                   className="text-xs px-2 py-1 rounded-md hover:bg-white/5 transition-colors"
-                  style={{ color: 'rgba(214, 178, 106, 0.8)' }}
+                  style={{ color: 'rgba(99, 102, 241, 0.8)' }}
                 >
                   清除选择
                 </button>
@@ -600,8 +600,8 @@ export default function AuthzPage() {
                       disabled={assignRoleSubmitting}
                       className="w-full px-4 py-3 text-left rounded-xl transition-all duration-200 disabled:opacity-50"
                       style={{
-                        background: isCurrentRole ? 'rgba(214, 178, 106, 0.15)' : 'var(--list-item-bg)',
-                        border: isCurrentRole ? '1px solid rgba(214, 178, 106, 0.3)' : '1px solid var(--nested-block-border)',
+                        background: isCurrentRole ? 'rgba(99, 102, 241, 0.15)' : 'var(--list-item-bg)',
+                        border: isCurrentRole ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid var(--nested-block-border)',
                       }}
                     >
                       <div className="flex items-center justify-between">
@@ -609,11 +609,11 @@ export default function AuthzPage() {
                           <div
                             className="w-9 h-9 rounded-[10px] flex items-center justify-center"
                             style={{
-                              background: role.isBuiltIn ? 'rgba(214, 178, 106, 0.12)' : 'var(--bg-card-hover)',
+                              background: role.isBuiltIn ? 'rgba(99, 102, 241, 0.12)' : 'var(--bg-card-hover)',
                             }}
                           >
                             {role.isBuiltIn ? (
-                              <ShieldCheck size={16} style={{ color: 'rgba(214, 178, 106, 0.8)' }} />
+                              <ShieldCheck size={16} style={{ color: 'rgba(99, 102, 241, 0.8)' }} />
                             ) : (
                               <User size={16} style={{ color: 'var(--text-muted)' }} />
                             )}
@@ -621,7 +621,7 @@ export default function AuthzPage() {
                           <div>
                             <div
                               className="text-sm font-medium"
-                              style={{ color: isCurrentRole ? 'rgba(214, 178, 106, 0.95)' : 'var(--text-primary)' }}
+                              style={{ color: isCurrentRole ? 'rgba(99, 102, 241, 0.95)' : 'var(--text-primary)' }}
                             >
                               {role.name}
                             </div>
@@ -634,8 +634,8 @@ export default function AuthzPage() {
                           <span
                             className="text-[10px] px-2 py-0.5 rounded-md"
                             style={{
-                              background: 'rgba(214, 178, 106, 0.2)',
-                              color: 'rgba(214, 178, 106, 0.9)',
+                              background: 'rgba(99, 102, 241, 0.2)',
+                              color: 'rgba(99, 102, 241, 0.9)',
                             }}
                           >
                             当前

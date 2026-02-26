@@ -102,9 +102,9 @@ export const ACCENT_STYLES = {
   },
   /** 金色强调 */
   gold: {
-    bg: 'rgba(214, 178, 106, 0.04)',
-    border: 'rgba(214, 178, 106, 0.1)',
-    text: 'rgba(214, 178, 106, 0.95)',
+    bg: 'rgba(99, 102, 241, 0.04)',
+    border: 'rgba(99, 102, 241, 0.1)',
+    text: 'rgba(99, 102, 241, 0.95)',
   },
   /** 紫色强调 */
   purple: {

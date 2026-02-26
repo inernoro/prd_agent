@@ -23,7 +23,7 @@ interface ParticleFieldProps {
 export function ParticleField({
   className,
   particleCount = 80,
-  colors = ['#d6b26a', '#f2d59b', '#7c3aed', '#a855f7'],
+  colors = ['#6366f1', '#a5b4fc', '#7c3aed', '#a855f7'],
   maxSpeed = 0.5,
   connectionDistance = 120,
   mouseInfluence = 150,
@@ -124,7 +124,7 @@ export function ParticleField({
             ctx.beginPath();
             ctx.moveTo(p1.x, p1.y);
             ctx.lineTo(p2.x, p2.y);
-            ctx.strokeStyle = `rgba(214, 178, 106, ${alpha})`;
+            ctx.strokeStyle = `rgba(99, 102, 241, ${alpha})`;
             ctx.lineWidth = 0.5;
             ctx.stroke();
           }

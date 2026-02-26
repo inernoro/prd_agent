@@ -300,7 +300,7 @@ export default function OpenPlatformPage() {
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-2">
                       <div className="flex items-center gap-2 px-2 py-1 rounded-lg text-sm" style={{ background: 'var(--bg-card-hover)', border: '1px solid var(--border-default)' }}>
-                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-semibold" style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}>
+                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-semibold" style={{ background: 'var(--gold-gradient)', color: '#ffffff' }}>
                           {app.boundUserName.charAt(0).toUpperCase()}
                         </div>
                         <span className="font-medium">{app.boundUserName}</span>

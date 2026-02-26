@@ -7,7 +7,7 @@ const accentColors: Record<Accent, { text: string; glow: string; hue?: number; g
   default: { text: 'var(--text-primary)', glow: 'transparent', gradient: 'transparent', pulse: 'rgba(255,255,255,0.4)' },
   green: { text: '#34d399', glow: 'rgba(52,211,153,0.12)', hue: 160, gradient: 'linear-gradient(135deg, rgba(52,211,153,0.15) 0%, rgba(16,185,129,0.05) 100%)', pulse: '#34d399' },
   emerald: { text: '#34d399', glow: 'rgba(52,211,153,0.12)', hue: 155, gradient: 'linear-gradient(135deg, rgba(52,211,153,0.15) 0%, rgba(16,185,129,0.05) 100%)', pulse: '#34d399' },
-  gold: { text: '#f2d59b', glow: 'rgba(242,213,155,0.12)', gradient: 'linear-gradient(135deg, rgba(242,213,155,0.15) 0%, rgba(214,178,106,0.05) 100%)', pulse: '#f2d59b' },
+  gold: { text: '#a5b4fc', glow: 'rgba(242,213,155,0.12)', gradient: 'linear-gradient(135deg, rgba(242,213,155,0.15) 0%, rgba(99,102,241,0.05) 100%)', pulse: '#a5b4fc' },
   blue: { text: '#60a5fa', glow: 'rgba(96,165,250,0.12)', hue: 217, gradient: 'linear-gradient(135deg, rgba(96,165,250,0.15) 0%, rgba(59,130,246,0.05) 100%)', pulse: '#60a5fa' },
   purple: { text: '#a78bfa', glow: 'rgba(167,139,250,0.12)', hue: 270, gradient: 'linear-gradient(135deg, rgba(167,139,250,0.15) 0%, rgba(139,92,246,0.05) 100%)', pulse: '#a78bfa' },
   cyan: { text: '#22d3ee', glow: 'rgba(34,211,238,0.12)', hue: 188, gradient: 'linear-gradient(135deg, rgba(34,211,238,0.15) 0%, rgba(6,182,212,0.05) 100%)', pulse: '#22d3ee' },

@@ -50,7 +50,7 @@ export function AuthzPermissionColumn({
             <label
               key={p.key}
               className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/4 cursor-pointer transition-colors"
-              style={{ background: checkedPermissions.has(p.key) ? 'rgba(214, 178, 106, 0.08)' : 'transparent' }}
+              style={{ background: checkedPermissions.has(p.key) ? 'rgba(99, 102, 241, 0.08)' : 'transparent' }}
             >
               <input
                 type="checkbox"
@@ -91,7 +91,7 @@ export function AuthzPermissionColumn({
           {isBuiltIn && (
             <span
               className="text-xs px-1.5 py-0.5 rounded"
-              style={{ background: 'rgba(214, 178, 106, 0.15)', color: 'rgba(214, 178, 106, 0.9)' }}
+              style={{ background: 'rgba(99, 102, 241, 0.15)', color: 'rgba(99, 102, 241, 0.9)' }}
             >
               内置
             </span>
@@ -112,7 +112,7 @@ export function AuthzPermissionColumn({
       {isBuiltIn && (
         <div
           className="mx-3 mt-3 px-3 py-2 rounded-lg text-xs"
-          style={{ background: 'rgba(214, 178, 106, 0.1)', color: 'rgba(214, 178, 106, 0.8)' }}
+          style={{ background: 'rgba(99, 102, 241, 0.1)', color: 'rgba(99, 102, 241, 0.8)' }}
         >
           内置角色的权限由代码定义，不可修改
         </div>

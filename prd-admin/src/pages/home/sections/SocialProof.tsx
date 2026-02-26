@@ -109,7 +109,7 @@ export function SocialProof({ className }: SocialProofProps) {
                 <div className="text-4xl sm:text-5xl lg:text-6xl font-bold mb-2">
                   <span
                     style={{
-                      background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+                      background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
                       WebkitBackgroundClip: 'text',
                       WebkitTextFillColor: 'transparent',
                       backgroundClip: 'text',
@@ -162,7 +162,7 @@ export function SocialProof({ className }: SocialProofProps) {
                   <div
                     className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
                     style={{
-                      background: 'linear-gradient(135deg, #d6b26a 0%, #f2d59b 100%)',
+                      background: 'linear-gradient(135deg, #6366f1 0%, #a5b4fc 100%)',
                       color: '#0b0b0d',
                     }}
                   >

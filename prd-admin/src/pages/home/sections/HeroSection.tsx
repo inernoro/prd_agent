@@ -34,8 +34,8 @@ function RotatingText() {
     >
       <ShinyText
         text={texts[index]}
-        color="#d6b26a"
-        shineColor="#f4e2b8"
+        color="#6366f1"
+        shineColor="#c7d2fe"
         speed={3}
         className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold"
       />
@@ -100,7 +100,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight mb-4">
             <span
               style={{
-                background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+                background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
                 WebkitBackgroundClip: 'text',
                 WebkitTextFillColor: 'transparent',
                 backgroundClip: 'text',
@@ -141,9 +141,9 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
                 />
                 <defs>
                   <linearGradient id="heroGoldGradient" x1="0" y1="0" x2="200" y2="0" gradientUnits="userSpaceOnUse">
-                    <stop offset="0%" stopColor="#f4e2b8" stopOpacity="0.3" />
-                    <stop offset="50%" stopColor="#d6b26a" />
-                    <stop offset="100%" stopColor="#f2d59b" stopOpacity="0.3" />
+                    <stop offset="0%" stopColor="#c7d2fe" stopOpacity="0.3" />
+                    <stop offset="50%" stopColor="#6366f1" />
+                    <stop offset="100%" stopColor="#a5b4fc" stopOpacity="0.3" />
                   </linearGradient>
                 </defs>
               </svg>
@@ -176,7 +176,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
                 <div
                   className="text-2xl sm:text-3xl md:text-4xl font-bold"
                   style={{
-                    background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+                    background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
                     WebkitBackgroundClip: 'text',
                     WebkitTextFillColor: 'transparent',
                     backgroundClip: 'text',
@@ -196,9 +196,9 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               onClick={onGetStarted}
               className="group relative px-10 py-4 rounded-xl font-semibold text-lg transition-all duration-300 hover:scale-105 active:scale-95"
               style={{
-                background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+                background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
                 color: '#0b0b0d',
-                boxShadow: '0 0 60px rgba(214, 178, 106, 0.4), 0 8px 32px rgba(0,0,0,0.4)',
+                boxShadow: '0 0 60px rgba(99, 102, 241, 0.4), 0 8px 32px rgba(0,0,0,0.4)',
               }}
             >
               <span className="relative z-10 flex items-center gap-2">

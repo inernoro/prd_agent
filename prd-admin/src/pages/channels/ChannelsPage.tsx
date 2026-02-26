@@ -298,7 +298,7 @@ export default function ChannelsPage() {
                       <div className="flex items-center gap-2">
                         <div
                           className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold"
-                          style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}
+                          style={{ background: 'var(--gold-gradient)', color: '#ffffff' }}
                         >
                           {wl.boundUserName.charAt(0).toUpperCase()}
                         </div>

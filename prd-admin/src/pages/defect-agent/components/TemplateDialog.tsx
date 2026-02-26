@@ -242,8 +242,8 @@ export function TemplateDialog() {
                       {template.isDefault && (
                         <Star
                           size={12}
-                          fill="rgba(214,178,106,0.9)"
-                          style={{ color: 'rgba(214,178,106,0.9)' }}
+                          fill="rgba(99,102,241,0.9)"
+                          style={{ color: 'rgba(99,102,241,0.9)' }}
                         />
                       )}
                     </div>
