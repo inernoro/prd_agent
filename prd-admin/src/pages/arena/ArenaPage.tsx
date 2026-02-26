@@ -151,6 +151,7 @@ export function ArenaPage() {
   const [groups, setGroups] = useState<ArenaGroup[]>([]);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string>('');
   const [lineupLoading, setLineupLoading] = useState(true);
+  const [lineupError, setLineupError] = useState<string | null>(null);
   const [groupDropdownOpen, setGroupDropdownOpen] = useState(false);
 
   // --- Battle state ---
@@ -205,19 +206,24 @@ export function ArenaPage() {
 
   async function loadLineup() {
     setLineupLoading(true);
+    setLineupError(null);
     try {
       const res = await getArenaLineup();
-      if (res.success && res.data?.items) {
-        const items = res.data.items as ArenaGroup[];
+      if (res.success) {
+        const items = (res.data?.items ?? []) as ArenaGroup[];
         setGroups(items);
         if (items.length > 0 && !selectedGroupKey) {
           setSelectedGroupKey(items[0].key);
         }
       } else {
-        toast.error('加载阵容失败', res.error?.message);
+        const msg = res.error?.message ?? '请求失败';
+        setLineupError(msg);
+        toast.error('加载阵容失败', msg);
       }
     } catch (e) {
-      toast.error('加载阵容失败', e instanceof Error ? e.message : '网络错误');
+      const msg = e instanceof Error ? e.message : '网络错误';
+      setLineupError(msg);
+      toast.error('加载阵容失败', msg);
     } finally {
       setLineupLoading(false);
     }
@@ -777,7 +783,7 @@ export function ArenaPage() {
                 </>
               )}
             </button>
-            {groupDropdownOpen && groups.length > 0 && (
+            {groupDropdownOpen && (
               <div
                 className="absolute right-0 top-full mt-1 z-50 rounded-[12px] py-1 min-w-[180px]"
                 style={{
@@ -786,26 +792,44 @@ export function ArenaPage() {
                   boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
                 }}
               >
-                {groups.map((g) => (
-                  <button
-                    key={g.key}
-                    onClick={() => {
-                      setSelectedGroupKey(g.key);
-                      setGroupDropdownOpen(false);
-                    }}
-                    className={cn(
-                      'w-full text-left px-3 py-2 text-[13px] transition-colors',
-                      'hover:bg-white/5',
-                      g.key === selectedGroupKey && 'bg-white/8'
-                    )}
-                    style={{ color: 'var(--text-primary)' }}
-                  >
-                    <div>{g.name}</div>
-                    <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                      {g.slots.length} 个模型
+                {groups.length === 0 ? (
+                  <div className="px-4 py-3 text-[13px] text-center" style={{ color: 'var(--text-muted)' }}>
+                    {lineupError ? '加载失败，点击重试' : '暂无可用阵容'}
+                    <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                      {lineupError ? (
+                        <button
+                          className="underline hover:text-white/80"
+                          onClick={() => { setGroupDropdownOpen(false); loadLineup(); }}
+                        >
+                          重新加载
+                        </button>
+                      ) : (
+                        '请先在管理页配置竞技场分组和模型'
+                      )}
                     </div>
-                  </button>
-                ))}
+                  </div>
+                ) : (
+                  groups.map((g) => (
+                    <button
+                      key={g.key}
+                      onClick={() => {
+                        setSelectedGroupKey(g.key);
+                        setGroupDropdownOpen(false);
+                      }}
+                      className={cn(
+                        'w-full text-left px-3 py-2 text-[13px] transition-colors',
+                        'hover:bg-white/5',
+                        g.key === selectedGroupKey && 'bg-white/8'
+                      )}
+                      style={{ color: 'var(--text-primary)' }}
+                    >
+                      <div>{g.name}</div>
+                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        {g.slots.length} 个模型
+                      </div>
+                    </button>
+                  ))
+                )}
               </div>
             )}
           </div>
@@ -834,7 +858,28 @@ export function ArenaPage() {
                   提出问题，多个模型匿名作答。阅读回答后揭晓真实身份，公平评估模型能力。
                 </p>
               </div>
-              {slots.length > 0 && (
+              {lineupLoading ? (
+                <div className="flex items-center gap-2 text-[13px]" style={{ color: 'var(--text-muted)' }}>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>加载阵容中...</span>
+                </div>
+              ) : lineupError ? (
+                <div className="text-center">
+                  <div className="text-[13px] mb-2 px-3 py-2 rounded-lg" style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}>
+                    加载阵容失败: {lineupError}
+                  </div>
+                  <Button variant="secondary" size="sm" onClick={loadLineup}>
+                    重新加载
+                  </Button>
+                </div>
+              ) : groups.length === 0 ? (
+                <div
+                  className="text-[13px] px-4 py-3 rounded-xl text-center max-w-sm"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                >
+                  暂无可用阵容，请先在后台管理页面配置竞技场分组和模型
+                </div>
+              ) : (
                 <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
                   当前阵容: {selectedGroup?.name} ({slots.length} 个模型)
                 </div>
@@ -1048,9 +1093,13 @@ export function ArenaPage() {
                 onChange={handleTextareaInput}
                 onKeyDown={handleKeyDown}
                 placeholder={
-                  slots.length === 0
-                    ? '请先选择一个有模型的阵容...'
-                    : '输入你的问题，让多个模型匿名回答...'
+                  lineupLoading
+                    ? '阵容加载中...'
+                    : groups.length === 0
+                      ? '请先在管理页配置竞技场阵容...'
+                      : slots.length === 0
+                        ? '请先选择一个有模型的阵容...'
+                        : '输入你的问题，让多个模型匿名回答...'
                 }
                 disabled={isStreaming || slots.length === 0}
                 rows={1}
@@ -1082,11 +1131,13 @@ export function ArenaPage() {
               <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 Enter 发送, Shift+Enter 换行
               </span>
-              {slots.length > 0 && (
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  {selectedGroup?.name} - {slots.length} 个模型将匿名回答
-                </span>
-              )}
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                {slots.length > 0
+                  ? `${selectedGroup?.name} - ${slots.length} 个模型将匿名回答`
+                  : groups.length === 0
+                    ? '未配置阵容'
+                    : '请选择阵容'}
+              </span>
             </div>
           </div>
         </div>
