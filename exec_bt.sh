@@ -407,29 +407,50 @@ else
     fi
 
     # P3/P4: port conflict scan
+    # 区分"可替换的 default"和"真正的第三方冲突"
     PORT_CONFLICT=""
+    DEFAULT_CONFLICT=""
     for d in /etc/nginx/sites-enabled /etc/nginx/conf.d; do
       [ -d "$d" ] || continue
       for f in "$d"/*; do
         [ -f "$f" ] || continue
-        BASENAME=$(basename "$(readlink -f "$f" 2>/dev/null || echo "$f")")
-        case "$BASENAME" in prdagent-*) continue ;; esac
-        grep -qE "listen\s+${APP_PORT}(\s|;)" "$f" 2>/dev/null && { PORT_CONFLICT="$f"; break 2; }
+        REALNAME=$(basename "$(readlink -f "$f" 2>/dev/null || echo "$f")")
+        case "$REALNAME" in prdagent-*) continue ;; esac
+        if grep -qE "listen\s+${APP_PORT}(\s|;)" "$f" 2>/dev/null; then
+          SHORTNAME=$(basename "$f")
+          if [ "$SHORTNAME" = "default" ] || [ "$REALNAME" = "default" ]; then
+            DEFAULT_CONFLICT="$f"
+          else
+            PORT_CONFLICT="$f"
+            break 2
+          fi
+        fi
       done
     done
-    [ -z "$PORT_CONFLICT" ] && ss -tlnp 2>/dev/null | grep -q ":${APP_PORT} " && PORT_CONFLICT="(non-nginx process)"
+    # 非 nginx 进程占端口
+    if [ -z "$PORT_CONFLICT" ] && [ -z "$DEFAULT_CONFLICT" ]; then
+      ss -tlnp 2>/dev/null | grep -q ":${APP_PORT} " && PORT_CONFLICT="(non-nginx process)"
+    fi
 
     if [ -n "$PORT_CONFLICT" ]; then
+      # 真正的第三方冲突 → 不碰, 只警告
       warn ":${APP_PORT} conflict: $PORT_CONFLICT"
       warn "Try: NGINX_APP_PORT=8080 ./exec_bt.sh -d"
     else
+      # default 冲突 → 先禁用 default, 再写我们的配置
+      if [ -n "$DEFAULT_CONFLICT" ] && [ -n "$ENABLED_DIR" ] && [ -d "$ENABLED_DIR" ]; then
+        cp "$ENABLED_DIR/default" "$ENABLED_DIR/default.bak.$(date +%s)" 2>/dev/null || true
+        rm -f "$ENABLED_DIR/default"
+        ok "Disabled default site (backed up to .bak)"
+      fi
+
       PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || curl -s --max-time 5 ipinfo.io/ip 2>/dev/null || echo "_")
 
       cat > "$CONF_DIR/prdagent-app.conf" <<NGINX_CONF
 # exec_bt.sh auto-generated $(date -Iseconds)
 server {
     listen ${APP_PORT};
-    server_name ${PUBLIC_IP};
+    server_name ${PUBLIC_IP} _;
     client_max_body_size 30m;
     location / {
         proxy_pass http://127.0.0.1:5500;
@@ -450,12 +471,6 @@ NGINX_CONF
 
       if [ -n "$ENABLED_DIR" ] && [ -d "$ENABLED_DIR" ]; then
         ln -sf "$CONF_DIR/prdagent-app.conf" "$ENABLED_DIR/prdagent-app.conf"
-        # N3: default conflict → backup then disable
-        if [ -f "$ENABLED_DIR/default" ] && grep -qE "listen\s+${APP_PORT}(\s|;)" "$ENABLED_DIR/default" 2>/dev/null; then
-          cp "$ENABLED_DIR/default" "$ENABLED_DIR/default.bak.$(date +%s)"
-          rm -f "$ENABLED_DIR/default"
-          warn "Disabled default site (backed up)"
-        fi
       fi
 
       if nginx -t 2>&1; then
@@ -472,6 +487,11 @@ NGINX_CONF
         warn "nginx -t failed, reverting prdagent-app.conf"
         rm -f "$CONF_DIR/prdagent-app.conf"
         [ -n "$ENABLED_DIR" ] && rm -f "$ENABLED_DIR/prdagent-app.conf"
+        # 恢复 default
+        if [ -n "$DEFAULT_CONFLICT" ]; then
+          LATEST_BAK=$(ls -t "$ENABLED_DIR"/default.bak.* 2>/dev/null | head -1)
+          [ -n "$LATEST_BAK" ] && cp "$LATEST_BAK" "$ENABLED_DIR/default" && warn "Restored default site"
+        fi
       fi
     fi
   fi

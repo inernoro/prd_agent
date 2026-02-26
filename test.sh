@@ -66,16 +66,52 @@ fi
 # ── Colors ──
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
+# Overwrite current line
+CR='\r\033[K'
 
 # ── Counters ──
 PASS=0; FAIL=0; SKIP=0; TOTAL=0
 FAIL_LIST=""
+# Per-phase counters
+PHASE_PASS=0; PHASE_FAIL=0; PHASE_SKIP=0; PHASE_TOTAL=0
+RUN_INDEX=0  # sequential counter across all tests
 
 # ── Test Framework ──
 current_phase=0
 current_phase_name=""
 
+# Progress bar: ████░░░░ 12/30 (40%)
+progress_bar() {
+  local done=$1 total=$2 width=20
+  if [ "$total" -eq 0 ]; then return; fi
+  local pct=$((done * 100 / total))
+  local filled=$((done * width / total))
+  local empty=$((width - filled))
+  local bar=""
+  for ((i=0; i<filled; i++)); do bar+="█"; done
+  for ((i=0; i<empty; i++)); do bar+="░"; done
+  echo -n "${bar} ${done}/${total} (${pct}%)"
+}
+
+# Phase summary line
+phase_summary() {
+  if [ "$PHASE_TOTAL" -eq 0 ]; then return; fi
+  local phase_run=$((PHASE_PASS + PHASE_FAIL))
+  if [ "$PHASE_FAIL" -eq 0 ] && [ "$phase_run" -gt 0 ]; then
+    echo -e "  ${GREEN}  └─ ${PHASE_PASS}/${PHASE_TOTAL} passed ✓${NC}"
+  elif [ "$PHASE_FAIL" -gt 0 ]; then
+    echo -e "  ${RED}  └─ ${PHASE_PASS} passed, ${PHASE_FAIL} FAILED ✗${NC}"
+  fi
+}
+
 phase() {
+  # Print summary of PREVIOUS phase before starting new one
+  if [ "$LIST_ONLY" != true ] && [ "$current_phase" -gt 0 ] || [ "$PHASE_TOTAL" -gt 0 ]; then
+    phase_summary
+  fi
+  # Reset per-phase counters
+  PHASE_PASS=0; PHASE_FAIL=0; PHASE_SKIP=0; PHASE_TOTAL=0
+
   current_phase=$1
   current_phase_name="$2"
   if [ "$LIST_ONLY" = true ]; then
@@ -85,8 +121,8 @@ phase() {
   if [ -n "$PHASE_ONLY" ] && [ "$PHASE_ONLY" != "$current_phase" ]; then return; fi
   if [ "$current_phase" -lt "$PHASE_FROM" ]; then return; fi
   echo ""
-  echo -e "  ${BOLD}${CYAN}══ Phase $1: $2 ══${NC}"
-  echo ""
+  echo -e "  ${BOLD}${CYAN}┌── Phase $1: $2 ──${NC}"
+  echo -e "  ${CYAN}│${NC}"
 }
 
 should_run() {
@@ -95,148 +131,208 @@ should_run() {
   return 0
 }
 
+# Status line at end of each test showing overall progress
+_status_line() {
+  local executed=$((PASS + FAIL))
+  # Only show if terminal is interactive
+  if [ -t 1 ] && [ "$LIST_ONLY" != true ]; then
+    echo -ne "  ${DIM}$(progress_bar $executed $TOTAL)  ${GREEN}${PASS}✓${NC} ${RED}${FAIL}✗${NC}${CR}" >&2
+  fi
+}
+
+# Core test runner
+_run_test() {
+  local result_pass=$1; local id="$2"; local desc="$3"
+  TOTAL=$((TOTAL + 1)); PHASE_TOTAL=$((PHASE_TOTAL + 1))
+  RUN_INDEX=$((RUN_INDEX + 1))
+  if [ "$result_pass" = "1" ]; then
+    PASS=$((PASS + 1)); PHASE_PASS=$((PHASE_PASS + 1))
+    echo -e "  ${CYAN}│${NC} ${GREEN}✓${NC} ${DIM}[${id}]${NC} $desc"
+  else
+    FAIL=$((FAIL + 1)); PHASE_FAIL=$((PHASE_FAIL + 1))
+    echo -e "  ${CYAN}│${NC} ${RED}✗${NC} ${DIM}[${id}]${NC} $desc"
+    FAIL_LIST="${FAIL_LIST}\n    [${id}] $desc"
+  fi
+  _status_line
+}
+
 # T <id> <description> <command...>
 # 执行命令, 0=PASS, 非0=FAIL
 T() {
-  TOTAL=$((TOTAL + 1))
+  TOTAL=$((TOTAL + 1)); PHASE_TOTAL=$((PHASE_TOTAL + 1))
   local id="$1"; local desc="$2"; shift 2
   if [ "$LIST_ONLY" = true ]; then
     echo "  [$id] $desc"
+    TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1))
     return
   fi
-  should_run || { SKIP=$((SKIP + 1)); return; }
+  should_run || { SKIP=$((SKIP + 1)); PHASE_SKIP=$((PHASE_SKIP + 1)); TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1)); return; }
   if [ "$DRY_RUN" = true ]; then
-    echo -e "  ${DIM}[DRY] [$id] $desc${NC}"
-    SKIP=$((SKIP + 1))
+    echo -e "  ${CYAN}│${NC} ${DIM}[DRY] [$id] $desc${NC}"
+    SKIP=$((SKIP + 1)); PHASE_SKIP=$((PHASE_SKIP + 1)); TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1))
     return
   fi
+  # Show "running..." indicator
+  echo -ne "  ${CYAN}│${NC} ${DIM}⋯ [${id}] $desc${CR}" >&2
   local output
   output=$("$@" 2>&1)
   local rc=$?
+  RUN_INDEX=$((RUN_INDEX + 1))
   if [ $rc -eq 0 ]; then
-    echo -e "  ${GREEN}✓${NC} [$id] $desc"
-    PASS=$((PASS + 1))
+    echo -e "  ${CYAN}│${NC} ${GREEN}✓${NC} ${DIM}[${id}]${NC} $desc"
+    PASS=$((PASS + 1)); PHASE_PASS=$((PHASE_PASS + 1))
   else
-    echo -e "  ${RED}✗${NC} [$id] $desc"
-    [ -n "$output" ] && echo -e "    ${DIM}${output:0:200}${NC}"
-    FAIL=$((FAIL + 1))
+    echo -e "  ${CYAN}│${NC} ${RED}✗ [${id}]${NC} $desc"
+    [ -n "$output" ] && echo -e "  ${CYAN}│${NC}   ${DIM}${output:0:200}${NC}"
+    FAIL=$((FAIL + 1)); PHASE_FAIL=$((PHASE_FAIL + 1))
     FAIL_LIST="${FAIL_LIST}\n    [$id] $desc"
   fi
+  _status_line
 }
 
 # T_NOT <id> <description> <command...>
 # 执行命令, 非0=PASS, 0=FAIL (反向断言)
 T_NOT() {
-  TOTAL=$((TOTAL + 1))
+  TOTAL=$((TOTAL + 1)); PHASE_TOTAL=$((PHASE_TOTAL + 1))
   local id="$1"; local desc="$2"; shift 2
   if [ "$LIST_ONLY" = true ]; then
     echo "  [$id] $desc"
+    TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1))
     return
   fi
-  should_run || { SKIP=$((SKIP + 1)); return; }
+  should_run || { SKIP=$((SKIP + 1)); PHASE_SKIP=$((PHASE_SKIP + 1)); TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1)); return; }
   if [ "$DRY_RUN" = true ]; then
-    echo -e "  ${DIM}[DRY] [$id] $desc${NC}"
-    SKIP=$((SKIP + 1))
+    echo -e "  ${CYAN}│${NC} ${DIM}[DRY] [$id] $desc${NC}"
+    SKIP=$((SKIP + 1)); PHASE_SKIP=$((PHASE_SKIP + 1)); TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1))
     return
   fi
+  echo -ne "  ${CYAN}│${NC} ${DIM}⋯ [${id}] $desc${CR}" >&2
   local output
   output=$("$@" 2>&1)
   local rc=$?
+  RUN_INDEX=$((RUN_INDEX + 1))
   if [ $rc -ne 0 ]; then
-    echo -e "  ${GREEN}✓${NC} [$id] $desc"
-    PASS=$((PASS + 1))
+    echo -e "  ${CYAN}│${NC} ${GREEN}✓${NC} ${DIM}[${id}]${NC} $desc"
+    PASS=$((PASS + 1)); PHASE_PASS=$((PHASE_PASS + 1))
   else
-    echo -e "  ${RED}✗${NC} [$id] $desc (expected failure but got success)"
-    FAIL=$((FAIL + 1))
+    echo -e "  ${CYAN}│${NC} ${RED}✗ [${id}]${NC} $desc ${DIM}(expected fail, got success)${NC}"
+    FAIL=$((FAIL + 1)); PHASE_FAIL=$((PHASE_FAIL + 1))
     FAIL_LIST="${FAIL_LIST}\n    [$id] $desc"
   fi
+  _status_line
 }
 
 # T_MATCH <id> <description> <expected_pattern> <command...>
 # 执行命令, stdout 匹配 grep pattern 则 PASS
 T_MATCH() {
-  TOTAL=$((TOTAL + 1))
+  TOTAL=$((TOTAL + 1)); PHASE_TOTAL=$((PHASE_TOTAL + 1))
   local id="$1"; local desc="$2"; local pattern="$3"; shift 3
   if [ "$LIST_ONLY" = true ]; then
     echo "  [$id] $desc"
+    TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1))
     return
   fi
-  should_run || { SKIP=$((SKIP + 1)); return; }
+  should_run || { SKIP=$((SKIP + 1)); PHASE_SKIP=$((PHASE_SKIP + 1)); TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1)); return; }
   if [ "$DRY_RUN" = true ]; then
-    echo -e "  ${DIM}[DRY] [$id] $desc${NC}"
-    SKIP=$((SKIP + 1))
+    echo -e "  ${CYAN}│${NC} ${DIM}[DRY] [$id] $desc${NC}"
+    SKIP=$((SKIP + 1)); PHASE_SKIP=$((PHASE_SKIP + 1)); TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1))
     return
   fi
+  echo -ne "  ${CYAN}│${NC} ${DIM}⋯ [${id}] $desc${CR}" >&2
   local output
   output=$("$@" 2>&1)
   local rc=$?
+  RUN_INDEX=$((RUN_INDEX + 1))
   if echo "$output" | grep -qE "$pattern"; then
-    echo -e "  ${GREEN}✓${NC} [$id] $desc"
-    PASS=$((PASS + 1))
+    echo -e "  ${CYAN}│${NC} ${GREEN}✓${NC} ${DIM}[${id}]${NC} $desc"
+    PASS=$((PASS + 1)); PHASE_PASS=$((PHASE_PASS + 1))
   else
-    echo -e "  ${RED}✗${NC} [$id] $desc"
-    echo -e "    ${DIM}expected: /$pattern/${NC}"
-    echo -e "    ${DIM}got: ${output:0:200}${NC}"
-    FAIL=$((FAIL + 1))
+    echo -e "  ${CYAN}│${NC} ${RED}✗ [${id}]${NC} $desc"
+    echo -e "  ${CYAN}│${NC}   ${DIM}expected: /$pattern/${NC}"
+    echo -e "  ${CYAN}│${NC}   ${DIM}got: ${output:0:200}${NC}"
+    FAIL=$((FAIL + 1)); PHASE_FAIL=$((PHASE_FAIL + 1))
     FAIL_LIST="${FAIL_LIST}\n    [$id] $desc"
   fi
+  _status_line
 }
 
 # T_HTTP <id> <description> <expected_status> <url> [curl_args...]
 # curl 请求, HTTP status code 匹配则 PASS
 T_HTTP() {
-  TOTAL=$((TOTAL + 1))
+  TOTAL=$((TOTAL + 1)); PHASE_TOTAL=$((PHASE_TOTAL + 1))
   local id="$1"; local desc="$2"; local expected="$3"; local url="$4"; shift 4
   if [ "$LIST_ONLY" = true ]; then
     echo "  [$id] $desc"
+    TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1))
     return
   fi
-  should_run || { SKIP=$((SKIP + 1)); return; }
+  should_run || { SKIP=$((SKIP + 1)); PHASE_SKIP=$((PHASE_SKIP + 1)); TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1)); return; }
   if [ "$DRY_RUN" = true ]; then
-    echo -e "  ${DIM}[DRY] [$id] $desc${NC}"
-    SKIP=$((SKIP + 1))
+    echo -e "  ${CYAN}│${NC} ${DIM}[DRY] [$id] $desc${NC}"
+    SKIP=$((SKIP + 1)); PHASE_SKIP=$((PHASE_SKIP + 1)); TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1))
     return
   fi
+  echo -ne "  ${CYAN}│${NC} ${DIM}⋯ [${id}] $desc${CR}" >&2
   local status
   status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$@" "$url" 2>/dev/null)
+  RUN_INDEX=$((RUN_INDEX + 1))
   if [ "$status" = "$expected" ]; then
-    echo -e "  ${GREEN}✓${NC} [$id] $desc (HTTP $status)"
-    PASS=$((PASS + 1))
+    echo -e "  ${CYAN}│${NC} ${GREEN}✓${NC} ${DIM}[${id}]${NC} $desc ${DIM}(HTTP $status)${NC}"
+    PASS=$((PASS + 1)); PHASE_PASS=$((PHASE_PASS + 1))
   else
-    echo -e "  ${RED}✗${NC} [$id] $desc (expected HTTP $expected, got $status)"
-    FAIL=$((FAIL + 1))
+    echo -e "  ${CYAN}│${NC} ${RED}✗ [${id}]${NC} $desc ${DIM}(expected HTTP $expected, got $status)${NC}"
+    FAIL=$((FAIL + 1)); PHASE_FAIL=$((PHASE_FAIL + 1))
     FAIL_LIST="${FAIL_LIST}\n    [$id] $desc"
   fi
+  _status_line
 }
 
 # T_WAIT <id> <description> <max_seconds> <command...>
-# 反复执行直到成功, 最多 N 秒
+# 反复执行直到成功, 最多 N 秒 (带动画)
 T_WAIT() {
-  TOTAL=$((TOTAL + 1))
+  TOTAL=$((TOTAL + 1)); PHASE_TOTAL=$((PHASE_TOTAL + 1))
   local id="$1"; local desc="$2"; local max="$3"; shift 3
   if [ "$LIST_ONLY" = true ]; then
     echo "  [$id] $desc (wait ≤${max}s)"
+    TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1))
     return
   fi
-  should_run || { SKIP=$((SKIP + 1)); return; }
+  should_run || { SKIP=$((SKIP + 1)); PHASE_SKIP=$((PHASE_SKIP + 1)); TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1)); return; }
   if [ "$DRY_RUN" = true ]; then
-    echo -e "  ${DIM}[DRY] [$id] $desc${NC}"
-    SKIP=$((SKIP + 1))
+    echo -e "  ${CYAN}│${NC} ${DIM}[DRY] [$id] $desc${NC}"
+    SKIP=$((SKIP + 1)); PHASE_SKIP=$((PHASE_SKIP + 1)); TOTAL=$((TOTAL - 1)); PHASE_TOTAL=$((PHASE_TOTAL - 1))
     return
   fi
   local i=0
+  local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
   while [ "$i" -lt "$max" ]; do
     if "$@" >/dev/null 2>&1; then
-      echo -e "  ${GREEN}✓${NC} [$id] $desc (${i}s)"
-      PASS=$((PASS + 1))
+      echo -ne "${CR}" >&2
+      echo -e "  ${CYAN}│${NC} ${GREEN}✓${NC} ${DIM}[${id}]${NC} $desc ${DIM}(${i}s)${NC}"
+      PASS=$((PASS + 1)); PHASE_PASS=$((PHASE_PASS + 1))
+      RUN_INDEX=$((RUN_INDEX + 1))
+      _status_line
       return
     fi
+    local si=$((i % ${#spinner[@]}))
+    echo -ne "  ${CYAN}│${NC} ${YELLOW}${spinner[$si]}${NC} ${DIM}[${id}] $desc (${i}/${max}s)${CR}" >&2
     sleep 1
     i=$((i + 1))
   done
-  echo -e "  ${RED}✗${NC} [$id] $desc (timeout ${max}s)"
-  FAIL=$((FAIL + 1))
+  echo -ne "${CR}" >&2
+  echo -e "  ${CYAN}│${NC} ${RED}✗ [${id}]${NC} $desc ${DIM}(timeout ${max}s)${NC}"
+  FAIL=$((FAIL + 1)); PHASE_FAIL=$((PHASE_FAIL + 1))
   FAIL_LIST="${FAIL_LIST}\n    [$id] $desc"
+  RUN_INDEX=$((RUN_INDEX + 1))
+  _status_line
+}
+
+# ── Phase action message (indented under phase) ──
+msg() {
+  should_run || return
+  [ "$LIST_ONLY" = true ] && return
+  [ "$DRY_RUN" = true ] && return
+  echo -e "  ${CYAN}│${NC} ${DIM}$1${NC}"
 }
 
 # Helper: get BT auth token (if auth is enabled)
@@ -301,15 +397,14 @@ T "E13" "测试分支 ($TEST_BRANCH) 存在"    git rev-parse --verify "$TEST_BR
 phase 1 "exec_bt.sh 首次启动"
 
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "  ${DIM}启动 exec_bt.sh -d (后台模式)...${NC}"
+  msg "启动 exec_bt.sh -d (后台模式)..."
   cd "$REPO_ROOT"
-  # 设置固定凭据以便测试
   export ROOT_ACCESS_USERNAME="admin"
   export ROOT_ACCESS_PASSWORD="TestPass123!"
 
   EXEC_OUTPUT=$(./exec_bt.sh -d 2>&1) || true
   EXEC_RC=$?
-  echo -e "  ${DIM}exec_bt.sh 返回码: $EXEC_RC${NC}"
+  msg "exec_bt.sh 返回码: $EXEC_RC"
 fi
 
 T "S01" "exec_bt.sh 返回码 0"                     test "${EXEC_RC:-1}" -eq 0
@@ -318,10 +413,7 @@ T_MATCH "S03" "输出包含 Dashboard 地址"            "9900" echo "${EXEC_OUT
 T_MATCH "S04" "输出包含 Login 凭据"                "admin" echo "${EXEC_OUTPUT:-}"
 T "S05" "PID file 已创建"                          test -f "$PID_FILE"
 
-if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  # 等待 BT 完全启动
-  echo -e "  ${DIM}等待 Branch-Tester 启动 (最多 30s)...${NC}"
-fi
+msg "等待 Branch-Tester 启动..."
 
 T_WAIT "S06" "BT :9900 可达"  30  curl -sf --max-time 3 http://localhost:9900
 T_WAIT "S07" "BT API 可达"    10  curl -sf --max-time 3 "${BT_API}/branches"
@@ -390,7 +482,7 @@ phase 4 "分支生命周期"
 
 # ── 4.1 添加分支 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 4.1 添加分支 ──${NC}"
+  msg "── 4.1 添加分支 ──"
   ADD_RESULT=$(bt_curl POST /branches -d "{\"branch\":\"$TEST_BRANCH\"}" 2>&1)
   ADD_STATUS=$?
 fi
@@ -404,7 +496,7 @@ if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
     try { const j=JSON.parse(d); console.log(j.branch?.id || '$TEST_BRANCH'); }
     catch(e) { console.log('$TEST_BRANCH'); }
   " 2>/dev/null || echo "$TEST_BRANCH")
-  echo -e "  ${DIM}分支 ID: $BRANCH_ID${NC}"
+  msg "分支 ID: $BRANCH_ID"
 fi
 
 # 验证分支出现在列表
@@ -416,14 +508,10 @@ T_MATCH "B04" "state.json 包含分支"                "${BRANCH_ID:-$TEST_BRANC
 
 # ── 4.2 一键部署 (build + start + activate) ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 4.2 一键部署 (可能需要数分钟) ──${NC}"
+  msg "── 4.2 一键部署 (build→start→activate, 可能需要数分钟) ──"
   DEPLOY_OUTPUT=$(bt_curl_sse POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/deploy" 2>&1)
   DEPLOY_RC=$?
-  echo -e "  ${DIM}部署返回码: $DEPLOY_RC${NC}"
-  # 显示最后几行
-  echo "$DEPLOY_OUTPUT" | tail -5 | while read -r line; do
-    echo -e "    ${DIM}$line${NC}"
-  done
+  msg "部署返回码: $DEPLOY_RC"
 fi
 
 T_MATCH "B05" "部署流包含 complete"                "complete" echo "${DEPLOY_OUTPUT:-}"
@@ -442,7 +530,7 @@ T_MATCH "B09" "nginx config 包含分支上游"          "prdagent-api-${BRANCH_
 
 # ── 4.3 网关断开 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 4.3 网关断开 ──${NC}"
+  msg "── 4.3 网关断开 ──"
   bt_curl POST /gateway/disconnect >/dev/null 2>&1
   sleep 1
 fi
@@ -452,7 +540,7 @@ T_MATCH "B11" "断开后 activeBranchId 为 null"      '"activeBranchId":null' b
 
 # ── 4.4 重新激活 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 4.4 重新激活 ──${NC}"
+  msg "── 4.4 重新激活 ──"
   bt_curl POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/activate" >/dev/null 2>&1
   sleep 2
 fi
@@ -461,7 +549,7 @@ T_WAIT "B12" "重新激活后 gateway 可达" 10 curl -sf --max-time 5 "http://l
 
 # ── 4.5 拉取代码 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 4.5 拉取代码 ──${NC}"
+  msg "── 4.5 拉取代码 ──"
   PULL_RESULT=$(bt_curl POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/pull" 2>&1)
 fi
 
@@ -472,7 +560,7 @@ T_MATCH "B14" "操作日志可查"                       "logs" bt_curl GET "/br
 
 # ── 4.7 停止分支 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 4.7 停止分支 ──${NC}"
+  msg "── 4.7 停止分支 ──"
   bt_curl POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/stop" >/dev/null 2>&1
   sleep 2
 fi
@@ -481,7 +569,7 @@ T_NOT "B15" "容器已停止"                           docker inspect --format=
 
 # ── 4.8 分支状态重置 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 4.8 重置分支状态 ──${NC}"
+  msg "── 4.8 重置分支状态 ──"
   bt_curl POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/reset" >/dev/null 2>&1
 fi
 
@@ -489,7 +577,7 @@ T_MATCH "B16" "分支状态已重置"                     "idle|success" bt_curl
 
 # ── 4.9 删除分支 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 4.9 删除分支 ──${NC}"
+  msg "── 4.9 删除分支 ──"
   DEL_OUTPUT=$(bt_curl_sse DELETE "/branches/${BRANCH_ID:-$TEST_BRANCH}" 2>&1)
   DEL_RC=$?
   sleep 2
@@ -524,7 +612,7 @@ else
   for id in N01 N02 N03 N04 N05; do
     TOTAL=$((TOTAL + 1)); SKIP=$((SKIP + 1))
     if [ "$LIST_ONLY" != true ] && should_run; then
-      echo -e "  ${YELLOW}⊘${NC} [$id] (nginx not installed, skipped)"
+      echo -e "  ${CYAN}│${NC} ${YELLOW}⊘${NC} ${DIM}[$id]${NC} (nginx not installed, skipped)"
     elif [ "$LIST_ONLY" = true ]; then
       echo "  [$id] (requires host nginx)"
     fi
@@ -551,13 +639,13 @@ T_HTTP "N10" "断开后 /api/ 返回 502"               "502" "http://localhost:
 phase 6 "幂等性 (重复启动)"
 
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "  ${DIM}记录当前状态...${NC}"
+  msg "记录当前状态..."
   OLD_PID=$(cat "$PID_FILE" 2>/dev/null || echo "none")
   OLD_MONGO_ID=$(docker inspect --format='{{.Id}}' prdagent-mongodb 2>/dev/null | head -c 12)
   OLD_REDIS_ID=$(docker inspect --format='{{.Id}}' prdagent-redis 2>/dev/null | head -c 12)
   OLD_GATEWAY_ID=$(docker inspect --format='{{.Id}}' prdagent-gateway 2>/dev/null | head -c 12)
 
-  echo -e "  ${DIM}重新运行 exec_bt.sh -d...${NC}"
+  msg "重新运行 exec_bt.sh -d..."
   cd "$REPO_ROOT"
   IDEM_OUTPUT=$(./exec_bt.sh -d 2>&1) || true
   IDEM_RC=$?
@@ -595,7 +683,7 @@ phase 7 "混沌测试 (故障注入)"
 
 # ── 7.1 Kill BT 进程 → 重启恢复 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 7.1 Kill -9 BT 进程 ──${NC}"
+  msg "── 7.1 Kill -9 BT 进程 ──"
   CHAOS_PID=$(cat "$PID_FILE" 2>/dev/null || echo "")
   if [ -n "$CHAOS_PID" ]; then
     kill -9 "$CHAOS_PID" 2>/dev/null || true
@@ -606,7 +694,7 @@ fi
 T_NOT "C01" "BT 进程已死"                         curl -sf --max-time 2 http://localhost:9900
 
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "  ${DIM}重新启动 exec_bt.sh -d...${NC}"
+  msg "重新启动 exec_bt.sh -d..."
   cd "$REPO_ROOT"
   CHAOS_OUTPUT=$(./exec_bt.sh -d 2>&1) || true
 fi
@@ -616,7 +704,7 @@ T_WAIT "C03" "API 恢复"        10  curl -sf --max-time 3 "${BT_API}/branches"
 
 # ── 7.2 损坏 state.json → 自动恢复 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 7.2 损坏 state.json ──${NC}"
+  msg "── 7.2 损坏 state.json ──"
   # 先停 BT
   ./exec_bt.sh --stop <<< "n" 2>/dev/null || true
   sleep 2
@@ -627,7 +715,7 @@ if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
     echo '{"broken": tru' > "$STATE_FILE"
   fi
 
-  echo -e "  ${DIM}损坏的 state.json 内容: $(cat "$STATE_FILE" 2>/dev/null)${NC}"
+  msg "损坏的 state.json 已写入"
 
   # 重启
   cd "$REPO_ROOT"
@@ -647,7 +735,7 @@ fi
 
 # ── 7.3 PID Reuse 模拟 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 7.3 PID Reuse 模拟 ──${NC}"
+  msg "── 7.3 PID Reuse 模拟 ──"
   # 停掉 BT
   ./exec_bt.sh --stop <<< "n" 2>/dev/null || true
   sleep 2
@@ -656,7 +744,7 @@ if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   mkdir -p "$(dirname "$PID_FILE")"
   echo "1" > "$PID_FILE"
 
-  echo -e "  ${DIM}PID file 已伪造为 PID 1${NC}"
+  msg "PID file 已伪造为 PID 1"
 
   # 重启 - 应该不会 kill PID 1
   cd "$REPO_ROOT"
@@ -671,7 +759,7 @@ T "C08" "PID 1 (init) 未被误杀"                   kill -0 1
 
 # ── 7.4 Gateway default.conf 为静态文件 (独立部署残留模拟) ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 7.4 Gateway default.conf 静态文件模拟 ──${NC}"
+  msg "── 7.4 Gateway default.conf 静态文件模拟 ──"
   GW_CONF="$REPO_ROOT/deploy/nginx/conf.d/default.conf"
 
   # 停 BT
@@ -693,7 +781,7 @@ server {
     }
 }
 STATIC_CONF
-    echo -e "  ${DIM}default.conf 已替换为静态文件 (模拟独立部署残留)${NC}"
+    msg "default.conf 已替换为静态文件 (模拟独立部署残留)"
   fi
 
   # 重启
@@ -707,7 +795,7 @@ T_WAIT "C11" "修复后 BT 可用"     30  curl -sf --max-time 3 http://localhos
 
 # ── 7.5 端口 9900 被占用 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 7.5 端口 9900 占用测试 ──${NC}"
+  msg "── 7.5 端口 9900 占用测试 ──"
   # 停 BT
   ./exec_bt.sh --stop <<< "n" 2>/dev/null || true
   sleep 2
@@ -746,7 +834,7 @@ T_WAIT "C13" "端口释放后恢复"    30  curl -sf --max-time 3 http://localho
 
 # ── 7.6 --test 自检命令 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 7.6 exec_bt.sh --test 自检 ──${NC}"
+  msg "── 7.6 exec_bt.sh --test 自检 ──"
   cd "$REPO_ROOT"
   SELFTEST_OUTPUT=$(./exec_bt.sh --test 2>&1) || true
   SELFTEST_RC=$?
@@ -756,7 +844,7 @@ T_MATCH "C14" "--test 输出包含测试结果"            "PASSED\|passed" echo
 
 # ── 7.7 --status 状态命令 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "\n  ${DIM}── 7.7 exec_bt.sh --status ──${NC}"
+  msg "── 7.7 exec_bt.sh --status ──"
   cd "$REPO_ROOT"
   STATUS_OUTPUT=$(./exec_bt.sh --status 2>&1) || true
 fi
@@ -780,7 +868,7 @@ else
   for id in P01 P02; do
     TOTAL=$((TOTAL + 1)); SKIP=$((SKIP + 1))
     if [ "$LIST_ONLY" != true ] && should_run; then
-      echo -e "  ${YELLOW}⊘${NC} [$id] (无法获取公网 IP, skipped)"
+      echo -e "  ${CYAN}│${NC} ${YELLOW}⊘${NC} ${DIM}[$id]${NC} (无法获取公网 IP, skipped)"
     elif [ "$LIST_ONLY" = true ]; then
       echo "  [$id] (requires public IP)"
     fi
@@ -796,13 +884,14 @@ T_HTTP "P04" "localhost:9900 → dashboard 可达"     "200" "http://localhost:9
 # ══════════════════════════════════════════════════════════════════════════
 phase 9 "清理"
 
-if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  echo -e "  ${DIM}保持 BT 运行 (不自动清理)${NC}"
-  echo -e "  ${DIM}如需停止: ./exec_bt.sh --stop${NC}"
-fi
+msg "保持 BT 运行 (不自动清理)"
+msg "如需停止: ./exec_bt.sh --stop"
 
 T "X01" "BT 仍在运行"                             curl -sf --max-time 3 http://localhost:9900
 T "X02" "基础设施仍在运行"                         docker inspect --format='{{.State.Running}}' prdagent-mongodb
+
+# Final phase summary
+phase_summary
 
 # ══════════════════════════════════════════════════════════════════════════
 # REPORT
@@ -813,6 +902,9 @@ if [ "$LIST_ONLY" = true ]; then
   echo ""
   exit 0
 fi
+
+# Clear progress line
+echo -ne "${CR}" >&2
 
 echo ""
 echo -e "  ${BOLD}${CYAN}╔══════════════════════════════════════════════════╗${NC}"
