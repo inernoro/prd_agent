@@ -274,12 +274,12 @@ function OverviewTab({ overview, trends, agents, loading }: {
     <div className="space-y-5">
       {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KpiCard title="总用户数" value={overview.totalUsers} accent="blue" icon={<Users size={13} />} animated />
-        <KpiCard title="活跃用户" value={overview.activeUsers} accent="emerald" icon={<Activity size={13} />} trend={activeTrend.direction} trendLabel={`${activeTrend.label} vs 上期`} animated />
+        <KpiCard title="总用户数" value={overview.totalUsers} accent="indigo" icon={<Users size={13} />} animated />
+        <KpiCard title="活跃用户" value={overview.activeUsers} accent="indigo" icon={<Activity size={13} />} trend={activeTrend.direction} trendLabel={`${activeTrend.label} vs 上期`} animated />
         <KpiCard title="对话消息" value={overview.periodMessages} accent="indigo" icon={<MessageSquare size={13} />} trend={msgTrend.direction} trendLabel={`${msgTrend.label} vs 上期`} animated />
         <KpiCard title="Token 消耗" value={formatTokens(overview.periodTokens)} accent="purple" icon={<Zap size={13} />} trend={tokenTrend.direction} trendLabel={`${tokenTrend.label} vs 上期`} animated />
-        <KpiCard title="LLM 调用" value={overview.llmCalls} accent="cyan" icon={<Cpu size={13} />} animated />
-        <KpiCard title="缺陷解决率" value={`${overview.defectResolutionRate}%`} accent="green" icon={<Bug size={13} />} animated />
+        <KpiCard title="LLM 调用" value={overview.llmCalls} accent="default" icon={<Cpu size={13} />} animated />
+        <KpiCard title="缺陷解决率" value={`${overview.defectResolutionRate}%`} accent="default" icon={<Bug size={13} />} animated />
       </div>
 
       {/* Charts Row */}
@@ -728,9 +728,9 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
     <div className="space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard title="总调用次数" value={totalCalls} accent="indigo" icon={<Cpu size={13} />} animated />
-        <KpiCard title="总 Token" value={formatTokens(totalTokens)} accent="purple" icon={<Zap size={13} />} animated />
-        <KpiCard title="模型种类" value={models.length} accent="cyan" icon={<Bot size={13} />} animated />
-        <KpiCard title="平均响应" value={models.length > 0 ? `${(models.reduce((s, m) => s + m.avgDurationMs, 0) / models.length / 1000).toFixed(1)}s` : '-'} accent="green" icon={<Activity size={13} />} animated />
+        <KpiCard title="总 Token" value={formatTokens(totalTokens)} accent="indigo" icon={<Zap size={13} />} animated />
+        <KpiCard title="模型种类" value={models.length} accent="default" icon={<Bot size={13} />} animated />
+        <KpiCard title="平均响应" value={models.length > 0 ? `${(models.reduce((s, m) => s + m.avgDurationMs, 0) / models.length / 1000).toFixed(1)}s` : '-'} accent="default" icon={<Activity size={13} />} animated />
       </div>
 
       <GlassCard glow animated accentHue={234}>
@@ -922,7 +922,7 @@ export default function ExecutiveDashboardPage() {
         activeKey={activeTab}
         onChange={setActiveTab}
         icon={<Crown size={16} />}
-        variant="gold"
+        variant="default"
         actions={isMobile ? undefined : (
           <div className="flex items-center gap-2">
             <select
