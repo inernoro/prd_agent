@@ -1,6 +1,9 @@
 import type { ApiResponse } from '@/types/api';
 
-/** 视频场景 */
+/** 分镜状态 */
+export type SceneItemStatus = 'Draft' | 'Generating' | 'Done' | 'Error';
+
+/** 视频场景（分镜） */
 export interface VideoGenScene {
   index: number;
   topic: string;
@@ -8,6 +11,8 @@ export interface VideoGenScene {
   visualDescription: string;
   durationSeconds: number;
   sceneType: string;
+  status: SceneItemStatus;
+  errorMessage?: string;
 }
 
 /** 视频生成任务 */
@@ -17,6 +22,8 @@ export interface VideoGenRun {
   status: string;
   articleMarkdown: string;
   articleTitle?: string;
+  systemPrompt?: string;
+  styleDescription?: string;
   scenes: VideoGenScene[];
   totalDurationSeconds: number;
   scriptMarkdown?: string;
@@ -47,11 +54,15 @@ export interface VideoGenRunListItem {
   startedAt?: string;
   endedAt?: string;
   errorMessage?: string;
+  scenesCount: number;
+  scenesReady: number;
 }
 
 export type CreateVideoGenRunContract = (input: {
   articleMarkdown: string;
   articleTitle?: string;
+  systemPrompt?: string;
+  styleDescription?: string;
 }) => Promise<ApiResponse<{ runId: string }>>;
 
 export type ListVideoGenRunsContract = (input?: {
@@ -62,3 +73,21 @@ export type ListVideoGenRunsContract = (input?: {
 export type GetVideoGenRunContract = (runId: string) => Promise<ApiResponse<VideoGenRun>>;
 
 export type CancelVideoGenRunContract = (runId: string) => Promise<ApiResponse<boolean>>;
+
+export type UpdateVideoSceneContract = (
+  runId: string,
+  sceneIndex: number,
+  input: {
+    topic?: string;
+    narration?: string;
+    visualDescription?: string;
+    sceneType?: string;
+  }
+) => Promise<ApiResponse<{ scene: VideoGenScene; totalDurationSeconds: number }>>;
+
+export type RegenerateVideoSceneContract = (
+  runId: string,
+  sceneIndex: number
+) => Promise<ApiResponse<boolean>>;
+
+export type TriggerVideoRenderContract = (runId: string) => Promise<ApiResponse<boolean>>;

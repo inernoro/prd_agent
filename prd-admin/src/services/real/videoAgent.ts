@@ -4,6 +4,9 @@ import type {
   ListVideoGenRunsContract,
   GetVideoGenRunContract,
   CancelVideoGenRunContract,
+  UpdateVideoSceneContract,
+  RegenerateVideoSceneContract,
+  TriggerVideoRenderContract,
 } from '@/services/contracts/videoAgent';
 
 const BASE = '/api/video-agent';
@@ -28,6 +31,21 @@ export const getVideoGenRunReal: GetVideoGenRunContract = async (runId) => {
 
 export const cancelVideoGenRunReal: CancelVideoGenRunContract = async (runId) => {
   const { data } = await api.post(`${BASE}/runs/${runId}/cancel`);
+  return data;
+};
+
+export const updateVideoSceneReal: UpdateVideoSceneContract = async (runId, sceneIndex, input) => {
+  const { data } = await api.put(`${BASE}/runs/${runId}/scenes/${sceneIndex}`, input);
+  return data;
+};
+
+export const regenerateVideoSceneReal: RegenerateVideoSceneContract = async (runId, sceneIndex) => {
+  const { data } = await api.post(`${BASE}/runs/${runId}/scenes/${sceneIndex}/regenerate`);
+  return data;
+};
+
+export const triggerVideoRenderReal: TriggerVideoRenderContract = async (runId) => {
+  const { data } = await api.post(`${BASE}/runs/${runId}/render`);
   return data;
 };
 
