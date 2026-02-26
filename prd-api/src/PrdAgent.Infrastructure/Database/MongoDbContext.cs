@@ -112,6 +112,9 @@ public class MongoDbContext
     public IMongoCollection<ReportTeamMember> ReportTeamMembers => _database.GetCollection<ReportTeamMember>("report_team_members");
     public IMongoCollection<ReportTemplate> ReportTemplates => _database.GetCollection<ReportTemplate>("report_templates");
     public IMongoCollection<WeeklyReport> WeeklyReports => _database.GetCollection<WeeklyReport>("report_weekly_reports");
+    public IMongoCollection<ReportDailyLog> ReportDailyLogs => _database.GetCollection<ReportDailyLog>("report_daily_logs");
+    public IMongoCollection<ReportDataSource> ReportDataSources => _database.GetCollection<ReportDataSource>("report_data_sources");
+    public IMongoCollection<ReportCommit> ReportCommits => _database.GetCollection<ReportCommit>("report_commits");
 
     // Channel Adapter 多通道适配器
     public IMongoCollection<ChannelWhitelist> ChannelWhitelists => _database.GetCollection<ChannelWhitelist>("channel_whitelist");
@@ -1010,5 +1013,33 @@ public class MongoDbContext
         WeeklyReports.Indexes.CreateOne(new CreateIndexModel<WeeklyReport>(
             Builders<WeeklyReport>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.PeriodEnd),
             new CreateIndexOptions { Name = "idx_weekly_reports_user_period" }));
+
+        // ReportDailyLogs：(UserId, Date) 唯一，一天一条
+        try
+        {
+            ReportDailyLogs.Indexes.CreateOne(new CreateIndexModel<ReportDailyLog>(
+                Builders<ReportDailyLog>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.Date),
+                new CreateIndexOptions { Unique = true, Name = "idx_daily_logs_user_date" }));
+        }
+        catch (MongoCommandException) { /* 索引已存在 */ }
+
+        // ReportDataSources：按 TeamId 查询
+        ReportDataSources.Indexes.CreateOne(new CreateIndexModel<ReportDataSource>(
+            Builders<ReportDataSource>.IndexKeys.Ascending(x => x.TeamId),
+            new CreateIndexOptions { Name = "idx_data_sources_team" }));
+
+        // ReportCommits：(DataSourceId, CommitHash) 唯一，幂等同步
+        try
+        {
+            ReportCommits.Indexes.CreateOne(new CreateIndexModel<ReportCommit>(
+                Builders<ReportCommit>.IndexKeys.Ascending(x => x.DataSourceId).Ascending(x => x.CommitHash),
+                new CreateIndexOptions { Unique = true, Name = "idx_commits_source_hash" }));
+        }
+        catch (MongoCommandException) { /* 索引已存在 */ }
+
+        // ReportCommits：按 MappedUserId + CommittedAt 查询用户一周提交
+        ReportCommits.Indexes.CreateOne(new CreateIndexModel<ReportCommit>(
+            Builders<ReportCommit>.IndexKeys.Ascending(x => x.MappedUserId).Descending(x => x.CommittedAt),
+            new CreateIndexOptions { Name = "idx_commits_user_date" }));
     }
 }

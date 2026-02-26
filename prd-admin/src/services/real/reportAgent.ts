@@ -24,6 +24,23 @@ import type {
   ReviewWeeklyReportContract,
   ReturnWeeklyReportContract,
   GetTeamDashboardContract,
+  SaveDailyLogContract,
+  ListDailyLogsContract,
+  GetDailyLogContract,
+  DeleteDailyLogContract,
+  ListDataSourcesContract,
+  CreateDataSourceContract,
+  UpdateDataSourceContract,
+  DeleteDataSourceContract,
+  TestDataSourceContract,
+  SyncDataSourceContract,
+  ListDataSourceCommitsContract,
+  GenerateReportContract,
+  GetCollectedActivityContract,
+  DailyLog,
+  ReportDataSource,
+  ReportCommit,
+  CollectedActivity,
   ReportTeam,
   ReportTeamMember,
   ReportTemplate,
@@ -208,6 +225,120 @@ export const getTeamDashboardReal: GetTeamDashboardContract = async (input) => {
   const q = qs.toString();
   return await apiRequest<TeamDashboardData>(
     `${api.reportAgent.teams.dashboard(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+// ========== Daily Logs ==========
+
+export const saveDailyLogReal: SaveDailyLogContract = async (input) => {
+  return await apiRequest<DailyLog>(api.reportAgent.dailyLogs.list(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const listDailyLogsReal: ListDailyLogsContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.startDate) qs.set('startDate', input.startDate);
+  if (input?.endDate) qs.set('endDate', input.endDate);
+  const q = qs.toString();
+  return await apiRequest<{ items: DailyLog[] }>(
+    `${api.reportAgent.dailyLogs.list()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const getDailyLogReal: GetDailyLogContract = async (input) => {
+  return await apiRequest<DailyLog>(
+    api.reportAgent.dailyLogs.byDate(encodeURIComponent(input.date)),
+    { method: 'GET' }
+  );
+};
+
+export const deleteDailyLogReal: DeleteDailyLogContract = async (input) => {
+  return await apiRequest<{ deleted: boolean }>(
+    api.reportAgent.dailyLogs.byDate(encodeURIComponent(input.date)),
+    { method: 'DELETE' }
+  );
+};
+
+// ========== Data Sources ==========
+
+export const listDataSourcesReal: ListDataSourcesContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.teamId) qs.set('teamId', input.teamId);
+  const q = qs.toString();
+  return await apiRequest<{ items: ReportDataSource[] }>(
+    `${api.reportAgent.dataSources.list()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const createDataSourceReal: CreateDataSourceContract = async (input) => {
+  return await apiRequest<{ id: string }>(api.reportAgent.dataSources.list(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const updateDataSourceReal: UpdateDataSourceContract = async (input) => {
+  const { id, ...body } = input;
+  return await apiRequest<object>(
+    api.reportAgent.dataSources.byId(encodeURIComponent(id)),
+    { method: 'PUT', body }
+  );
+};
+
+export const deleteDataSourceReal: DeleteDataSourceContract = async (input) => {
+  return await apiRequest<object>(
+    api.reportAgent.dataSources.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+export const testDataSourceReal: TestDataSourceContract = async (input) => {
+  return await apiRequest<{ success: boolean; error?: string }>(
+    api.reportAgent.dataSources.test(encodeURIComponent(input.id)),
+    { method: 'POST' }
+  );
+};
+
+export const syncDataSourceReal: SyncDataSourceContract = async (input) => {
+  return await apiRequest<{ syncedCommits: number; error?: string }>(
+    api.reportAgent.dataSources.sync(encodeURIComponent(input.id)),
+    { method: 'POST' }
+  );
+};
+
+export const listDataSourceCommitsReal: ListDataSourceCommitsContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.since) qs.set('since', input.since);
+  if (input.until) qs.set('until', input.until);
+  if (input.limit != null) qs.set('limit', String(input.limit));
+  const q = qs.toString();
+  return await apiRequest<{ items: ReportCommit[] }>(
+    `${api.reportAgent.dataSources.commits(encodeURIComponent(input.id))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+// ========== AI Generation ==========
+
+export const generateReportReal: GenerateReportContract = async (input) => {
+  return await apiRequest<WeeklyReport>(
+    api.reportAgent.reports.generate(encodeURIComponent(input.id)),
+    { method: 'POST' }
+  );
+};
+
+export const getCollectedActivityReal: GetCollectedActivityContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input?.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  const q = qs.toString();
+  return await apiRequest<CollectedActivity>(
+    `${api.reportAgent.activity()}${q ? `?${q}` : ''}`,
     { method: 'GET' }
   );
 };

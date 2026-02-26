@@ -536,6 +536,36 @@ public static class WorkflowAgent
 }
 
 /// <summary>
+/// Report Agent 周报管理
+/// </summary>
+public static class ReportAgent
+{
+    public const string AppName = "Report Agent";
+
+    public static class Generate
+    {
+        [AppCallerMetadata(
+            "周报草稿生成",
+            "基于采集数据自动生成周报草稿",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Report"
+        )]
+        public const string Draft = "report-agent.generate::chat";
+    }
+
+    public static class Polish
+    {
+        [AppCallerMetadata(
+            "周报内容润色",
+            "对手动编写的周报内容做表达优化",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Report"
+        )]
+        public const string Content = "report-agent.polish::chat";
+    }
+}
+
+/// <summary>
 /// Admin 管理后台
 /// </summary>
 public static class Admin

@@ -16,7 +16,7 @@ import type {
   TeamDashboardData,
 } from '@/services/contracts/reportAgent';
 
-type TabKey = 'my-reports' | 'team-dashboard' | 'templates' | 'teams';
+type TabKey = 'my-reports' | 'daily-log' | 'team-dashboard' | 'templates' | 'teams' | 'data-sources';
 
 interface ReportAgentState {
   // Data

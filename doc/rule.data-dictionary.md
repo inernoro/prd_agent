@@ -78,6 +78,9 @@
 | `report_team_members` | `ReportTeamMember` | 周报团队成员 | `(teamId, userId)` 唯一；`userId` |
 | `report_templates` | `ReportTemplate` | 周报模板 | `(isDefault, createdAt)` |
 | `report_weekly_reports` | `WeeklyReport` | 周报主体 | `(userId, teamId, weekYear, weekNumber)` 唯一；`(teamId, status, periodEnd)`；`(userId, periodEnd)` |
+| `report_daily_logs` | `ReportDailyLog` | 每日工作打点 | `(userId, date)` 唯一 |
+| `report_data_sources` | `ReportDataSource` | Git/SVN 数据源配置 | `teamId` |
+| `report_commits` | `ReportCommit` | 缓存的代码提交 | `(dataSourceId, commitHash)` 唯一；`(mappedUserId, committedAt)` |
 
 ---
 

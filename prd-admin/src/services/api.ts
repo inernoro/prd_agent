@@ -465,7 +465,20 @@ export const api = {
       submit: (id: string) => `/api/report-agent/reports/${id}/submit`,
       review: (id: string) => `/api/report-agent/reports/${id}/review`,
       return: (id: string) => `/api/report-agent/reports/${id}/return`,
+      generate: (id: string) => `/api/report-agent/reports/${id}/generate`,
     },
+    dailyLogs: {
+      list: () => '/api/report-agent/daily-logs',
+      byDate: (date: string) => `/api/report-agent/daily-logs/${date}`,
+    },
+    dataSources: {
+      list: () => '/api/report-agent/data-sources',
+      byId: (id: string) => `/api/report-agent/data-sources/${id}`,
+      test: (id: string) => `/api/report-agent/data-sources/${id}/test`,
+      sync: (id: string) => `/api/report-agent/data-sources/${id}/sync`,
+      commits: (id: string) => `/api/report-agent/data-sources/${id}/commits`,
+    },
+    activity: () => '/api/report-agent/activity',
     users: () => '/api/report-agent/users',
   },
 

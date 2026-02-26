@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react';
-import { FileBarChart, Users, FileText, Building2, RefreshCw } from 'lucide-react';
+import { FileBarChart, Users, FileText, Building2, RefreshCw, CalendarCheck, GitBranch } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
@@ -9,6 +9,8 @@ import { MyReportsList } from './components/MyReportsList';
 import { TeamDashboard } from './components/TeamDashboard';
 import { TemplateManager } from './components/TemplateManager';
 import { TeamManager } from './components/TeamManager';
+import { DailyLogPanel } from './components/DailyLogPanel';
+import { DataSourceManager } from './components/DataSourceManager';
 
 export default function ReportAgentPage() {
   const {
@@ -25,6 +27,7 @@ export default function ReportAgentPage() {
 
   const hasTemplateManage = permissions.includes('report-agent.template.manage') || permissions.includes('super');
   const hasTeamManage = permissions.includes('report-agent.team.manage') || permissions.includes('super');
+  const hasDataSourceManage = permissions.includes('report-agent.datasource.manage') || permissions.includes('super');
 
   // Check if user is a leader of any team
   const isLeader = useMemo(() => {
@@ -38,6 +41,7 @@ export default function ReportAgentPage() {
   const tabItems = useMemo(() => {
     const items = [
       { key: 'my-reports', label: '我的周报', icon: <FileText size={14} /> },
+      { key: 'daily-log', label: '每日打点', icon: <CalendarCheck size={14} /> },
     ];
     if (isLeader) {
       items.push({ key: 'team-dashboard', label: '团队面板', icon: <Users size={14} /> });
@@ -48,8 +52,11 @@ export default function ReportAgentPage() {
     if (hasTeamManage) {
       items.push({ key: 'teams', label: '团队管理', icon: <Building2 size={14} /> });
     }
+    if (hasDataSourceManage) {
+      items.push({ key: 'data-sources', label: '数据源', icon: <GitBranch size={14} /> });
+    }
     return items;
-  }, [isLeader, hasTemplateManage, hasTeamManage]);
+  }, [isLeader, hasTemplateManage, hasTeamManage, hasDataSourceManage]);
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
@@ -83,9 +90,11 @@ export default function ReportAgentPage() {
 
       <div className="flex-1 min-h-0">
         {activeTab === 'my-reports' && <MyReportsList />}
+        {activeTab === 'daily-log' && <DailyLogPanel />}
         {activeTab === 'team-dashboard' && <TeamDashboard />}
         {activeTab === 'templates' && <TemplateManager />}
         {activeTab === 'teams' && <TeamManager />}
+        {activeTab === 'data-sources' && <DataSourceManager />}
       </div>
     </div>
   );

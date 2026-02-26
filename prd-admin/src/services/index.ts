@@ -507,6 +507,19 @@ import type {
   ReviewWeeklyReportContract,
   ReturnWeeklyReportContract,
   GetTeamDashboardContract,
+  SaveDailyLogContract,
+  ListDailyLogsContract,
+  GetDailyLogContract,
+  DeleteDailyLogContract,
+  ListDataSourcesContract,
+  CreateDataSourceContract,
+  UpdateDataSourceContract,
+  DeleteDataSourceContract,
+  TestDataSourceContract,
+  SyncDataSourceContract,
+  ListDataSourceCommitsContract,
+  GenerateReportContract,
+  GetCollectedActivityContract,
 } from '@/services/contracts/reportAgent';
 import {
   listReportTeamsReal,
@@ -532,6 +545,19 @@ import {
   reviewWeeklyReportReal,
   returnWeeklyReportReal,
   getTeamDashboardReal,
+  saveDailyLogReal,
+  listDailyLogsReal,
+  getDailyLogReal,
+  deleteDailyLogReal,
+  listDataSourcesReal,
+  createDataSourceReal,
+  updateDataSourceReal,
+  deleteDataSourceReal,
+  testDataSourceReal,
+  syncDataSourceReal,
+  listDataSourceCommitsReal,
+  generateReportReal,
+  getCollectedActivityReal,
 } from '@/services/real/reportAgent';
 
 function withAuth<TArgs extends unknown[], TResult>(
@@ -846,6 +872,20 @@ export const submitWeeklyReport: SubmitWeeklyReportContract = withAuth(submitWee
 export const reviewWeeklyReport: ReviewWeeklyReportContract = withAuth(reviewWeeklyReportReal);
 export const returnWeeklyReport: ReturnWeeklyReportContract = withAuth(returnWeeklyReportReal);
 export const getTeamDashboard: GetTeamDashboardContract = withAuth(getTeamDashboardReal);
+// Report Agent Phase 2: Daily Logs + Data Sources + AI Generation
+export const saveDailyLog: SaveDailyLogContract = withAuth(saveDailyLogReal);
+export const listDailyLogs: ListDailyLogsContract = withAuth(listDailyLogsReal);
+export const getDailyLog: GetDailyLogContract = withAuth(getDailyLogReal);
+export const deleteDailyLog: DeleteDailyLogContract = withAuth(deleteDailyLogReal);
+export const listDataSources: ListDataSourcesContract = withAuth(listDataSourcesReal);
+export const createDataSource: CreateDataSourceContract = withAuth(createDataSourceReal);
+export const updateDataSource: UpdateDataSourceContract = withAuth(updateDataSourceReal);
+export const deleteDataSource: DeleteDataSourceContract = withAuth(deleteDataSourceReal);
+export const testDataSource: TestDataSourceContract = withAuth(testDataSourceReal);
+export const syncDataSource: SyncDataSourceContract = withAuth(syncDataSourceReal);
+export const listDataSourceCommits: ListDataSourceCommitsContract = withAuth(listDataSourceCommitsReal);
+export const generateReport: GenerateReportContract = withAuth(generateReportReal);
+export const getCollectedActivity: GetCollectedActivityContract = withAuth(getCollectedActivityReal);
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
 export const automationsService: IAutomationsService = new AutomationsService();

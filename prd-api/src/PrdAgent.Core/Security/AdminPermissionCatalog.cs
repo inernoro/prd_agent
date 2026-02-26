@@ -140,6 +140,11 @@ public static class AdminPermissionCatalog
     public const string ReportAgentViewAll = "report-agent.view.all";
 
     /// <summary>
+    /// 周报 Agent 数据源管理权限：配置 Git/SVN 仓库连接
+    /// </summary>
+    public const string ReportAgentDataSourceManage = "report-agent.datasource.manage";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -202,6 +207,7 @@ public static class AdminPermissionCatalog
         new(ReportAgentTemplateManage, "周报-模板管理", "创建/编辑周报模板"),
         new(ReportAgentTeamManage, "周报-团队管理", "管理周报团队与成员"),
         new(ReportAgentViewAll, "周报-查看全部", "查看所有团队周报"),
+        new(ReportAgentDataSourceManage, "周报-数据源管理", "配置 Git/SVN 仓库连接"),
         new(WorkflowAgentManage, "工作流引擎-管理", "管理所有工作流与执行记录"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),

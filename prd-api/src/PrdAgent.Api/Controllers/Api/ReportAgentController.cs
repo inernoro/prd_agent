@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Services.ReportAgent;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -21,11 +23,22 @@ public class ReportAgentController : ControllerBase
     private const string AppKey = "report-agent";
     private readonly MongoDbContext _db;
     private readonly ILogger<ReportAgentController> _logger;
+    private readonly IConfiguration _configuration;
+    private readonly MapActivityCollector _activityCollector;
+    private readonly ReportGenerationService _generationService;
 
-    public ReportAgentController(MongoDbContext db, ILogger<ReportAgentController> logger)
+    public ReportAgentController(
+        MongoDbContext db,
+        ILogger<ReportAgentController> logger,
+        IConfiguration configuration,
+        MapActivityCollector activityCollector,
+        ReportGenerationService generationService)
     {
         _db = db;
         _logger = logger;
+        _configuration = configuration;
+        _activityCollector = activityCollector;
+        _generationService = generationService;
     }
 
     #region Helpers
@@ -923,6 +936,477 @@ public class ReportAgentController : ControllerBase
     public class ReturnReportRequest
     {
         public string? Reason { get; set; }
+    }
+
+    public class SaveDailyLogRequest
+    {
+        public string? Date { get; set; }
+        public List<DailyLogItemInput>? Items { get; set; }
+    }
+
+    public class DailyLogItemInput
+    {
+        public string? Content { get; set; }
+        public string? Category { get; set; }
+        public int? DurationMinutes { get; set; }
+    }
+
+    public class CreateDataSourceRequest
+    {
+        public string TeamId { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string RepoUrl { get; set; } = string.Empty;
+        public string? AccessToken { get; set; }
+        public string? BranchFilter { get; set; }
+        public Dictionary<string, string>? UserMapping { get; set; }
+        public int PollIntervalMinutes { get; set; } = 60;
+    }
+
+    public class UpdateDataSourceRequest
+    {
+        public string? Name { get; set; }
+        public string? RepoUrl { get; set; }
+        public string? AccessToken { get; set; }
+        public string? BranchFilter { get; set; }
+        public Dictionary<string, string>? UserMapping { get; set; }
+        public int? PollIntervalMinutes { get; set; }
+        public bool? Enabled { get; set; }
+    }
+
+    #endregion
+
+    #region Daily Logs
+
+    /// <summary>
+    /// 保存每日打点（Upsert：同一 userId+date 只保留一条）
+    /// </summary>
+    [HttpPost("daily-logs")]
+    public async Task<IActionResult> SaveDailyLog([FromBody] SaveDailyLogRequest request)
+    {
+        if (request.Items == null || request.Items.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail("items 不能为空"));
+
+        if (string.IsNullOrEmpty(request.Date))
+            return BadRequest(ApiResponse<object>.Fail("date 不能为空"));
+
+        if (!DateTime.TryParse(request.Date, out var parsedDate))
+            return BadRequest(ApiResponse<object>.Fail("date 格式无效"));
+
+        var date = parsedDate.Date; // normalize to date only
+        var userId = GetUserId();
+
+        var items = request.Items.Select(i => new DailyLogItem
+        {
+            Content = i.Content ?? string.Empty,
+            Category = DailyLogCategory.All.Contains(i.Category ?? "") ? i.Category! : DailyLogCategory.Other,
+            DurationMinutes = i.DurationMinutes
+        }).Where(i => !string.IsNullOrWhiteSpace(i.Content)).ToList();
+
+        if (items.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail("至少需要一条有效工作项"));
+
+        var filter = Builders<ReportDailyLog>.Filter.Eq(x => x.UserId, userId)
+                   & Builders<ReportDailyLog>.Filter.Eq(x => x.Date, date);
+
+        var existing = await _db.ReportDailyLogs.Find(filter).FirstOrDefaultAsync();
+
+        if (existing != null)
+        {
+            var update = Builders<ReportDailyLog>.Update
+                .Set(x => x.Items, items)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow);
+            await _db.ReportDailyLogs.UpdateOneAsync(filter, update);
+            existing.Items = items;
+            existing.UpdatedAt = DateTime.UtcNow;
+            return Ok(ApiResponse<object>.Ok(existing));
+        }
+        else
+        {
+            var log = new ReportDailyLog
+            {
+                UserId = userId,
+                UserName = GetUsername(),
+                Date = date,
+                Items = items
+            };
+            await _db.ReportDailyLogs.InsertOneAsync(log);
+            return Ok(ApiResponse<object>.Ok(log));
+        }
+    }
+
+    /// <summary>
+    /// 查询每日打点列表
+    /// </summary>
+    [HttpGet("daily-logs")]
+    public async Task<IActionResult> ListDailyLogs([FromQuery] string? startDate, [FromQuery] string? endDate)
+    {
+        var userId = GetUserId();
+        var filter = Builders<ReportDailyLog>.Filter.Eq(x => x.UserId, userId);
+
+        if (DateTime.TryParse(startDate, out var start))
+            filter &= Builders<ReportDailyLog>.Filter.Gte(x => x.Date, start.Date);
+
+        if (DateTime.TryParse(endDate, out var end))
+            filter &= Builders<ReportDailyLog>.Filter.Lte(x => x.Date, end.Date);
+
+        var logs = await _db.ReportDailyLogs.Find(filter)
+            .SortByDescending(x => x.Date).Limit(100).ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(new { items = logs }));
+    }
+
+    /// <summary>
+    /// 获取指定日期的打点
+    /// </summary>
+    [HttpGet("daily-logs/{date}")]
+    public async Task<IActionResult> GetDailyLog(string date)
+    {
+        if (!DateTime.TryParse(date, out var parsedDate))
+            return BadRequest(ApiResponse<object>.Fail("日期格式无效"));
+
+        var userId = GetUserId();
+        var log = await _db.ReportDailyLogs.Find(
+            x => x.UserId == userId && x.Date == parsedDate.Date
+        ).FirstOrDefaultAsync();
+
+        if (log == null)
+            return Ok(ApiResponse<object>.Ok(new ReportDailyLog
+            {
+                UserId = userId,
+                Date = parsedDate.Date,
+                Items = new()
+            }));
+
+        return Ok(ApiResponse<object>.Ok(log));
+    }
+
+    /// <summary>
+    /// 删除指定日期的打点
+    /// </summary>
+    [HttpDelete("daily-logs/{date}")]
+    public async Task<IActionResult> DeleteDailyLog(string date)
+    {
+        if (!DateTime.TryParse(date, out var parsedDate))
+            return BadRequest(ApiResponse<object>.Fail("日期格式无效"));
+
+        var userId = GetUserId();
+        var result = await _db.ReportDailyLogs.DeleteOneAsync(
+            x => x.UserId == userId && x.Date == parsedDate.Date);
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = result.DeletedCount > 0 }));
+    }
+
+    #endregion
+
+    #region Data Sources
+
+    /// <summary>
+    /// 列出数据源（按团队过滤）
+    /// </summary>
+    [HttpGet("data-sources")]
+    public async Task<IActionResult> ListDataSources([FromQuery] string? teamId)
+    {
+        var userId = GetUserId();
+
+        FilterDefinition<ReportDataSource> filter;
+        if (!string.IsNullOrEmpty(teamId))
+        {
+            // 验证是否为团队成员
+            if (!HasPermission(AdminPermissionCatalog.ReportAgentViewAll)
+                && !await IsTeamMember(teamId, userId))
+            {
+                return Forbid();
+            }
+            filter = Builders<ReportDataSource>.Filter.Eq(x => x.TeamId, teamId);
+        }
+        else if (HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+        {
+            filter = Builders<ReportDataSource>.Filter.Empty;
+        }
+        else
+        {
+            // 只返回用户所在团队的数据源
+            var memberships = await _db.ReportTeamMembers.Find(m => m.UserId == userId).ToListAsync();
+            var teamIds = memberships.Select(m => m.TeamId).Distinct().ToList();
+            filter = Builders<ReportDataSource>.Filter.In(x => x.TeamId, teamIds);
+        }
+
+        var sources = await _db.ReportDataSources.Find(filter)
+            .SortByDescending(x => x.CreatedAt).ToListAsync();
+
+        // 脱敏 token
+        var result = sources.Select(s => new
+        {
+            s.Id, s.TeamId, s.SourceType, s.Name, s.RepoUrl,
+            AccessTokenMasked = ApiKeyCrypto.Mask(
+                string.IsNullOrEmpty(s.EncryptedAccessToken) ? null
+                : ApiKeyCrypto.Decrypt(s.EncryptedAccessToken, GetCryptoKey())),
+            s.BranchFilter, s.UserMapping, s.PollIntervalMinutes,
+            s.Enabled, s.LastSyncAt, s.LastSyncError, s.CreatedBy, s.CreatedAt, s.UpdatedAt
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { items = result }));
+    }
+
+    /// <summary>
+    /// 创建数据源
+    /// </summary>
+    [HttpPost("data-sources")]
+    public async Task<IActionResult> CreateDataSource([FromBody] CreateDataSourceRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(ApiResponse<object>.Fail("名称不能为空"));
+        if (string.IsNullOrWhiteSpace(request.RepoUrl))
+            return BadRequest(ApiResponse<object>.Fail("仓库地址不能为空"));
+        if (string.IsNullOrWhiteSpace(request.TeamId))
+            return BadRequest(ApiResponse<object>.Fail("团队 ID 不能为空"));
+
+        var userId = GetUserId();
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentDataSourceManage)
+            && !HasPermission(AdminPermissionCatalog.ReportAgentTeamManage)
+            && !await IsTeamLeaderOrDeputy(request.TeamId, userId))
+        {
+            return Forbid();
+        }
+
+        var source = new ReportDataSource
+        {
+            TeamId = request.TeamId,
+            Name = request.Name,
+            RepoUrl = request.RepoUrl,
+            BranchFilter = request.BranchFilter,
+            UserMapping = request.UserMapping ?? new(),
+            PollIntervalMinutes = Math.Max(10, request.PollIntervalMinutes),
+            CreatedBy = userId
+        };
+
+        if (!string.IsNullOrWhiteSpace(request.AccessToken))
+        {
+            source.EncryptedAccessToken = ApiKeyCrypto.Encrypt(request.AccessToken, GetCryptoKey());
+        }
+
+        await _db.ReportDataSources.InsertOneAsync(source);
+        return Ok(ApiResponse<object>.Ok(new { id = source.Id }));
+    }
+
+    /// <summary>
+    /// 更新数据源
+    /// </summary>
+    [HttpPut("data-sources/{id}")]
+    public async Task<IActionResult> UpdateDataSource(string id, [FromBody] UpdateDataSourceRequest request)
+    {
+        var source = await _db.ReportDataSources.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (source == null) return NotFound(ApiResponse<object>.Fail("数据源不存在"));
+
+        var userId = GetUserId();
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentDataSourceManage)
+            && !await IsTeamLeaderOrDeputy(source.TeamId, userId))
+        {
+            return Forbid();
+        }
+
+        var updates = new List<UpdateDefinition<ReportDataSource>>();
+        if (request.Name != null) updates.Add(Builders<ReportDataSource>.Update.Set(x => x.Name, request.Name));
+        if (request.RepoUrl != null) updates.Add(Builders<ReportDataSource>.Update.Set(x => x.RepoUrl, request.RepoUrl));
+        if (request.BranchFilter != null) updates.Add(Builders<ReportDataSource>.Update.Set(x => x.BranchFilter, request.BranchFilter));
+        if (request.UserMapping != null) updates.Add(Builders<ReportDataSource>.Update.Set(x => x.UserMapping, request.UserMapping));
+        if (request.PollIntervalMinutes.HasValue) updates.Add(Builders<ReportDataSource>.Update.Set(x => x.PollIntervalMinutes, Math.Max(10, request.PollIntervalMinutes.Value)));
+        if (request.Enabled.HasValue) updates.Add(Builders<ReportDataSource>.Update.Set(x => x.Enabled, request.Enabled.Value));
+
+        if (!string.IsNullOrWhiteSpace(request.AccessToken))
+        {
+            updates.Add(Builders<ReportDataSource>.Update.Set(x => x.EncryptedAccessToken,
+                ApiKeyCrypto.Encrypt(request.AccessToken, GetCryptoKey())));
+        }
+
+        updates.Add(Builders<ReportDataSource>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow));
+
+        await _db.ReportDataSources.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<ReportDataSource>.Update.Combine(updates));
+
+        return Ok(ApiResponse<object>.Ok());
+    }
+
+    /// <summary>
+    /// 删除数据源
+    /// </summary>
+    [HttpDelete("data-sources/{id}")]
+    public async Task<IActionResult> DeleteDataSource(string id)
+    {
+        var source = await _db.ReportDataSources.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (source == null) return NotFound(ApiResponse<object>.Fail("数据源不存在"));
+
+        var userId = GetUserId();
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentDataSourceManage)
+            && !await IsTeamLeaderOrDeputy(source.TeamId, userId))
+        {
+            return Forbid();
+        }
+
+        // 删除关联的提交记录
+        await _db.ReportCommits.DeleteManyAsync(x => x.DataSourceId == id);
+        await _db.ReportDataSources.DeleteOneAsync(x => x.Id == id);
+        return Ok(ApiResponse<object>.Ok());
+    }
+
+    /// <summary>
+    /// 测试数据源连接
+    /// </summary>
+    [HttpPost("data-sources/{id}/test")]
+    public async Task<IActionResult> TestDataSource(string id)
+    {
+        var source = await _db.ReportDataSources.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (source == null) return NotFound(ApiResponse<object>.Fail("数据源不存在"));
+
+        try
+        {
+            var connector = CreateConnector(source);
+            var reachable = await connector.TestConnectionAsync(CancellationToken.None);
+            return Ok(ApiResponse<object>.Ok(new { success = reachable }));
+        }
+        catch (Exception ex)
+        {
+            return Ok(ApiResponse<object>.Ok(new { success = false, error = ex.Message }));
+        }
+    }
+
+    /// <summary>
+    /// 手动触发数据源同步
+    /// </summary>
+    [HttpPost("data-sources/{id}/sync")]
+    public async Task<IActionResult> SyncDataSource(string id)
+    {
+        var source = await _db.ReportDataSources.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (source == null) return NotFound(ApiResponse<object>.Fail("数据源不存在"));
+
+        var userId = GetUserId();
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentDataSourceManage)
+            && !await IsTeamLeaderOrDeputy(source.TeamId, userId))
+        {
+            return Forbid();
+        }
+
+        try
+        {
+            var connector = CreateConnector(source);
+            var synced = await connector.SyncAsync(CancellationToken.None);
+
+            // 更新同步状态
+            await _db.ReportDataSources.UpdateOneAsync(
+                x => x.Id == id,
+                Builders<ReportDataSource>.Update
+                    .Set(x => x.LastSyncAt, DateTime.UtcNow)
+                    .Set(x => x.LastSyncError, null)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow));
+
+            return Ok(ApiResponse<object>.Ok(new { syncedCommits = synced }));
+        }
+        catch (Exception ex)
+        {
+            await _db.ReportDataSources.UpdateOneAsync(
+                x => x.Id == id,
+                Builders<ReportDataSource>.Update
+                    .Set(x => x.LastSyncError, ex.Message)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow));
+
+            return Ok(ApiResponse<object>.Ok(new { syncedCommits = 0, error = ex.Message }));
+        }
+    }
+
+    /// <summary>
+    /// 查看已同步的提交列表
+    /// </summary>
+    [HttpGet("data-sources/{id}/commits")]
+    public async Task<IActionResult> ListDataSourceCommits(
+        string id, [FromQuery] string? since, [FromQuery] string? until, [FromQuery] int limit = 50)
+    {
+        var source = await _db.ReportDataSources.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (source == null) return NotFound(ApiResponse<object>.Fail("数据源不存在"));
+
+        var filter = Builders<ReportCommit>.Filter.Eq(x => x.DataSourceId, id);
+        if (DateTime.TryParse(since, out var sinceDate))
+            filter &= Builders<ReportCommit>.Filter.Gte(x => x.CommittedAt, sinceDate);
+        if (DateTime.TryParse(until, out var untilDate))
+            filter &= Builders<ReportCommit>.Filter.Lte(x => x.CommittedAt, untilDate);
+
+        var commits = await _db.ReportCommits.Find(filter)
+            .SortByDescending(x => x.CommittedAt)
+            .Limit(Math.Min(limit, 200))
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(new { items = commits }));
+    }
+
+    private ICodeSourceConnector CreateConnector(ReportDataSource source)
+    {
+        var token = string.IsNullOrEmpty(source.EncryptedAccessToken)
+            ? null
+            : ApiKeyCrypto.Decrypt(source.EncryptedAccessToken, GetCryptoKey());
+
+        return source.SourceType switch
+        {
+            DataSourceType.Git => new GitHubConnector(source, token, _db, _logger),
+            _ => throw new NotSupportedException($"数据源类型 {source.SourceType} 暂不支持")
+        };
+    }
+
+    private string GetCryptoKey()
+        => _configuration["Security:ApiKeyCryptoSecret"] ?? "default-report-agent-crypto-key-32";
+
+    #endregion
+
+    #region AI Generation
+
+    /// <summary>
+    /// 手动触发 AI 生成周报内容
+    /// </summary>
+    [HttpPost("reports/{id}/generate")]
+    public async Task<IActionResult> GenerateReport(string id)
+    {
+        var report = await _db.WeeklyReports.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (report == null) return NotFound(ApiResponse<object>.Fail("周报不存在"));
+
+        var userId = GetUserId();
+        if (report.UserId != userId && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return Forbid();
+
+        if (report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.Returned)
+            return BadRequest(ApiResponse<object>.Fail("只有草稿或退回状态的周报才能生成"));
+
+        try
+        {
+            var updatedReport = await _generationService.GenerateAsync(
+                report.UserId, report.TeamId, report.TemplateId,
+                report.WeekYear, report.WeekNumber, CancellationToken.None);
+
+            return Ok(ApiResponse<object>.Ok(updatedReport));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "AI 生成周报失败: reportId={ReportId}", id);
+            return StatusCode(500, ApiResponse<object>.Fail($"AI 生成失败: {ex.Message}"));
+        }
+    }
+
+    /// <summary>
+    /// 预览采集数据（不保存）
+    /// </summary>
+    [HttpGet("activity")]
+    public async Task<IActionResult> GetCollectedActivity(
+        [FromQuery] int? weekYear, [FromQuery] int? weekNumber)
+    {
+        var userId = GetUserId();
+        var now = DateTime.UtcNow;
+        var wy = weekYear ?? ISOWeek.GetYear(now);
+        var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
+
+        var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+        var sunday = monday.AddDays(6).AddHours(23).AddMinutes(59).AddSeconds(59);
+
+        var activity = await _activityCollector.CollectAsync(userId, monday, sunday, CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(activity));
     }
 
     #endregion
