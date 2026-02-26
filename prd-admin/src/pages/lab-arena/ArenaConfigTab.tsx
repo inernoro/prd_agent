@@ -119,8 +119,8 @@ export default function ArenaConfigTab() {
           return next;
         });
       }
-      if (platformsRes.success && platformsRes.data?.items) {
-        setPlatforms(platformsRes.data.items as Platform[]);
+      if (platformsRes.success) {
+        setPlatforms((platformsRes.data as Platform[]) ?? []);
       }
     } catch {
       toast.error('加载 Arena 配置失败');
