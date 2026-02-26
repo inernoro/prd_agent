@@ -74,6 +74,10 @@
 | `user_preferences` | `UserPreference` | 用户偏好设置 | `userId` 唯一 |
 | `watermark_font_assets` | `WatermarkFontAsset` | 水印字体资产 | `(userId, fontKey)` 唯一 |
 | `watermark_configs` | `WatermarkConfig` | 水印配置（基于 appKey 绑定） | `(userId, updatedAt desc)`；`(userId, appKeys)` |
+| `report_teams` | `ReportTeam` | 周报团队 | `leaderUserId` |
+| `report_team_members` | `ReportTeamMember` | 周报团队成员 | `(teamId, userId)` 唯一；`userId` |
+| `report_templates` | `ReportTemplate` | 周报模板 | `(isDefault, createdAt)` |
+| `report_weekly_reports` | `WeeklyReport` | 周报主体 | `(userId, teamId, weekYear, weekNumber)` 唯一；`(teamId, status, periodEnd)`；`(userId, periodEnd)` |
 
 ---
 

@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 周报模板
 /// </summary>
+[AppOwnership(AppNames.ReportAgent, AppNames.ReportAgentDisplay)]
 public class ReportTemplate
 {
     /// <summary>主键（Guid）</summary>

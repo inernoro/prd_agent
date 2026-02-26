@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 周报
 /// </summary>
+[AppOwnership(AppNames.ReportAgent, AppNames.ReportAgentDisplay, IsPrimary = true)]
 public class WeeklyReport
 {
     /// <summary>主键（Guid）</summary>

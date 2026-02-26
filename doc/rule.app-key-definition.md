@@ -21,6 +21,8 @@
 - `prd-agent`
 - `visual-agent`
 - `literary-agent`
+- `defect-agent`
+- `report-agent`
 
 ---
 

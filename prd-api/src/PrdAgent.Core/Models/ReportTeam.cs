@@ -1,8 +1,11 @@
+using PrdAgent.Core.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 周报团队
 /// </summary>
+[AppOwnership(AppNames.ReportAgent, AppNames.ReportAgentDisplay, IsPrimary = true)]
 public class ReportTeam
 {
     /// <summary>主键（Guid）</summary>
@@ -31,6 +34,7 @@ public class ReportTeam
 /// <summary>
 /// 周报团队成员
 /// </summary>
+[AppOwnership(AppNames.ReportAgent, AppNames.ReportAgentDisplay)]
 public class ReportTeamMember
 {
     /// <summary>主键（Guid）</summary>
