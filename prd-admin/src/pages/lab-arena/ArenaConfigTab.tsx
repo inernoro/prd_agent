@@ -6,8 +6,10 @@ import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { PrdLoader } from '@/components/ui/PrdLoader';
+import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
+import type { Platform } from '@/types/admin';
 import {
   listArenaGroups,
   createArenaGroup,
@@ -30,8 +32,6 @@ interface ArenaSlot {
   group: string;
   sortOrder: number;
   enabled: boolean;
-  avatarColor?: string;
-  description?: string;
 }
 
 interface ArenaGroup {
@@ -44,11 +44,6 @@ interface ArenaGroup {
   slots: ArenaSlot[];
 }
 
-interface PlatformItem {
-  id: string;
-  name: string;
-}
-
 // ── Form state types ──
 
 interface GroupForm {
@@ -58,25 +53,14 @@ interface GroupForm {
   sortOrder: number;
 }
 
-interface SlotForm {
-  displayName: string;
-  platformId: string;
-  modelId: string;
-  avatarColor: string;
-  description: string;
-  sortOrder: number;
-  enabled: boolean;
-}
-
 const EMPTY_GROUP_FORM: GroupForm = { key: '', name: '', description: '', sortOrder: 0 };
-const EMPTY_SLOT_FORM: SlotForm = { displayName: '', platformId: '', modelId: '', avatarColor: '', description: '', sortOrder: 0, enabled: true };
 
 // ── Component ──
 
 export default function ArenaConfigTab() {
   // ── Data state ──
   const [groups, setGroups] = useState<ArenaGroup[]>([]);
-  const [platforms, setPlatforms] = useState<PlatformItem[]>([]);
+  const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [loading, setLoading] = useState(true);
 
   // ── Expand state ──
@@ -88,12 +72,15 @@ export default function ArenaConfigTab() {
   const [groupForm, setGroupForm] = useState<GroupForm>(EMPTY_GROUP_FORM);
   const [groupSaving, setGroupSaving] = useState(false);
 
-  // ── Slot dialog state ──
-  const [slotDialogOpen, setSlotDialogOpen] = useState(false);
-  const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
-  const [slotTargetGroup, setSlotTargetGroup] = useState<string>('');
-  const [slotForm, setSlotForm] = useState<SlotForm>(EMPTY_SLOT_FORM);
-  const [slotSaving, setSlotSaving] = useState(false);
+  // ── Model picker state (for batch-adding slots) ──
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [modelPickerTargetGroup, setModelPickerTargetGroup] = useState('');
+
+  // ── Slot edit dialog state ──
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingSlot, setEditingSlot] = useState<ArenaSlot | null>(null);
+  const [editDisplayName, setEditDisplayName] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
 
   // ── Platform name lookup ──
   const platformMap = useMemo(() => {
@@ -101,6 +88,17 @@ export default function ArenaConfigTab() {
     for (const p of platforms) map.set(p.id, p.name);
     return map;
   }, [platforms]);
+
+  // ── Existing models for the target group (pre-select in picker) ──
+  const existingModelsForPicker = useMemo<SelectedModelItem[]>(() => {
+    const group = groups.find((g) => g.key === modelPickerTargetGroup);
+    if (!group) return [];
+    return group.slots.map((s) => ({
+      platformId: s.platformId,
+      modelId: s.modelId,
+      name: s.displayName,
+    }));
+  }, [groups, modelPickerTargetGroup]);
 
   // ── Load data ──
   const fetchData = useCallback(async () => {
@@ -113,7 +111,6 @@ export default function ArenaConfigTab() {
       if (groupsRes.success && groupsRes.data?.items) {
         const items = groupsRes.data.items as ArenaGroup[];
         setGroups(items);
-        // Default: all expanded
         setExpandedGroups((prev) => {
           const next = new Set(prev);
           for (const g of items) {
@@ -123,7 +120,7 @@ export default function ArenaConfigTab() {
         });
       }
       if (platformsRes.success && platformsRes.data?.items) {
-        setPlatforms(platformsRes.data.items as PlatformItem[]);
+        setPlatforms(platformsRes.data.items as Platform[]);
       }
     } catch {
       toast.error('加载 Arena 配置失败');
@@ -214,79 +211,82 @@ export default function ArenaConfigTab() {
     }
   }, [fetchData]);
 
-  // ── Slot CRUD ──
-  const openCreateSlot = useCallback((groupKey: string) => {
-    setEditingSlotId(null);
-    setSlotTargetGroup(groupKey);
-    setSlotForm({ ...EMPTY_SLOT_FORM, platformId: platforms[0]?.id ?? '' });
-    setSlotDialogOpen(true);
-  }, [platforms]);
-
-  const openEditSlot = useCallback((slot: ArenaSlot) => {
-    setEditingSlotId(slot.id);
-    setSlotTargetGroup(slot.group);
-    setSlotForm({
-      displayName: slot.displayName,
-      platformId: slot.platformId,
-      modelId: slot.modelId,
-      avatarColor: slot.avatarColor ?? '',
-      description: slot.description ?? '',
-      sortOrder: slot.sortOrder,
-      enabled: slot.enabled,
-    });
-    setSlotDialogOpen(true);
+  // ── Slot: open model picker for batch-adding ──
+  const openAddSlots = useCallback((groupKey: string) => {
+    setModelPickerTargetGroup(groupKey);
+    setModelPickerOpen(true);
   }, []);
 
-  const handleSaveSlot = useCallback(async () => {
-    if (!slotForm.displayName.trim()) {
+  // ── Slot: handle model picker confirm ──
+  const handleModelPickerConfirm = useCallback(async (models: SelectedModelItem[]) => {
+    const group = groups.find((g) => g.key === modelPickerTargetGroup);
+    const existingKeys = new Set(
+      (group?.slots ?? []).map((s) => `${s.platformId}:${s.modelId}`.toLowerCase()),
+    );
+    const newModels = models.filter(
+      (m) => !existingKeys.has(`${m.platformId}:${m.modelId}`.toLowerCase()),
+    );
+
+    if (newModels.length === 0) {
+      toast.info('没有新模型需要添加');
+      return;
+    }
+
+    let successCount = 0;
+    for (const m of newModels) {
+      try {
+        const res = await createArenaSlot({
+          displayName: m.name || m.modelName || m.modelId,
+          platformId: m.platformId,
+          modelId: m.modelId,
+          group: modelPickerTargetGroup,
+          enabled: true,
+        });
+        if (res.success) successCount++;
+      } catch {
+        // continue with remaining models
+      }
+    }
+
+    if (successCount > 0) {
+      toast.success(`已添加 ${successCount} 个槽位`);
+      await fetchData();
+    } else {
+      toast.error('添加槽位失败');
+    }
+  }, [groups, modelPickerTargetGroup, fetchData]);
+
+  // ── Slot edit ──
+  const openEditSlot = useCallback((slot: ArenaSlot) => {
+    setEditingSlot(slot);
+    setEditDisplayName(slot.displayName);
+    setEditDialogOpen(true);
+  }, []);
+
+  const handleSaveEdit = useCallback(async () => {
+    if (!editingSlot) return;
+    if (!editDisplayName.trim()) {
       toast.warning('请填写显示名称');
       return;
     }
-    if (!slotForm.platformId) {
-      toast.warning('请选择平台');
-      return;
-    }
-    if (!slotForm.modelId.trim()) {
-      toast.warning('请填写模型 ID');
-      return;
-    }
 
-    setSlotSaving(true);
+    setEditSaving(true);
     try {
-      if (editingSlotId) {
-        const res = await updateArenaSlot(editingSlotId, {
-          displayName: slotForm.displayName.trim(),
-          platformId: slotForm.platformId,
-          modelId: slotForm.modelId.trim(),
-          sortOrder: slotForm.sortOrder,
-          avatarColor: slotForm.avatarColor.trim() || undefined,
-          description: slotForm.description.trim() || undefined,
-        });
-        if (!res.success) throw new Error(res.message || '更新失败');
-        toast.success('槽位已更新');
-      } else {
-        const res = await createArenaSlot({
-          displayName: slotForm.displayName.trim(),
-          platformId: slotForm.platformId,
-          modelId: slotForm.modelId.trim(),
-          group: slotTargetGroup,
-          sortOrder: slotForm.sortOrder,
-          enabled: slotForm.enabled,
-          avatarColor: slotForm.avatarColor.trim() || undefined,
-          description: slotForm.description.trim() || undefined,
-        });
-        if (!res.success) throw new Error(res.message || '创建失败');
-        toast.success('槽位已创建');
-      }
-      setSlotDialogOpen(false);
+      const res = await updateArenaSlot(editingSlot.id, {
+        displayName: editDisplayName.trim(),
+      });
+      if (!res.success) throw new Error(res.message || '更新失败');
+      toast.success('槽位已更新');
+      setEditDialogOpen(false);
       await fetchData();
     } catch (err: any) {
-      toast.error(editingSlotId ? '更新槽位失败' : '创建槽位失败', err?.message);
+      toast.error('更新槽位失败', err?.message);
     } finally {
-      setSlotSaving(false);
+      setEditSaving(false);
     }
-  }, [editingSlotId, slotForm, slotTargetGroup, fetchData]);
+  }, [editingSlot, editDisplayName, fetchData]);
 
+  // ── Slot delete & toggle ──
   const handleDeleteSlot = useCallback(async (slotId: string) => {
     try {
       const res = await deleteArenaSlot(slotId);
@@ -382,7 +382,7 @@ export default function ArenaConfigTab() {
                   )}
                 </div>
                 <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                  <Button variant="ghost" size="xs" onClick={() => openCreateSlot(group.key)} title="添加槽位">
+                  <Button variant="ghost" size="xs" onClick={() => openAddSlots(group.key)} title="添加槽位">
                     <Plus size={14} />
                   </Button>
                   <Button variant="ghost" size="xs" onClick={() => openEditGroup(group)} title="编辑分组">
@@ -410,10 +410,10 @@ export default function ArenaConfigTab() {
                         variant="secondary"
                         size="xs"
                         className="mt-2"
-                        onClick={() => openCreateSlot(group.key)}
+                        onClick={() => openAddSlots(group.key)}
                       >
                         <Plus size={12} />
-                        添加
+                        添加模型
                       </Button>
                     </div>
                   ) : (
@@ -526,122 +526,62 @@ export default function ArenaConfigTab() {
         }
       />
 
-      {/* ── Slot Dialog ── */}
+      {/* ── Model Picker Dialog (batch add slots) ── */}
+      <ModelPoolPickerDialog
+        open={modelPickerOpen}
+        onOpenChange={setModelPickerOpen}
+        selectedModels={existingModelsForPicker}
+        platforms={platforms}
+        onConfirm={handleModelPickerConfirm}
+        title="添加 Arena 槽位"
+        description="从平台中选择模型，确认后批量创建槽位"
+        confirmText="确认添加"
+      />
+
+      {/* ── Slot Edit Dialog ── */}
       <Dialog
-        open={slotDialogOpen}
-        onOpenChange={setSlotDialogOpen}
-        title={editingSlotId ? '编辑槽位' : '添加槽位'}
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+        title="编辑槽位"
         content={
-          <div className="space-y-4 pt-1">
-            {/* Display Name */}
-            <div>
-              <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                显示名称 <span style={{ color: 'rgba(239,68,68,0.8)' }}>*</span>
-              </label>
-              <input
-                className="w-full px-3 py-2 rounded-[12px] text-sm outline-none prd-field"
-                placeholder="例如: GPT-4o"
-                value={slotForm.displayName}
-                onChange={(e) => setSlotForm((f) => ({ ...f, displayName: e.target.value }))}
-              />
-            </div>
+          editingSlot && (
+            <div className="space-y-4 pt-1">
+              {/* Read-only: platform + model */}
+              <div
+                className="rounded-[12px] px-3 py-2.5 text-sm"
+                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
+              >
+                <div style={{ color: 'var(--text-secondary)' }}>
+                  {platformMap.get(editingSlot.platformId) || editingSlot.platformId}
+                </div>
+                <div className="font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                  {editingSlot.modelId}
+                </div>
+              </div>
 
-            {/* Platform + Model row */}
-            <div className="grid grid-cols-2 gap-3">
-              {/* Platform */}
+              {/* Display Name */}
               <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                  平台 <span style={{ color: 'rgba(239,68,68,0.8)' }}>*</span>
+                  显示名称
                 </label>
-                <select
+                <input
                   className="w-full px-3 py-2 rounded-[12px] text-sm outline-none prd-field"
-                  value={slotForm.platformId}
-                  onChange={(e) => setSlotForm((f) => ({ ...f, platformId: e.target.value }))}
-                >
-                  <option value="">-- 选择平台 --</option>
-                  {platforms.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Model ID */}
-              <div>
-                <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                  模型 ID <span style={{ color: 'rgba(239,68,68,0.8)' }}>*</span>
-                </label>
-                <input
-                  className="w-full px-3 py-2 rounded-[12px] text-sm outline-none prd-field font-mono"
-                  placeholder="例如: gpt-4o"
-                  value={slotForm.modelId}
-                  onChange={(e) => setSlotForm((f) => ({ ...f, modelId: e.target.value }))}
+                  value={editDisplayName}
+                  onChange={(e) => setEditDisplayName(e.target.value)}
                 />
               </div>
-            </div>
 
-            {/* Avatar Color */}
-            <div>
-              <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                头像颜色
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  className="flex-1 px-3 py-2 rounded-[12px] text-sm outline-none prd-field"
-                  placeholder="例如: #6366f1 或 rgb(99,102,241)"
-                  value={slotForm.avatarColor}
-                  onChange={(e) => setSlotForm((f) => ({ ...f, avatarColor: e.target.value }))}
-                />
-                {slotForm.avatarColor && (
-                  <div
-                    className="w-8 h-8 rounded-lg shrink-0"
-                    style={{
-                      background: slotForm.avatarColor,
-                      border: '1px solid var(--border-default)',
-                    }}
-                    title={slotForm.avatarColor}
-                  />
-                )}
+              {/* Actions */}
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="secondary" size="sm" onClick={() => setEditDialogOpen(false)}>
+                  取消
+                </Button>
+                <Button variant="primary" size="sm" onClick={handleSaveEdit} disabled={editSaving}>
+                  {editSaving ? '保存中...' : '保存'}
+                </Button>
               </div>
             </div>
-
-            {/* Description */}
-            <div>
-              <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                描述
-              </label>
-              <input
-                className="w-full px-3 py-2 rounded-[12px] text-sm outline-none prd-field"
-                placeholder="可选描述信息"
-                value={slotForm.description}
-                onChange={(e) => setSlotForm((f) => ({ ...f, description: e.target.value }))}
-              />
-            </div>
-
-            {/* Sort order */}
-            <div>
-              <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                排序
-              </label>
-              <input
-                type="number"
-                className="w-full px-3 py-2 rounded-[12px] text-sm outline-none prd-field"
-                value={slotForm.sortOrder}
-                onChange={(e) => setSlotForm((f) => ({ ...f, sortOrder: Number(e.target.value) || 0 }))}
-              />
-            </div>
-
-            {/* Actions */}
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="secondary" size="sm" onClick={() => setSlotDialogOpen(false)}>
-                取消
-              </Button>
-              <Button variant="primary" size="sm" onClick={handleSaveSlot} disabled={slotSaving}>
-                {slotSaving ? '保存中...' : editingSlotId ? '保存' : '创建'}
-              </Button>
-            </div>
-          </div>
+          )
         }
       />
     </div>
@@ -672,28 +612,17 @@ function SlotCard({
         !slot.enabled && 'opacity-50',
       )}
     >
-      {/* Header: color dot + name */}
-      <div className="flex items-center gap-2 mb-2">
-        <div
-          className="w-3 h-3 rounded-full shrink-0"
-          style={{
-            background: slot.avatarColor || 'var(--text-muted)',
-            boxShadow: slot.avatarColor
-              ? `0 0 6px ${slot.avatarColor}40`
-              : 'none',
-          }}
-        />
-        <span
-          className="text-sm font-semibold truncate"
-          style={{ color: 'var(--text-primary)' }}
-          title={slot.displayName}
-        >
-          {slot.displayName}
-        </span>
+      {/* Name */}
+      <div
+        className="text-sm font-semibold truncate mb-1.5"
+        style={{ color: 'var(--text-primary)' }}
+        title={slot.displayName}
+      >
+        {slot.displayName}
       </div>
 
       {/* Platform */}
-      <div className="text-[11px] mb-1" style={{ color: 'var(--text-secondary)' }}>
+      <div className="text-[11px] mb-0.5" style={{ color: 'var(--text-secondary)' }}>
         {platformName || slot.platformId}
       </div>
 
@@ -705,17 +634,6 @@ function SlotCard({
       >
         {slot.modelId}
       </div>
-
-      {/* Description */}
-      {slot.description && (
-        <div
-          className="text-[11px] truncate mb-2"
-          style={{ color: 'var(--text-muted)' }}
-          title={slot.description}
-        >
-          {slot.description}
-        </div>
-      )}
 
       {/* Actions row */}
       <div className="flex items-center justify-between">
