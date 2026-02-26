@@ -330,6 +330,17 @@ public class VideoGenRunWorker : BackgroundService
             throw new InvalidOperationException("无法启动 Remotion 渲染进程");
         }
 
+        // 必须并发消费 stdout 和 stderr，否则 OS 管道缓冲区满后进程会死锁
+        var stderrBuilder = new StringBuilder();
+        var stderrTask = Task.Run(async () =>
+        {
+            while (!process.StandardError.EndOfStream)
+            {
+                var line = await process.StandardError.ReadLineAsync();
+                if (line != null) stderrBuilder.AppendLine(line);
+            }
+        });
+
         var lastProgress = 0;
         // 读取 stdout 解析渲染进度
         while (!process.StandardOutput.EndOfStream)
@@ -355,12 +366,12 @@ public class VideoGenRunWorker : BackgroundService
             }
         }
 
+        await stderrTask;
         await process.WaitForExitAsync();
 
         if (process.ExitCode != 0)
         {
-            var stderr = await process.StandardError.ReadToEndAsync();
-            throw new InvalidOperationException($"Remotion 渲染失败 (exit code {process.ExitCode}): {stderr}");
+            throw new InvalidOperationException($"Remotion 渲染失败 (exit code {process.ExitCode}): {stderrBuilder}");
         }
     }
 
