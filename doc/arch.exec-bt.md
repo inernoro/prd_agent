@@ -1,6 +1,6 @@
 # exec_bt.sh 部署架构与冲突分析
 
-> **版本**：v1.1 | **日期**：2026-02-24 | **关联**：design.branch-tester.md, quickstart.md
+> **版本**：v1.2 | **日期**：2026-02-26 | **关联**：design.branch-tester.md, quickstart.md, test.sh
 
 ## 1. 系统全景
 
@@ -249,9 +249,46 @@ Node.js `JSON.parse` 会抛异常导致启动失败。
 - **永远不 drop** MongoDB 数据库 (BT 内部有安全检查, exec_bt.sh 不碰 DB)
 - **永远不盲杀** PID — 必须通过 `is_bt_pid()` 验证所有权
 
-## 6. 测试用例
+## 6. 测试体系
 
-### 6.1 `exec_bt.sh --test` 自检项
+### 6.0 全量验收测试: `test.sh`
+
+> **一个脚本, 一条命令, 覆盖全部意外场景。**
+
+```bash
+./test.sh                  # 运行全部 (≈70 项)
+./test.sh --phase 4        # 只跑分支生命周期
+./test.sh --from 7         # 从混沌测试开始
+./test.sh --list           # 列出所有测试项 (不执行)
+./test.sh --dry            # 干跑 (打印不执行)
+```
+
+| Phase | 名称 | 测试数 | 覆盖意外场景 |
+|-------|------|--------|-------------|
+| 0 | 环境前置检查 | 13 | docker/node/pnpm 缺失, 仓库结构不完整 |
+| 1 | exec_bt.sh 首次启动 | 7 | 首次部署失败, BT 无法绑定端口 |
+| 2 | 基础设施验证 | 12 | 容器未启动, 网络不通, MongoDB/Redis 连不上 |
+| 3 | Dashboard & API | 10 | API 不可达, 返回格式错误, 404 处理 |
+| 4 | 分支生命周期 | 18 | 添加/部署/激活/断开/拉取/停止/删除 全链路 |
+| 5 | Nginx 网关 | 10 | symlink 断裂, _disconnected 缺失, Host nginx 配置 |
+| 6 | 幂等性 | 7 | 重复启动覆盖旧实例, 基础设施不被重建 |
+| 7 | 混沌测试 | 16 | **PID reuse, state.json 损坏, 端口抢占, 静态 default.conf** |
+| 8 | 端到端 | 4 | 公网不可达, 本地端口链路断裂 |
+| 9 | 清理 | 2 | 测试后系统仍正常 |
+
+### 6.0.1 混沌测试覆盖矩阵 (Phase 7 × MECE 场景)
+
+| test.sh 测试 | MECE 场景 | 注入方式 | 验证点 |
+|-------------|-----------|---------|--------|
+| C01-C03 | S5, S6 | `kill -9` BT 进程 | 重启恢复, API 可用 |
+| C04-C05 | R3 | 写入截断 JSON 到 state.json | 自动备份+重置, BT 启动 |
+| C06-C08 | R1 | PID file 写入 PID 1 | is_bt_pid() 跳过 kill, PID 1 存活 |
+| C09-C11 | G1 | 替换 symlink 为静态 nginx conf | 检测→备份→symlink→reload |
+| C12-C13 | P2 | python 占用 :9900 | 冲突警告, 释放后恢复 |
+| C14 | — | `--test` 自检 | 全部 PASS |
+| C15-C16 | — | `--status` 状态 | 显示 running + ports |
+
+### 6.1 `exec_bt.sh --test` 自检项 (轻量级)
 
 ```bash
 # Pre-flight
