@@ -66,6 +66,32 @@
   --md-quote-border: rgba(56, 189, 248, 0.45);
 }
 
+/*
+ * Dark mode prose override (higher specificity than Tailwind Typography defaults)
+ * Fixes: dark mode text unreadable in PRD preview & other markdown areas.
+ * Tailwind Typography's extend-merge may leave built-in hardcoded light-mode
+ * values (e.g. #374151) on .prose; this rule uses .dark .prose (0,2,0)
+ * to guarantee the correct dark-mode token values take effect.
+ */
+.dark .prose {
+  --tw-prose-body: #f1f5f9;
+  --tw-prose-headings: #f1f5f9;
+  --tw-prose-lead: #f1f5f9;
+  --tw-prose-bold: #f1f5f9;
+  --tw-prose-quotes: #f1f5f9;
+  --tw-prose-counters: #94a3b8;
+  --tw-prose-bullets: #94a3b8;
+  --tw-prose-captions: #94a3b8;
+  --tw-prose-code: #bae6fd;
+  --tw-prose-pre-code: #e2e8f0;
+  --tw-prose-pre-bg: rgba(2, 6, 23, 0.65);
+  --tw-prose-links: #7dd3fc;
+  --tw-prose-hr: #334155;
+  --tw-prose-quote-borders: rgba(56, 189, 248, 0.45);
+  --tw-prose-th-borders: #334155;
+  --tw-prose-td-borders: #334155;
+}
+
 * {
   margin: 0;
   padding: 0;
