@@ -121,6 +121,19 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  {
+    id: 'builtin-report-agent',
+    name: '周报管理员',
+    description: '周报创建、提交、审阅，支持AI生成、团队汇总、计划比对',
+    icon: 'FileBarChart',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'report-agent',
+    routePath: '/report-agent',
+    tags: ['周报', '日报', '团队管理'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
   // ========== 普通版 Agent（统一对话界面）==========
   {
     id: 'builtin-code-reviewer',

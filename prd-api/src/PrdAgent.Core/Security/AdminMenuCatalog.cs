@@ -43,9 +43,6 @@ public static class AdminMenuCatalog
         // 开放平台
         new("open-platform", "/open-platform", "开放平台", null, "Plug", 120),
 
-        // 周报管理
-        new("report-agent", "/report-agent", "周报管理", null, "FileBarChart", 122),
-
         // 工作流引擎
         new("workflow-agent", "/workflow-agent", "工作流引擎", null, "Workflow", 124),
 
