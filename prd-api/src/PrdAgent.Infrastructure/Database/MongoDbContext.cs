@@ -115,6 +115,8 @@ public class MongoDbContext
     public IMongoCollection<ReportDailyLog> ReportDailyLogs => _database.GetCollection<ReportDailyLog>("report_daily_logs");
     public IMongoCollection<ReportDataSource> ReportDataSources => _database.GetCollection<ReportDataSource>("report_data_sources");
     public IMongoCollection<ReportCommit> ReportCommits => _database.GetCollection<ReportCommit>("report_commits");
+    public IMongoCollection<ReportComment> ReportComments => _database.GetCollection<ReportComment>("report_comments");
+    public IMongoCollection<TeamSummary> ReportTeamSummaries => _database.GetCollection<TeamSummary>("report_team_summaries");
 
     // Channel Adapter 多通道适配器
     public IMongoCollection<ChannelWhitelist> ChannelWhitelists => _database.GetCollection<ChannelWhitelist>("channel_whitelist");
@@ -1041,5 +1043,23 @@ public class MongoDbContext
         ReportCommits.Indexes.CreateOne(new CreateIndexModel<ReportCommit>(
             Builders<ReportCommit>.IndexKeys.Ascending(x => x.MappedUserId).Descending(x => x.CommittedAt),
             new CreateIndexOptions { Name = "idx_commits_user_date" }));
+
+        // ReportComments：按 (ReportId, SectionIndex) 查询段落评论
+        ReportComments.Indexes.CreateOne(new CreateIndexModel<ReportComment>(
+            Builders<ReportComment>.IndexKeys.Ascending(x => x.ReportId).Ascending(x => x.SectionIndex),
+            new CreateIndexOptions { Name = "idx_report_comments_report_section" }));
+        // ReportComments：按 ParentCommentId 查询回复
+        ReportComments.Indexes.CreateOne(new CreateIndexModel<ReportComment>(
+            Builders<ReportComment>.IndexKeys.Ascending(x => x.ParentCommentId),
+            new CreateIndexOptions { Name = "idx_report_comments_parent" }));
+
+        // ReportTeamSummaries：(TeamId, WeekYear, WeekNumber) 唯一
+        try
+        {
+            ReportTeamSummaries.Indexes.CreateOne(new CreateIndexModel<TeamSummary>(
+                Builders<TeamSummary>.IndexKeys.Ascending(x => x.TeamId).Ascending(x => x.WeekYear).Ascending(x => x.WeekNumber),
+                new CreateIndexOptions { Unique = true, Name = "idx_team_summaries_team_week" }));
+        }
+        catch (MongoCommandException) { /* 索引已存在 */ }
     }
 }

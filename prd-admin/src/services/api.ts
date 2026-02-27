@@ -454,6 +454,8 @@ export const api = {
       members: (id: string) => `/api/report-agent/teams/${id}/members`,
       member: (id: string, userId: string) => `/api/report-agent/teams/${id}/members/${userId}`,
       dashboard: (id: string) => `/api/report-agent/teams/${id}/dashboard`,
+      summary: (id: string) => `/api/report-agent/teams/${id}/summary`,
+      summaryGenerate: (id: string) => `/api/report-agent/teams/${id}/summary/generate`,
     },
     templates: {
       list: () => '/api/report-agent/templates',
@@ -466,6 +468,9 @@ export const api = {
       review: (id: string) => `/api/report-agent/reports/${id}/review`,
       return: (id: string) => `/api/report-agent/reports/${id}/return`,
       generate: (id: string) => `/api/report-agent/reports/${id}/generate`,
+      comments: (id: string) => `/api/report-agent/reports/${id}/comments`,
+      comment: (id: string, commentId: string) => `/api/report-agent/reports/${id}/comments/${commentId}`,
+      planComparison: (id: string) => `/api/report-agent/reports/${id}/plan-comparison`,
     },
     dailyLogs: {
       list: () => '/api/report-agent/daily-logs',

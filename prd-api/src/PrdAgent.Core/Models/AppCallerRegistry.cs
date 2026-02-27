@@ -563,6 +563,17 @@ public static class ReportAgent
         )]
         public const string Content = "report-agent.polish::chat";
     }
+
+    public static class Aggregate
+    {
+        [AppCallerMetadata(
+            "团队周报汇总",
+            "将团队成员周报汇总为管理摘要",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Report"
+        )]
+        public const string Summary = "report-agent.aggregate::chat";
+    }
 }
 
 /// <summary>

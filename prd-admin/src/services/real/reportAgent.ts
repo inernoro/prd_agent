@@ -37,6 +37,12 @@ import type {
   ListDataSourceCommitsContract,
   GenerateReportContract,
   GetCollectedActivityContract,
+  ListCommentsContract,
+  CreateCommentContract,
+  DeleteCommentContract,
+  GetPlanComparisonContract,
+  GenerateTeamSummaryContract,
+  GetTeamSummaryContract,
   DailyLog,
   ReportDataSource,
   ReportCommit,
@@ -47,6 +53,9 @@ import type {
   WeeklyReport,
   ReportUser,
   TeamDashboardData,
+  ReportComment,
+  PlanComparison,
+  TeamSummary,
 } from '../contracts/reportAgent';
 
 // ========== Teams ==========
@@ -339,6 +348,66 @@ export const getCollectedActivityReal: GetCollectedActivityContract = async (inp
   const q = qs.toString();
   return await apiRequest<CollectedActivity>(
     `${api.reportAgent.activity()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+// ========== Phase 3: Comments ==========
+
+export const listCommentsReal: ListCommentsContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.sectionIndex != null) qs.set('sectionIndex', String(input.sectionIndex));
+  const q = qs.toString();
+  return await apiRequest<{ items: ReportComment[] }>(
+    `${api.reportAgent.reports.comments(encodeURIComponent(input.reportId))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const createCommentReal: CreateCommentContract = async (input) => {
+  const { reportId, ...body } = input;
+  return await apiRequest<{ comment: ReportComment }>(
+    api.reportAgent.reports.comments(encodeURIComponent(reportId)),
+    { method: 'POST', body }
+  );
+};
+
+export const deleteCommentReal: DeleteCommentContract = async (input) => {
+  return await apiRequest<object>(
+    api.reportAgent.reports.comment(encodeURIComponent(input.reportId), encodeURIComponent(input.commentId)),
+    { method: 'DELETE' }
+  );
+};
+
+// ========== Phase 3: Plan Comparison ==========
+
+export const getPlanComparisonReal: GetPlanComparisonContract = async (input) => {
+  return await apiRequest<PlanComparison>(
+    api.reportAgent.reports.planComparison(encodeURIComponent(input.reportId)),
+    { method: 'GET' }
+  );
+};
+
+// ========== Phase 3: Team Summary ==========
+
+export const generateTeamSummaryReal: GenerateTeamSummaryContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  const q = qs.toString();
+  return await apiRequest<{ summary: TeamSummary }>(
+    `${api.reportAgent.teams.summaryGenerate(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
+    { method: 'POST' }
+  );
+};
+
+export const getTeamSummaryReal: GetTeamSummaryContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  const q = qs.toString();
+  return await apiRequest<{ summary: TeamSummary | null }>(
+    `${api.reportAgent.teams.summary(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
     { method: 'GET' }
   );
 };

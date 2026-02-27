@@ -1,6 +1,6 @@
 # 周报 Agent — 实施进度追踪
 
-> **最后更新**：2026-02-27 | **当前阶段**：Phase 2 ✅ → Phase 3 待启动
+> **最后更新**：2026-02-27 | **当前阶段**：Phase 3 ✅ → Phase 4 待启动
 >
 > **用途**：跨 session 的实施进度单一信息源。新 session 读此文档即可恢复上下文，无需全盘扫描。
 >
@@ -18,7 +18,7 @@
 | PRD | 产品需求文档 v1.0 | ✅ DONE | `ff1943f` | 2026-02-24 |
 | 1 | 基础闭环 | ✅ DONE | `46c6d15` | 2026-02-24 |
 | 2 | 自动采集 | ✅ DONE | `ffce7fd` | 2026-02-26 |
-| 3 | 管理增强 | 🔵 PLANNED | — | — |
+| 3 | 管理增强 | ✅ DONE | `TBD` | 2026-02-27 |
 | 4 | 体验优化 | 🔵 PLANNED | — | — |
 
 ---
@@ -137,29 +137,63 @@
 
 ---
 
-## Phase 3：管理增强 — 🔵 PLANNED
+## Phase 3：管理增强 — ✅ DONE
 
-> 来源：PRD `doc/agent.report-agent.md` §八 Phase 3
+> Commit: `TBD` (2026-02-27) — 实现全部 5 个功能
+> 功能：通知系统 + 退回完善 + 评论系统 + 计划比对 + 团队汇总
 
-### 待实现
+### 交付物
 
-| 功能点 | 说明 | 预估复杂度 |
-|--------|------|-----------|
-| 团队汇总 | AI 自动汇总团队所有成员周报，生成团队周报 | 高（LLM + 新 UI） |
-| 评论系统 | 领导对周报行级评论 | 中（新模型 + 新 UI） |
-| 退回机制 | 退回 + 说明原因 + 重新提交流程 | 低（状态机已支持） |
-| 通知系统 | 提醒提交/逾期/查阅通知 | 中（复用 AdminNotification） |
-| 计划比对 | 上周计划 vs 本周实际自动比对 | 中（数据关联 + 展示） |
+**后端新增 — 模型 (2 个)**：
+- `ReportComment.cs` — 段落级评论（支持回复线程，ParentCommentId）
+- `TeamSummary.cs` — AI 团队汇总（TeamSummarySection 分段结构）
 
-### 前置条件
+**后端新增 — 服务 (2 个)**：
+- `ReportNotificationService.cs` — 7 种通知事件（复用 AdminNotification + Key 幂等去重）
+- `TeamSummaryService.cs` — AI 团队汇总生成（ILlmGateway.SendAsync + JSON 解析）
 
-- Phase 2 的 AI 生成引擎已就绪 → 团队汇总可复用 `ReportGenerationService`
-- 状态机已有 `Returned` 状态 → 退回机制基础已存在
-- `AdminNotification` 基础设施已有 → 通知可复用
+**后端修改**：
+- `ReportAgentController.cs` — +6 端点，+通知调用（Submit/Review/Return），+2 DI 注入
+- `WeeklyReport.cs` — +3 字段（ReturnedBy/ReturnedByName/ReturnedAt）
+- `AppCallerRegistry.cs` — +`report-agent.aggregate::chat` AppCallerCode
+- `MongoDbContext.cs` — +2 集合（`report_comments`, `report_team_summaries`）+3 索引
+- `ReportAutoGenerateWorker.cs` — +截止提醒（周五 10:00/15:00）+逾期标记（周一）
+- `Program.cs` — +2 DI 注册（ReportNotificationService, TeamSummaryService）
 
-### 预计需要的 AppCallerCode
+**前端新增**：
+- `PlanComparisonPanel.tsx` — 计划比对双栏视图
 
-- `report-agent.aggregate::chat` — 团队汇总生成（PRD §9.2 已预定义）
+**前端修改**：
+- `ReportDetailPanel.tsx` — +退回 banner +评论系统 +计划比对 tab
+- `TeamDashboard.tsx` — +退回对话框 +团队汇总区域 +Overdue 状态
+- `contracts/reportAgent.ts` — +ReportComment, PlanComparison, TeamSummary 接口 +6 contract types
+- `real/reportAgent.ts` — +6 API 函数
+- `api.ts` — +5 路由
+- `services/index.ts` — +6 导出
+
+**DB 新增集合**：`report_comments`, `report_team_summaries`
+
+### API 端点清单（Phase 3 新增 6 个）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/report-agent/reports/{id}/comments` | GET | 评论列表（可选 ?sectionIndex=） |
+| `/api/report-agent/reports/{id}/comments` | POST | 创建评论（支持 parentCommentId 回复） |
+| `/api/report-agent/reports/{id}/comments/{commentId}` | DELETE | 删除评论（级联删除回复） |
+| `/api/report-agent/reports/{id}/plan-comparison` | GET | 计划比对（上周计划 vs 本周实际） |
+| `/api/report-agent/teams/{id}/summary/generate` | POST | AI 生成团队汇总 |
+| `/api/report-agent/teams/{id}/summary` | GET | 获取团队汇总（?weekYear=&weekNumber=） |
+
+### 架构决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 通知机制 | 复用 `AdminNotification` + Key 幂等去重 | 已有成熟基础设施，避免新建 |
+| 评论粒度 | 段落级 + ParentCommentId 线程回复 | 用户明确要求；参考 PrdComment 模式 |
+| 计划比对 | 纯数据关联（关键词匹配段落标题） | 不需要 LLM，只是数据展示 |
+| 团队汇总存储 | 独立集合 `report_team_summaries` | 独立生命周期，唯一索引按周去重 |
+| 团队汇总 AI | `ILlmGateway.SendAsync` + CancellationToken.None | 遵循 Gateway 规则 + 服务器权威性 |
+| 截止提醒 | 扩展现有 `ReportAutoGenerateWorker` | 避免新建 Worker，复用定时器 |
 
 ---
 

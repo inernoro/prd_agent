@@ -26,19 +26,25 @@ public class ReportAgentController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly MapActivityCollector _activityCollector;
     private readonly ReportGenerationService _generationService;
+    private readonly ReportNotificationService _notificationService;
+    private readonly TeamSummaryService _teamSummaryService;
 
     public ReportAgentController(
         MongoDbContext db,
         ILogger<ReportAgentController> logger,
         IConfiguration configuration,
         MapActivityCollector activityCollector,
-        ReportGenerationService generationService)
+        ReportGenerationService generationService,
+        ReportNotificationService notificationService,
+        TeamSummaryService teamSummaryService)
     {
         _db = db;
         _logger = logger;
         _configuration = configuration;
         _activityCollector = activityCollector;
         _generationService = generationService;
+        _notificationService = notificationService;
+        _teamSummaryService = teamSummaryService;
     }
 
     #region Helpers
@@ -702,11 +708,26 @@ public class ReportAgentController : ControllerBase
             .Set(r => r.Status, WeeklyReportStatus.Submitted)
             .Set(r => r.SubmittedAt, DateTime.UtcNow)
             .Set(r => r.ReturnReason, null as string)
+            .Set(r => r.ReturnedBy, null as string)
+            .Set(r => r.ReturnedByName, null as string)
+            .Set(r => r.ReturnedAt, null as DateTime?)
             .Set(r => r.UpdatedAt, DateTime.UtcNow);
 
         await _db.WeeklyReports.UpdateOneAsync(r => r.Id == id, update);
 
         var updated = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+
+        // 通知：提交 → 负责人 + 检查全员提交
+        if (updated != null)
+        {
+            var team = await _db.ReportTeams.Find(t => t.Id == updated.TeamId).FirstOrDefaultAsync();
+            if (team != null)
+            {
+                await _notificationService.NotifyReportSubmittedAsync(updated, team.LeaderUserId);
+                await _notificationService.CheckAndNotifyAllSubmittedAsync(updated);
+            }
+        }
+
         return Ok(ApiResponse<object>.Ok(new { report = updated }));
     }
 
@@ -740,6 +761,11 @@ public class ReportAgentController : ControllerBase
         await _db.WeeklyReports.UpdateOneAsync(r => r.Id == id, update);
 
         var updated = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+
+        // 通知：审阅 → 员工
+        if (updated != null)
+            await _notificationService.NotifyReportReviewedAsync(updated, username ?? "审阅人");
+
         return Ok(ApiResponse<object>.Ok(new { report = updated }));
     }
 
@@ -762,14 +788,23 @@ public class ReportAgentController : ControllerBase
             !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只有团队负责人可以退回"));
 
+        var username = GetUsername();
         var update = Builders<WeeklyReport>.Update
             .Set(r => r.Status, WeeklyReportStatus.Returned)
             .Set(r => r.ReturnReason, req.Reason)
+            .Set(r => r.ReturnedBy, userId)
+            .Set(r => r.ReturnedByName, username)
+            .Set(r => r.ReturnedAt, DateTime.UtcNow)
             .Set(r => r.UpdatedAt, DateTime.UtcNow);
 
         await _db.WeeklyReports.UpdateOneAsync(r => r.Id == id, update);
 
         var updated = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+
+        // 通知：退回 → 员工
+        if (updated != null)
+            await _notificationService.NotifyReportReturnedAsync(updated, username ?? "审阅人");
+
         return Ok(ApiResponse<object>.Ok(new { report = updated }));
     }
 
@@ -1410,4 +1445,253 @@ public class ReportAgentController : ControllerBase
     }
 
     #endregion
+
+    #region Comments
+
+    /// <summary>
+    /// 获取周报评论列表
+    /// </summary>
+    [HttpGet("reports/{id}/comments")]
+    public async Task<IActionResult> ListComments(string id, [FromQuery] int? sectionIndex)
+    {
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        // 验证访问权限：本人 + 团队成员 + 负责人 + 管理员
+        var userId = GetUserId();
+        if (report.UserId != userId &&
+            !await IsTeamMember(report.TeamId, userId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该周报的评论"));
+
+        var filter = Builders<ReportComment>.Filter.Eq(c => c.ReportId, id);
+        if (sectionIndex.HasValue)
+            filter &= Builders<ReportComment>.Filter.Eq(c => c.SectionIndex, sectionIndex.Value);
+
+        var comments = await _db.ReportComments
+            .Find(filter)
+            .SortBy(c => c.CreatedAt)
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(new { items = comments }));
+    }
+
+    /// <summary>
+    /// 创建评论（支持段落级 + 回复）
+    /// </summary>
+    [HttpPost("reports/{id}/comments")]
+    public async Task<IActionResult> CreateComment(string id, [FromBody] CreateCommentRequest req)
+    {
+        var userId = GetUserId();
+        var username = GetUsername();
+
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        // 验证访问权限
+        if (report.UserId != userId &&
+            !await IsTeamMember(report.TeamId, userId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权评论该周报"));
+
+        if (string.IsNullOrWhiteSpace(req.Content))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "评论内容不能为空"));
+
+        // 获取段落标题快照
+        var sectionTitle = req.SectionIndex >= 0 && req.SectionIndex < report.Sections.Count
+            ? report.Sections[req.SectionIndex].TemplateSection?.Title ?? ""
+            : "";
+
+        // 如果是回复，验证父评论存在
+        if (!string.IsNullOrEmpty(req.ParentCommentId))
+        {
+            var parent = await _db.ReportComments.Find(c => c.Id == req.ParentCommentId && c.ReportId == id).AnyAsync();
+            if (!parent)
+                return BadRequest(ApiResponse<object>.Fail("NOT_FOUND", "父评论不存在"));
+        }
+
+        var comment = new ReportComment
+        {
+            ReportId = id,
+            SectionIndex = req.SectionIndex,
+            SectionTitleSnapshot = sectionTitle,
+            ParentCommentId = string.IsNullOrEmpty(req.ParentCommentId) ? null : req.ParentCommentId,
+            AuthorUserId = userId,
+            AuthorDisplayName = username ?? "匿名",
+            Content = req.Content.Trim()
+        };
+
+        await _db.ReportComments.InsertOneAsync(comment);
+        return Ok(ApiResponse<object>.Ok(new { comment }));
+    }
+
+    /// <summary>
+    /// 删除评论（仅作者或管理员）
+    /// </summary>
+    [HttpDelete("reports/{reportId}/comments/{commentId}")]
+    public async Task<IActionResult> DeleteComment(string reportId, string commentId)
+    {
+        var userId = GetUserId();
+        var comment = await _db.ReportComments.Find(c => c.Id == commentId && c.ReportId == reportId).FirstOrDefaultAsync();
+        if (comment == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "评论不存在"));
+
+        if (comment.AuthorUserId != userId && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能删除自己的评论"));
+
+        // 删除评论及其所有回复
+        await _db.ReportComments.DeleteManyAsync(
+            c => c.Id == commentId || c.ParentCommentId == commentId);
+
+        return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    #endregion
+
+    #region Plan Comparison
+
+    /// <summary>
+    /// 计划比对：上周计划 vs 本周实际
+    /// </summary>
+    [HttpGet("reports/{id}/plan-comparison")]
+    public async Task<IActionResult> GetPlanComparison(string id)
+    {
+        var userId = GetUserId();
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        // 验证访问权限
+        if (report.UserId != userId &&
+            !await IsTeamMember(report.TeamId, userId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看"));
+
+        // 计算上周
+        var prevWeekNumber = report.WeekNumber - 1;
+        var prevWeekYear = report.WeekYear;
+        if (prevWeekNumber < 1)
+        {
+            prevWeekYear--;
+            prevWeekNumber = ISOWeek.GetWeeksInYear(prevWeekYear);
+        }
+
+        var lastWeekReport = await _db.WeeklyReports.Find(
+            r => r.UserId == report.UserId
+                 && r.TeamId == report.TeamId
+                 && r.WeekYear == prevWeekYear
+                 && r.WeekNumber == prevWeekNumber
+        ).FirstOrDefaultAsync();
+
+        // 从上周周报提取"下周计划"段落
+        var lastWeekPlans = new List<string>();
+        if (lastWeekReport != null)
+        {
+            var planKeywords = new[] { "计划", "plan", "下周", "next" };
+            foreach (var section in lastWeekReport.Sections)
+            {
+                var title = section.TemplateSection?.Title?.ToLowerInvariant() ?? "";
+                if (planKeywords.Any(kw => title.Contains(kw, StringComparison.OrdinalIgnoreCase)))
+                {
+                    lastWeekPlans.AddRange(section.Items.Select(i => i.Content));
+                }
+            }
+        }
+
+        // 从本周周报提取"完成"段落
+        var thisWeekActuals = new List<string>();
+        var completedKeywords = new[] { "完成", "成果", "本周", "done", "completed", "this week" };
+        foreach (var section in report.Sections)
+        {
+            var title = section.TemplateSection?.Title?.ToLowerInvariant() ?? "";
+            if (completedKeywords.Any(kw => title.Contains(kw, StringComparison.OrdinalIgnoreCase)))
+            {
+                thisWeekActuals.AddRange(section.Items.Select(i => i.Content));
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            lastWeekPlans,
+            thisWeekActuals,
+            lastWeekLabel = lastWeekReport != null
+                ? $"{prevWeekYear} 年第 {prevWeekNumber} 周"
+                : null,
+            thisWeekLabel = $"{report.WeekYear} 年第 {report.WeekNumber} 周",
+            hasLastWeek = lastWeekReport != null
+        }));
+    }
+
+    #endregion
+
+    #region Team Summary
+
+    /// <summary>
+    /// 生成团队周报汇总（AI 聚合）
+    /// </summary>
+    [HttpPost("teams/{id}/summary/generate")]
+    public async Task<IActionResult> GenerateTeamSummary(string id,
+        [FromQuery] int? weekYear, [FromQuery] int? weekNumber)
+    {
+        var userId = GetUserId();
+        var username = GetUsername();
+
+        if (!await IsTeamLeaderOrDeputy(id, userId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只有团队负责人可以生成团队汇总"));
+
+        var now = DateTime.UtcNow;
+        var wy = weekYear ?? ISOWeek.GetYear(now);
+        var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
+
+        try
+        {
+            var summary = await _teamSummaryService.GenerateAsync(id, wy, wn, userId, username);
+            return Ok(ApiResponse<object>.Ok(new { summary }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "团队汇总生成失败: teamId={TeamId}", id);
+            return StatusCode(500, ApiResponse<object>.Fail($"AI 汇总失败: {ex.Message}"));
+        }
+    }
+
+    /// <summary>
+    /// 获取团队周报汇总
+    /// </summary>
+    [HttpGet("teams/{id}/summary")]
+    public async Task<IActionResult> GetTeamSummary(string id,
+        [FromQuery] int? weekYear, [FromQuery] int? weekNumber)
+    {
+        var userId = GetUserId();
+        if (!await IsTeamLeaderOrDeputy(id, userId) &&
+            !await IsTeamMember(id, userId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看团队汇总"));
+
+        var now = DateTime.UtcNow;
+        var wy = weekYear ?? ISOWeek.GetYear(now);
+        var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
+
+        var summary = await _db.ReportTeamSummaries.Find(
+            s => s.TeamId == id && s.WeekYear == wy && s.WeekNumber == wn
+        ).FirstOrDefaultAsync();
+
+        return Ok(ApiResponse<object>.Ok(new { summary }));
+    }
+
+    #endregion
+}
+
+public class CreateCommentRequest
+{
+    public int SectionIndex { get; set; }
+    public string Content { get; set; } = string.Empty;
+    public string? ParentCommentId { get; set; }
 }

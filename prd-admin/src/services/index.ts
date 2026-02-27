@@ -520,6 +520,12 @@ import type {
   ListDataSourceCommitsContract,
   GenerateReportContract,
   GetCollectedActivityContract,
+  ListCommentsContract,
+  CreateCommentContract,
+  DeleteCommentContract,
+  GetPlanComparisonContract,
+  GenerateTeamSummaryContract,
+  GetTeamSummaryContract,
 } from '@/services/contracts/reportAgent';
 import {
   listReportTeamsReal,
@@ -558,6 +564,12 @@ import {
   listDataSourceCommitsReal,
   generateReportReal,
   getCollectedActivityReal,
+  listCommentsReal,
+  createCommentReal,
+  deleteCommentReal,
+  getPlanComparisonReal,
+  generateTeamSummaryReal,
+  getTeamSummaryReal,
 } from '@/services/real/reportAgent';
 
 function withAuth<TArgs extends unknown[], TResult>(
@@ -886,6 +898,13 @@ export const syncDataSource: SyncDataSourceContract = withAuth(syncDataSourceRea
 export const listDataSourceCommits: ListDataSourceCommitsContract = withAuth(listDataSourceCommitsReal);
 export const generateReport: GenerateReportContract = withAuth(generateReportReal);
 export const getCollectedActivity: GetCollectedActivityContract = withAuth(getCollectedActivityReal);
+// Report Agent Phase 3: Comments + Plan Comparison + Team Summary
+export const listComments: ListCommentsContract = withAuth(listCommentsReal);
+export const createComment: CreateCommentContract = withAuth(createCommentReal);
+export const deleteComment: DeleteCommentContract = withAuth(deleteCommentReal);
+export const getPlanComparison: GetPlanComparisonContract = withAuth(getPlanComparisonReal);
+export const generateTeamSummary: GenerateTeamSummaryContract = withAuth(generateTeamSummaryReal);
+export const getTeamSummary: GetTeamSummaryContract = withAuth(getTeamSummaryReal);
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
 export const automationsService: IAutomationsService = new AutomationsService();

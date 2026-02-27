@@ -81,6 +81,8 @@
 | `report_daily_logs` | `ReportDailyLog` | 每日工作打点 | `(userId, date)` 唯一 |
 | `report_data_sources` | `ReportDataSource` | Git/SVN 数据源配置 | `teamId` |
 | `report_commits` | `ReportCommit` | 缓存的代码提交 | `(dataSourceId, commitHash)` 唯一；`(mappedUserId, committedAt)` |
+| `report_comments` | `ReportComment` | 周报段落级评论（支持线程回复） | `(reportId, sectionIndex)`；`(parentCommentId)` |
+| `report_team_summaries` | `TeamSummary` | AI 团队周报汇总（按周去重） | `(teamId, weekYear, weekNumber)` 唯一 |
 
 ---
 

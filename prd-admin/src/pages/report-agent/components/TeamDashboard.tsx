@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Calendar, CheckCircle2, Clock, AlertCircle, Eye } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar, CheckCircle2, Clock, AlertCircle, Eye, Sparkles, Loader2 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { useAuthStore } from '@/stores/authStore';
-import { reviewWeeklyReport, returnWeeklyReport } from '@/services';
+import { reviewWeeklyReport, returnWeeklyReport, generateTeamSummary, getTeamSummary } from '@/services';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
+import type { TeamSummary } from '@/services/contracts/reportAgent';
 import { ReportDetailPanel } from './ReportDetailPanel';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
@@ -24,6 +25,7 @@ const statusConfig: Record<string, { label: string; color: string; icon: typeof 
   [WeeklyReportStatus.Submitted]: { label: '已提交', color: 'rgba(59, 130, 246, 0.9)', icon: AlertCircle },
   [WeeklyReportStatus.Reviewed]: { label: '已审阅', color: 'rgba(34, 197, 94, 0.9)', icon: CheckCircle2 },
   [WeeklyReportStatus.Returned]: { label: '已退回', color: 'rgba(239, 68, 68, 0.9)', icon: AlertCircle },
+  [WeeklyReportStatus.Overdue]: { label: '逾期', color: 'rgba(239, 68, 68, 0.9)', icon: AlertCircle },
 };
 
 export function TeamDashboard() {
@@ -38,11 +40,30 @@ export function TeamDashboard() {
   const [weekNumber, setWeekNumber] = useState(now.weekNumber);
   const [viewingReportId, setViewingReportId] = useState<string | null>(null);
 
+  // Return dialog state
+  const [returnDialogId, setReturnDialogId] = useState<string | null>(null);
+  const [returnReason, setReturnReason] = useState('');
+
+  // Team summary state
+  const [summary, setSummary] = useState<TeamSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [generatingSummary, setGeneratingSummary] = useState(false);
+
   useEffect(() => {
     if (selectedTeamId) {
       void loadDashboard(selectedTeamId, weekYear, weekNumber);
+      loadSummary();
     }
   }, [selectedTeamId, weekYear, weekNumber, loadDashboard]);
+
+  const loadSummary = async () => {
+    if (!selectedTeamId) return;
+    setSummaryLoading(true);
+    const res = await getTeamSummary({ teamId: selectedTeamId, weekYear, weekNumber });
+    if (res.success && res.data) setSummary(res.data.summary);
+    else setSummary(null);
+    setSummaryLoading(false);
+  };
 
   const handlePrevWeek = () => {
     if (weekNumber <= 1) { setWeekYear(weekYear - 1); setWeekNumber(52); }
@@ -64,15 +85,28 @@ export function TeamDashboard() {
     }
   };
 
-  const handleReturn = async (reportId: string) => {
-    const reason = window.prompt('请输入退回原因');
-    if (reason === null) return;
-    const res = await returnWeeklyReport({ id: reportId, reason });
+  const handleReturn = async () => {
+    if (!returnDialogId) return;
+    const res = await returnWeeklyReport({ id: returnDialogId, reason: returnReason });
     if (res.success) {
       toast.success('已退回');
+      setReturnDialogId(null);
+      setReturnReason('');
       void loadDashboard(selectedTeamId, weekYear, weekNumber);
     } else {
       toast.error(res.error?.message || '操作失败');
+    }
+  };
+
+  const handleGenerateSummary = async () => {
+    setGeneratingSummary(true);
+    const res = await generateTeamSummary({ teamId: selectedTeamId, weekYear, weekNumber });
+    setGeneratingSummary(false);
+    if (res.success && res.data) {
+      setSummary(res.data.summary);
+      toast.success('团队汇总已生成');
+    } else {
+      toast.error(res.error?.message || '汇总生成失败');
     }
   };
 
@@ -91,8 +125,29 @@ export function TeamDashboard() {
           reportId={viewingReportId}
           onClose={() => setViewingReportId(null)}
           onReview={() => handleReview(viewingReportId)}
-          onReturn={() => handleReturn(viewingReportId)}
+          onReturn={() => { setReturnDialogId(viewingReportId); setViewingReportId(null); }}
         />
+      )}
+
+      {/* Return Dialog */}
+      {returnDialogId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.3)' }}>
+          <GlassCard className="p-4 w-[400px]">
+            <div className="text-[14px] font-medium mb-3" style={{ color: 'var(--text-primary)' }}>退回周报</div>
+            <textarea
+              className="w-full text-[12px] px-3 py-2 rounded-lg resize-none"
+              style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)', minHeight: 80 }}
+              placeholder="请输入退回原因..."
+              value={returnReason}
+              onChange={(e) => setReturnReason(e.target.value)}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2 mt-3">
+              <Button variant="ghost" size="sm" onClick={() => { setReturnDialogId(null); setReturnReason(''); }}>取消</Button>
+              <Button variant="primary" size="sm" onClick={handleReturn}>确认退回</Button>
+            </div>
+          </GlassCard>
+        </div>
       )}
 
       {/* Controls */}
@@ -174,7 +229,7 @@ export function TeamDashboard() {
                         <Button variant="primary" size="sm" onClick={() => handleReview(member.reportId!)}>
                           审阅
                         </Button>
-                        <Button variant="secondary" size="sm" onClick={() => handleReturn(member.reportId!)}>
+                        <Button variant="secondary" size="sm" onClick={() => setReturnDialogId(member.reportId!)}>
                           退回
                         </Button>
                       </div>
@@ -191,6 +246,55 @@ export function TeamDashboard() {
           </div>
         </GlassCard>
       )}
+
+      {/* Team Summary */}
+      <GlassCard variant="subtle" className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>团队周报汇总</div>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleGenerateSummary}
+            disabled={generatingSummary}
+          >
+            {generatingSummary ? <Loader2 size={12} className="animate-spin mr-1" /> : <Sparkles size={12} className="mr-1" />}
+            {summary ? '重新生成' : '生成汇总'}
+          </Button>
+        </div>
+
+        {summaryLoading ? (
+          <div className="text-[12px] text-center py-4" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+        ) : summary ? (
+          <div className="space-y-3">
+            <div className="text-[10px] flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+              <span>汇总 {summary.submittedCount}/{summary.memberCount} 份周报</span>
+              <span>·</span>
+              <span>由 {summary.generatedByName || '系统'} 生成于 {new Date(summary.generatedAt).toLocaleString()}</span>
+            </div>
+            {summary.sections.map((section, idx) => (
+              <div key={idx}>
+                <div className="text-[12px] font-medium mb-1" style={{ color: 'var(--text-primary)' }}>{section.title}</div>
+                {section.items.length === 0 ? (
+                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>（无内容）</div>
+                ) : (
+                  <ul className="space-y-0.5">
+                    {section.items.map((item, i) => (
+                      <li key={i} className="flex items-start gap-1.5">
+                        <span className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>•</span>
+                        <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-[12px] text-center py-4" style={{ color: 'var(--text-muted)' }}>
+            暂无汇总，点击"生成汇总"自动聚合团队周报
+          </div>
+        )}
+      </GlassCard>
     </div>
   );
 }

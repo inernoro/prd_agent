@@ -25,6 +25,10 @@ public class ReportAutoGenerateWorker : BackgroundService
         _logger = logger;
     }
 
+    // 截止提醒去重
+    private int _lastDeadlineReminderWeek = -1;
+    private int _lastDeadlineReminderYear = -1;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("ReportAutoGenerateWorker started");
@@ -35,6 +39,7 @@ public class ReportAutoGenerateWorker : BackgroundService
             {
                 await Task.Delay(CheckInterval, stoppingToken);
                 await CheckAndGenerateAsync(stoppingToken);
+                await CheckDeadlineAndOverdueAsync();
             }
             catch (OperationCanceledException)
             {
@@ -152,6 +157,84 @@ public class ReportAutoGenerateWorker : BackgroundService
         _lastTriggeredWeek = weekNumber;
 
         _logger.LogInformation("Auto-generate completed: generated={Generated}, skipped={Skipped}", generated, skipped);
+    }
+
+    /// <summary>
+    /// 检查截止提醒 + 逾期标记
+    /// </summary>
+    private async Task CheckDeadlineAndOverdueAsync()
+    {
+        var chinaTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, ChinaTimeZone);
+        var weekYear = ISOWeek.GetYear(chinaTime);
+        var weekNumber = ISOWeek.GetWeekOfYear(chinaTime);
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        var notificationService = scope.ServiceProvider.GetRequiredService<ReportNotificationService>();
+
+        // 截止提醒：周五 10:00 或 15:00（每周只提醒一次）
+        if (chinaTime.DayOfWeek == DayOfWeek.Friday &&
+            (chinaTime.Hour == 10 || chinaTime.Hour == 15) &&
+            (_lastDeadlineReminderYear != weekYear || _lastDeadlineReminderWeek != weekNumber))
+        {
+            _logger.LogInformation("Sending deadline reminders for {Year}-W{Week}", weekYear, weekNumber);
+            _lastDeadlineReminderYear = weekYear;
+            _lastDeadlineReminderWeek = weekNumber;
+
+            var teams = await db.ReportTeams.Find(_ => true).ToListAsync();
+            foreach (var team in teams)
+            {
+                var members = await db.ReportTeamMembers.Find(m => m.TeamId == team.Id).ToListAsync();
+                foreach (var member in members)
+                {
+                    var hasReport = await db.WeeklyReports.Find(
+                        r => r.UserId == member.UserId && r.TeamId == team.Id
+                             && r.WeekYear == weekYear && r.WeekNumber == weekNumber
+                             && (r.Status == WeeklyReportStatus.Submitted || r.Status == WeeklyReportStatus.Reviewed)
+                    ).AnyAsync();
+
+                    if (!hasReport)
+                    {
+                        await notificationService.NotifyDeadlineApproachingAsync(member.UserId, weekYear, weekNumber);
+                    }
+                }
+            }
+        }
+
+        // 逾期标记：周一之后，上周的 Draft/NotStarted → Overdue
+        if (chinaTime.DayOfWeek == DayOfWeek.Monday && chinaTime.Hour >= 10)
+        {
+            var prevWeekNumber = weekNumber - 1;
+            var prevWeekYear = weekYear;
+            if (prevWeekNumber < 1)
+            {
+                prevWeekYear--;
+                prevWeekNumber = ISOWeek.GetWeeksInYear(prevWeekYear);
+            }
+
+            var overdueStatuses = new[] { WeeklyReportStatus.Draft, WeeklyReportStatus.NotStarted };
+            var overdueReports = await db.WeeklyReports.Find(
+                r => r.WeekYear == prevWeekYear && r.WeekNumber == prevWeekNumber
+                     && overdueStatuses.Contains(r.Status)
+            ).ToListAsync();
+
+            foreach (var report in overdueReports)
+            {
+                await db.WeeklyReports.UpdateOneAsync(
+                    r => r.Id == report.Id,
+                    Builders<WeeklyReport>.Update
+                        .Set(r => r.Status, WeeklyReportStatus.Overdue)
+                        .Set(r => r.UpdatedAt, DateTime.UtcNow));
+
+                var team = await db.ReportTeams.Find(t => t.Id == report.TeamId).FirstOrDefaultAsync();
+                await notificationService.NotifyOverdueAsync(
+                    report.UserId, team?.LeaderUserId, prevWeekYear, prevWeekNumber);
+            }
+
+            if (overdueReports.Count > 0)
+                _logger.LogInformation("Marked {Count} reports as overdue for {Year}-W{Week}",
+                    overdueReports.Count, prevWeekYear, prevWeekNumber);
+        }
     }
 
     private static async Task<string?> FindTemplateAsync(MongoDbContext db, string teamId, string? jobTitle, CancellationToken ct)
