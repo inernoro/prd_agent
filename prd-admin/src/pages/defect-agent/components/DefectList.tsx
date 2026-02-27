@@ -82,7 +82,6 @@ export function DefectList() {
         >
           <div className="w-1 flex-shrink-0" />
           <div className="w-2 flex-shrink-0" />
-          <span className="w-[52px] flex-shrink-0">编号</span>
           <span className="w-[46px] flex-shrink-0">严重性</span>
           <span className="flex-1 min-w-0">标题</span>
           <span className="w-[52px] flex-shrink-0">状态</span>

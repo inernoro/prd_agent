@@ -269,14 +269,6 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
       )}
       {(isRead || isArchived) && <div className="w-2 flex-shrink-0" />}
 
-      {/* 缺陷编号 */}
-      <span
-        className="text-[10px] font-mono flex-shrink-0 w-[52px]"
-        style={{ color: isRead ? 'var(--text-muted)' : 'var(--text-secondary)' }}
-      >
-        {defect.defectNo}
-      </span>
-
       {/* 严重性 */}
       <div
         className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0"
@@ -286,14 +278,14 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
         {severity.label}
       </div>
 
-      {/* 标题 - 已读变灰 */}
+      {/* 标题 - 已读变灰，tooltip 显示编号 */}
       <span
         className="text-[13px] font-medium truncate flex-1 min-w-0 transition-colors"
         style={{
           color: isRead ? 'var(--text-muted)' : 'var(--text-primary)',
           opacity: isRead ? 0.7 : 1,
         }}
-        title={title}
+        title={`${defect.defectNo} · ${title}`}
       >
         {title}
       </span>
