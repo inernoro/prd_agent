@@ -1,3 +1,5 @@
+import { Info } from 'lucide-react';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { GlassCard } from '@/components/design/GlassCard';
 
 type Accent = 'default' | 'green' | 'gold' | 'blue' | 'purple';
@@ -18,6 +20,7 @@ export function KpiCard({
   accent = 'default',
   trend,
   trendLabel,
+  info,
 }: {
   title: string;
   value: number | string;
@@ -26,6 +29,7 @@ export function KpiCard({
   accent?: Accent;
   trend?: 'up' | 'down' | 'neutral';
   trendLabel?: string;
+  info?: string;
 }) {
   const display = typeof value === 'number' ? value.toLocaleString() : value;
   const colors = accentColors[accent];
@@ -38,8 +42,13 @@ export function KpiCard({
       accentHue={colors.hue}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+        <div className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
           {title}
+          {info && (
+            <Tooltip content={info} side="top">
+              <Info size={11} style={{ color: 'var(--text-muted)', opacity: 0.5, flexShrink: 0 }} />
+            </Tooltip>
+          )}
         </div>
         {/* 装饰性光点 */}
         <div
