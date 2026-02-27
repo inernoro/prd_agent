@@ -132,7 +132,7 @@ public class ReportGenerationService
             var report = new WeeklyReport
             {
                 UserId = userId,
-                UserName = user?.Name,
+                UserName = user?.DisplayName,
                 AvatarFileName = user?.AvatarFileName,
                 TeamId = teamId,
                 TeamName = team?.Name,

@@ -324,7 +324,7 @@ public class ReportAgentController : ControllerBase
     [HttpGet("users")]
     public async Task<IActionResult> ListUsers()
     {
-        var users = await _db.Users.Find(u => u.IsActive != false)
+        var users = await _db.Users.Find(u => u.Status == UserStatus.Active)
             .SortBy(u => u.Username)
             .Project(u => new
             {
@@ -1019,13 +1019,13 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> SaveDailyLog([FromBody] SaveDailyLogRequest request)
     {
         if (request.Items == null || request.Items.Count == 0)
-            return BadRequest(ApiResponse<object>.Fail("items 不能为空"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "items 不能为空"));
 
         if (string.IsNullOrEmpty(request.Date))
-            return BadRequest(ApiResponse<object>.Fail("date 不能为空"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "date 不能为空"));
 
         if (!DateTime.TryParse(request.Date, out var parsedDate))
-            return BadRequest(ApiResponse<object>.Fail("date 格式无效"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "date 格式无效"));
 
         var date = parsedDate.Date; // normalize to date only
         var userId = GetUserId();
@@ -1038,7 +1038,7 @@ public class ReportAgentController : ControllerBase
         }).Where(i => !string.IsNullOrWhiteSpace(i.Content)).ToList();
 
         if (items.Count == 0)
-            return BadRequest(ApiResponse<object>.Fail("至少需要一条有效工作项"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "至少需要一条有效工作项"));
 
         var filter = Builders<ReportDailyLog>.Filter.Eq(x => x.UserId, userId)
                    & Builders<ReportDailyLog>.Filter.Eq(x => x.Date, date);
@@ -1097,7 +1097,7 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> GetDailyLog(string date)
     {
         if (!DateTime.TryParse(date, out var parsedDate))
-            return BadRequest(ApiResponse<object>.Fail("日期格式无效"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "日期格式无效"));
 
         var userId = GetUserId();
         var log = await _db.ReportDailyLogs.Find(
@@ -1122,7 +1122,7 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> DeleteDailyLog(string date)
     {
         if (!DateTime.TryParse(date, out var parsedDate))
-            return BadRequest(ApiResponse<object>.Fail("日期格式无效"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "日期格式无效"));
 
         var userId = GetUserId();
         var result = await _db.ReportDailyLogs.DeleteOneAsync(
@@ -1190,11 +1190,11 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> CreateDataSource([FromBody] CreateDataSourceRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
-            return BadRequest(ApiResponse<object>.Fail("名称不能为空"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "名称不能为空"));
         if (string.IsNullOrWhiteSpace(request.RepoUrl))
-            return BadRequest(ApiResponse<object>.Fail("仓库地址不能为空"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "仓库地址不能为空"));
         if (string.IsNullOrWhiteSpace(request.TeamId))
-            return BadRequest(ApiResponse<object>.Fail("团队 ID 不能为空"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "团队 ID 不能为空"));
 
         var userId = GetUserId();
         if (!HasPermission(AdminPermissionCatalog.ReportAgentDataSourceManage)
@@ -1231,7 +1231,7 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> UpdateDataSource(string id, [FromBody] UpdateDataSourceRequest request)
     {
         var source = await _db.ReportDataSources.Find(x => x.Id == id).FirstOrDefaultAsync();
-        if (source == null) return NotFound(ApiResponse<object>.Fail("数据源不存在"));
+        if (source == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "数据源不存在"));
 
         var userId = GetUserId();
         if (!HasPermission(AdminPermissionCatalog.ReportAgentDataSourceManage)
@@ -1260,7 +1260,7 @@ public class ReportAgentController : ControllerBase
             x => x.Id == id,
             Builders<ReportDataSource>.Update.Combine(updates));
 
-        return Ok(ApiResponse<object>.Ok());
+        return Ok(ApiResponse<object>.Ok(new { }));
     }
 
     /// <summary>
@@ -1270,7 +1270,7 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> DeleteDataSource(string id)
     {
         var source = await _db.ReportDataSources.Find(x => x.Id == id).FirstOrDefaultAsync();
-        if (source == null) return NotFound(ApiResponse<object>.Fail("数据源不存在"));
+        if (source == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "数据源不存在"));
 
         var userId = GetUserId();
         if (!HasPermission(AdminPermissionCatalog.ReportAgentDataSourceManage)
@@ -1282,7 +1282,7 @@ public class ReportAgentController : ControllerBase
         // 删除关联的提交记录
         await _db.ReportCommits.DeleteManyAsync(x => x.DataSourceId == id);
         await _db.ReportDataSources.DeleteOneAsync(x => x.Id == id);
-        return Ok(ApiResponse<object>.Ok());
+        return Ok(ApiResponse<object>.Ok(new { }));
     }
 
     /// <summary>
@@ -1292,7 +1292,7 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> TestDataSource(string id)
     {
         var source = await _db.ReportDataSources.Find(x => x.Id == id).FirstOrDefaultAsync();
-        if (source == null) return NotFound(ApiResponse<object>.Fail("数据源不存在"));
+        if (source == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "数据源不存在"));
 
         try
         {
@@ -1313,7 +1313,7 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> SyncDataSource(string id)
     {
         var source = await _db.ReportDataSources.Find(x => x.Id == id).FirstOrDefaultAsync();
-        if (source == null) return NotFound(ApiResponse<object>.Fail("数据源不存在"));
+        if (source == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "数据源不存在"));
 
         var userId = GetUserId();
         if (!HasPermission(AdminPermissionCatalog.ReportAgentDataSourceManage)
@@ -1357,7 +1357,7 @@ public class ReportAgentController : ControllerBase
         string id, [FromQuery] string? since, [FromQuery] string? until, [FromQuery] int limit = 50)
     {
         var source = await _db.ReportDataSources.Find(x => x.Id == id).FirstOrDefaultAsync();
-        if (source == null) return NotFound(ApiResponse<object>.Fail("数据源不存在"));
+        if (source == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "数据源不存在"));
 
         var filter = Builders<ReportCommit>.Filter.Eq(x => x.DataSourceId, id);
         if (DateTime.TryParse(since, out var sinceDate))
@@ -1400,14 +1400,14 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> GenerateReport(string id)
     {
         var report = await _db.WeeklyReports.Find(x => x.Id == id).FirstOrDefaultAsync();
-        if (report == null) return NotFound(ApiResponse<object>.Fail("周报不存在"));
+        if (report == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
 
         var userId = GetUserId();
         if (report.UserId != userId && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
             return Forbid();
 
         if (report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.Returned)
-            return BadRequest(ApiResponse<object>.Fail("只有草稿或退回状态的周报才能生成"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "只有草稿或退回状态的周报才能生成"));
 
         try
         {
@@ -1420,7 +1420,7 @@ public class ReportAgentController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "AI 生成周报失败: reportId={ReportId}", id);
-            return StatusCode(500, ApiResponse<object>.Fail($"AI 生成失败: {ex.Message}"));
+            return StatusCode(500, ApiResponse<object>.Fail("SERVER_ERROR", $"AI 生成失败: {ex.Message}"));
         }
     }
 
@@ -1653,12 +1653,12 @@ public class ReportAgentController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(ApiResponse<object>.Fail(ex.Message));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_REQUEST", ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "团队汇总生成失败: teamId={TeamId}", id);
-            return StatusCode(500, ApiResponse<object>.Fail($"AI 汇总失败: {ex.Message}"));
+            return StatusCode(500, ApiResponse<object>.Fail("SERVER_ERROR", $"AI 汇总失败: {ex.Message}"));
         }
     }
 
