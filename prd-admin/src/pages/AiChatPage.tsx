@@ -94,7 +94,7 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
 });
 
 const MAX_MESSAGE_CHARS = 16 * 1024;
-const ALLOWED_TEXT_EXTS = ['.md', '.txt', '.log', '.json', '.csv'];
+const ALLOWED_TEXT_EXTS = ['.md', '.mdc', '.txt', '.log', '.json', '.csv'];
 
 function normalizeFileName(name: string) {
   return (name ?? '').trim();
@@ -874,8 +874,9 @@ export default function AiChatPage() {
 
   const onPickPrdFile = async (file: File) => {
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.md')) {
-      toast.warning('仅支持 .md 文件');
+    const ext = file.name.toLowerCase();
+    if (!ext.endsWith('.md') && !ext.endsWith('.mdc') && !ext.endsWith('.txt')) {
+      toast.warning('仅支持 .md、.mdc、.txt 文件');
       return;
     }
     const content = await file.text();
@@ -1584,7 +1585,7 @@ export default function AiChatPage() {
       <input
         ref={prdFileRef}
         type="file"
-        accept=".md"
+        accept=".md,.mdc,.txt"
         className="hidden"
         onChange={async (e) => {
           const f = e.currentTarget.files?.[0] ?? null;
