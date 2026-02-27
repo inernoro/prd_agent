@@ -41,7 +41,7 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
         {[...Array(12)].map((_, i) => (
           <div
             key={i}
-            className="absolute w-1 h-1 bg-amber-400/60 rounded-full animate-pulse"
+            className="absolute w-1 h-1 bg-indigo-400/60 rounded-full animate-pulse"
             style={{
               left: `${10 + (i * 7) % 80}%`,
               top: `${15 + (i * 11) % 70}%`,
@@ -55,12 +55,12 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
       {/* Content */}
       <div className="relative z-10 max-w-5xl mx-auto px-6 text-center">
         {/* Badge */}
-        <div className="inline-flex items-center gap-2 px-4 py-2 mb-8 rounded-full border border-amber-500/20 bg-amber-500/10 backdrop-blur-sm">
+        <div className="inline-flex items-center gap-2 px-4 py-2 mb-8 rounded-full border border-indigo-500/20 bg-indigo-500/10 backdrop-blur-sm">
           <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500" />
           </span>
-          <span className="text-sm text-amber-400/90">限时免费体验中</span>
+          <span className="text-sm text-indigo-400/90">限时免费体验中</span>
         </div>
 
         {/* Headline */}
@@ -81,12 +81,12 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
             <svg className="absolute -bottom-2 left-0 w-full" viewBox="0 0 200 8" fill="none">
               <path
                 d="M2 6C50 2 150 2 198 6"
-                stroke="url(#goldGradient)"
+                stroke="url(#indigoGradient)"
                 strokeWidth="3"
                 strokeLinecap="round"
               />
               <defs>
-                <linearGradient id="goldGradient" x1="0" y1="0" x2="200" y2="0" gradientUnits="userSpaceOnUse">
+                <linearGradient id="indigoGradient" x1="0" y1="0" x2="200" y2="0" gradientUnits="userSpaceOnUse">
                   <stop offset="0%" stopColor="#c7d2fe" />
                   <stop offset="50%" stopColor="#6366f1" />
                   <stop offset="100%" stopColor="#a5b4fc" />

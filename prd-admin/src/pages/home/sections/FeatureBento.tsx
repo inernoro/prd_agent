@@ -175,7 +175,7 @@ function ServerRack() {
               )} />
               <div className={cn(
                 'w-1.5 h-1.5 rounded-full transition-colors duration-300',
-                activeServer === i ? 'bg-amber-400 animate-pulse' : 'bg-white/20'
+                activeServer === i ? 'bg-indigo-400 animate-pulse' : 'bg-white/20'
               )} />
             </div>
             {/* Vent lines */}
@@ -248,20 +248,20 @@ function WorkflowDiagram() {
         {[
           { label: '输入', color: 'blue' },
           { label: '处理', color: 'purple' },
-          { label: '输出', color: 'gold' },
+          { label: '输出', color: 'indigo' },
         ].map((step, i) => (
           <div key={step.label} className="flex items-center">
             <div className={cn(
               'w-16 h-16 rounded-xl flex flex-col items-center justify-center gap-1 border transition-all',
               step.color === 'blue' && 'bg-blue-500/10 border-blue-500/30',
               step.color === 'purple' && 'bg-purple-500/10 border-purple-500/30',
-              step.color === 'gold' && 'bg-amber-500/10 border-amber-500/30'
+              step.color === 'indigo' && 'bg-indigo-500/10 border-indigo-500/30'
             )}>
               <svg className={cn(
                 'w-6 h-6',
                 step.color === 'blue' && 'text-blue-400',
                 step.color === 'purple' && 'text-purple-400',
-                step.color === 'gold' && 'text-amber-400'
+                step.color === 'indigo' && 'text-indigo-400'
               )} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 {i === 0 && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />}
                 {i === 1 && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />}
@@ -309,7 +309,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
         <SectionHeader
           badge="平台优势"
           badgeIcon={
-            <svg className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
           }
@@ -522,7 +522,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* Workflow - full width */}
-          <div className="md:col-span-6 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 lg:p-8 hover:border-amber-500/30 transition-all duration-500">
+          <div className="md:col-span-6 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 lg:p-8 hover:border-indigo-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{

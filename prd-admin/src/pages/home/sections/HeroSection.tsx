@@ -8,7 +8,7 @@ interface HeroSectionProps {
   onWatchDemo?: () => void;
 }
 
-// Rotating text component for the headline — uses ShinyText for golden shine
+// Rotating text component for the headline — uses ShinyText for indigo shine
 function RotatingText() {
   const texts = ['重塑创作', '提升效率', '释放潜能', '驱动创新'];
   const [index, setIndex] = useState(0);
@@ -88,12 +88,12 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
       <div className="flex-1 flex items-center justify-center relative z-10">
         <div className="text-center px-6 max-w-5xl mx-auto pt-20">
           {/* Enhanced Badge with pulse animation */}
-          <div className="inline-flex items-center gap-2 px-5 py-2.5 mb-8 rounded-full border border-amber-500/30 bg-amber-500/10 backdrop-blur-md">
+          <div className="inline-flex items-center gap-2 px-5 py-2.5 mb-8 rounded-full border border-indigo-500/30 bg-indigo-500/10 backdrop-blur-md">
             <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500" />
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500" />
             </span>
-            <span className="text-sm font-medium text-amber-400/90">新一代 AI Agent 平台</span>
+            <span className="text-sm font-medium text-indigo-400/90">新一代 AI Agent 平台</span>
           </div>
 
           {/* Main headline with BlurText entrance + underline decoration */}
@@ -130,17 +130,17 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
             />
             <span className="relative inline-block mt-2">
               <RotatingText />
-              {/* Golden underline decoration */}
+              {/* Indigo underline decoration */}
               <svg className="absolute -bottom-2 left-0 w-full h-3" viewBox="0 0 200 12" fill="none" preserveAspectRatio="none">
                 <path
                   d="M2 8C30 4 60 2 100 6C140 10 170 4 198 8"
-                  stroke="url(#heroGoldGradient)"
+                  stroke="url(#heroIndigoGradient)"
                   strokeWidth="3"
                   strokeLinecap="round"
                   fill="none"
                 />
                 <defs>
-                  <linearGradient id="heroGoldGradient" x1="0" y1="0" x2="200" y2="0" gradientUnits="userSpaceOnUse">
+                  <linearGradient id="heroIndigoGradient" x1="0" y1="0" x2="200" y2="0" gradientUnits="userSpaceOnUse">
                     <stop offset="0%" stopColor="#c7d2fe" stopOpacity="0.3" />
                     <stop offset="50%" stopColor="#6366f1" />
                     <stop offset="100%" stopColor="#a5b4fc" stopOpacity="0.3" />
@@ -239,7 +239,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               <span>免费试用</span>
             </div>
             <div className="flex items-center gap-2">
-              <svg className="w-4 h-4 text-amber-500/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4 h-4 text-indigo-500/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
               <span>即刻上手</span>
