@@ -156,7 +156,7 @@ public class ProfileController : ControllerBase
         await _db.Users.UpdateOneAsync(u => u.UserId == currentUserId, update, cancellationToken: ct);
 
         user.AvatarFileName = avatarFileName;
-        var avatarUrl = BuildAvatarUrl(user);
+        var avatarUrl = AvatarUrlBuilder.BuildFresh(_cfg, user);
 
         _logger.LogInformation("User uploaded own avatar. userId={UserId} file={File} size={Size}",
             currentUserId, avatarFileName, bytes.Length);
@@ -194,7 +194,7 @@ public class ProfileController : ControllerBase
         await _db.Users.UpdateOneAsync(u => u.UserId == currentUserId, updateDef, cancellationToken: ct);
 
         user.AvatarFileName = fileName;
-        var avatarUrl = BuildAvatarUrl(user);
+        var avatarUrl = AvatarUrlBuilder.BuildFresh(_cfg, user);
 
         return Ok(ApiResponse<UserAvatarUploadResponse>.Ok(new UserAvatarUploadResponse
         {
