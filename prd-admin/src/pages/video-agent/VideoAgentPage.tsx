@@ -8,10 +8,13 @@ import {
   updateVideoSceneReal,
   regenerateVideoSceneReal,
   triggerVideoRenderReal,
+  generateScenePreviewReal,
+  updateScenePreviewReal,
   getVideoGenStreamUrl,
   getVideoGenDownloadUrl,
+  getScenePreviewStreamUrl,
 } from '@/services/real/videoAgent';
-import type { VideoGenRun, VideoGenRunListItem, VideoGenScene } from '@/services/contracts/videoAgent';
+import type { VideoGenRun, VideoGenRunListItem } from '@/services/contracts/videoAgent';
 
 const SCENE_TYPE_LABELS: Record<string, string> = {
   intro: '开场',
@@ -242,6 +245,127 @@ export const VideoAgentPage: React.FC = () => {
       });
     } catch { /* ignore */ }
   };
+
+  // ─── 生成分镜预览图 ───
+  const imageAbortRef = useRef<Map<number, AbortController>>(new Map());
+
+  const handleGeneratePreview = async (sceneIndex: number) => {
+    if (!selectedRunId || !selectedRun) return;
+
+    // 取消之前的 SSE 连接
+    imageAbortRef.current.get(sceneIndex)?.abort();
+
+    // 本地标记 running
+    setSelectedRun((prev) => {
+      if (!prev) return prev;
+      const scenes = [...prev.scenes];
+      scenes[sceneIndex] = { ...scenes[sceneIndex], imageStatus: 'running', imageUrl: undefined };
+      return { ...prev, scenes };
+    });
+
+    try {
+      const res = await generateScenePreviewReal(selectedRunId, sceneIndex);
+      if (!res.success) return;
+
+      const { imageRunId } = res.data;
+
+      // 启动 SSE 监听图片生成结果
+      const ac = new AbortController();
+      imageAbortRef.current.set(sceneIndex, ac);
+
+      const sseUrl = getScenePreviewStreamUrl(selectedRunId, sceneIndex);
+      const fullUrl = `${import.meta.env.VITE_API_BASE_URL || ''}${sseUrl}`;
+
+      const response = await fetch(fullUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: ac.signal,
+      });
+
+      if (!response.ok || !response.body) return;
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const payload = JSON.parse(line.slice(6));
+
+              if (payload.type === 'imageDone') {
+                const imageUrl = payload.base64
+                  ? `data:image/png;base64,${payload.base64}`
+                  : payload.url || '';
+
+                // 保存到后端
+                if (selectedRunId) {
+                  await updateScenePreviewReal(selectedRunId, sceneIndex, imageUrl);
+                }
+
+                // 更新本地状态
+                setSelectedRun((prev) => {
+                  if (!prev) return prev;
+                  const scenes = [...prev.scenes];
+                  scenes[sceneIndex] = { ...scenes[sceneIndex], imageStatus: 'done', imageUrl, imageGenRunId: imageRunId };
+                  return { ...prev, scenes };
+                });
+
+                ac.abort(); // 拿到图就断开
+                imageAbortRef.current.delete(sceneIndex);
+                return;
+              }
+
+              if (payload.type === 'imageError') {
+                setSelectedRun((prev) => {
+                  if (!prev) return prev;
+                  const scenes = [...prev.scenes];
+                  scenes[sceneIndex] = { ...scenes[sceneIndex], imageStatus: 'error' };
+                  return { ...prev, scenes };
+                });
+                ac.abort();
+                imageAbortRef.current.delete(sceneIndex);
+                return;
+              }
+            } catch { /* parse error */ }
+          }
+        }
+      }
+    } catch {
+      // SSE 连接断开
+      setSelectedRun((prev) => {
+        if (!prev) return prev;
+        const scenes = [...prev.scenes];
+        if (scenes[sceneIndex]?.imageStatus === 'running') {
+          scenes[sceneIndex] = { ...scenes[sceneIndex], imageStatus: 'error' };
+        }
+        return { ...prev, scenes };
+      });
+    }
+  };
+
+  const handleBatchGeneratePreviews = () => {
+    if (!selectedRun) return;
+    selectedRun.scenes.forEach((scene, idx) => {
+      if (scene.imageStatus !== 'running') {
+        handleGeneratePreview(idx);
+      }
+    });
+  };
+
+  // 清理 SSE 连接
+  useEffect(() => {
+    return () => {
+      imageAbortRef.current.forEach((ac) => ac.abort());
+    };
+  }, [selectedRunId]);
 
   // ─── 导出/渲染 ───
   const handleExport = async () => {
@@ -569,83 +693,132 @@ export const VideoAgentPage: React.FC = () => {
             </div>
           </div>
         ) : (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between mb-3">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-semibold">
                 分镜列表
                 <span className="ml-2 text-xs text-muted-foreground font-normal">
-                  {selectedRun.scenes.length} 个镜头 · 总时长 {(selectedRun.totalDurationSeconds / 60).toFixed(1)} 分钟
+                  {selectedRun.scenes.length} 个镜头 · {(selectedRun.totalDurationSeconds / 60).toFixed(1)} 分钟
                 </span>
               </h3>
               {isEditing && (
-                <button
-                  onClick={() => {
-                    // 批量重新生成所有分镜
-                    selectedRun.scenes.forEach((_, idx) => handleRegenerateScene(idx));
-                  }}
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                >
-                  全部重新生成
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleBatchGeneratePreviews}
+                    className="text-xs text-primary hover:text-primary/80"
+                  >
+                    批量生成预览图
+                  </button>
+                  <button
+                    onClick={() => selectedRun.scenes.forEach((_, idx) => handleRegenerateScene(idx))}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    全部重新生成文案
+                  </button>
+                </div>
               )}
             </div>
 
-            {selectedRun.scenes.map((scene, idx) => (
-              <button
-                key={scene.index}
-                onClick={() => setActiveSceneIndex(idx)}
-                className={`w-full text-left rounded-lg border p-3 transition-all ${
-                  activeSceneIndex === idx
-                    ? 'border-primary/50 bg-primary/5 shadow-sm'
-                    : 'border-border/50 bg-card/50 hover:bg-muted/30'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  {/* 序号 */}
-                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
-                    activeSceneIndex === idx ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
-                  }`}>
-                    {idx + 1}
-                  </span>
-
-                  {/* 类型标签 */}
-                  <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                    {SCENE_TYPE_LABELS[scene.sceneType] || scene.sceneType}
-                  </span>
-
-                  {/* 主题 */}
-                  <span className="text-sm font-medium flex-1 truncate">{scene.topic}</span>
-
-                  {/* 状态 & 时长 */}
-                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    {scene.status === 'Generating' && (
-                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+            {/* 分镜卡片网格（每行2个，像文学创作的marker列表） */}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {selectedRun.scenes.map((scene, idx) => (
+                <div
+                  key={scene.index}
+                  onClick={() => setActiveSceneIndex(idx)}
+                  className={`cursor-pointer rounded-lg border overflow-hidden transition-all ${
+                    activeSceneIndex === idx
+                      ? 'border-primary/50 ring-1 ring-primary/20 shadow-sm'
+                      : 'border-border/50 hover:border-border'
+                  }`}
+                >
+                  {/* 预览图区域 */}
+                  <div className="relative aspect-video bg-muted/30">
+                    {scene.imageUrl ? (
+                      <img
+                        src={scene.imageUrl}
+                        alt={scene.topic}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center w-full h-full">
+                        {scene.imageStatus === 'running' ? (
+                          <div className="text-center space-y-1">
+                            <div className="w-6 h-6 mx-auto border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                            <span className="text-xs text-muted-foreground">生成中...</span>
+                          </div>
+                        ) : (
+                          <div className="text-center space-y-1">
+                            <svg className="w-8 h-8 mx-auto text-muted-foreground/30" viewBox="0 0 24 24" fill="none">
+                              <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" />
+                              <circle cx="8.5" cy="8.5" r="1.5" stroke="currentColor" strokeWidth="1.5" />
+                              <path d="M3 16l5-5 4 4 3-3 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                            {isEditing && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleGeneratePreview(idx); }}
+                                className="text-xs text-primary hover:text-primary/80"
+                              >
+                                生成预览图
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     )}
-                    {scene.status === 'Error' && (
-                      <div className="w-2 h-2 rounded-full bg-destructive" />
+
+                    {/* 左上角序号 + 类型 */}
+                    <div className="absolute top-1.5 left-1.5 flex items-center gap-1">
+                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-black/60 text-white text-xs font-bold">
+                        {idx + 1}
+                      </span>
+                      <span className="rounded-md bg-black/50 px-1.5 py-0.5 text-xs text-white/90">
+                        {SCENE_TYPE_LABELS[scene.sceneType] || scene.sceneType}
+                      </span>
+                    </div>
+
+                    {/* 右上角时长 */}
+                    <span className="absolute top-1.5 right-1.5 rounded-md bg-black/50 px-1.5 py-0.5 text-xs text-white/90">
+                      {scene.durationSeconds.toFixed(1)}s
+                    </span>
+
+                    {/* 右上角图片状态（已有图时，显示重试按钮） */}
+                    {scene.imageUrl && isEditing && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleGeneratePreview(idx); }}
+                        className="absolute bottom-1.5 right-1.5 rounded-md bg-black/50 px-1.5 py-0.5 text-xs text-white/90 hover:bg-black/70"
+                      >
+                        重新生成
+                      </button>
                     )}
-                    {scene.status === 'Done' && (
-                      <svg className="w-3 h-3 text-primary" viewBox="0 0 12 12" fill="none">
-                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
+
+                    {scene.imageStatus === 'error' && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-destructive/10">
+                        <span className="text-xs text-destructive">生成失败</span>
+                      </div>
                     )}
-                    {scene.durationSeconds.toFixed(1)}s
-                  </span>
+                  </div>
+
+                  {/* 文字区域 */}
+                  <div className="p-2.5 space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-medium truncate flex-1">{scene.topic}</span>
+                      {scene.status === 'Generating' && (
+                        <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse flex-shrink-0" />
+                      )}
+                      {scene.status === 'Done' && (
+                        <svg className="w-3 h-3 text-primary flex-shrink-0" viewBox="0 0 12 12" fill="none">
+                          <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground line-clamp-2">{scene.narration}</p>
+                    {scene.status === 'Error' && scene.errorMessage && (
+                      <p className="text-xs text-destructive line-clamp-1">{scene.errorMessage}</p>
+                    )}
+                  </div>
                 </div>
-
-                {/* 旁白预览 */}
-                <p className="mt-1.5 ml-8 text-xs text-muted-foreground line-clamp-2">
-                  {scene.narration}
-                </p>
-
-                {/* 错误信息 */}
-                {scene.status === 'Error' && scene.errorMessage && (
-                  <p className="mt-1 ml-8 text-xs text-destructive line-clamp-1">
-                    {scene.errorMessage}
-                  </p>
-                )}
-              </button>
-            ))}
+              ))}
+            </div>
           </div>
         )}
       </div>

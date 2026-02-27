@@ -97,6 +97,17 @@ public class VideoGenScene
 
     /// <summary>最近一次错误信息</summary>
     public string? ErrorMessage { get; set; }
+
+    // ─── 预览图（借鉴文学创作的 marker → image 模式） ───
+
+    /// <summary>关联的 ImageGenRun ID</summary>
+    public string? ImageGenRunId { get; set; }
+
+    /// <summary>生成的预览图 URL 或 base64</summary>
+    public string? ImageUrl { get; set; }
+
+    /// <summary>预览图生成状态：idle / running / done / error</summary>
+    public string ImageStatus { get; set; } = "idle";
 }
 
 /// <summary>
@@ -119,4 +130,12 @@ public class UpdateVideoSceneRequest
     public string? Narration { get; set; }
     public string? VisualDescription { get; set; }
     public string? SceneType { get; set; }
+}
+
+/// <summary>
+/// 更新分镜预览图 URL 请求
+/// </summary>
+public class UpdateScenePreviewRequest
+{
+    public string? ImageUrl { get; set; }
 }

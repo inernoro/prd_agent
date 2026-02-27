@@ -3,6 +3,9 @@ import type { ApiResponse } from '@/types/api';
 /** 分镜状态 */
 export type SceneItemStatus = 'Draft' | 'Generating' | 'Done' | 'Error';
 
+/** 预览图状态 */
+export type ImageStatus = 'idle' | 'running' | 'done' | 'error';
+
 /** 视频场景（分镜） */
 export interface VideoGenScene {
   index: number;
@@ -13,6 +16,12 @@ export interface VideoGenScene {
   sceneType: string;
   status: SceneItemStatus;
   errorMessage?: string;
+  /** 关联的 ImageGenRun ID */
+  imageGenRunId?: string;
+  /** 生成的预览图 URL 或 base64 */
+  imageUrl?: string;
+  /** 预览图状态 */
+  imageStatus: ImageStatus;
 }
 
 /** 视频生成任务 */
@@ -91,3 +100,14 @@ export type RegenerateVideoSceneContract = (
 ) => Promise<ApiResponse<boolean>>;
 
 export type TriggerVideoRenderContract = (runId: string) => Promise<ApiResponse<boolean>>;
+
+export type GenerateScenePreviewContract = (
+  runId: string,
+  sceneIndex: number
+) => Promise<ApiResponse<{ imageRunId: string }>>;
+
+export type UpdateScenePreviewContract = (
+  runId: string,
+  sceneIndex: number,
+  imageUrl: string
+) => Promise<ApiResponse<boolean>>;

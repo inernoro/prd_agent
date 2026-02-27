@@ -7,6 +7,8 @@ import type {
   UpdateVideoSceneContract,
   RegenerateVideoSceneContract,
   TriggerVideoRenderContract,
+  GenerateScenePreviewContract,
+  UpdateScenePreviewContract,
 } from '@/services/contracts/videoAgent';
 
 const BASE = '/api/video-agent';
@@ -48,6 +50,22 @@ export const triggerVideoRenderReal: TriggerVideoRenderContract = async (runId) 
   const { data } = await api.post(`${BASE}/runs/${runId}/render`);
   return data;
 };
+
+export const generateScenePreviewReal: GenerateScenePreviewContract = async (runId, sceneIndex) => {
+  const { data } = await api.post(`${BASE}/runs/${runId}/scenes/${sceneIndex}/preview`);
+  return data;
+};
+
+export const updateScenePreviewReal: UpdateScenePreviewContract = async (runId, sceneIndex, imageUrl) => {
+  const { data } = await api.put(`${BASE}/runs/${runId}/scenes/${sceneIndex}/preview`, { imageUrl });
+  return data;
+};
+
+/** 获取分镜预览图 SSE 事件流 URL */
+export function getScenePreviewStreamUrl(runId: string, sceneIndex: number, afterSeq?: number): string {
+  const base = `${BASE}/runs/${runId}/scenes/${sceneIndex}/preview/stream`;
+  return afterSeq ? `${base}?afterSeq=${afterSeq}` : base;
+}
 
 /** 获取 SSE 事件流 URL */
 export function getVideoGenStreamUrl(runId: string, afterSeq?: number): string {

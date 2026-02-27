@@ -552,6 +552,17 @@ public static class VideoAgent
         )]
         public const string Chat = "video-agent.script::chat";
     }
+
+    public static class Image
+    {
+        [AppCallerMetadata(
+            "视频场景-文生图",
+            "根据分镜画面描述生成预览图",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Video"
+        )]
+        public const string Text2Img = "video-agent.image.text2img::generation";
+    }
 }
 
 /// <summary>
