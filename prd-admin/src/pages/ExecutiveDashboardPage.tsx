@@ -218,12 +218,12 @@ function OverviewTab({ overview, trends, agents, loading }: {
     <div className="space-y-6">
       {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        <KpiCard title="总用户数" value={overview.totalUsers} accent="blue" />
-        <KpiCard title="活跃用户" value={overview.activeUsers} accent="green" trend={activeTrend.direction} trendLabel={`${activeTrend.label} vs 上期`} />
-        <KpiCard title="对话消息" value={overview.periodMessages} accent="gold" trend={msgTrend.direction} trendLabel={`${msgTrend.label} vs 上期`} />
-        <KpiCard title="Token 消耗" value={formatTokens(overview.periodTokens)} accent="purple" trend={tokenTrend.direction} trendLabel={`${tokenTrend.label} vs 上期`} />
-        <KpiCard title="LLM 调用" value={overview.llmCalls} accent="blue" />
-        <KpiCard title="缺陷解决率" value={`${overview.defectResolutionRate}%`} accent="gold" />
+        <KpiCard title="总用户数" value={overview.totalUsers} accent="blue" info="系统注册的全部用户数（含非活跃）" />
+        <KpiCard title="活跃用户" value={overview.activeUsers} accent="green" trend={activeTrend.direction} trendLabel={`${activeTrend.label} vs 上期`} info="所选时间范围内有登录记录的用户数（基于 LastActiveAt）" />
+        <KpiCard title="对话消息" value={overview.periodMessages} accent="gold" trend={msgTrend.direction} trendLabel={`${msgTrend.label} vs 上期`} info="PRD 对话 + 缺陷消息 + 视觉创作消息三个来源合计" />
+        <KpiCard title="Token 消耗" value={formatTokens(overview.periodTokens)} accent="purple" trend={tokenTrend.direction} trendLabel={`${tokenTrend.label} vs 上期`} info="PRD 对话中 Assistant 回复的 Input + Output Token 总和" />
+        <KpiCard title="LLM 调用" value={overview.llmCalls} accent="blue" info="所有 Agent 通过 LLM Gateway 发起的大模型请求总次数" />
+        <KpiCard title="缺陷解决率" value={`${overview.defectResolutionRate}%`} accent="gold" info="已解决或已关闭的缺陷数 ÷ 缺陷总数（全时间段）" />
       </div>
 
       {/* Charts Row */}
@@ -255,7 +255,7 @@ function OverviewTab({ overview, trends, agents, loading }: {
           <div className="space-y-1">
             <StatRow icon={Users} label="总用户数" value={overview.totalUsers} info="系统注册的全部用户数（含非活跃）" />
             <StatRow icon={Users} label="活跃用户" value={overview.activeUsers} info="所选时间范围内有登录活动的用户数" />
-            <StatRow icon={MessageSquare} label="对话消息数" value={overview.periodMessages} info="所选时间范围内所有会话中的消息总条数" />
+            <StatRow icon={MessageSquare} label="对话消息数" value={overview.periodMessages} info="PRD 对话 + 缺陷消息 + 视觉创作消息三个来源合计" />
             <StatRow icon={Bug} label="缺陷总数" value={overview.totalDefects} info="全部时间段内提交的缺陷报告总数" />
             <StatRow icon={Bug} label="已解决缺陷" value={overview.resolvedDefects} info="状态为「已解决」或「已关闭」的缺陷数" />
             <StatRow icon={Image} label="图片生成" value={overview.periodImages} sub="张" info="所选时间范围内的图片生成任务数" />
@@ -662,10 +662,10 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KpiCard title="总调用次数" value={totalCalls} accent="gold" />
-        <KpiCard title="总 Token" value={formatTokens(totalTokens)} accent="purple" />
-        <KpiCard title="模型种类" value={models.length} accent="blue" />
-        <KpiCard title="平均响应" value={models.length > 0 ? `${(models.reduce((s, m) => s + m.avgDurationMs, 0) / models.length / 1000).toFixed(1)}s` : '-'} accent="green" />
+        <KpiCard title="总调用次数" value={totalCalls} accent="gold" info="所有模型的 LLM Gateway 请求总次数" />
+        <KpiCard title="总 Token" value={formatTokens(totalTokens)} accent="purple" info="所有模型的 Input + Output Token 合计" />
+        <KpiCard title="模型种类" value={models.length} accent="blue" info="在所选时间范围内被调用过的不同模型数" />
+        <KpiCard title="平均响应" value={models.length > 0 ? `${(models.reduce((s, m) => s + m.avgDurationMs, 0) / models.length / 1000).toFixed(1)}s` : '-'} accent="green" info="各模型平均响应时间的均值（排除未完成请求）" />
       </div>
 
       <GlassCard glow>
@@ -679,11 +679,21 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
           <table className="w-full text-[12px]">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                <th className="text-left py-2 font-medium" style={{ color: 'var(--text-muted)' }}>模型</th>
-                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>调用</th>
-                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>输入 Token</th>
-                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>输出 Token</th>
-                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>平均响应</th>
+                <th className="text-left py-2 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1">模型 <InfoTip tip="LLM Gateway 中实际使用的模型名称" /></span>
+                </th>
+                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">调用 <InfoTip tip="该模型在所选时间范围内被调用的总次数" /></span>
+                </th>
+                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">输入 Token <InfoTip tip="发送给该模型的 Prompt Token 总量" /></span>
+                </th>
+                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">输出 Token <InfoTip tip="该模型生成的 Completion Token 总量" /></span>
+                </th>
+                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">平均响应 <InfoTip tip="该模型所有已完成请求的平均耗时（排除未完成请求）" /></span>
+                </th>
               </tr>
             </thead>
             <tbody>
