@@ -130,21 +130,32 @@ export function DefectSubmitPanel() {
             mimeType: item.file.type || 'image/png',
           });
 
+          if (res.success && res.data?.description) {
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.file === item.file
+                  ? { ...a, status: 'done', description: res.data!.description }
+                  : a
+              )
+            );
+          } else {
+            const errMsg = res.error?.message || '图片分析失败';
+            console.warn('[defect-image-analyze] failed:', errMsg);
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.file === item.file
+                  ? { ...a, status: 'error', description: errMsg }
+                  : a
+              )
+            );
+          }
+        } catch (e) {
+          console.warn('[defect-image-analyze] error:', e);
           setAttachments((prev) =>
             prev.map((a) =>
               a.file === item.file
-                ? {
-                    ...a,
-                    status: res.success && res.data?.description ? 'done' : 'error',
-                    description: res.data?.description,
-                  }
+                ? { ...a, status: 'error', description: String(e) }
                 : a
-            )
-          );
-        } catch {
-          setAttachments((prev) =>
-            prev.map((a) =>
-              a.file === item.file ? { ...a, status: 'error' } : a
             )
           );
         }
@@ -162,7 +173,10 @@ export function DefectSubmitPanel() {
         if (file) pastedFiles.push(file);
       }
     }
-    if (pastedFiles.length > 0) addFiles(pastedFiles);
+    if (pastedFiles.length > 0) {
+      e.preventDefault();
+      addFiles(pastedFiles);
+    }
   }, [addFiles]);
 
   // Handle drag and drop
@@ -519,7 +533,7 @@ export function DefectSubmitPanel() {
                           )}
                           {item.status === 'done' && (
                             <div
-                              className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center"
+                              className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full flex items-center justify-center"
                               style={{ background: 'rgba(34, 197, 94, 0.9)' }}
                             >
                               <Check size={8} style={{ color: '#fff' }} />
@@ -527,7 +541,7 @@ export function DefectSubmitPanel() {
                           )}
                           {item.status === 'error' && (
                             <div
-                              className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center"
+                              className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full flex items-center justify-center"
                               style={{ background: 'rgba(255, 120, 120, 0.9)' }}
                             >
                               <AlertTriangle size={8} style={{ color: '#fff' }} />
@@ -599,15 +613,22 @@ export function DefectSubmitPanel() {
                 )}
                 {previewItem && previewItem.status === 'error' && (
                   <div
-                    className="mt-2 px-3 py-2 rounded-lg text-[11px] flex items-center gap-1.5"
+                    className="mt-2 px-3 py-2 rounded-lg text-[11px]"
                     style={{
                       background: 'rgba(255, 120, 120, 0.08)',
                       border: '1px solid rgba(255, 120, 120, 0.15)',
                       color: 'var(--text-muted)',
                     }}
                   >
-                    <AlertTriangle size={10} style={{ color: 'rgba(255, 120, 120, 0.8)' }} />
-                    图片分析失败，不影响缺陷提交
+                    <div className="flex items-center gap-1.5">
+                      <AlertTriangle size={10} style={{ color: 'rgba(255, 120, 120, 0.8)', flexShrink: 0 }} />
+                      图片分析失败，不影响缺陷提交
+                    </div>
+                    {previewItem.description && (
+                      <div className="mt-1 pl-4 text-[10px]" style={{ color: 'rgba(255, 120, 120, 0.7)' }}>
+                        {previewItem.description}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
