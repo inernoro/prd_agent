@@ -1184,33 +1184,69 @@ select optgroup {
 
 /* ── .surface — 主级卡片 ── */
 .surface {
-  background: linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%);
+  position: relative;
   border: 1px solid var(--glass-border);
   box-shadow:
     0 2px 16px -4px rgba(0, 0, 0, 0.35),
     inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+  isolation: isolate;
+}
+.surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: -1;
+  background: linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%);
   backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
   -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
-  isolation: isolate;
-  /* macOS backdrop-filter 合成器伪影修复：消除相邻 blur 元素行边界接缝线 */
-  -webkit-backface-visibility: hidden;
-  backface-visibility: hidden;
+  pointer-events: none;
 }
 
 /* ── .surface-raised — 突出卡片（更深阴影 + 更亮内光） ── */
 .surface-raised {
-  background: linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%);
+  position: relative;
   border: 1px solid var(--glass-border);
   box-shadow:
     0 8px 32px -4px rgba(0, 0, 0, 0.4),
     0 4px 16px -2px rgba(0, 0, 0, 0.25),
     inset 0 1px 0 0 rgba(255, 255, 255, 0.08),
     inset 0 -1px 0 0 rgba(0, 0, 0, 0.12);
+  isolation: isolate;
+}
+.surface-raised::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: -1;
+  background: linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%);
   backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
   -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
-  isolation: isolate;
-  -webkit-backface-visibility: hidden;
-  backface-visibility: hidden;
+  pointer-events: none;
+}
+
+/*
+ * ── .glass-blur-pseudo — GlassCard 质量模式伪元素 blur 层 ──
+ *
+ * macOS 合成器接缝修复：当多个 backdrop-filter 元素在 grid 中相邻时，
+ * macOS 合成器在行边界处产生可见接缝线（Windows 无此问题）。
+ * 将 blur + background 移至 ::before 伪元素，使每个 blur 层独立合成，
+ * 消除元素间 blur 区域的合成冲突。
+ *
+ * GlassCard 通过 CSS 自定义属性 --_gbl (blur) 和 --_gbg (background)
+ * 传递动态值给伪元素。
+ */
+.glass-blur-pseudo::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: -1;
+  backdrop-filter: var(--_gbl);
+  -webkit-backdrop-filter: var(--_gbl);
+  background: var(--_gbg);
+  pointer-events: none;
 }
 
 /* ── .surface-inset — 嵌套面板（card 内的二级分区，无 blur） ── */
@@ -1289,8 +1325,13 @@ select optgroup {
    此处仅需清除 backdrop-filter 并微调视觉细节。
    ======================================== */
 
-/* 核心：彻底清除所有 backdrop-filter（inline 和 CSS 均覆盖） */
+/* 核心：彻底清除所有 backdrop-filter（inline、CSS、伪元素均覆盖） */
 html[data-perf-mode="performance"] * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html[data-perf-mode="performance"] *::before,
+html[data-perf-mode="performance"] *::after {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }

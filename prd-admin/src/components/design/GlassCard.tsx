@@ -111,6 +111,7 @@ export function GlassCard({
       ref={ref}
       className={cn(
         'rounded-[16px] relative no-focus-ring',
+        !isPerf && 'glass-blur-pseudo',
         !animated && 'transition-[border-color,box-shadow,opacity] duration-200',
         overflowClass[overflow],
         paddingClass[padding],
@@ -233,19 +234,16 @@ function buildGlassStyle(
     shadowLayers.push(`0 6px 32px -8px hsla(${accentHue}, 75%, 55%, 0.25)`);
   }
 
+  // backdrop-filter + background 通过 CSS 自定义属性传递给 ::before 伪元素
+  // （配合 .glass-blur-pseudo 类），避免 macOS 上相邻 blur 元素的合成器接缝伪影
   return {
-    background,
+    '--_gbl': blur,
+    '--_gbg': background,
     border: `1px solid var(--glass-border, rgba(255, 255, 255, ${0.14 * borderMult}))`,
-    backdropFilter: blur,
-    WebkitBackdropFilter: blur,
     boxShadow: shadowLayers.join(', '),
     transform: 'translateZ(0)',
     willChange: 'transform' as const,
     isolation: 'isolate' as const,
-    // macOS backdrop-filter 合成器伪影修复：相邻 blur 元素在行边界产生可见接缝线
-    // backfaceVisibility: hidden 强制每个卡片独立合成层，消除边界渗透
-    backfaceVisibility: 'hidden' as const,
-    WebkitBackfaceVisibility: 'hidden' as const,
     ...extra,
-  };
+  } as React.CSSProperties;
 }
