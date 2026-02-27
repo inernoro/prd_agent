@@ -46,7 +46,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
-import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateUserAvatar } from '@/services';
+import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
@@ -876,12 +876,13 @@ export default function AppShell() {
             username={user?.username}
             userType={user?.userType ?? null}
             avatarFileName={user?.avatarFileName ?? null}
+            onUpload={async (file) => uploadMyAvatar({ file })}
             onSave={async (avatarFileName) => {
               if (!user?.userId) return;
-              const res = await updateUserAvatar(user.userId, avatarFileName);
+              const res = await updateMyAvatar(avatarFileName);
               if (!res.success) throw new Error(res.error?.message || '保存失败');
               // 同时更新 avatarFileName 和 avatarUrl，确保左下角头像立即更新
-              patchUser({ 
+              patchUser({
                 avatarFileName: avatarFileName ?? null,
                 avatarUrl: res.data?.avatarUrl ?? null
               });
