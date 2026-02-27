@@ -896,8 +896,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     // 检查文件类型
     const fileName = file.name.toLowerCase();
-    if (!fileName.endsWith('.md') && !fileName.endsWith('.txt')) {
-      toast.warning('仅支持 .md 和 .txt 格式的文件');
+    if (!fileName.endsWith('.md') && !fileName.endsWith('.mdc') && !fileName.endsWith('.txt')) {
+      toast.warning('仅支持 .md、.mdc、.txt 格式的文件');
       return;
     }
 
@@ -2166,7 +2166,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".md,.txt"
+                  accept=".md,.mdc,.txt"
                   onChange={handleFileUpload}
                   className="hidden"
                 />
@@ -2192,7 +2192,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".md,.txt"
+                  accept=".md,.mdc,.txt"
                   onChange={handleFileUpload}
                   className="hidden"
                 />

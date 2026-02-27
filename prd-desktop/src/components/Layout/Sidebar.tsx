@@ -363,8 +363,9 @@ export default function Sidebar() {
     const file = input.files?.[0] ?? null;
     input.value = '';
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.md')) {
-      setInlineError('仅支持 .md 格式文件');
+    const ext = file.name.toLowerCase();
+    if (!ext.endsWith('.md') && !ext.endsWith('.mdc') && !ext.endsWith('.txt')) {
+      setInlineError('仅支持 .md、.mdc、.txt 格式文件');
       return;
     }
     try {
@@ -443,8 +444,9 @@ export default function Sidebar() {
     // 允许下次选择同名文件也触发 change
     input.value = '';
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.md')) {
-      alert('仅支持 .md 格式文件');
+    const ext = file.name.toLowerCase();
+    if (!ext.endsWith('.md') && !ext.endsWith('.mdc') && !ext.endsWith('.txt')) {
+      alert('仅支持 .md、.mdc、.txt 格式文件');
       return;
     }
     try {
@@ -842,7 +844,7 @@ export default function Sidebar() {
                           <input
                             ref={createPrdInputRef}
                             type="file"
-                            accept=".md"
+                            accept=".md,.mdc,.txt"
                             className="hidden"
                             onChange={handleCreatePrdFileSelect}
                           />
@@ -879,7 +881,7 @@ export default function Sidebar() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".md"
+          accept=".md,.mdc,.txt"
           className="hidden"
           onChange={handleFileSelectForBind}
         />
