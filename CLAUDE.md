@@ -371,7 +371,7 @@ prd_agent/
 | 管理通知 | ✅ DONE | NotificationsController, admin_notifications |
 | 缺陷管理 Agent | ✅ DONE | DefectAgentController, DefectAgentTests (25 tests) |
 | 配置市场 (海鲜市场) | ✅ DONE | CONFIG_TYPE_REGISTRY, MarketplaceCard, IForkable, ForkService |
-| 周报管理 Agent | ✅ DONE | ReportAgentController, ReportAgentPage (6 tabs: 我的周报/每日打点/团队面板/模板管理/团队管理/数据源) |
+| 周报管理 Agent | ✅ Phase 1-2 DONE | ReportAgentController, ReportAgentPage (6 tabs)，详见 `doc/plan.report-agent-impl.md` |
 | **附件上传** | ✅ DONE | AttachmentsController + Rust upload_attachment + Desktop UI (图片选择/预览/上传) |
 | **技能系统** | ✅ DONE | SkillSettings 模型 + SkillsController + Desktop SkillPanel/SkillManagerModal (服务端公共技能 + 客户端本地自定义技能) |
 | **知识库** | ⚠️ PARTIAL | KnowledgeBasePage UI 占位，"资料文件"标注开发中 |
