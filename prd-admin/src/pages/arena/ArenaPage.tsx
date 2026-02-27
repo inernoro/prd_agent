@@ -33,6 +33,7 @@ interface ArenaGroup {
 interface ArenaPanel {
   slotId: string;
   label: string;
+  labelIndex: number;
   status: 'waiting' | 'streaming' | 'done' | 'error';
   text: string;
   ttftMs: number | null;
@@ -75,35 +76,51 @@ interface BattleDetail {
 }
 
 // ---------------------------------------------------------------------------
+// SSE event routing context
+// ---------------------------------------------------------------------------
+
+interface SSEContext {
+  /** modelId → slotId (built from request slots) */
+  modelToSlotId: Map<string, string>;
+  /** Backend itemId (ObjectId) → slotId (built dynamically from modelStart events) */
+  itemIdToSlotMap: Map<string, string>;
+  /** Tracks which slots have been assigned to prevent duplicate-model confusion */
+  assignedSlots: Set<string>;
+  /** Original slots array for sequential matching */
+  slots: ArenaSlot[];
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const LABELS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
+/** Generate letter label: 0→A, 25→Z, 26→AA, 27→AB... */
+function getLabel(idx: number): string {
+  if (idx < 26) return String.fromCharCode(65 + idx);
+  return String.fromCharCode(65 + Math.floor(idx / 26) - 1) + String.fromCharCode(65 + (idx % 26));
+}
 
-const LABEL_COLORS: Record<string, string> = {
-  A: '#6366f1',
-  B: '#f59e0b',
-  C: '#10b981',
-  D: '#ef4444',
-  E: '#8b5cf6',
-  F: '#ec4899',
-  G: '#14b8a6',
-  H: '#f97316',
-  I: '#06b6d4',
-  J: '#84cc16',
-  K: '#a855f7',
-  L: '#e11d48',
-};
+const PALETTE = [
+  '#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899',
+  '#14b8a6', '#f97316', '#06b6d4', '#84cc16', '#a855f7', '#e11d48',
+  '#3b82f6', '#d946ef', '#0ea5e9', '#65a30d', '#7c3aed', '#db2777',
+  '#0d9488', '#ea580c', '#0891b2', '#ca8a04', '#9333ea', '#be123c',
+  '#2563eb', '#c026d3',
+];
 
-function assignLabels(slots: ArenaSlot[]): Map<string, string> {
+function getLabelColor(idx: number): string {
+  return PALETTE[idx % PALETTE.length];
+}
+
+function assignLabels(slots: ArenaSlot[]): Map<string, { label: string; index: number }> {
   const shuffled = [...slots];
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-  const map = new Map<string, string>();
+  const map = new Map<string, { label: string; index: number }>();
   shuffled.forEach((slot, idx) => {
-    map.set(slot.id, `助手 ${LABELS[idx]}`);
+    map.set(slot.id, { label: `助手 ${getLabel(idx)}`, index: idx });
   });
   return map;
 }
@@ -130,7 +147,6 @@ function groupByDate(items: BattleHistoryItem[]): Map<string, BattleHistoryItem[
     list.push(item);
     groups.set(key, list);
   }
-  // Remove empty groups
   for (const o of order) {
     if (groups.get(o)?.length === 0) groups.delete(o);
   }
@@ -157,7 +173,6 @@ export function ArenaPage() {
   // --- Battle state ---
   const [prompt, setPrompt] = useState('');
   const [panels, setPanels] = useState<ArenaPanel[]>([]);
-  const [labelMap, setLabelMap] = useState<Map<string, string>>(new Map());
   const [isStreaming, setIsStreaming] = useState(false);
   const [allDone, setAllDone] = useState(false);
   const [revealed, setRevealed] = useState(false);
@@ -177,7 +192,6 @@ export function ArenaPage() {
 
   // --- Refs ---
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const chatAreaRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const panelsRef = useRef<ArenaPanel[]>([]);
   const groupDropdownRef = useRef<HTMLDivElement>(null);
@@ -185,6 +199,13 @@ export function ArenaPage() {
   // Keep panelsRef in sync
   useEffect(() => {
     panelsRef.current = panels;
+  }, [panels]);
+
+  // Auto-scroll each panel body to bottom during streaming
+  useEffect(() => {
+    document.querySelectorAll<HTMLElement>('[data-panel-body]').forEach((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
   }, [panels]);
 
   // Close dropdown when clicking outside
@@ -254,7 +275,6 @@ export function ArenaPage() {
       abortRef.current = null;
     }
     setPanels([]);
-    setLabelMap(new Map());
     setIsStreaming(false);
     setAllDone(false);
     setRevealed(false);
@@ -265,190 +285,10 @@ export function ArenaPage() {
     textareaRef.current?.focus();
   }
 
-  // --- Send question ---
-  const handleSend = useCallback(async () => {
-    const question = prompt.trim();
-    if (!question || isStreaming) return;
-    if (slots.length === 0) {
-      toast.warning('暂无可用模型', '请先在管理页配置竞技场阵容');
-      return;
-    }
-
-    // Assign random labels
-    const newLabelMap = assignLabels(slots);
-    setLabelMap(newLabelMap);
-
-    // Initialize panels
-    const initialPanels: ArenaPanel[] = slots.map((slot) => ({
-      slotId: slot.id,
-      label: newLabelMap.get(slot.id) ?? '助手 ?',
-      status: 'waiting',
-      text: '',
-      ttftMs: null,
-      totalMs: null,
-      errorMessage: null,
-    }));
-    setPanels(initialPanels);
-    panelsRef.current = initialPanels;
-    setCurrentPrompt(question);
-    setIsStreaming(true);
-    setAllDone(false);
-    setRevealed(false);
-    setRevealedInfos(new Map());
-    setActiveBattleId(null);
-    setPrompt('');
-
-    // Build slot-index map: itemId "item-0" -> slots[0] -> slotId
-    const slotIndexMap = new Map<number, string>();
-    slots.forEach((s, i) => slotIndexMap.set(i, s.id));
-
-    // Also map by modelId for fallback matching
-    const modelToSlotId = new Map<string, string>();
-    slots.forEach((s) => modelToSlotId.set(s.modelId, s.id));
-
-    const abortController = new AbortController();
-    abortRef.current = abortController;
-
-    try {
-      const token = useAuthStore.getState().token;
-      const sseUrl = api.lab.model.runsStream();
-
-      // Resolve full URL the same way apiClient does
-      const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim().replace(/\/+$/, '') ?? '';
-      const fullUrl = baseUrl ? `${baseUrl}/${sseUrl.replace(/^\/+/, '')}` : sseUrl;
-
-      const response = await fetch(fullUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-          'X-Client': 'admin',
-        },
-        body: JSON.stringify({
-          promptText: question,
-          models: slots.map((s) => ({
-            platformId: s.platformId,
-            modelId: s.modelId,
-            modelName: s.modelId,
-          })),
-          params: { maxConcurrency: 20, repeatN: 1 },
-        }),
-        signal: abortController.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} ${response.statusText}`);
-      }
-
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      // Parse SSE format: event: <type>\ndata: <json>\n\n
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        // Split on double newline (SSE message boundary)
-        while (true) {
-          const idx = buffer.indexOf('\n\n');
-          if (idx < 0) break;
-          const raw = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-
-          // Parse event: and data: lines
-          const messageLines = raw.split('\n').map((l) => l.trimEnd());
-          let sseEvent: string | undefined;
-          const dataLines: string[] = [];
-          for (const mLine of messageLines) {
-            if (mLine.startsWith('event:')) sseEvent = mLine.slice('event:'.length).trim();
-            if (mLine.startsWith('data:')) dataLines.push(mLine.slice('data:'.length).trim());
-          }
-
-          if (dataLines.length === 0) continue;
-          const dataStr = dataLines.join('\n');
-          if (!dataStr || dataStr === '[DONE]') continue;
-
-          let data: any;
-          try {
-            data = JSON.parse(dataStr);
-          } catch {
-            continue;
-          }
-
-          handleSSEEvent(sseEvent, data, slotIndexMap, modelToSlotId);
-        }
-      }
-    } catch (e: any) {
-      if (e?.name === 'AbortError') return;
-      toast.error('流式请求失败', e?.message ?? '网络错误');
-      // Mark remaining waiting panels as error
-      setPanels((prev) =>
-        prev.map((p) =>
-          p.status === 'waiting' || p.status === 'streaming'
-            ? { ...p, status: 'error', errorMessage: e?.message ?? '连接中断' }
-            : p
-        )
-      );
-    } finally {
-      setIsStreaming(false);
-      abortRef.current = null;
-      // Check if all done
-      const finalPanels = panelsRef.current;
-      const done = finalPanels.length > 0 && finalPanels.every((p) => p.status === 'done' || p.status === 'error');
-      setAllDone(done);
-
-      // Auto-save battle
-      if (finalPanels.length > 0) {
-        try {
-          const saveRes = await saveArenaBattle({
-            prompt: question,
-            groupKey: selectedGroupKey,
-            responses: finalPanels.map((p) => ({
-              slotId: p.slotId,
-              label: p.label,
-              content: p.text,
-              ttftMs: p.ttftMs,
-              totalMs: p.totalMs,
-              status: p.status === 'error' ? 'error' : 'done',
-              errorMessage: p.errorMessage,
-            })),
-            revealed: false,
-          });
-          if (saveRes.success && saveRes.data?.id) {
-            setActiveBattleId(saveRes.data.id);
-          }
-        } catch {
-          // silent save failure
-        }
-        loadHistory();
-      }
-    }
-  }, [prompt, isStreaming, slots, selectedGroupKey]);
-
-  function handleSSEEvent(
-    sseEvent: string | undefined,
-    data: any,
-    slotIndexMap: Map<number, string>,
-    modelToSlotId: Map<string, string>
-  ) {
+  // --- SSE event handler ---
+  function handleSSEEvent(sseEvent: string | undefined, data: any, ctx: SSEContext) {
     const type = data.type as string;
     const itemId = data.itemId as string | undefined;
-
-    // Resolve slotId from itemId (e.g. "item-0" -> index 0 -> slotId)
-    let slotId: string | undefined;
-    if (itemId) {
-      const match = itemId.match(/(\d+)$/);
-      if (match) {
-        const idx = parseInt(match[1], 10);
-        slotId = slotIndexMap.get(idx);
-      }
-    }
-    // Fallback: use modelId
-    if (!slotId && data.modelId) {
-      slotId = modelToSlotId.get(data.modelId);
-    }
 
     // Run-level events (event: run)
     if (sseEvent === 'run') {
@@ -463,7 +303,26 @@ export function ArenaPage() {
       return;
     }
 
-    // Model-level events (event: model)
+    // Model-level events — resolve slotId
+    // On modelStart, build itemId → slotId mapping dynamically
+    if (type === 'modelStart' && itemId && data.modelId) {
+      for (const s of ctx.slots) {
+        if (s.modelId === data.modelId && !ctx.assignedSlots.has(s.id)) {
+          ctx.itemIdToSlotMap.set(itemId, s.id);
+          ctx.assignedSlots.add(s.id);
+          break;
+        }
+      }
+    }
+
+    // Resolve slotId: primary = itemId map, fallback = modelId
+    let slotId: string | undefined;
+    if (itemId) {
+      slotId = ctx.itemIdToSlotMap.get(itemId);
+    }
+    if (!slotId && data.modelId) {
+      slotId = ctx.modelToSlotId.get(data.modelId);
+    }
     if (!slotId) return;
 
     const updatePanel = (updater: (p: ArenaPanel) => ArenaPanel) => {
@@ -517,6 +376,167 @@ export function ArenaPage() {
     }
   }
 
+  // --- Send question ---
+  const handleSend = useCallback(async () => {
+    const question = prompt.trim();
+    if (!question || isStreaming) return;
+    if (slots.length === 0) {
+      toast.warning('暂无可用模型', '请先在管理页配置竞技场阵容');
+      return;
+    }
+
+    // Assign random labels
+    const newLabelMap = assignLabels(slots);
+
+    // Initialize panels
+    const initialPanels: ArenaPanel[] = slots.map((slot) => {
+      const info = newLabelMap.get(slot.id) ?? { label: '助手 ?', index: 0 };
+      return {
+        slotId: slot.id,
+        label: info.label,
+        labelIndex: info.index,
+        status: 'waiting',
+        text: '',
+        ttftMs: null,
+        totalMs: null,
+        errorMessage: null,
+      };
+    });
+    setPanels(initialPanels);
+    panelsRef.current = initialPanels;
+    setCurrentPrompt(question);
+    setIsStreaming(true);
+    setAllDone(false);
+    setRevealed(false);
+    setRevealedInfos(new Map());
+    setActiveBattleId(null);
+    setPrompt('');
+
+    // SSE routing context
+    const modelToSlotId = new Map<string, string>();
+    slots.forEach((s) => modelToSlotId.set(s.modelId, s.id));
+
+    const sseCtx: SSEContext = {
+      modelToSlotId,
+      itemIdToSlotMap: new Map(),
+      assignedSlots: new Set(),
+      slots,
+    };
+
+    const abortController = new AbortController();
+    abortRef.current = abortController;
+
+    try {
+      const token = useAuthStore.getState().token;
+      const sseUrl = api.lab.model.runsStream();
+
+      const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim().replace(/\/+$/, '') ?? '';
+      const fullUrl = baseUrl ? `${baseUrl}/${sseUrl.replace(/^\/+/, '')}` : sseUrl;
+
+      const response = await fetch(fullUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'X-Client': 'admin',
+        },
+        body: JSON.stringify({
+          promptText: question,
+          models: slots.map((s) => ({
+            platformId: s.platformId,
+            modelId: s.modelId,
+            modelName: s.modelId,
+          })),
+          params: { maxConcurrency: 20, repeatN: 1 },
+        }),
+        signal: abortController.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        while (true) {
+          const idx = buffer.indexOf('\n\n');
+          if (idx < 0) break;
+          const raw = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+
+          const messageLines = raw.split('\n').map((l) => l.trimEnd());
+          let sseEvent: string | undefined;
+          const dataLines: string[] = [];
+          for (const mLine of messageLines) {
+            if (mLine.startsWith('event:')) sseEvent = mLine.slice('event:'.length).trim();
+            if (mLine.startsWith('data:')) dataLines.push(mLine.slice('data:'.length).trim());
+          }
+
+          if (dataLines.length === 0) continue;
+          const dataStr = dataLines.join('\n');
+          if (!dataStr || dataStr === '[DONE]') continue;
+
+          let data: any;
+          try {
+            data = JSON.parse(dataStr);
+          } catch {
+            continue;
+          }
+
+          handleSSEEvent(sseEvent, data, sseCtx);
+        }
+      }
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+      toast.error('流式请求失败', e?.message ?? '网络错误');
+      setPanels((prev) =>
+        prev.map((p) =>
+          p.status === 'waiting' || p.status === 'streaming'
+            ? { ...p, status: 'error', errorMessage: e?.message ?? '连接中断' }
+            : p
+        )
+      );
+    } finally {
+      setIsStreaming(false);
+      abortRef.current = null;
+      const finalPanels = panelsRef.current;
+      const done = finalPanels.length > 0 && finalPanels.every((p) => p.status === 'done' || p.status === 'error');
+      setAllDone(done);
+
+      if (finalPanels.length > 0) {
+        try {
+          const saveRes = await saveArenaBattle({
+            prompt: question,
+            groupKey: selectedGroupKey,
+            responses: finalPanels.map((p) => ({
+              slotId: p.slotId,
+              label: p.label,
+              content: p.text,
+              ttftMs: p.ttftMs,
+              totalMs: p.totalMs,
+              status: p.status === 'error' ? 'error' : 'done',
+              errorMessage: p.errorMessage,
+            })),
+            revealed: false,
+          });
+          if (saveRes.success && saveRes.data?.id) {
+            setActiveBattleId(saveRes.data.id);
+          }
+        } catch {
+          // silent
+        }
+        loadHistory();
+      }
+    }
+  }, [prompt, isStreaming, slots, selectedGroupKey]);
+
   // --- Reveal models ---
   async function handleReveal() {
     if (revealLoading || revealed) return;
@@ -562,9 +582,10 @@ export function ArenaPage() {
         setIsStreaming(false);
         setRevealedInfos(new Map());
 
-        const loadedPanels: ArenaPanel[] = (battle.responses || []).map((r) => ({
+        const loadedPanels: ArenaPanel[] = (battle.responses || []).map((r, idx) => ({
           slotId: r.slotId,
           label: r.label,
+          labelIndex: idx,
           status: r.status === 'error' ? 'error' : 'done',
           text: r.content || '',
           ttftMs: r.ttftMs,
@@ -573,10 +594,6 @@ export function ArenaPage() {
         }));
         setPanels(loadedPanels);
         panelsRef.current = loadedPanels;
-
-        const newLabelMap = new Map<string, string>();
-        loadedPanels.forEach((p) => newLabelMap.set(p.slotId, p.label));
-        setLabelMap(newLabelMap);
       } else {
         toast.error('加载对战记录失败', res.error?.message);
       }
@@ -585,7 +602,7 @@ export function ArenaPage() {
     }
   }
 
-  // --- Textarea auto-resize and keyboard shortcut ---
+  // --- Textarea ---
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -595,18 +612,10 @@ export function ArenaPage() {
 
   function handleTextareaInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
     setPrompt(e.target.value);
-    // Auto-resize
     const el = e.target;
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 160) + 'px';
   }
-
-  // Scroll chat area to bottom when panels update
-  useEffect(() => {
-    if (chatAreaRef.current) {
-      chatAreaRef.current.scrollTop = chatAreaRef.current.scrollHeight;
-    }
-  }, [panels, revealed]);
 
   // --- Filter history ---
   const filteredHistory = historySearch
@@ -615,7 +624,7 @@ export function ArenaPage() {
   const groupedHistory = groupByDate(filteredHistory);
 
   // --- Determine page state ---
-  const hasBattle = panels.length > 0 || currentPrompt;
+  const hasBattle = panels.length > 0 || !!currentPrompt;
   const canReveal = allDone && !revealed && panels.length > 0 && panels.some((p) => p.status === 'done');
 
   return (
@@ -633,12 +642,7 @@ export function ArenaPage() {
       >
         {/* New Battle Button */}
         <div className="p-3 flex-shrink-0">
-          <Button
-            variant="primary"
-            size="md"
-            className="w-full"
-            onClick={handleNewBattle}
-          >
+          <Button variant="primary" size="md" className="w-full" onClick={handleNewBattle}>
             <Plus className="w-4 h-4" />
             新建对战
           </Button>
@@ -648,10 +652,7 @@ export function ArenaPage() {
         <div className="px-3 pb-2 flex-shrink-0">
           <div
             className="flex items-center gap-2 h-9 px-3 rounded-[10px]"
-            style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
           >
             <Search className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
             <input
@@ -672,19 +673,13 @@ export function ArenaPage() {
               <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--text-muted)' }} />
             </div>
           ) : filteredHistory.length === 0 ? (
-            <div
-              className="text-center py-8 text-[13px]"
-              style={{ color: 'var(--text-muted)' }}
-            >
+            <div className="text-center py-8 text-[13px]" style={{ color: 'var(--text-muted)' }}>
               暂无对战记录
             </div>
           ) : (
             Array.from(groupedHistory.entries()).map(([dateLabel, items]) => (
               <div key={dateLabel} className="mb-3">
-                <div
-                  className="text-[11px] font-medium px-2 py-1.5 uppercase tracking-wider"
-                  style={{ color: 'var(--text-muted)' }}
-                >
+                <div className="text-[11px] font-medium px-2 py-1.5 uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                   {dateLabel}
                 </div>
                 {items.map((item) => (
@@ -694,30 +689,22 @@ export function ArenaPage() {
                     className={cn(
                       'w-full text-left px-3 py-2.5 rounded-[10px] mb-0.5',
                       'transition-colors duration-150 group',
-                      activeBattleId === item.id
-                        ? 'bg-white/10'
-                        : 'hover:bg-white/5'
+                      activeBattleId === item.id ? 'bg-white/10' : 'hover:bg-white/5'
                     )}
                   >
                     <div className="flex items-start gap-2">
-                      <MessageSquare
-                        className="w-3.5 h-3.5 mt-0.5 flex-shrink-0"
-                        style={{ color: 'var(--text-muted)' }}
-                      />
+                      <MessageSquare className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
                       <div className="flex-1 min-w-0">
-                        <div
-                          className="text-[13px] leading-snug truncate"
-                          style={{ color: 'var(--text-primary)' }}
-                        >
+                        <div className="text-[13px] leading-snug truncate" style={{ color: 'var(--text-primary)' }}>
                           {truncate(item.prompt, 30)}
                         </div>
-                        <div
-                          className="text-[11px] mt-0.5 flex items-center gap-1"
-                          style={{ color: 'var(--text-muted)' }}
-                        >
+                        <div className="text-[11px] mt-0.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
                           <span>{item.responseCount} 个模型</span>
                           {item.revealed && (
-                            <span className="ml-1 text-[10px] px-1 py-0.5 rounded" style={{ background: 'rgba(99,102,241,0.15)', color: 'rgba(99,102,241,0.9)' }}>
+                            <span
+                              className="ml-1 text-[10px] px-1 py-0.5 rounded"
+                              style={{ background: 'rgba(99,102,241,0.15)', color: 'rgba(99,102,241,0.9)' }}
+                            >
                               已揭晓
                             </span>
                           )}
@@ -743,7 +730,6 @@ export function ArenaPage() {
           }}
         >
           <div className="flex items-center gap-3">
-            {/* Mobile sidebar toggle */}
             <button
               className="lg:hidden p-1.5 rounded-lg hover:bg-white/5"
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -752,9 +738,7 @@ export function ArenaPage() {
             </button>
             <div className="flex items-center gap-2">
               <Swords className="w-5 h-5" style={{ color: 'var(--text-primary)' }} />
-              <h1 className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                AI 竞技场
-              </h1>
+              <h1 className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>AI 竞技场</h1>
             </div>
           </div>
 
@@ -768,11 +752,7 @@ export function ArenaPage() {
                 'disabled:opacity-50 disabled:cursor-not-allowed',
                 'hover:bg-white/5'
               )}
-              style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                color: 'var(--text-primary)',
-              }}
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
             >
               {lineupLoading ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -797,10 +777,7 @@ export function ArenaPage() {
                     {lineupError ? '加载失败，点击重试' : '暂无可用阵容'}
                     <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
                       {lineupError ? (
-                        <button
-                          className="underline hover:text-white/80"
-                          onClick={() => { setGroupDropdownOpen(false); loadLineup(); }}
-                        >
+                        <button className="underline hover:text-white/80" onClick={() => { setGroupDropdownOpen(false); loadLineup(); }}>
                           重新加载
                         </button>
                       ) : (
@@ -812,10 +789,7 @@ export function ArenaPage() {
                   groups.map((g) => (
                     <button
                       key={g.key}
-                      onClick={() => {
-                        setSelectedGroupKey(g.key);
-                        setGroupDropdownOpen(false);
-                      }}
+                      onClick={() => { setSelectedGroupKey(g.key); setGroupDropdownOpen(false); }}
                       className={cn(
                         'w-full text-left px-3 py-2 text-[13px] transition-colors',
                         'hover:bg-white/5',
@@ -824,9 +798,7 @@ export function ArenaPage() {
                       style={{ color: 'var(--text-primary)' }}
                     >
                       <div>{g.name}</div>
-                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                        {g.slots.length} 个模型
-                      </div>
+                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{g.slots.length} 个模型</div>
                     </button>
                   ))
                 )}
@@ -835,104 +807,94 @@ export function ArenaPage() {
           </div>
         </div>
 
-        {/* Chat Area */}
-        <div
-          ref={chatAreaRef}
-          className="flex-1 overflow-y-auto px-4 py-6"
-          style={{ minHeight: 0 }}
-        >
-          {!hasBattle ? (
-            /* Empty State */
-            <div className="flex flex-col items-center justify-center h-full gap-4">
-              <div
-                className="w-16 h-16 rounded-full flex items-center justify-center"
-                style={{ background: 'rgba(99,102,241,0.1)' }}
-              >
-                <Swords className="w-8 h-8" style={{ color: 'rgba(99,102,241,0.7)' }} />
-              </div>
-              <div className="text-center">
-                <h2 className="text-[18px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-                  AI 盲评竞技场
-                </h2>
-                <p className="text-[14px] max-w-md" style={{ color: 'var(--text-muted)' }}>
-                  提出问题，多个模型匿名作答。阅读回答后揭晓真实身份，公平评估模型能力。
-                </p>
-              </div>
-              {lineupLoading ? (
-                <div className="flex items-center gap-2 text-[13px]" style={{ color: 'var(--text-muted)' }}>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>加载阵容中...</span>
-                </div>
-              ) : lineupError ? (
-                <div className="text-center">
-                  <div className="text-[13px] mb-2 px-3 py-2 rounded-lg" style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}>
-                    加载阵容失败: {lineupError}
-                  </div>
-                  <Button variant="secondary" size="sm" onClick={loadLineup}>
-                    重新加载
-                  </Button>
-                </div>
-              ) : groups.length === 0 ? (
-                <div
-                  className="text-[13px] px-4 py-3 rounded-xl text-center max-w-sm"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
-                >
-                  暂无可用阵容，请先在后台管理页面配置竞技场分组和模型
-                </div>
-              ) : (
-                <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                  当前阵容: {selectedGroup?.name} ({slots.length} 个模型)
-                </div>
-              )}
+        {/* ===================== Content ===================== */}
+        {!hasBattle ? (
+          /* Empty State */
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4" style={{ minHeight: 0 }}>
+            <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: 'rgba(99,102,241,0.1)' }}>
+              <Swords className="w-8 h-8" style={{ color: 'rgba(99,102,241,0.7)' }} />
             </div>
-          ) : (
-            <div className="max-w-5xl mx-auto space-y-6">
-              {/* User Question Bubble */}
-              <div className="flex justify-end">
-                <GlassCard
-                  variant="subtle"
-                  padding="md"
-                  className="max-w-[70%]"
-                  style={{
-                    background: 'linear-gradient(135deg, rgba(99,102,241,0.15) 0%, rgba(99,102,241,0.08) 100%)',
-                    border: '1px solid rgba(99,102,241,0.2)',
-                  }}
-                >
-                  <p
-                    className="text-[14px] leading-relaxed whitespace-pre-wrap"
-                    style={{ color: 'var(--text-primary)' }}
-                  >
-                    {currentPrompt}
-                  </p>
-                </GlassCard>
+            <div className="text-center">
+              <h2 className="text-[18px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>AI 盲评竞技场</h2>
+              <p className="text-[14px] max-w-md" style={{ color: 'var(--text-muted)' }}>
+                提出问题，多个模型匿名作答。阅读回答后揭晓真实身份，公平评估模型能力。
+              </p>
+            </div>
+            {lineupLoading ? (
+              <div className="flex items-center gap-2 text-[13px]" style={{ color: 'var(--text-muted)' }}>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>加载阵容中...</span>
               </div>
+            ) : lineupError ? (
+              <div className="text-center">
+                <div
+                  className="text-[13px] mb-2 px-3 py-2 rounded-lg"
+                  style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
+                >
+                  加载阵容失败: {lineupError}
+                </div>
+                <Button variant="secondary" size="sm" onClick={loadLineup}>重新加载</Button>
+              </div>
+            ) : groups.length === 0 ? (
+              <div
+                className="text-[13px] px-4 py-3 rounded-xl text-center max-w-sm"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+              >
+                暂无可用阵容，请先在后台管理页面配置竞技场分组和模型
+              </div>
+            ) : (
+              <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                当前阵容: {selectedGroup?.name} ({slots.length} 个模型)
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Battle View — horizontal card layout */
+          <div className="flex-1 flex flex-col min-h-0">
+            {/* Prompt Bar */}
+            <div
+              className="flex-shrink-0 flex items-center gap-2 px-5 py-2.5 border-b"
+              style={{ borderColor: 'rgba(255,255,255,0.05)', background: 'rgba(99,102,241,0.04)' }}
+            >
+              <div
+                className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
+                style={{ background: 'rgba(99,102,241,0.15)' }}
+              >
+                <MessageSquare className="w-3 h-3" style={{ color: 'rgba(99,102,241,0.8)' }} />
+              </div>
+              <p
+                className="text-[13px] truncate flex-1"
+                style={{ color: 'var(--text-primary)' }}
+                title={currentPrompt}
+              >
+                {currentPrompt}
+              </p>
+            </div>
 
-              {/* Response Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {panels.map((panel) => {
-                  const info = revealedInfos.get(panel.slotId);
-                  const letterMatch = panel.label.match(/[A-L]$/);
-                  const letter = letterMatch ? letterMatch[0] : 'A';
-                  const labelColor = info?.avatarColor ?? LABEL_COLORS[letter] ?? '#6366f1';
+            {/* Panels Row — horizontal scroll, each card 50% width */}
+            <div className="flex-1 min-h-0 flex gap-4 overflow-x-auto px-4 py-4">
+              {panels.map((panel) => {
+                const info = revealedInfos.get(panel.slotId);
+                const letter = getLabel(panel.labelIndex);
+                const labelColor = info?.avatarColor ?? getLabelColor(panel.labelIndex);
 
-                  return (
+                return (
+                  <div
+                    key={panel.slotId}
+                    className="flex-shrink-0 flex flex-col"
+                    style={{ width: 'calc(50% - 8px)' }}
+                  >
                     <GlassCard
-                      key={panel.slotId}
                       padding="none"
                       className={cn(
-                        'transition-transform duration-500',
+                        'flex flex-col h-full transition-transform duration-500',
                         revealAnimating && 'scale-[0.98]'
                       )}
                     >
-                      {/* Panel Header */}
+                      {/* Header */}
                       <div
-                        className={cn(
-                          'flex items-center justify-between px-4 py-3 border-b transition-all duration-500',
-                          revealed && 'py-3'
-                        )}
-                        style={{
-                          borderColor: 'rgba(255,255,255,0.05)',
-                        }}
+                        className="flex items-center justify-between px-4 py-3 border-b flex-shrink-0"
+                        style={{ borderColor: 'rgba(255,255,255,0.05)' }}
                       >
                         <div className="flex items-center gap-2.5">
                           <div
@@ -946,17 +908,11 @@ export function ArenaPage() {
                             {letter}
                           </div>
                           <div>
-                            <div
-                              className="text-[13px] font-semibold"
-                              style={{ color: 'var(--text-primary)' }}
-                            >
+                            <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                               {revealed && info ? info.displayName : panel.label}
                             </div>
                             {revealed && info && (
-                              <div
-                                className="text-[11px]"
-                                style={{ color: 'var(--text-muted)' }}
-                              >
+                              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                                 {info.platformName}
                               </div>
                             )}
@@ -967,51 +923,44 @@ export function ArenaPage() {
                             <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: labelColor }} />
                           )}
                           {panel.status === 'done' && (
-                            <div
-                              className="w-2 h-2 rounded-full"
-                              style={{ background: '#10b981' }}
-                            />
+                            <div className="w-2 h-2 rounded-full" style={{ background: '#10b981' }} />
                           )}
                           {panel.status === 'error' && (
-                            <div
-                              className="w-2 h-2 rounded-full"
-                              style={{ background: '#ef4444' }}
-                            />
+                            <div className="w-2 h-2 rounded-full" style={{ background: '#ef4444' }} />
+                          )}
+                          {(panel.status === 'done' || panel.status === 'error') && panel.totalMs != null && (
+                            <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                              {(panel.totalMs / 1000).toFixed(1)}s
+                            </span>
                           )}
                         </div>
                       </div>
 
-                      {/* Panel Body */}
-                      <div className="px-4 py-3 min-h-[120px]">
+                      {/* Body — internal scroll */}
+                      <div
+                        className="flex-1 overflow-y-auto min-h-0 px-4 py-3"
+                        data-panel-body
+                      >
                         {panel.status === 'waiting' ? (
-                          <div className="flex items-center gap-2 h-full py-8 justify-center">
+                          <div className="flex items-center gap-2 py-8 justify-center">
                             <div className="flex gap-1">
                               <div className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: 'var(--text-muted)', animationDelay: '0ms' }} />
                               <div className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: 'var(--text-muted)', animationDelay: '150ms' }} />
                               <div className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: 'var(--text-muted)', animationDelay: '300ms' }} />
                             </div>
-                            <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                              等待响应...
-                            </span>
+                            <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>等待响应...</span>
                           </div>
                         ) : panel.status === 'error' ? (
-                          <div className="flex items-center gap-2 py-4">
+                          <div className="py-4">
                             <div
                               className="text-[13px] px-3 py-2 rounded-lg"
-                              style={{
-                                background: 'rgba(239,68,68,0.08)',
-                                color: 'rgba(239,68,68,0.9)',
-                                border: '1px solid rgba(239,68,68,0.15)',
-                              }}
+                              style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
                             >
                               {panel.errorMessage ?? '响应异常'}
                             </div>
                           </div>
                         ) : (
-                          <div
-                            className="text-[13px] leading-relaxed whitespace-pre-wrap break-words"
-                            style={{ color: 'var(--text-primary)' }}
-                          >
+                          <div className="text-[13px] leading-relaxed whitespace-pre-wrap break-words" style={{ color: 'var(--text-primary)' }}>
                             {panel.text}
                             {panel.status === 'streaming' && (
                               <span
@@ -1023,10 +972,10 @@ export function ArenaPage() {
                         )}
                       </div>
 
-                      {/* Panel Footer - metrics */}
+                      {/* Footer — metrics (visible after reveal) */}
                       {(panel.status === 'done' || panel.status === 'error') && revealed && (
                         <div
-                          className="px-4 py-2 flex items-center gap-4 border-t"
+                          className="px-4 py-2 flex items-center gap-4 border-t flex-shrink-0"
                           style={{ borderColor: 'rgba(255,255,255,0.05)' }}
                         >
                           {panel.ttftMs != null && (
@@ -1044,34 +993,14 @@ export function ArenaPage() {
                         </div>
                       )}
                     </GlassCard>
-                  );
-                })}
-              </div>
-
-              {/* Reveal Button */}
-              {panels.length > 0 && !revealed && (
-                <div className="flex justify-center pt-4 pb-2">
-                  <Button
-                    variant={canReveal ? 'primary' : 'secondary'}
-                    size="md"
-                    onClick={handleReveal}
-                    disabled={!canReveal || revealLoading}
-                    className="px-8"
-                  >
-                    {revealLoading ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Eye className="w-4 h-4" />
-                    )}
-                    揭晓模型身份
-                  </Button>
-                </div>
-              )}
+                  </div>
+                );
+              })}
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* Bottom Input Bar */}
+        {/* ===================== Bottom Bar ===================== */}
         <div
           className="flex-shrink-0 px-4 py-3 border-t"
           style={{
@@ -1082,10 +1011,7 @@ export function ArenaPage() {
           <div className="max-w-5xl mx-auto">
             <div
               className="flex items-end gap-2 rounded-[14px] p-2"
-              style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-              }}
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
             >
               <textarea
                 ref={textareaRef}
@@ -1108,10 +1034,7 @@ export function ArenaPage() {
                   'placeholder:text-[color:var(--text-muted)] disabled:opacity-50 disabled:cursor-not-allowed',
                   'px-2 py-1.5'
                 )}
-                style={{
-                  color: 'var(--text-primary)',
-                  maxHeight: '160px',
-                }}
+                style={{ color: 'var(--text-primary)', maxHeight: '160px' }}
               />
               <Button
                 variant="primary"
@@ -1120,24 +1043,30 @@ export function ArenaPage() {
                 disabled={isStreaming || !prompt.trim() || slots.length === 0}
                 className="flex-shrink-0 mb-0.5"
               >
-                {isStreaming ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Send className="w-3.5 h-3.5" />
-                )}
+                {isStreaming ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               </Button>
             </div>
             <div className="flex items-center justify-between mt-1.5 px-1">
               <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 Enter 发送, Shift+Enter 换行
               </span>
-              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                {slots.length > 0
-                  ? `${selectedGroup?.name} - ${slots.length} 个模型将匿名回答`
-                  : groups.length === 0
-                    ? '未配置阵容'
-                    : '请选择阵容'}
-              </span>
+              {canReveal ? (
+                <Button
+                  variant="primary"
+                  size="xs"
+                  onClick={handleReveal}
+                  disabled={revealLoading}
+                >
+                  {revealLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Eye className="w-3 h-3" />}
+                  揭晓模型身份
+                </Button>
+              ) : (
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  {slots.length > 0
+                    ? `${selectedGroup?.name} - ${slots.length} 个模型将匿名回答`
+                    : groups.length === 0 ? '未配置阵容' : '请选择阵容'}
+                </span>
+              )}
             </div>
           </div>
         </div>
