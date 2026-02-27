@@ -35,6 +35,15 @@ public static class AvatarUrlBuilder
     }
 
     /// <summary>
+    /// 构造带 cache-bust 的头像 URL（用于上传/更新后立即返回新鲜 URL）
+    /// </summary>
+    public static string? BuildFresh(IConfiguration cfg, User? user)
+    {
+        var url = Build(cfg, user);
+        return AppendCacheBust(url);
+    }
+
+    /// <summary>
     /// 根据 AvatarFileName 构造头像 URL（用于已知文件名的场景）
     /// </summary>
     public static string? Build(IConfiguration cfg, string? avatarFileName)
@@ -50,6 +59,16 @@ public static class AvatarUrlBuilder
         file = file.ToLowerInvariant();
 
         return $"{baseUrl}/{AvatarPathPrefix}/{file}";
+    }
+
+    /// <summary>
+    /// 为 URL 追加 ?v={unix_seconds} 缓存破坏参数
+    /// </summary>
+    public static string? AppendCacheBust(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return url;
+        var sep = url.Contains('?') ? '&' : '?';
+        return $"{url}{sep}v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
     }
 
     private static string ResolveAvatarFileName(User? user)

@@ -67,7 +67,7 @@ public static class DocumentValidator
     /// <summary>
     /// 去除 YAML frontmatter（--- ... --- 包裹的头部元数据），常见于 .mdc 文件
     /// </summary>
-    internal static string StripYamlFrontmatter(string content)
+    public static string StripYamlFrontmatter(string content)
     {
         if (!content.StartsWith("---"))
             return content;
