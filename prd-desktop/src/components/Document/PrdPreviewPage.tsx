@@ -543,8 +543,9 @@ export default function PrdPreviewPage(props?: {
     if (prdPreviewError) return <div className="text-sm text-red-600 dark:text-red-400">{prdPreviewError}</div>;
     return (
       <MarkdownRenderer
-        className="prose prose-sm dark:prose-invert max-w-none"
+        className="prose prose-sm max-w-none"
         content={prdPreview?.content || ''}
+        style={{ color: 'var(--color-text)' }}
       />
     );
   }, [canPreview, prdPreview?.content, prdPreviewError, prdPreviewLoading]);
