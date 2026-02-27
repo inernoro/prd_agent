@@ -1258,12 +1258,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                               {/* 实际使用的模型 */}
                                               <div
                                                 className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors"
-                                                style={{ background: isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--list-item-bg)' }}
+                                                style={{ background: isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                                                 onMouseEnter={(e) => {
                                                   e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.1)' : 'var(--bg-input-hover)';
                                                 }}
                                                 onMouseLeave={(e) => {
-                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--list-item-bg)';
+                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))';
                                                 }}
                                                 title={isFallback ? `降级回退：${resolvedModel.fallbackReason || ''}` : resolvedModel.source === 'legacy' ? '使用传统配置的单模型' : resolvedModel.modelGroupName ? `使用默认模型池：${resolvedModel.modelGroupName}` : '使用默认模型池'}
                                               >
@@ -2169,7 +2169,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
                 <div
                   className="rounded-[12px] p-3 min-h-[200px] max-h-[400px] overflow-auto"
-                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}
+                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                 >
                   {filteredGroups.length === 0 ? (
                     <div className="py-12 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>

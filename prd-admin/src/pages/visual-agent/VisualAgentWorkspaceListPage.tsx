@@ -688,7 +688,7 @@ function QuickInputBox(props: {
                   borderRadius: 4,
                   overflow: 'hidden',
                   border: '1px solid rgba(255,255,255,0.22)',
-                  background: 'var(--list-item-bg)',
+                  background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                   color: 'rgba(255,255,255,0.82)',
                 }}
                 title={`参考图：${selectedImage.file.name}`}
@@ -795,7 +795,7 @@ function QuickInputBox(props: {
                           borderRadius: 4,
                           overflow: 'hidden',
                           border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'var(--list-item-bg)',
+                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                           color: 'rgba(255,255,255,0.82)',
                         }}
                         title="选择档位"
@@ -872,7 +872,7 @@ function QuickInputBox(props: {
                           borderRadius: 4,
                           overflow: 'hidden',
                           border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'var(--list-item-bg)',
+                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                           color: 'rgba(255,255,255,0.82)',
                         }}
                         title="选择比例"
@@ -1224,7 +1224,7 @@ function NewProjectCard(props: { onClick: () => void }) {
         className="h-[160px] rounded-xl flex flex-col items-center justify-center gap-2.5 transition-all duration-300 group-hover:scale-[1.02] group-hover:border-white/25"
         style={{
           border: '1.5px dashed rgba(255,255,255,0.2)',
-          background: 'var(--list-item-bg)',
+          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
         }}
       >
         <div

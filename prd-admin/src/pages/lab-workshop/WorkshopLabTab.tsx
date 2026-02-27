@@ -475,7 +475,7 @@ export default function WorkshopLabTab() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {/* 模拟画布 - 两阶段选择 */}
             <div className="surface-inset" style={{
-              background: 'var(--bg-elevated)',
+              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
               borderRadius: 8,
               padding: 12,
               border: '1px solid var(--border-default)',
@@ -580,7 +580,7 @@ export default function WorkshopLabTab() {
 
             {/* 主输入框 */}
             <div className="surface-inset" style={{
-              background: 'var(--bg-elevated)',
+              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
               borderRadius: 8,
               padding: 12,
               border: '1px solid var(--border-default)',
@@ -621,7 +621,7 @@ export default function WorkshopLabTab() {
 
             {/* 窄容器测试 */}
             <div className="surface-inset" style={{
-              background: 'var(--bg-elevated)',
+              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
               borderRadius: 8,
               padding: 12,
               border: '1px solid var(--border-default)',
@@ -665,7 +665,7 @@ export default function WorkshopLabTab() {
 
             {/* 测试用例 */}
             <div className="surface-inset" style={{
-              background: 'var(--bg-elevated)',
+              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
               borderRadius: 8,
               padding: 12,
               border: '1px solid var(--border-default)',
@@ -684,7 +684,7 @@ export default function WorkshopLabTab() {
 
             {/* 两阶段测试用例 */}
             <div className="surface-inset" style={{
-              background: 'var(--bg-elevated)',
+              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
               borderRadius: 8,
               padding: 12,
               border: '1px solid var(--border-default)',
@@ -711,7 +711,7 @@ export default function WorkshopLabTab() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {/* 当前文本 */}
             <div className="surface-inset" style={{
-              background: 'var(--bg-elevated)',
+              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
               borderRadius: 8,
               padding: 12,
               border: '1px solid var(--border-default)',
@@ -735,7 +735,7 @@ export default function WorkshopLabTab() {
 
             {/* 输出日志 */}
             <div className="surface-inset" style={{
-              background: 'var(--bg-elevated)',
+              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
               borderRadius: 8,
               padding: 12,
               border: '1px solid var(--border-default)',
@@ -820,7 +820,7 @@ export default function WorkshopLabTab() {
         {/* 验收清单 + 自动测试 */}
         <div className="surface-inset" style={{
           marginTop: 16,
-          background: 'var(--bg-elevated)',
+          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
           borderRadius: 8,
           padding: 12,
           border: '1px solid var(--border-default)',

@@ -425,7 +425,7 @@ export default function LiteraryAgentWorkspaceListPage() {
         <div className="px-2 pb-2 flex-1 min-h-0 overflow-hidden">
           <div
             className="h-full overflow-hidden border rounded-[5px] text-[12px] md:text-[10px] flex flex-col"
-            style={{ borderColor: 'var(--border-subtle)', background: 'var(--list-item-bg)' }}
+            style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
           >
             <div className="p-1.5 flex-1 overflow-hidden">
               <ArticlePreview markdown={getArticlePreviewText(ws)} />

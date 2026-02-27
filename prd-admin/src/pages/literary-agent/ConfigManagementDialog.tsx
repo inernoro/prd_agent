@@ -457,7 +457,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                       <div className="px-2 pb-1 flex-1 min-h-0 overflow-hidden">
                         <div
                           className="h-full overflow-auto border rounded-[6px]"
-                          style={{ borderColor: 'var(--border-subtle)', background: 'var(--list-item-bg)', minHeight: '80px', maxHeight: '120px' }}
+                          style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', minHeight: '80px', maxHeight: '120px' }}
                         >
                           <style>{`
                             .modal-prompt-md { font-size: 11px; line-height: 1.5; color: var(--text-secondary); padding: 8px; }
@@ -543,7 +543,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
               <div className="px-2 pb-1">
                 <div
                   className="overflow-hidden border rounded-[6px] p-2"
-                  style={{ borderColor: 'var(--border-subtle)', background: 'var(--list-item-bg)', maxHeight: '80px' }}
+                  style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', maxHeight: '80px' }}
                 >
                   <div className="text-[11px] line-clamp-3" style={{ color: 'var(--text-muted)' }}>
                     {prompt.content || '（内容为空）'}
@@ -631,7 +631,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                         <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 80px' }}>
                           <div
                             className="overflow-auto border rounded-[6px] p-2"
-                            style={{ borderColor: 'var(--border-subtle)', background: 'var(--list-item-bg)', minHeight: '60px', maxHeight: '80px' }}
+                            style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', minHeight: '60px', maxHeight: '80px' }}
                           >
                             <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                               {config.prompt || '（无提示词）'}
@@ -642,7 +642,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                             style={{
                               background: config.imageUrl
                                 ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                                : 'var(--list-item-bg)',
+                                : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                               border: config.imageUrl ? 'none' : '1px solid var(--border-subtle)',
                               minHeight: '60px',
                               maxHeight: '80px',
@@ -727,7 +727,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                   style={{
                     background: config.imageUrl
                       ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                      : 'var(--list-item-bg)',
+                      : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                     height: '80px',
                   }}
                 >

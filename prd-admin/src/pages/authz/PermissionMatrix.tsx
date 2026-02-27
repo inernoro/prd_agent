@@ -179,7 +179,7 @@ export function PermissionMatrix({
                     highlightRoleKey === role.key
                       ? 'rgba(99, 102, 241, 0.12)'
                       : role.isBuiltIn
-                        ? 'var(--list-item-bg)'
+                        ? 'var(--bg-card, rgba(255, 255, 255, 0.03))'
                         : 'transparent',
                   color: highlightRoleKey === role.key ? 'rgba(99, 102, 241, 0.95)' : 'var(--text-primary)',
                   minWidth: 88,

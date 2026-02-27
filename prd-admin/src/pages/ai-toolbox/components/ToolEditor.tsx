@@ -671,7 +671,7 @@ export function ToolEditor() {
                       <div
                         className="absolute top-full left-0 mt-2 p-3 rounded-xl border shadow-xl z-10 grid grid-cols-8 gap-1.5 w-[300px]"
                         style={{
-                          background: 'var(--bg-elevated, #1a1f2e)',
+                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                           borderColor: 'rgba(255, 255, 255, 0.1)',
                         }}
                       >

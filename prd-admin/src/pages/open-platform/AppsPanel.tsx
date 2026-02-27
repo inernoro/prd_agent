@@ -296,7 +296,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
     <div className="h-full overflow-hidden p-1">
       <GlassCard animated glow className="h-full flex flex-col">
         {/* ============ 顶部统计栏 ============ */}
-        <div className="p-4 border-b border-white/10 flex-shrink-0" style={{ background: 'var(--list-item-bg)' }}>
+        <div className="p-4 border-b border-white/10 flex-shrink-0" style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <Key size={18} className="text-muted-foreground" />

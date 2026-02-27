@@ -122,7 +122,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
     <div className="h-full overflow-auto p-1">
       <GlassCard animated glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'var(--list-item-bg)' }}>
+        <div className="p-4 border-b border-white/10" style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Webhook size={18} className="text-muted-foreground" />
@@ -141,7 +141,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
               <div
                 className="p-4 rounded-lg"
                 style={{
-                  background: webhookStats.isEnabled ? 'rgba(34,197,94,0.06)' : 'var(--list-item-bg)',
+                  background: webhookStats.isEnabled ? 'rgba(34,197,94,0.06)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                   border: webhookStats.isEnabled ? '1px solid rgba(34,197,94,0.2)' : '1px solid var(--nested-block-border)',
                 }}
               >

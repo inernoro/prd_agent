@@ -426,7 +426,7 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
                       <div
                         key={log.id}
                         className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs"
-                        style={{ background: 'var(--list-item-bg)' }}
+                        style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                       >
                         <div className="flex items-center gap-2">
                           {log.success ? (

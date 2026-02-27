@@ -164,7 +164,7 @@ function SequencesTab() {
                   <div className="font-medium" style={{ color: 'var(--text-primary)' }}>
                     {seq.name}
                     <span className="ml-2 text-xs font-mono px-1.5 py-0.5 rounded"
-                      style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
+                      style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-secondary)' }}>
                       {seq.sequenceKey}
                     </span>
                   </div>
@@ -564,7 +564,7 @@ function AssetsTab() {
                 <div className="flex gap-1">
                   {asset.tags.map((tag) => (
                     <span key={tag} className="text-[10px] px-1 py-0.5 rounded"
-                      style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>
+                      style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-muted)' }}>
                       {tag}
                     </span>
                   ))}
@@ -704,7 +704,7 @@ function EnrollmentsTab() {
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             className="px-2 py-1 text-xs rounded-md"
-            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+            style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
           >
             <option value="">全部状态</option>
             <option value="active">进行中</option>
@@ -752,7 +752,7 @@ function EnrollmentsTab() {
                   <button
                     onClick={() => handleUnsubscribe(enr.id)}
                     className="text-xs px-2 py-1 rounded-md"
-                    style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
+                    style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
                   >
                     退订
                   </button>

@@ -106,7 +106,7 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
     <div className="h-full overflow-auto p-1">
       <GlassCard animated glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'var(--list-item-bg)' }}>
+        <div className="p-4 border-b border-white/10" style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Users size={18} className="text-muted-foreground" />

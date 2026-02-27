@@ -1253,7 +1253,7 @@ export default function AiChatPage() {
                           style={{
                             border: '1px solid var(--border-subtle)',
                             color: 'var(--text-secondary)',
-                            background: 'var(--list-item-bg)',
+                            background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                           }}
                           title="本轮回答角色"
                         >
@@ -1291,7 +1291,7 @@ export default function AiChatPage() {
                           <button
                             type="button"
                             className="text-[11px] rounded-full px-2 py-1 hover:bg-white/5"
-                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--list-item-bg)' }}
+                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                             onClick={() => {
                               setComposer(m.content || '');
                               setResendTargetMessageId(m.id);
@@ -1374,7 +1374,7 @@ export default function AiChatPage() {
                           <button
                             type="button"
                             className="text-[11px] rounded-full px-2 py-1 hover:bg-white/5"
-                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--list-item-bg)' }}
+                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                             onClick={() => openCitationDrawer(m.citations || [], 0)}
                             title="右侧展开引用内容"
                           >
@@ -1387,7 +1387,7 @@ export default function AiChatPage() {
                               key={`${c.headingId || c.headingTitle || 'c'}-${idx}`}
                               type="button"
                               className="inline-flex items-center rounded-full px-2 py-1 text-[11px] hover:bg-white/5"
-                              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--list-item-bg)' }}
+                              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                               title={c.excerpt || c.headingTitle || c.headingId || ''}
                               onClick={() => openCitationDrawer(m.citations || [], idx)}
                             >
@@ -1783,7 +1783,7 @@ export default function AiChatPage() {
                     className="w-full text-left rounded-[14px] px-3 py-2"
                     style={{
                       border: '1px solid var(--border-subtle)',
-                      background: active ? 'var(--bg-input-hover)' : 'var(--list-item-bg)',
+                      background: active ? 'var(--bg-input-hover)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                       color: 'var(--text-primary)',
                     }}
                     onClick={() => setCitationDrawerActiveIndex(idx)}

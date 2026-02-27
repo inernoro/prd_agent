@@ -3293,7 +3293,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               className="overflow-auto border rounded-[6px]"
                               style={{
                                 borderColor: 'var(--border-subtle)',
-                                background: 'var(--list-item-bg)',
+                                background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                 height: '100px',
                               }}
                             >
@@ -3493,7 +3493,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 className="overflow-auto border rounded-[6px] p-2"
                                 style={{
                                   borderColor: 'var(--border-subtle)',
-                                  background: 'var(--list-item-bg)',
+                                  background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                 }}
                               >
                                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -3504,7 +3504,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               <div
                                 className="flex items-center justify-center overflow-hidden rounded-[6px]"
                                 style={{
-                                  background: 'var(--list-item-bg)',
+                                  background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                   border: '1px solid var(--border-subtle)',
                                   cursor: config.imageUrl ? 'zoom-in' : 'default',
                                 }}
@@ -3894,7 +3894,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <div
                     className="flex-1 rounded-lg overflow-hidden relative group cursor-pointer"
                     style={{
-                      background: editingRefConfig.imageUrl ? 'transparent' : 'var(--list-item-bg)',
+                      background: editingRefConfig.imageUrl ? 'transparent' : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                       border: editingRefConfig.imageUrl ? 'none' : '1px dashed var(--border-subtle)',
                       minHeight: '200px',
                     }}
