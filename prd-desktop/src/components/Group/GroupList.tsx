@@ -239,14 +239,14 @@ export default function GroupList() {
                   className={`h-8 w-8 shrink-0 rounded-lg flex items-center justify-center text-sm font-semibold ${
                     activeGroupId === group.groupId
                       ? 'bg-primary-500 text-white'
-                      : 'bg-primary-500/10 text-primary-600'
+                      : 'bg-primary-500/10 text-primary-600 dark:text-primary-300'
                   }`}
                   aria-hidden="true"
                 >
                   {getGroupInitial(group.groupName)}
                 </div>
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium leading-5">
+                  <div className="truncate text-sm font-medium leading-5 text-text-primary">
                     {group.groupName}
                   </div>
                 </div>
