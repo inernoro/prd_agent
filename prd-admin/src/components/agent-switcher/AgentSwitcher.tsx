@@ -26,6 +26,7 @@ const ICON_PATHS: Record<string, string> = {
   'visual-agent': 'icon/backups/agent/visual-agent.png',
   'literary-agent': 'icon/backups/agent/literary-agent.png',
   'defect-agent': 'icon/backups/agent/defect-agent.png',
+  'video-agent': 'icon/backups/agent/video-agent.png',
 };
 
 function getAgentIconUrl(appKey: string): string {
@@ -41,14 +42,16 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
   'visual-agent': 'AI驱动的视觉创作，一键生成精美图像',
   'literary-agent': '文学创作助手，为文章配图赋予灵魂',
   'defect-agent': '缺陷管理专家，高效追踪问题闭环',
+  'video-agent': '文章转视频教程，AI驱动分镜创作',
 };
 
 /** 入场方向配置 */
 const ENTRY_DIRECTIONS = [
-  { x: -60, y: -40, rotate: -5 },
-  { x: 60, y: -40, rotate: 5 },
-  { x: -60, y: 40, rotate: 5 },
-  { x: 60, y: 40, rotate: -5 },
+  { x: -80, y: -40, rotate: -5 },
+  { x: -40, y: -40, rotate: -3 },
+  { x: 0, y: -40, rotate: 0 },
+  { x: 40, y: -40, rotate: 3 },
+  { x: 80, y: -40, rotate: 5 },
 ];
 
 /** Agent 卡片组件 */
@@ -491,7 +494,8 @@ export function AgentSwitcher() {
         case '1':
         case '2':
         case '3':
-        case '4': {
+        case '4':
+        case '5': {
           if (!transitionAgent) {
             const idx = parseInt(e.key, 10) - 1;
             const agent = AGENT_DEFINITIONS[idx];

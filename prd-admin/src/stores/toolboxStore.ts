@@ -122,6 +122,19 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  {
+    id: 'builtin-video-agent',
+    name: '视频创作者',
+    description: '文章转视频教程，AI驱动分镜脚本与预览图生成',
+    icon: 'Video',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'video-agent',
+    routePath: '/video-agent',
+    tags: ['视频', '教程', '分镜'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
   // ========== 普通版 Agent（统一对话界面）==========
   {
     id: 'builtin-code-reviewer',
