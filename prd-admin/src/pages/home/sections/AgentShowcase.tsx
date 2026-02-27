@@ -725,7 +725,7 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
               {activeAgent.features.map((feature, i) => (
                 <div
                   key={i}
-                  className="p-4 rounded-xl bg-white/[0.03] border border-white/10 hover:bg-white/[0.05] hover:border-white/20 transition-all duration-300"
+                  className="surface-interactive p-4 rounded-xl"
                 >
                   <div className={cn('inline-flex p-2 rounded-lg mb-2 bg-gradient-to-br', activeAgent.gradient)}>
                     {Icons[feature.icon]}

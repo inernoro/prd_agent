@@ -137,7 +137,7 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
                 logs.map((log) => (
                   <div
                     key={log.id}
-                    className="p-4 rounded-lg transition-colors hover:bg-white/[0.03] cursor-pointer"
+                    className="surface-row p-4 rounded-lg cursor-pointer"
                     style={{
                       background: isSuccess(log.statusCode) ? 'rgba(34,197,94,0.04)' : 'rgba(239,68,68,0.04)',
                       border: `1px solid ${isSuccess(log.statusCode) ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}`,

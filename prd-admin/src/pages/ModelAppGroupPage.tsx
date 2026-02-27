@@ -962,7 +962,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                           setSelectedAppId(firstItem.id);
                         }
                       }}
-                      className="px-3 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors"
+                      className="surface-row px-3 py-3 cursor-pointer"
                       style={isSelected ? { background: 'var(--bg-input-hover)' } : undefined}
                     >
                       <div className="flex items-center gap-3">

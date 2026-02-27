@@ -146,7 +146,7 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
                 mappings.map((mapping) => (
                   <div
                     key={mapping.id}
-                    className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/[0.03]"
+                    className="surface-row flex items-center justify-between p-4 rounded-lg"
                     style={{ border: '1px solid var(--nested-block-border)' }}
                   >
                     <div className="flex items-center gap-4">

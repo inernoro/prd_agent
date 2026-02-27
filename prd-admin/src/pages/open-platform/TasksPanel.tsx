@@ -233,7 +233,7 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
                 tasks.map((task) => (
                   <div
                     key={task.id}
-                    className="p-4 rounded-lg transition-colors hover:bg-white/[0.03] cursor-pointer"
+                    className="surface-row p-4 rounded-lg cursor-pointer"
                     style={{
                       background: statusBgColors[task.status] || 'transparent',
                       border: `1px solid ${statusBorderColors[task.status] || 'var(--nested-block-border)'}`,

@@ -858,7 +858,7 @@ export function ToolEditor() {
             >
               <button
                 onClick={() => setShowAdvanced(!showAdvanced)}
-                className="w-full px-4 py-3 flex items-center justify-between transition-colors hover:bg-white/[0.02]"
+                className="surface-row w-full px-4 py-3 flex items-center justify-between"
               >
                 <div className="flex items-center gap-2">
                   <div

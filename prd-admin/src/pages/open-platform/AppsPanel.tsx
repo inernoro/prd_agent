@@ -404,7 +404,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                   apps.map((app) => (
                     <div
                       key={app.id}
-                      className={`flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-white/[0.03] ${selectedIds.has(app.id) ? 'bg-blue-500/10' : ''}`}
+                      className={`surface-row flex items-center gap-3 p-3 rounded-lg ${selectedIds.has(app.id) ? 'bg-blue-500/10' : ''}`}
                       style={{ border: selectedIds.has(app.id) ? '1px solid rgba(59,130,246,0.3)' : '1px solid var(--nested-block-border)' }}
                     >
                       {/* 选择框 */}

@@ -210,7 +210,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
                 whitelists.map((wl) => (
                   <div
                     key={wl.id}
-                    className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/[0.03]"
+                    className="surface-row flex items-center justify-between p-4 rounded-lg"
                     style={{ border: '1px solid var(--nested-block-border)' }}
                   >
                     <div className="flex items-center gap-4 flex-1 min-w-0">

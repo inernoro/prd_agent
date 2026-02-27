@@ -222,7 +222,7 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
                 workflows.map((wf) => (
                   <div
                     key={wf.id}
-                    className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/[0.03]"
+                    className="surface-row flex items-center justify-between p-4 rounded-lg"
                     style={{ border: '1px solid var(--nested-block-border)' }}
                   >
                     <div className="flex items-center gap-4 flex-1 min-w-0">

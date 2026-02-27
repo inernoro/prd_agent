@@ -489,7 +489,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                 return (
                   <tr
                     key={user.userId}
-                    className="transition-colors hover:bg-white/[0.03]"
+                    className="surface-row"
                     style={{
                       borderBottom: '1px solid rgba(148,163,184,0.06)',
                       background: isTop3 ? 'rgba(99,102,241,0.04)' : undefined,
@@ -693,7 +693,7 @@ function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]
               {agents.map(a => {
                 const color = AGENT_COLORS[a.appKey] ?? AI.slate;
                 return (
-                  <tr key={a.appKey} className="hover:bg-white/[0.02] transition-colors" style={{ borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
+                  <tr key={a.appKey} className="surface-row" style={{ borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
                     <td className="py-2.5 pr-4">
                       <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full" style={{ background: color }} />
@@ -753,7 +753,7 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
             </thead>
             <tbody>
               {models.map(m => (
-                <tr key={m.model} className="hover:bg-white/[0.02] transition-colors" style={{ borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
+                <tr key={m.model} className="surface-row" style={{ borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
                   <td className="py-2.5 font-medium" style={{ color: 'var(--text-primary)' }}>
                     <div className="flex items-center gap-2">
                       <div className="w-1.5 h-1.5 rounded-full" style={{ background: AI.indigo }} />
