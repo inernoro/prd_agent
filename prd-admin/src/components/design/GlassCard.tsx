@@ -242,6 +242,10 @@ function buildGlassStyle(
     transform: 'translateZ(0)',
     willChange: 'transform' as const,
     isolation: 'isolate' as const,
+    // macOS backdrop-filter 合成器伪影修复：相邻 blur 元素在行边界产生可见接缝线
+    // backfaceVisibility: hidden 强制每个卡片独立合成层，消除边界渗透
+    backfaceVisibility: 'hidden' as const,
+    WebkitBackfaceVisibility: 'hidden' as const,
     ...extra,
   };
 }

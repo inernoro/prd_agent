@@ -1192,6 +1192,9 @@ select optgroup {
   backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
   -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
   isolation: isolate;
+  /* macOS backdrop-filter 合成器伪影修复：消除相邻 blur 元素行边界接缝线 */
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
 }
 
 /* ── .surface-raised — 突出卡片（更深阴影 + 更亮内光） ── */
@@ -1206,6 +1209,8 @@ select optgroup {
   backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
   -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
   isolation: isolate;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
 }
 
 /* ── .surface-inset — 嵌套面板（card 内的二级分区，无 blur） ── */
