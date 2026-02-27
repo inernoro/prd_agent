@@ -199,13 +199,23 @@ public class ExecutiveController : ControllerBase
         days = Math.Clamp(days, 1, 30);
         var periodStart = DateTime.UtcNow.Date.AddDays(-days + 1);
 
-        // 从 llm_request_logs 的 RequestPurpose (AppCallerCode) 聚合
-        var logs = await _db.LlmRequestLogs
+        // 已知 Agent 路由前缀 → appKey 映射
+        var agentRoutePrefixes = new Dictionary<string, string>
+        {
+            { "/api/prd-agent/", "prd-agent" },
+            { "/api/visual-agent/", "visual-agent" },
+            { "/api/literary-agent/", "literary-agent" },
+            { "/api/defect-agent/", "defect-agent" },
+            { "/api/ai-toolbox/", "ai-toolbox" },
+            { "/api/open-platform/", "open-platform" },
+        };
+
+        // ── 1. LLM 调用统计 (llm_request_logs) ──
+        var llmLogs = await _db.LlmRequestLogs
             .Find(l => l.StartedAt >= periodStart && l.RequestPurpose != null)
             .Project(l => new
             {
                 l.RequestPurpose,
-                l.RequestPurposeDisplayName,
                 l.UserId,
                 l.InputTokens,
                 l.OutputTokens,
@@ -213,8 +223,7 @@ public class ExecutiveController : ControllerBase
             })
             .ToListAsync();
 
-        // 按 appKey 聚合 (RequestPurpose 的第一个 . 前缀)
-        var agentGroups = logs
+        var llmByAgent = llmLogs
             .GroupBy(l =>
             {
                 var rp = l.RequestPurpose ?? "";
@@ -222,17 +231,61 @@ public class ExecutiveController : ControllerBase
                 return dotIndex > 0 ? rp[..dotIndex] : rp;
             })
             .Where(g => !string.IsNullOrEmpty(g.Key))
-            .Select(g =>
+            .ToDictionary(g => g.Key, g =>
             {
                 var withDuration = g.Where(l => l.DurationMs.HasValue).ToList();
                 return new
                 {
-                    appKey = g.Key,
-                    name = ResolveAgentName(g.Key),
-                    calls = g.Count(),
-                    users = g.Select(l => l.UserId).Where(u => u != null).Distinct().Count(),
+                    llmCalls = g.Count(),
+                    llmUsers = g.Select(l => l.UserId).Where(u => u != null).Distinct().Count(),
                     tokens = g.Sum(l => (long)(l.InputTokens ?? 0) + (l.OutputTokens ?? 0)),
-                    avgDurationMs = withDuration.Count > 0 ? withDuration.Average(l => l.DurationMs!.Value) : 0,
+                    avgDurationMs = withDuration.Count > 0 ? withDuration.Average(l => l.DurationMs!.Value) : 0d,
+                };
+            });
+
+        // ── 2. API 调用统计 (api_request_logs) ──
+        // 只查写操作 (POST/PUT/DELETE)，排除纯读取 GET 请求，更能反映真实使用量
+        var apiLogs = await _db.ApiRequestLogs
+            .Find(l => l.StartedAt >= periodStart
+                        && l.Method != "GET"
+                        && l.StatusCode >= 200 && l.StatusCode < 400)
+            .Project(l => new { l.Path, l.UserId })
+            .ToListAsync();
+
+        var apiByAgent = apiLogs
+            .Select(l =>
+            {
+                foreach (var kv in agentRoutePrefixes)
+                    if (l.Path.StartsWith(kv.Key, StringComparison.OrdinalIgnoreCase))
+                        return new { AppKey = kv.Value, l.UserId };
+                return null;
+            })
+            .Where(x => x != null)
+            .GroupBy(x => x!.AppKey)
+            .ToDictionary(g => g.Key, g => new
+            {
+                apiCalls = g.Count(),
+                apiUsers = g.Select(x => x!.UserId).Where(u => u != null && u != "anonymous").Distinct().Count(),
+            });
+
+        // ── 3. 合并：以两个数据源的并集为准 ──
+        var allAppKeys = llmByAgent.Keys.Union(apiByAgent.Keys).ToHashSet();
+
+        var agentGroups = allAppKeys
+            .Select(appKey =>
+            {
+                llmByAgent.TryGetValue(appKey, out var llm);
+                apiByAgent.TryGetValue(appKey, out var api);
+                return new
+                {
+                    appKey,
+                    name = ResolveAgentName(appKey),
+                    calls = (api?.apiCalls ?? 0) + (llm?.llmCalls ?? 0),
+                    users = Math.Max(llm?.llmUsers ?? 0, api?.apiUsers ?? 0),
+                    tokens = llm?.tokens ?? 0L,
+                    avgDurationMs = llm?.avgDurationMs ?? 0d,
+                    llmCalls = llm?.llmCalls ?? 0,
+                    apiCalls = api?.apiCalls ?? 0,
                 };
             })
             .OrderByDescending(a => a.calls)

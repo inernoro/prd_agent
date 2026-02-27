@@ -590,12 +590,13 @@ function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]
                 <div className="flex justify-between text-[11px]">
                   <span className="flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
                     使用人数
-                    <InfoTip tip="在所选时间范围内，通过 LLM Gateway 调用过该 Agent 的独立用户数" />
+                    <InfoTip tip="在所选时间范围内使用过该 Agent 的独立用户数（综合 API 调用与 LLM 调用）" />
                   </span>
                   <span style={{ color }}>{agent.users}/{totalUsers} 人</span>
                 </div>
                 <ProgressBar value={agent.users} max={totalUsers} color={color} />
-                <StatRow label="调用次数" value={agent.calls} info="该 Agent 在所选时间范围内触发的 LLM 请求总次数（基于 llm_request_logs）" />
+                <StatRow label="业务操作" value={agent.apiCalls ?? 0} info="该 Agent 在所选时间范围内的写操作次数（POST/PUT/DELETE），反映实际业务使用量" />
+                <StatRow label="LLM 调用" value={agent.llmCalls ?? 0} info="该 Agent 触发的大模型请求次数（基于 llm_request_logs）" />
                 <StatRow label="Token 消耗" value={formatTokens(agent.tokens)} info="该 Agent 所有 LLM 请求的输入 + 输出 Token 总和" />
                 <StatRow label="平均响应" value={`${(agent.avgDurationMs / 1000).toFixed(1)}s`} info="该 Agent 所有已完成 LLM 请求的平均耗时（不含未完成请求）" />
               </div>
@@ -612,16 +613,19 @@ function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]
               <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                 <th className="text-left py-2 pr-4 font-medium" style={{ color: 'var(--text-muted)' }}>Agent</th>
                 <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
-                  <span className="inline-flex items-center gap-1 justify-end">调用次数 <InfoTip tip="LLM 请求总次数" /></span>
+                  <span className="inline-flex items-center gap-1 justify-end">总调用 <InfoTip tip="业务操作 + LLM 调用合计" /></span>
+                </th>
+                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">业务操作 <InfoTip tip="POST/PUT/DELETE 请求数" /></span>
+                </th>
+                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">LLM <InfoTip tip="大模型调用次数" /></span>
                 </th>
                 <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
                   <span className="inline-flex items-center gap-1 justify-end">用户数 <InfoTip tip="去重后的独立用户数" /></span>
                 </th>
                 <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
                   <span className="inline-flex items-center gap-1 justify-end">Token <InfoTip tip="输入 + 输出 Token 总和" /></span>
-                </th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
-                  <span className="inline-flex items-center gap-1 justify-end">平均响应 <InfoTip tip="已完成请求的平均耗时" /></span>
                 </th>
               </tr>
             </thead>
@@ -631,10 +635,11 @@ function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]
                   <td className="py-2 pr-4">
                     <span className="text-sm font-medium" style={{ color: AGENT_COLORS[a.appKey] ?? 'var(--text-primary)' }}>{a.name}</span>
                   </td>
-                  <td className="py-2 px-3 text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>{a.calls.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right tabular-nums font-semibold" style={{ color: 'var(--text-primary)' }}>{a.calls.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>{(a.apiCalls ?? 0).toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>{(a.llmCalls ?? 0).toLocaleString()}</td>
                   <td className="py-2 px-3 text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>{a.users}</td>
                   <td className="py-2 px-3 text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>{formatTokens(a.tokens)}</td>
-                  <td className="py-2 px-3 text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>{(a.avgDurationMs / 1000).toFixed(1)}s</td>
                 </tr>
               ))}
             </tbody>
