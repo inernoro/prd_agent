@@ -207,6 +207,7 @@ import type {
   MoveDefectToFolderContract,
   BatchMoveDefectsContract,
   PreviewApiLogsContract,
+  AnalyzeDefectImageContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IAutomationsService } from '@/services/contracts/automations';
@@ -451,6 +452,7 @@ import {
   getDefectStatsReal,
   getDefectUsersReal,
   polishDefectReal,
+  analyzeDefectImageReal,
   listDeletedDefectsReal,
   restoreDefectReal,
   permanentDeleteDefectReal,
@@ -756,6 +758,7 @@ export const deleteDefectAttachment: DeleteDefectAttachmentContract = withAuth(d
 export const getDefectStats: GetDefectStatsContract = withAuth(getDefectStatsReal);
 export const getDefectUsers: GetDefectUsersContract = withAuth(getDefectUsersReal);
 export const polishDefect: PolishDefectContract = withAuth(polishDefectReal);
+export const analyzeDefectImage: AnalyzeDefectImageContract = withAuth(analyzeDefectImageReal);
 export const listDeletedDefects: ListDeletedDefectsContract = withAuth(listDeletedDefectsReal);
 export const restoreDefect: RestoreDefectContract = withAuth(restoreDefectReal);
 export const permanentDeleteDefect: PermanentDeleteDefectContract = withAuth(permanentDeleteDefectReal);

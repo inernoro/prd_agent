@@ -349,6 +349,17 @@ public static class DefectAgent
         )]
         public const string Chat = "defect-agent.polish::chat";
     }
+
+    public static class AnalyzeImage
+    {
+        [AppCallerMetadata(
+            "截图缺陷分析",
+            "VLM 分析截图中标记的缺陷内容",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Analyze"
+        )]
+        public const string Vision = "defect-agent.analyze-image::vision";
+    }
 }
 
 /// <summary>
