@@ -14,6 +14,7 @@ export function Dialog({
   contentStyle,
   titleAction,
   titleCenter,
+  zIndex,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -30,22 +31,28 @@ export function Dialog({
   titleAction?: React.ReactNode;
   /** 标题栏居中的内容（如标签切换） */
   titleCenter?: React.ReactNode;
+  /** 自定义 z-index 层级（overlay 用此值，content 用此值 +10）。默认 overlay=100, content=110 */
+  zIndex?: number;
 }) {
+  const overlayZ = zIndex ?? 100;
+  const contentZ = (zIndex ?? 100) + 10;
+
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
-          className="fixed inset-0 z-100 prd-dialog-overlay"
-          style={{ background: 'rgba(0,0,0,0.72)' }}
+          className="fixed inset-0 prd-dialog-overlay"
+          style={{ background: 'rgba(0,0,0,0.72)', zIndex: overlayZ }}
         />
         <DialogPrimitive.Content
           {...(description ? {} : ({ 'aria-describedby': undefined } as const))}
           className={[
-            'fixed left-1/2 top-1/2 z-110 w-[92vw] rounded-[22px] p-6 flex flex-col prd-dialog-content',
+            'fixed left-1/2 top-1/2 w-[92vw] rounded-[22px] p-6 flex flex-col prd-dialog-content',
             contentClassName ?? '',
           ].join(' ')}
           style={{
             ...glassPanel,
+            zIndex: contentZ,
             maxWidth: typeof maxWidth === 'number' ? `${maxWidth}px` : (maxWidth ?? '520px'),
             ...contentStyle,
           }}
