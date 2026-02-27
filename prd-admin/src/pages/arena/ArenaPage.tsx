@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
 import { readSseStream } from '@/lib/sse';
+import { getAvatarUrlByModelName, getAvatarUrlByPlatformType } from '@/assets/model-avatars';
 import {
   getArenaLineup,
   revealArenaSlots,
@@ -41,6 +42,8 @@ interface ArenaPanel {
   ttftMs: number | null;
   totalMs: number | null;
   errorMessage: string | null;
+  /** Timestamp when this panel started receiving data (for completion-order sorting) */
+  startedAt: number | null;
 }
 
 interface RevealedInfo {
@@ -369,7 +372,7 @@ export function ArenaPage() {
 
     switch (type) {
       case 'modelStart':
-        updatePanel((p) => ({ ...p, status: 'streaming' }));
+        updatePanel((p) => ({ ...p, status: 'streaming', startedAt: p.startedAt ?? Date.now() }));
         break;
 
       case 'delta':
@@ -434,6 +437,7 @@ export function ArenaPage() {
         ttftMs: null,
         totalMs: null,
         errorMessage: null,
+        startedAt: null,
       };
     });
     setPanels(initialPanels);
@@ -604,6 +608,7 @@ export function ArenaPage() {
           ttftMs: r.ttftMs,
           totalMs: r.totalMs,
           errorMessage: r.errorMessage,
+          startedAt: idx,
         }));
         setPanels(loadedPanels);
         panelsRef.current = loadedPanels;
@@ -639,6 +644,28 @@ export function ArenaPage() {
   // --- Determine page state ---
   const hasBattle = panels.length > 0 || !!currentPrompt;
   const canReveal = allDone && !revealed && panels.length > 0 && panels.some((p) => p.status === 'done');
+
+  // --- Sort panels: active/done first (by startedAt), waiting last ---
+  const sortedPanels = useMemo(() => {
+    return [...panels].sort((a, b) => {
+      // Waiting panels go to the end
+      const aActive = a.status !== 'waiting';
+      const bActive = b.status !== 'waiting';
+      if (aActive !== bActive) return aActive ? -1 : 1;
+      // Among active panels, sort by startedAt (earliest first)
+      if (aActive && bActive) {
+        const aT = a.startedAt ?? Infinity;
+        const bT = b.startedAt ?? Infinity;
+        if (aT !== bT) return aT - bT;
+      }
+      return 0;
+    });
+  }, [panels]);
+
+  // --- Progress calculation ---
+  const completedCount = panels.filter((p) => p.status === 'done' || p.status === 'error').length;
+  const totalCount = panels.length;
+  const progressPct = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
 
   return (
     <div className="flex h-full" style={{ minHeight: 0 }}>
@@ -884,25 +911,34 @@ export function ArenaPage() {
               </p>
             </div>
 
-            {/* Panels Row — horizontal scroll, each card 50% width */}
-            <div className="flex-1 min-h-0 flex gap-4 overflow-x-auto px-4 py-4">
-              {panels.map((panel) => {
+            {/* Panels Row — horizontal scroll, each card 1/3 width, sorted by activity */}
+            <div className="flex-1 min-h-0 flex gap-3 overflow-x-auto px-4 py-4">
+              {sortedPanels.map((panel) => {
                 const info = revealedInfos.get(panel.slotId);
                 const letter = getLabel(panel.labelIndex);
                 const labelColor = info?.avatarColor ?? getLabelColor(panel.labelIndex);
+
+                // Resolve model avatar for revealed state
+                const avatarUrl = revealed && info
+                  ? (getAvatarUrlByModelName(info.displayName) ?? getAvatarUrlByPlatformType(info.platformName))
+                  : null;
+                const isSvg = avatarUrl ? /\.svg(\?|#|$)/i.test(avatarUrl) : false;
 
                 return (
                   <div
                     key={panel.slotId}
                     className="flex-shrink-0 flex flex-col"
-                    style={{ width: 'calc(50% - 8px)' }}
+                    style={{ width: 'calc(33.333% - 8px)', minWidth: '320px' }}
                   >
-                    <GlassCard
-                      padding="none"
+                    <div
                       className={cn(
-                        'flex flex-col h-full transition-transform duration-500',
+                        'flex flex-col h-full rounded-[14px] transition-transform duration-500',
                         revealAnimating && 'scale-[0.98]'
                       )}
+                      style={{
+                        background: 'rgba(255,255,255,0.03)',
+                        border: '1px solid rgba(255,255,255,0.07)',
+                      }}
                     >
                       {/* Header */}
                       <div
@@ -910,28 +946,43 @@ export function ArenaPage() {
                         style={{ borderColor: 'rgba(255,255,255,0.05)' }}
                       >
                         <div className="flex items-center gap-2.5">
-                          <div
-                            className="w-7 h-7 rounded-full flex items-center justify-center text-[12px] font-bold"
-                            style={{
-                              background: `${labelColor}20`,
-                              color: labelColor,
-                              border: `1px solid ${labelColor}40`,
-                            }}
-                          >
-                            {letter}
-                          </div>
-                          <div>
-                            <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                          {/* Avatar: model image on reveal, letter badge before reveal */}
+                          {revealed && info && avatarUrl ? (
+                            <div
+                              className="w-7 h-7 rounded-full flex items-center justify-center overflow-hidden flex-shrink-0"
+                              style={{ background: isSvg ? 'rgba(255,255,255,0.06)' : 'transparent' }}
+                            >
+                              <img
+                                src={avatarUrl}
+                                alt={info.displayName}
+                                className={isSvg ? 'w-4 h-4 object-contain' : 'w-full h-full object-cover'}
+                                style={isSvg ? { filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.35))' } : undefined}
+                              />
+                            </div>
+                          ) : (
+                            <div
+                              className="w-7 h-7 rounded-full flex items-center justify-center text-[12px] font-bold flex-shrink-0"
+                              style={{
+                                background: `${labelColor}20`,
+                                color: labelColor,
+                                border: `1px solid ${labelColor}40`,
+                              }}
+                            >
+                              {letter}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                               {revealed && info ? info.displayName : panel.label}
                             </div>
                             {revealed && info && (
-                              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                {info.platformName}
+                              <div className="mt-0.5">
+                                <PlatformLabel name={info.platformName} size="sm" showIcon={false} />
                               </div>
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-shrink-0">
                           {panel.status === 'streaming' && (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: labelColor }} />
                           )}
@@ -1005,10 +1056,40 @@ export function ArenaPage() {
                           )}
                         </div>
                       )}
-                    </GlassCard>
+                    </div>
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* ===================== Progress Bar ===================== */}
+        {hasBattle && totalCount > 0 && (isStreaming || completedCount > 0) && (
+          <div className="flex-shrink-0 px-6 pt-3">
+            <div className="mx-auto" style={{ maxWidth: '900px' }}>
+              <div className="flex items-center gap-3">
+                <div
+                  className="flex-1 h-1.5 rounded-full overflow-hidden"
+                  style={{ background: 'rgba(255,255,255,0.06)' }}
+                >
+                  <div
+                    className="h-full rounded-full transition-all duration-500 ease-out"
+                    style={{
+                      width: `${progressPct}%`,
+                      background: completedCount === totalCount
+                        ? '#10b981'
+                        : 'linear-gradient(90deg, #6366f1, #8b5cf6)',
+                    }}
+                  />
+                </div>
+                <span
+                  className="text-[11px] font-mono flex-shrink-0"
+                  style={{ color: completedCount === totalCount ? '#10b981' : 'var(--text-muted)' }}
+                >
+                  {completedCount}/{totalCount}{completedCount === totalCount && !isStreaming ? ' 完成' : ''}
+                </span>
+              </div>
             </div>
           </div>
         )}
