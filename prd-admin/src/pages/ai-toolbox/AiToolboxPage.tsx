@@ -21,11 +21,9 @@ const CATEGORY_OPTIONS: { key: ToolboxCategory; label: string; icon: React.React
   { key: 'custom', label: '我创建的', icon: <User size={12} /> },
 ];
 
-// 页面容器样式
-const pageContainerClassName = 'surface-inset';
-const pageContainerStyle: React.CSSProperties = {
-  borderRadius: '16px',
-};
+// 页面容器样式 — 页面级不使用 surface 类，保持透明让卡片自身表达玻璃质感
+const pageContainerClassName = '';
+const pageContainerStyle: React.CSSProperties = {};
 
 export default function AiToolboxPage() {
   const { isMobile } = useBreakpoint();

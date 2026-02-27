@@ -183,12 +183,23 @@ grep -rn "bg-elevated" prd-admin/src/pages/ prd-admin/src/components/ --include=
 
 ## 注意事项
 
-1. **不要修改 Landing Page 装饰元素**: `pages/home/sections/` 下的 FeatureBento、SectionHeader 等使用独立装饰性样式，不纳入 Surface System
-2. **保留语义色**: `success/error/warning` 相关的状态背景色不要替换
-3. **GlassCard 组件不需修复**: `components/design/GlassCard.tsx` 本身是 Surface System 的 React 封装，使用 `.glass-card-interactive` 类
-4. **glassStyles.ts 预设暂保留**: `lib/glassStyles.ts` 中的预设对象目前仍被部分 Dialog/Drawer 使用，不在此 skill 范围内替换
-5. **按钮 hover 不要替换**: `<button>` 上的 `hover:bg-white/10` 是正常的交互反馈，不是卡片样式问题
-6. **用户可指定范围**: 如果用户说"修复 XXX 页面样式"，只扫描对应文件；如果说"全局修复"则扫描全部
+1. **页面级容器禁止使用 surface 类**: 占满整个内容区域的页面根 `<div>` 不应有 `surface-inset`、`surface` 等类。页面容器应保持透明，让内部的 GlassCard / surface 子组件自己表达玻璃质感。如果页面根元素使用了 `surface-inset`，整个页面看起来会像一个灰蒙蒙的框，这是最常见的错误。
+2. **不要修改 Landing Page 装饰元素**: `pages/home/sections/` 下的 FeatureBento、SectionHeader 等使用独立装饰性样式，不纳入 Surface System
+3. **保留语义色**: `success/error/warning` 相关的状态背景色不要替换
+4. **GlassCard 组件不需修复**: `components/design/GlassCard.tsx` 本身是 Surface System 的 React 封装，使用 `.glass-card-interactive` 类
+5. **glassStyles.ts 预设暂保留**: `lib/glassStyles.ts` 中的预设对象目前仍被部分 Dialog/Drawer 使用，不在此 skill 范围内替换
+6. **按钮 hover 不要替换**: `<button>` 上的 `hover:bg-white/10` 是正常的交互反馈，不是卡片样式问题
+7. **用户可指定范围**: 如果用户说"修复 XXX 页面样式"，只扫描对应文件；如果说"全局修复"则扫描全部
+
+### surface 类适用层级速查
+
+| 层级 | 示例 | 是否使用 surface | 说明 |
+|------|------|----------------|------|
+| 页面根容器 | `<div className="h-full flex flex-col">` | **否** | 保持透明 |
+| 页面内区块 | 设置面板、统计卡片 | `.surface-inset` | 嵌套面板 |
+| 独立卡片 | ToolCard、项目卡片 | `GlassCard` 或 `.surface` | 自带 blur |
+| 列表行 | 表格行、列表项 | `.surface-row` | hover 高亮 |
+| 可点击卡片 | 快捷入口 | `.surface-interactive` | hover 上浮 |
 
 ## Surface System 参考
 
