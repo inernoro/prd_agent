@@ -1,5 +1,27 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuthStore } from '@/stores/authStore';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { GlassCard } from '@/components/design/GlassCard';
+import { Button } from '@/components/design/Button';
+import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
+import { cn } from '@/lib/cn';
+import {
+  Upload,
+  Sparkles,
+  Settings,
+  FileText,
+  Trash2,
+  RefreshCw,
+  Download,
+  DownloadCloud,
+  Video,
+  Loader2,
+  Image as ImageIcon,
+  Copy,
+  X,
+} from 'lucide-react';
+import { toast } from '@/lib/toast';
+import { glassFloatingButton } from '@/lib/glassStyles';
 import {
   createVideoGenRunReal,
   listVideoGenRunsReal,
@@ -16,49 +38,125 @@ import {
 } from '@/services/real/videoAgent';
 import type { VideoGenRun, VideoGenRunListItem } from '@/services/contracts/videoAgent';
 
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
+// ─── Types ───
+
+type WorkflowPhase = 0 | 1 | 2; // 0=upload, 1=preview/editing, 2=scenesGenerated
+
+// ─── Constants ───
+
 const SCENE_TYPE_LABELS: Record<string, string> = {
-  intro: '开场',
-  concept: '概念',
-  steps: '步骤',
-  code: '代码',
-  comparison: '对比',
-  diagram: '图表',
-  summary: '总结',
-  outro: '结尾',
+  intro: '开场', concept: '概念', steps: '步骤', code: '代码',
+  comparison: '对比', diagram: '图表', summary: '总结', outro: '结尾',
 };
 
 const ACTIVE_STATUSES = ['Queued', 'Scripting', 'Rendering'];
 
+const PRD_MD_STYLE = `
+  .prd-md { font-size: 14px; line-height: 1.72; color: var(--text-secondary); white-space: normal; word-break: break-word; }
+  .prd-md h1,.prd-md h2,.prd-md h3 { color: var(--text-primary); font-weight: 700; margin: 16px 0 10px; }
+  .prd-md h1 { font-size: 20px; letter-spacing: 0.2px; }
+  .prd-md h2 { font-size: 17px; }
+  .prd-md h3 { font-size: 15px; }
+  .prd-md p { margin: 10px 0; }
+  .prd-md ul,.prd-md ol { margin: 10px 0; padding-left: 18px; }
+  .prd-md li { margin: 6px 0; }
+  .prd-md hr { border: 0; border-top: 1px solid var(--border-default); margin: 14px 0; }
+  .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(236,72,153,0.35); background: rgba(236,72,153,0.06); color: rgba(236,72,153,0.92); border-radius: 10px; }
+  .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
+  .prd-md img { max-width: 100%; border-radius: 8px; margin: 8px 0; }
+  .prd-md code { font-size: 13px; background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px; }
+  .prd-md pre { background: rgba(0,0,0,0.3); border-radius: 8px; padding: 12px; overflow-x: auto; margin: 8px 0; }
+  .prd-md pre code { background: none; padding: 0; }
+`;
+
+const phaseSteps = [
+  { key: 0, label: '上传' },
+  { key: 1, label: '预览' },
+  { key: 2, label: '分镜标记' },
+];
+
+// ─── PanelCard ───
+
+const panelCardStyle: React.CSSProperties = {
+  background: 'var(--panel)',
+  border: '1px solid var(--border-default)',
+  boxShadow: 'var(--shadow-card)',
+};
+
+const PanelCard = ({ className, children }: { className?: string; children: React.ReactNode }) => (
+  <GlassCard
+    variant="subtle"
+    padding="sm"
+    className={cn('rounded-[16px]', className)}
+    style={panelCardStyle}
+  >
+    {children}
+  </GlassCard>
+);
+
+// ─── Config pills style ───
+
+const configPillBaseClass = 'flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs cursor-pointer transition-colors';
+const configPillTextClass = 'truncate flex-1';
+
 /**
- * 视频 Agent 页面 —— 交互式分镜编辑
- * 流程：文章输入 → 配置(提示词/风格) → 分镜生成 → 分镜编辑(可逐条重试) → 导出渲染
+ * 视频 Agent 页面 —— 借鉴文学创作的交互模式
+ * 流程：文章上传 → 预览 → 分镜标记生成 → 逐条编辑/重试/预览图 → 导出
  */
 export const VideoAgentPage: React.FC = () => {
   const token = useAuthStore((s) => s.token);
+  const { isMobile } = useBreakpoint();
 
-  // ─── 输入状态 ───
-  const [markdown, setMarkdown] = useState('');
-  const [title, setTitle] = useState('');
+  // ─── Workflow state ───
+  const [phase, setPhase] = useState<WorkflowPhase>(0);
+  const [mobileTab, setMobileTab] = useState<'article' | 'scenes'>('article');
+
+  // ─── Input state ───
+  const [articleContent, setArticleContent] = useState('');
+  const [articleTitle, setArticleTitle] = useState('');
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ─── Config state ───
   const [systemPrompt, setSystemPrompt] = useState('');
   const [styleDescription, setStyleDescription] = useState('');
-  const [showConfig, setShowConfig] = useState(false);
-  const [creating, setCreating] = useState(false);
 
-  // ─── 任务列表 ───
+  // ─── Run state ───
   const [runs, setRuns] = useState<VideoGenRunListItem[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<VideoGenRun | null>(null);
-
-  // ─── 分镜编辑 ───
-  const [activeSceneIndex, setActiveSceneIndex] = useState<number>(0);
-  const [editingFields, setEditingFields] = useState<Record<string, string>>({});
-
-  // ─── 渲染/导出 ───
+  const [creating, setCreating] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // ─── Scene editing state ───
+  const [editingNarrations, setEditingNarrations] = useState<Record<number, string>>({});
 
-  // ─── 加载任务列表 ───
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sceneListRef = useRef<HTMLDivElement>(null);
+
+  // ─── Computed ───
+  const isEditing = selectedRun?.status === 'Editing';
+  const isActive = selectedRun && ACTIVE_STATUSES.includes(selectedRun.status);
+  const isCompleted = selectedRun?.status === 'Completed';
+  const isBusy = creating || !!isActive;
+  const scenesReady = selectedRun?.scenes.filter((s) => s.imageStatus === 'done').length ?? 0;
+  const scenesTotal = selectedRun?.scenes.length ?? 0;
+
+  // ─── Phase calculation ───
+  useEffect(() => {
+    if (!selectedRun) {
+      setPhase(0);
+    } else if (selectedRun.status === 'Editing' || selectedRun.status === 'Completed') {
+      setPhase(2);
+    } else if (ACTIVE_STATUSES.includes(selectedRun.status)) {
+      setPhase(1);
+    }
+  }, [selectedRun?.status]);
+
+  // ─── Load runs ───
   const loadRuns = useCallback(async () => {
     try {
       const res = await listVideoGenRunsReal({ limit: 20 });
@@ -68,29 +166,32 @@ export const VideoAgentPage: React.FC = () => {
 
   useEffect(() => { loadRuns(); }, [loadRuns]);
 
-  // ─── 选中任务时加载详情 ───
+  // ─── Load run detail ───
   const loadDetail = useCallback(async (runId: string) => {
     try {
       const res = await getVideoGenRunReal(runId);
       if (res.success) {
         setSelectedRun(res.data);
-        setActiveSceneIndex(0);
-        setEditingFields({});
+        setEditingNarrations({});
+        // Restore article content for preview
+        if (res.data.articleMarkdown) {
+          setArticleContent(res.data.articleMarkdown);
+          setArticleTitle(res.data.articleTitle || '');
+        }
       }
     } catch { /* ignore */ }
   }, []);
 
   useEffect(() => {
     if (selectedRunId) loadDetail(selectedRunId);
-    else { setSelectedRun(null); setActiveSceneIndex(0); }
+    else setSelectedRun(null);
   }, [selectedRunId, loadDetail]);
 
-  // ─── SSE / 轮询（分镜生成和渲染期间） ───
+  // ─── SSE / Polling ───
   useEffect(() => {
     if (!selectedRunId || !selectedRun) return;
     const status = selectedRun.status;
 
-    // 活跃阶段：SSE 监听
     if (ACTIVE_STATUSES.includes(status)) {
       const url = getVideoGenStreamUrl(selectedRunId);
       const fullUrl = `${import.meta.env.VITE_API_BASE_URL || ''}${url}`;
@@ -118,13 +219,10 @@ export const VideoAgentPage: React.FC = () => {
             buffer = lines.pop() || '';
 
             for (const line of lines) {
-              if (line.startsWith('event: ')) {
-                currentEvent = line.slice(7).trim();
-              }
+              if (line.startsWith('event: ')) currentEvent = line.slice(7).trim();
               if (line.startsWith('data: ')) {
                 try {
                   const payload = JSON.parse(line.slice(6));
-
                   if (currentEvent === 'phase.changed' && payload.phase) {
                     setSelectedRun((prev) => prev
                       ? { ...prev, currentPhase: payload.phase, phaseProgress: payload.progress ?? 0 }
@@ -133,23 +231,15 @@ export const VideoAgentPage: React.FC = () => {
                   if (currentEvent === 'render.progress' && payload.percent !== undefined) {
                     setSelectedRun((prev) => prev ? { ...prev, phaseProgress: payload.percent } : prev);
                   }
-                  if (currentEvent === 'script.done' && payload.scenes) {
-                    // 分镜生成完成 → 刷新详情
+                  if (currentEvent === 'script.done') {
                     if (selectedRunId) loadDetail(selectedRunId);
                     loadRuns();
                   }
-                  if (currentEvent === 'scene.regenerated') {
-                    // 单条分镜重试完成 → 刷新详情
-                    if (selectedRunId) loadDetail(selectedRunId);
-                  }
-                  if (currentEvent === 'scene.error') {
+                  if (currentEvent === 'scene.regenerated' || currentEvent === 'scene.error') {
                     if (selectedRunId) loadDetail(selectedRunId);
                   }
                   if (['run.completed', 'run.error', 'run.cancelled'].includes(currentEvent)) {
-                    setTimeout(() => {
-                      loadRuns();
-                      if (selectedRunId) loadDetail(selectedRunId);
-                    }, 500);
+                    setTimeout(() => { loadRuns(); if (selectedRunId) loadDetail(selectedRunId); }, 500);
                   }
                 } catch { /* parse error */ }
               }
@@ -162,7 +252,6 @@ export const VideoAgentPage: React.FC = () => {
       return () => { abortController.abort(); };
     }
 
-    // Editing 状态：轮询（分镜重试事件）
     if (status === 'Editing') {
       const hasGenerating = selectedRun.scenes.some((s) => s.status === 'Generating');
       if (hasGenerating) {
@@ -180,27 +269,44 @@ export const VideoAgentPage: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRunId, selectedRun?.status, token, loadRuns, loadDetail]);
 
-  // ─── 创建任务 ───
+  // ─── File upload handler ───
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadedFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = reader.result as string;
+      setArticleContent(text);
+      if (!articleTitle) {
+        // Auto-extract title from first heading
+        const match = text.match(/^#\s+(.+)/m);
+        if (match) setArticleTitle(match[1]);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // Reset
+  };
+
+  // ─── Create run ───
   const handleCreate = async () => {
-    if (!markdown.trim()) return;
+    if (!articleContent.trim()) return;
     setCreating(true);
     try {
       const res = await createVideoGenRunReal({
-        articleMarkdown: markdown,
-        articleTitle: title || undefined,
+        articleMarkdown: articleContent,
+        articleTitle: articleTitle || undefined,
         systemPrompt: systemPrompt || undefined,
         styleDescription: styleDescription || undefined,
       });
       if (res.success) {
         setSelectedRunId(res.data.runId);
-        setMarkdown('');
-        setTitle('');
         await loadRuns();
       }
     } catch { /* ignore */ } finally { setCreating(false); }
   };
 
-  // ─── 取消任务 ───
+  // ─── Cancel run ───
   const handleCancel = async () => {
     if (!selectedRunId) return;
     await cancelVideoGenRunReal(selectedRunId);
@@ -208,35 +314,24 @@ export const VideoAgentPage: React.FC = () => {
     loadDetail(selectedRunId);
   };
 
-  // ─── 更新分镜 ───
+  // ─── Update scene narration ───
   const handleSaveScene = async (sceneIndex: number) => {
     if (!selectedRunId || !selectedRun) return;
-    const fields = editingFields;
+    const newNarration = editingNarrations[sceneIndex];
     const scene = selectedRun.scenes[sceneIndex];
-    if (!scene) return;
-
-    const input: Record<string, string> = {};
-    if (fields.topic && fields.topic !== scene.topic) input.topic = fields.topic;
-    if (fields.narration && fields.narration !== scene.narration) input.narration = fields.narration;
-    if (fields.visualDescription && fields.visualDescription !== scene.visualDescription) input.visualDescription = fields.visualDescription;
-
-    if (Object.keys(input).length === 0) return;
+    if (!scene || newNarration === undefined || newNarration === scene.narration) return;
 
     try {
-      const res = await updateVideoSceneReal(selectedRunId, sceneIndex, input);
-      if (res.success) {
-        loadDetail(selectedRunId);
-        setEditingFields({});
-      }
+      const res = await updateVideoSceneReal(selectedRunId, sceneIndex, { narration: newNarration });
+      if (res.success) loadDetail(selectedRunId);
     } catch { /* ignore */ }
   };
 
-  // ─── 重新生成分镜 ───
+  // ─── Regenerate scene ───
   const handleRegenerateScene = async (sceneIndex: number) => {
     if (!selectedRunId) return;
     try {
       await regenerateVideoSceneReal(selectedRunId, sceneIndex);
-      // 更新本地状态
       setSelectedRun((prev) => {
         if (!prev) return prev;
         const scenes = [...prev.scenes];
@@ -246,16 +341,13 @@ export const VideoAgentPage: React.FC = () => {
     } catch { /* ignore */ }
   };
 
-  // ─── 生成分镜预览图 ───
+  // ─── Preview image generation ───
   const imageAbortRef = useRef<Map<number, AbortController>>(new Map());
 
   const handleGeneratePreview = async (sceneIndex: number) => {
     if (!selectedRunId || !selectedRun) return;
-
-    // 取消之前的 SSE 连接
     imageAbortRef.current.get(sceneIndex)?.abort();
 
-    // 本地标记 running
     setSelectedRun((prev) => {
       if (!prev) return prev;
       const scenes = [...prev.scenes];
@@ -268,8 +360,6 @@ export const VideoAgentPage: React.FC = () => {
       if (!res.success) return;
 
       const { imageRunId } = res.data;
-
-      // 启动 SSE 监听图片生成结果
       const ac = new AbortController();
       imageAbortRef.current.set(sceneIndex, ac);
 
@@ -280,7 +370,6 @@ export const VideoAgentPage: React.FC = () => {
         headers: { Authorization: `Bearer ${token}` },
         signal: ac.signal,
       });
-
       if (!response.ok || !response.body) return;
 
       const reader = response.body.getReader();
@@ -290,7 +379,6 @@ export const VideoAgentPage: React.FC = () => {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -299,30 +387,21 @@ export const VideoAgentPage: React.FC = () => {
           if (line.startsWith('data: ')) {
             try {
               const payload = JSON.parse(line.slice(6));
-
               if (payload.type === 'imageDone') {
                 const imageUrl = payload.base64
                   ? `data:image/png;base64,${payload.base64}`
                   : payload.url || '';
-
-                // 保存到后端
-                if (selectedRunId) {
-                  await updateScenePreviewReal(selectedRunId, sceneIndex, imageUrl);
-                }
-
-                // 更新本地状态
+                if (selectedRunId) await updateScenePreviewReal(selectedRunId, sceneIndex, imageUrl);
                 setSelectedRun((prev) => {
                   if (!prev) return prev;
                   const scenes = [...prev.scenes];
                   scenes[sceneIndex] = { ...scenes[sceneIndex], imageStatus: 'done', imageUrl, imageGenRunId: imageRunId };
                   return { ...prev, scenes };
                 });
-
-                ac.abort(); // 拿到图就断开
+                ac.abort();
                 imageAbortRef.current.delete(sceneIndex);
                 return;
               }
-
               if (payload.type === 'imageError') {
                 setSelectedRun((prev) => {
                   if (!prev) return prev;
@@ -339,7 +418,6 @@ export const VideoAgentPage: React.FC = () => {
         }
       }
     } catch {
-      // SSE 连接断开
       setSelectedRun((prev) => {
         if (!prev) return prev;
         const scenes = [...prev.scenes];
@@ -354,473 +432,683 @@ export const VideoAgentPage: React.FC = () => {
   const handleBatchGeneratePreviews = () => {
     if (!selectedRun) return;
     selectedRun.scenes.forEach((scene, idx) => {
-      if (scene.imageStatus !== 'running') {
-        handleGeneratePreview(idx);
-      }
+      if (scene.imageStatus !== 'running') handleGeneratePreview(idx);
     });
   };
 
-  // 清理 SSE 连接
   useEffect(() => {
-    return () => {
-      imageAbortRef.current.forEach((ac) => ac.abort());
-    };
+    return () => { imageAbortRef.current.forEach((ac) => ac.abort()); };
   }, [selectedRunId]);
 
-  // ─── 导出/渲染 ───
+  // ─── Export ───
   const handleExport = async () => {
     if (!selectedRunId) return;
     setExporting(true);
     try {
       const res = await triggerVideoRenderReal(selectedRunId);
-      if (res.success) {
-        await loadRuns();
-        loadDetail(selectedRunId);
-      }
+      if (res.success) { await loadRuns(); loadDetail(selectedRunId); }
     } catch { /* ignore */ } finally { setExporting(false); }
   };
 
-  // ─── 分镜编辑选中 ───
-  const activeScene = selectedRun?.scenes[activeSceneIndex];
-
-  useEffect(() => {
-    if (activeScene) {
-      setEditingFields({
-        topic: activeScene.topic,
-        narration: activeScene.narration,
-        visualDescription: activeScene.visualDescription,
-      });
-    }
-  }, [activeSceneIndex, activeScene?.topic, activeScene?.narration, activeScene?.visualDescription]);
-
-  const isEditing = selectedRun?.status === 'Editing';
-  const isActive = selectedRun && ACTIVE_STATUSES.includes(selectedRun.status);
-  const isCompleted = selectedRun?.status === 'Completed';
-
-  // ─── 步骤指示器数据 ───
-  const steps = [
-    { key: 'input', label: '输入文章' },
-    { key: 'scripting', label: '生成分镜' },
-    { key: 'editing', label: '编辑分镜' },
-    { key: 'rendering', label: '渲染导出' },
-    { key: 'completed', label: '完成' },
-  ];
-
-  const getCurrentStep = (): number => {
-    if (!selectedRun) return 0;
-    switch (selectedRun.status) {
-      case 'Queued':
-      case 'Scripting': return 1;
-      case 'Editing': return 2;
-      case 'Rendering': return 3;
-      case 'Completed': return 4;
-      default: return 0;
-    }
+  // ─── Step click handler ───
+  const handleStepClick = (stepKey: number) => {
+    if (isBusy) return;
+    if (stepKey === 0 && !selectedRun) setPhase(0);
   };
 
-  const currentStep = getCurrentStep();
+  // ─── Active button (depends on phase) ───
+  const activeButton = (() => {
+    if (phase === 0 && articleContent.trim()) {
+      return { label: '进入预览', icon: FileText, action: () => { setPhase(1); return Promise.resolve(); } };
+    }
+    if (phase === 1 && !selectedRun) {
+      return { label: '生成分镜标记', icon: Sparkles, action: handleCreate, disabled: !articleContent.trim() };
+    }
+    if (isEditing) {
+      return { label: exporting ? '渲染中...' : '导出视频', icon: Video, action: handleExport, disabled: exporting };
+    }
+    return null;
+  })();
+
+  // ─── New task handler ───
+  const handleNewTask = () => {
+    setSelectedRunId(null);
+    setSelectedRun(null);
+    setArticleContent('');
+    setArticleTitle('');
+    setUploadedFileName(null);
+    setPhase(0);
+  };
 
   return (
-    <div className="flex h-full">
-      {/* ═══ 左侧面板 ═══ */}
-      <div className="flex w-[420px] flex-shrink-0 flex-col border-r border-border">
-        {/* 上半：预览 / 输入 */}
-        <div className="flex-1 overflow-auto p-4 space-y-4">
-          {/* 步骤指示器 */}
-          {selectedRun && (
-            <div className="flex items-center gap-1 mb-2">
-              {steps.map((step, idx) => (
-                <React.Fragment key={step.key}>
-                  <div className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-                    idx < currentStep
-                      ? 'bg-primary/15 text-primary'
-                      : idx === currentStep
-                      ? 'bg-primary/10 text-primary animate-pulse'
-                      : 'bg-muted text-muted-foreground'
-                  }`}>
-                    {idx < currentStep ? (
-                      <svg className="w-3 h-3" viewBox="0 0 12 12" fill="none">
-                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    ) : idx === currentStep ? (
-                      <span className="text-xs font-bold">{idx + 1}/{steps.length}</span>
-                    ) : null}
-                    <span className="hidden lg:inline">{step.label}</span>
-                  </div>
-                  {idx < steps.length - 1 && (
-                    <div className={`w-3 h-px flex-shrink-0 ${idx < currentStep ? 'bg-primary/30' : 'bg-border'}`} />
-                  )}
-                </React.Fragment>
-              ))}
-            </div>
-          )}
+    <div
+      className="h-full min-h-0 flex flex-col"
+      style={{ background: 'var(--bg-base)' }}
+    >
+      <style>{PRD_MD_STYLE}</style>
 
-          {/* 场景预览（Editing/Completed 状态） */}
-          {activeScene && (isEditing || isCompleted) ? (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold">
-                  镜头 {activeSceneIndex + 1}/{selectedRun!.scenes.length}
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    {SCENE_TYPE_LABELS[activeScene.sceneType] || activeScene.sceneType}
+      {/* Mobile tabs */}
+      {isMobile && (
+        <div className="flex-shrink-0 flex rounded-lg overflow-hidden mx-3 mt-3" style={{ border: '1px solid var(--border-default)' }}>
+          <button
+            className={cn('flex-1 px-4 py-2 text-sm font-medium transition-colors', mobileTab === 'article' ? 'bg-white/10' : '')}
+            style={{ color: mobileTab === 'article' ? 'var(--text-primary)' : 'var(--text-muted)' }}
+            onClick={() => setMobileTab('article')}
+          >
+            文章预览
+          </button>
+          <button
+            className={cn('flex-1 px-4 py-2 text-sm font-medium transition-colors', mobileTab === 'scenes' ? 'bg-white/10' : '')}
+            style={{ color: mobileTab === 'scenes' ? 'var(--text-primary)' : 'var(--text-muted)' }}
+            onClick={() => setMobileTab('scenes')}
+          >
+            分镜工作台
+          </button>
+        </div>
+      )}
+
+      <div className="flex-1 min-h-0 flex gap-4 p-4 overflow-hidden">
+        {/* ═══ LEFT PANEL: Article Preview ═══ */}
+        <div className={cn('flex-1 min-w-0 flex flex-col gap-4', isMobile && mobileTab !== 'article' && 'hidden')}>
+          <GlassCard
+            variant="subtle"
+            padding="sm"
+            className="flex-1 min-h-0 flex flex-col rounded-[16px]"
+            style={panelCardStyle}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between gap-2 mb-3 flex-shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                  {uploadedFileName || articleTitle || '文章内容'}
+                </span>
+                {articleContent && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
+                    {articleContent.length} 字符
                   </span>
-                </h3>
-                <span className="text-xs text-muted-foreground">{activeScene.durationSeconds.toFixed(1)}s</span>
+                )}
               </div>
-
-              {/* 预览卡片 */}
-              <div className="rounded-lg border border-border/50 bg-gradient-to-b from-muted/30 to-background p-4 space-y-3">
-                <div className="text-sm font-medium">{editingFields.topic ?? activeScene.topic}</div>
-                <div className="text-sm text-muted-foreground leading-relaxed">
-                  {editingFields.narration ?? activeScene.narration}
-                </div>
-                <div className="text-xs text-muted-foreground/70 italic">
-                  {editingFields.visualDescription ?? activeScene.visualDescription}
-                </div>
-              </div>
-
-              {/* 编辑区（仅 Editing 状态） */}
-              {isEditing && (
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-muted-foreground">主题</label>
-                  <input
-                    value={editingFields.topic ?? ''}
-                    onChange={(e) => setEditingFields((f) => ({ ...f, topic: e.target.value }))}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                  />
-                  <label className="text-xs font-medium text-muted-foreground">旁白台词</label>
-                  <textarea
-                    value={editingFields.narration ?? ''}
-                    onChange={(e) => setEditingFields((f) => ({ ...f, narration: e.target.value }))}
-                    rows={3}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary resize-none"
-                  />
-                  <label className="text-xs font-medium text-muted-foreground">画面描述</label>
-                  <textarea
-                    value={editingFields.visualDescription ?? ''}
-                    onChange={(e) => setEditingFields((f) => ({ ...f, visualDescription: e.target.value }))}
-                    rows={2}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary resize-none"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleSaveScene(activeSceneIndex)}
-                      className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-                    >
-                      保存修改
-                    </button>
-                    <button
-                      onClick={() => handleRegenerateScene(activeSceneIndex)}
-                      disabled={activeScene.status === 'Generating'}
-                      className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted/50 disabled:opacity-50"
-                    >
-                      {activeScene.status === 'Generating' ? 'AI 重新生成中...' : 'AI 重新生成'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : !selectedRun || selectedRun.status === 'Failed' || selectedRun.status === 'Cancelled' ? (
-            /* 文章输入区 */
-            <div className="space-y-3">
-              <h3 className="text-sm font-semibold">文章转视频</h3>
-              <input
-                type="text"
-                placeholder="视频标题（可选）"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-              />
-              <textarea
-                placeholder="粘贴 Markdown 文章内容..."
-                value={markdown}
-                onChange={(e) => setMarkdown(e.target.value)}
-                rows={8}
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary resize-none"
-              />
-
-              {/* 配置面板（系统提示词 + 风格） */}
-              <button
-                onClick={() => setShowConfig(!showConfig)}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                <svg className={`w-3 h-3 transition-transform ${showConfig ? 'rotate-90' : ''}`} viewBox="0 0 12 12" fill="none">
-                  <path d="M4 2L8 6L4 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                高级配置
-              </button>
-
-              {showConfig && (
-                <div className="space-y-2 rounded-md border border-border/50 bg-muted/20 p-3">
-                  <label className="text-xs font-medium text-muted-foreground">系统提示词（可选）</label>
-                  <textarea
-                    placeholder="自定义 LLM 指导，例如：旁白语言活泼轻松，面向初学者..."
-                    value={systemPrompt}
-                    onChange={(e) => setSystemPrompt(e.target.value)}
-                    rows={3}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary resize-none"
-                  />
-                  <label className="text-xs font-medium text-muted-foreground">风格描述（可选）</label>
-                  <textarea
-                    placeholder="视觉风格说明，例如：科技感、深色背景、霓虹色系..."
-                    value={styleDescription}
-                    onChange={(e) => setStyleDescription(e.target.value)}
-                    rows={2}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary resize-none"
-                  />
-                </div>
-              )}
-
-              <button
-                onClick={handleCreate}
-                disabled={creating || !markdown.trim()}
-                className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {creating ? '创建中...' : '生成分镜'}
-              </button>
-            </div>
-          ) : (
-            /* Scripting / Rendering 进度 */
-            <div className="space-y-3">
-              <h3 className="text-sm font-semibold">
-                {selectedRun.articleTitle || `任务 ${selectedRun.id.slice(0, 8)}`}
-              </h3>
-              <ProgressBar
-                phase={selectedRun.currentPhase}
-                progress={selectedRun.phaseProgress}
-                status={selectedRun.status}
-                errorMessage={selectedRun.errorMessage}
-              />
-              {isActive && (
+              {phase > 0 && !isActive && (
                 <button
-                  onClick={handleCancel}
-                  className="rounded-md border border-destructive/30 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/5"
+                  className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors flex-shrink-0 border"
+                  style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+                  onClick={handleNewTask}
                 >
-                  取消
+                  新建任务
                 </button>
               )}
             </div>
-          )}
 
-          {/* 导出按钮（Editing 状态） */}
-          {isEditing && (
-            <div className="border-t border-border pt-3">
-              <button
-                onClick={handleExport}
-                disabled={exporting}
-                className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              >
-                {exporting ? '渲染中...' : '导出视频'}
-              </button>
-              <p className="mt-1 text-xs text-muted-foreground text-center">
-                确认分镜无误后，点击导出开始渲染
-              </p>
-            </div>
-          )}
-
-          {/* 下载区（Completed 状态） */}
-          {isCompleted && (
-            <div className="border-t border-border pt-3 space-y-2">
-              <h4 className="text-sm font-semibold text-primary">视频已完成</h4>
-              <div className="flex flex-wrap gap-2">
-                {selectedRun.videoAssetUrl && (
-                  <a
-                    href={selectedRun.videoAssetUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/20"
+            {/* Content area */}
+            <div className="flex-1 min-h-0 overflow-auto">
+              {phase === 0 && !articleContent ? (
+                /* Upload phase */
+                <div className="h-full flex flex-col items-center justify-center gap-4">
+                  <div
+                    className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                    style={{ background: 'rgba(236, 72, 153, 0.1)', border: '1px solid rgba(236, 72, 153, 0.2)' }}
                   >
-                    下载 MP4
-                  </a>
-                )}
-                <DownloadButton runId={selectedRun.id} type="srt" label="SRT 字幕" />
-                <DownloadButton runId={selectedRun.id} type="narration" label="配音台词" />
-                <DownloadButton runId={selectedRun.id} type="script" label="视频脚本" />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* 下半：历史任务 */}
-        <div className="h-[200px] flex-shrink-0 overflow-auto border-t border-border p-3 space-y-1">
-          <h4 className="text-xs font-semibold text-muted-foreground mb-1">历史任务</h4>
-          {runs.length === 0 && (
-            <div className="text-xs text-muted-foreground py-4 text-center">暂无任务</div>
-          )}
-          {runs.map((run) => (
-            <button
-              key={run.id}
-              onClick={() => setSelectedRunId(run.id)}
-              className={`w-full rounded-md border p-2.5 text-left text-xs transition-colors ${
-                selectedRunId === run.id
-                  ? 'border-primary/50 bg-primary/5'
-                  : 'border-border/50 bg-background hover:bg-muted/50'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-medium truncate">{run.articleTitle || `任务 ${run.id.slice(0, 8)}`}</span>
-                <StatusBadge status={run.status} />
-              </div>
-              <div className="mt-0.5 text-muted-foreground flex items-center gap-2">
-                <span>{new Date(run.createdAt).toLocaleString('zh-CN')}</span>
-                {run.scenesCount > 0 && <span>{run.scenesReady}/{run.scenesCount} 镜头</span>}
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ═══ 右侧面板：分镜列表 ═══ */}
-      <div className="flex-1 overflow-auto p-4">
-        {!selectedRun || (selectedRun.scenes.length === 0 && !ACTIVE_STATUSES.includes(selectedRun.status)) ? (
-          <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
-            {selectedRun?.status === 'Failed' ? (
-              <div className="text-center space-y-2">
-                <div className="text-destructive font-medium">任务失败</div>
-                <div className="text-xs">{selectedRun.errorMessage}</div>
-              </div>
-            ) : selectedRun?.status === 'Cancelled' ? (
-              <div className="text-center">任务已取消</div>
-            ) : (
-              '选择一个任务或创建新任务'
-            )}
-          </div>
-        ) : selectedRun.scenes.length === 0 ? (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center space-y-2">
-              <div className="w-8 h-8 mx-auto border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-              <div className="text-sm text-muted-foreground">正在分析文章，生成分镜脚本...</div>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold">
-                分镜列表
-                <span className="ml-2 text-xs text-muted-foreground font-normal">
-                  {selectedRun.scenes.length} 个镜头 · {(selectedRun.totalDurationSeconds / 60).toFixed(1)} 分钟
-                </span>
-              </h3>
-              {isEditing && (
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleBatchGeneratePreviews}
-                    className="text-xs text-primary hover:text-primary/80"
+                    <Upload size={28} style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
+                  </div>
+                  <div className="text-center">
+                    <div className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+                      上传文章文件
+                    </div>
+                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      支持 .md / .txt 格式，或直接粘贴内容
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="primary" onClick={() => fileInputRef.current?.click()}>
+                      <Upload size={14} />
+                      选择文件
+                    </Button>
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".md,.txt,.markdown"
+                    className="hidden"
+                    onChange={handleFileUpload}
+                  />
+                  {/* Or paste directly */}
+                  <div className="w-full max-w-md mt-2">
+                    <textarea
+                      placeholder="或在此粘贴 Markdown 文章内容..."
+                      value={articleContent}
+                      onChange={(e) => setArticleContent(e.target.value)}
+                      rows={6}
+                      className="w-full rounded-[14px] px-3 py-2.5 text-sm outline-none resize-none prd-field"
+                      style={{ minHeight: 120 }}
+                    />
+                  </div>
+                </div>
+              ) : phase === 0 && articleContent ? (
+                /* File uploaded but not yet previewed */
+                <div className="h-full flex flex-col items-center justify-center gap-4">
+                  <div
+                    className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                    style={{ background: 'rgba(236, 72, 153, 0.1)', border: '1px solid rgba(236, 72, 153, 0.2)' }}
                   >
-                    批量生成预览图
-                  </button>
-                  <button
-                    onClick={() => selectedRun.scenes.forEach((_, idx) => handleRegenerateScene(idx))}
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    全部重新生成文案
-                  </button>
+                    <FileText size={28} style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
+                  </div>
+                  <div className="text-center">
+                    <div className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+                      {uploadedFileName || '已粘贴文章'}
+                    </div>
+                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      {articleContent.length} 字符
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="secondary" onClick={() => { setArticleContent(''); setUploadedFileName(null); }}>
+                      重新上传
+                    </Button>
+                    <Button variant="primary" onClick={() => setPhase(1)}>
+                      进入预览
+                    </Button>
+                  </div>
+                </div>
+              ) : isActive && selectedRun?.scenes.length === 0 ? (
+                /* Scripting progress */
+                <div className="h-full flex flex-col items-center justify-center gap-4">
+                  <Loader2 size={36} className="animate-spin" style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
+                  <div className="text-center">
+                    <div className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+                      AI 正在分析文章，生成分镜脚本...
+                    </div>
+                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      {selectedRun?.currentPhase === 'scripting' ? `进度 ${selectedRun.phaseProgress}%` : '准备中'}
+                    </div>
+                  </div>
+                  <Button variant="secondary" onClick={handleCancel}>
+                    <X size={14} />
+                    取消
+                  </Button>
+                </div>
+              ) : (
+                /* Article preview (markdown render) */
+                <div className="prd-md">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {articleContent}
+                  </ReactMarkdown>
                 </div>
               )}
             </div>
 
-            {/* 分镜卡片网格（每行2个，像文学创作的marker列表） */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-              {selectedRun.scenes.map((scene, idx) => (
+            {/* History list at bottom */}
+            {runs.length > 0 && (
+              <div className="flex-shrink-0 mt-3 pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>历史任务</span>
+                  <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{runs.length} 个</span>
+                </div>
+                <div className="max-h-[120px] overflow-auto space-y-1">
+                  {runs.map((run) => (
+                    <button
+                      key={run.id}
+                      onClick={() => setSelectedRunId(run.id)}
+                      className="w-full rounded-lg p-2 text-left text-xs transition-colors"
+                      style={{
+                        background: selectedRunId === run.id ? 'rgba(236, 72, 153, 0.08)' : 'transparent',
+                        border: selectedRunId === run.id ? '1px solid rgba(236, 72, 153, 0.2)' : '1px solid transparent',
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                          {run.articleTitle || `任务 ${run.id.slice(0, 8)}`}
+                        </span>
+                        <RunStatusBadge status={run.status} />
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+                        <span>{new Date(run.createdAt).toLocaleString('zh-CN')}</span>
+                        {run.scenesCount > 0 && <span>{run.scenesReady}/{run.scenesCount} 镜头</span>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </GlassCard>
+        </div>
+
+        {/* ═══ RIGHT PANEL: Workflow + Scene List ═══ */}
+        <div className={cn('flex flex-col gap-3', isMobile ? 'w-full' : 'w-96', isMobile && mobileTab !== 'scenes' && 'hidden')}>
+          {/* Top: Workflow progress + Config */}
+          <PanelCard>
+            <WorkflowProgressBar
+              steps={phaseSteps}
+              currentStep={phase}
+              onStepClick={handleStepClick}
+              disabled={isBusy}
+              allCompleted={
+                phase === 2 &&
+                scenesTotal > 0 &&
+                selectedRun?.scenes.every((s) => s.imageStatus === 'done') === true
+              }
+            />
+
+            {/* Active button */}
+            {activeButton && (
+              <Button
+                variant="primary"
+                className="w-full"
+                onClick={() => void activeButton.action()}
+                disabled={isBusy || activeButton.disabled}
+              >
+                <activeButton.icon size={16} />
+                {isBusy && !exporting ? '生成中...' : activeButton.label}
+              </Button>
+            )}
+
+            {/* Config pills: 齿轮 | 提示词 | 风格 | 配置按钮 */}
+            <div className="mt-3 pt-3 border-t flex items-center gap-2" style={{ borderColor: 'var(--border-subtle)' }}>
+              <Settings size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+
+              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                {/* 系统提示词 pill */}
                 <div
-                  key={scene.index}
-                  onClick={() => setActiveSceneIndex(idx)}
-                  className={`cursor-pointer rounded-lg border overflow-hidden transition-all ${
-                    activeSceneIndex === idx
-                      ? 'border-primary/50 ring-1 ring-primary/20 shadow-sm'
-                      : 'border-border/50 hover:border-border'
-                  }`}
+                  className={configPillBaseClass}
+                  style={{
+                    background: systemPrompt ? 'rgba(147, 197, 253, 0.08)' : 'var(--nested-block-bg)',
+                    border: systemPrompt ? '1px solid rgba(147, 197, 253, 0.15)' : '1px solid var(--border-subtle)',
+                  }}
+                  title={systemPrompt || '自定义LLM提示词（点击编辑）'}
                 >
-                  {/* 预览图区域 */}
-                  <div className="relative aspect-video bg-muted/30">
-                    {scene.imageUrl ? (
-                      <img
-                        src={scene.imageUrl}
-                        alt={scene.topic}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex items-center justify-center w-full h-full">
-                        {scene.imageStatus === 'running' ? (
-                          <div className="text-center space-y-1">
-                            <div className="w-6 h-6 mx-auto border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-                            <span className="text-xs text-muted-foreground">生成中...</span>
+                  <FileText size={12} style={{ color: systemPrompt ? '#93C5FD' : '#9CA3AF', flexShrink: 0 }} />
+                  <span className={configPillTextClass} style={{ color: systemPrompt ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                    {systemPrompt ? '提示词' : '自动风格'}
+                  </span>
+                </div>
+
+                {/* 风格描述 pill */}
+                <div
+                  className={configPillBaseClass}
+                  style={{
+                    background: styleDescription ? 'rgba(192, 132, 252, 0.08)' : 'var(--nested-block-bg)',
+                    border: styleDescription ? '1px solid rgba(192, 132, 252, 0.15)' : '1px solid var(--border-subtle)',
+                  }}
+                  title={styleDescription || '视觉风格描述（点击编辑）'}
+                >
+                  <ImageIcon size={12} style={{ color: styleDescription ? '#C084FC' : '#9CA3AF', flexShrink: 0 }} />
+                  <span className={configPillTextClass} style={{ color: styleDescription ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                    {styleDescription ? '风格' : '风格'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Config button */}
+              <button
+                type="button"
+                className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors flex-shrink-0 border"
+                style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+                onClick={() => {
+                  // TODO: Open full config dialog like literary-agent
+                  toast.info('配置', '配置面板开发中');
+                }}
+                title="打开全部配置"
+              >
+                配置
+              </button>
+            </div>
+
+            {/* Inline config inputs (simple version before config dialog is implemented) */}
+            {!selectedRun && (
+              <div className="mt-3 space-y-2">
+                <div>
+                  <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>视频标题</label>
+                  <input
+                    type="text"
+                    value={articleTitle}
+                    onChange={(e) => setArticleTitle(e.target.value)}
+                    placeholder="可选，自动从文章提取"
+                    className="w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none prd-field"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>系统提示词</label>
+                  <textarea
+                    value={systemPrompt}
+                    onChange={(e) => setSystemPrompt(e.target.value)}
+                    placeholder="旁白语言活泼轻松，面向初学者..."
+                    rows={2}
+                    className="w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none resize-none prd-field"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>风格描述</label>
+                  <textarea
+                    value={styleDescription}
+                    onChange={(e) => setStyleDescription(e.target.value)}
+                    placeholder="科技感、深色背景、霓虹色系..."
+                    rows={2}
+                    className="w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none resize-none prd-field"
+                  />
+                </div>
+              </div>
+            )}
+          </PanelCard>
+
+          {/* Scene list (only visible in phase 2) */}
+          {phase === 2 && selectedRun && selectedRun.scenes.length > 0 && (
+            <PanelCard className="flex-1 min-h-0 flex flex-col">
+              {/* Compact title bar */}
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>分镜标记</span>
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded"
+                    style={{ background: 'var(--border-subtle)', color: 'var(--text-muted)' }}
+                  >
+                    {scenesReady}/{scenesTotal}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="xs"
+                    variant="primary"
+                    disabled={!isEditing || scenesTotal === 0}
+                    onClick={handleBatchGeneratePreviews}
+                    title="批量生成预览图"
+                  >
+                    <Sparkles size={12} />
+                    生成
+                  </Button>
+                  {isCompleted && selectedRun.videoAssetUrl && (
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      onClick={() => window.open(selectedRun.videoAssetUrl!, '_blank')}
+                      title="下载视频"
+                    >
+                      <DownloadCloud size={12} />
+                      下载
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Scene cards */}
+              <div ref={sceneListRef} className="flex-1 min-h-0 overflow-auto space-y-1.5">
+                {selectedRun.scenes.map((scene, idx) => {
+                  const statusLabel =
+                    scene.status === 'Generating' ? '生成中'
+                    : scene.status === 'Done' ? '完成'
+                    : scene.status === 'Error' ? '失败'
+                    : '等待';
+
+                  const showPlaceholder = scene.imageStatus === 'running';
+                  const canShow = Boolean(scene.imageUrl) && scene.imageStatus === 'done';
+                  const hasImage = Boolean(scene.imageUrl);
+                  const genLabel = hasImage ? '重新生成' : '生成图片';
+
+                  const narration = editingNarrations[idx] ?? scene.narration;
+
+                  return (
+                    <div
+                      key={scene.index}
+                      className="p-2.5 rounded"
+                      style={{
+                        background: 'var(--bg-elevated)',
+                        border: '1px solid var(--border-subtle)',
+                        position: 'relative',
+                      }}
+                    >
+                      {/* Header row */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+                            镜头 {idx + 1}
+                          </span>
+                          <span
+                            className="text-[10px] px-1 py-0.5 rounded"
+                            style={{ background: 'rgba(236, 72, 153, 0.1)', color: 'rgba(236, 72, 153, 0.8)' }}
+                          >
+                            {SCENE_TYPE_LABELS[scene.sceneType] || scene.sceneType}
+                          </span>
+                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                            {scene.durationSeconds.toFixed(1)}s
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {/* Status badge */}
+                          <div
+                            className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
+                            style={{
+                              background:
+                                scene.status === 'Done'
+                                  ? 'rgba(34, 197, 94, 0.12)'
+                                  : scene.status === 'Error'
+                                    ? 'rgba(239, 68, 68, 0.12)'
+                                    : scene.status === 'Generating'
+                                      ? 'rgba(250, 204, 21, 0.12)'
+                                      : 'var(--bg-input-hover)',
+                              border:
+                                scene.status === 'Done'
+                                  ? '1px solid rgba(34, 197, 94, 0.28)'
+                                  : scene.status === 'Error'
+                                    ? '1px solid rgba(239, 68, 68, 0.28)'
+                                    : scene.status === 'Generating'
+                                      ? '1px solid rgba(250, 204, 21, 0.24)'
+                                      : '1px solid var(--border-default)',
+                              color:
+                                scene.status === 'Done'
+                                  ? 'rgba(34, 197, 94, 0.95)'
+                                  : scene.status === 'Error'
+                                    ? 'rgba(239, 68, 68, 0.95)'
+                                    : scene.status === 'Generating'
+                                      ? 'rgba(250, 204, 21, 0.95)'
+                                      : 'var(--text-secondary)',
+                            }}
+                          >
+                            {statusLabel}
                           </div>
-                        ) : (
-                          <div className="text-center space-y-1">
-                            <svg className="w-8 h-8 mx-auto text-muted-foreground/30" viewBox="0 0 24 24" fill="none">
-                              <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" />
-                              <circle cx="8.5" cy="8.5" r="1.5" stroke="currentColor" strokeWidth="1.5" />
-                              <path d="M3 16l5-5 4 4 3-3 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                            {isEditing && (
+                        </div>
+                      </div>
+
+                      {/* Error message */}
+                      {scene.errorMessage && (
+                        <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.92)' }}>
+                          {scene.errorMessage}
+                        </div>
+                      )}
+
+                      {/* Image preview box */}
+                      <div
+                        className="mt-1.5 rounded-[10px] overflow-hidden relative group"
+                        style={{
+                          height: 120,
+                          background: 'rgba(0,0,0,0.18)',
+                          border: '1px solid var(--border-default)',
+                          cursor: canShow ? 'pointer' : 'default',
+                        }}
+                      >
+                        {showPlaceholder ? (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                            <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
+                            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>生成中…</span>
+                          </div>
+                        ) : canShow ? (
+                          <>
+                            <img src={scene.imageUrl!} alt={`scene-${idx + 1}`} className="w-full h-full block" style={{ objectFit: 'contain' }} />
+                            {/* Copy and Download on hover */}
+                            <div
+                              className="absolute bottom-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <button
-                                onClick={(e) => { e.stopPropagation(); handleGeneratePreview(idx); }}
-                                className="text-xs text-primary hover:text-primary/80"
+                                className="p-2 rounded-lg"
+                                style={{ ...glassFloatingButton, background: 'rgba(0, 0, 0, 0.6)', border: '1px solid rgba(255, 255, 255, 0.2)' }}
+                                onClick={async () => {
+                                  try {
+                                    await navigator.clipboard.writeText(scene.imageUrl!);
+                                    toast.success('已复制', '图片链接已复制');
+                                  } catch { /* ignore */ }
+                                }}
+                                title="复制图片链接"
                               >
-                                生成预览图
+                                <Copy size={16} style={{ color: 'white' }} />
                               </button>
-                            )}
+                              <button
+                                className="p-2 rounded-lg"
+                                style={{ ...glassFloatingButton, background: 'rgba(0, 0, 0, 0.6)', border: '1px solid rgba(255, 255, 255, 0.2)' }}
+                                onClick={async () => {
+                                  try {
+                                    const response = await fetch(scene.imageUrl!);
+                                    const blob = await response.blob();
+                                    const blobUrl = URL.createObjectURL(blob);
+                                    const link = document.createElement('a');
+                                    link.href = blobUrl;
+                                    link.download = `镜头-${idx + 1}.png`;
+                                    link.click();
+                                    URL.revokeObjectURL(blobUrl);
+                                  } catch {
+                                    const link = document.createElement('a');
+                                    link.href = scene.imageUrl!;
+                                    link.download = `镜头-${idx + 1}.png`;
+                                    link.target = '_blank';
+                                    link.click();
+                                  }
+                                }}
+                                title="下载图片"
+                              >
+                                <DownloadCloud size={16} style={{ color: 'white' }} />
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                            <div
+                              className="rounded-lg flex items-center justify-center"
+                              style={{
+                                width: 160,
+                                height: 90,
+                                background: 'var(--nested-block-bg)',
+                                border: '1.5px dashed rgba(236, 72, 153, 0.3)',
+                              }}
+                            >
+                              <ImageIcon size={18} style={{ opacity: 0.4 }} />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Image error overlay */}
+                        {scene.imageStatus === 'error' && (
+                          <div className="absolute inset-0 flex items-center justify-center" style={{ background: 'rgba(239,68,68,0.1)' }}>
+                            <span className="text-xs" style={{ color: 'rgba(239,68,68,0.9)' }}>图片生成失败</span>
                           </div>
                         )}
                       </div>
-                    )}
 
-                    {/* 左上角序号 + 类型 */}
-                    <div className="absolute top-1.5 left-1.5 flex items-center gap-1">
-                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-black/60 text-white text-xs font-bold">
-                        {idx + 1}
-                      </span>
-                      <span className="rounded-md bg-black/50 px-1.5 py-0.5 text-xs text-white/90">
-                        {SCENE_TYPE_LABELS[scene.sceneType] || scene.sceneType}
-                      </span>
-                    </div>
+                      {/* Narration textarea */}
+                      <textarea
+                        value={narration}
+                        onChange={(e) => {
+                          setEditingNarrations((prev) => ({ ...prev, [idx]: e.target.value }));
+                        }}
+                        onBlur={() => {
+                          if (editingNarrations[idx] !== undefined && editingNarrations[idx] !== scene.narration) {
+                            handleSaveScene(idx);
+                          }
+                        }}
+                        className="mt-1.5 w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none resize-none prd-field"
+                        style={{ minHeight: 56 }}
+                        placeholder="旁白台词（可编辑后右下角重新生成）"
+                        disabled={scene.status === 'Generating'}
+                      />
 
-                    {/* 右上角时长 */}
-                    <span className="absolute top-1.5 right-1.5 rounded-md bg-black/50 px-1.5 py-0.5 text-xs text-white/90">
-                      {scene.durationSeconds.toFixed(1)}s
-                    </span>
-
-                    {/* 右上角图片状态（已有图时，显示重试按钮） */}
-                    {scene.imageUrl && isEditing && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleGeneratePreview(idx); }}
-                        className="absolute bottom-1.5 right-1.5 rounded-md bg-black/50 px-1.5 py-0.5 text-xs text-white/90 hover:bg-black/70"
-                      >
-                        重新生成
-                      </button>
-                    )}
-
-                    {scene.imageStatus === 'error' && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-destructive/10">
-                        <span className="text-xs text-destructive">生成失败</span>
+                      {/* Action buttons */}
+                      <div className="mt-1.5 flex items-center justify-between gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={scene.status === 'Generating'}
+                          onClick={() => handleRegenerateScene(idx)}
+                          title="AI 重新生成该镜头的分镜内容"
+                        >
+                          <RefreshCw size={14} />
+                          重试
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={scene.imageStatus === 'running' || scene.status === 'Generating' || !isEditing}
+                          onClick={() => handleGeneratePreview(idx)}
+                          title={hasImage ? '重新生成该镜头预览图' : '生成该镜头的预览图'}
+                        >
+                          <Sparkles size={14} />
+                          {genLabel}
+                        </Button>
                       </div>
-                    )}
-                  </div>
-
-                  {/* 文字区域 */}
-                  <div className="p-2.5 space-y-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-medium truncate flex-1">{scene.topic}</span>
-                      {scene.status === 'Generating' && (
-                        <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse flex-shrink-0" />
-                      )}
-                      {scene.status === 'Done' && (
-                        <svg className="w-3 h-3 text-primary flex-shrink-0" viewBox="0 0 12 12" fill="none">
-                          <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      )}
                     </div>
-                    <p className="text-xs text-muted-foreground line-clamp-2">{scene.narration}</p>
-                    {scene.status === 'Error' && scene.errorMessage && (
-                      <p className="text-xs text-destructive line-clamp-1">{scene.errorMessage}</p>
+                  );
+                })}
+              </div>
+
+              {/* Help text */}
+              <div className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+                点击"生成"将批量生成预览图；也可在单条卡片内编辑后逐条生成
+              </div>
+
+              {/* Download area for completed runs */}
+              {isCompleted && (
+                <div className="mt-3 pt-3 border-t space-y-2" style={{ borderColor: 'var(--border-subtle)' }}>
+                  <div className="text-xs font-semibold" style={{ color: 'rgba(34, 197, 94, 0.95)' }}>
+                    视频已完成
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedRun.videoAssetUrl && (
+                      <Button size="xs" variant="primary" onClick={() => window.open(selectedRun!.videoAssetUrl!, '_blank')}>
+                        <Download size={12} />
+                        下载 MP4
+                      </Button>
                     )}
+                    <DownloadButton runId={selectedRun.id} type="srt" label="SRT 字幕" />
+                    <DownloadButton runId={selectedRun.id} type="narration" label="配音台词" />
+                    <DownloadButton runId={selectedRun.id} type="script" label="视频脚本" />
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
+              )}
+            </PanelCard>
+          )}
+
+          {/* Rendering progress (when in Rendering status) */}
+          {selectedRun?.status === 'Rendering' && (
+            <PanelCard>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Loader2 size={16} className="animate-spin" style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
+                  <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                    渲染视频中...
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
+                    <span>渲染进度</span>
+                    <span>{selectedRun.phaseProgress}%</span>
+                  </div>
+                  <div
+                    className="h-1.5 w-full rounded-full overflow-hidden"
+                    style={{ background: 'rgba(255,255,255,0.08)' }}
+                  >
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{
+                        width: `${selectedRun.phaseProgress}%`,
+                        background: 'linear-gradient(90deg, rgba(236, 72, 153, 0.8), rgba(236, 72, 153, 0.5))',
+                      }}
+                    />
+                  </div>
+                </div>
+                <Button variant="secondary" size="xs" onClick={handleCancel}>
+                  <X size={12} />
+                  取消
+                </Button>
+              </div>
+            </PanelCard>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -828,72 +1116,35 @@ export const VideoAgentPage: React.FC = () => {
 
 // ─── Sub-components ───
 
-const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
-  const config: Record<string, { label: string; className: string }> = {
-    Queued: { label: '排队中', className: 'bg-muted text-muted-foreground' },
-    Scripting: { label: '生成中', className: 'bg-blue-500/10 text-blue-500' },
-    Editing: { label: '编辑中', className: 'bg-amber-500/10 text-amber-500' },
-    Rendering: { label: '渲染中', className: 'bg-orange-500/10 text-orange-500' },
-    Completed: { label: '已完成', className: 'bg-green-500/10 text-green-500' },
-    Failed: { label: '失败', className: 'bg-destructive/10 text-destructive' },
-    Cancelled: { label: '已取消', className: 'bg-muted text-muted-foreground' },
+const RunStatusBadge: React.FC<{ status: string }> = ({ status }) => {
+  const config: Record<string, { label: string; bg: string; border: string; color: string }> = {
+    Queued: { label: '排队', bg: 'var(--bg-input-hover)', border: 'var(--border-default)', color: 'var(--text-secondary)' },
+    Scripting: { label: '生成中', bg: 'rgba(250, 204, 21, 0.12)', border: 'rgba(250, 204, 21, 0.24)', color: 'rgba(250, 204, 21, 0.95)' },
+    Editing: { label: '编辑中', bg: 'rgba(236, 72, 153, 0.12)', border: 'rgba(236, 72, 153, 0.24)', color: 'rgba(236, 72, 153, 0.95)' },
+    Rendering: { label: '渲染中', bg: 'rgba(251, 146, 60, 0.12)', border: 'rgba(251, 146, 60, 0.24)', color: 'rgba(251, 146, 60, 0.95)' },
+    Completed: { label: '完成', bg: 'rgba(34, 197, 94, 0.12)', border: 'rgba(34, 197, 94, 0.28)', color: 'rgba(34, 197, 94, 0.95)' },
+    Failed: { label: '失败', bg: 'rgba(239, 68, 68, 0.12)', border: 'rgba(239, 68, 68, 0.28)', color: 'rgba(239, 68, 68, 0.95)' },
+    Cancelled: { label: '取消', bg: 'var(--bg-input-hover)', border: 'var(--border-default)', color: 'var(--text-secondary)' },
   };
-  const c = config[status] ?? { label: status, className: 'bg-muted text-muted-foreground' };
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${c.className}`}>{c.label}</span>;
-};
-
-const ProgressBar: React.FC<{
-  phase: string;
-  progress: number;
-  status: string;
-  errorMessage?: string;
-}> = ({ phase, progress, status, errorMessage }) => {
-  const labels: Record<string, string> = {
-    scripting: '分析文章 & 生成分镜',
-    editing: '编辑分镜',
-    rendering: '渲染视频',
-    completed: '已完成',
-  };
-
-  if (status === 'Failed') {
-    return (
-      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 space-y-1">
-        <div className="text-sm font-medium text-destructive">任务失败</div>
-        {errorMessage && <div className="text-xs text-muted-foreground">{errorMessage}</div>}
-      </div>
-    );
-  }
-
+  const c = config[status] ?? { label: status, bg: 'var(--bg-input-hover)', border: 'var(--border-default)', color: 'var(--text-secondary)' };
   return (
-    <div className="space-y-2">
-      <div className="flex justify-between text-xs text-muted-foreground">
-        <span>{labels[phase] || phase}</span>
-        <span>{progress}%</span>
-      </div>
-      <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-        <div
-          className="h-full rounded-full bg-primary transition-all duration-300"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
-    </div>
+    <span
+      className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
+      style={{ background: c.bg, border: `1px solid ${c.border}`, color: c.color }}
+    >
+      {c.label}
+    </span>
   );
 };
 
-const DownloadButton: React.FC<{
-  runId: string;
-  type: 'srt' | 'narration' | 'script';
-  label: string;
-}> = ({ runId, type, label }) => {
+const DownloadButton: React.FC<{ runId: string; type: 'srt' | 'narration' | 'script'; label: string }> = ({ runId, type, label }) => {
   const token = useAuthStore((s) => s.token);
 
   const handleDownload = async () => {
     const url = getVideoGenDownloadUrl(runId, type);
     const fullUrl = `${import.meta.env.VITE_API_BASE_URL || ''}${url}`;
     try {
-      const res = await fetch(fullUrl, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(fullUrl, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) return;
       const blob = await res.blob();
       const a = document.createElement('a');
@@ -905,11 +1156,9 @@ const DownloadButton: React.FC<{
   };
 
   return (
-    <button
-      onClick={handleDownload}
-      className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted/50"
-    >
+    <Button size="xs" variant="secondary" onClick={handleDownload}>
+      <Download size={12} />
       {label}
-    </button>
+    </Button>
   );
 };
