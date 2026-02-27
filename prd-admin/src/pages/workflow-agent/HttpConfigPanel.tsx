@@ -191,10 +191,8 @@ function KvTable({ entries, onChange, placeholder }: {
               {!isPlaceholder && (
                 <button
                   onClick={() => remove(idx)}
-                  className="w-5 h-5 rounded flex items-center justify-center text-[11px] transition-colors"
+                  className="surface-row w-5 h-5 rounded flex items-center justify-center text-[11px] transition-colors"
                   style={{ color: 'var(--text-muted)' }}
-                  onMouseEnter={e => { e.currentTarget.style.color = 'rgba(239,68,68,0.8)'; e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
                 >
                   ×
                 </button>

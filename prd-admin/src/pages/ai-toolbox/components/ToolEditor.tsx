@@ -94,11 +94,10 @@ const CONFIG_TABS = [
   { key: 'conversation', label: '对话体验', icon: <MessageSquare size={12} />, hue: 180 },
 ];
 
-// 页面容器样式 - 不透明背景
+// 页面容器样式
+const pageContainerClassName = 'surface-inset';
 const pageContainerStyle: React.CSSProperties = {
-  background: 'var(--bg-elevated)',
   borderRadius: '16px',
-  border: '1px solid rgba(255, 255, 255, 0.06)',
 };
 
 interface FormState {
@@ -587,7 +586,7 @@ export function ToolEditor() {
   );
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-3" style={pageContainerStyle}>
+    <div className={`${pageContainerClassName} h-full min-h-0 flex flex-col gap-3`} style={pageContainerStyle}>
       {/* Header */}
       <div className="px-4 pt-3">
         <TabBar

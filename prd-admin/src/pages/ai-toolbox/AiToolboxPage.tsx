@@ -21,11 +21,10 @@ const CATEGORY_OPTIONS: { key: ToolboxCategory; label: string; icon: React.React
   { key: 'custom', label: '我创建的', icon: <User size={12} /> },
 ];
 
-// 页面容器样式 - 不透明背景
+// 页面容器样式
+const pageContainerClassName = 'surface-inset';
 const pageContainerStyle: React.CSSProperties = {
-  background: 'var(--bg-elevated)',
   borderRadius: '16px',
-  border: '1px solid rgba(255, 255, 255, 0.06)',
 };
 
 export default function AiToolboxPage() {
@@ -94,7 +93,7 @@ export default function AiToolboxPage() {
 
   // Grid view (default)
   return (
-    <div className="h-full min-h-0 flex flex-col gap-3" style={pageContainerStyle}>
+    <div className={`${pageContainerClassName} h-full min-h-0 flex flex-col gap-3`} style={pageContainerStyle}>
       {/* Header */}
       <div className="px-4 pt-3">
         <div className={`flex ${isMobile ? 'flex-col gap-2.5' : 'items-center justify-between'}`}>

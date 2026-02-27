@@ -472,7 +472,7 @@ export function ModelPoolManagePage() {
                   <div key={group.type}>
                     {/* ── 第一级：类型分组头 ── */}
                     <div
-                      className={`flex items-center gap-3 px-4 py-2 cursor-pointer select-none glass-row-hover ${isMobile ? 'flex-wrap gap-y-1' : ''}`}
+                      className={`flex items-center gap-3 px-4 py-2 cursor-pointer select-none surface-row ${isMobile ? 'flex-wrap gap-y-1' : ''}`}
                       style={{ background: 'var(--list-item-bg)', borderBottom: '1px solid var(--nested-block-border)' }}
                       onClick={() => setCollapsedTypes(prev => {
                         const next = new Set(prev);
@@ -568,7 +568,7 @@ export function ModelPoolManagePage() {
                       return (
                         <div key={pool.id}>
                           <div
-                            className={`group transition-colors cursor-pointer glass-row-hover ${isMobile ? 'flex flex-col gap-2 px-3 py-2.5' : 'flex items-center gap-3 pl-12 pr-4 py-2.5'}`}
+                            className={`group transition-colors cursor-pointer surface-row ${isMobile ? 'flex flex-col gap-2 px-3 py-2.5' : 'flex items-center gap-3 pl-12 pr-4 py-2.5'}`}
                             style={{ borderBottom: '1px solid var(--nested-block-border)' }}
                             onClick={() => setExpandedPoolIds(prev => {
                               const next = new Set(prev);

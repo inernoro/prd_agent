@@ -490,7 +490,7 @@ export default function AutomationRulesPage() {
                     <div
                       key={rule.id}
                       onClick={() => handleSelectRule(rule)}
-                      className={`w-full text-left px-3 py-2.5 rounded-[10px] transition-all cursor-pointer ${!selected ? 'glass-row-hover' : ''}`}
+                      className={`w-full text-left px-3 py-2.5 rounded-[10px] transition-all cursor-pointer ${!selected ? 'surface-row' : ''}`}
                       style={{
                         background: selected ? 'rgba(59,130,246,0.1)' : 'transparent',
                         border: selected ? '1px solid rgba(59,130,246,0.25)' : '1px solid transparent',
@@ -624,7 +624,7 @@ export default function AutomationRulesPage() {
                     <SectionTitle>执行动作</SectionTitle>
                     <div className="space-y-2">
                       {edit.actions.map((action, idx) => (
-                        <div key={idx} className="p-3 rounded-[12px] space-y-2 glass-panel-depth"
+                        <div key={idx} className="p-3 rounded-[12px] space-y-2 surface-inset"
                           style={{ background: 'var(--list-item-bg)', border: '1px solid var(--border-subtle)' }}>
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-medium flex items-center gap-1.5">

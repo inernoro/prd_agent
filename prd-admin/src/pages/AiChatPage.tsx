@@ -995,8 +995,7 @@ export default function AiChatPage() {
           style={{ background: 'rgba(0,0,0,0.5)' }}
         />
         <DialogPrimitive.Content
-          className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[110] w-[400px] max-h-[500px] overflow-auto rounded-[16px] p-4 shadow-xl"
-          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}
+          className="surface-inset fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[110] w-[400px] max-h-[500px] overflow-auto rounded-[16px] p-4 shadow-xl"
         >
           <DialogPrimitive.Title className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>
             选择对话

@@ -129,22 +129,12 @@ function CapsuleSidebar({ capsuleTypes, categories, onAddCapsule }: {
                   <button
                     key={meta.typeKey}
                     onClick={() => !isDisabled && onAddCapsule(meta.typeKey)}
-                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-[8px] transition-colors text-left"
+                    className="surface-row w-full flex items-center gap-2 px-2 py-1.5 rounded-[8px] transition-colors text-left"
                     style={{
                       background: 'rgba(255,255,255,0.03)',
                       border: '1px solid rgba(255,255,255,0.06)',
                       opacity: isDisabled ? 0.4 : 1,
                       cursor: isDisabled ? 'not-allowed' : 'pointer',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (isDisabled) return;
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
-                      e.currentTarget.style.borderColor = `hsla(${meta.accentHue}, 60%, 55%, 0.2)`;
-                    }}
-                    onMouseLeave={(e) => {
-                      if (isDisabled) return;
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
-                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
                     }}
                     title={isDisabled ? disabledReason : meta.description}
                   >
@@ -214,14 +204,12 @@ function CurlImportPanel({ onImport, disabled }: {
       <button
         onClick={() => setOpen(true)}
         disabled={disabled}
-        className="w-full flex items-center justify-center gap-1.5 h-8 rounded-[8px] text-[11px] font-semibold transition-all duration-150 mb-2"
+        className="surface-row w-full flex items-center justify-center gap-1.5 h-8 rounded-[8px] text-[11px] font-semibold transition-all duration-150 mb-2"
         style={{
           background: 'rgba(59,130,246,0.06)',
           border: '1px dashed rgba(59,130,246,0.2)',
           color: 'rgba(59,130,246,0.8)',
         }}
-        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.12)'; }}
-        onMouseLeave={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.06)'; }}
       >
         ⌘ 从浏览器粘贴 cURL
       </button>
@@ -301,14 +289,12 @@ function CurlExportButton({ values }: { values: Record<string, string> }) {
     <button
       onClick={handleExport}
       disabled={!hasUrl}
-      className="w-full flex items-center justify-center gap-1.5 h-7 rounded-[8px] text-[11px] font-medium transition-all duration-150 disabled:opacity-30"
+      className="surface-row w-full flex items-center justify-center gap-1.5 h-7 rounded-[8px] text-[11px] font-medium transition-all duration-150 disabled:opacity-30"
       style={{
         background: copied ? 'rgba(34,197,94,0.08)' : 'rgba(168,85,247,0.06)',
         border: `1px dashed ${copied ? 'rgba(34,197,94,0.25)' : 'rgba(168,85,247,0.2)'}`,
         color: copied ? 'rgba(34,197,94,0.9)' : 'rgba(168,85,247,0.8)',
       }}
-      onMouseEnter={e => { if (!copied) e.currentTarget.style.background = 'rgba(168,85,247,0.12)'; }}
-      onMouseLeave={e => { if (!copied) e.currentTarget.style.background = 'rgba(168,85,247,0.06)'; }}
     >
       {copied ? '✓ 已复制到剪贴板' : '⬆ 导出为 cURL 命令'}
     </button>

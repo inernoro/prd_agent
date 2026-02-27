@@ -1160,14 +1160,96 @@ select optgroup {
   animation: line-draw 2s ease-out forwards;
 }
 
-/* ========================================
-   AI-Native Card Interactive Effects
+/* ═══════════════════════════════════════════════════════════
+   Surface System — Single Source of Truth for Card/Panel Surfaces
 
-   提供卡片悬停动效：微上浮 + 强调色光晕 + 边框提亮。
-   通过 CSS 自定义属性 --card-accent-border / --card-accent-glow
-   实现每张卡片独立的强调色。
-   ======================================== */
+   目的：统一全应用的卡片/面板视觉样式，消除内联样式碎片化问题。
+   所有 surface 类使用 tokens.css 中的 CSS 变量
+   (--glass-bg-start, --glass-bg-end, --glass-border)，
+   质量/性能模式通过变量值自动切换。
 
+   类名            用途                             blur  shadow  hover
+   ─────────────  ─────────────────────────────────  ────  ──────  ─────
+   .surface       主级卡片容器                       ✓     中      —
+   .surface-raised 突出展示卡片（KPI、Hero）          ✓     强      —
+   .surface-inset  嵌套内面板（card 内二级分区）      —     内陷    —
+   .surface-row    列表/表格行                        —     —      背景+微影
+   .surface-interactive  可点击卡片                   —     —      上浮+光晕
+
+   用法:
+     <div className="surface rounded-[16px] p-4">       主容器
+     <div className="surface-inset rounded-lg p-3">     嵌套面板
+     <div className="surface-row px-4 py-2">            列表行
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── .surface — 主级卡片 ── */
+.surface {
+  background: linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    0 2px 16px -4px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
+  -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
+  isolation: isolate;
+}
+
+/* ── .surface-raised — 突出卡片（更深阴影 + 更亮内光） ── */
+.surface-raised {
+  background: linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    0 8px 32px -4px rgba(0, 0, 0, 0.4),
+    0 4px 16px -2px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
+  -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
+  isolation: isolate;
+}
+
+/* ── .surface-inset — 嵌套面板（card 内的二级分区，无 blur） ── */
+.surface-inset {
+  background: var(--bg-card, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* ── .surface-row — 列表/表格行悬停 ── */
+.surface-row {
+  transition: background 0.2s ease,
+              box-shadow 0.25s ease;
+}
+
+.surface-row:hover {
+  background: var(--bg-card-hover, rgba(255, 255, 255, 0.05)) !important;
+  box-shadow:
+    0 2px 12px -4px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+/* ── .surface-interactive — 可点击卡片（上浮 + 光晕） ── */
+.surface-interactive {
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.25s ease,
+              box-shadow 0.3s ease;
+}
+
+.surface-interactive:hover {
+  transform: translateY(-3px);
+  border-color: var(--card-accent-border, rgba(255, 255, 255, 0.15)) !important;
+  box-shadow:
+    0 12px 40px -12px var(--card-accent-glow, rgba(0, 0, 0, 0.5)),
+    0 4px 16px -4px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.surface-interactive:active {
+  transform: translateY(-1px);
+  transition-duration: 0.1s;
+}
+
+/* ── .glass-card-interactive — GlassCard 组件专用 (保留兼容) ── */
 .glass-card-interactive {
   transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
               border-color 0.25s ease,
@@ -1180,41 +1262,12 @@ select optgroup {
   box-shadow:
     0 12px 40px -12px var(--card-accent-glow, rgba(0, 0, 0, 0.5)),
     0 4px 16px -4px rgba(0, 0, 0, 0.4),
-    0 1px 0 0 rgba(255, 255, 255, 0.08) inset !important;
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08) !important;
 }
 
 .glass-card-interactive:active {
   transform: translateY(-1px);
   transition-duration: 0.1s;
-}
-
-/* Row-level hover for list/table rows inside cards */
-.glass-row-hover {
-  transition: background 0.2s ease,
-              box-shadow 0.25s ease !important;
-}
-
-.glass-row-hover:hover {
-  background: var(--nested-block-bg) !important;
-  box-shadow:
-    0 2px 12px -4px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.04) !important;
-}
-
-/* Elevated panel with subtle depth (lab/tool sections) */
-.glass-panel-depth {
-  box-shadow:
-    0 2px 8px -2px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.03);
-  transition: border-color 0.2s ease,
-              box-shadow 0.25s ease;
-}
-
-.glass-panel-depth:hover {
-  border-color: rgba(255, 255, 255, 0.08) !important;
-  box-shadow:
-    0 4px 16px -4px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
 }
 
 /* ========================================

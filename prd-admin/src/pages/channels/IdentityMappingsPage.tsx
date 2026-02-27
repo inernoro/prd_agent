@@ -199,10 +199,8 @@ export default function IdentityMappingsPage() {
               {mappings.map((mapping) => (
                 <tr
                   key={mapping.id}
-                  className="transition-colors"
+                  className="surface-row transition-colors"
                   style={{ borderTop: '1px solid var(--bg-input)' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--list-item-bg)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                 >
                   <td className="px-4 py-3">
                     <div className="font-mono text-sm">{mapping.channelIdentifier}</div>

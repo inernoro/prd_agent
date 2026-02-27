@@ -474,7 +474,7 @@ export default function WorkshopLabTab() {
           {/* 左侧：测试区 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {/* 模拟画布 - 两阶段选择 */}
-            <div className="glass-panel-depth" style={{
+            <div className="surface-inset" style={{
               background: 'var(--bg-elevated)',
               borderRadius: 8,
               padding: 12,
@@ -579,7 +579,7 @@ export default function WorkshopLabTab() {
             </div>
 
             {/* 主输入框 */}
-            <div className="glass-panel-depth" style={{
+            <div className="surface-inset" style={{
               background: 'var(--bg-elevated)',
               borderRadius: 8,
               padding: 12,
@@ -620,7 +620,7 @@ export default function WorkshopLabTab() {
             </div>
 
             {/* 窄容器测试 */}
-            <div className="glass-panel-depth" style={{
+            <div className="surface-inset" style={{
               background: 'var(--bg-elevated)',
               borderRadius: 8,
               padding: 12,
@@ -664,7 +664,7 @@ export default function WorkshopLabTab() {
             </div>
 
             {/* 测试用例 */}
-            <div className="glass-panel-depth" style={{
+            <div className="surface-inset" style={{
               background: 'var(--bg-elevated)',
               borderRadius: 8,
               padding: 12,
@@ -683,7 +683,7 @@ export default function WorkshopLabTab() {
             </div>
 
             {/* 两阶段测试用例 */}
-            <div className="glass-panel-depth" style={{
+            <div className="surface-inset" style={{
               background: 'var(--bg-elevated)',
               borderRadius: 8,
               padding: 12,
@@ -710,7 +710,7 @@ export default function WorkshopLabTab() {
           {/* 右侧：输出面板 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {/* 当前文本 */}
-            <div className="glass-panel-depth" style={{
+            <div className="surface-inset" style={{
               background: 'var(--bg-elevated)',
               borderRadius: 8,
               padding: 12,
@@ -734,7 +734,7 @@ export default function WorkshopLabTab() {
             </div>
 
             {/* 输出日志 */}
-            <div className="glass-panel-depth" style={{
+            <div className="surface-inset" style={{
               background: 'var(--bg-elevated)',
               borderRadius: 8,
               padding: 12,
@@ -818,7 +818,7 @@ export default function WorkshopLabTab() {
         </div>
 
         {/* 验收清单 + 自动测试 */}
-        <div className="glass-panel-depth" style={{
+        <div className="surface-inset" style={{
           marginTop: 16,
           background: 'var(--bg-elevated)',
           borderRadius: 8,

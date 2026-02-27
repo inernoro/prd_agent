@@ -261,10 +261,8 @@ export default function ChannelTasksPage() {
               {tasks.map((task) => (
                 <tr
                   key={task.id}
-                  className="transition-colors cursor-pointer"
+                  className="surface-row transition-colors cursor-pointer"
                   style={{ borderTop: '1px solid var(--bg-input)' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--list-item-bg)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   onClick={() => handleViewDetail(task)}
                 >
                   <td className="px-4 py-3">

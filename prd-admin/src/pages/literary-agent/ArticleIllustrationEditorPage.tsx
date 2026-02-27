@@ -2670,10 +2670,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 return (
                   <div
                   key={it.markerIndex}
-                  className="p-2.5 rounded"
+                  className="surface-inset p-2.5 rounded"
                   style={{
-                    background: 'var(--bg-elevated)',
-                    border: '1px solid var(--border-subtle)',
                     position: 'relative',
                   }}
                 >

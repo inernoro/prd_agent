@@ -289,40 +289,34 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
         }}
       >
         <button
-          className="flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
+          className="surface-row flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
           style={{
             background: 'rgba(99,102,241,0.08)',
             border: '1px solid rgba(99,102,241,0.15)',
             color: 'rgba(99,102,241,0.85)',
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.15)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.08)'; }}
           onClick={(e) => { e.stopPropagation(); onEdit(); }}
         >
           ✎ 编辑
         </button>
         <button
-          className="flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
+          className="surface-row flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
           style={{
             background: 'rgba(59,130,246,0.08)',
             border: '1px solid rgba(59,130,246,0.15)',
             color: 'rgba(59,130,246,0.85)',
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.15)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.08)'; }}
           onClick={(e) => { e.stopPropagation(); onCanvas(); }}
         >
           ◇ 画布
         </button>
         <button
-          className="w-7 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150 flex items-center justify-center flex-shrink-0"
+          className="surface-row w-7 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150 flex items-center justify-center flex-shrink-0"
           style={{
             background: 'rgba(239,68,68,0.06)',
             border: '1px solid rgba(239,68,68,0.12)',
             color: 'rgba(239,68,68,0.65)',
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.14)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.06)'; }}
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
           title="删除"
         >

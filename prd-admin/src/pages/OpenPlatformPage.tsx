@@ -292,7 +292,7 @@ export default function OpenPlatformPage() {
             </thead>
             <tbody>
               {apps.map((app) => (
-                <tr key={app.id} className="transition-colors" style={{ borderTop: '1px solid var(--bg-input)' }} onMouseEnter={(e) => e.currentTarget.style.background = 'var(--list-item-bg)'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                <tr key={app.id} className="surface-row transition-colors" style={{ borderTop: '1px solid var(--bg-input)' }}>
                   <td className="px-4 py-3">
                     <div className="font-medium">{app.appName}</div>
                     {app.description && <div className="text-sm text-muted-foreground">{app.description}</div>}
@@ -1171,12 +1171,10 @@ function LogsDialog({
               </thead>
               <tbody>
                 {logs.map((log) => (
-                  <tr 
-                    key={log.id} 
-                    className="transition-colors cursor-pointer"
+                  <tr
+                    key={log.id}
+                    className="surface-row transition-colors cursor-pointer"
                     style={{ borderTop: '1px solid var(--bg-input)' }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = 'var(--list-item-bg)'}
-                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                     onClick={() => handleViewDetail(log)}
                   >
                     <td className="px-3 py-2.5">

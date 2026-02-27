@@ -132,8 +132,7 @@ export default function MobileHomePage() {
                 <button
                   key={agent.key}
                   onClick={() => navigate(agent.path)}
-                  className="flex flex-col items-center gap-2 py-3 rounded-2xl transition-all active:scale-95"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                  className="surface-inset flex flex-col items-center gap-2 py-3 rounded-2xl transition-all active:scale-95"
                 >
                   <div
                     className="w-10 h-10 rounded-xl flex items-center justify-center"
@@ -164,8 +163,7 @@ export default function MobileHomePage() {
                 return (
                   <div
                     key={card.key}
-                    className="flex flex-col items-center gap-1.5 py-3 rounded-xl"
-                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
+                    className="surface-inset flex flex-col items-center gap-1.5 py-3 rounded-xl"
                   >
                     <CardIcon size={16} style={{ color: card.color }} />
                     <div className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
@@ -196,8 +194,7 @@ export default function MobileHomePage() {
               {notifications.slice(0, 3).map((n) => (
                 <div
                   key={n.id}
-                  className="flex items-start gap-3 p-3 rounded-xl"
-                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
+                  className="surface-inset flex items-start gap-3 p-3 rounded-xl"
                 >
                   <Bell size={16} className="mt-0.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
                   <div className="flex-1 min-w-0">
@@ -230,8 +227,7 @@ export default function MobileHomePage() {
                   <button
                     key={item.id}
                     onClick={() => navigate(item.navigateTo)}
-                    className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all active:scale-[0.98]"
-                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
+                    className="surface-inset w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all active:scale-[0.98]"
                   >
                     <div
                       className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
