@@ -672,11 +672,10 @@ export function ArenaPage() {
       {/* ===================== Sidebar ===================== */}
       <div
         className={cn(
-          'flex flex-col border-r transition-all duration-300',
+          'flex flex-col transition-all duration-300',
           sidebarCollapsed ? 'w-0 overflow-hidden opacity-0' : 'w-[280px] min-w-[280px]'
         )}
         style={{
-          borderColor: 'var(--glass-border, rgba(255,255,255,0.07))',
           background: 'var(--bg-base, #0d0d0f)',
         }}
       >
@@ -763,9 +762,8 @@ export function ArenaPage() {
       <div className="flex-1 flex flex-col min-w-0" style={{ minHeight: 0 }}>
         {/* Top Bar */}
         <div
-          className="flex items-center justify-between px-5 h-14 flex-shrink-0 border-b"
+          className="flex items-center justify-between px-5 h-14 flex-shrink-0"
           style={{
-            borderColor: 'var(--glass-border, rgba(255,255,255,0.07))',
             background: 'var(--bg-base, #0d0d0f)',
           }}
         >
@@ -893,8 +891,8 @@ export function ArenaPage() {
           <div className="flex-1 flex flex-col min-h-0">
             {/* Prompt Bar */}
             <div
-              className="flex-shrink-0 flex items-center gap-2 px-5 py-2.5 border-b"
-              style={{ borderColor: 'rgba(255,255,255,0.05)', background: 'rgba(99,102,241,0.04)' }}
+              className="flex-shrink-0 flex items-center gap-2 px-5 py-2.5"
+              style={{ background: 'rgba(99,102,241,0.04)' }}
             >
               <div
                 className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
@@ -937,13 +935,11 @@ export function ArenaPage() {
                       )}
                       style={{
                         background: 'rgba(255,255,255,0.03)',
-                        border: '1px solid rgba(255,255,255,0.07)',
                       }}
                     >
                       {/* Header */}
                       <div
-                        className="flex items-center justify-between px-4 py-3 border-b flex-shrink-0"
-                        style={{ borderColor: 'rgba(255,255,255,0.05)' }}
+                        className="flex items-center justify-between px-4 py-3 flex-shrink-0"
                       >
                         <div className="flex items-center gap-2.5">
                           {/* Avatar: model image on reveal, letter badge before reveal */}
@@ -1039,8 +1035,7 @@ export function ArenaPage() {
                       {/* Footer — metrics (visible after reveal) */}
                       {(panel.status === 'done' || panel.status === 'error') && revealed && (
                         <div
-                          className="px-4 py-2 flex items-center gap-4 border-t flex-shrink-0"
-                          style={{ borderColor: 'rgba(255,255,255,0.05)' }}
+                          className="px-4 py-2 flex items-center gap-4 flex-shrink-0"
                         >
                           {panel.ttftMs != null && (
                             <div className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -1096,16 +1091,15 @@ export function ArenaPage() {
 
         {/* ===================== Bottom Bar ===================== */}
         <div
-          className="flex-shrink-0 px-6 py-4 border-t"
+          className="flex-shrink-0 px-6 py-4"
           style={{
-            borderColor: 'var(--glass-border, rgba(255,255,255,0.07))',
             background: 'var(--bg-base, #0d0d0f)',
           }}
         >
           <div className="mx-auto" style={{ maxWidth: '900px' }}>
             <div
               className="rounded-[16px] p-3"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+              style={{ background: 'rgba(255,255,255,0.03)' }}
             >
               <textarea
                 ref={textareaRef}
@@ -1130,7 +1124,7 @@ export function ArenaPage() {
                 )}
                 style={{ color: 'var(--text-primary)', minHeight: '56px', maxHeight: '200px' }}
               />
-              <div className="flex items-center justify-between mt-2 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+              <div className="flex items-center justify-between mt-2 pt-2">
                 <span className="text-[11px] px-2" style={{ color: 'var(--text-muted)' }}>
                   {slots.length > 0
                     ? `${selectedGroup?.name} · ${slots.length} 个模型匿名回答`
