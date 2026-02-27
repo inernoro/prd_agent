@@ -45,6 +45,7 @@ import {
   Lock,
   Search,
   Layers,
+  Swords,
   Info,
 } from 'lucide-react';
 
@@ -53,7 +54,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   FileText, Palette, PenTool, Bug, Code2, Languages, FileSearch, BarChart3,
   Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare, Zap,
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
-  GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
+  GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers, Swords,
 };
 
 // 可选的图标列表
@@ -66,7 +67,7 @@ const ICON_HUE_MAP: Record<string, number> = {
   Sparkles: 280, Rocket: 210, MessageSquare: 180, Zap: 45, Brain: 270, Cpu: 200,
   Database: 220, Globe: 180, Image: 330, Music: 300, Video: 0, BookOpen: 140,
   GraduationCap: 220, Briefcase: 30, Heart: 350, Star: 45, Shield: 210, Lock: 200,
-  Search: 180, Layers: 240,
+  Search: 180, Layers: 240, Swords: 30,
 };
 
 // 获取图标组件

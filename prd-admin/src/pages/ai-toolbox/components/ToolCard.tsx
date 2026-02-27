@@ -37,6 +37,7 @@ import {
   Lock,
   Search,
   Layers,
+  Swords,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -49,7 +50,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   FileText, Palette, PenTool, Bug, Code2, Languages, FileSearch, BarChart3,
   Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare, Zap,
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
-  GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
+  GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers, Swords,
 };
 
 const ACCENT_PALETTE: Record<string, { from: string; soft: string }> = {
@@ -84,6 +85,7 @@ const ACCENT_PALETTE: Record<string, { from: string; soft: string }> = {
   Lock:         { from: '#64748B', soft: '#94A3B8' },
   Search:       { from: '#14B8A6', soft: '#5EEAD4' },
   Layers:       { from: '#8B5CF6', soft: '#C4B5FD' },
+  Swords:       { from: '#F97316', soft: '#FDBA74' },
 };
 
 function getIconComponent(iconName: string): LucideIcon {
