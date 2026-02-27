@@ -41,7 +41,6 @@ export function SystemDialogHost() {
       title={current?.title || '提示'}
       description={undefined}
       maxWidth={560}
-      zIndex={10000}
       content={
         !current ? null : current.kind === 'alert' ? (
           <div className="grid gap-5">

@@ -49,10 +49,9 @@ export function ConfirmTip({
           side={side}
           align={align}
           sideOffset={10}
-          className="rounded-[14px] p-3"
+          className="z-50 rounded-[14px] p-3"
           style={{
             ...glassPanel,
-            zIndex: 150,
             minWidth: 240,
           }}
         >
