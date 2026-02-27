@@ -484,7 +484,7 @@ export default function SkillsPage() {
           padding: 6px 10px;
           border-radius: 8px;
           border: 1px solid var(--border-default);
-          background: var(--bg-card-hover);
+          background: var(--bg-card, rgba(255, 255, 255, 0.03));
           color: rgba(255,255,255,0.9);
           font-size: 13px;
           outline: none;
@@ -501,7 +501,7 @@ export default function SkillsPage() {
           cursor: pointer;
         }
         select.field-input option {
-          background: var(--bg-elevated);
+          background: var(--bg-card, rgba(255, 255, 255, 0.03));
           color: #fff;
         }
         textarea.field-input {

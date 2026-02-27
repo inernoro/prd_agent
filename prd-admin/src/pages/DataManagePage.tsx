@@ -307,7 +307,7 @@ function MappingRow({ mapping, onView, onValidate, onDelete, deleting }: { mappi
     if (!mapping.existsInDatabase) return 'rgba(239,68,68,0.15)';
     if (!mapping.hasEntity) return 'rgba(239,68,68,0.1)';
     if (mapping.appOwners.length === 0) return 'rgba(168,85,247,0.1)';
-    return 'var(--list-item-bg)';
+    return 'var(--bg-card, rgba(255, 255, 255, 0.03))';
   };
   const protectedCollections = ['users', 'llmplatforms', 'llmmodels', 'system_roles'];
   const isProtected = protectedCollections.includes(mapping.collectionName.toLowerCase());
@@ -436,7 +436,7 @@ export default function DataManagePage() {
   };
 
   const UserRow = ({ u }: { u: AdminUserPreviewItem }) => (
-    <div className="grid gap-2 rounded-[10px] px-3 py-2.5 transition-colors hover:bg-white/3" style={{ gridTemplateColumns: '1.2fr 1fr 0.6fr 0.6fr 1fr', background: 'var(--list-item-bg)', border: '1px solid var(--bg-card-hover)' }}>
+    <div className="grid gap-2 rounded-[10px] px-3 py-2.5 surface-row" style={{ gridTemplateColumns: '1.2fr 1fr 0.6fr 0.6fr 1fr' }}>
       <div className="min-w-0"><div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{u.username || '-'}</div><div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{u.displayName || '-'}</div></div>
       <div className="min-w-0 text-xs font-mono self-center truncate" style={{ color: 'var(--text-secondary)' }}>{u.userId?.slice(0, 8) || '-'}...</div>
       <div className="text-xs self-center" style={{ color: 'var(--text-secondary)' }}>{u.role}</div>

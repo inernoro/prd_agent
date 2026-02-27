@@ -245,7 +245,7 @@ export default function ChannelTasksPage() {
 
         <div className="flex-1 overflow-auto">
           <table className="w-full">
-            <thead style={{ background: 'var(--list-item-bg)' }}>
+            <thead className="surface-inset">
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium">任务 ID</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">通道</th>

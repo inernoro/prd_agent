@@ -716,11 +716,7 @@ export default function UsersPage() {
         </div>
 
         <div
-          className="mt-4 flex-1 min-h-0 overflow-auto rounded-[14px] p-4"
-          style={{
-            background: 'var(--list-item-bg)',
-            border: '1px solid var(--bg-card-hover)',
-          }}
+          className="mt-4 flex-1 min-h-0 overflow-auto rounded-[14px] p-4 surface-inset"
         >
           {loading ? (
             <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -745,19 +741,20 @@ export default function UsersPage() {
                 return (
                   <div
                     key={u.userId}
-                    className="group relative rounded-[10px] p-2.5 transition-all duration-150"
-                    style={{
-                      background: isBot ? 'rgba(34,197,94,0.03)' : 'var(--list-item-bg)',
-                      border: isBot ? '1px solid rgba(34,197,94,0.15)' : '1px solid var(--nested-block-border)',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.06)' : 'var(--bg-input)';
-                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.25)' : 'var(--border-default)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.03)' : 'var(--list-item-bg)';
-                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.15)' : 'var(--nested-block-border)';
-                    }}
+                    className={`group relative rounded-[10px] p-2.5 ${isBot ? '' : 'surface-row'}`}
+                    style={isBot ? {
+                      background: 'rgba(34,197,94,0.03)',
+                      border: '1px solid rgba(34,197,94,0.15)',
+                      transition: 'all 0.15s',
+                    } : undefined}
+                    onMouseEnter={isBot ? (e) => {
+                      e.currentTarget.style.background = 'rgba(34,197,94,0.06)';
+                      e.currentTarget.style.borderColor = 'rgba(34,197,94,0.25)';
+                    } : undefined}
+                    onMouseLeave={isBot ? (e) => {
+                      e.currentTarget.style.background = 'rgba(34,197,94,0.03)';
+                      e.currentTarget.style.borderColor = 'rgba(34,197,94,0.15)';
+                    } : undefined}
                   >
                     {/* 操作按钮：悬浮显示 */}
                     <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">

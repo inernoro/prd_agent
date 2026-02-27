@@ -169,8 +169,7 @@ export default function StatsPage() {
             消息趋势（近{days}天）
           </div>
           <div
-            className="mt-3 rounded-[14px] overflow-hidden"
-            style={{ background: 'var(--list-item-bg)', border: '1px solid var(--border-subtle)' }}
+            className="mt-3 rounded-[14px] overflow-hidden surface-inset"
           >
             {loading ? (
               <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
@@ -193,8 +192,7 @@ export default function StatsPage() {
             内容缺失统计（共{gapStats?.total ?? 0}条）
           </div>
           <div
-            className="mt-3 rounded-[14px] overflow-hidden"
-            style={{ background: 'var(--list-item-bg)', border: '1px solid var(--border-subtle)' }}
+            className="mt-3 rounded-[14px] overflow-hidden surface-inset"
           >
             {loading ? (
               <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>

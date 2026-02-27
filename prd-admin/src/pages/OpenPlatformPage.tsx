@@ -280,7 +280,7 @@ export default function OpenPlatformPage() {
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[700px]">
-            <thead style={{ background: 'var(--list-item-bg)' }}>
+            <thead className="surface-inset">
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium">应用名称</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">绑定信息</th>
@@ -1098,7 +1098,7 @@ function LogsDialog({
 
           {/* 筛选面板 */}
           {showFilters && (
-            <div className="p-4 rounded-lg" style={{ background: 'var(--list-item-bg)', border: '1px solid var(--nested-block-border)' }}>
+            <div className="p-4 rounded-lg surface-inset">
               <div className="flex items-center gap-2 mb-3">
                 <Filter size={14} style={{ color: 'var(--accent-gold)' }} />
                 <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>筛选条件</span>
@@ -1158,7 +1158,7 @@ function LogsDialog({
           )}
           <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
             <table className="w-full text-sm">
-              <thead className="sticky top-0" style={{ background: 'var(--list-item-bg)' }}>
+              <thead className="sticky top-0 surface-inset">
                 <tr>
                   <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>时间</th>
                   <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>应用</th>

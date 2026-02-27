@@ -624,8 +624,7 @@ export default function AutomationRulesPage() {
                     <SectionTitle>执行动作</SectionTitle>
                     <div className="space-y-2">
                       {edit.actions.map((action, idx) => (
-                        <div key={idx} className="p-3 rounded-[12px] space-y-2 surface-inset"
-                          style={{ background: 'var(--list-item-bg)', border: '1px solid var(--border-subtle)' }}>
+                        <div key={idx} className="p-3 rounded-[12px] space-y-2 surface-inset">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-medium flex items-center gap-1.5">
                               {actionTypeIcons[action.type]}

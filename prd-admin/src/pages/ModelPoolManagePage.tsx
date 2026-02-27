@@ -473,7 +473,7 @@ export function ModelPoolManagePage() {
                     {/* ── 第一级：类型分组头 ── */}
                     <div
                       className={`flex items-center gap-3 px-4 py-2 cursor-pointer select-none surface-row ${isMobile ? 'flex-wrap gap-y-1' : ''}`}
-                      style={{ background: 'var(--list-item-bg)', borderBottom: '1px solid var(--nested-block-border)' }}
+                      style={{ borderBottom: '1px solid var(--nested-block-border)' }}
                       onClick={() => setCollapsedTypes(prev => {
                         const next = new Set(prev);
                         if (next.has(group.type)) next.delete(group.type);
@@ -810,8 +810,8 @@ export function ModelPoolManagePage() {
                           {/* ── 第三级：展开的模型列表 ── */}
                           {isExpanded && pool.models && pool.models.length > 0 && (
                             <div
-                              className={`py-2 pr-4 ${isMobile ? 'pl-3' : 'pl-12'}`}
-                              style={{ background: 'var(--list-item-bg)', borderBottom: '1px solid var(--nested-block-border)' }}
+                              className={`py-2 pr-4 ${isMobile ? 'pl-3' : 'pl-12'} surface-inset`}
+                              style={{ borderBottom: '1px solid var(--nested-block-border)' }}
                             >
                               <div className={`${isMobile ? 'ml-2' : 'ml-5'} space-y-1`}>
                                 {pool.models.map((model, idx) => {
@@ -1012,8 +1012,7 @@ export function ModelPoolManagePage() {
                 </div>
 
                 <div
-                  className="rounded-[12px] overflow-hidden"
-                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}
+                  className="rounded-[12px] overflow-hidden surface-inset"
                 >
                   {poolForm.models.length === 0 ? (
                     <div className="py-10 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>

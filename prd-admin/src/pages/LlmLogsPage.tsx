@@ -1665,7 +1665,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                   {sizes.length ? (
                                     <div
                                       className="mt-2 rounded-[10px] p-2"
-                                      style={{ border: '1px solid var(--border-default)', background: 'var(--list-item-bg)', maxHeight: 220, overflow: 'auto' }}
+                                      style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', maxHeight: 220, overflow: 'auto' }}
                                     >
                                       <div className="flex flex-wrap gap-1.5">
                                         {sizes.map((s, idx) => (
@@ -1847,7 +1847,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         className="rounded-[12px] px-2.5 py-1.5 min-w-0"
                         style={{
                           border: '1px solid var(--border-subtle)',
-                          background: 'var(--list-item-bg)',
+                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                           minWidth: 0,
                           ...(ss?.container ?? {}),
                         }}
@@ -1980,7 +1980,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>Response</div>
                   <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                    <div className="flex items-center rounded-[8px] p-0.5" style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}>
+                    <div className="flex items-center rounded-[8px] p-0.5" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
                       <button
                         type="button"
                         onClick={() => setAnswerView('preview')}
@@ -2133,7 +2133,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         <div
                           key={it.k}
                           className="rounded-[12px] px-3 py-2 min-w-0 overflow-hidden"
-                          style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)', minWidth: 0 }}
+                          style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', minWidth: 0 }}
                         >
                           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                             {it.k}
@@ -2240,7 +2240,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
 
                       return (
                     <div className="mb-3">
-                      <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}>
+                      <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
                         {/* Prompt */}
                         <div className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)' }}>
                           {(detail?.questionText ?? '').trim() || '（无提示词）'}

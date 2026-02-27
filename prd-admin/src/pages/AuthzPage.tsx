@@ -456,7 +456,7 @@ export default function AuthzPage() {
                         }}
                         className="w-full px-4 py-3 text-left rounded-xl transition-all duration-200"
                         style={{
-                          background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'var(--list-item-bg)',
+                          background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                           border: isSelected ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid transparent',
                         }}
                       >
@@ -600,7 +600,7 @@ export default function AuthzPage() {
                       disabled={assignRoleSubmitting}
                       className="w-full px-4 py-3 text-left rounded-xl transition-all duration-200 disabled:opacity-50"
                       style={{
-                        background: isCurrentRole ? 'rgba(99, 102, 241, 0.15)' : 'var(--list-item-bg)',
+                        background: isCurrentRole ? 'rgba(99, 102, 241, 0.15)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                         border: isCurrentRole ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid var(--nested-block-border)',
                       }}
                     >
