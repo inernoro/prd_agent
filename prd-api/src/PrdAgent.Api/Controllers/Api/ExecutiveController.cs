@@ -222,14 +222,18 @@ public class ExecutiveController : ControllerBase
                 return dotIndex > 0 ? rp[..dotIndex] : rp;
             })
             .Where(g => !string.IsNullOrEmpty(g.Key))
-            .Select(g => new
+            .Select(g =>
             {
-                appKey = g.Key,
-                name = ResolveAgentName(g.Key),
-                calls = g.Count(),
-                users = g.Select(l => l.UserId).Where(u => u != null).Distinct().Count(),
-                tokens = g.Sum(l => (long)(l.InputTokens ?? 0) + (l.OutputTokens ?? 0)),
-                avgDurationMs = g.Average(l => l.DurationMs ?? 0),
+                var withDuration = g.Where(l => l.DurationMs.HasValue).ToList();
+                return new
+                {
+                    appKey = g.Key,
+                    name = ResolveAgentName(g.Key),
+                    calls = g.Count(),
+                    users = g.Select(l => l.UserId).Where(u => u != null).Distinct().Count(),
+                    tokens = g.Sum(l => (long)(l.InputTokens ?? 0) + (l.OutputTokens ?? 0)),
+                    avgDurationMs = withDuration.Count > 0 ? withDuration.Average(l => l.DurationMs!.Value) : 0,
+                };
             })
             .OrderByDescending(a => a.calls)
             .ToList();
@@ -253,14 +257,18 @@ public class ExecutiveController : ControllerBase
 
         var modelGroups = logs
             .GroupBy(l => l.Model ?? "unknown")
-            .Select(g => new
+            .Select(g =>
             {
-                model = g.Key,
-                calls = g.Count(),
-                inputTokens = g.Sum(l => (long)(l.InputTokens ?? 0)),
-                outputTokens = g.Sum(l => (long)(l.OutputTokens ?? 0)),
-                totalTokens = g.Sum(l => (long)(l.InputTokens ?? 0) + (l.OutputTokens ?? 0)),
-                avgDurationMs = Math.Round(g.Average(l => l.DurationMs ?? 0), 1),
+                var withDuration = g.Where(l => l.DurationMs.HasValue).ToList();
+                return new
+                {
+                    model = g.Key,
+                    calls = g.Count(),
+                    inputTokens = g.Sum(l => (long)(l.InputTokens ?? 0)),
+                    outputTokens = g.Sum(l => (long)(l.OutputTokens ?? 0)),
+                    totalTokens = g.Sum(l => (long)(l.InputTokens ?? 0) + (l.OutputTokens ?? 0)),
+                    avgDurationMs = withDuration.Count > 0 ? Math.Round(withDuration.Average(l => l.DurationMs!.Value), 1) : 0,
+                };
             })
             .OrderByDescending(m => m.calls)
             .ToList();

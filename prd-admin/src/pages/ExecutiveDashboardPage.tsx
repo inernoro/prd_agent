@@ -3,7 +3,7 @@ import {
   Crown, Users, Bot, DollarSign, Link2, TrendingUp,
   MessageSquare, Image, Bug, Zap, Activity,
   BarChart3, RefreshCw, Loader2,
-  ArrowUpDown, ChevronUp, ChevronDown,
+  ArrowUpDown, ChevronUp, ChevronDown, Info,
 } from 'lucide-react';
 import { TabBar } from '@/components/design/TabBar';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -28,6 +28,7 @@ import type {
 } from '@/services/contracts/executive';
 import type { EChartsOption } from 'echarts';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { Tooltip } from '@/components/ui/Tooltip';
 
 // ─── Chart Helpers ──────────────────────────────────────────────────
 
@@ -143,12 +144,13 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="text-[13px] font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>{children}</h3>;
 }
 
-function StatRow({ label, value, sub, icon: Icon }: { label: string; value: string | number; sub?: string; icon?: any }) {
+function StatRow({ label, value, sub, icon: Icon, info }: { label: string; value: string | number; sub?: string; icon?: any; info?: string }) {
   return (
     <div className="flex items-center justify-between py-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
       <div className="flex items-center gap-2">
         {Icon && <Icon size={14} style={{ color: 'var(--text-muted)' }} />}
         <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{label}</span>
+        {info && <InfoTip tip={info} />}
       </div>
       <div className="text-right">
         <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{typeof value === 'number' ? value.toLocaleString() : value}</span>
@@ -182,6 +184,14 @@ function EmptyHint({ text }: { text: string }) {
     <div className="flex flex-col items-center justify-center py-12 text-center">
       <div className="text-sm" style={{ color: 'var(--text-muted)' }}>{text}</div>
     </div>
+  );
+}
+
+function InfoTip({ tip }: { tip: string }) {
+  return (
+    <Tooltip content={tip} side="top">
+      <Info size={12} style={{ color: 'var(--text-muted)', opacity: 0.6, flexShrink: 0 }} />
+    </Tooltip>
   );
 }
 
@@ -243,12 +253,12 @@ function OverviewTab({ overview, trends, agents, loading }: {
         <GlassCard glow>
           <SectionTitle>业务统计</SectionTitle>
           <div className="space-y-1">
-            <StatRow icon={Users} label="总用户数" value={overview.totalUsers} />
-            <StatRow icon={Users} label="活跃用户" value={overview.activeUsers} />
-            <StatRow icon={MessageSquare} label="对话消息数" value={overview.periodMessages} />
-            <StatRow icon={Bug} label="缺陷总数" value={overview.totalDefects} />
-            <StatRow icon={Bug} label="已解决缺陷" value={overview.resolvedDefects} />
-            <StatRow icon={Image} label="图片生成" value={overview.periodImages} sub="张" />
+            <StatRow icon={Users} label="总用户数" value={overview.totalUsers} info="系统注册的全部用户数（含非活跃）" />
+            <StatRow icon={Users} label="活跃用户" value={overview.activeUsers} info="所选时间范围内有登录活动的用户数" />
+            <StatRow icon={MessageSquare} label="对话消息数" value={overview.periodMessages} info="所选时间范围内所有会话中的消息总条数" />
+            <StatRow icon={Bug} label="缺陷总数" value={overview.totalDefects} info="全部时间段内提交的缺陷报告总数" />
+            <StatRow icon={Bug} label="已解决缺陷" value={overview.resolvedDefects} info="状态为「已解决」或「已关闭」的缺陷数" />
+            <StatRow icon={Image} label="图片生成" value={overview.periodImages} sub="张" info="所选时间范围内的图片生成任务数" />
           </div>
         </GlassCard>
       </div>
@@ -578,13 +588,16 @@ function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]
               </div>
               <div className="space-y-2">
                 <div className="flex justify-between text-[11px]">
-                  <span style={{ color: 'var(--text-muted)' }}>使用人数</span>
+                  <span className="flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                    使用人数
+                    <InfoTip tip="在所选时间范围内，通过 LLM Gateway 调用过该 Agent 的独立用户数" />
+                  </span>
                   <span style={{ color }}>{agent.users}/{totalUsers} 人</span>
                 </div>
                 <ProgressBar value={agent.users} max={totalUsers} color={color} />
-                <StatRow label="调用次数" value={agent.calls} />
-                <StatRow label="Token 消耗" value={formatTokens(agent.tokens)} />
-                <StatRow label="平均响应" value={`${(agent.avgDurationMs / 1000).toFixed(1)}s`} />
+                <StatRow label="调用次数" value={agent.calls} info="该 Agent 在所选时间范围内触发的 LLM 请求总次数（基于 llm_request_logs）" />
+                <StatRow label="Token 消耗" value={formatTokens(agent.tokens)} info="该 Agent 所有 LLM 请求的输入 + 输出 Token 总和" />
+                <StatRow label="平均响应" value={`${(agent.avgDurationMs / 1000).toFixed(1)}s`} info="该 Agent 所有已完成 LLM 请求的平均耗时（不含未完成请求）" />
               </div>
             </GlassCard>
           );
@@ -598,10 +611,18 @@ function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                 <th className="text-left py-2 pr-4 font-medium" style={{ color: 'var(--text-muted)' }}>Agent</th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>调用次数</th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>用户数</th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>Token</th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>平均响应</th>
+                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">调用次数 <InfoTip tip="LLM 请求总次数" /></span>
+                </th>
+                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">用户数 <InfoTip tip="去重后的独立用户数" /></span>
+                </th>
+                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">Token <InfoTip tip="输入 + 输出 Token 总和" /></span>
+                </th>
+                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">平均响应 <InfoTip tip="已完成请求的平均耗时" /></span>
+                </th>
               </tr>
             </thead>
             <tbody>
