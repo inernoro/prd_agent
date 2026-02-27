@@ -51,9 +51,10 @@ import {
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import type { SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2 } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2, ArrowLeft } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -285,6 +286,7 @@ const PanelCard = ({ className, children }: { className?: string; children: Reac
 );
 
 export default function ArticleIllustrationEditorPage({ workspaceId }: { workspaceId: string }) {
+  const navigate = useNavigate();
   const { isMobile } = useBreakpoint();
   const [mobileTab, setMobileTab] = useState<'article' | 'markers'>('article');
   const [articleContent, setArticleContent] = useState('');
@@ -2045,6 +2047,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           {/* 精简头部：标题 + 模型信息 */}
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => navigate(-1)}
+                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+                title="返回"
+              >
+                <ArrowLeft size={16} />
+              </button>
               <div className="flex items-center gap-2">
                 <FileText size={16} style={{ color: 'var(--text-primary)' }} />
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
