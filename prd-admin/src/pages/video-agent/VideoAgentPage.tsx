@@ -73,9 +73,9 @@ const PRD_MD_STYLE = `
 `;
 
 const phaseSteps = [
-  { key: 0, label: '上传' },
-  { key: 1, label: '预览' },
-  { key: 2, label: '分镜标记' },
+  { key: 0, label: '上传文章' },
+  { key: 1, label: '生成分镜' },
+  { key: 2, label: '分镜编辑' },
 ];
 
 // ─── PanelCard ───
@@ -290,7 +290,10 @@ export const VideoAgentPage: React.FC = () => {
 
   // ─── Create run ───
   const handleCreate = async () => {
-    if (!articleContent.trim()) return;
+    if (!articleContent.trim()) {
+      toast.warning('缺少文章内容', '请先上传或粘贴文章');
+      return;
+    }
     setCreating(true);
     try {
       const res = await createVideoGenRunReal({
@@ -300,18 +303,30 @@ export const VideoAgentPage: React.FC = () => {
         styleDescription: styleDescription || undefined,
       });
       if (res.success) {
+        setPhase(1); // 切到预览阶段（SSE 接管后 phase 会自动到 2）
         setSelectedRunId(res.data.runId);
         await loadRuns();
+      } else {
+        toast.error('创建失败', (res as { message?: string }).message || '服务器返回失败');
       }
-    } catch { /* ignore */ } finally { setCreating(false); }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '网络请求失败';
+      toast.error('请求异常', msg);
+      console.error('[VideoAgent] createRun error:', err);
+    } finally { setCreating(false); }
   };
 
   // ─── Cancel run ───
   const handleCancel = async () => {
     if (!selectedRunId) return;
-    await cancelVideoGenRunReal(selectedRunId);
-    await loadRuns();
-    loadDetail(selectedRunId);
+    try {
+      await cancelVideoGenRunReal(selectedRunId);
+      await loadRuns();
+      loadDetail(selectedRunId);
+    } catch (err) {
+      console.error('[VideoAgent] cancel error:', err);
+      toast.error('取消失败', err instanceof Error ? err.message : '请求异常');
+    }
   };
 
   // ─── Update scene narration ───
@@ -338,7 +353,10 @@ export const VideoAgentPage: React.FC = () => {
         scenes[sceneIndex] = { ...scenes[sceneIndex], status: 'Generating', errorMessage: undefined };
         return { ...prev, scenes };
       });
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('[VideoAgent] regenerateScene error:', err);
+      toast.error('重试失败', err instanceof Error ? err.message : '请求异常');
+    }
   };
 
   // ─── Preview image generation ───
@@ -447,7 +465,11 @@ export const VideoAgentPage: React.FC = () => {
     try {
       const res = await triggerVideoRenderReal(selectedRunId);
       if (res.success) { await loadRuns(); loadDetail(selectedRunId); }
-    } catch { /* ignore */ } finally { setExporting(false); }
+      else { toast.error('导出失败', (res as { message?: string }).message || '服务器返回失败'); }
+    } catch (err) {
+      console.error('[VideoAgent] export error:', err);
+      toast.error('导出异常', err instanceof Error ? err.message : '请求异常');
+    } finally { setExporting(false); }
   };
 
   // ─── Step click handler ───
@@ -458,10 +480,7 @@ export const VideoAgentPage: React.FC = () => {
 
   // ─── Active button (depends on phase) ───
   const activeButton = (() => {
-    if (phase === 0 && articleContent.trim()) {
-      return { label: '进入预览', icon: FileText, action: () => { setPhase(1); return Promise.resolve(); } };
-    }
-    if (phase === 1 && !selectedRun) {
+    if ((phase === 0 || phase === 1) && !selectedRun) {
       return { label: '生成分镜标记', icon: Sparkles, action: handleCreate, disabled: !articleContent.trim() };
     }
     if (isEditing) {
@@ -542,73 +561,36 @@ export const VideoAgentPage: React.FC = () => {
 
             {/* Content area */}
             <div className="flex-1 min-h-0 overflow-auto">
-              {phase === 0 && !articleContent ? (
-                /* Upload phase */
-                <div className="h-full flex flex-col items-center justify-center gap-4">
-                  <div
-                    className="w-16 h-16 rounded-2xl flex items-center justify-center"
-                    style={{ background: 'rgba(236, 72, 153, 0.1)', border: '1px solid rgba(236, 72, 153, 0.2)' }}
-                  >
-                    <Upload size={28} style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
-                  </div>
-                  <div className="text-center">
-                    <div className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                      上传文章文件
-                    </div>
-                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                      支持 .md / .txt 格式，或直接粘贴内容
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button variant="primary" onClick={() => fileInputRef.current?.click()}>
+              {phase === 0 ? (
+                /* Upload / Input phase — textarea always visible */
+                <div className="h-full flex flex-col gap-4 p-2">
+                  {/* File upload button */}
+                  <div className="flex items-center gap-3">
+                    <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()}>
                       <Upload size={14} />
                       选择文件
                     </Button>
-                  </div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".md,.txt,.markdown"
-                    className="hidden"
-                    onChange={handleFileUpload}
-                  />
-                  {/* Or paste directly */}
-                  <div className="w-full max-w-md mt-2">
-                    <textarea
-                      placeholder="或在此粘贴 Markdown 文章内容..."
-                      value={articleContent}
-                      onChange={(e) => setArticleContent(e.target.value)}
-                      rows={6}
-                      className="w-full rounded-[14px] px-3 py-2.5 text-sm outline-none resize-none prd-field"
-                      style={{ minHeight: 120 }}
+                    {uploadedFileName && (
+                      <span className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                        {uploadedFileName}
+                      </span>
+                    )}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".md,.txt,.markdown"
+                      className="hidden"
+                      onChange={handleFileUpload}
                     />
                   </div>
-                </div>
-              ) : phase === 0 && articleContent ? (
-                /* File uploaded but not yet previewed */
-                <div className="h-full flex flex-col items-center justify-center gap-4">
-                  <div
-                    className="w-16 h-16 rounded-2xl flex items-center justify-center"
-                    style={{ background: 'rgba(236, 72, 153, 0.1)', border: '1px solid rgba(236, 72, 153, 0.2)' }}
-                  >
-                    <FileText size={28} style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
-                  </div>
-                  <div className="text-center">
-                    <div className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                      {uploadedFileName || '已粘贴文章'}
-                    </div>
-                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                      {articleContent.length} 字符
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button variant="secondary" onClick={() => { setArticleContent(''); setUploadedFileName(null); }}>
-                      重新上传
-                    </Button>
-                    <Button variant="primary" onClick={() => setPhase(1)}>
-                      进入预览
-                    </Button>
-                  </div>
+                  {/* Article content textarea — always visible, won't unmount */}
+                  <textarea
+                    placeholder="粘贴 Markdown 文章内容，或点击上方按钮选择文件..."
+                    value={articleContent}
+                    onChange={(e) => setArticleContent(e.target.value)}
+                    className="flex-1 w-full rounded-[14px] px-3 py-2.5 text-sm outline-none resize-none prd-field"
+                    style={{ minHeight: 200 }}
+                  />
                 </div>
               ) : isActive && selectedRun?.scenes.length === 0 ? (
                 /* Scripting progress */
