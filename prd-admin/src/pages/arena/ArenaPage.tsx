@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
+import { readSseStream } from '@/lib/sse';
 import {
   getArenaLineup,
   revealArenaSlots,
@@ -76,18 +78,36 @@ interface BattleDetail {
 }
 
 // ---------------------------------------------------------------------------
+// URL helpers (match the pattern used by the working modelLab service)
+// ---------------------------------------------------------------------------
+
+function getApiBaseUrl() {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+  return raw.trim().replace(/\/+$/, '');
+}
+
+function joinUrl(base: string, path: string) {
+  const b = base.replace(/\/+$/, '');
+  const p = path.replace(/^\/+/, '');
+  if (!b) return `/${p}`;
+  return `${b}/${p}`;
+}
+
+// ---------------------------------------------------------------------------
 // SSE event routing context
 // ---------------------------------------------------------------------------
 
 interface SSEContext {
-  /** modelId → slotId (built from request slots) */
+  /** modelId → slotId (built from request slots, for matching) */
   modelToSlotId: Map<string, string>;
-  /** Backend itemId (ObjectId) → slotId (built dynamically from modelStart events) */
+  /** Backend itemId → slotId (built dynamically from modelStart events) */
   itemIdToSlotMap: Map<string, string>;
   /** Tracks which slots have been assigned to prevent duplicate-model confusion */
   assignedSlots: Set<string>;
-  /** Original slots array for sequential matching */
+  /** Original slots array for sequential fallback */
   slots: ArenaSlot[];
+  /** Sequential counter for fallback assignment when modelId matching fails */
+  nextUnassignedIdx: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -287,8 +307,8 @@ export function ArenaPage() {
 
   // --- SSE event handler ---
   function handleSSEEvent(sseEvent: string | undefined, data: any, ctx: SSEContext) {
-    const type = data.type as string;
-    const itemId = data.itemId as string | undefined;
+    const type = data?.type as string;
+    const itemId = data?.itemId as string | undefined;
 
     // Run-level events (event: run)
     if (sseEvent === 'run') {
@@ -303,25 +323,39 @@ export function ArenaPage() {
       return;
     }
 
-    // Model-level events — resolve slotId
-    // On modelStart, build itemId → slotId mapping dynamically
-    if (type === 'modelStart' && itemId && data.modelId) {
-      for (const s of ctx.slots) {
-        if (s.modelId === data.modelId && !ctx.assignedSlots.has(s.id)) {
-          ctx.itemIdToSlotMap.set(itemId, s.id);
-          ctx.assignedSlots.add(s.id);
-          break;
+    // Model-level events — resolve slotId from itemId
+    if (type === 'modelStart' && itemId) {
+      // Strategy 1: Match by modelId
+      const eventModelId = data.modelId as string | undefined;
+      let matched = false;
+      if (eventModelId) {
+        for (const s of ctx.slots) {
+          if (s.modelId === eventModelId && !ctx.assignedSlots.has(s.id)) {
+            ctx.itemIdToSlotMap.set(itemId, s.id);
+            ctx.assignedSlots.add(s.id);
+            matched = true;
+            break;
+          }
+        }
+      }
+      // Strategy 2: Sequential fallback — assign to next unassigned slot
+      if (!matched) {
+        while (ctx.nextUnassignedIdx < ctx.slots.length) {
+          const s = ctx.slots[ctx.nextUnassignedIdx];
+          ctx.nextUnassignedIdx++;
+          if (!ctx.assignedSlots.has(s.id)) {
+            ctx.itemIdToSlotMap.set(itemId, s.id);
+            ctx.assignedSlots.add(s.id);
+            break;
+          }
         }
       }
     }
 
-    // Resolve slotId: primary = itemId map, fallback = modelId
+    // Resolve slotId
     let slotId: string | undefined;
     if (itemId) {
       slotId = ctx.itemIdToSlotMap.get(itemId);
-    }
-    if (!slotId && data.modelId) {
-      slotId = ctx.modelToSlotId.get(data.modelId);
     }
     if (!slotId) return;
 
@@ -421,6 +455,7 @@ export function ArenaPage() {
       itemIdToSlotMap: new Map(),
       assignedSlots: new Set(),
       slots,
+      nextUnassignedIdx: 0,
     };
 
     const abortController = new AbortController();
@@ -429,16 +464,14 @@ export function ArenaPage() {
     try {
       const token = useAuthStore.getState().token;
       const sseUrl = api.lab.model.runsStream();
-
-      const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim().replace(/\/+$/, '') ?? '';
-      const fullUrl = baseUrl ? `${baseUrl}/${sseUrl.replace(/^\/+/, '')}` : sseUrl;
+      const fullUrl = joinUrl(getApiBaseUrl(), sseUrl);
 
       const response = await fetch(fullUrl, {
         method: 'POST',
         headers: {
+          Accept: 'text/event-stream',
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
-          'X-Client': 'admin',
         },
         body: JSON.stringify({
           promptText: question,
@@ -453,46 +486,26 @@ export function ArenaPage() {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+        const errText = await response.text().catch(() => '');
+        throw new Error(errText || `HTTP ${response.status} ${response.statusText}`);
       }
 
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        while (true) {
-          const idx = buffer.indexOf('\n\n');
-          if (idx < 0) break;
-          const raw = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-
-          const messageLines = raw.split('\n').map((l) => l.trimEnd());
-          let sseEvent: string | undefined;
-          const dataLines: string[] = [];
-          for (const mLine of messageLines) {
-            if (mLine.startsWith('event:')) sseEvent = mLine.slice('event:'.length).trim();
-            if (mLine.startsWith('data:')) dataLines.push(mLine.slice('data:'.length).trim());
-          }
-
-          if (dataLines.length === 0) continue;
-          const dataStr = dataLines.join('\n');
-          if (!dataStr || dataStr === '[DONE]') continue;
-
+      // Use the proven readSseStream utility (handles CRLF, keepalive comments, etc.)
+      await readSseStream(
+        response,
+        (evt) => {
+          if (!evt.data) return;
+          if (evt.data === '[DONE]') return;
           let data: any;
           try {
-            data = JSON.parse(dataStr);
+            data = JSON.parse(evt.data);
           } catch {
-            continue;
+            return;
           }
-
-          handleSSEEvent(sseEvent, data, sseCtx);
-        }
-      }
+          handleSSEEvent(evt.event, data, sseCtx);
+        },
+        abortController.signal
+      );
     } catch (e: any) {
       if (e?.name === 'AbortError') return;
       toast.error('流式请求失败', e?.message ?? '网络错误');
@@ -614,7 +627,7 @@ export function ArenaPage() {
     setPrompt(e.target.value);
     const el = e.target;
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   }
 
   // --- Filter history ---
@@ -938,7 +951,7 @@ export function ArenaPage() {
 
                       {/* Body — internal scroll */}
                       <div
-                        className="flex-1 overflow-y-auto min-h-0 px-4 py-3"
+                        className="flex-1 overflow-y-auto min-h-0 px-5 py-4"
                         data-panel-body
                       >
                         {panel.status === 'waiting' ? (
@@ -960,8 +973,8 @@ export function ArenaPage() {
                             </div>
                           </div>
                         ) : (
-                          <div className="text-[13px] leading-relaxed whitespace-pre-wrap break-words" style={{ color: 'var(--text-primary)' }}>
-                            {panel.text}
+                          <div className="arena-markdown text-[14px] leading-[1.75] break-words" style={{ color: 'var(--text-primary)' }}>
+                            <ReactMarkdown>{panel.text}</ReactMarkdown>
                             {panel.status === 'streaming' && (
                               <span
                                 className="inline-block w-[2px] h-[14px] ml-0.5 animate-pulse"
@@ -1002,16 +1015,16 @@ export function ArenaPage() {
 
         {/* ===================== Bottom Bar ===================== */}
         <div
-          className="flex-shrink-0 px-4 py-3 border-t"
+          className="flex-shrink-0 px-6 py-4 border-t"
           style={{
             borderColor: 'var(--glass-border, rgba(255,255,255,0.07))',
             background: 'var(--bg-base, #0d0d0f)',
           }}
         >
-          <div className="max-w-5xl mx-auto">
+          <div className="mx-auto" style={{ maxWidth: '900px' }}>
             <div
-              className="flex items-end gap-2 rounded-[14px] p-2"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+              className="rounded-[16px] p-3"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
             >
               <textarea
                 ref={textareaRef}
@@ -1028,45 +1041,50 @@ export function ArenaPage() {
                         : '输入你的问题，让多个模型匿名回答...'
                 }
                 disabled={isStreaming || slots.length === 0}
-                rows={1}
+                rows={2}
                 className={cn(
-                  'flex-1 bg-transparent border-none outline-none resize-none text-[14px] leading-relaxed',
+                  'w-full bg-transparent border-none outline-none resize-none text-[14px] leading-relaxed',
                   'placeholder:text-[color:var(--text-muted)] disabled:opacity-50 disabled:cursor-not-allowed',
-                  'px-2 py-1.5'
+                  'px-2 py-1'
                 )}
-                style={{ color: 'var(--text-primary)', maxHeight: '160px' }}
+                style={{ color: 'var(--text-primary)', minHeight: '56px', maxHeight: '200px' }}
               />
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleSend}
-                disabled={isStreaming || !prompt.trim() || slots.length === 0}
-                className="flex-shrink-0 mb-0.5"
-              >
-                {isStreaming ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              </Button>
-            </div>
-            <div className="flex items-center justify-between mt-1.5 px-1">
-              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                Enter 发送, Shift+Enter 换行
-              </span>
-              {canReveal ? (
-                <Button
-                  variant="primary"
-                  size="xs"
-                  onClick={handleReveal}
-                  disabled={revealLoading}
-                >
-                  {revealLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Eye className="w-3 h-3" />}
-                  揭晓模型身份
-                </Button>
-              ) : (
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              <div className="flex items-center justify-between mt-2 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                <span className="text-[11px] px-2" style={{ color: 'var(--text-muted)' }}>
                   {slots.length > 0
-                    ? `${selectedGroup?.name} - ${slots.length} 个模型将匿名回答`
+                    ? `${selectedGroup?.name} · ${slots.length} 个模型匿名回答`
                     : groups.length === 0 ? '未配置阵容' : '请选择阵容'}
                 </span>
-              )}
+                <div className="flex items-center gap-2">
+                  {canReveal && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleReveal}
+                      disabled={revealLoading}
+                    >
+                      {revealLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                      揭晓身份
+                    </Button>
+                  )}
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleSend}
+                    disabled={isStreaming || !prompt.trim() || slots.length === 0}
+                    className="px-4"
+                  >
+                    {isStreaming ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        发送
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
