@@ -67,13 +67,26 @@
 }
 
 /*
- * Dark mode prose override (higher specificity than Tailwind Typography defaults)
- * Fixes: dark mode text unreadable in PRD preview & other markdown areas.
- * Tailwind Typography's extend-merge may leave built-in hardcoded light-mode
- * values (e.g. #374151) on .prose; this rule uses .dark .prose (0,2,0)
- * to guarantee the correct dark-mode token values take effect.
+ * Dark mode prose: nuclear override
+ *
+ * Problem: body text in .prose is muted/unreadable in dark mode while headings
+ * are fine. Root causes identified:
+ *   1. dark:prose-invert utility (.dark\:prose-invert:is(.dark *)) comes AFTER
+ *      any custom .dark .prose rule in the generated CSS (both are specificity
+ *      0,2,0), so the utility wins and sets --tw-prose-body to var(--md-text).
+ *      The nested CSS variable chain var(--md-text)->var(--color-text)->#f1f5f9
+ *      may not resolve correctly in all WebView engines.
+ *   2. Headings have explicit color rules (color: var(--tw-prose-headings)) on
+ *      the element itself, but body text (p, li, td…) only INHERITS from the
+ *      .prose root — any inline style from raw HTML (rehype-raw) can override.
+ *   3. PRD content may contain raw HTML with inline style="color:..." that
+ *      doesn't adapt to dark mode.
+ *
+ * Fix: set direct color values (not CSS variables) with !important to override
+ * inline styles and bypass CSS variable resolution issues entirely.
  */
 .dark .prose {
+  color: #f1f5f9 !important;
   --tw-prose-body: #f1f5f9;
   --tw-prose-headings: #f1f5f9;
   --tw-prose-lead: #f1f5f9;
@@ -90,6 +103,35 @@
   --tw-prose-quote-borders: rgba(56, 189, 248, 0.45);
   --tw-prose-th-borders: #334155;
   --tw-prose-td-borders: #334155;
+}
+
+/* Force body text elements to inherit prose root color - handles inline styles
+   from raw HTML, CSS variable resolution failures, and WebView quirks.
+   Uses :where() for zero added specificity + !important to beat inline styles. */
+.dark .prose :where(p, li, td, span, div, blockquote, dt, dd,
+  figcaption, summary, details, label):not(:where([class~="not-prose"],
+  [class~="not-prose"] *)) {
+  color: inherit !important;
+}
+
+.dark .prose :where(strong, b, em, i, del, ins, mark, small, sub,
+  sup):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  color: inherit !important;
+}
+
+.dark .prose :where(h1, h2, h3, h4, h5, h6,
+  th):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  color: #f1f5f9 !important;
+}
+
+.dark .prose :where(a):not(:where([class~="not-prose"],
+  [class~="not-prose"] *)) {
+  color: #7dd3fc !important;
+}
+
+.dark .prose :where(code):not(:where([class~="not-prose"],
+  [class~="not-prose"] *)) {
+  color: #bae6fd !important;
 }
 
 * {
