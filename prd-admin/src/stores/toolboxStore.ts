@@ -15,7 +15,7 @@ import type {
   AgentInfo,
 } from '@/services';
 
-export type ToolboxView = 'grid' | 'detail' | 'create' | 'edit' | 'running';
+export type ToolboxView = 'grid' | 'detail' | 'create' | 'edit' | 'running' | 'quick-create';
 export type ToolboxCategory = 'all' | 'builtin' | 'custom' | 'favorite';
 export type ToolboxPageTab = 'toolbox' | 'capabilities';
 
@@ -54,6 +54,7 @@ interface ToolboxState {
   setSearchQuery: (query: string) => void;
   startCreate: () => void;
   startEdit: (item: ToolboxItem) => void;
+  setEditingItem: (item: Partial<ToolboxItem>) => void;
   saveItem: (item: Partial<ToolboxItem>) => Promise<boolean>;
   deleteItem: (id: string) => Promise<boolean>;
   runItem: (itemId: string, input: string) => Promise<void>;
@@ -252,10 +253,10 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
     set({ searchQuery: query });
   },
 
-  // Start creating a new item
+  // Start creating a new item (quick wizard)
   startCreate: () => {
     set({
-      view: 'create',
+      view: 'quick-create',
       editingItem: {
         name: '',
         description: '',
@@ -274,6 +275,11 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       view: 'edit',
       editingItem: { ...item },
     });
+  },
+
+  // Set editing item (used by QuickCreateWizard to pass data to full editor)
+  setEditingItem: (item: Partial<ToolboxItem>) => {
+    set({ editingItem: item });
   },
 
   // Save item (create or update)
