@@ -559,19 +559,19 @@ export default function Sidebar() {
                       className="z-50 min-w-[140px] rounded-md ui-glass-panel p-1"
                     >
                       <DropdownMenu.Item
-                        className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none"
+                        className="px-2 py-1.5 text-sm rounded cursor-pointer text-text-primary hover:bg-black/5 dark:hover:bg-white/5 outline-none"
                         onSelect={handleCreateGroup}
                       >
                         创建群组
                       </DropdownMenu.Item>
                       <DropdownMenu.Item
-                        className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none"
+                        className="px-2 py-1.5 text-sm rounded cursor-pointer text-text-primary hover:bg-black/5 dark:hover:bg-white/5 outline-none"
                         onSelect={handleJoinGroup}
                       >
                         加入群组
                       </DropdownMenu.Item>
                       <DropdownMenu.Item
-                        className={`px-2 py-1.5 text-sm rounded outline-none ${
+                        className={`px-2 py-1.5 text-sm rounded outline-none text-text-primary ${
                           activeGroupId
                             ? (canReplacePrd ? 'cursor-pointer hover:bg-black/5 dark:hover:bg-white/5' : 'opacity-50 cursor-not-allowed')
                             : 'opacity-50 cursor-not-allowed'
