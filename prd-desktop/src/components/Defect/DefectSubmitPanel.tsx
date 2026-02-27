@@ -28,6 +28,7 @@ interface DefectTemplate {
   id: string;
   name: string;
   description?: string;
+  exampleContent?: string;
   isDefault?: boolean;
 }
 
@@ -104,6 +105,7 @@ export default function DefectSubmitPanel() {
   const [polishing, setPolishing] = useState(false);
   const [error, setError] = useState('');
   const [focused, setFocused] = useState(false);
+  const [showExample, setShowExample] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -366,11 +368,31 @@ export default function DefectSubmitPanel() {
             </div>
           </div>
 
-          {/* Template hint */}
-          {selectedTemplate?.description && (
-            <div className="mt-2 px-3 py-2 rounded-lg text-[11px] bg-blue-500/8 border border-blue-500/15 text-text-secondary">
-              <span className="text-blue-400">模板提示：</span>
-              {selectedTemplate.description}
+          {/* Template hint + example */}
+          {selectedTemplate && (selectedTemplate.description || selectedTemplate.exampleContent) && (
+            <div className="mt-2 space-y-2">
+              {selectedTemplate.description && (
+                <div className="px-3 py-2 rounded-lg text-[11px] bg-blue-500/8 border border-blue-500/15 text-text-secondary">
+                  <span className="text-blue-400">模板提示：</span>
+                  {selectedTemplate.description}
+                </div>
+              )}
+              {selectedTemplate.exampleContent && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowExample(!showExample)}
+                    className="flex items-center gap-1.5 text-[11px] text-amber-400/85 hover:opacity-80 transition-colors"
+                  >
+                    {showExample ? '▾ 收起示范' : '▸ 查看示范 — 看看理想的缺陷报告长什么样'}
+                  </button>
+                  {showExample && (
+                    <div className="mt-1.5 px-3 py-2.5 rounded-lg text-[12px] whitespace-pre-wrap leading-relaxed bg-amber-500/6 border border-amber-500/15 text-text-secondary max-h-[200px] overflow-y-auto">
+                      {selectedTemplate.exampleContent}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
