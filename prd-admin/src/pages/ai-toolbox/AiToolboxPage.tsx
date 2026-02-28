@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { useToolboxStore, type ToolboxCategory, type ToolboxPageTab } from '@/stores/toolboxStore';
-import { Package, Search, Plus, Loader2, Sparkles, Boxes, User, Wrench } from 'lucide-react';
+import { Package, Search, Plus, Loader2, Sparkles, Boxes, User, Wrench, Star } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { ToolCard } from './components/ToolCard';
@@ -18,6 +18,7 @@ const PAGE_TABS: { key: ToolboxPageTab; label: string; icon: React.ReactNode }[]
 
 const CATEGORY_OPTIONS: { key: ToolboxCategory; label: string; icon: React.ReactNode }[] = [
   { key: 'all', label: '全部', icon: <Boxes size={12} /> },
+  { key: 'favorite', label: '收藏', icon: <Star size={12} /> },
   { key: 'builtin', label: '内置工具', icon: <Sparkles size={12} /> },
   { key: 'custom', label: '我创建的', icon: <User size={12} /> },
 ];
@@ -36,6 +37,7 @@ export default function AiToolboxPage() {
     items,
     itemsLoading,
     selectedItem,
+    favoriteIds,
     setPageTab,
     setCategory,
     setSearchQuery,
@@ -56,6 +58,8 @@ export default function AiToolboxPage() {
       result = result.filter((item) => item.type === 'builtin');
     } else if (category === 'custom') {
       result = result.filter((item) => item.type === 'custom');
+    } else if (category === 'favorite') {
+      result = result.filter((item) => favoriteIds.has(item.id));
     }
 
     // Filter by search
@@ -70,7 +74,7 @@ export default function AiToolboxPage() {
     }
 
     return result;
-  }, [items, category, searchQuery]);
+  }, [items, category, searchQuery, favoriteIds]);
 
   // Render based on current view
   if (view === 'detail' && selectedItem) {

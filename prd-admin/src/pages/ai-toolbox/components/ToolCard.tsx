@@ -95,12 +95,13 @@ function getPalette(iconName: string) {
 }
 
 export function ToolCard({ item }: ToolCardProps) {
-  const { selectItem } = useToolboxStore();
+  const { selectItem, toggleFavorite, isFavorite } = useToolboxStore();
   const navigate = useNavigate();
   const { isMobile } = useBreakpoint();
   const palette = getPalette(item.icon);
   const IconComponent = getIconComponent(item.icon);
   const isCustomized = !!item.routePath;
+  const favorited = isFavorite(item.id);
 
   const handleClick = () => {
     if (isCustomized && item.routePath) {
@@ -108,6 +109,11 @@ export function ToolCard({ item }: ToolCardProps) {
     } else {
       selectItem(item);
     }
+  };
+
+  const handleToggleFavorite = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    toggleFavorite(item.id);
   };
 
   return (
@@ -144,14 +150,18 @@ export function ToolCard({ item }: ToolCardProps) {
         {/* Icon + Title row */}
         <div className="flex items-start gap-3 mb-2.5">
           <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 relative"
             style={{
               background: `linear-gradient(135deg, ${palette.from}22 0%, ${palette.from}0a 100%)`,
               border: `1px solid ${palette.from}28`,
               boxShadow: `0 2px 10px ${palette.from}12`,
             }}
           >
-            <IconComponent size={19} style={{ color: palette.soft }} />
+            {item.emoji ? (
+              <span className="text-[20px] leading-none select-none">{item.emoji}</span>
+            ) : (
+              <IconComponent size={19} style={{ color: palette.soft }} />
+            )}
           </div>
           <div className="flex-1 min-w-0 pt-1">
             <div className="flex items-center gap-1">
@@ -223,15 +233,34 @@ export function ToolCard({ item }: ToolCardProps) {
             ) : item.type === 'builtin' ? '内置' : '自定义'}
           </span>
 
-          {item.usageCount > 0 && (
-            <span
-              className="flex items-center gap-0.5 text-[10px]"
-              style={{ color: 'rgba(255, 255, 255, 0.4)' }}
+          <div className="flex items-center gap-2">
+            {item.usageCount > 0 && (
+              <span
+                className="flex items-center gap-0.5 text-[10px]"
+                style={{ color: 'rgba(255, 255, 255, 0.4)' }}
+              >
+                <Zap size={8} style={{ color: palette.soft, opacity: 0.8 }} />
+                {item.usageCount}
+              </span>
+            )}
+            <button
+              onClick={handleToggleFavorite}
+              className="flex items-center justify-center w-6 h-6 rounded-md transition-all duration-200 hover:scale-110"
+              style={{
+                background: favorited ? `${palette.from}18` : 'transparent',
+              }}
+              title={favorited ? '取消收藏' : '收藏'}
             >
-              <Zap size={8} style={{ color: palette.soft, opacity: 0.8 }} />
-              {item.usageCount}
-            </span>
-          )}
+              <Star
+                size={13}
+                fill={favorited ? '#FBBF24' : 'none'}
+                style={{
+                  color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',
+                  transition: 'all 0.2s ease',
+                }}
+              />
+            </button>
+          </div>
         </div>
       </div>
     </GlassCard>
