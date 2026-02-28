@@ -6277,10 +6277,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div
                   className="w-[560px] max-w-[82vw] rounded-[12px] p-3"
                   style={{
-                    ...glassInputArea,
-                    background: 'rgba(0,0,0,0.14)',
-                    border: '1px solid var(--border-subtle, rgba(255,255,255,0.12))',
-                    boxShadow: '0 24px 90px rgba(0,0,0,0.45)',
+                    background: '#2c2c2e',
+                    backdropFilter: 'none',
+                    WebkitBackdropFilter: 'none',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    boxShadow: '0 12px 48px rgba(0,0,0,0.40)',
                     minHeight: 148,
                   }}
                 >
@@ -6652,10 +6653,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div
               className="h-9 rounded-[999px] px-1.5 inline-flex items-center gap-1 whitespace-nowrap"
               style={{
-                ...glassTooltip,
+                background: '#2c2c2e',
+                backdropFilter: 'none',
+                WebkitBackdropFilter: 'none',
                 border: '1px solid rgba(255,255,255,0.08)',
-                background: 'rgba(38, 38, 42, 0.82)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.40)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
                 color: 'var(--text-secondary)',
               }}
             >
@@ -6733,10 +6735,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div
               className="rounded-full p-1.5 flex flex-col gap-1.5 bg-transparent"
               style={{
-                ...glassPanel,
-                background: 'rgba(38, 38, 42, 0.80)',
+                background: '#2c2c2e',
+                backdropFilter: 'none',
+                WebkitBackdropFilter: 'none',
                 border: '1px solid rgba(255,255,255,0.08)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.40), 0 0 0 1px rgba(255, 255, 255, 0.04) inset',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.35), 0 0 0 1px rgba(255, 255, 255, 0.04) inset',
               }}
             >
               {/* 工具（hover 弹出：Select / Hand / Mark[禁用]） */}
@@ -7267,10 +7270,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div
               className="absolute left-1/2 -translate-x-1/2 bottom-3 z-40 inline-flex items-center gap-1 px-1.5 rounded-full h-12"
               style={{
-                ...glassTooltip,
+                background: '#2c2c2e',
+                backdropFilter: 'none',
+                WebkitBackdropFilter: 'none',
                 border: '1px solid rgba(255,255,255,0.08)',
-                background: 'rgba(38, 38, 42, 0.85)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.40)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
               }}
             >
               {/* 手型工具 — 拖拽画布 */}
@@ -7357,12 +7361,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div
               className={`flex flex-col h-full ${isMobile ? 'p-3' : 'p-2.5 rounded-[14px]'}`}
               style={{
-                ...glassPanel,
                 background: isMobile
-                  ? 'linear-gradient(180deg, rgba(32, 32, 36, 0.96) 0%, rgba(28, 28, 32, 0.98) 100%)'
-                  : 'linear-gradient(180deg, rgba(40, 40, 44, 0.90) 0%, rgba(34, 34, 38, 0.92) 100%)',
+                  ? 'linear-gradient(180deg, #252528 0%, #222225 100%)'
+                  : 'linear-gradient(180deg, #2c2c2e 0%, #282828 100%)',
+                backdropFilter: 'none',
+                WebkitBackdropFilter: 'none',
                 border: isMobile ? 'none' : '1px solid rgba(255, 255, 255, 0.08)',
-                boxShadow: isMobile ? 'none' : '0 8px 32px rgba(0,0,0,0.40), 0 0 0 1px rgba(255, 255, 255, 0.04) inset',
+                boxShadow: isMobile ? 'none' : '0 8px 32px rgba(0,0,0,0.35), 0 0 0 1px rgba(255, 255, 255, 0.04) inset',
                 borderRadius: isMobile ? 0 : 14,
               }}
             >
