@@ -218,10 +218,15 @@ public class VideoGenRunWorker : BackgroundService
             var outputMp4 = Path.Combine(outDir, $"{run.Id}_scene_{sceneIdx}.mp4");
 
             // 调用 Remotion 渲染 SingleScene 组合
+            // Windows 上 Process.Start 在 UseShellExecute=false 时找不到 npx，需要用 cmd /c
+            var isWindows = OperatingSystem.IsWindows();
+            var remotionCmd = $"npx remotion render SingleScene \"{outputMp4}\" --props=\"{dataFilePath}\"";
             var psi = new ProcessStartInfo
             {
-                FileName = "npx",
-                Arguments = $"remotion render SingleScene \"{outputMp4}\" --props=\"{dataFilePath}\"",
+                FileName = isWindows ? "cmd" : "npx",
+                Arguments = isWindows
+                    ? $"/c {remotionCmd}"
+                    : $"remotion render SingleScene \"{outputMp4}\" --props=\"{dataFilePath}\"",
                 WorkingDirectory = videoProjectPath,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -548,10 +553,14 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task RunRemotionRenderAsync(VideoGenRun run, string projectPath, string dataFile, string outputMp4)
     {
+        var isWindows = OperatingSystem.IsWindows();
+        var remotionCmd = $"npx remotion render TutorialVideo \"{outputMp4}\" --props=\"{dataFile}\"";
         var psi = new ProcessStartInfo
         {
-            FileName = "npx",
-            Arguments = $"remotion render TutorialVideo \"{outputMp4}\" --props=\"{dataFile}\"",
+            FileName = isWindows ? "cmd" : "npx",
+            Arguments = isWindows
+                ? $"/c {remotionCmd}"
+                : $"remotion render TutorialVideo \"{outputMp4}\" --props=\"{dataFile}\"",
             WorkingDirectory = projectPath,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -958,8 +967,10 @@ public class VideoGenRunWorker : BackgroundService
         var path = _configuration["VideoAgent:RemotionProjectPath"];
         if (string.IsNullOrWhiteSpace(path))
         {
+            // AppContext.BaseDirectory = .../prd-api/src/PrdAgent.Api/bin/Debug/net8.0/
+            // 需要向上 6 级到项目根目录，再进 prd-video
             var baseDir = AppContext.BaseDirectory;
-            path = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "..", "prd-video"));
+            path = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "..", "..", "prd-video"));
         }
         return path;
     }
