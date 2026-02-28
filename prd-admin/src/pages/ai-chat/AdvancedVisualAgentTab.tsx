@@ -1568,6 +1568,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       ui.style.setProperty('--zoom', String(z));
       ui.style.setProperty('--invZoom', String(1 / Math.max(0.0001, z)));
     }
+    // 同步画布背景网格（点阵随 pan/zoom 运动）
+    const stageEl = stageRef.current;
+    if (stageEl) {
+      const gridBase = 24;
+      const sz = gridBase * z;
+      stageEl.style.backgroundSize = `${sz}px ${sz}px`;
+      stageEl.style.backgroundPosition = `${cam.x % sz}px ${cam.y % sz}px`;
+    }
     // 同步更新快捷输入框位置（避免 React 状态延迟导致不跟手）
     const quickPanel = quickPanelRef.current;
     const gen = selectedGeneratorRef.current;
@@ -5043,7 +5051,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             ref={stageRef}
             className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:outline-none! focus-visible:shadow-none!"
             style={{
-              background: 'rgba(0,0,0,0.10)',
+              backgroundColor: '#1e1e1e',
+              backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.12) 1px, transparent 1px)',
+              backgroundSize: '24px 24px',
+              backgroundPosition: '0px 0px',
               cursor: panning ? 'grabbing' : effectiveTool === 'hand' ? 'grab' : 'default',
               userSelect: 'none',
               WebkitUserSelect: 'none',
