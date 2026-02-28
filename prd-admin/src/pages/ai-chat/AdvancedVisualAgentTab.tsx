@@ -6653,9 +6653,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               className="h-9 rounded-[999px] px-1.5 inline-flex items-center gap-1 whitespace-nowrap"
               style={{
                 ...glassTooltip,
-                border: '1px solid rgba(255,255,255,0.12)',
-                background: 'rgba(0,0,0,0.25)',
-                boxShadow: '0 18px 60px rgba(0,0,0,0.50)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                background: 'rgba(38, 38, 42, 0.82)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.40)',
                 color: 'var(--text-secondary)',
               }}
             >
@@ -6734,7 +6734,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               className="rounded-full p-1.5 flex flex-col gap-1.5 bg-transparent"
               style={{
                 ...glassPanel,
-                boxShadow: '0 18px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                background: 'rgba(38, 38, 42, 0.80)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.40), 0 0 0 1px rgba(255, 255, 255, 0.04) inset',
               }}
             >
               {/* 工具（hover 弹出：Select / Hand / Mark[禁用]） */}
@@ -7266,9 +7268,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               className="absolute left-1/2 -translate-x-1/2 bottom-3 z-40 inline-flex items-center gap-1 px-1.5 rounded-full h-12"
               style={{
                 ...glassTooltip,
-                border: '1px solid rgba(255,255,255,0.14)',
-                background: 'rgba(0,0,0,0.45)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                background: 'rgba(38, 38, 42, 0.85)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.40)',
               }}
             >
               {/* 手型工具 — 拖拽画布 */}
@@ -7357,10 +7359,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               style={{
                 ...glassPanel,
                 background: isMobile
-                  ? 'linear-gradient(180deg, rgba(18, 18, 22, 0.96) 0%, rgba(14, 14, 18, 0.98) 100%)'
-                  : 'linear-gradient(180deg, var(--glass-bg-start, rgba(30, 30, 35, 0.85)) 0%, var(--glass-bg-end, rgba(25, 25, 30, 0.80)) 100%)',
-                border: isMobile ? 'none' : '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
-                boxShadow: isMobile ? 'none' : '0 12px 40px rgba(0,0,0,0.50), 0 0 0 1px rgba(255, 255, 255, 0.05) inset',
+                  ? 'linear-gradient(180deg, rgba(32, 32, 36, 0.96) 0%, rgba(28, 28, 32, 0.98) 100%)'
+                  : 'linear-gradient(180deg, rgba(40, 40, 44, 0.90) 0%, rgba(34, 34, 38, 0.92) 100%)',
+                border: isMobile ? 'none' : '1px solid rgba(255, 255, 255, 0.08)',
+                boxShadow: isMobile ? 'none' : '0 8px 32px rgba(0,0,0,0.40), 0 0 0 1px rgba(255, 255, 255, 0.04) inset',
                 borderRadius: isMobile ? 0 : 14,
               }}
             >
