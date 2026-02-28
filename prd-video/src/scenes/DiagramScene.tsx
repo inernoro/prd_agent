@@ -41,7 +41,7 @@ export const DiagramScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
         opacity: fadeOut,
       }}
     >
-      <Background accentColor={COLORS.neon.pink} variant="radial" />
+      <Background accentColor={COLORS.neon.pink} variant="radial" backgroundImageUrl={scene.backgroundImageUrl} />
       <FloatingShapes accentColor={COLORS.neon.pink} seed={505} intensity="medium" />
 
       <div

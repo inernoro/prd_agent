@@ -50,7 +50,7 @@ export const IntroScene: React.FC<{ scene: SceneData; videoTitle: string }> = ({
         opacity: fadeOutProgress,
       }}
     >
-      <Background accentColor={COLORS.neon.blue} variant="radial" />
+      <Background accentColor={COLORS.neon.blue} variant="radial" backgroundImageUrl={scene.backgroundImageUrl} />
       <FloatingShapes accentColor={COLORS.neon.blue} seed={42} intensity="medium" />
 
       <div

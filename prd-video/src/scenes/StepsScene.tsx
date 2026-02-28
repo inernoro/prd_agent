@@ -45,7 +45,7 @@ export const StepsScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
         opacity: fadeOut,
       }}
     >
-      <Background accentColor={COLORS.neon.green} variant="split" />
+      <Background accentColor={COLORS.neon.green} variant="split" backgroundImageUrl={scene.backgroundImageUrl} />
       <FloatingShapes accentColor={COLORS.neon.green} seed={202} intensity="low" />
 
       <div

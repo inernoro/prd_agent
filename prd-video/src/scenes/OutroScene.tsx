@@ -36,7 +36,7 @@ export const OutroScene: React.FC<{ scene: SceneData; videoTitle: string }> = ({
         justifyContent: "center",
       }}
     >
-      <Background accentColor={COLORS.neon.purple} variant="radial" />
+      <Background accentColor={COLORS.neon.purple} variant="radial" backgroundImageUrl={scene.backgroundImageUrl} />
       <FloatingShapes accentColor={COLORS.neon.purple} seed={707} intensity="high" />
 
       <div

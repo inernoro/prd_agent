@@ -17,6 +17,7 @@ import {
   Loader2,
   Play,
   X,
+  ImageIcon,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
@@ -28,6 +29,7 @@ import {
   regenerateVideoSceneReal,
   triggerVideoRenderReal,
   generateScenePreviewReal,
+  generateSceneBgImageReal,
   getVideoGenStreamUrl,
   getVideoGenDownloadUrl,
 } from '@/services/real/videoAgent';
@@ -184,9 +186,9 @@ export const VideoAgentPage: React.FC = () => {
 
   // ─── SSE / Polling ───
 
-  // 是否有需要轮询的分镜（Generating 或 imageStatus=running）
+  // 是否有需要轮询的分镜（Generating 或 imageStatus=running 或 backgroundImageStatus=running）
   const needsScenePolling = selectedRun?.status === 'Editing' && selectedRun.scenes.some(
-    (s) => s.status === 'Generating' || s.imageStatus === 'running'
+    (s) => s.status === 'Generating' || s.imageStatus === 'running' || s.backgroundImageStatus === 'running'
   );
 
   useEffect(() => {
@@ -398,6 +400,49 @@ export const VideoAgentPage: React.FC = () => {
     if (!selectedRun) return;
     selectedRun.scenes.forEach((scene, idx) => {
       if (scene.imageStatus !== 'running') handleGeneratePreview(idx);
+    });
+  };
+
+  // ─── Generate background image (AI) ───
+  const handleGenerateBgImage = async (sceneIndex: number) => {
+    if (!selectedRunId || !selectedRun) return;
+
+    // Optimistic UI
+    setSelectedRun((prev) => {
+      if (!prev) return prev;
+      const scenes = [...prev.scenes];
+      scenes[sceneIndex] = { ...scenes[sceneIndex], backgroundImageStatus: 'running', backgroundImageUrl: undefined };
+      return { ...prev, scenes };
+    });
+
+    try {
+      const res = await generateSceneBgImageReal(selectedRunId, sceneIndex);
+      if (!res.success) {
+        setSelectedRun((prev) => {
+          if (!prev) return prev;
+          const scenes = [...prev.scenes];
+          scenes[sceneIndex] = { ...scenes[sceneIndex], backgroundImageStatus: 'error' };
+          return { ...prev, scenes };
+        });
+        toast.error('生图失败', '无法启动背景图生成');
+      }
+    } catch (err) {
+      setSelectedRun((prev) => {
+        if (!prev) return prev;
+        const scenes = [...prev.scenes];
+        if (scenes[sceneIndex]?.backgroundImageStatus === 'running') {
+          scenes[sceneIndex] = { ...scenes[sceneIndex], backgroundImageStatus: 'error' };
+        }
+        return { ...prev, scenes };
+      });
+      toast.error('请求异常', err instanceof Error ? err.message : '网络错误');
+    }
+  };
+
+  const handleBatchGenerateBgImages = () => {
+    if (!selectedRun) return;
+    selectedRun.scenes.forEach((scene, idx) => {
+      if (scene.backgroundImageStatus !== 'running') handleGenerateBgImage(idx);
     });
   };
 
@@ -732,13 +777,23 @@ export const VideoAgentPage: React.FC = () => {
                 <div className="flex items-center gap-1">
                   <Button
                     size="xs"
+                    variant="secondary"
+                    disabled={!isEditing || scenesTotal === 0}
+                    onClick={handleBatchGenerateBgImages}
+                    title="批量 AI 生成背景图"
+                  >
+                    <ImageIcon size={12} />
+                    生成背景图
+                  </Button>
+                  <Button
+                    size="xs"
                     variant="primary"
                     disabled={!isEditing || scenesTotal === 0}
                     onClick={handleBatchGeneratePreviews}
                     title="批量渲染分镜视频"
                   >
                     <Sparkles size={12} />
-                    生成
+                    渲染
                   </Button>
                   {isCompleted && selectedRun.videoAssetUrl && (
                     <Button
@@ -918,6 +973,30 @@ export const VideoAgentPage: React.FC = () => {
                         )}
                       </div>
 
+                      {/* Background image row */}
+                      <div className="mt-1.5 flex items-center gap-2">
+                        {scene.backgroundImageStatus === 'running' ? (
+                          <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            <Loader2 size={12} className="animate-spin" style={{ color: 'rgba(147, 197, 253, 0.7)' }} />
+                            <span>背景图生成中...</span>
+                          </div>
+                        ) : scene.backgroundImageStatus === 'done' && scene.backgroundImageUrl ? (
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={scene.backgroundImageUrl}
+                              alt="背景图"
+                              className="rounded"
+                              style={{ width: 48, height: 27, objectFit: 'cover', border: '1px solid var(--border-subtle)' }}
+                            />
+                            <span className="text-[11px]" style={{ color: 'rgba(34,197,94,0.8)' }}>背景图已生成</span>
+                          </div>
+                        ) : scene.backgroundImageStatus === 'error' ? (
+                          <span className="text-[11px]" style={{ color: 'rgba(239,68,68,0.8)' }}>背景图生成失败</span>
+                        ) : (
+                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无背景图</span>
+                        )}
+                      </div>
+
                       {/* Narration textarea */}
                       <textarea
                         value={narration}
@@ -947,16 +1026,28 @@ export const VideoAgentPage: React.FC = () => {
                           <RefreshCw size={14} />
                           重试
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          disabled={scene.imageStatus === 'running' || scene.status === 'Generating' || !isEditing}
-                          onClick={() => handleGeneratePreview(idx)}
-                          title={hasVideo ? '重新渲染该分镜视频' : '渲染该分镜视频'}
-                        >
-                          <Sparkles size={14} />
-                          {genLabel}
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={scene.backgroundImageStatus === 'running' || scene.status === 'Generating' || !isEditing}
+                            onClick={() => handleGenerateBgImage(idx)}
+                            title="AI 生成该镜头的背景图"
+                          >
+                            <ImageIcon size={14} />
+                            背景图
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={scene.imageStatus === 'running' || scene.status === 'Generating' || !isEditing}
+                            onClick={() => handleGeneratePreview(idx)}
+                            title={hasVideo ? '重新渲染该分镜视频' : '渲染该分镜视频'}
+                          >
+                            <Sparkles size={14} />
+                            {genLabel}
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   );

@@ -40,7 +40,7 @@ export const ConceptScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
         opacity: fadeOut,
       }}
     >
-      <Background accentColor={COLORS.neon.purple} variant="diagonal" />
+      <Background accentColor={COLORS.neon.purple} variant="diagonal" backgroundImageUrl={scene.backgroundImageUrl} />
       <FloatingShapes accentColor={COLORS.neon.purple} seed={101} intensity="low" />
 
       <div

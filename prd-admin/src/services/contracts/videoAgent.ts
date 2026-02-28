@@ -18,8 +18,12 @@ export interface VideoGenScene {
   errorMessage?: string;
   /** 分镜预览视频 URL */
   imageUrl?: string;
-  /** 预览图状态 */
+  /** 预览视频渲染状态 */
   imageStatus: ImageStatus;
+  /** AI 生成的背景图 URL */
+  backgroundImageUrl?: string;
+  /** 背景图生成状态 */
+  backgroundImageStatus: ImageStatus;
 }
 
 /** 视频生成任务 */
@@ -100,6 +104,11 @@ export type RegenerateVideoSceneContract = (
 export type TriggerVideoRenderContract = (runId: string) => Promise<ApiResponse<boolean>>;
 
 export type GenerateScenePreviewContract = (
+  runId: string,
+  sceneIndex: number
+) => Promise<ApiResponse<boolean>>;
+
+export type GenerateSceneBgImageContract = (
   runId: string,
   sceneIndex: number
 ) => Promise<ApiResponse<boolean>>;

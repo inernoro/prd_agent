@@ -41,7 +41,7 @@ export const SummaryScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
         opacity: fadeOut,
       }}
     >
-      <Background accentColor={COLORS.neon.blue} variant="split" />
+      <Background accentColor={COLORS.neon.blue} variant="split" backgroundImageUrl={scene.backgroundImageUrl} />
       <FloatingShapes accentColor={COLORS.neon.blue} seed={606} intensity="low" />
 
       <div

@@ -103,11 +103,19 @@ public class VideoGenScene
     /// <summary>关联的 ImageGenRun ID</summary>
     public string? ImageGenRunId { get; set; }
 
-    /// <summary>生成的预览图 URL 或 base64</summary>
+    /// <summary>生成的预览视频 URL（Remotion 单场景渲染产物）</summary>
     public string? ImageUrl { get; set; }
 
-    /// <summary>预览图生成状态：idle / running / done / error</summary>
+    /// <summary>预览视频渲染状态：idle / running / done / error</summary>
     public string ImageStatus { get; set; } = "idle";
+
+    // ─── AI 背景图（图生模型根据 VisualDescription 生成） ───
+
+    /// <summary>AI 生成的背景图 URL</summary>
+    public string? BackgroundImageUrl { get; set; }
+
+    /// <summary>背景图生成状态：idle / running / done / error</summary>
+    public string BackgroundImageStatus { get; set; } = "idle";
 }
 
 /// <summary>

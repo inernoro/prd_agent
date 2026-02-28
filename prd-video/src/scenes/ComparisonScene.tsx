@@ -45,7 +45,7 @@ export const ComparisonScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
         opacity: fadeOut,
       }}
     >
-      <Background accentColor={COLORS.neon.orange} variant="default" />
+      <Background accentColor={COLORS.neon.orange} variant="default" backgroundImageUrl={scene.backgroundImageUrl} />
       <FloatingShapes accentColor={COLORS.neon.orange} seed={404} intensity="low" />
 
       <div

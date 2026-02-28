@@ -299,6 +299,43 @@ public class VideoAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(true));
     }
 
+    // ─── 分镜背景图生成（AI 图生模型） ───
+
+    /// <summary>
+    /// 为指定分镜生成 AI 背景图（标记 backgroundImageStatus=running，由 Worker 调图生模型）
+    /// </summary>
+    [HttpPost("runs/{runId}/scenes/{sceneIndex:int}/generate-bg")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GenerateSceneBgImage(string runId, int sceneIndex, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var run = await _db.VideoGenRuns
+            .Find(x => x.Id == runId && x.OwnerAdminId == adminId)
+            .FirstOrDefaultAsync(ct);
+
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+
+        if (run.Status != VideoGenRunStatus.Editing)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅在编辑阶段可生成背景图"));
+
+        if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分镜序号超出范围"));
+
+        // 标记 backgroundImageStatus=running，Worker 会自动拾取并调图生模型
+        run.Scenes[sceneIndex].BackgroundImageStatus = "running";
+        run.Scenes[sceneIndex].BackgroundImageUrl = null;
+
+        await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == runId,
+            Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+            cancellationToken: ct);
+
+        _logger.LogInformation("VideoAgent 背景图排队: runId={RunId}, scene={Scene}", runId, sceneIndex);
+
+        return Ok(ApiResponse<object>.Ok(true));
+    }
+
     /// <summary>
     /// SSE 流式获取任务事件
     /// </summary>

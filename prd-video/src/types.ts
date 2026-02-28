@@ -16,6 +16,8 @@ export interface SceneData {
   durationSeconds: number;
   durationInFrames: number;
   sceneType: SceneType;
+  /** AI 生成的背景图 URL（可选，有则渲染为场景背景） */
+  backgroundImageUrl?: string;
 }
 
 export interface VideoData {

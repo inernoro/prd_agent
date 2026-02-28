@@ -2,12 +2,14 @@ import React from "react";
 import { useCurrentFrame, useVideoConfig, interpolate } from "remotion";
 import { COLORS } from "../utils/colors";
 
-/** 动态粒子 + 网格 + 光晕 + 呼吸光带背景 */
+/** 动态粒子 + 网格 + 光晕 + 呼吸光带背景，支持 AI 背景图叠加 */
 export const Background: React.FC<{
   accentColor?: string;
   showGrid?: boolean;
   variant?: "default" | "radial" | "diagonal" | "split";
-}> = ({ accentColor = COLORS.neon.blue, showGrid = true, variant = "default" }) => {
+  /** AI 生成的背景图 URL，有则作为底层渲染 */
+  backgroundImageUrl?: string;
+}> = ({ accentColor = COLORS.neon.blue, showGrid = true, variant = "default", backgroundImageUrl }) => {
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
 
@@ -50,6 +52,30 @@ export const Background: React.FC<{
         overflow: "hidden",
       }}
     >
+      {/* AI 背景图层 */}
+      {backgroundImageUrl && (
+        <>
+          <img
+            src={backgroundImageUrl}
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+            }}
+          />
+          {/* 暗色叠加层，确保文字可读 */}
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: `linear-gradient(180deg, ${COLORS.bg.primary}cc 0%, ${COLORS.bg.primary}88 40%, ${COLORS.bg.primary}bb 100%)`,
+            }}
+          />
+        </>
+      )}
+
       {/* 网格 */}
       {showGrid && (
         <svg

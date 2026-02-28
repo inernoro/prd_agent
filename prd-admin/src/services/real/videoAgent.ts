@@ -9,6 +9,7 @@ import type {
   RegenerateVideoSceneContract,
   TriggerVideoRenderContract,
   GenerateScenePreviewContract,
+  GenerateSceneBgImageContract,
   VideoGenRun,
   VideoGenRunListItem,
   VideoGenScene,
@@ -67,6 +68,13 @@ export const triggerVideoRenderReal: TriggerVideoRenderContract = async (runId) 
 export const generateScenePreviewReal: GenerateScenePreviewContract = async (runId, sceneIndex) => {
   return await apiRequest<boolean>(
     api.videoAgent.scenes.preview(runId, sceneIndex),
+    { method: 'POST' }
+  );
+};
+
+export const generateSceneBgImageReal: GenerateSceneBgImageContract = async (runId, sceneIndex) => {
+  return await apiRequest<boolean>(
+    api.videoAgent.scenes.generateBg(runId, sceneIndex),
     { method: 'POST' }
   );
 };

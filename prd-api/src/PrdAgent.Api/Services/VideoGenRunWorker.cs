@@ -8,6 +8,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LLM;
 
 namespace PrdAgent.Api.Services;
 
@@ -138,6 +139,44 @@ public class VideoGenRunWorker : BackgroundService
                     }
                     continue;
                 }
+
+                // 路径 5: Editing 状态中有 backgroundImageStatus=running 的分镜 → 调图生模型生成背景图
+                var bgPending = await FindEditingRunWithPendingBgImageAsync(stoppingToken);
+                if (bgPending != null)
+                {
+                    try
+                    {
+                        await ProcessSceneBgImageGenerationAsync(bgPending);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "VideoGenRunWorker 背景图生成失败: runId={RunId}", bgPending.Id);
+                        try
+                        {
+                            var changed = false;
+                            foreach (var s in bgPending.Scenes)
+                            {
+                                if (s.BackgroundImageStatus == "running")
+                                {
+                                    s.BackgroundImageStatus = "error";
+                                    changed = true;
+                                }
+                            }
+                            if (changed)
+                            {
+                                await _db.VideoGenRuns.UpdateOneAsync(
+                                    x => x.Id == bgPending.Id,
+                                    Builders<VideoGenRun>.Update.Set(x => x.Scenes, bgPending.Scenes),
+                                    cancellationToken: CancellationToken.None);
+                            }
+                        }
+                        catch (Exception innerEx)
+                        {
+                            _logger.LogError(innerEx, "VideoGenRunWorker 标记背景图失败状态异常: runId={RunId}", bgPending.Id);
+                        }
+                    }
+                    continue;
+                }
             }
             catch (OperationCanceledException)
             {
@@ -196,6 +235,97 @@ public class VideoGenRunWorker : BackgroundService
         return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
     }
 
+    private async Task<VideoGenRun?> FindEditingRunWithPendingBgImageAsync(CancellationToken ct)
+    {
+        var filter = Builders<VideoGenRun>.Filter.And(
+            Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Editing),
+            Builders<VideoGenRun>.Filter.ElemMatch(x => x.Scenes,
+                Builders<VideoGenScene>.Filter.Eq(s => s.BackgroundImageStatus, "running")));
+
+        return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
+    }
+
+    // ─── 路径 5: AI 图生模型生成场景背景图 ───
+
+    private async Task ProcessSceneBgImageGenerationAsync(VideoGenRun run)
+    {
+        var sceneIdx = run.Scenes.FindIndex(s => s.BackgroundImageStatus == "running");
+        if (sceneIdx < 0) return;
+
+        var scene = run.Scenes[sceneIdx];
+        _logger.LogInformation("VideoGen 背景图生成: runId={RunId}, sceneIndex={Index}", run.Id, sceneIdx);
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var imageClient = scope.ServiceProvider.GetRequiredService<OpenAIImageClient>();
+
+            // 构建图生提示词：结合 visualDescription + 风格描述
+            var imagePrompt = BuildImageGenPrompt(scene, run.StyleDescription);
+
+            var result = await imageClient.GenerateUnifiedAsync(
+                prompt: imagePrompt,
+                n: 1,
+                size: "1792x1024", // 16:9 宽屏，适合视频背景
+                responseFormat: "url",
+                ct: CancellationToken.None,
+                appCallerCode: AppCallerRegistry.VideoAgent.Image.Text2Img);
+
+            if (!result.Success || result.Data?.Images.FirstOrDefault() == null)
+            {
+                throw new InvalidOperationException($"图生模型返回失败: {result.Message}");
+            }
+
+            var imageUrl = result.Data.Images[0].Url ?? result.Data.Images[0].OriginalUrl;
+            if (string.IsNullOrWhiteSpace(imageUrl) && !string.IsNullOrWhiteSpace(result.Data.Images[0].Base64))
+            {
+                // 如果返回 base64，需要存为文件
+                imageUrl = $"data:image/png;base64,{result.Data.Images[0].Base64}";
+            }
+
+            run.Scenes[sceneIdx].BackgroundImageUrl = imageUrl;
+            run.Scenes[sceneIdx].BackgroundImageStatus = "done";
+
+            await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                cancellationToken: CancellationToken.None);
+
+            _logger.LogInformation("VideoGen 背景图完成: runId={RunId}, scene={Index}", run.Id, sceneIdx);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "VideoGen 背景图生成失败: runId={RunId}, scene={Index}", run.Id, sceneIdx);
+
+            run.Scenes[sceneIdx].BackgroundImageStatus = "error";
+            run.Scenes[sceneIdx].BackgroundImageUrl = null;
+
+            await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                cancellationToken: CancellationToken.None);
+        }
+    }
+
+    /// <summary>构建图生提示词：将 visualDescription 转化为图生模型的有效 prompt</summary>
+    private static string BuildImageGenPrompt(VideoGenScene scene, string? styleDescription)
+    {
+        var sb = new StringBuilder();
+        sb.Append($"A cinematic 16:9 widescreen illustration for a tech tutorial video scene. ");
+        sb.Append($"Topic: {scene.Topic}. ");
+        sb.Append($"Visual elements: {scene.VisualDescription}. ");
+        sb.Append("Style: dark futuristic tech theme, clean layout, high contrast, ");
+        sb.Append("suitable as video background with space for text overlay. ");
+        sb.Append("No text, no watermarks, no UI elements. ");
+
+        if (!string.IsNullOrWhiteSpace(styleDescription))
+        {
+            sb.Append($"Additional style: {styleDescription}. ");
+        }
+
+        return sb.ToString();
+    }
+
     // ─── 路径 4: Remotion 渲染单场景预览视频 ───
 
     private async Task ProcessScenePreviewRenderAsync(VideoGenRun run)
@@ -225,6 +355,7 @@ public class VideoGenRunWorker : BackgroundService
                     durationSeconds = scene.DurationSeconds,
                     durationInFrames = (int)Math.Ceiling(scene.DurationSeconds * 30),
                     sceneType = scene.SceneType,
+                    backgroundImageUrl = scene.BackgroundImageUrl,
                 }
             };
 
@@ -424,6 +555,7 @@ public class VideoGenRunWorker : BackgroundService
                 durationSeconds = s.DurationSeconds,
                 durationInFrames = (int)Math.Ceiling(s.DurationSeconds * 30),
                 sceneType = s.SceneType,
+                backgroundImageUrl = s.BackgroundImageUrl,
             }).ToList()
         };
 
