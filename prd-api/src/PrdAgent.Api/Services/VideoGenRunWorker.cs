@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -565,9 +566,48 @@ public class VideoGenRunWorker : BackgroundService
         return sb.ToString();
     }
 
+    /// <summary>
+    /// 从 Gateway SendAsync 返回的原始 HTTP 响应体中提取 LLM 生成的文本内容。
+    /// SendAsync 返回原始响应 JSON（如 OpenAI 格式 {"choices":[{"message":{"content":"..."}}]}），
+    /// 需要先提取 message.content，再剥离 DeepSeek-R1 等推理模型的 &lt;think&gt; 标签。
+    /// </summary>
+    private static string ExtractLlmContent(string rawResponseBody)
+    {
+        var text = rawResponseBody.Trim();
+
+        // 尝试从 OpenAI 格式 JSON 中提取 choices[0].message.content
+        if (text.StartsWith("{"))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(text);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("choices", out var choices)
+                    && choices.GetArrayLength() > 0)
+                {
+                    var firstChoice = choices[0];
+                    if (firstChoice.TryGetProperty("message", out var message)
+                        && message.TryGetProperty("content", out var content))
+                    {
+                        text = content.GetString() ?? "";
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // 不是标准 OpenAI 格式，保持原样继续解析
+            }
+        }
+
+        // 剥离 DeepSeek-R1 等模型的 <think>...</think> 推理标签
+        text = Regex.Replace(text, @"<think>[\s\S]*?</think>", "", RegexOptions.IgnoreCase).Trim();
+
+        return text;
+    }
+
     private static List<VideoGenScene> ParseScenesFromLlmResponse(string content)
     {
-        var jsonContent = content.Trim();
+        var jsonContent = ExtractLlmContent(content);
 
         if (jsonContent.StartsWith("```"))
         {
@@ -606,7 +646,7 @@ public class VideoGenRunWorker : BackgroundService
 
     private static VideoGenScene ParseSingleSceneFromLlmResponse(string content)
     {
-        var jsonContent = content.Trim();
+        var jsonContent = ExtractLlmContent(content);
 
         if (jsonContent.StartsWith("```"))
         {
