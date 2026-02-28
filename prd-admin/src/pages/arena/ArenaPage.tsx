@@ -973,6 +973,7 @@ export function ArenaPage() {
           labelIndex: idx,
           status: r.status === 'error' ? 'error' : 'done',
           text: r.content || '',
+          thinking: r.thinking || '',
           ttftMs: r.ttftMs,
           totalMs: r.totalMs,
           errorMessage: r.errorMessage,
@@ -1017,8 +1018,8 @@ export function ArenaPage() {
   const sortedPanels = useMemo(() => {
     return [...panels].sort((a, b) => {
       // Panels with content (text or error) come first
-      const aHasContent = a.text.length > 0 || a.thinking.length > 0 || a.status === 'error';
-      const bHasContent = b.text.length > 0 || b.thinking.length > 0 || b.status === 'error';
+      const aHasContent = (a.text?.length ?? 0) > 0 || (a.thinking?.length ?? 0) > 0 || a.status === 'error';
+      const bHasContent = (b.text?.length ?? 0) > 0 || (b.thinking?.length ?? 0) > 0 || b.status === 'error';
       if (aHasContent !== bHasContent) return aHasContent ? -1 : 1;
       // Among those with content, sort by startedAt (earliest first = responded first)
       const aT = a.startedAt ?? Infinity;
