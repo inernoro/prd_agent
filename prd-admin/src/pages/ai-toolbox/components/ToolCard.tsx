@@ -188,11 +188,11 @@ export function ToolCard({ item }: ToolCardProps) {
         </div>
       )}
 
-      {/* 底部渐变遮罩 */}
+      {/* 底部渐变遮罩 — 加强，让文字区有足够对比 */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
-          background: `linear-gradient(0deg, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.5) 40%, transparent 65%)`,
+          background: `linear-gradient(0deg, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.7) 35%, rgba(0,0,0,0.25) 55%, transparent 70%)`,
         }}
       />
 
@@ -212,22 +212,29 @@ export function ToolCard({ item }: ToolCardProps) {
         }}
       />
 
-      {/* 底部信息区 */}
-      <div className="absolute bottom-0 left-0 right-0 p-3.5">
+      {/* 底部信息区 — 毛玻璃底板 */}
+      <div
+        className="absolute bottom-0 left-0 right-0 p-3.5 backdrop-blur-md"
+        style={{
+          background: 'rgba(0, 0, 0, 0.25)',
+          borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+        }}
+      >
         {/* 标题行 */}
-        <div className="flex items-center gap-1.5 mb-1">
+        <div className="flex items-center gap-1.5 mb-1.5">
           <div
-            className="font-semibold text-[13px] truncate flex-1"
+            className="font-bold text-[15px] truncate flex-1"
             style={{
-              color: 'rgba(255, 255, 255, 0.95)',
-              textShadow: '0 1px 3px rgba(0,0,0,0.5)',
+              color: '#fff',
+              textShadow: '0 1px 4px rgba(0,0,0,0.6)',
+              letterSpacing: '0.01em',
             }}
           >
             {item.name}
           </div>
           <ArrowUpRight
-            size={12}
-            className="shrink-0 opacity-0 group-hover:opacity-70 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+            size={13}
+            className="shrink-0 opacity-0 group-hover:opacity-80 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
             style={{ color: palette.soft }}
           />
         </div>
@@ -236,7 +243,7 @@ export function ToolCard({ item }: ToolCardProps) {
         <div
           className="text-[11px] line-clamp-2 leading-relaxed mb-2.5"
           style={{
-            color: 'rgba(255, 255, 255, 0.55)',
+            color: 'rgba(255, 255, 255, 0.65)',
             textShadow: '0 1px 2px rgba(0,0,0,0.4)',
             minHeight: '2.2em',
           }}
