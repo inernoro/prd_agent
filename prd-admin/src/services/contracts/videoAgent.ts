@@ -16,9 +16,7 @@ export interface VideoGenScene {
   sceneType: string;
   status: SceneItemStatus;
   errorMessage?: string;
-  /** 关联的 ImageGenRun ID */
-  imageGenRunId?: string;
-  /** 生成的预览图 URL 或 base64 */
+  /** 分镜预览视频 URL */
   imageUrl?: string;
   /** 预览图状态 */
   imageStatus: ImageStatus;
@@ -104,10 +102,4 @@ export type TriggerVideoRenderContract = (runId: string) => Promise<ApiResponse<
 export type GenerateScenePreviewContract = (
   runId: string,
   sceneIndex: number
-) => Promise<ApiResponse<{ imageRunId: string }>>;
-
-export type UpdateScenePreviewContract = (
-  runId: string,
-  sceneIndex: number,
-  imageUrl: string
 ) => Promise<ApiResponse<boolean>>;

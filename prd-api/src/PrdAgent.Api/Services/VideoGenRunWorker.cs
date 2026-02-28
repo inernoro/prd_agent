@@ -98,6 +98,21 @@ public class VideoGenRunWorker : BackgroundService
                     }
                     continue;
                 }
+
+                // 路径 4: Editing 状态中有 imageStatus=running 的分镜 → Remotion 渲染单场景预览视频
+                var previewPending = await FindEditingRunWithPendingPreviewAsync(stoppingToken);
+                if (previewPending != null)
+                {
+                    try
+                    {
+                        await ProcessScenePreviewRenderAsync(previewPending);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "VideoGenRunWorker 分镜预览渲染失败: runId={RunId}", previewPending.Id);
+                    }
+                    continue;
+                }
             }
             catch (OperationCanceledException)
             {
@@ -144,6 +159,127 @@ public class VideoGenRunWorker : BackgroundService
                 Builders<VideoGenScene>.Filter.Eq(s => s.Status, SceneItemStatus.Generating)));
 
         return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
+    }
+
+    private async Task<VideoGenRun?> FindEditingRunWithPendingPreviewAsync(CancellationToken ct)
+    {
+        var filter = Builders<VideoGenRun>.Filter.And(
+            Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Editing),
+            Builders<VideoGenRun>.Filter.ElemMatch(x => x.Scenes,
+                Builders<VideoGenScene>.Filter.Eq(s => s.ImageStatus, "running")));
+
+        return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
+    }
+
+    // ─── 路径 4: Remotion 渲染单场景预览视频 ───
+
+    private async Task ProcessScenePreviewRenderAsync(VideoGenRun run)
+    {
+        var sceneIdx = run.Scenes.FindIndex(s => s.ImageStatus == "running");
+        if (sceneIdx < 0) return;
+
+        var scene = run.Scenes[sceneIdx];
+        _logger.LogInformation("VideoGen 分镜预览渲染: runId={RunId}, sceneIndex={Index}", run.Id, sceneIdx);
+
+        try
+        {
+            var videoProjectPath = GetVideoProjectPath();
+            var dataDir = Path.Combine(videoProjectPath, "data");
+            Directory.CreateDirectory(dataDir);
+
+            // 构造单场景数据
+            var sceneData = new
+            {
+                title = run.ArticleTitle ?? "技术教程",
+                scene = new
+                {
+                    index = scene.Index,
+                    topic = scene.Topic,
+                    narration = scene.Narration,
+                    visualDescription = scene.VisualDescription,
+                    durationSeconds = scene.DurationSeconds,
+                    durationInFrames = (int)Math.Ceiling(scene.DurationSeconds * 30),
+                    sceneType = scene.SceneType,
+                }
+            };
+
+            var dataJson = JsonSerializer.Serialize(sceneData, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = true
+            });
+
+            var dataFilePath = Path.Combine(dataDir, $"{run.Id}_scene_{sceneIdx}.json");
+            await File.WriteAllTextAsync(dataFilePath, dataJson, CancellationToken.None);
+
+            // 渲染输出
+            var outDir = Path.Combine(videoProjectPath, "out");
+            Directory.CreateDirectory(outDir);
+            var outputMp4 = Path.Combine(outDir, $"{run.Id}_scene_{sceneIdx}.mp4");
+
+            // 调用 Remotion 渲染 SingleScene 组合
+            var psi = new ProcessStartInfo
+            {
+                FileName = "npx",
+                Arguments = $"remotion render SingleScene \"{outputMp4}\" --props=\"{dataFilePath}\"",
+                WorkingDirectory = videoProjectPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+
+            using var process = Process.Start(psi);
+            if (process == null)
+                throw new InvalidOperationException("无法启动 Remotion 渲染进程");
+
+            var stderrBuilder = new StringBuilder();
+            var stderrTask = Task.Run(async () =>
+            {
+                while (!process.StandardError.EndOfStream)
+                {
+                    var line = await process.StandardError.ReadLineAsync();
+                    if (line != null) stderrBuilder.AppendLine(line);
+                }
+            });
+
+            // 消费 stdout（避免管道缓冲区死锁）
+            while (!process.StandardOutput.EndOfStream)
+            {
+                await process.StandardOutput.ReadLineAsync();
+            }
+
+            await stderrTask;
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode != 0)
+                throw new InvalidOperationException($"Remotion 单场景渲染失败 (exit code {process.ExitCode}): {stderrBuilder}");
+
+            // 更新分镜的预览视频 URL
+            run.Scenes[sceneIdx].ImageUrl = outputMp4;
+            run.Scenes[sceneIdx].ImageStatus = "done";
+
+            await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                cancellationToken: CancellationToken.None);
+
+            _logger.LogInformation("VideoGen 分镜预览完成: runId={RunId}, scene={Index}, output={Output}",
+                run.Id, sceneIdx, outputMp4);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "VideoGen 分镜预览渲染失败: runId={RunId}, scene={Index}", run.Id, sceneIdx);
+
+            // 标记失败
+            run.Scenes[sceneIdx].ImageStatus = "error";
+            run.Scenes[sceneIdx].ImageUrl = null;
+
+            await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                cancellationToken: CancellationToken.None);
+        }
     }
 
     // ─── 路径 1: 分镜生成（Queued → Scripting → Editing）───

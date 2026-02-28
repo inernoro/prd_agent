@@ -9,7 +9,6 @@ import type {
   RegenerateVideoSceneContract,
   TriggerVideoRenderContract,
   GenerateScenePreviewContract,
-  UpdateScenePreviewContract,
   VideoGenRun,
   VideoGenRunListItem,
   VideoGenScene,
@@ -66,24 +65,11 @@ export const triggerVideoRenderReal: TriggerVideoRenderContract = async (runId) 
 };
 
 export const generateScenePreviewReal: GenerateScenePreviewContract = async (runId, sceneIndex) => {
-  return await apiRequest<{ imageRunId: string }>(
+  return await apiRequest<boolean>(
     api.videoAgent.scenes.preview(runId, sceneIndex),
     { method: 'POST' }
   );
 };
-
-export const updateScenePreviewReal: UpdateScenePreviewContract = async (runId, sceneIndex, imageUrl) => {
-  return await apiRequest<boolean>(
-    api.videoAgent.scenes.preview(runId, sceneIndex),
-    { method: 'PUT', body: { imageUrl } }
-  );
-};
-
-/** 获取分镜预览图 SSE 事件流 URL */
-export function getScenePreviewStreamUrl(runId: string, sceneIndex: number, afterSeq?: number): string {
-  const base = api.videoAgent.scenes.previewStream(runId, sceneIndex);
-  return afterSeq ? `${base}?afterSeq=${afterSeq}` : base;
-}
 
 /** 获取 SSE 事件流 URL */
 export function getVideoGenStreamUrl(runId: string, afterSeq?: number): string {

@@ -1,6 +1,7 @@
 import { Composition } from "remotion";
 import { TutorialVideo } from "./TutorialVideo";
-import type { VideoData } from "./types";
+import { SingleScene } from "./SingleScene";
+import type { VideoData, SceneData } from "./types";
 
 /** 默认 props（用于 Studio 预览） */
 const defaultProps: VideoData = {
@@ -71,6 +72,12 @@ function getTotalFrames(scenes: VideoData["scenes"]): number {
   return scenes.reduce((sum, s) => sum + s.durationInFrames, 0);
 }
 
+/** SingleScene 默认 props（用于 Studio 预览） */
+const defaultSingleSceneProps: { title: string; scene: SceneData } = {
+  title: defaultProps.title,
+  scene: defaultProps.scenes[0],
+};
+
 export const RemotionRoot: React.FC = () => {
   return (
     <>
@@ -88,6 +95,23 @@ export const RemotionRoot: React.FC = () => {
             fps: props.fps,
             width: props.width,
             height: props.height,
+          };
+        }}
+      />
+      <Composition
+        id="SingleScene"
+        component={SingleScene}
+        durationInFrames={defaultSingleSceneProps.scene.durationInFrames}
+        fps={30}
+        width={1920}
+        height={1080}
+        defaultProps={defaultSingleSceneProps}
+        calculateMetadata={({ props }) => {
+          return {
+            durationInFrames: props.scene.durationInFrames,
+            fps: 30,
+            width: 1920,
+            height: 1080,
           };
         }}
       />

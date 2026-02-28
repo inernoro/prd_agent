@@ -262,10 +262,10 @@ public class VideoAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(true));
     }
 
-    // ─── 分镜预览图（复用 ImageGenRunWorker） ───
+    // ─── 分镜预览视频（Remotion 渲染单场景） ───
 
     /// <summary>
-    /// 为指定分镜生成预览图（创建 ImageGenRun，由 ImageGenRunWorker 处理）
+    /// 为指定分镜生成预览视频（标记 imageStatus=running，由 VideoGenRunWorker 渲染）
     /// </summary>
     [HttpPost("runs/{runId}/scenes/{sceneIndex:int}/preview")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
@@ -280,42 +280,12 @@ public class VideoAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
         if (run.Status != VideoGenRunStatus.Editing)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅在编辑阶段可生成预览图"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅在编辑阶段可生成预览"));
 
         if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分镜序号超出范围"));
 
-        var scene = run.Scenes[sceneIndex];
-
-        // 构造图片生成提示词：结合画面描述 + 风格
-        var prompt = scene.VisualDescription;
-        if (!string.IsNullOrWhiteSpace(run.StyleDescription))
-        {
-            prompt = $"{prompt}。风格：{run.StyleDescription}";
-        }
-
-        var imageRun = new ImageGenRun
-        {
-            OwnerAdminId = adminId,
-            Status = ImageGenRunStatus.Queued,
-            AppKey = AppKey,
-            AppCallerCode = AppCallerRegistry.VideoAgent.Image.Text2Img,
-            Size = "1024x1024",
-            ResponseFormat = "b64_json",
-            MaxConcurrency = 1,
-            Items = new List<ImageGenRunPlanItem>
-            {
-                new() { Prompt = prompt, Count = 1, Size = "1024x1024" }
-            },
-            Total = 1,
-            IdempotencyKey = $"video-{runId}-scene-{sceneIndex}-{DateTime.UtcNow.Ticks}",
-            CreatedAt = DateTime.UtcNow,
-        };
-
-        await _db.ImageGenRuns.InsertOneAsync(imageRun, cancellationToken: ct);
-
-        // 更新分镜的图片生成状态
-        run.Scenes[sceneIndex].ImageGenRunId = imageRun.Id;
+        // 标记 imageStatus=running，Worker 会自动拾取并渲染
         run.Scenes[sceneIndex].ImageStatus = "running";
         run.Scenes[sceneIndex].ImageUrl = null;
 
@@ -324,107 +294,7 @@ public class VideoAgentController : ControllerBase
             Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
             cancellationToken: ct);
 
-        _logger.LogInformation("VideoAgent 分镜预览图创建: runId={RunId}, scene={Scene}, imageRunId={ImageRunId}",
-            runId, sceneIndex, imageRun.Id);
-
-        return Ok(ApiResponse<object>.Ok(new { imageRunId = imageRun.Id }));
-    }
-
-    /// <summary>
-    /// SSE 流式获取分镜预览图生成事件（代理到 ImageGenRun 事件流）
-    /// </summary>
-    [HttpGet("runs/{runId}/scenes/{sceneIndex:int}/preview/stream")]
-    [Produces("text/event-stream")]
-    public async Task StreamScenePreview(string runId, int sceneIndex, [FromQuery] int? afterSeq, CancellationToken cancellationToken)
-    {
-        Response.ContentType = "text/event-stream";
-        Response.Headers.CacheControl = "no-cache";
-        Response.Headers.Connection = "keep-alive";
-
-        var adminId = GetAdminId();
-        var run = await _db.VideoGenRuns
-            .Find(x => x.Id == runId && x.OwnerAdminId == adminId)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (run == null || sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
-        {
-            await WriteEventAsync(null, "error",
-                JsonSerializer.Serialize(new { code = ErrorCodes.NOT_FOUND, message = "分镜不存在" }, JsonOptions),
-                cancellationToken);
-            return;
-        }
-
-        var imageRunId = run.Scenes[sceneIndex].ImageGenRunId;
-        if (string.IsNullOrWhiteSpace(imageRunId))
-        {
-            await WriteEventAsync(null, "error",
-                JsonSerializer.Serialize(new { code = ErrorCodes.INVALID_FORMAT, message = "该分镜无图片生成任务" }, JsonOptions),
-                cancellationToken);
-            return;
-        }
-
-        // 代理 ImageGen 事件流
-        long lastSeq = afterSeq ?? 0;
-        var lastKeepAliveAt = DateTime.UtcNow;
-
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            var events = await _runStore.GetEventsAsync(RunKinds.ImageGen, imageRunId, lastSeq, limit: 100, cancellationToken);
-            if (events.Count > 0)
-            {
-                foreach (var ev in events)
-                {
-                    await WriteEventAsync(ev.Seq.ToString(), ev.EventName, ev.PayloadJson, cancellationToken);
-                    lastSeq = ev.Seq;
-                }
-                lastKeepAliveAt = DateTime.UtcNow;
-            }
-            else
-            {
-                if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 10)
-                {
-                    await Response.WriteAsync(": keepalive\n\n", cancellationToken);
-                    await Response.Body.FlushAsync(cancellationToken);
-                    lastKeepAliveAt = DateTime.UtcNow;
-                }
-
-                var imgRun = await _db.ImageGenRuns.Find(x => x.Id == imageRunId).FirstOrDefaultAsync(cancellationToken);
-                if (imgRun == null) break;
-                if (imgRun.Status is ImageGenRunStatus.Completed or ImageGenRunStatus.Failed or ImageGenRunStatus.Cancelled)
-                {
-                    if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 2) break;
-                }
-
-                await Task.Delay(650, cancellationToken);
-            }
-        }
-    }
-
-    /// <summary>
-    /// 更新分镜预览图 URL（前端在收到 imageDone 事件后回写）
-    /// </summary>
-    [HttpPut("runs/{runId}/scenes/{sceneIndex:int}/preview")]
-    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> UpdateScenePreviewUrl(string runId, int sceneIndex, [FromBody] UpdateScenePreviewRequest request, CancellationToken ct)
-    {
-        var adminId = GetAdminId();
-        var run = await _db.VideoGenRuns
-            .Find(x => x.Id == runId && x.OwnerAdminId == adminId)
-            .FirstOrDefaultAsync(ct);
-
-        if (run == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
-
-        if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分镜序号超出范围"));
-
-        run.Scenes[sceneIndex].ImageUrl = request.ImageUrl;
-        run.Scenes[sceneIndex].ImageStatus = string.IsNullOrWhiteSpace(request.ImageUrl) ? "error" : "done";
-
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
-            Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
-            cancellationToken: ct);
+        _logger.LogInformation("VideoAgent 分镜预览排队: runId={RunId}, scene={Scene}", runId, sceneIndex);
 
         return Ok(ApiResponse<object>.Ok(true));
     }

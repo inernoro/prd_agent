@@ -15,12 +15,10 @@ import {
   DownloadCloud,
   Video,
   Loader2,
-  Image as ImageIcon,
-  Copy,
+  Play,
   X,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
-import { glassFloatingButton } from '@/lib/glassStyles';
 import {
   createVideoGenRunReal,
   listVideoGenRunsReal,
@@ -30,10 +28,8 @@ import {
   regenerateVideoSceneReal,
   triggerVideoRenderReal,
   generateScenePreviewReal,
-  updateScenePreviewReal,
   getVideoGenStreamUrl,
   getVideoGenDownloadUrl,
-  getScenePreviewStreamUrl,
 } from '@/services/real/videoAgent';
 import type { VideoGenRun, VideoGenRunListItem } from '@/services/contracts/videoAgent';
 
@@ -253,7 +249,8 @@ export const VideoAgentPage: React.FC = () => {
 
     if (status === 'Editing') {
       const hasGenerating = selectedRun.scenes.some((s) => s.status === 'Generating');
-      if (hasGenerating) {
+      const hasRendering = selectedRun.scenes.some((s) => s.imageStatus === 'running');
+      if (hasGenerating || hasRendering) {
         pollingRef.current = setInterval(async () => {
           if (selectedRunId) {
             try {
@@ -358,13 +355,11 @@ export const VideoAgentPage: React.FC = () => {
     }
   };
 
-  // ─── Preview image generation ───
-  const imageAbortRef = useRef<Map<number, AbortController>>(new Map());
-
+  // ─── Preview video generation (Remotion) ───
   const handleGeneratePreview = async (sceneIndex: number) => {
     if (!selectedRunId || !selectedRun) return;
-    imageAbortRef.current.get(sceneIndex)?.abort();
 
+    // Optimistic UI: mark scene as rendering
     setSelectedRun((prev) => {
       if (!prev) return prev;
       const scenes = [...prev.scenes];
@@ -374,67 +369,17 @@ export const VideoAgentPage: React.FC = () => {
 
     try {
       const res = await generateScenePreviewReal(selectedRunId, sceneIndex);
-      if (!res.success) return;
-
-      const { imageRunId } = res.data;
-      const ac = new AbortController();
-      imageAbortRef.current.set(sceneIndex, ac);
-
-      const sseUrl = getScenePreviewStreamUrl(selectedRunId, sceneIndex);
-      const fullUrl = `${import.meta.env.VITE_API_BASE_URL || ''}${sseUrl}`;
-
-      const response = await fetch(fullUrl, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: ac.signal,
-      });
-      if (!response.ok || !response.body) return;
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const payload = JSON.parse(line.slice(6));
-              if (payload.type === 'imageDone') {
-                const imageUrl = payload.base64
-                  ? `data:image/png;base64,${payload.base64}`
-                  : payload.url || '';
-                if (selectedRunId) await updateScenePreviewReal(selectedRunId, sceneIndex, imageUrl);
-                setSelectedRun((prev) => {
-                  if (!prev) return prev;
-                  const scenes = [...prev.scenes];
-                  scenes[sceneIndex] = { ...scenes[sceneIndex], imageStatus: 'done', imageUrl, imageGenRunId: imageRunId };
-                  return { ...prev, scenes };
-                });
-                ac.abort();
-                imageAbortRef.current.delete(sceneIndex);
-                return;
-              }
-              if (payload.type === 'imageError') {
-                setSelectedRun((prev) => {
-                  if (!prev) return prev;
-                  const scenes = [...prev.scenes];
-                  scenes[sceneIndex] = { ...scenes[sceneIndex], imageStatus: 'error' };
-                  return { ...prev, scenes };
-                });
-                ac.abort();
-                imageAbortRef.current.delete(sceneIndex);
-                return;
-              }
-            } catch { /* parse error */ }
-          }
-        }
+      if (!res.success) {
+        setSelectedRun((prev) => {
+          if (!prev) return prev;
+          const scenes = [...prev.scenes];
+          scenes[sceneIndex] = { ...scenes[sceneIndex], imageStatus: 'error' };
+          return { ...prev, scenes };
+        });
+        toast.error('渲染失败', '无法启动分镜渲染');
       }
-    } catch {
+      // Worker picks up the rendering; polling will detect completion
+    } catch (err) {
       setSelectedRun((prev) => {
         if (!prev) return prev;
         const scenes = [...prev.scenes];
@@ -443,6 +388,7 @@ export const VideoAgentPage: React.FC = () => {
         }
         return { ...prev, scenes };
       });
+      toast.error('请求异常', err instanceof Error ? err.message : '网络错误');
     }
   };
 
@@ -452,10 +398,6 @@ export const VideoAgentPage: React.FC = () => {
       if (scene.imageStatus !== 'running') handleGeneratePreview(idx);
     });
   };
-
-  useEffect(() => {
-    return () => { imageAbortRef.current.forEach((ac) => ac.abort()); };
-  }, [selectedRunId]);
 
   // ─── Export ───
   const handleExport = async () => {
@@ -712,7 +654,7 @@ export const VideoAgentPage: React.FC = () => {
                   }}
                   title={styleDescription || '视觉风格描述（点击编辑）'}
                 >
-                  <ImageIcon size={12} style={{ color: styleDescription ? '#C084FC' : '#9CA3AF', flexShrink: 0 }} />
+                  <Video size={12} style={{ color: styleDescription ? '#C084FC' : '#9CA3AF', flexShrink: 0 }} />
                   <span className={configPillTextClass} style={{ color: styleDescription ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                     {styleDescription ? '风格' : '风格'}
                   </span>
@@ -791,7 +733,7 @@ export const VideoAgentPage: React.FC = () => {
                     variant="primary"
                     disabled={!isEditing || scenesTotal === 0}
                     onClick={handleBatchGeneratePreviews}
-                    title="批量生成预览图"
+                    title="批量渲染分镜视频"
                   >
                     <Sparkles size={12} />
                     生成
@@ -821,8 +763,8 @@ export const VideoAgentPage: React.FC = () => {
 
                   const showPlaceholder = scene.imageStatus === 'running';
                   const canShow = Boolean(scene.imageUrl) && scene.imageStatus === 'done';
-                  const hasImage = Boolean(scene.imageUrl);
-                  const genLabel = hasImage ? '重新生成' : '生成图片';
+                  const hasVideo = Boolean(scene.imageUrl);
+                  const genLabel = hasVideo ? '重新渲染' : '渲染分镜';
 
                   const narration = editingNarrations[idx] ?? scene.narration;
 
@@ -895,45 +837,37 @@ export const VideoAgentPage: React.FC = () => {
                         </div>
                       )}
 
-                      {/* Image preview box */}
+                      {/* Video preview box */}
                       <div
                         className="mt-1.5 rounded-[10px] overflow-hidden relative group"
                         style={{
                           height: 120,
                           background: 'rgba(0,0,0,0.18)',
                           border: '1px solid var(--border-default)',
-                          cursor: canShow ? 'pointer' : 'default',
                         }}
                       >
                         {showPlaceholder ? (
                           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
                             <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
-                            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>生成中…</span>
+                            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>渲染中…</span>
                           </div>
                         ) : canShow ? (
                           <>
-                            <img src={scene.imageUrl!} alt={`scene-${idx + 1}`} className="w-full h-full block" style={{ objectFit: 'contain' }} />
-                            {/* Copy and Download on hover */}
+                            <video
+                              src={scene.imageUrl!}
+                              className="w-full h-full block"
+                              style={{ objectFit: 'contain' }}
+                              controls
+                              preload="metadata"
+                            />
+                            {/* Download on hover */}
                             <div
-                              className="absolute bottom-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                              className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <button
-                                className="p-2 rounded-lg"
-                                style={{ ...glassFloatingButton, background: 'rgba(0, 0, 0, 0.6)', border: '1px solid rgba(255, 255, 255, 0.2)' }}
-                                onClick={async () => {
-                                  try {
-                                    await navigator.clipboard.writeText(scene.imageUrl!);
-                                    toast.success('已复制', '图片链接已复制');
-                                  } catch { /* ignore */ }
-                                }}
-                                title="复制图片链接"
-                              >
-                                <Copy size={16} style={{ color: 'white' }} />
-                              </button>
-                              <button
-                                className="p-2 rounded-lg"
-                                style={{ ...glassFloatingButton, background: 'rgba(0, 0, 0, 0.6)', border: '1px solid rgba(255, 255, 255, 0.2)' }}
+                                className="p-1.5 rounded-lg"
+                                style={{ background: 'rgba(0, 0, 0, 0.6)', border: '1px solid rgba(255, 255, 255, 0.2)' }}
                                 onClick={async () => {
                                   try {
                                     const response = await fetch(scene.imageUrl!);
@@ -941,20 +875,20 @@ export const VideoAgentPage: React.FC = () => {
                                     const blobUrl = URL.createObjectURL(blob);
                                     const link = document.createElement('a');
                                     link.href = blobUrl;
-                                    link.download = `镜头-${idx + 1}.png`;
+                                    link.download = `镜头-${idx + 1}.mp4`;
                                     link.click();
                                     URL.revokeObjectURL(blobUrl);
                                   } catch {
                                     const link = document.createElement('a');
                                     link.href = scene.imageUrl!;
-                                    link.download = `镜头-${idx + 1}.png`;
+                                    link.download = `镜头-${idx + 1}.mp4`;
                                     link.target = '_blank';
                                     link.click();
                                   }
                                 }}
-                                title="下载图片"
+                                title="下载分镜视频"
                               >
-                                <DownloadCloud size={16} style={{ color: 'white' }} />
+                                <DownloadCloud size={14} style={{ color: 'white' }} />
                               </button>
                             </div>
                           </>
@@ -969,15 +903,15 @@ export const VideoAgentPage: React.FC = () => {
                                 border: '1.5px dashed rgba(236, 72, 153, 0.3)',
                               }}
                             >
-                              <ImageIcon size={18} style={{ opacity: 0.4 }} />
+                              <Play size={18} style={{ opacity: 0.4 }} />
                             </div>
                           </div>
                         )}
 
-                        {/* Image error overlay */}
+                        {/* Render error overlay */}
                         {scene.imageStatus === 'error' && (
                           <div className="absolute inset-0 flex items-center justify-center" style={{ background: 'rgba(239,68,68,0.1)' }}>
-                            <span className="text-xs" style={{ color: 'rgba(239,68,68,0.9)' }}>图片生成失败</span>
+                            <span className="text-xs" style={{ color: 'rgba(239,68,68,0.9)' }}>渲染失败</span>
                           </div>
                         )}
                       </div>
@@ -1016,7 +950,7 @@ export const VideoAgentPage: React.FC = () => {
                           variant="secondary"
                           disabled={scene.imageStatus === 'running' || scene.status === 'Generating' || !isEditing}
                           onClick={() => handleGeneratePreview(idx)}
-                          title={hasImage ? '重新生成该镜头预览图' : '生成该镜头的预览图'}
+                          title={hasVideo ? '重新渲染该分镜视频' : '渲染该分镜视频'}
                         >
                           <Sparkles size={14} />
                           {genLabel}
@@ -1029,7 +963,7 @@ export const VideoAgentPage: React.FC = () => {
 
               {/* Help text */}
               <div className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
-                点击"生成"将批量生成预览图；也可在单条卡片内编辑后逐条生成
+                点击"生成"将批量渲染分镜视频；也可在单条卡片内编辑后逐条渲染
               </div>
 
               {/* Download area for completed runs */}
