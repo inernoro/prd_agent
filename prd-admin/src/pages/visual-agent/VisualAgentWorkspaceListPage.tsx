@@ -9,11 +9,9 @@ import { toast } from '@/lib/toast';
 import {
   createVisualAgentWorkspace,
   deleteVisualAgentWorkspace,
-  getUserPreferences,
   getUsers,
   listVisualAgentWorkspaces,
   refreshVisualAgentWorkspaceCover,
-  updateVisualAgentPreferences,
   updateVisualAgentWorkspace,
   uploadVisualAgentWorkspaceAsset,
 } from '@/services';
@@ -1131,43 +1129,12 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const [inputLoading, setInputLoading] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<{ file: File; previewUrl: string } | null>(null);
-  const [selectedSize, setSelectedSize] = useState<string>('1024x1024');
-  const [prefReady, setPrefReady] = useState(false);
-  const sizeSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // 加载用户保存的默认尺寸偏好
-  useEffect(() => {
-    if (!userId) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await getUserPreferences();
-        if (cancelled) return;
-        if (res.success && res.data.visualAgentPreferences?.defaultSize) {
-          setSelectedSize(res.data.visualAgentPreferences.defaultSize);
-        }
-      } catch {
-        // ignore
-      } finally {
-        if (!cancelled) setPrefReady(true);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [userId]);
-
-  // 用户更改尺寸时，防抖保存到后端偏好
-  useEffect(() => {
-    if (!userId || !prefReady) return;
-    if (sizeSaveRef.current) clearTimeout(sizeSaveRef.current);
-    sizeSaveRef.current = setTimeout(() => {
-      void getUserPreferences().then((res) => {
-        if (!res.success) return;
-        const existing = res.data.visualAgentPreferences ?? { modelAuto: true };
-        void updateVisualAgentPreferences({ ...existing, defaultSize: selectedSize }).catch(() => {});
-      }).catch(() => {});
-    }, 800);
-    return () => { if (sizeSaveRef.current) clearTimeout(sizeSaveRef.current); };
-  }, [selectedSize, userId, prefReady]);
+  // 默认尺寸：从 localStorage 读取用户偏好，与编辑器共享同一 key
+  const defaultSizeKey = userId ? `prdAdmin.visualAgent.defaultSize.${userId}` : '';
+  const [selectedSize, setSelectedSize] = useState<string>(() => {
+    if (!defaultSizeKey) return '1024x1024';
+    try { return localStorage.getItem(defaultSizeKey) || '1024x1024'; } catch { return '1024x1024'; }
+  });
 
   // 共享对话框状态
   const [shareOpen, setShareOpen] = useState(false);
@@ -1379,6 +1346,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
   const onSelectedSizeChange = (size: string) => {
     setSelectedSize(size);
+    if (defaultSizeKey) { try { localStorage.setItem(defaultSizeKey, size); } catch { /* ignore */ } }
   };
 
   // 新建文件夹（目前作为占位功能，后续可接入后端）

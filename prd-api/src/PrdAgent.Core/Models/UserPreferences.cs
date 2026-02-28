@@ -77,12 +77,6 @@ public class VisualAgentPreferences
 
     /// <summary>用户自定义快捷指令（最多 10 个）</summary>
     public List<QuickActionConfig>? QuickActions { get; set; }
-
-    /// <summary>
-    /// 默认生成尺寸（如 "1024x1024"、"2048x2048" 等）。
-    /// 用户在编辑器或首页选择尺寸后持久化，下次进入时自动恢复。
-    /// </summary>
-    public string? DefaultSize { get; set; }
 }
 
 /// <summary>
