@@ -10,6 +10,8 @@ interface ParticleVortexProps {
   particleCount?: number;
   /** 是否启用鼠标跟随，默认 false */
   mouseFollow?: boolean;
+  /** 拖尾填充色，需与宿主背景匹配以消除矩形边框，默认 'rgba(20,20,20,0.8)' */
+  trailColor?: string;
   /** 额外 className */
   className?: string;
 }
@@ -109,6 +111,7 @@ function resetParticle(p: Particle, origin: [number, number]) {
 export function ParticleVortex({
   particleCount = 300,
   mouseFollow = false,
+  trailColor = 'rgba(20,20,20,0.8)',
   className,
 }: ParticleVortexProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -117,10 +120,12 @@ export function ParticleVortex({
     hover: false,
     mouse: [0, 0] as [number, number],
     mouseFollow,
+    trailColor,
   });
 
-  // 同步 mouseFollow prop
+  // 同步 props
   useEffect(() => { stateRef.current.mouseFollow = mouseFollow; }, [mouseFollow]);
+  useEffect(() => { stateRef.current.trailColor = trailColor; }, [trailColor]);
 
   const handleMouseMove = useCallback((e: MouseEvent) => {
     const canvas = canvasRef.current;
@@ -173,7 +178,7 @@ export function ParticleVortex({
       const my = st.mouse[1] * devicePixelRatio;
 
       ctxA.clearRect(0, 0, w, h);
-      ctxB.fillStyle = 'rgba(20,20,20,0.8)';
+      ctxB.fillStyle = stateRef.current.trailColor;
       ctxB.fillRect(0, 0, w, h);
 
       // 绘制 + 更新粒子

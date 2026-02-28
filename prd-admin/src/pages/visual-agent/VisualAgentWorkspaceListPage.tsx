@@ -492,13 +492,20 @@ const SCENARIO_TAGS = [
 // ============ Hero 区域 ============
 function HeroSection() {
   return (
-    <div className="relative" style={{ height: 280 }}>
-      {/* 粒子漩涡 — 作为大背景铺满 Hero 区域 */}
-      <div className="absolute inset-0">
-        <ParticleVortex particleCount={300} mouseFollow />
+    <div className="relative w-full" style={{ height: 260 }}>
+      {/* 粒子漩涡背景 — trailColor 匹配页面 #0a0a0c，径向渐隐消除边框 */}
+      <div
+        className="absolute inset-0"
+        style={{
+          opacity: 0.55,
+          maskImage: 'radial-gradient(ellipse 60% 80% at 50% 50%, black 20%, transparent 100%)',
+          WebkitMaskImage: 'radial-gradient(ellipse 60% 80% at 50% 50%, black 20%, transparent 100%)',
+        }}
+      >
+        <ParticleVortex particleCount={200} mouseFollow trailColor="rgba(10,10,12,0.85)" />
       </div>
-      {/* 文字层叠在粒子上方 */}
-      <div className="relative z-10 flex flex-col items-center justify-center h-full text-center pt-4">
+      {/* 文字层 */}
+      <div className="relative z-10 flex flex-col items-center justify-center h-full text-center">
         <h1
           className="text-[42px] font-bold tracking-tight mb-3"
           style={{
