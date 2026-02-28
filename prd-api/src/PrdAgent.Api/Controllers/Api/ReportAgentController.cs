@@ -701,8 +701,8 @@ public class ReportAgentController : ControllerBase
         if (report.UserId != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能提交自己的周报"));
 
-        if (report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.Returned)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "只有草稿或已退回状态的周报可以提交"));
+        if (report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.Returned && report.Status != WeeklyReportStatus.Overdue)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "只有草稿、已退回或逾期状态的周报可以提交"));
 
         var update = Builders<WeeklyReport>.Update
             .Set(r => r.Status, WeeklyReportStatus.Submitted)
@@ -1406,8 +1406,8 @@ public class ReportAgentController : ControllerBase
         if (report.UserId != userId && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
             return Forbid();
 
-        if (report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.Returned)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "只有草稿或退回状态的周报才能生成"));
+        if (report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.Returned && report.Status != WeeklyReportStatus.Overdue)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "只有草稿、退回或逾期状态的周报才能生成"));
 
         try
         {
