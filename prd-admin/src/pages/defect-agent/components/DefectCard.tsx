@@ -247,7 +247,7 @@ export function DefectCard({ defect }: DefectCardProps) {
 
   return (
     <>
-      <GlassCard glow={isSelected} className="p-0 overflow-hidden">
+      <GlassCard glow={isSelected} animated className="p-0 overflow-hidden">
         <div
           role="button"
           tabIndex={0}

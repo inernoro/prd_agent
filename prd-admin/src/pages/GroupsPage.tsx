@@ -400,7 +400,7 @@ export default function GroupsPage() {
         icon={<FolderKanban size={16} />}
       />
 
-      <GlassCard glow className="flex-1 min-h-0 flex flex-col">
+      <GlassCard animated glow className="flex-1 min-h-0 flex flex-col">
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[180px] max-w-xs">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
@@ -447,6 +447,7 @@ export default function GroupsPage() {
                 const heat = getHeatLevel(g.messageCount ?? 0, g.lastMessageAt);
                 return (
                   <GlassCard
+                    animated
                     key={g.groupId}
                     variant="default"
                     padding="sm"

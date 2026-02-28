@@ -1,5 +1,6 @@
 import { cn } from '@/lib/cn';
-import { CountUpNumber } from '../components/CountUpNumber';
+import { CountUp } from '@/components/reactbits';
+import { SectionHeader } from '@/components/design/SectionHeader';
 
 interface Stat {
   value: number;
@@ -75,18 +76,11 @@ export function SocialProof({ className }: SocialProofProps) {
 
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">
-        {/* Section header */}
-        <div className="text-center mb-16">
-          <div className="inline-flex items-center gap-2 px-4 py-2 mb-6 rounded-full border border-white/10 bg-white/[0.03]">
-            <span className="text-sm text-white/50">数据说话</span>
-          </div>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-white/90 mb-4">
-            值得信赖的选择
-          </h2>
-          <p className="text-lg text-white/40 max-w-2xl mx-auto">
-            已有数千家企业选择我们，一起见证 AI 的力量
-          </p>
-        </div>
+        <SectionHeader
+          badge="数据说话"
+          title="值得信赖的选择"
+          subtitle="已有数千家企业选择我们，一起见证 AI 的力量"
+        />
 
         {/* Stats grid */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-20">
@@ -115,16 +109,17 @@ export function SocialProof({ className }: SocialProofProps) {
                 <div className="text-4xl sm:text-5xl lg:text-6xl font-bold mb-2">
                   <span
                     style={{
-                      background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+                      background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
                       WebkitBackgroundClip: 'text',
                       WebkitTextFillColor: 'transparent',
                       backgroundClip: 'text',
                     }}
                   >
-                    <CountUpNumber
-                      end={stat.value}
+                    <CountUp
+                      to={stat.value}
+                      duration={2.5}
                       suffix={stat.suffix}
-                      duration={2500}
+                      separator=","
                       decimals={stat.suffix === '%' ? 1 : 0}
                     />
                   </span>
@@ -137,15 +132,12 @@ export function SocialProof({ className }: SocialProofProps) {
           ))}
         </div>
 
-        {/* Testimonials header */}
-        <div className="text-center mb-12">
-          <h3 className="text-2xl sm:text-3xl font-bold text-white/90 mb-2">
-            用户反馈
-          </h3>
-          <p className="text-white/40">
-            听听他们怎么说
-          </p>
-        </div>
+        <SectionHeader
+          title="用户反馈"
+          subtitle="听听他们怎么说"
+          size="sm"
+          spacing="md"
+        />
 
         {/* Testimonials */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -170,7 +162,7 @@ export function SocialProof({ className }: SocialProofProps) {
                   <div
                     className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
                     style={{
-                      background: 'linear-gradient(135deg, #d6b26a 0%, #f2d59b 100%)',
+                      background: 'linear-gradient(135deg, #6366f1 0%, #a5b4fc 100%)',
                       color: '#0b0b0d',
                     }}
                   >

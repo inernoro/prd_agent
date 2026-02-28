@@ -211,6 +211,7 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
 }) {
   return (
     <GlassCard
+      animated
       interactive
       padding="none"
       onClick={onEdit}
@@ -225,8 +226,8 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
             <div
               className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0 text-[18px]"
               style={{
-                background: 'rgba(214,178,106,0.08)',
-                border: '1px solid rgba(214,178,106,0.12)',
+                background: 'rgba(99,102,241,0.08)',
+                border: '1px solid rgba(99,102,241,0.12)',
               }}
             >
               {workflow.icon || '⚡'}
@@ -288,40 +289,34 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
         }}
       >
         <button
-          className="flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
+          className="surface-row flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
           style={{
-            background: 'rgba(214,178,106,0.08)',
-            border: '1px solid rgba(214,178,106,0.15)',
-            color: 'rgba(214,178,106,0.85)',
+            background: 'rgba(99,102,241,0.08)',
+            border: '1px solid rgba(99,102,241,0.15)',
+            color: 'rgba(99,102,241,0.85)',
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(214,178,106,0.15)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(214,178,106,0.08)'; }}
           onClick={(e) => { e.stopPropagation(); onEdit(); }}
         >
           ✎ 编辑
         </button>
         <button
-          className="flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
+          className="surface-row flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
           style={{
             background: 'rgba(59,130,246,0.08)',
             border: '1px solid rgba(59,130,246,0.15)',
             color: 'rgba(59,130,246,0.85)',
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.15)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.08)'; }}
           onClick={(e) => { e.stopPropagation(); onCanvas(); }}
         >
           ◇ 画布
         </button>
         <button
-          className="w-7 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150 flex items-center justify-center flex-shrink-0"
+          className="surface-row w-7 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150 flex items-center justify-center flex-shrink-0"
           style={{
             background: 'rgba(239,68,68,0.06)',
             border: '1px solid rgba(239,68,68,0.12)',
             color: 'rgba(239,68,68,0.65)',
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.14)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.06)'; }}
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
           title="删除"
         >
@@ -336,13 +331,13 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
 
 function EmptyState({ onCreate, creating }: { onCreate: () => void; creating: boolean }) {
   return (
-    <GlassCard>
+    <GlassCard animated>
       <div className="flex flex-col items-center py-12 gap-5">
         <div
           className="w-20 h-20 rounded-[20px] flex items-center justify-center text-[36px]"
           style={{
-            background: 'linear-gradient(135deg, rgba(214,178,106,0.1) 0%, rgba(59,130,246,0.08) 100%)',
-            border: '1px solid rgba(214,178,106,0.12)',
+            background: 'linear-gradient(135deg, rgba(99,102,241,0.1) 0%, rgba(59,130,246,0.08) 100%)',
+            border: '1px solid rgba(99,102,241,0.12)',
           }}
         >
           ⚡

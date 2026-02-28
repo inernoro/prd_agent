@@ -40,9 +40,16 @@ public class ExecutiveController : ControllerBase
         var activeUsers = await _db.Users.CountDocumentsAsync(u => u.LastActiveAt >= periodStart);
         var prevActiveUsers = await _db.Users.CountDocumentsAsync(u => u.LastActiveAt >= prevPeriodStart && u.LastActiveAt < periodStart);
 
-        // 本期消息数
-        var periodMessages = await _db.Messages.CountDocumentsAsync(m => m.Timestamp >= periodStart);
-        var prevMessages = await _db.Messages.CountDocumentsAsync(m => m.Timestamp >= prevPeriodStart && m.Timestamp < periodStart);
+        // 本期消息数 (合并 PRD 对话 + 缺陷消息 + 视觉创作消息)
+        var prdMessages = await _db.Messages.CountDocumentsAsync(m => m.Timestamp >= periodStart);
+        var defectMsgCount = await _db.DefectMessages.CountDocumentsAsync(m => m.CreatedAt >= periodStart);
+        var visualMsgCount = await _db.ImageMasterMessages.CountDocumentsAsync(m => m.CreatedAt >= periodStart);
+        var periodMessages = prdMessages + defectMsgCount + visualMsgCount;
+
+        var prevPrdMessages = await _db.Messages.CountDocumentsAsync(m => m.Timestamp >= prevPeriodStart && m.Timestamp < periodStart);
+        var prevDefectMsgCount = await _db.DefectMessages.CountDocumentsAsync(m => m.CreatedAt >= prevPeriodStart && m.CreatedAt < periodStart);
+        var prevVisualMsgCount = await _db.ImageMasterMessages.CountDocumentsAsync(m => m.CreatedAt >= prevPeriodStart && m.CreatedAt < periodStart);
+        var prevMessages = prevPrdMessages + prevDefectMsgCount + prevVisualMsgCount;
 
         // 本期 Token 用量 (from messages)
         var tokenFilter = Builders<Message>.Filter.Gte(m => m.Timestamp, periodStart) &
@@ -102,10 +109,17 @@ public class ExecutiveController : ControllerBase
         days = Math.Clamp(days, 7, 90);
         var startDate = DateTime.UtcNow.Date.AddDays(-days + 1);
 
-        // 消息按天
-        var messages = await _db.Messages.Find(m => m.Timestamp >= startDate)
+        // 消息按天 (合并三个消息集合)
+        var prdMsgs = await _db.Messages.Find(m => m.Timestamp >= startDate)
             .Project(m => new { m.Timestamp })
             .ToListAsync();
+        var defectMsgs = await _db.DefectMessages.Find(m => m.CreatedAt >= startDate)
+            .Project(m => new { Timestamp = m.CreatedAt })
+            .ToListAsync();
+        var visualMsgs = await _db.ImageMasterMessages.Find(m => m.CreatedAt >= startDate)
+            .Project(m => new { Timestamp = m.CreatedAt })
+            .ToListAsync();
+        var messages = prdMsgs.Concat(defectMsgs).Concat(visualMsgs).ToList();
 
         // Token 按天
         var tokenFilter = Builders<Message>.Filter.Gte(m => m.Timestamp, startDate) &
@@ -199,13 +213,23 @@ public class ExecutiveController : ControllerBase
         days = Math.Clamp(days, 1, 30);
         var periodStart = DateTime.UtcNow.Date.AddDays(-days + 1);
 
-        // 从 llm_request_logs 的 RequestPurpose (AppCallerCode) 聚合
-        var logs = await _db.LlmRequestLogs
+        // 已知 Agent 路由前缀 → appKey 映射
+        var agentRoutePrefixes = new Dictionary<string, string>
+        {
+            { "/api/prd-agent/", "prd-agent" },
+            { "/api/visual-agent/", "visual-agent" },
+            { "/api/literary-agent/", "literary-agent" },
+            { "/api/defect-agent/", "defect-agent" },
+            { "/api/ai-toolbox/", "ai-toolbox" },
+            { "/api/open-platform/", "open-platform" },
+        };
+
+        // ── 1. LLM 调用统计 (llm_request_logs) ──
+        var llmLogs = await _db.LlmRequestLogs
             .Find(l => l.StartedAt >= periodStart && l.RequestPurpose != null)
             .Project(l => new
             {
                 l.RequestPurpose,
-                l.RequestPurposeDisplayName,
                 l.UserId,
                 l.InputTokens,
                 l.OutputTokens,
@@ -213,8 +237,7 @@ public class ExecutiveController : ControllerBase
             })
             .ToListAsync();
 
-        // 按 appKey 聚合 (RequestPurpose 的第一个 . 前缀)
-        var agentGroups = logs
+        var llmByAgent = llmLogs
             .GroupBy(l =>
             {
                 var rp = l.RequestPurpose ?? "";
@@ -222,14 +245,62 @@ public class ExecutiveController : ControllerBase
                 return dotIndex > 0 ? rp[..dotIndex] : rp;
             })
             .Where(g => !string.IsNullOrEmpty(g.Key))
-            .Select(g => new
+            .ToDictionary(g => g.Key, g =>
             {
-                appKey = g.Key,
-                name = ResolveAgentName(g.Key),
-                calls = g.Count(),
-                users = g.Select(l => l.UserId).Where(u => u != null).Distinct().Count(),
-                tokens = g.Sum(l => (long)(l.InputTokens ?? 0) + (l.OutputTokens ?? 0)),
-                avgDurationMs = g.Average(l => l.DurationMs ?? 0),
+                var withDuration = g.Where(l => l.DurationMs.HasValue).ToList();
+                return new
+                {
+                    llmCalls = g.Count(),
+                    llmUsers = g.Select(l => l.UserId).Where(u => u != null).Distinct().Count(),
+                    tokens = g.Sum(l => (long)(l.InputTokens ?? 0) + (l.OutputTokens ?? 0)),
+                    avgDurationMs = withDuration.Count > 0 ? withDuration.Average(l => l.DurationMs!.Value) : 0d,
+                };
+            });
+
+        // ── 2. API 调用统计 (api_request_logs) ──
+        // 只查写操作 (POST/PUT/DELETE)，排除纯读取 GET 请求，更能反映真实使用量
+        var apiLogs = await _db.ApiRequestLogs
+            .Find(l => l.StartedAt >= periodStart
+                        && l.Method != "GET"
+                        && l.StatusCode >= 200 && l.StatusCode < 400)
+            .Project(l => new { l.Path, l.UserId })
+            .ToListAsync();
+
+        var apiByAgent = apiLogs
+            .Select(l =>
+            {
+                foreach (var kv in agentRoutePrefixes)
+                    if (l.Path.StartsWith(kv.Key, StringComparison.OrdinalIgnoreCase))
+                        return new { AppKey = kv.Value, l.UserId };
+                return null;
+            })
+            .Where(x => x != null)
+            .GroupBy(x => x!.AppKey)
+            .ToDictionary(g => g.Key, g => new
+            {
+                apiCalls = g.Count(),
+                apiUsers = g.Select(x => x!.UserId).Where(u => u != null && u != "anonymous").Distinct().Count(),
+            });
+
+        // ── 3. 合并：以两个数据源的并集为准 ──
+        var allAppKeys = llmByAgent.Keys.Union(apiByAgent.Keys).ToHashSet();
+
+        var agentGroups = allAppKeys
+            .Select(appKey =>
+            {
+                llmByAgent.TryGetValue(appKey, out var llm);
+                apiByAgent.TryGetValue(appKey, out var api);
+                return new
+                {
+                    appKey,
+                    name = ResolveAgentName(appKey),
+                    calls = (api?.apiCalls ?? 0) + (llm?.llmCalls ?? 0),
+                    users = Math.Max(llm?.llmUsers ?? 0, api?.apiUsers ?? 0),
+                    tokens = llm?.tokens ?? 0L,
+                    avgDurationMs = llm?.avgDurationMs ?? 0d,
+                    llmCalls = llm?.llmCalls ?? 0,
+                    apiCalls = api?.apiCalls ?? 0,
+                };
             })
             .OrderByDescending(a => a.calls)
             .ToList();
@@ -253,14 +324,18 @@ public class ExecutiveController : ControllerBase
 
         var modelGroups = logs
             .GroupBy(l => l.Model ?? "unknown")
-            .Select(g => new
+            .Select(g =>
             {
-                model = g.Key,
-                calls = g.Count(),
-                inputTokens = g.Sum(l => (long)(l.InputTokens ?? 0)),
-                outputTokens = g.Sum(l => (long)(l.OutputTokens ?? 0)),
-                totalTokens = g.Sum(l => (long)(l.InputTokens ?? 0) + (l.OutputTokens ?? 0)),
-                avgDurationMs = Math.Round(g.Average(l => l.DurationMs ?? 0), 1),
+                var withDuration = g.Where(l => l.DurationMs.HasValue).ToList();
+                return new
+                {
+                    model = g.Key,
+                    calls = g.Count(),
+                    inputTokens = g.Sum(l => (long)(l.InputTokens ?? 0)),
+                    outputTokens = g.Sum(l => (long)(l.OutputTokens ?? 0)),
+                    totalTokens = g.Sum(l => (long)(l.InputTokens ?? 0) + (l.OutputTokens ?? 0)),
+                    avgDurationMs = withDuration.Count > 0 ? Math.Round(withDuration.Average(l => l.DurationMs!.Value), 1) : 0,
+                };
             })
             .OrderByDescending(m => m.calls)
             .ToList();
@@ -282,13 +357,24 @@ public class ExecutiveController : ControllerBase
         var humanUsers = allUsers.Where(u => u.UserType != UserType.Bot).ToList();
         var userIds = humanUsers.Select(u => u.UserId).ToHashSet();
 
-        // --- Agent 使用量 (llm_request_logs 按 appKey + userId 聚合) ---
+        // --- Agent 使用量 (llm_request_logs + api_request_logs 合并) ---
+        var agentRoutePrefixes = new Dictionary<string, string>
+        {
+            { "/api/prd-agent/", "prd-agent" },
+            { "/api/visual-agent/", "visual-agent" },
+            { "/api/literary-agent/", "literary-agent" },
+            { "/api/defect-agent/", "defect-agent" },
+            { "/api/ai-toolbox/", "ai-toolbox" },
+            { "/api/open-platform/", "open-platform" },
+        };
+
+        // LLM 维度
         var logs = await _db.LlmRequestLogs
             .Find(l => l.StartedAt >= periodStart && l.RequestPurpose != null && l.UserId != null)
             .Project(l => new { l.UserId, l.RequestPurpose })
             .ToListAsync();
 
-        var agentUserCounts = logs
+        var llmAgentUserCounts = logs
             .Where(l => l.UserId != null && userIds.Contains(l.UserId))
             .GroupBy(l =>
             {
@@ -302,14 +388,64 @@ public class ExecutiveController : ControllerBase
                 g => g.GroupBy(x => x.UserId!).ToDictionary(ug => ug.Key, ug => ug.Count())
             );
 
-        // --- 消息数 ---
-        var msgItems = await _db.Messages
+        // API 维度 (写操作)
+        var apiLogsForLb = await _db.ApiRequestLogs
+            .Find(l => l.StartedAt >= periodStart && l.Method != "GET"
+                        && l.StatusCode >= 200 && l.StatusCode < 400)
+            .Project(l => new { l.Path, l.UserId })
+            .ToListAsync();
+
+        var apiAgentUserCounts = apiLogsForLb
+            .Select(l =>
+            {
+                foreach (var kv in agentRoutePrefixes)
+                    if (l.Path.StartsWith(kv.Key, StringComparison.OrdinalIgnoreCase))
+                        return new { AppKey = kv.Value, l.UserId };
+                return null;
+            })
+            .Where(x => x != null && x.UserId != null && x.UserId != "anonymous" && userIds.Contains(x.UserId))
+            .GroupBy(x => x!.AppKey)
+            .ToDictionary(
+                g => g.Key,
+                g => g.GroupBy(x => x!.UserId!).ToDictionary(ug => ug.Key, ug => ug.Count())
+            );
+
+        // 合并两个数据源
+        var agentUserCounts = new Dictionary<string, Dictionary<string, int>>();
+        foreach (var appKey in llmAgentUserCounts.Keys.Union(apiAgentUserCounts.Keys))
+        {
+            llmAgentUserCounts.TryGetValue(appKey, out var llmVals);
+            apiAgentUserCounts.TryGetValue(appKey, out var apiVals);
+            var merged = new Dictionary<string, int>();
+            foreach (var uid in (llmVals?.Keys ?? Enumerable.Empty<string>()).Union(apiVals?.Keys ?? Enumerable.Empty<string>()))
+            {
+                var llmCount = llmVals != null && llmVals.TryGetValue(uid, out var lv) ? lv : 0;
+                var apiCount = apiVals != null && apiVals.TryGetValue(uid, out var av) ? av : 0;
+                merged[uid] = llmCount + apiCount;
+            }
+            agentUserCounts[appKey] = merged;
+        }
+
+        // --- 消息数 (合并 PRD 对话 + 缺陷消息 + 视觉创作消息) ---
+        var prdMsgItems = await _db.Messages
             .Find(m => m.Timestamp >= periodStart)
             .Project(m => new { m.SenderId })
             .ToListAsync();
-        var msgByUser = msgItems
-            .Where(m => m.SenderId != null && userIds.Contains(m.SenderId))
-            .GroupBy(m => m.SenderId!)
+        var defectMsgItems = await _db.DefectMessages
+            .Find(m => m.CreatedAt >= periodStart)
+            .Project(m => new { UserId = m.UserId })
+            .ToListAsync();
+        var visualMsgItems = await _db.ImageMasterMessages
+            .Find(m => m.CreatedAt >= periodStart)
+            .Project(m => new { UserId = m.OwnerUserId })
+            .ToListAsync();
+
+        var allMsgSenders = prdMsgItems.Select(m => m.SenderId)
+            .Concat(defectMsgItems.Select(m => m.UserId))
+            .Concat(visualMsgItems.Select(m => m.UserId));
+        var msgByUser = allMsgSenders
+            .Where(uid => uid != null && userIds.Contains(uid))
+            .GroupBy(uid => uid!)
             .ToDictionary(g => g.Key, g => g.Count());
 
         // --- 会话数 ---

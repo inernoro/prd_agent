@@ -66,6 +66,34 @@
   --md-quote-border: rgba(56, 189, 248, 0.45);
 }
 
+/*
+ * Dark mode prose: hardcoded overrides for Tailwind typography variables.
+ *
+ * The primary fix is in MarkdownRenderer.tsx (rehypeStripInlineColors plugin)
+ * which strips inline color styles from raw HTML in PRD content. This CSS
+ * block provides a safety net by setting all prose variables to concrete
+ * dark-mode values, avoiding CSS variable chain resolution issues in WebView.
+ */
+.dark .prose {
+  color: #f1f5f9;
+  --tw-prose-body: #f1f5f9;
+  --tw-prose-headings: #f1f5f9;
+  --tw-prose-lead: #f1f5f9;
+  --tw-prose-bold: #f1f5f9;
+  --tw-prose-quotes: #f1f5f9;
+  --tw-prose-counters: #94a3b8;
+  --tw-prose-bullets: #94a3b8;
+  --tw-prose-captions: #94a3b8;
+  --tw-prose-code: #bae6fd;
+  --tw-prose-pre-code: #e2e8f0;
+  --tw-prose-pre-bg: rgba(2, 6, 23, 0.65);
+  --tw-prose-links: #7dd3fc;
+  --tw-prose-hr: #334155;
+  --tw-prose-quote-borders: rgba(56, 189, 248, 0.45);
+  --tw-prose-th-borders: #334155;
+  --tw-prose-td-borders: #334155;
+}
+
 * {
   margin: 0;
   padding: 0;

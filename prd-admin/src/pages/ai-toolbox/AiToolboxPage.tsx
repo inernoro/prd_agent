@@ -9,6 +9,7 @@ import { ToolDetail } from './components/ToolDetail';
 import { ToolEditor } from './components/ToolEditor';
 import { ToolRunner } from './components/ToolRunner';
 import { BasicCapabilities } from './components/BasicCapabilities';
+import { QuickCreateWizard } from './components/QuickCreateWizard';
 
 const PAGE_TABS: { key: ToolboxPageTab; label: string; icon: React.ReactNode }[] = [
   { key: 'toolbox', label: 'AI 百宝箱', icon: <Package size={14} /> },
@@ -21,12 +22,9 @@ const CATEGORY_OPTIONS: { key: ToolboxCategory; label: string; icon: React.React
   { key: 'custom', label: '我创建的', icon: <User size={12} /> },
 ];
 
-// 页面容器样式 - 不透明背景
-const pageContainerStyle: React.CSSProperties = {
-  background: 'var(--bg-elevated)',
-  borderRadius: '16px',
-  border: '1px solid rgba(255, 255, 255, 0.06)',
-};
+// 页面容器样式 — 页面级不使用 surface 类，保持透明让卡片自身表达玻璃质感
+const pageContainerClassName = '';
+const pageContainerStyle: React.CSSProperties = {};
 
 export default function AiToolboxPage() {
   const { isMobile } = useBreakpoint();
@@ -79,6 +77,10 @@ export default function AiToolboxPage() {
     return <ToolDetail />;
   }
 
+  if (view === 'quick-create') {
+    return <QuickCreateWizard />;
+  }
+
   if (view === 'create' || view === 'edit') {
     return <ToolEditor />;
   }
@@ -94,7 +96,7 @@ export default function AiToolboxPage() {
 
   // Grid view (default)
   return (
-    <div className="h-full min-h-0 flex flex-col gap-3" style={pageContainerStyle}>
+    <div className={`${pageContainerClassName} h-full min-h-0 flex flex-col gap-3`} style={pageContainerStyle}>
       {/* Header */}
       <div className="px-4 pt-3">
         <div className={`flex ${isMobile ? 'flex-col gap-2.5' : 'items-center justify-between'}`}>
@@ -226,7 +228,7 @@ export default function AiToolboxPage() {
             </div>
           </div>
         ) : filteredItems.length === 0 ? (
-          <GlassCard variant="subtle" className="flex flex-col items-center justify-center h-48 gap-3">
+          <GlassCard animated variant="subtle" className="flex flex-col items-center justify-center h-48 gap-3">
             <div
               className="w-14 h-14 rounded-xl flex items-center justify-center"
               style={{

@@ -3,6 +3,7 @@ using Markdig;
 using Markdig.Syntax;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 
 namespace PrdAgent.Infrastructure.Markdown;
 
@@ -20,9 +21,12 @@ public class MarkdownParser : IMarkdownParser
             .Build();
     }
 
-    /// <summary>解析Markdown文档</summary>
+    /// <summary>解析Markdown文档（自动去除 MDC/YAML frontmatter）</summary>
     public ParsedPrd Parse(string content)
     {
+        // 去除 .mdc 文件的 YAML frontmatter，保留纯 Markdown 正文
+        content = DocumentValidator.StripYamlFrontmatter(content);
+
         var document = Markdig.Markdown.Parse(content, _pipeline);
         // 统一处理 Windows(\r\n) 和 Unix(\n) 换行符
         var lines = content.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');

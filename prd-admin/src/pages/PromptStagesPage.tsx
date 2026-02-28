@@ -53,9 +53,9 @@ function SegmentedTabs<T extends string>(props: {
             type="button"
             className="h-[32px] px-4 rounded-[11px] text-[13px] font-semibold transition-all duration-200 inline-flex items-center gap-2 shrink-0 whitespace-nowrap"
             style={{
-              color: active ? '#1a1206' : 'var(--text-secondary)',
+              color: active ? '#ffffff' : 'var(--text-secondary)',
               background: active ? 'var(--gold-gradient)' : 'transparent',
-              boxShadow: active ? '0 2px 8px -2px rgba(214, 178, 106, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset' : 'none',
+              boxShadow: active ? '0 2px 8px -2px rgba(99, 102, 241, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset' : 'none',
               opacity: disabled ? 0.5 : 1,
               cursor: disabled ? 'not-allowed' : 'pointer',
               transform: active ? 'scale(1)' : 'scale(0.98)',
@@ -910,7 +910,7 @@ export default function PromptStagesPage() {
 
       {showUserPrompts && (
         <div className="grid gap-6 flex-1 min-h-0 overflow-x-hidden" style={{ gridTemplateColumns: isMobile ? '1fr' : '320px minmax(0, 1fr)' }}>
-        <GlassCard glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
+        <GlassCard animated glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
           <div className="flex items-center justify-between gap-3 min-w-0">
             <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>快捷指令</div>
             <div className="shrink-0">
@@ -944,13 +944,13 @@ export default function PromptStagesPage() {
                   className="rounded-[16px] transition-all duration-200 min-w-0 overflow-hidden relative cursor-pointer hover:scale-[1.01]"
                   style={{
                     background: active
-                      ? 'linear-gradient(135deg, rgba(214, 178, 106, 0.12) 0%, rgba(214, 178, 106, 0.08) 100%)'
+                      ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(99, 102, 241, 0.08) 100%)'
                       : 'var(--bg-input)',
                     border: active
-                      ? '1px solid rgba(214, 178, 106, 0.40)'
+                      ? '1px solid rgba(99, 102, 241, 0.40)'
                       : '1px solid var(--border-subtle)',
                     boxShadow: active
-                      ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
+                      ? '0 4px 16px -4px rgba(99, 102, 241, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
                       : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
                   }}
                 >
@@ -1012,7 +1012,7 @@ export default function PromptStagesPage() {
                             width: 28,
                             height: 28,
                             borderRadius: 10,
-                            color: active ? '#1a1206' : 'var(--text-secondary)',
+                            color: active ? '#ffffff' : 'var(--text-secondary)',
                             background: active ? 'var(--gold-gradient)' : 'var(--bg-input-hover)',
                             border: active ? '1px solid rgba(0,0,0,0.08)' : '1px solid var(--border-default)',
                             boxShadow: active ? 'var(--shadow-gold)' : 'none',
@@ -1047,7 +1047,7 @@ export default function PromptStagesPage() {
           </div>
         </GlassCard>
 
-        <GlassCard glow className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
+        <GlassCard animated glow className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
           <div className={`flex ${isMobile ? 'flex-col gap-2' : 'items-start justify-between gap-3'}`}>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -1252,7 +1252,7 @@ export default function PromptStagesPage() {
           className="grid gap-6 flex-1 min-h-0 overflow-x-hidden"
           style={{ gridTemplateColumns: isMobile ? '1fr' : '320px minmax(0, 1fr)' }}
         >
-              <GlassCard glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
+              <GlassCard animated glow className="p-5 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
             <div className="flex items-center justify-between gap-3 min-w-0">
               <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>系统指令</div>
               <div className="shrink-0">
@@ -1283,13 +1283,13 @@ export default function PromptStagesPage() {
                     className="rounded-[16px] px-4 py-3.5 transition-all duration-200 min-w-0 overflow-hidden cursor-pointer hover:scale-[1.01]"
                     style={{
                       background: active
-                        ? 'linear-gradient(135deg, rgba(214, 178, 106, 0.12) 0%, rgba(214, 178, 106, 0.08) 100%)'
+                        ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(99, 102, 241, 0.08) 100%)'
                         : 'var(--bg-input)',
                       border: active
-                        ? '1px solid rgba(214, 178, 106, 0.40)'
+                        ? '1px solid rgba(99, 102, 241, 0.40)'
                         : '1px solid var(--border-subtle)',
                       boxShadow: active
-                        ? '0 4px 16px -4px rgba(214, 178, 106, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
+                        ? '0 4px 16px -4px rgba(99, 102, 241, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03) inset'
                         : '0 2px 8px -2px rgba(0, 0, 0, 0.2)',
                     }}
                     role="button"
@@ -1327,7 +1327,7 @@ export default function PromptStagesPage() {
             </div>
           </GlassCard>
 
-              <GlassCard glow className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
+              <GlassCard animated glow className="p-4 min-h-0 flex flex-col min-w-0 overflow-hidden" variant="default">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-3">
@@ -1389,8 +1389,8 @@ export default function PromptStagesPage() {
                         boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
                       }}
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(214, 178, 106, 0.40)';
-                        e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(214, 178, 106, 0.2) inset, 0 0 0 2px rgba(214, 178, 106, 0.1)';
+                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.40)';
+                        e.currentTarget.style.boxShadow = '0 2px 8px -2px rgba(0, 0, 0, 0.2) inset, 0 0 0 1px rgba(99, 102, 241, 0.2) inset, 0 0 0 2px rgba(99, 102, 241, 0.1)';
                       }}
                       onBlur={(e) => {
                         e.currentTarget.style.borderColor = 'var(--border-subtle)';
@@ -1436,7 +1436,7 @@ export default function PromptStagesPage() {
             </div>
           )}
 
-          <GlassCard glow className="p-5 flex-shrink-0">
+          <GlassCard animated glow className="p-5 flex-shrink-0">
             <div className="flex items-center justify-between gap-3 mb-4">
               <div>
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>文学创作提示词</div>
@@ -1470,7 +1470,7 @@ export default function PromptStagesPage() {
 
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
               {literaryPrompts.map((prompt) => (
-                <GlassCard glow key={prompt.id} className="p-4">
+                <GlassCard animated glow key={prompt.id} className="p-4">
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -1630,7 +1630,7 @@ export default function PromptStagesPage() {
             </div>
 
             <div className="grid gap-4 min-h-0" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              <GlassCard glow className="p-4 min-h-0 flex flex-col">
+              <GlassCard animated glow className="p-4 min-h-0 flex flex-col">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>原文</div>
                 <textarea
                   value={optOriginal}
@@ -1647,7 +1647,7 @@ export default function PromptStagesPage() {
                 />
               </GlassCard>
 
-              <GlassCard glow className="p-4 min-h-0 flex flex-col" variant="gold">
+              <GlassCard animated glow className="p-4 min-h-0 flex flex-col" variant="gold">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>优化结果（流式）</div>
                   <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>

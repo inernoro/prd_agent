@@ -148,11 +148,12 @@ export default function DocumentUpload() {
     const files = e.dataTransfer.files;
     if (files.length > 0) {
       const file = files[0];
-      if (file.name.endsWith('.md')) {
+      const ext = file.name.toLowerCase();
+      if (ext.endsWith('.md') || ext.endsWith('.mdc') || ext.endsWith('.txt')) {
         const content = await file.text();
         handleUpload(content, file.name);
       } else {
-        setError('仅支持 .md 格式文件');
+        setError('仅支持 .md、.mdc、.txt 格式文件');
       }
     }
   }, []);
@@ -210,7 +211,7 @@ export default function DocumentUpload() {
             
             <h2 className="text-xl font-semibold mb-2">上传PRD文档</h2>
             <p className="text-text-secondary mb-6">
-              拖拽 Markdown 文件到此处，或点击选择文件
+              拖拽文档文件到此处，或点击选择文件（支持 .md / .mdc / .txt）
             </p>
 
             <label className="inline-flex items-center gap-2 px-6 py-3 bg-primary-500 text-white rounded-lg cursor-pointer hover:bg-primary-600 transition-colors">
@@ -220,14 +221,14 @@ export default function DocumentUpload() {
               选择文件
               <input 
                 type="file" 
-                accept=".md" 
+                accept=".md,.mdc,.txt"
                 className="hidden" 
                 onChange={handleFileSelect}
               />
             </label>
 
             <p className="text-xs text-text-secondary mt-4">
-              支持 Ctrl+V 粘贴 Markdown 文本
+              支持 Ctrl+V 粘贴文本内容
             </p>
 
             {error && (

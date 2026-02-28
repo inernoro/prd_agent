@@ -5,7 +5,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { useDefectStore } from '@/stores/defectStore';
 import { toast } from '@/lib/toast';
 import { DefectStatus } from '@/services/contracts/defectAgent';
-import { Bug, Plus, FileText, RefreshCw } from 'lucide-react';
+import { Bug, Plus, FileText, RefreshCw, LayoutGrid, List } from 'lucide-react';
 import { DefectList } from './components/DefectList';
 import { DefectSubmitPanel } from './components/DefectSubmitPanel';
 import { DefectDetailPanel } from './components/DefectDetailPanel';
@@ -25,6 +25,8 @@ export default function DefectAgentPage() {
     setShowSubmitPanel,
     showTemplateDialog,
     setShowTemplateDialog,
+    viewMode,
+    setViewMode,
     loadAll,
   } = useDefectStore();
 
@@ -85,6 +87,39 @@ export default function DefectAgentPage() {
         onChange={(key) => setFilter(key as 'submitted' | 'assigned')}
         actions={
           <>
+            {/* 视图切换 */}
+            <div
+              className="flex items-center rounded-lg overflow-hidden"
+              style={{
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.1)',
+              }}
+            >
+              <button
+                type="button"
+                className="flex items-center justify-center w-7 h-7 transition-colors"
+                style={{
+                  background: viewMode === 'card' ? 'rgba(255,255,255,0.12)' : 'transparent',
+                  color: viewMode === 'card' ? 'var(--text-primary)' : 'var(--text-muted)',
+                }}
+                onClick={() => setViewMode('card')}
+                title="卡片视图"
+              >
+                <LayoutGrid size={14} />
+              </button>
+              <button
+                type="button"
+                className="flex items-center justify-center w-7 h-7 transition-colors"
+                style={{
+                  background: viewMode === 'list' ? 'rgba(255,255,255,0.12)' : 'transparent',
+                  color: viewMode === 'list' ? 'var(--text-primary)' : 'var(--text-muted)',
+                }}
+                onClick={() => setViewMode('list')}
+                title="列表视图"
+              >
+                <List size={14} />
+              </button>
+            </div>
             <Button
               variant="secondary"
               size="sm"
@@ -107,7 +142,7 @@ export default function DefectAgentPage() {
 
       {/* Error */}
       {error && (
-        <GlassCard glow className="py-2 px-3">
+        <GlassCard animated glow className="py-2 px-3">
           <div className="flex items-center justify-between">
             <div
               className="text-[12px]"
@@ -125,7 +160,7 @@ export default function DefectAgentPage() {
 
       {/* Loading */}
       {loading && !error && (
-        <GlassCard glow className="py-3 px-3">
+        <GlassCard animated glow className="py-3 px-3">
           <div
             className="text-[12px] flex items-center gap-2"
             style={{ color: 'var(--text-muted)' }}
@@ -137,7 +172,7 @@ export default function DefectAgentPage() {
       )}
 
       {/* Content - 用 GlassCard 包裹整个列表区域 */}
-      <GlassCard variant="subtle" className="flex-1 min-h-0">
+      <GlassCard animated variant="subtle" className="flex-1 min-h-0">
         <div className="h-full min-h-0 overflow-auto">
           <DefectList />
         </div>

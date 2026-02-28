@@ -14,6 +14,9 @@ public class DefectTemplate
     /// <summary>模板描述</summary>
     public string? Description { get; set; }
 
+    /// <summary>示范内容（一个完整的缺陷报告示例，展示理想的书写方式）</summary>
+    public string? ExampleContent { get; set; }
+
     /// <summary>必填字段定义</summary>
     public List<DefectTemplateField> RequiredFields { get; set; } = new();
 

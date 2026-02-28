@@ -28,7 +28,7 @@ export const Button = React.forwardRef<
 
   const variantCls =
     variant === 'primary'
-      ? 'text-[#1a1206]'
+      ? 'text-[#ffffff]'
       : variant === 'danger'
         ? 'text-[rgba(239,68,68,0.95)]'
         : 'text-[color:var(--text-primary)]';
@@ -37,7 +37,7 @@ export const Button = React.forwardRef<
     variant === 'primary'
       ? { 
           background: 'var(--gold-gradient)', 
-          boxShadow: '0 4px 16px -2px rgba(214, 178, 106, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1) inset',
+          boxShadow: '0 4px 16px -2px rgba(99, 102, 241, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1) inset',
           // 隔离阴影效果，防止与 GlassCard 的 backdrop-filter 产生异常渲染
           isolation: 'isolate',
         }

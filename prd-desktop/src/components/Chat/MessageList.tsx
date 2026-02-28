@@ -142,8 +142,7 @@ function ThinkingSection({ thinkingText, isThinkingPhase, hasContent }: {
       <button
         type="button"
         onClick={() => setManualExpanded(isExpanded ? false : true)}
-        className="inline-flex items-center gap-1.5 text-xs transition-colors select-none"
-        style={{ color: 'rgba(245,158,11,0.75)' }}
+        className="inline-flex items-center gap-1.5 text-xs transition-colors select-none text-amber-600/75 dark:text-amber-400/75"
       >
         <svg
           className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
@@ -165,7 +164,7 @@ function ThinkingSection({ thinkingText, isThinkingPhase, hasContent }: {
       </button>
       {isExpanded ? (
         <div className="mt-1.5 pl-4 border-l-2 border-amber-400/30 dark:border-amber-500/20">
-          <p className="text-xs leading-relaxed whitespace-pre-wrap break-words" style={{ color: 'rgba(150,150,150,0.8)' }}>
+          <p className="text-xs leading-relaxed whitespace-pre-wrap break-words text-gray-500/80 dark:text-gray-400/80">
             {thinkingText}
           </p>
         </div>

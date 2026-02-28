@@ -507,6 +507,13 @@ public class ImageGenRunWorker : BackgroundService
                             isMultiImageVisionMode,
                             loadedImageRefs.Count);
 
+                        // 文学创作场景：追加中文语言约束，防止生图模型将内容翻译为英文
+                        if (string.Equals(run.AppKey, "literary-agent", StringComparison.OrdinalIgnoreCase)
+                            && finalPrompt.Any(c => c >= 0x4E00 && c <= 0x9FFF))
+                        {
+                            finalPrompt += "\n\nIMPORTANT: All text, labels, titles, and captions rendered within the image MUST be in Chinese (简体中文). Do NOT use English text anywhere in the image.";
+                        }
+
                         // 统一图片生成：根据 images 数量自动路由（文生图/图生图/多图）
                         // 将所有已加载的图片（含 initImageBase64 单图兼容）合并为 data URI 列表
                         var allImages = new List<string>();

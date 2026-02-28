@@ -126,12 +126,9 @@ const CAPABILITIES: Capability[] = [
   },
 ];
 
-// 页面容器样式 - 不透明背景
-const pageContainerStyle: React.CSSProperties = {
-  background: 'var(--bg-elevated)',
-  borderRadius: '16px',
-  border: '1px solid rgba(255, 255, 255, 0.06)',
-};
+// 页面容器样式 — 页面级不使用 surface 类，保持透明让卡片自身表达玻璃质感
+const pageContainerClassName = '';
+const pageContainerStyle: React.CSSProperties = {};
 
 interface ChatMessage {
   id: string;
@@ -308,7 +305,7 @@ export function BasicCapabilities() {
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-3" style={pageContainerStyle}>
+    <div className={`${pageContainerClassName} h-full min-h-0 flex flex-col gap-3`} style={pageContainerStyle}>
       {/* Header */}
       <div className="px-4 pt-3">
         <div className={`flex ${isMobile ? 'flex-col gap-2.5' : 'items-center justify-between'}`}>

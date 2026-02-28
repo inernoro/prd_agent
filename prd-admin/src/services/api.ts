@@ -263,6 +263,12 @@ export const api = {
     leaderboard: () => '/api/executive/leaderboard',
   },
 
+  // ============ Profile 自服务 ============
+  profile: {
+    avatarUpload: () => '/api/profile/avatar/upload',
+    avatar: () => '/api/profile/avatar',
+  },
+
   // ============ Dashboard 仪表盘 ============
   dashboard: {
     notifications: {

@@ -234,7 +234,7 @@ export default function AttentionLandscape({
           frameloop={visible ? 'always' : 'never'}
         >
           <ambientLight intensity={0.55} />
-          <directionalLight position={[3, 2, 1]} intensity={0.55} color="#f2d59b" />
+          <directionalLight position={[3, 2, 1]} intensity={0.55} color="#a5b4fc" />
           <pointLight position={[-1.6, 0.6, 1.8]} intensity={0.45} color="#22d3ee" />
           <Landscape metrics={metrics} />
         </Canvas>

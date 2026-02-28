@@ -270,7 +270,7 @@ export function ToolDetail() {
       <div className="flex-1 min-h-0 flex gap-4">
         {/* Left: Info Panel */}
         <div className="w-72 flex-shrink-0 flex flex-col gap-3">
-          <GlassCard className="p-4" variant="subtle">
+          <GlassCard animated className="p-4" variant="subtle">
             {/* Icon & Name */}
             <div className="flex items-center gap-3 mb-3">
               <div
@@ -352,7 +352,7 @@ export function ToolDetail() {
 
           {/* Agent Key */}
           {selectedItem.agentKey && (
-            <GlassCard className="p-3" variant="subtle">
+            <GlassCard animated className="p-3" variant="subtle">
               <div className="text-[10px] mb-1" style={{ color: 'var(--text-muted)' }}>
                 关联 Agent
               </div>
@@ -367,7 +367,7 @@ export function ToolDetail() {
         </div>
 
         {/* Right: Chat Interface */}
-        <GlassCard className="flex-1 min-w-0 flex flex-col" padding="none" overflow="hidden">
+        <GlassCard animated className="flex-1 min-w-0 flex flex-col" padding="none" overflow="hidden">
           {/* Chat Messages */}
           <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
             {messages.length === 0 ? (

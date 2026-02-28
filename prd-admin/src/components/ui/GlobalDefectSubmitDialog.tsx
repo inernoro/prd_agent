@@ -29,6 +29,8 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 
@@ -82,6 +84,7 @@ export function GlobalDefectSubmitDialog() {
   const [attachments, setAttachments] = useState<File[]>([]);
   const [polishing, setPolishing] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [showExample, setShowExample] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -428,18 +431,49 @@ export function GlobalDefectSubmitDialog() {
             </div>
           </div>
 
-          {/* Template Hint */}
-          {selectedTemplate && selectedTemplate.description && (
-            <div
-              className="px-3 py-2 rounded-lg text-[11px]"
-              style={{
-                background: 'rgba(100,200,255,0.08)',
-                color: 'var(--text-secondary)',
-                border: '1px solid rgba(100,200,255,0.15)',
-              }}
-            >
-              <span style={{ color: 'rgba(100,200,255,0.8)' }}>模板提示：</span>
-              {selectedTemplate.description}
+          {/* Template Hint + Example */}
+          {selectedTemplate && (selectedTemplate.description || selectedTemplate.exampleContent) && (
+            <div className="space-y-2">
+              {selectedTemplate.description && (
+                <div
+                  className="px-3 py-2 rounded-lg text-[11px]"
+                  style={{
+                    background: 'rgba(100,200,255,0.08)',
+                    color: 'var(--text-secondary)',
+                    border: '1px solid rgba(100,200,255,0.15)',
+                  }}
+                >
+                  <span style={{ color: 'rgba(100,200,255,0.8)' }}>模板提示：</span>
+                  {selectedTemplate.description}
+                </div>
+              )}
+              {selectedTemplate.exampleContent && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowExample(!showExample)}
+                    className="flex items-center gap-1.5 text-[11px] transition-colors hover:opacity-80"
+                    style={{ color: 'rgba(214,178,106,0.85)' }}
+                  >
+                    {showExample ? <EyeOff size={12} /> : <Eye size={12} />}
+                    {showExample ? '收起示范' : '查看示范 — 看看理想的缺陷报告长什么样'}
+                  </button>
+                  {showExample && (
+                    <div
+                      className="mt-1.5 px-3 py-2.5 rounded-lg text-[12px] whitespace-pre-wrap leading-relaxed"
+                      style={{
+                        background: 'rgba(214,178,106,0.06)',
+                        border: '1px solid rgba(214,178,106,0.15)',
+                        color: 'var(--text-secondary)',
+                        maxHeight: '200px',
+                        overflowY: 'auto',
+                      }}
+                    >
+                      {selectedTemplate.exampleContent}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -455,10 +489,10 @@ export function GlobalDefectSubmitDialog() {
             style={{
               background: 'rgba(0,0,0,0.14)',
               border: focused 
-                ? '1px solid rgba(214, 178, 106, 0.55)' 
+                ? '1px solid rgba(99, 102, 241, 0.55)' 
                 : '1px solid rgba(255,255,255,0.08)',
               boxShadow: focused 
-                ? '0 0 0 2px rgba(214, 178, 106, 0.15)' 
+                ? '0 0 0 2px rgba(99, 102, 241, 0.15)' 
                 : 'none',
             }}
           >
@@ -684,8 +718,8 @@ export function GlobalDefectSubmitDialog() {
                         onClick={() => setSeverity(opt.value)}
                         className="px-2 py-1 rounded-[7px] text-[11px] font-medium transition-colors"
                         style={{
-                          background: active ? 'rgba(214, 178, 106, 0.18)' : 'rgba(255,255,255,0.06)',
-                          border: active ? '1px solid rgba(214, 178, 106, 0.35)' : '1px solid rgba(255,255,255,0.08)',
+                          background: active ? 'rgba(99, 102, 241, 0.18)' : 'rgba(255,255,255,0.06)',
+                          border: active ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(255,255,255,0.08)',
                           color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                         }}
                       >

@@ -363,8 +363,9 @@ export default function Sidebar() {
     const file = input.files?.[0] ?? null;
     input.value = '';
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.md')) {
-      setInlineError('仅支持 .md 格式文件');
+    const ext = file.name.toLowerCase();
+    if (!ext.endsWith('.md') && !ext.endsWith('.mdc') && !ext.endsWith('.txt')) {
+      setInlineError('仅支持 .md、.mdc、.txt 格式文件');
       return;
     }
     try {
@@ -443,8 +444,9 @@ export default function Sidebar() {
     // 允许下次选择同名文件也触发 change
     input.value = '';
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.md')) {
-      alert('仅支持 .md 格式文件');
+    const ext = file.name.toLowerCase();
+    if (!ext.endsWith('.md') && !ext.endsWith('.mdc') && !ext.endsWith('.txt')) {
+      alert('仅支持 .md、.mdc、.txt 格式文件');
       return;
     }
     try {
@@ -559,19 +561,19 @@ export default function Sidebar() {
                       className="z-50 min-w-[140px] rounded-md ui-glass-panel p-1"
                     >
                       <DropdownMenu.Item
-                        className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none"
+                        className="px-2 py-1.5 text-sm rounded cursor-pointer text-text-primary hover:bg-black/5 dark:hover:bg-white/5 outline-none"
                         onSelect={handleCreateGroup}
                       >
                         创建群组
                       </DropdownMenu.Item>
                       <DropdownMenu.Item
-                        className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 outline-none"
+                        className="px-2 py-1.5 text-sm rounded cursor-pointer text-text-primary hover:bg-black/5 dark:hover:bg-white/5 outline-none"
                         onSelect={handleJoinGroup}
                       >
                         加入群组
                       </DropdownMenu.Item>
                       <DropdownMenu.Item
-                        className={`px-2 py-1.5 text-sm rounded outline-none ${
+                        className={`px-2 py-1.5 text-sm rounded outline-none text-text-primary ${
                           activeGroupId
                             ? (canReplacePrd ? 'cursor-pointer hover:bg-black/5 dark:hover:bg-white/5' : 'opacity-50 cursor-not-allowed')
                             : 'opacity-50 cursor-not-allowed'
@@ -842,7 +844,7 @@ export default function Sidebar() {
                           <input
                             ref={createPrdInputRef}
                             type="file"
-                            accept=".md"
+                            accept=".md,.mdc,.txt"
                             className="hidden"
                             onChange={handleCreatePrdFileSelect}
                           />
@@ -879,7 +881,7 @@ export default function Sidebar() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".md"
+          accept=".md,.mdc,.txt"
           className="hidden"
           onChange={handleFileSelectForBind}
         />

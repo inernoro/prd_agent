@@ -191,10 +191,8 @@ function KvTable({ entries, onChange, placeholder }: {
               {!isPlaceholder && (
                 <button
                   onClick={() => remove(idx)}
-                  className="w-5 h-5 rounded flex items-center justify-center text-[11px] transition-colors"
+                  className="surface-row w-5 h-5 rounded flex items-center justify-center text-[11px] transition-colors"
                   style={{ color: 'var(--text-muted)' }}
-                  onMouseEnter={e => { e.currentTarget.style.color = 'rgba(239,68,68,0.8)'; e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
                 >
                   ×
                 </button>
@@ -375,7 +373,7 @@ export function HttpConfigPanel({ values, onBatchChange, disabled }: {
               className="px-3 py-2 text-[11px] font-medium relative transition-colors"
               style={{
                 color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
-                borderBottom: isActive ? '2px solid rgba(214,178,106,0.7)' : '2px solid transparent',
+                borderBottom: isActive ? '2px solid rgba(99,102,241,0.7)' : '2px solid transparent',
               }}
             >
               {tab.label}

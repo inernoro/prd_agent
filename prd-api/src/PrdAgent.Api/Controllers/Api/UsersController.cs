@@ -456,7 +456,7 @@ public class UsersController : ControllerBase
         await _db.Users.UpdateOneAsync(u => u.UserId == uid, update, cancellationToken: ct);
 
         user.AvatarFileName = avatarFileName;
-        var avatarUrl = BuildAvatarUrl(user);
+        var avatarUrl = AvatarUrlBuilder.BuildFresh(_cfg, user);
 
         _logger.LogInformation("Admin uploaded user avatar. userId={UserId} file={File} size={Size}",
             uid, avatarFileName, bytes.Length);

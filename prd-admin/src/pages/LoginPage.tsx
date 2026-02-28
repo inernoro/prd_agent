@@ -177,8 +177,8 @@ export default function LoginPage() {
         // 必须 readwrite：登出回登录页要读取主页面保存的角度，实现"续着以前的状态"
         persistMode="readwrite"
         // 登录页 idle 也希望更"深"：除非明确刹车（shouldRun===false），否则用实色
-        strokeRunning={shouldRun === false ? 'rgba(231, 206, 151, 0.30)' : 'rgba(231, 206, 151, 1)'}
-        strokeBraking={'rgba(231, 206, 151, 0.30)'}
+        strokeRunning={shouldRun === false ? 'rgba(165, 180, 252, 0.30)' : 'rgba(165, 180, 252, 1)'}
+        strokeBraking={'rgba(165, 180, 252, 0.30)'}
         brakeStrokeFadeMs={2000}
       />
 
@@ -198,7 +198,7 @@ export default function LoginPage() {
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            'radial-gradient(820px 620px at 50% 46%, rgba(214, 178, 106, 0.10) 0%, transparent 66%), radial-gradient(900px 720px at 48% 56%, rgba(92, 134, 255, 0.06) 0%, transparent 70%)',
+            'radial-gradient(820px 620px at 50% 46%, rgba(99, 102, 241, 0.10) 0%, transparent 66%), radial-gradient(900px 720px at 48% 56%, rgba(92, 134, 255, 0.06) 0%, transparent 70%)',
           opacity: 0.9,
         }}
       />
@@ -211,7 +211,7 @@ export default function LoginPage() {
               <div className="flex items-center gap-4">
                 <div
                   className="h-12 w-12 rounded-[14px] flex items-center justify-center text-[12px] font-extrabold"
-                  style={{ background: 'linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-2) 100%)', color: '#1a1206' }}
+                  style={{ background: 'linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-2) 100%)', color: '#ffffff' }}
                 >
                   MAP
                 </div>
@@ -276,7 +276,7 @@ export default function LoginPage() {
               <div className="flex items-center gap-4">
                 <div
                   className="h-12 w-12 rounded-[14px] flex items-center justify-center text-[12px] font-extrabold"
-                  style={{ background: 'linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-2) 100%)', color: '#1a1206' }}
+                  style={{ background: 'linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-2) 100%)', color: '#ffffff' }}
                 >
                   MAP
                 </div>

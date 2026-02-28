@@ -541,7 +541,7 @@ export default function AssetsManagePage() {
 
       {/* ==================== 单文件资源 Tab ==================== */}
       {activeTab === 'single' && (
-        <GlassCard glow className="overflow-hidden">
+        <GlassCard animated glow className="overflow-hidden">
           <div className="flex items-center justify-between gap-3 mb-5">
             <SectionTitle icon={<User size={16} />} title="无头像兜底" badge="required" />
           </div>
@@ -562,7 +562,7 @@ export default function AssetsManagePage() {
                 height: isMobile ? '100px' : '120px',
                 background: isNoHeadBroken
                   ? 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.03) 100%)'
-                  : 'var(--list-item-bg)',
+                  : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
               }}
             >
                 {noHeadPreviewUrl ? (
@@ -590,7 +590,7 @@ export default function AssetsManagePage() {
               <div className="text-[11px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>当前地址</div>
               <div
                 className="font-mono text-[12px] break-all p-2.5 rounded-[10px]"
-                style={{ background: 'var(--list-item-bg)', border: '1px solid var(--bg-card-hover)', color: 'var(--text-secondary)' }}
+                style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--bg-card-hover)', color: 'var(--text-secondary)' }}
               >
                 {noHeadPreviewUrl || '-'}
               </div>
@@ -636,7 +636,7 @@ export default function AssetsManagePage() {
       {activeTab === 'desktop' && (
         <div className="flex flex-col gap-4">
           {/* 品牌配置 */}
-          <GlassCard glow className="overflow-hidden">
+          <GlassCard animated glow className="overflow-hidden">
             <div className="flex items-start justify-between gap-4 mb-4">
               <div>
                 <SectionTitle icon={<Monitor size={16} />} title="品牌配置" badge="Desktop" />
@@ -679,7 +679,7 @@ export default function AssetsManagePage() {
           </GlassCard>
 
           {/* 快速创建 */}
-          <GlassCard glow className="overflow-hidden">
+          <GlassCard animated glow className="overflow-hidden">
             <SectionTitle icon={<Plus size={16} />} title="快速创建" />
             <p className="mt-1.5 mb-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
               资源根目录：<code className="font-mono text-[10px] px-1.5 py-0.5 rounded-[6px]" style={{ background: 'var(--bg-input)' }}>{desktopRoot || '-'}</code>
@@ -689,7 +689,7 @@ export default function AssetsManagePage() {
               {/* 新建皮肤 */}
               <div
                 className="p-3.5 rounded-[12px]"
-                style={{ background: 'var(--list-item-bg)', border: '1px solid var(--bg-card-hover)' }}
+                style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--bg-card-hover)' }}
               >
                 <div className="flex items-center gap-2 mb-2.5">
                   <Palette size={13} style={{ color: 'var(--accent-gold)' }} />
@@ -718,7 +718,7 @@ export default function AssetsManagePage() {
                 {/* 新建 Key */}
               <div
                 className="p-3.5 rounded-[12px]"
-                style={{ background: 'var(--list-item-bg)', border: '1px solid var(--bg-card-hover)' }}
+                style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--bg-card-hover)' }}
               >
                 <div className="flex items-center gap-2 mb-2.5">
                   <FolderOpen size={13} style={{ color: 'var(--accent-gold)' }} />
@@ -764,7 +764,7 @@ export default function AssetsManagePage() {
           </GlassCard>
 
           {/* 资源矩阵 */}
-          <GlassCard glow className="overflow-hidden">
+          <GlassCard animated glow className="overflow-hidden">
             <SectionTitle icon={<Layers size={16} />} title="资源矩阵" />
             <p className="mt-1.5 mb-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
               点击缩略图上传/替换资源，红色边框表示缺失，黄色虚线表示回落到默认
@@ -774,7 +774,7 @@ export default function AssetsManagePage() {
             <div
               className="rounded-[12px] overflow-hidden"
               style={{
-                background: 'var(--list-item-bg)',
+                background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                 border: '1px solid var(--bg-card-hover)',
               }}
             >
@@ -786,7 +786,7 @@ export default function AssetsManagePage() {
                   style={{
                     gridTemplateColumns: `minmax(160px, 1fr) repeat(${columns.length}, minmax(90px, 1fr))`,
                     borderBottom: '1px solid var(--bg-card-hover)',
-                    background: 'var(--list-item-bg)',
+                    background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                   }}
                 >
                   <div
@@ -933,7 +933,7 @@ function AssetRowBlock(props: {
                   ? 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.02) 100%)'
                   : isFallback
                     ? 'linear-gradient(135deg, rgba(234,179,8,0.06) 0%, rgba(234,179,8,0.02) 100%)'
-                    : 'linear-gradient(135deg, var(--nested-block-bg) 0%, var(--list-item-bg) 100%)',
+                    : 'linear-gradient(135deg, var(--nested-block-bg) 0%, var(--bg-card, rgba(255, 255, 255, 0.03)) 100%)',
               }}
               title={isUploading ? '上传中...' : (url ? `点击替换\n${url}` : '点击上传')}
               onClick={() => !isUploading && onUpload(skin, row.key)}
