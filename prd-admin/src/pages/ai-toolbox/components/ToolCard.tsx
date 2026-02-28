@@ -161,28 +161,42 @@ export function ToolCard({ item }: ToolCardProps) {
             `,
           }}
         >
-          {/* 大图标/emoji 作为视觉焦点 */}
+          {/* 图标视觉焦点 + 光晕 */}
           <div
             className="absolute inset-0 flex items-center justify-center transition-transform duration-500 ease-out group-hover:scale-[1.08]"
-            style={{ paddingBottom: '30%' }}
+            style={{ paddingBottom: '28%' }}
           >
-            {item.emoji ? (
-              <span className="text-[56px] leading-none select-none opacity-90">{item.emoji}</span>
-            ) : (
-              <IconComponent
-                size={64}
-                strokeWidth={1.2}
-                style={{ color: palette.soft, opacity: 0.7 }}
-              />
-            )}
+            {/* 图标背后的柔光圈 */}
+            <div
+              className="absolute rounded-full blur-3xl"
+              style={{
+                width: 100,
+                height: 100,
+                background: `radial-gradient(circle, ${palette.from}50 0%, ${palette.from}15 60%, transparent 100%)`,
+              }}
+            />
+            <IconComponent
+              size={52}
+              strokeWidth={1.4}
+              className="relative drop-shadow-lg"
+              style={{ color: palette.soft, opacity: 0.92 }}
+            />
           </div>
           {/* 装饰性光点 */}
           <div
-            className="absolute w-24 h-24 rounded-full blur-2xl opacity-30"
+            className="absolute w-28 h-28 rounded-full blur-2xl opacity-25"
             style={{
               background: palette.from,
-              top: '15%',
-              right: '10%',
+              top: '12%',
+              right: '8%',
+            }}
+          />
+          <div
+            className="absolute w-16 h-16 rounded-full blur-xl opacity-15"
+            style={{
+              background: palette.soft,
+              bottom: '35%',
+              left: '12%',
             }}
           />
         </div>
