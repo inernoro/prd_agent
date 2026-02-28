@@ -275,6 +275,7 @@ export function ArenaPage() {
   const abortRef = useRef<AbortController | null>(null);
   const panelsRef = useRef<ArenaPanel[]>([]);
   const groupDropdownRef = useRef<HTMLDivElement>(null);
+  const manageModeRef = useRef(false);
 
   // Keep panelsRef in sync
   useEffect(() => {
@@ -288,9 +289,15 @@ export function ArenaPage() {
     });
   }, [panels]);
 
-  // Close dropdown when clicking outside
+  // Keep manageModeRef in sync
+  useEffect(() => {
+    manageModeRef.current = manageMode;
+  }, [manageMode]);
+
+  // Close dropdown when clicking outside (but not during manage mode — ConfirmTip uses portals)
   useEffect(() => {
     function handleClick(e: MouseEvent) {
+      if (manageModeRef.current) return;
       if (groupDropdownRef.current && !groupDropdownRef.current.contains(e.target as Node)) {
         setGroupDropdownOpen(false);
       }
@@ -862,19 +869,17 @@ export function ArenaPage() {
   const hasBattle = panels.length > 0 || !!currentPrompt;
   const canReveal = allDone && !revealed && !revealAnimating && !revealLoading && panels.length > 0 && panels.some((p) => p.status === 'done');
 
-  // --- Sort panels: active/done first (by startedAt), waiting last ---
+  // --- Sort panels: panels with content first, then by startedAt, waiting last ---
   const sortedPanels = useMemo(() => {
     return [...panels].sort((a, b) => {
-      // Waiting panels go to the end
-      const aActive = a.status !== 'waiting';
-      const bActive = b.status !== 'waiting';
-      if (aActive !== bActive) return aActive ? -1 : 1;
-      // Among active panels, sort by startedAt (earliest first)
-      if (aActive && bActive) {
-        const aT = a.startedAt ?? Infinity;
-        const bT = b.startedAt ?? Infinity;
-        if (aT !== bT) return aT - bT;
-      }
+      // Panels with content (text or error) come first
+      const aHasContent = a.text.length > 0 || a.status === 'error';
+      const bHasContent = b.text.length > 0 || b.status === 'error';
+      if (aHasContent !== bHasContent) return aHasContent ? -1 : 1;
+      // Among those with content, sort by startedAt (earliest first = responded first)
+      const aT = a.startedAt ?? Infinity;
+      const bT = b.startedAt ?? Infinity;
+      if (aT !== bT) return aT - bT;
       return 0;
     });
   }, [panels]);
@@ -883,6 +888,7 @@ export function ArenaPage() {
   const completedCount = panels.filter((p) => p.status === 'done' || p.status === 'error').length;
   const totalCount = panels.length;
   const progressPct = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
+  const hasActiveProgress = hasBattle && totalCount > 0 && (isStreaming || completedCount > 0);
 
   return (
     <div className="flex h-full" style={{ minHeight: 0 }}>
@@ -1414,36 +1420,6 @@ export function ArenaPage() {
           </div>
         )}
 
-        {/* ===================== Progress Bar ===================== */}
-        {hasBattle && totalCount > 0 && (isStreaming || completedCount > 0) && (
-          <div className="flex-shrink-0 px-6 pt-3">
-            <div className="mx-auto" style={{ maxWidth: '900px' }}>
-              <div className="flex items-center gap-3">
-                <div
-                  className="flex-1 h-1.5 rounded-full overflow-hidden"
-                  style={{ background: 'rgba(255,255,255,0.06)' }}
-                >
-                  <div
-                    className="h-full rounded-full transition-all duration-500 ease-out"
-                    style={{
-                      width: `${progressPct}%`,
-                      background: completedCount === totalCount
-                        ? '#10b981'
-                        : 'linear-gradient(90deg, #6366f1, #8b5cf6)',
-                    }}
-                  />
-                </div>
-                <span
-                  className="text-[11px] font-mono flex-shrink-0"
-                  style={{ color: completedCount === totalCount ? '#10b981' : 'var(--text-muted)' }}
-                >
-                  {completedCount}/{totalCount}{completedCount === totalCount && !isStreaming ? ' 完成' : ''}
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* ===================== Bottom Bar ===================== */}
         <div
           className="flex-shrink-0 px-6 py-4"
@@ -1452,10 +1428,21 @@ export function ArenaPage() {
           }}
         >
           <div className="mx-auto" style={{ maxWidth: '900px' }}>
+            {/* Conic-gradient progress ring wrapper */}
             <div
-              className="rounded-[16px] p-3 transition-colors duration-150 focus-within:ring-1 focus-within:ring-[rgba(99,102,241,0.5)]"
-              style={{ background: 'rgba(255,255,255,0.03)' }}
+              className="rounded-[18px] p-[2px] transition-all duration-300"
+              style={{
+                background: hasActiveProgress
+                  ? completedCount === totalCount && !isStreaming
+                    ? '#10b981'
+                    : `conic-gradient(from 0deg, #6366f1 ${progressPct * 3.6}deg, rgba(255,255,255,0.06) ${progressPct * 3.6}deg)`
+                  : 'rgba(255,255,255,0.06)',
+              }}
             >
+              <div
+                className="rounded-[16px] p-3"
+                style={{ background: 'var(--bg-base, #0d0d0f)' }}
+              >
               <textarea
                 ref={textareaRef}
                 value={prompt}
@@ -1481,6 +1468,12 @@ export function ArenaPage() {
               />
               <div className="flex items-center justify-between mt-2 pt-2">
                 <span className="text-[11px] px-2" style={{ color: 'var(--text-muted)' }}>
+                  {hasActiveProgress
+                    ? <span style={{ color: completedCount === totalCount ? '#10b981' : 'var(--text-muted)' }}>
+                        {completedCount}/{totalCount}{completedCount === totalCount && !isStreaming ? ' 完成' : ' 进行中'}
+                        {' · '}
+                      </span>
+                    : null}
                   {slots.length > 0
                     ? `${selectedGroup?.name} · ${slots.length} 个模型匿名回答`
                     : groups.length === 0 ? '未配置阵容' : '请选择阵容'}
@@ -1515,6 +1508,7 @@ export function ArenaPage() {
                   </Button>
                 </div>
               </div>
+            </div>
             </div>
           </div>
         </div>
