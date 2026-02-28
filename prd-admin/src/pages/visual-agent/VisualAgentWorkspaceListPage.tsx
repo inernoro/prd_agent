@@ -492,17 +492,19 @@ const SCENARIO_TAGS = [
 function HeroSection() {
   return (
     <div className="text-center py-8">
-      {/* Aurora Prism 流体变形球 */}
+      {/* Prism Diamond 棱镜钻石 */}
       <div className="flex items-center justify-center mb-5">
-        <div className="va-hero-orb-pulse">
-          <div className="va-hero-orb" />
+        <div className="va-prism-scene">
+          <div className="va-prism-pulse">
+            <div className="va-prism" />
+          </div>
         </div>
       </div>
       {/* 主标题 - 全息流动渐变 */}
       <h1
         className="text-[42px] font-bold tracking-tight mb-3"
         style={{
-          background: 'linear-gradient(90deg, #c4b5fd, #818cf8, #6ee7b7, #fcd34d, #f9a8d4, #c4b5fd)',
+          background: 'linear-gradient(90deg, #c4b5fd, #818cf8, #6ee7b7, #818cf8, #c4b5fd)',
           backgroundSize: '200% 100%',
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',

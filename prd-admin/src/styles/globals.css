@@ -759,43 +759,64 @@ select optgroup {
   .prd-recgrid-canvas { opacity: 0.9; }
 }
 
-/* ---- Visual Agent Hero: Aurora Prism ---- */
+/* ---- Visual Agent Hero: Prism Diamond ---- */
 
-/* 外层脉冲容器 */
-.va-hero-orb-pulse {
-  animation: vaOrbPulse 3.5s ease-in-out infinite;
+/* 3D 透视容器 */
+.va-prism-scene {
+  perspective: 600px;
+  width: 56px;
+  height: 56px;
+}
+
+/* 呼吸脉冲层 */
+.va-prism-pulse {
+  width: 100%;
+  height: 100%;
+  animation: vaPrismPulse 3.5s ease-in-out infinite;
   will-change: transform, opacity;
 }
 
-/* 多彩流体变形球 */
-.va-hero-orb {
-  width: 60px;
-  height: 60px;
-  background: conic-gradient(from 0deg, #a78bfa, #60a5fa, #34d399, #fbbf24, #f472b6, #a78bfa);
+/* 钻石本体 */
+.va-prism {
+  width: 40px;
+  height: 40px;
+  margin: 8px auto 0;
+  transform: rotate(45deg);
+  border-radius: 6px;
+  background: linear-gradient(135deg, #a78bfa 0%, #6ee7b7 50%, #60a5fa 100%);
   box-shadow:
-    0 0 24px rgba(129, 140, 248, 0.4),
-    0 0 48px rgba(167, 139, 250, 0.18);
-  animation: vaOrbMorph 8s ease-in-out infinite, vaOrbSpin 12s linear infinite;
-  will-change: border-radius, transform;
+    0 0 20px rgba(139, 92, 246, 0.45),
+    0 0 40px rgba(110, 231, 183, 0.15),
+    inset 0 0 12px rgba(255, 255, 255, 0.12);
+  animation: vaPrismFlip 6s ease-in-out infinite;
+  will-change: transform;
 }
 
-/* 球体变形 */
-@keyframes vaOrbMorph {
-  0%, 100% { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; }
-  25%      { border-radius: 30% 60% 70% 40% / 50% 60% 30% 60%; }
-  50%      { border-radius: 50% 60% 30% 60% / 30% 60% 70% 40%; }
-  75%      { border-radius: 60% 30% 60% 40% / 60% 40% 30% 70%; }
+/* 钻石表面高光 */
+.va-prism::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.25) 0%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.08) 100%
+  );
 }
 
-/* 渐变旋转 */
-@keyframes vaOrbSpin {
-  to { transform: rotate(360deg); }
+/* 3D 翻转（保持 45deg 菱形 + Y 轴旋转） */
+@keyframes vaPrismFlip {
+  0%   { transform: rotate(45deg) rotateY(0deg); }
+  50%  { transform: rotate(45deg) rotateY(180deg); }
+  100% { transform: rotate(45deg) rotateY(360deg); }
 }
 
-/* 呼吸脉冲 */
-@keyframes vaOrbPulse {
-  0%, 100% { transform: scale(0.92); opacity: 0.85; }
-  50%      { transform: scale(1.08); opacity: 1; }
+/* 呼吸缩放 */
+@keyframes vaPrismPulse {
+  0%, 100% { transform: scale(0.92); opacity: 0.82; }
+  50%      { transform: scale(1.06); opacity: 1; }
 }
 
 /* 标题全息流动渐变 */
@@ -806,13 +827,12 @@ select optgroup {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .va-hero-orb-pulse,
-  .va-hero-orb {
+  .va-prism-pulse,
+  .va-prism {
     animation: none !important;
     will-change: auto;
   }
-  .va-hero-orb {
-    border-radius: 50%;
+  .va-prism {
     opacity: 0.9;
   }
 }
