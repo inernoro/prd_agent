@@ -424,7 +424,7 @@ export function ModelPoolManagePage() {
       />
 
       {/* 模型池列表 */}
-      <GlassCard variant="subtle" className="flex-1 min-h-0">
+      <GlassCard animated variant="subtle" className="flex-1 min-h-0">
         <div className="h-full min-h-0 overflow-auto">
           {loading ? (
             <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
@@ -472,10 +472,8 @@ export function ModelPoolManagePage() {
                   <div key={group.type}>
                     {/* ── 第一级：类型分组头 ── */}
                     <div
-                      className={`flex items-center gap-3 px-4 py-2 cursor-pointer select-none ${isMobile ? 'flex-wrap gap-y-1' : ''}`}
-                      style={{ background: 'var(--list-item-bg)', borderBottom: '1px solid var(--nested-block-border)' }}
-                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-input)'; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = 'var(--list-item-bg)'; }}
+                      className={`flex items-center gap-3 px-4 py-2 cursor-pointer select-none surface-row ${isMobile ? 'flex-wrap gap-y-1' : ''}`}
+                      style={{ borderBottom: '1px solid var(--nested-block-border)' }}
                       onClick={() => setCollapsedTypes(prev => {
                         const next = new Set(prev);
                         if (next.has(group.type)) next.delete(group.type);
@@ -570,10 +568,8 @@ export function ModelPoolManagePage() {
                       return (
                         <div key={pool.id}>
                           <div
-                            className={`group transition-colors cursor-pointer ${isMobile ? 'flex flex-col gap-2 px-3 py-2.5' : 'flex items-center gap-3 pl-12 pr-4 py-2.5'}`}
+                            className={`group transition-colors cursor-pointer surface-row ${isMobile ? 'flex flex-col gap-2 px-3 py-2.5' : 'flex items-center gap-3 pl-12 pr-4 py-2.5'}`}
                             style={{ borderBottom: '1px solid var(--nested-block-border)' }}
-                            onMouseEnter={e => { e.currentTarget.style.background = 'var(--nested-block-bg)'; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                             onClick={() => setExpandedPoolIds(prev => {
                               const next = new Set(prev);
                               if (next.has(pool.id)) next.delete(pool.id);
@@ -814,8 +810,8 @@ export function ModelPoolManagePage() {
                           {/* ── 第三级：展开的模型列表 ── */}
                           {isExpanded && pool.models && pool.models.length > 0 && (
                             <div
-                              className={`py-2 pr-4 ${isMobile ? 'pl-3' : 'pl-12'}`}
-                              style={{ background: 'var(--list-item-bg)', borderBottom: '1px solid var(--nested-block-border)' }}
+                              className={`py-2 pr-4 ${isMobile ? 'pl-3' : 'pl-12'} surface-inset`}
+                              style={{ borderBottom: '1px solid var(--nested-block-border)' }}
                             >
                               <div className={`${isMobile ? 'ml-2' : 'ml-5'} space-y-1`}>
                                 {pool.models.map((model, idx) => {
@@ -1016,8 +1012,7 @@ export function ModelPoolManagePage() {
                 </div>
 
                 <div
-                  className="rounded-[12px] overflow-hidden"
-                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}
+                  className="rounded-[12px] overflow-hidden surface-inset"
                 >
                   {poolForm.models.length === 0 ? (
                     <div className="py-10 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>

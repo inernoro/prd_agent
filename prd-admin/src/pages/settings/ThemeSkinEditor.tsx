@@ -23,7 +23,7 @@ export function ThemeSkinEditor() {
   const { config, setConfig, reset, saving } = useThemeStore();
 
   return (
-    <GlassCard glow accentHue={45} className="h-full flex flex-col">
+    <GlassCard glow animated accentHue={234} className="h-full flex flex-col">
       {/* 标题栏 */}
       <div className="flex items-center justify-between gap-3 mb-6">
         <div>
@@ -75,9 +75,9 @@ export function ThemeSkinEditor() {
                   className="p-3 rounded-lg transition-all text-left"
                   style={{
                     background: isActive
-                      ? 'rgba(214, 178, 106, 0.15)'
+                      ? 'rgba(99, 102, 241, 0.15)'
                       : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${isActive ? 'rgba(214, 178, 106, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
+                    border: `1px solid ${isActive ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
                   }}
                 >
                   <div
@@ -113,9 +113,9 @@ export function ThemeSkinEditor() {
                   className="p-3 rounded-lg transition-all text-left"
                   style={{
                     background: isActive
-                      ? 'rgba(214, 178, 106, 0.15)'
+                      ? 'rgba(99, 102, 241, 0.15)'
                       : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${isActive ? 'rgba(214, 178, 106, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
+                    border: `1px solid ${isActive ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
                   }}
                 >
                   <div
@@ -164,9 +164,9 @@ export function ThemeSkinEditor() {
               className="flex-1 p-3 rounded-lg transition-all flex items-center justify-center gap-2"
               style={{
                 background: config.enableGlow
-                  ? 'rgba(214, 178, 106, 0.15)'
+                  ? 'rgba(99, 102, 241, 0.15)'
                   : 'rgba(255, 255, 255, 0.04)',
-                border: `1px solid ${config.enableGlow ? 'rgba(214, 178, 106, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
+                border: `1px solid ${config.enableGlow ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
               }}
             >
               <Sparkles
@@ -185,9 +185,9 @@ export function ThemeSkinEditor() {
               className="flex-1 p-3 rounded-lg transition-all flex items-center justify-center gap-2"
               style={{
                 background: !config.enableGlow
-                  ? 'rgba(214, 178, 106, 0.15)'
+                  ? 'rgba(99, 102, 241, 0.15)'
                   : 'rgba(255, 255, 255, 0.04)',
-                border: `1px solid ${!config.enableGlow ? 'rgba(214, 178, 106, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
+                border: `1px solid ${!config.enableGlow ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
               }}
             >
               <span
@@ -216,9 +216,9 @@ export function ThemeSkinEditor() {
                   className="w-full p-3 rounded-lg transition-all text-left"
                   style={{
                     background: isActive
-                      ? 'rgba(214, 178, 106, 0.15)'
+                      ? 'rgba(99, 102, 241, 0.15)'
                       : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${isActive ? 'rgba(214, 178, 106, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
+                    border: `1px solid ${isActive ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
                   }}
                 >
                   <div
@@ -255,9 +255,9 @@ export function ThemeSkinEditor() {
                   className="w-full p-3 rounded-lg transition-all text-left"
                   style={{
                     background: isActive
-                      ? 'rgba(214, 178, 106, 0.15)'
+                      ? 'rgba(99, 102, 241, 0.15)'
                       : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${isActive ? 'rgba(214, 178, 106, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
+                    border: `1px solid ${isActive ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
                   }}
                 >
                   <div
@@ -308,7 +308,7 @@ export function ThemeSkinEditor() {
               style={{
                 ...glassPanel,
                 background: config.enableGlow
-                  ? `radial-gradient(ellipse 100% 60% at 50% -10%, rgba(214, 178, 106, 0.25) 0%, transparent 65%), linear-gradient(180deg, var(--glass-bg-start, rgba(255,255,255,0.08)) 0%, var(--glass-bg-end, rgba(255,255,255,0.03)) 100%)`
+                  ? `radial-gradient(ellipse 100% 60% at 50% -10%, rgba(99, 102, 241, 0.25) 0%, transparent 65%), linear-gradient(180deg, var(--glass-bg-start, rgba(255,255,255,0.08)) 0%, var(--glass-bg-end, rgba(255,255,255,0.03)) 100%)`
                   : `linear-gradient(180deg, var(--glass-bg-start, rgba(255,255,255,0.08)) 0%, var(--glass-bg-end, rgba(255,255,255,0.03)) 100%)`,
                 border: `1px solid var(--glass-border, rgba(255,255,255,0.14))`,
               }}

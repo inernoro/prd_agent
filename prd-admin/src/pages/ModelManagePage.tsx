@@ -1165,7 +1165,7 @@ export default function ModelManagePage() {
     <div className="h-full min-h-0 flex flex-col gap-5">
       <div className={`grid gap-5 flex-1 min-h-0 transition-all ${isMobile ? 'grid-cols-1' : platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[256px_1fr]'}`}>
         {/* 左侧：平台列表（导航风格），移动端隐藏 */}
-        <GlassCard glow className={`p-0 overflow-hidden flex flex-col ${isMobile ? 'hidden' : ''}`}>
+        <GlassCard animated glow className={`p-0 overflow-hidden flex flex-col ${isMobile ? 'hidden' : ''}`}>
           {/* 折叠/展开按钮 */}
           <div className="p-2 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             {!platformSidebarCollapsed && (
@@ -1404,7 +1404,7 @@ export default function ModelManagePage() {
         )}
 
         {/* 右侧：平台详情 + 模型列表 */}
-        <GlassCard glow variant={selectedPlatform ? 'gold' : 'default'} className="p-0 overflow-hidden flex flex-col">
+        <GlassCard animated glow variant={selectedPlatform ? 'gold' : 'default'} className="p-0 overflow-hidden flex flex-col">
           <div className={`p-4 flex ${isMobile ? 'flex-col gap-3' : 'items-start justify-between gap-4'}`} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             <div className="min-w-0">
               <div className="flex items-center gap-2 min-w-0">

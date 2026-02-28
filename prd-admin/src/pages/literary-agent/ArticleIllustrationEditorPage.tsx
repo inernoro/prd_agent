@@ -97,7 +97,7 @@ const PRD_MD_STYLE = `
   .prd-md ul,.prd-md ol { margin: 10px 0; padding-left: 18px; }
   .prd-md li { margin: 6px 0; }
   .prd-md hr { border: 0; border-top: 1px solid var(--border-default); margin: 14px 0; }
-  .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
+  .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: rgba(165,180,252,0.92); border-radius: 10px; }
   .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
   .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 6px; border-radius: 8px; }
   .prd-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 14px; padding: 12px; overflow: auto; }
@@ -276,6 +276,7 @@ const panelCardStyle: React.CSSProperties = {
 
 const PanelCard = ({ className, children }: { className?: string; children: React.ReactNode }) => (
   <GlassCard
+    animated
     variant="subtle"
     padding="sm"
     className={cn('rounded-[16px]', className)}
@@ -2043,7 +2044,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       )}
       {/* 左侧：文章编辑器 */}
       <div className={cn("flex-1 min-w-0 flex flex-col gap-4", isMobile && mobileTab !== 'article' && "hidden")}>
-        <GlassCard glow className="flex-1 min-h-0 flex flex-col">
+        <GlassCard animated glow className="flex-1 min-h-0 flex flex-col">
           {/* 精简头部：标题 + 模型信息 */}
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -2699,10 +2700,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 return (
                   <div
                   key={it.markerIndex}
-                  className="p-2.5 rounded"
+                  className="surface-inset p-2.5 rounded"
                   style={{
-                    background: 'var(--bg-elevated)',
-                    border: '1px solid var(--border-subtle)',
                     position: 'relative',
                   }}
                 >
@@ -3281,6 +3280,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       const isPromptSelected = selectedPrompt?.id === prompt.id;
                       return (
                       <GlassCard
+                        animated
                         glow
                         key={prompt.id}
                         className="p-0 overflow-hidden"
@@ -3323,7 +3323,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               className="overflow-auto border rounded-[6px]"
                               style={{
                                 borderColor: 'var(--border-subtle)',
-                                background: 'var(--list-item-bg)',
+                                background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                 height: '100px',
                               }}
                             >
@@ -3494,6 +3494,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <div className="grid grid-cols-1 gap-3">
                     {referenceImageConfigs.map((config) => (
                       <GlassCard
+                        animated
                         key={config.id}
                         className="p-0 overflow-hidden"
                         style={config.isActive ? {
@@ -3522,7 +3523,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 className="overflow-auto border rounded-[6px] p-2"
                                 style={{
                                   borderColor: 'var(--border-subtle)',
-                                  background: 'var(--list-item-bg)',
+                                  background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                 }}
                               >
                                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -3533,7 +3534,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               <div
                                 className="flex items-center justify-center overflow-hidden rounded-[6px]"
                                 style={{
-                                  background: 'var(--list-item-bg)',
+                                  background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                   border: '1px solid var(--border-subtle)',
                                   cursor: config.imageUrl ? 'zoom-in' : 'default',
                                 }}
@@ -3923,7 +3924,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <div
                     className="flex-1 rounded-lg overflow-hidden relative group cursor-pointer"
                     style={{
-                      background: editingRefConfig.imageUrl ? 'transparent' : 'var(--list-item-bg)',
+                      background: editingRefConfig.imageUrl ? 'transparent' : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                       border: editingRefConfig.imageUrl ? 'none' : '1px dashed var(--border-subtle)',
                       minHeight: '200px',
                     }}

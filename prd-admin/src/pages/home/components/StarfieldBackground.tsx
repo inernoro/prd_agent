@@ -149,9 +149,9 @@ export function StarfieldBackground({ className, themeColor }: StarfieldBackgrou
           m += layer(uv * mix(10.0, 0.5, depth) + fi * 20.0) * fade;
         }
 
-        // Use theme color if provided, otherwise use gold
-        vec3 defaultGold = vec3(0.85, 0.65, 0.30);
-        vec3 themeBase = length(uThemeColor) > 0.1 ? uThemeColor : defaultGold;
+        // Use theme color if provided, otherwise use indigo
+        vec3 defaultColor = vec3(0.39, 0.40, 0.95);
+        vec3 themeBase = length(uThemeColor) > 0.1 ? uThemeColor : defaultColor;
 
         // Create color variations
         vec3 themeBright = themeBase * 1.3;
@@ -217,7 +217,7 @@ export function StarfieldBackground({ className, themeColor }: StarfieldBackgrou
     if (themeColor) {
       gl.uniform3f(colorHandle, themeColor[0] / 255, themeColor[1] / 255, themeColor[2] / 255);
     } else {
-      gl.uniform3f(colorHandle, 0, 0, 0); // Will use default gold in shader
+      gl.uniform3f(colorHandle, 0, 0, 0); // Will use default indigo in shader
     }
 
     const resize = () => {

@@ -2,7 +2,7 @@
 
 /* 注意：避免使用 color-mix()，部分浏览器/WebView 不支持 */
 :focus-visible {
-  outline: 2px solid rgba(214, 178, 106, 0.7);
+  outline: 2px solid rgba(99, 102, 241, 0.6);
   outline-offset: 2px;
 }
 
@@ -19,7 +19,7 @@
   color: var(--text-primary);
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
-  caret-color: rgba(214, 178, 106, 0.85);
+  caret-color: rgba(129, 140, 248, 0.85);
   transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
@@ -33,9 +33,9 @@
 }
 
 .prd-field:focus {
-  border-color: rgba(214, 178, 106, 0.35);
+  border-color: rgba(99, 102, 241, 0.4);
   box-shadow:
-    0 0 0 3px rgba(214, 178, 106, 0.16),
+    0 0 0 3px rgba(99, 102, 241, 0.12),
     0 1px 0 rgba(255, 255, 255, 0.03) inset;
 }
 
@@ -86,9 +86,9 @@ select optgroup {
 
 /* 侧边栏导航项：hover 效果（纯 CSS，避免 JS 残影） */
 .nav-item-hover:hover {
-  background: rgba(255, 255, 255, 0.08) !important;
-  border-color: rgba(214, 178, 106, 0.25) !important;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.25), 0 0 0 1px rgba(214, 178, 106, 0.12) inset;
+  background: rgba(99, 102, 241, 0.06) !important;
+  border-color: rgba(99, 102, 241, 0.15) !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25), 0 0 0 1px rgba(99, 102, 241, 0.08) inset;
 }
 
 /* 图片上传：海浪透明遮罩（用于 syncStatus=pending 的画布图片） */
@@ -447,7 +447,7 @@ select optgroup {
 
 @keyframes modelMapLineGlow {
   0%, 100% { opacity: 1; filter: drop-shadow(0 10px 22px rgba(0,0,0,0.45)); }
-  50% { opacity: 1; filter: drop-shadow(0 16px 32px rgba(214, 178, 106, 0.26)); }
+  50% { opacity: 1; filter: drop-shadow(0 16px 32px rgba(99, 102, 241, 0.26)); }
 }
 
 @keyframes modelMapNodeIn {
@@ -719,7 +719,7 @@ select optgroup {
 
 .prd-login-leftGlow {
   background:
-    radial-gradient(900px 640px at 50% 46%, rgba(214, 178, 106, 0.10) 0%, transparent 66%),
+    radial-gradient(900px 640px at 50% 46%, rgba(99, 102, 241, 0.10) 0%, transparent 66%),
     radial-gradient(760px 520px at 55% 60%, rgba(124, 252, 0, 0.05) 0%, transparent 64%);
 }
 
@@ -730,13 +730,13 @@ select optgroup {
   overflow: hidden;
   pointer-events: none;
   background:
-    radial-gradient(1000px 820px at 68% 52%, rgba(214, 178, 106, 0.06) 0%, transparent 64%),
+    radial-gradient(1000px 820px at 68% 52%, rgba(99, 102, 241, 0.06) 0%, transparent 64%),
     radial-gradient(900px 760px at 32% 56%, rgba(92, 134, 255, 0.05) 0%, transparent 68%),
     linear-gradient(180deg, #050507 0%, #07070a 55%, #050507 100%);
   /* defaults */
   --prd-recgrid-scale: 0.97;
   /* 注意：canvas 不支持 color-mix()，这里用可解析的 rgba，组件也可通过 prop 覆盖 */
-  --prd-recgrid-stroke: rgba(231, 206, 151, 0.55);
+  --prd-recgrid-stroke: rgba(165, 180, 252, 0.55);
 }
 
 .prd-recgrid-canvas {
@@ -1128,10 +1128,10 @@ select optgroup {
 /* Glow pulse for CTA buttons */
 @keyframes glow-pulse {
   0%, 100% {
-    box-shadow: 0 0 40px rgba(214, 178, 106, 0.3), 0 8px 32px rgba(0,0,0,0.4);
+    box-shadow: 0 0 40px rgba(99, 102, 241, 0.3), 0 8px 32px rgba(0,0,0,0.4);
   }
   50% {
-    box-shadow: 0 0 60px rgba(214, 178, 106, 0.5), 0 8px 32px rgba(0,0,0,0.4);
+    box-shadow: 0 0 60px rgba(99, 102, 241, 0.5), 0 8px 32px rgba(0,0,0,0.4);
   }
 }
 
@@ -1160,6 +1160,157 @@ select optgroup {
   animation: line-draw 2s ease-out forwards;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   Surface System — Single Source of Truth for Card/Panel Surfaces
+
+   目的：统一全应用的卡片/面板视觉样式，消除内联样式碎片化问题。
+   所有 surface 类使用 tokens.css 中的 CSS 变量
+   (--glass-bg-start, --glass-bg-end, --glass-border)，
+   质量/性能模式通过变量值自动切换。
+
+   类名            用途                             blur  shadow  hover
+   ─────────────  ─────────────────────────────────  ────  ──────  ─────
+   .surface       主级卡片容器                       ✓     中      —
+   .surface-raised 突出展示卡片（KPI、Hero）          ✓     强      —
+   .surface-inset  嵌套内面板（card 内二级分区）      —     内陷    —
+   .surface-row    列表/表格行                        —     —      背景+微影
+   .surface-interactive  可点击卡片                   —     —      上浮+光晕
+
+   用法:
+     <div className="surface rounded-[16px] p-4">       主容器
+     <div className="surface-inset rounded-lg p-3">     嵌套面板
+     <div className="surface-row px-4 py-2">            列表行
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── .surface — 主级卡片 ── */
+.surface {
+  position: relative;
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    0 2px 16px -4px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+  isolation: isolate;
+}
+.surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: -1;
+  background: linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%);
+  backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
+  -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
+  pointer-events: none;
+}
+
+/* ── .surface-raised — 突出卡片（更深阴影 + 更亮内光） ── */
+.surface-raised {
+  position: relative;
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    0 8px 32px -4px rgba(0, 0, 0, 0.4),
+    0 4px 16px -2px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.12);
+  isolation: isolate;
+}
+.surface-raised::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: -1;
+  background: linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%);
+  backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
+  -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
+  pointer-events: none;
+}
+
+/*
+ * ── .glass-blur-pseudo — GlassCard 质量模式伪元素 blur 层 ──
+ *
+ * macOS 合成器接缝修复：当多个 backdrop-filter 元素在 grid 中相邻时，
+ * macOS 合成器在行边界处产生可见接缝线（Windows 无此问题）。
+ * 将 blur + background 移至 ::before 伪元素，使每个 blur 层独立合成，
+ * 消除元素间 blur 区域的合成冲突。
+ *
+ * GlassCard 通过 CSS 自定义属性 --_gbl (blur) 和 --_gbg (background)
+ * 传递动态值给伪元素。
+ */
+.glass-blur-pseudo::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: -1;
+  backdrop-filter: var(--_gbl);
+  -webkit-backdrop-filter: var(--_gbl);
+  background: var(--_gbg);
+  pointer-events: none;
+}
+
+/* ── .surface-inset — 嵌套面板（card 内的二级分区，无 blur） ── */
+.surface-inset {
+  background: var(--bg-card, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* ── .surface-row — 列表/表格行悬停 ── */
+.surface-row {
+  transition: background 0.2s ease,
+              box-shadow 0.25s ease;
+}
+
+.surface-row:hover {
+  background: var(--bg-card-hover, rgba(255, 255, 255, 0.05)) !important;
+  box-shadow:
+    0 2px 12px -4px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+/* ── .surface-interactive — 可点击卡片（上浮 + 光晕） ── */
+.surface-interactive {
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.25s ease,
+              box-shadow 0.3s ease;
+}
+
+.surface-interactive:hover {
+  transform: translateY(-3px);
+  border-color: var(--card-accent-border, rgba(255, 255, 255, 0.15)) !important;
+  box-shadow:
+    0 12px 40px -12px var(--card-accent-glow, rgba(0, 0, 0, 0.5)),
+    0 4px 16px -4px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.surface-interactive:active {
+  transform: translateY(-1px);
+  transition-duration: 0.1s;
+}
+
+/* ── .glass-card-interactive — GlassCard 组件专用 (保留兼容) ── */
+.glass-card-interactive {
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.25s ease,
+              box-shadow 0.3s ease !important;
+}
+
+.glass-card-interactive:hover {
+  transform: translateY(-3px);
+  border-color: var(--card-accent-border, rgba(255, 255, 255, 0.15)) !important;
+  box-shadow:
+    0 12px 40px -12px var(--card-accent-glow, rgba(0, 0, 0, 0.5)),
+    0 4px 16px -4px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.glass-card-interactive:active {
+  transform: translateY(-1px);
+  transition-duration: 0.1s;
+}
+
 /* ========================================
    Performance Mode — Obsidian 实底暗色风格
 
@@ -1174,8 +1325,13 @@ select optgroup {
    此处仅需清除 backdrop-filter 并微调视觉细节。
    ======================================== */
 
-/* 核心：彻底清除所有 backdrop-filter（inline 和 CSS 均覆盖） */
+/* 核心：彻底清除所有 backdrop-filter（inline、CSS、伪元素均覆盖） */
 html[data-perf-mode="performance"] * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html[data-perf-mode="performance"] *::before,
+html[data-perf-mode="performance"] *::after {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
@@ -1188,6 +1344,14 @@ html[data-perf-mode="performance"] .transition-all {
 /* 减少合成层数量 */
 html[data-perf-mode="performance"] [style*="will-change"] {
   will-change: auto !important;
+}
+
+/* ReactBits 组件：性能模式下简化动画 */
+html[data-perf-mode="performance"] .blur-text span {
+  filter: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  transition: none !important;
 }
 
 /* 尊重系统级别的减少动画偏好 */
@@ -1268,7 +1432,7 @@ html[data-perf-mode="performance"] [style*="will-change"] {
 
 /* 选中节点环 */
 .workflow-canvas .react-flow__node.selected .react-flow__handle {
-  border-color: rgba(214, 178, 106, 0.5) !important;
+  border-color: rgba(99, 102, 241, 0.5) !important;
 }
 
 /* 控件面板暗色 */
@@ -1317,4 +1481,35 @@ html[data-perf-mode="performance"] [style*="will-change"] {
   .workflow-canvas .react-flow__edge.animated path {
     animation: none !important;
   }
+}
+
+/* ── AI-Native UI: Chat Page Styles ───────────────────────────────── */
+
+/* Typing indicator: 3-dot pulse */
+.ai-typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #818CF8;
+  animation: ai-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes ai-dot-pulse {
+  0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+/* Chat card subtle border glow on focus-within */
+.ai-chat-card:focus-within {
+  border-color: rgba(99, 102, 241, 0.25) !important;
+}
+
+/* Chat input focus ring */
+.ai-chat-card textarea:focus {
+  border-color: rgba(99, 102, 241, 0.40) !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-typing-dot { animation: none; opacity: 0.6; }
 }

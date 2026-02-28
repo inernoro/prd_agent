@@ -18,8 +18,8 @@
   --border-subtle: rgba(255, 255, 255, 0.08);
   --border-default: rgba(255, 255, 255, 0.12);
   --border-hover: rgba(255, 255, 255, 0.18);
-  /* 避免使用 color-mix()，直接用 rgba 计算值 (gold #d6b26a at 55% opacity) */
-  --border-focus: rgba(214, 178, 106, 0.55);
+  /* 避免使用 color-mix()，直接用 rgba 计算值 (indigo #6366f1 at 55% opacity) */
+  --border-focus: rgba(99, 102, 241, 0.55);
 
   /* 玻璃效果变量（默认值，可被主题系统覆盖） */
   --glass-bg-start: rgba(255, 255, 255, 0.08);
@@ -31,9 +31,9 @@
   --text-muted: rgba(247, 247, 251, 0.48);
 
   --accent-green: #7cfc00;
-  --accent-gold: #d6b26a;
-  --accent-gold-2: #f2d59b;
-  --gold-gradient: linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%);
+  --accent-gold: #818cf8;
+  --accent-gold-2: #a5b4fc;
+  --gold-gradient: linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%);
 
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -43,7 +43,7 @@
   /* 更"薄"的层级：以描边为主，阴影更克制 */
   --shadow-card: 0 2px 14px rgba(0, 0, 0, 0.28);
   --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.36);
-  --shadow-gold: 0 10px 22px rgba(214, 178, 106, 0.16);
+  --shadow-gold: 0 10px 22px rgba(99, 102, 241, 0.16);
 
   /* ── 移动端适配 Token ── */
   --mobile-padding: 16px;

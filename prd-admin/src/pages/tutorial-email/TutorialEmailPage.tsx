@@ -137,7 +137,7 @@ function SequencesTab() {
       </div>
 
       {showCreate && (
-        <GlassCard className="p-4">
+        <GlassCard animated className="p-4">
           <SequenceForm
             onSubmit={handleCreate}
             onCancel={() => setShowCreate(false)}
@@ -153,7 +153,7 @@ function SequencesTab() {
         </div>
       ) : (
         sequences.map((seq) => (
-          <GlassCard key={seq.id} className="p-4">
+          <GlassCard key={seq.id} animated className="p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div
@@ -164,7 +164,7 @@ function SequencesTab() {
                   <div className="font-medium" style={{ color: 'var(--text-primary)' }}>
                     {seq.name}
                     <span className="ml-2 text-xs font-mono px-1.5 py-0.5 rounded"
-                      style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
+                      style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-secondary)' }}>
                       {seq.sequenceKey}
                     </span>
                   </div>
@@ -351,7 +351,7 @@ function TemplatesTab() {
       </div>
 
       {showCreate && (
-        <GlassCard className="p-4">
+        <GlassCard animated className="p-4">
           <TemplateForm
             onSubmit={handleCreate}
             onCancel={() => setShowCreate(false)}
@@ -386,7 +386,7 @@ function TemplatesTab() {
         </div>
       ) : (
         templates.map((tpl) => (
-          <GlassCard key={tpl.id} className="p-4">
+          <GlassCard key={tpl.id} animated className="p-4">
             {editingId === tpl.id ? (
               <TemplateForm
                 initial={tpl}
@@ -533,7 +533,7 @@ function AssetsTab() {
       </div>
 
       {showCreate && (
-        <GlassCard className="p-4">
+        <GlassCard animated className="p-4">
           <AssetForm onSubmit={handleCreate} onCancel={() => setShowCreate(false)} />
         </GlassCard>
       )}
@@ -547,7 +547,7 @@ function AssetsTab() {
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           {assets.map((asset) => (
-            <GlassCard key={asset.id} className="p-3">
+            <GlassCard key={asset.id} animated className="p-3">
               <div className="aspect-video rounded-md overflow-hidden mb-2"
                 style={{ background: 'var(--bg-base)' }}>
                 <img
@@ -564,7 +564,7 @@ function AssetsTab() {
                 <div className="flex gap-1">
                   {asset.tags.map((tag) => (
                     <span key={tag} className="text-[10px] px-1 py-0.5 rounded"
-                      style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>
+                      style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-muted)' }}>
                       {tag}
                     </span>
                   ))}
@@ -704,7 +704,7 @@ function EnrollmentsTab() {
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             className="px-2 py-1 text-xs rounded-md"
-            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+            style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
           >
             <option value="">全部状态</option>
             <option value="active">进行中</option>
@@ -729,7 +729,7 @@ function EnrollmentsTab() {
       ) : (
         <div className="space-y-2">
           {enrollments.map((enr) => (
-            <GlassCard key={enr.id} className="p-3">
+            <GlassCard key={enr.id} animated className="p-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   {statusIcon(enr.status)}
@@ -752,7 +752,7 @@ function EnrollmentsTab() {
                   <button
                     onClick={() => handleUnsubscribe(enr.id)}
                     className="text-xs px-2 py-1 rounded-md"
-                    style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
+                    style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
                   >
                     退订
                   </button>

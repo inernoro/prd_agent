@@ -703,7 +703,7 @@ function EffectCard({ config, onClick }: { config: EffectConfig; onClick: () => 
   const colors = CATEGORY_COLORS[config.category];
 
   return (
-    <GlassCard className="flex flex-col cursor-pointer hover:ring-1 hover:ring-white/20 transition-all" onClick={onClick}>
+    <GlassCard animated className="flex flex-col cursor-pointer hover:ring-1 hover:ring-white/20 transition-all" onClick={onClick}>
       <div className="flex items-center justify-between mb-2">
         <div className="flex-1 min-w-0">
           <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{config.label}</div>

@@ -2496,7 +2496,7 @@ export default function LlmLabTab() {
       <div className="h-full min-h-0 grid grid-cols-1 gap-x-5 gap-y-4 lg:grid-cols-[360px_1fr] lg:grid-rows-[auto_1fr]">
         {/* 左上：试验区 */}
         <div className="min-w-0 min-h-0 lg:col-start-1 lg:row-start-1">
-          <GlassCard glow accentHue={210} className="lg:h-full">
+          <GlassCard glow animated accentHue={210} className="lg:h-full">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -2573,7 +2573,7 @@ export default function LlmLabTab() {
 
         {/* 左下：自定义模型集合 + 大模型实验 */}
         <div className="min-w-0 min-h-0 lg:col-start-1 lg:row-start-2">
-          <GlassCard glow accentHue={270} className="overflow-hidden flex flex-col min-h-0 lg:h-full">
+          <GlassCard glow animated accentHue={270} className="overflow-hidden flex flex-col min-h-0 lg:h-full">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -2675,7 +2675,7 @@ export default function LlmLabTab() {
                         <div
                           key={pid}
                           className="rounded-[14px] p-3"
-                          style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}
+                          style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
@@ -2703,7 +2703,7 @@ export default function LlmLabTab() {
                                   )}
                                   style={{
                                     border: isDisabled ? '1px solid var(--nested-block-border)' : '1px solid var(--border-default)',
-                                    background: isDisabled ? 'rgba(255,255,255,0.01)' : 'var(--list-item-bg)',
+                                    background: isDisabled ? 'rgba(255,255,255,0.01)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                     color: isDisabled ? 'var(--text-muted)' : 'var(--text-primary)',
                                     opacity: isDisabled ? 0.78 : 1,
                                   }}
@@ -2765,7 +2765,7 @@ export default function LlmLabTab() {
 
         {/* 右上：提示词 */}
         <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-1">
-          <GlassCard glow variant="gold" className="lg:h-full">
+          <GlassCard glow animated variant="gold" className="lg:h-full">
           {/* Row 1: 一行放所有“切换/动作”按钮（避免堆叠） */}
           <div className="flex items-start justify-between gap-3 min-w-0">
             <div className="min-w-0 flex-1 overflow-x-auto pr-1">
@@ -2777,7 +2777,7 @@ export default function LlmLabTab() {
                   ]}
                   value={mainMode}
                   onChange={(key) => onMainModeChange(key as MainMode)}
-                  accentHue={45}
+                  accentHue={234}
                 />
 
                 {mainMode === 'infer' ? (
@@ -2791,7 +2791,7 @@ export default function LlmLabTab() {
                     ]}
                     value={mode}
                     onChange={(key) => onModeClick(key as LabMode)}
-                    accentHue={45}
+                    accentHue={234}
                   />
                 ) : (
                   <div className="inline-flex items-center gap-2 w-max">
@@ -2803,7 +2803,7 @@ export default function LlmLabTab() {
                       ]}
                       value={imageSubMode}
                       onChange={(key) => setImageSubMode(key as ImageSubMode)}
-                      accentHue={45}
+                      accentHue={234}
                     />
                     {imageSubMode === 'single' ? (
                       <label className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
@@ -2842,7 +2842,7 @@ export default function LlmLabTab() {
                                 width: 16,
                                 height: 16,
                                 border: '1px solid var(--border-default)',
-                                background: 'var(--list-item-bg)',
+                                background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                               }}
                             >
                               <span
@@ -2851,7 +2851,7 @@ export default function LlmLabTab() {
                                   height: Math.max(6, Math.round(currentAspectOpt.iconH * 0.55)),
                                   borderRadius: 4,
                                   border: '2px solid rgba(255,255,255,0.22)',
-                                  background: 'var(--list-item-bg)',
+                                  background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                 }}
                               />
                             </span>
@@ -2889,7 +2889,7 @@ export default function LlmLabTab() {
                                         width: 22,
                                         height: 22,
                                         border: '1px solid var(--border-default)',
-                                        background: 'var(--list-item-bg)',
+                                        background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                       }}
                                     >
                                       <span
@@ -2898,7 +2898,7 @@ export default function LlmLabTab() {
                                           height: Math.max(6, Math.round(opt.iconH * scale)),
                                           borderRadius: 5,
                                           border: '2px solid rgba(255,255,255,0.22)',
-                                          background: 'var(--list-item-bg)',
+                                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                         }}
                                       />
                                     </span>
@@ -3176,7 +3176,7 @@ export default function LlmLabTab() {
 
         {/* 右下：实时结果 */}
         <div className="min-w-0 min-h-0 lg:col-start-2 lg:row-start-2">
-          <GlassCard glow accentHue={150} className="overflow-hidden flex flex-col min-h-0 lg:h-full">
+          <GlassCard glow animated accentHue={150} className="overflow-hidden flex flex-col min-h-0 lg:h-full">
           {mainMode === 'infer' ? (
             <>
           <div className="flex items-center justify-between shrink-0">
@@ -3206,7 +3206,7 @@ export default function LlmLabTab() {
                 }
                 value={sortBy}
                 onChange={(key) => setSortBy(key as SortBy)}
-                accentHue={45}
+                accentHue={234}
               />
               {!running && failedRunCount > 0 ? (
                 <Button
@@ -3328,7 +3328,7 @@ export default function LlmLabTab() {
                   <div
                     key={it.itemId}
                     className="rounded-[14px] p-3"
-                    style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}
+                    style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                   >
                     {mode === 'imageGenPlan'
                       ? (() => {
@@ -3602,7 +3602,7 @@ export default function LlmLabTab() {
                       </div>
                       <div
                         className="mt-1 rounded-[12px] px-2.5 py-2 min-w-0"
-                        style={{ border: '1px solid var(--border-default)', background: 'var(--list-item-bg)' }}
+                        style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                       >
                         <InlineMarquee
                           text={it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）')}
@@ -3719,7 +3719,7 @@ export default function LlmLabTab() {
                             ].join(' ')}
                             style={{
                               border: selected ? '2px solid rgba(250,204,21,0.95)' : '1px solid var(--border-default)',
-                              background: 'var(--list-item-bg)',
+                              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                               height: '100%',
                             }}
                             onClick={() => {
@@ -3914,7 +3914,7 @@ export default function LlmLabTab() {
                                 <div
                                   key={g.model.modelId}
                                   className="rounded-[14px] p-3 flex flex-col min-h-0"
-                                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}
+                                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                                 >
                                   <div className="flex items-center justify-between gap-2">
                                     <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }} title={g.model.displayName}>
@@ -4079,7 +4079,7 @@ export default function LlmLabTab() {
                           <div
                             key={it.key}
                             className="rounded-[14px] p-3 flex flex-col gap-2"
-                            style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}
+                            style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                           >
                             <div className="flex items-start justify-between gap-2">
                               <div className="text-xs font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
@@ -4120,7 +4120,7 @@ export default function LlmLabTab() {
                               className="rounded-[12px] overflow-hidden relative"
                               style={{
                                 border: '1px solid var(--border-default)',
-                                background: 'var(--list-item-bg)',
+                                background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                 height: imageThumbHeight,
                               }}
                               onClick={() => {
@@ -4222,7 +4222,7 @@ export default function LlmLabTab() {
                             <div
                               key={g.key}
                               className="rounded-[14px] p-3 flex flex-col min-h-0"
-                              style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}
+                              style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }} title={g.model.displayName}>
@@ -4237,7 +4237,7 @@ export default function LlmLabTab() {
                                   className="mt-2 rounded-[12px] flex items-center justify-center text-xs"
                                   style={{
                                     border: '1px solid var(--border-default)',
-                                    background: 'var(--list-item-bg)',
+                                    background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                     height: imageThumbHeight,
                                     color: 'var(--text-muted)',
                                   }}
@@ -4291,7 +4291,7 @@ export default function LlmLabTab() {
                       className="rounded-[14px] p-3 flex flex-col min-h-0"
                       style={{
                         border: '1px solid var(--border-subtle)',
-                        background: 'var(--list-item-bg)',
+                        background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                         minHeight: 306,
                       }}
                     >
@@ -4345,7 +4345,7 @@ export default function LlmLabTab() {
                         className="mt-2 rounded-[12px] flex flex-col items-center justify-center gap-2 px-3 text-center"
                         style={{
                           border: '1px solid var(--border-default)',
-                          background: 'var(--list-item-bg)',
+                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                           height: 208,
                           color: 'var(--text-muted)',
                         }}
@@ -4593,7 +4593,7 @@ export default function LlmLabTab() {
               <button
                 type="button"
                 className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
-                style={{ background: 'var(--list-item-bg)', border: '1px solid var(--border-default)' }}
+                style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--border-default)' }}
                 onClick={() => setCreateExperimentOpen(false)}
               >
                 取消
@@ -4665,7 +4665,7 @@ export default function LlmLabTab() {
                       <button
                         type="button"
                         className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-[30px] px-3 rounded-[10px] text-[12px] text-(--text-primary) hover:bg-white/8 hover:border-white/20 shrink-0"
-                        style={{ background: 'var(--list-item-bg)', border: '1px solid var(--border-default)' }}
+                        style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--border-default)' }}
                         onClick={async (evt) => {
                           evt.stopPropagation();
                           const ok = await systemDialog.confirm({
@@ -4693,7 +4693,7 @@ export default function LlmLabTab() {
               <button
                 type="button"
                 className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
-                style={{ background: 'var(--list-item-bg)', border: '1px solid var(--border-default)' }}
+                style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--border-default)' }}
                 onClick={() => setLoadExperimentOpen(false)}
               >
                 取消

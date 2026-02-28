@@ -67,7 +67,7 @@ function ArticlePreview({ markdown }: { markdown: string }) {
           .literary-preview-md p { margin: 2px 0; }
           .literary-preview-md ul,.literary-preview-md ol { margin: 2px 0; padding-left: 12px; }
           .literary-preview-md li { margin: 1px 0; }
-          .literary-preview-md blockquote { margin: 2px 0; padding: 2px 6px; border-left: 2px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); border-radius: 4px; }
+          .literary-preview-md blockquote { margin: 2px 0; padding: 2px 6px; border-left: 2px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); border-radius: 4px; }
           .literary-preview-md code { font-size: 9px; background: var(--bg-input-hover); padding: 0 3px; border-radius: 3px; }
         `}</style>
         <div className="literary-preview-md">
@@ -392,7 +392,7 @@ export default function LiteraryAgentWorkspaceListPage() {
   };
 
   const renderCard = (ws: VisualAgentWorkspace) => (
-    <GlassCard glow key={ws.id} className="p-0 overflow-hidden">
+    <GlassCard animated glow key={ws.id} className="p-0 overflow-hidden">
       <div
         role="button"
         tabIndex={0}
@@ -425,7 +425,7 @@ export default function LiteraryAgentWorkspaceListPage() {
         <div className="px-2 pb-2 flex-1 min-h-0 overflow-hidden">
           <div
             className="h-full overflow-hidden border rounded-[5px] text-[12px] md:text-[10px] flex flex-col"
-            style={{ borderColor: 'var(--border-subtle)', background: 'var(--list-item-bg)' }}
+            style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
           >
             <div className="p-1.5 flex-1 overflow-hidden">
               <ArticlePreview markdown={getArticlePreviewText(ws)} />
@@ -545,18 +545,18 @@ export default function LiteraryAgentWorkspaceListPage() {
       />
 
       {error && (
-        <GlassCard glow className="py-2 px-3">
+        <GlassCard animated glow className="py-2 px-3">
           <div className="text-[12px]" style={{ color: 'rgba(255,120,120,0.95)' }}>{error}</div>
         </GlassCard>
       )}
 
       <div className="flex-1 min-h-0 overflow-auto">
         {loading ? (
-          <GlassCard glow className="py-2 px-3">
+          <GlassCard animated glow className="py-2 px-3">
             <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</div>
           </GlassCard>
         ) : items.length === 0 ? (
-          <GlassCard glow className="py-6 px-3">
+          <GlassCard animated glow className="py-6 px-3">
             <div className="text-center">
               <FileText size={36} className="mx-auto mb-2" style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
               <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>

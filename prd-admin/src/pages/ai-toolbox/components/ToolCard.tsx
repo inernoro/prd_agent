@@ -112,25 +112,48 @@ export function ToolCard({ item }: ToolCardProps) {
 
   return (
     <GlassCard
+      animated
       variant="subtle"
       padding="none"
       interactive
+      overflow="hidden"
       onClick={handleClick}
       className="group"
+      style={{
+        '--card-accent-border': `${palette.from}35`,
+        '--card-accent-glow': `${palette.from}25`,
+      } as React.CSSProperties}
     >
-      <div className="p-3 flex flex-col h-full">
+      {/* Accent top bar — gradient fade */}
+      <div
+        className="h-[2px]"
+        style={{
+          background: `linear-gradient(90deg, transparent 5%, ${palette.from}60 35%, ${palette.from}60 65%, transparent 95%)`,
+        }}
+      />
+
+      {/* Accent gradient overlay at top of card */}
+      <div
+        className="absolute inset-x-0 top-0 h-20 pointer-events-none"
+        style={{
+          background: `linear-gradient(180deg, ${palette.from}0c 0%, transparent 100%)`,
+        }}
+      />
+
+      <div className="p-3.5 flex flex-col h-full relative">
         {/* Icon + Title row */}
-        <div className="flex items-start gap-2.5 mb-2">
+        <div className="flex items-start gap-3 mb-2.5">
           <div
-            className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
             style={{
-              background: `${palette.from}15`,
-              border: `1px solid ${palette.from}20`,
+              background: `linear-gradient(135deg, ${palette.from}22 0%, ${palette.from}0a 100%)`,
+              border: `1px solid ${palette.from}28`,
+              boxShadow: `0 2px 10px ${palette.from}12`,
             }}
           >
-            <IconComponent size={18} style={{ color: palette.soft }} />
+            <IconComponent size={19} style={{ color: palette.soft }} />
           </div>
-          <div className="flex-1 min-w-0 pt-0.5">
+          <div className="flex-1 min-w-0 pt-1">
             <div className="flex items-center gap-1">
               <div
                 className="font-semibold text-[13px] truncate flex-1"
@@ -140,7 +163,7 @@ export function ToolCard({ item }: ToolCardProps) {
               </div>
               <ArrowUpRight
                 size={12}
-                className="shrink-0 opacity-0 group-hover:opacity-60 transition-opacity duration-200"
+                className="shrink-0 opacity-0 group-hover:opacity-70 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
                 style={{ color: palette.soft }}
               />
             </div>
@@ -150,12 +173,12 @@ export function ToolCard({ item }: ToolCardProps) {
         {/* Description */}
         <div
           className="text-[11px] line-clamp-2 leading-relaxed mb-3"
-          style={{ color: 'var(--text-muted, rgba(255, 255, 255, 0.45))', minHeight: '2.2em' }}
+          style={{ color: 'var(--text-muted, rgba(255, 255, 255, 0.5))', minHeight: '2.2em' }}
         >
           {item.description}
         </div>
 
-        {/* Tags — 移动端隐藏以节省空间 */}
+        {/* Tags */}
         {!isMobile && item.tags.length > 0 && (
           <div className="flex flex-wrap gap-1 mb-2.5">
             {item.tags.slice(0, 3).map((tag) => (
@@ -163,15 +186,16 @@ export function ToolCard({ item }: ToolCardProps) {
                 key={tag}
                 className="text-[10px] px-1.5 py-0.5 rounded-md"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.04)',
-                  color: 'var(--text-muted, rgba(255, 255, 255, 0.5))',
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  color: 'rgba(255, 255, 255, 0.55)',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
                 }}
               >
                 {tag}
               </span>
             ))}
             {item.tags.length > 3 && (
-              <span className="text-[10px] px-1" style={{ color: 'rgba(255, 255, 255, 0.3)' }}>
+              <span className="text-[10px] px-1" style={{ color: 'rgba(255, 255, 255, 0.35)' }}>
                 +{item.tags.length - 3}
               </span>
             )}
@@ -180,15 +204,15 @@ export function ToolCard({ item }: ToolCardProps) {
 
         {/* Footer */}
         <div
-          className="flex items-center justify-between pt-2 mt-auto"
-          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.05)' }}
+          className="flex items-center justify-between pt-2.5 mt-auto"
+          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
         >
           <span
             className="text-[10px] px-2 py-0.5 rounded-full font-medium inline-flex items-center gap-1"
             style={{
-              background: isCustomized ? `${palette.from}15` : 'rgba(255, 255, 255, 0.04)',
-              color: isCustomized ? palette.soft : 'rgba(255, 255, 255, 0.4)',
-              border: isCustomized ? `1px solid ${palette.from}20` : '1px solid rgba(255, 255, 255, 0.04)',
+              background: isCustomized ? `${palette.from}18` : 'rgba(255, 255, 255, 0.05)',
+              color: isCustomized ? palette.soft : 'rgba(255, 255, 255, 0.45)',
+              border: isCustomized ? `1px solid ${palette.from}25` : '1px solid rgba(255, 255, 255, 0.06)',
             }}
           >
             {isCustomized ? (
@@ -202,9 +226,9 @@ export function ToolCard({ item }: ToolCardProps) {
           {item.usageCount > 0 && (
             <span
               className="flex items-center gap-0.5 text-[10px]"
-              style={{ color: 'rgba(255, 255, 255, 0.35)' }}
+              style={{ color: 'rgba(255, 255, 255, 0.4)' }}
             >
-              <Zap size={8} style={{ color: palette.soft, opacity: 0.7 }} />
+              <Zap size={8} style={{ color: palette.soft, opacity: 0.8 }} />
               {item.usageCount}
             </span>
           )}

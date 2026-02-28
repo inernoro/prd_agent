@@ -207,7 +207,7 @@ export function ExchangeManagePage() {
       {loading ? (
         <div className="text-center text-muted-foreground py-12">加载中...</div>
       ) : exchanges.length === 0 ? (
-        <GlassCard className="text-center py-12">
+        <GlassCard animated className="text-center py-12">
           <ArrowLeftRight size={36} className="mx-auto mb-3 text-muted-foreground/50" />
           <div className="text-muted-foreground">暂无模型中继配置</div>
           <div className="text-xs text-muted-foreground/60 mt-1">点击「新建中继」添加第一个 Exchange</div>
@@ -215,7 +215,7 @@ export function ExchangeManagePage() {
       ) : (
         <div className="grid gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
           {exchanges.map(exchange => (
-            <GlassCard key={exchange.id} className="relative p-4 space-y-3">
+            <GlassCard animated key={exchange.id} className="relative p-4 space-y-3">
               {/* 头部：名称 + 状态 */}
               <div className="flex items-start justify-between">
                 <div className="flex-1 min-w-0">

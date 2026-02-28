@@ -36,10 +36,10 @@ export function PageHeader(props: PageHeaderProps) {
             onClick={() => handleChange(tab.key)}
             className={`flex items-center gap-2 px-3 h-[28px] text-[12px] font-semibold transition-all duration-150 shrink-0 whitespace-nowrap ${active ? 'rounded-[9px]' : ''}`}
             style={{
-              color: active ? '#1a1206' : 'rgba(255, 255, 255, 0.75)',
+              color: active ? '#ffffff' : 'rgba(255, 255, 255, 0.75)',
               background: active ? 'var(--gold-gradient)' : 'transparent',
               boxShadow: active
-                ? '0 2px 8px -1px rgba(214, 178, 106, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.12) inset'
+                ? '0 2px 8px -1px rgba(99, 102, 241, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.12) inset'
                 : 'none',
               opacity: active ? 1 : 0.85,
             }}

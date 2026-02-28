@@ -231,7 +231,7 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
 
   return (
     <div className="h-full overflow-auto p-1">
-      <GlassCard glow className="min-h-full">
+      <GlassCard animated glow className="min-h-full">
         <div className="grid grid-cols-12">
           {/* ============ 左栏：服务器配置 + 工作流 ============ */}
           <div className="col-span-7 border-r border-white/10">

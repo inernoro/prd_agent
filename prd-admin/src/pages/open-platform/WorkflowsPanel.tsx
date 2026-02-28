@@ -154,9 +154,9 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
 
   return (
     <div className="h-full overflow-auto p-1">
-      <GlassCard glow className="min-h-full">
+      <GlassCard animated glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'var(--list-item-bg)' }}>
+        <div className="p-4 border-b border-white/10" style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <FileText size={18} className="text-muted-foreground" />
@@ -222,7 +222,7 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
                 workflows.map((wf) => (
                   <div
                     key={wf.id}
-                    className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/[0.03]"
+                    className="surface-row flex items-center justify-between p-4 rounded-lg"
                     style={{ border: '1px solid var(--nested-block-border)' }}
                   >
                     <div className="flex items-center gap-4 flex-1 min-w-0">
