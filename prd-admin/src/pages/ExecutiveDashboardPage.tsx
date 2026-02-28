@@ -31,7 +31,7 @@ import type { EChartsOption } from 'echarts';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { Tooltip } from '@/components/ui/Tooltip';
 
-// ─── AI-Native Color Palette ─────────────────────────────────────────
+// ─── Color Palette (Blue-Indigo cohesive theme) ─────────────────────
 
 const AI = {
   indigo:     '#818cf8',
@@ -44,10 +44,18 @@ const AI = {
   slate:      'rgba(148,163,184,0.7)',
 } as const;
 
-const chartTextColor = 'rgba(226,232,240,0.55)';
-const chartGridLine  = 'rgba(148,163,184,0.08)';
-const chartTooltipBg = 'rgba(15,23,42,0.96)';
-const chartTooltipBorder = 'rgba(99,102,241,0.2)';
+/** Convert 6-digit hex (#rrggbb) to rgba string */
+function hexAlpha(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+const chartTextColor = 'rgba(226,232,240,0.6)';
+const chartGridLine  = 'rgba(148,163,184,0.09)';
+const chartTooltipBg = 'rgba(15,23,42,0.95)';
+const chartTooltipBorder = 'rgba(99,102,241,0.25)';
 
 // ─── Chart Helpers ──────────────────────────────────────────────────
 
@@ -79,13 +87,13 @@ function makeTrendOption(data: ExecutiveTrendItem[], field: 'messages' | 'tokens
     },
     series: [{
       type: 'line', data: values, smooth: 0.4, symbol: 'none',
-      lineStyle: { width: 2.5, color, shadowColor: color.replace(/[\d.]+\)$/, '0.3)'), shadowBlur: 8 },
+      lineStyle: { width: 2.5, color, shadowColor: hexAlpha(color, 0.25), shadowBlur: 10 },
       areaStyle: {
         color: {
           type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
           colorStops: [
-            { offset: 0, color: color.replace(/[\d.]+\)$/, '0.2)') },
-            { offset: 0.6, color: color.replace(/[\d.]+\)$/, '0.06)') },
+            { offset: 0, color: hexAlpha(color, 0.22) },
+            { offset: 0.6, color: hexAlpha(color, 0.06) },
             { offset: 1, color: 'transparent' },
           ],
         },
@@ -95,11 +103,16 @@ function makeTrendOption(data: ExecutiveTrendItem[], field: 'messages' | 'tokens
 }
 
 function makeAgentPieOption(agents: ExecutiveAgentStat[]): EChartsOption {
+  // Cohesive blue-to-violet palette with muted tones for professional look
   const agentColors: Record<string, string> = {
-    'prd-agent': AI.blue, 'defect-agent': AI.rose,
-    'visual-agent': AI.purple, 'literary-agent': AI.emerald,
-    'ai-toolbox': AI.amber, 'open-platform': AI.indigo,
-    'admin': 'rgba(120,113,108,0.6)', 'chat': AI.slate,
+    'prd-agent':      '#6B8EF8',   // Soft blue
+    'defect-agent':   '#E88A84',   // Muted coral
+    'visual-agent':   '#A78BF0',   // Soft violet
+    'literary-agent': '#5CBDA0',   // Muted teal
+    'ai-toolbox':     '#D4A45C',   // Warm amber
+    'open-platform':  '#7AB4E0',   // Sky blue
+    'admin':          'rgba(148,163,184,0.45)',
+    'chat':           'rgba(148,163,184,0.32)',
   };
   return {
     backgroundColor: 'transparent',
@@ -132,7 +145,7 @@ function makeModelBarOption(models: ExecutiveModelStat[]): EChartsOption {
     tooltip: {
       backgroundColor: chartTooltipBg, borderColor: chartTooltipBorder, borderWidth: 1,
       textStyle: { color: '#e2e8f0', fontSize: 12 },
-      formatter: (p: any) => `${p.name}<br/><span style="color:${AI.indigo};font-weight:600">${p.value.toLocaleString()}</span> 次调用`,
+      formatter: (p: any) => `${p.name}<br/><span style="color:${AI.blue};font-weight:600">${p.value.toLocaleString()}</span> 次调用`,
     },
     grid: { left: 0, right: 0, top: 12, bottom: 0, containLabel: true },
     xAxis: {
@@ -152,8 +165,8 @@ function makeModelBarOption(models: ExecutiveModelStat[]): EChartsOption {
         color: {
           type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
           colorStops: [
-            { offset: 0, color: AI.indigo },
-            { offset: 1, color: 'rgba(99,102,241,0.15)' },
+            { offset: 0, color: AI.blue },
+            { offset: 1, color: hexAlpha(AI.blue, 0.12) },
           ],
         },
       },
@@ -162,8 +175,8 @@ function makeModelBarOption(models: ExecutiveModelStat[]): EChartsOption {
           color: {
             type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
             colorStops: [
-              { offset: 0, color: AI.purple },
-              { offset: 1, color: 'rgba(139,92,246,0.25)' },
+              { offset: 0, color: AI.indigo },
+              { offset: 1, color: hexAlpha(AI.indigo, 0.2) },
             ],
           },
         },
@@ -283,26 +296,26 @@ function OverviewTab({ overview, trends, agents, loading }: {
 
   return (
     <div className="space-y-5">
-      {/* KPI Row */}
+      {/* KPI Row — cohesive blue/indigo theme with semantic green/cyan accents */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <KpiCard title="总用户数" value={overview.totalUsers} accent="blue" icon={<Users size={13} />} animated info="系统注册的全部用户数（含非活跃）" />
-        <KpiCard title="活跃用户" value={overview.activeUsers} accent="green" icon={<Activity size={13} />} trend={activeTrend.direction} trendLabel={`${activeTrend.label} vs 上期`} animated info="所选时间范围内有登录记录的用户数（基于 LastActiveAt）" />
-        <KpiCard title="对话消息" value={overview.periodMessages} accent="gold" icon={<MessageSquare size={13} />} trend={msgTrend.direction} trendLabel={`${msgTrend.label} vs 上期`} animated info="PRD 对话 + 缺陷消息 + 视觉创作消息三个来源合计" />
+        <KpiCard title="活跃用户" value={overview.activeUsers} accent="emerald" icon={<Activity size={13} />} trend={activeTrend.direction} trendLabel={`${activeTrend.label} vs 上期`} animated info="所选时间范围内有登录记录的用户数（基于 LastActiveAt）" />
+        <KpiCard title="对话消息" value={overview.periodMessages} accent="indigo" icon={<MessageSquare size={13} />} trend={msgTrend.direction} trendLabel={`${msgTrend.label} vs 上期`} animated info="PRD 对话 + 缺陷消息 + 视觉创作消息三个来源合计" />
         <KpiCard title="Token 消耗" value={formatTokens(overview.periodTokens)} accent="purple" icon={<Zap size={13} />} trend={tokenTrend.direction} trendLabel={`${tokenTrend.label} vs 上期`} animated info="PRD 对话中 Assistant 回复的 Input + Output Token 总和" />
-        <KpiCard title="LLM 调用" value={overview.llmCalls} accent="blue" icon={<Cpu size={13} />} animated info="所有 Agent 通过 LLM Gateway 发起的大模型请求总次数" />
-        <KpiCard title="缺陷解决率" value={`${overview.defectResolutionRate}%`} accent="gold" icon={<Bug size={13} />} animated info="已解决或已关闭的缺陷数 ÷ 缺陷总数（全时间段）" />
+        <KpiCard title="LLM 调用" value={overview.llmCalls} accent="cyan" icon={<Cpu size={13} />} animated info="所有 Agent 通过 LLM Gateway 发起的大模型请求总次数" />
+        <KpiCard title="缺陷解决率" value={`${overview.defectResolutionRate}%`} accent="emerald" icon={<Bug size={13} />} animated info="已解决或已关闭的缺陷数 ÷ 缺陷总数（全时间段）" />
       </div>
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <GlassCard glow animated className="lg:col-span-2" accentHue={234}>
-          <SectionTitle accent={AI.indigo}>消息趋势</SectionTitle>
+        <GlassCard glow animated className="lg:col-span-2" accentHue={217}>
+          <SectionTitle accent={AI.blue}>消息趋势</SectionTitle>
           {trends.length > 0 ? (
-            <EChart option={makeTrendOption(trends, 'messages', AI.indigo, '条消息')} height={260} />
+            <EChart option={makeTrendOption(trends, 'messages', AI.blue, '条消息')} height={260} />
           ) : <EmptyHint text="暂无趋势数据" />}
         </GlassCard>
-        <GlassCard glow animated accentHue={270}>
-          <SectionTitle accent={AI.purple}>Agent 调用分布</SectionTitle>
+        <GlassCard glow animated accentHue={234}>
+          <SectionTitle accent={AI.indigo}>Agent 调用分布</SectionTitle>
           {agents.length > 0 ? (
             <EChart option={makeAgentPieOption(agents)} height={260} />
           ) : <EmptyHint text="暂无 Agent 数据" />}
@@ -311,14 +324,14 @@ function OverviewTab({ overview, trends, agents, loading }: {
 
       {/* Token Trend + Overview Stats */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <GlassCard glow animated accentHue={270}>
-          <SectionTitle accent={AI.purple}>Token 消耗趋势</SectionTitle>
+        <GlassCard glow animated accentHue={234}>
+          <SectionTitle accent={AI.indigo}>Token 消耗趋势</SectionTitle>
           {trends.length > 0 ? (
-            <EChart option={makeTrendOption(trends, 'tokens', AI.purple, 'tokens')} height={260} />
+            <EChart option={makeTrendOption(trends, 'tokens', AI.indigo, 'tokens')} height={260} />
           ) : <EmptyHint text="暂无趋势数据" />}
         </GlassCard>
-        <GlassCard glow animated accentHue={188}>
-          <SectionTitle accent={AI.cyan}>业务统计</SectionTitle>
+        <GlassCard glow animated accentHue={217}>
+          <SectionTitle accent={AI.blue}>业务统计</SectionTitle>
           <div className="space-y-0.5">
             <StatRow icon={Users} label="总用户数" value={overview.totalUsers} accent={AI.blue} info="系统注册的全部用户数（含非活跃）" />
             <StatRow icon={Users} label="活跃用户" value={overview.activeUsers} accent={AI.emerald} info="所选时间范围内有登录活动的用户数" />
@@ -763,7 +776,7 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard title="总调用次数" value={totalCalls} accent="gold" icon={<Cpu size={13} />} animated info="所有模型的 LLM Gateway 请求总次数" />
+        <KpiCard title="总调用次数" value={totalCalls} accent="indigo" icon={<Cpu size={13} />} animated info="所有模型的 LLM Gateway 请求总次数" />
         <KpiCard title="总 Token" value={formatTokens(totalTokens)} accent="purple" icon={<Zap size={13} />} animated info="所有模型的 Input + Output Token 合计" />
         <KpiCard title="模型种类" value={models.length} accent="blue" icon={<Bot size={13} />} animated info="在所选时间范围内被调用过的不同模型数" />
         <KpiCard title="平均响应" value={models.length > 0 ? `${(models.reduce((s, m) => s + m.avgDurationMs, 0) / models.length / 1000).toFixed(1)}s` : '-'} accent="green" icon={<Activity size={13} />} animated info="各模型平均响应时间的均值（排除未完成请求）" />
