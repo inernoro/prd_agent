@@ -23,6 +23,7 @@ public class VideoAgentController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _runStore;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<VideoAgentController> _logger;
 
     private const string AppKey = "video-agent";
@@ -31,10 +32,12 @@ public class VideoAgentController : ControllerBase
     public VideoAgentController(
         MongoDbContext db,
         IRunEventStore runStore,
+        IConfiguration configuration,
         ILogger<VideoAgentController> logger)
     {
         _db = db;
         _runStore = runStore;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -143,6 +146,9 @@ public class VideoAgentController : ControllerBase
         {
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
         }
+
+        // 兼容旧数据：将本地路径转换为 API URL
+        NormalizeVideoUrls(run);
 
         return Ok(ApiResponse<VideoGenRun>.Ok(run));
     }
@@ -459,6 +465,62 @@ public class VideoAgentController : ControllerBase
             "script" => Content(run.ScriptMarkdown ?? string.Empty, "text/markdown; charset=utf-8", System.Text.Encoding.UTF8),
             _ => BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的下载类型，可选: srt, narration, script")),
         };
+    }
+
+    /// <summary>
+    /// 兼容旧数据：将本地文件系统路径转换为 /api/video-agent/assets/{fileName} 格式
+    /// </summary>
+    private static void NormalizeVideoUrls(VideoGenRun run)
+    {
+        foreach (var scene in run.Scenes)
+        {
+            scene.ImageUrl = NormalizePath(scene.ImageUrl);
+        }
+        run.VideoAssetUrl = NormalizePath(run.VideoAssetUrl);
+    }
+
+    private static string? NormalizePath(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url) || url.StartsWith("/api/")) return url;
+        // 本地路径 → 提取文件名 → API URL
+        var fileName = Path.GetFileName(url);
+        if (string.IsNullOrWhiteSpace(fileName) || !fileName.EndsWith(".mp4")) return url;
+        return $"/api/video-agent/assets/{fileName}";
+    }
+
+    // ─── 静态资源 ───
+
+    /// <summary>
+    /// 提供 prd-video/out/ 目录下渲染产物的 HTTP 访问（视频预览/下载）
+    /// 仅允许 .mp4 文件，文件名必须为安全字符
+    /// </summary>
+    [HttpGet("assets/{fileName}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public IActionResult ServeAsset(string fileName)
+    {
+        // 安全校验：仅允许 [a-zA-Z0-9_\-\.] 文件名 + .mp4 扩展名
+        if (string.IsNullOrWhiteSpace(fileName)
+            || !System.Text.RegularExpressions.Regex.IsMatch(fileName, @"^[\w\-\.]+\.mp4$"))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "非法文件名"));
+        }
+
+        var videoProjectPath = _configuration["VideoAgent:RemotionProjectPath"];
+        if (string.IsNullOrWhiteSpace(videoProjectPath))
+        {
+            var baseDir = AppContext.BaseDirectory;
+            videoProjectPath = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "..", "..", "prd-video"));
+        }
+
+        var filePath = Path.Combine(videoProjectPath, "out", fileName);
+        if (!System.IO.File.Exists(filePath))
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文件不存在"));
+        }
+
+        var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return File(stream, "video/mp4", enableRangeProcessing: true);
     }
 
     // ─── Helpers ───

@@ -416,8 +416,9 @@ public class VideoGenRunWorker : BackgroundService
             if (process.ExitCode != 0)
                 throw new InvalidOperationException($"Remotion 单场景渲染失败 (exit code {process.ExitCode}): {stderrBuilder}");
 
-            // 更新分镜的预览视频 URL
-            run.Scenes[sceneIdx].ImageUrl = outputMp4;
+            // 更新分镜的预览视频 URL（存储 API 可访问的相对路径）
+            var outputFileName = Path.GetFileName(outputMp4);
+            run.Scenes[sceneIdx].ImageUrl = $"/api/video-agent/assets/{outputFileName}";
             run.Scenes[sceneIdx].ImageStatus = "done";
 
             await _db.VideoGenRuns.UpdateOneAsync(
@@ -585,12 +586,13 @@ public class VideoGenRunWorker : BackgroundService
         var scriptMd = GenerateScriptMarkdown(run.Scenes, run.ArticleTitle);
         var narrationDoc = GenerateNarrationDoc(run.Scenes, run.ArticleTitle);
 
-        // 2e: 完成
+        // 2e: 完成（存储 API 可访问的 URL 而非本地路径）
+        var videoAssetApiUrl = $"/api/video-agent/assets/{Path.GetFileName(outputMp4)}";
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == run.Id,
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Completed)
-                .Set(x => x.VideoAssetUrl, outputMp4)
+                .Set(x => x.VideoAssetUrl, videoAssetApiUrl)
                 .Set(x => x.SrtContent, srtContent)
                 .Set(x => x.ScriptMarkdown, scriptMd)
                 .Set(x => x.NarrationDoc, narrationDoc)
@@ -601,7 +603,7 @@ public class VideoGenRunWorker : BackgroundService
 
         await PublishEventAsync(run.Id, "run.completed", new
         {
-            videoUrl = outputMp4,
+            videoUrl = videoAssetApiUrl,
             totalDuration = run.TotalDurationSeconds,
             scenesCount = run.Scenes.Count,
         });
