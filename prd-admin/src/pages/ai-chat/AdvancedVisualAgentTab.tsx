@@ -1571,7 +1571,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 同步画布背景网格（点阵随 pan/zoom 运动）
     const stageEl = stageRef.current;
     if (stageEl) {
-      const gridBase = 24;
+      const gridBase = 48;
       const sz = gridBase * z;
       stageEl.style.backgroundSize = `${sz}px ${sz}px`;
       stageEl.style.backgroundPosition = `${cam.x % sz}px ${cam.y % sz}px`;
