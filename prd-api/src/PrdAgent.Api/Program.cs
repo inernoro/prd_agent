@@ -210,6 +210,15 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.TutorialEmailWorker>();
 // 应用注册中心服务
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAppRegistryService, PrdAgent.Infrastructure.Services.AppRegistryService>();
 
+// Report Agent Phase 2: 自动采集服务
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.MapActivityCollector>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportGenerationService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.GitSyncWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.ReportAutoGenerateWorker>();
+// Report Agent Phase 3: 管理增强服务
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportNotificationService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.TeamSummaryService>();
+
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>
 {

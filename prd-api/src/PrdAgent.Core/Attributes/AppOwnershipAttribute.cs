@@ -78,4 +78,8 @@ public static class AppNames
     /// <summary>LLM - LLM 配置与日志</summary>
     public const string Llm = "llm";
     public const string LlmDisplay = "LLM 配置";
+
+    /// <summary>Report Agent - 周报管理</summary>
+    public const string ReportAgent = "report-agent";
+    public const string ReportAgentDisplay = "周报管理";
 }

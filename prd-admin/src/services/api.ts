@@ -453,6 +453,47 @@ export const api = {
     },
   },
 
+  // ============ Report Agent 周报管理 ============
+  reportAgent: {
+    teams: {
+      list: () => '/api/report-agent/teams',
+      byId: (id: string) => `/api/report-agent/teams/${id}`,
+      members: (id: string) => `/api/report-agent/teams/${id}/members`,
+      member: (id: string, userId: string) => `/api/report-agent/teams/${id}/members/${userId}`,
+      dashboard: (id: string) => `/api/report-agent/teams/${id}/dashboard`,
+      summary: (id: string) => `/api/report-agent/teams/${id}/summary`,
+      summaryGenerate: (id: string) => `/api/report-agent/teams/${id}/summary/generate`,
+    },
+    templates: {
+      list: () => '/api/report-agent/templates',
+      byId: (id: string) => `/api/report-agent/templates/${id}`,
+    },
+    reports: {
+      list: () => '/api/report-agent/reports',
+      byId: (id: string) => `/api/report-agent/reports/${id}`,
+      submit: (id: string) => `/api/report-agent/reports/${id}/submit`,
+      review: (id: string) => `/api/report-agent/reports/${id}/review`,
+      return: (id: string) => `/api/report-agent/reports/${id}/return`,
+      generate: (id: string) => `/api/report-agent/reports/${id}/generate`,
+      comments: (id: string) => `/api/report-agent/reports/${id}/comments`,
+      comment: (id: string, commentId: string) => `/api/report-agent/reports/${id}/comments/${commentId}`,
+      planComparison: (id: string) => `/api/report-agent/reports/${id}/plan-comparison`,
+    },
+    dailyLogs: {
+      list: () => '/api/report-agent/daily-logs',
+      byDate: (date: string) => `/api/report-agent/daily-logs/${date}`,
+    },
+    dataSources: {
+      list: () => '/api/report-agent/data-sources',
+      byId: (id: string) => `/api/report-agent/data-sources/${id}`,
+      test: (id: string) => `/api/report-agent/data-sources/${id}/test`,
+      sync: (id: string) => `/api/report-agent/data-sources/${id}/sync`,
+      commits: (id: string) => `/api/report-agent/data-sources/${id}/commits`,
+    },
+    activity: () => '/api/report-agent/activity',
+    users: () => '/api/report-agent/users',
+  },
+
   // ============ Open Platform 开放平台 ============
   openPlatform: {
     apps: {

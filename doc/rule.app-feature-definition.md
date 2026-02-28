@@ -58,6 +58,9 @@ visual-agent.image::generation
 literary-agent.content::chat
 open-platform.proxy::chat
 admin.prompts.optimize::chat
+report-agent.generate::chat         # 周报草稿生成
+report-agent.aggregate::chat        # 团队周报汇总
+report-agent.polish::chat           # 内容润色
 ```
 
 ---
