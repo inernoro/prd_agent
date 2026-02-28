@@ -103,11 +103,10 @@ function AgentCard({
           : undefined,
       }}
     >
-      {/* 主卡片 */}
+      {/* 主卡片 — 图片铺满 + 底部文字叠加 */}
       <div
         className="relative w-[200px] h-[260px] rounded-[28px] overflow-hidden transition-all duration-400 ease-out cursor-pointer"
         style={{
-          background: 'linear-gradient(145deg, rgba(25, 28, 40, 0.98) 0%, rgba(15, 17, 25, 0.99) 100%)',
           // 真正的边缘发光：多层 box-shadow
           boxShadow: isSelected
             ? `
@@ -123,6 +122,27 @@ function AgentCard({
             : 'translateY(0) scale(1)',
         }}
       >
+        {/* 图片铺满整个卡片 */}
+        <img
+          src={iconUrl}
+          alt={agent.name}
+          className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 ease-out"
+          style={{
+            transform: isSelected ? 'scale(1.06)' : 'scale(1)',
+          }}
+          draggable={false}
+        />
+
+        {/* 底部渐变遮罩 — 保证文字可读 */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background: isSelected
+              ? `linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 45%, transparent 70%), linear-gradient(0deg, ${agent.color.text}18 0%, transparent 40%)`
+              : 'linear-gradient(0deg, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.3) 45%, transparent 70%)',
+          }}
+        />
+
         {/* 边缘光晕层 - 内边框发光 */}
         <div
           className="absolute inset-0 rounded-[28px] pointer-events-none transition-opacity duration-300"
@@ -146,62 +166,34 @@ function AgentCard({
           }}
         />
 
-        {/* 图标区域 */}
-        <div className="relative pt-8 pb-4 flex justify-center">
-          <div
-            className="relative w-[100px] h-[100px] transition-all duration-400"
-            style={{
-              transform: isSelected ? 'scale(1.08) translateY(-2px)' : 'scale(1)',
-              filter: isSelected
-                ? `drop-shadow(0 0 20px ${agent.color.text}60)`
-                : 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))',
-            }}
-          >
-            <img
-              src={iconUrl}
-              alt={agent.name}
-              className="w-full h-full object-contain"
-              draggable={false}
-            />
-          </div>
-        </div>
-
-        {/* 文字区域 */}
-        <div className="px-5 pb-6">
+        {/* 文字区域 — 定位在底部 */}
+        <div className="absolute bottom-0 left-0 right-0 px-5 pb-5">
           <h3
-            className="text-[18px] font-semibold text-center mb-2 transition-all duration-300"
+            className="text-[18px] font-semibold text-center mb-1.5 transition-all duration-300"
             style={{
-              color: isSelected ? '#fff' : 'rgba(255,255,255,0.85)',
+              color: isSelected ? '#fff' : 'rgba(255,255,255,0.92)',
+              textShadow: '0 1px 4px rgba(0,0,0,0.5)',
             }}
           >
             {agent.name}
           </h3>
           <p
-            className="text-[13px] text-center leading-relaxed transition-all duration-300"
+            className="text-[12px] text-center leading-relaxed transition-all duration-300"
             style={{
-              color: isSelected ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.45)',
+              color: isSelected ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.55)',
+              textShadow: '0 1px 3px rgba(0,0,0,0.5)',
             }}
           >
             {description}
           </p>
         </div>
 
-        {/* 底部渐变 */}
-        <div
-          className="absolute bottom-0 left-0 right-0 h-20 pointer-events-none transition-opacity duration-400"
-          style={{
-            background: isSelected
-              ? `linear-gradient(0deg, ${agent.color.text}12 0%, transparent 100%)`
-              : 'transparent',
-          }}
-        />
-
         {/* 快捷键 */}
         <div
-          className="absolute top-4 right-4 w-8 h-8 rounded-xl flex items-center justify-center text-[13px] font-bold transition-all duration-300"
+          className="absolute top-4 right-4 w-8 h-8 rounded-xl flex items-center justify-center text-[13px] font-bold transition-all duration-300 backdrop-blur-sm"
           style={{
-            background: isSelected ? `${agent.color.text}35` : 'rgba(255, 255, 255, 0.06)',
-            color: isSelected ? '#fff' : 'rgba(255,255,255,0.5)',
+            background: isSelected ? `${agent.color.text}45` : 'rgba(0, 0, 0, 0.35)',
+            color: isSelected ? '#fff' : 'rgba(255,255,255,0.7)',
             boxShadow: isSelected ? `0 0 12px ${agent.color.text}30` : 'none',
           }}
         >
