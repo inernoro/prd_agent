@@ -1091,6 +1091,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const composingRef = useRef(false);
   const [composerSize, setComposerSize] = useState<string | null>(null);
   const composerSizeAutoRef = useRef(true);
+  /** 用户手动选择尺寸时调用：同时更新 composerSize + savedDefaultSize（持久化偏好） */
+  const setComposerSizeManual = useCallback((size: string) => {
+    composerSizeAutoRef.current = false;
+    setComposerSize(size);
+    setSavedDefaultSize(size);
+  }, []);
   const inputPanelRef = useRef<HTMLDivElement | null>(null);
   const MIN_TA_HEIGHT = 132; // 默认高度较之前下降约 1/4（177 -> 132）
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -1267,14 +1273,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       prev.map((x) => (x.key === k ? { ...x, x: newX, y: newY, w: newW, h: newH } : x))
     );
   }, [composerSize, selectedKeys, canvas]);
-
-  // 用户手动选择尺寸时，同步更新 savedDefaultSize 以触发偏好保存
-  useEffect(() => {
-    if (!composerSize) return;
-    if (composerSizeAutoRef.current) return;
-    if (!modelPrefReady) return;
-    setSavedDefaultSize(composerSize);
-  }, [composerSize, modelPrefReady]);
 
   // 注：已删除老代码的 selectedImagesForComposer 显示区域
   // TwoPhaseRichComposer 内部自己管理 chip 显示，不需要外部 padding
@@ -2067,6 +2065,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           // 加载用户保存的默认尺寸
           if (prefs.defaultSize) {
             setSavedDefaultSize(prefs.defaultSize);
+            // 同时设置 composerSize，使得 UI 显示正确的尺寸
+            setComposerSize(prefs.defaultSize);
+            composerSizeAutoRef.current = false;
           }
           diyQuickActionsReadyRef.current = true;
         }
@@ -6237,13 +6238,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
                                       const targetOpt = ratiosByResolution[tier].get(currentAspect);
                                       if (targetOpt) {
-                                        composerSizeAutoRef.current = false;
-                                        setComposerSize(targetOpt.size);
+                                        setComposerSizeManual(targetOpt.size);
                                       } else {
                                         const first = ratiosByResolution[tier].values().next().value;
                                         if (first) {
-                                          composerSizeAutoRef.current = false;
-                                          setComposerSize(first.size);
+                                          setComposerSizeManual(first.size);
                                         }
                                       }
                                     }}
@@ -6288,8 +6287,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
                                     }}
                                     onClick={() => {
-                                      composerSizeAutoRef.current = false;
-                                      setComposerSize(opt.size);
+                                      setComposerSizeManual(opt.size);
                                       setQuickSizeOpen(false);
                                     }}
                                   >
@@ -7562,14 +7560,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                         const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
                                         const targetOpt = ratiosByResolution[tier].get(currentAspect);
                                         if (targetOpt) {
-                                          composerSizeAutoRef.current = false;
-                                          setComposerSize(targetOpt.size);
+                                          setComposerSizeManual(targetOpt.size);
                                         } else {
                                           // 当前比例在目标分辨率不存在，选第一个
                                           const first = ratiosByResolution[tier].values().next().value;
                                           if (first) {
-                                            composerSizeAutoRef.current = false;
-                                            setComposerSize(first.size);
+                                            setComposerSizeManual(first.size);
                                           }
                                         }
                                       }}
@@ -7610,8 +7606,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
                                   }}
                                   onClick={() => {
-                                    composerSizeAutoRef.current = false;
-                                    setComposerSize(opt.size);
+                                    setComposerSizeManual(opt.size);
                                     setSizeSelectorOpen(false);
                                   }}
                                 >
