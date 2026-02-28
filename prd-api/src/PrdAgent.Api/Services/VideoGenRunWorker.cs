@@ -273,7 +273,7 @@ public class VideoGenRunWorker : BackgroundService
 
             if (!result.Success || result.Data?.Images.FirstOrDefault() == null)
             {
-                throw new InvalidOperationException($"图生模型返回失败: {result.Message}");
+                throw new InvalidOperationException($"图生模型返回失败: {result.Error?.Message}");
             }
 
             var imageUrl = result.Data.Images[0].Url ?? result.Data.Images[0].OriginalUrl;
