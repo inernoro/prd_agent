@@ -222,6 +222,14 @@ public class ExecutiveController : ControllerBase
             { "/api/defect-agent/", "defect-agent" },
             { "/api/ai-toolbox/", "ai-toolbox" },
             { "/api/open-platform/", "open-platform" },
+            { "/api/v1/open-platform/", "open-platform" }, // 开放平台 Chat API (OpenPlatformChatController)
+        };
+
+        // AppCallerCode 前缀归一化：将 LLM 日志中的 appCallerCode 前缀映射到标准 appKey
+        // 例如 "open-platform-agent.proxy::chat" 提取前缀为 "open-platform-agent"，需归一化为 "open-platform"
+        var appKeyAliases = new Dictionary<string, string>
+        {
+            { "open-platform-agent", "open-platform" },
         };
 
         // ── 1. LLM 调用统计 (llm_request_logs) ──
@@ -242,7 +250,8 @@ public class ExecutiveController : ControllerBase
             {
                 var rp = l.RequestPurpose ?? "";
                 var dotIndex = rp.IndexOf('.');
-                return dotIndex > 0 ? rp[..dotIndex] : rp;
+                var key = dotIndex > 0 ? rp[..dotIndex] : rp;
+                return appKeyAliases.TryGetValue(key, out var normalized) ? normalized : key;
             })
             .Where(g => !string.IsNullOrEmpty(g.Key))
             .ToDictionary(g => g.Key, g =>
