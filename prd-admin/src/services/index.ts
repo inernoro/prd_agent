@@ -788,6 +788,9 @@ import {
   toggleArenaSlotReal,
   getArenaLineupReal,
   revealArenaSlotsReal,
+  createArenaRunReal,
+  getArenaRunReal,
+  cancelArenaRunReal,
   saveArenaBattleReal,
   listArenaBattlesReal,
   getArenaBattleReal,
@@ -804,6 +807,9 @@ export const deleteArenaSlot = withAuth(deleteArenaSlotReal);
 export const toggleArenaSlot = withAuth(toggleArenaSlotReal);
 export const getArenaLineup = withAuth(getArenaLineupReal);
 export const revealArenaSlots = withAuth(revealArenaSlotsReal);
+export const createArenaRun = withAuth(createArenaRunReal);
+export const getArenaRun = withAuth(getArenaRunReal);
+export const cancelArenaRun = withAuth(cancelArenaRunReal);
 export const saveArenaBattle = withAuth(saveArenaBattleReal);
 export const listArenaBattles = withAuth(listArenaBattlesReal);
 export const getArenaBattle = withAuth(getArenaBattleReal);

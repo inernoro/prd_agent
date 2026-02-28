@@ -76,6 +76,35 @@ export async function revealArenaSlotsReal(slotIds: string[]): Promise<ApiRespon
   });
 }
 
+// ============ Arena Runs (Run/Worker + afterSeq) ============
+
+export async function createArenaRunReal(data: {
+  prompt: string;
+  groupKey: string;
+  slots: Array<{
+    slotId: string;
+    platformId: string;
+    modelId: string;
+    label: string;
+    labelIndex: number;
+  }>;
+}): Promise<ApiResponse<any>> {
+  return await apiRequest(api.arena.runs.create(), {
+    method: 'POST',
+    body: data,
+  });
+}
+
+export async function getArenaRunReal(runId: string): Promise<ApiResponse<any>> {
+  return await apiRequest(api.arena.runs.byId(runId));
+}
+
+export async function cancelArenaRunReal(runId: string): Promise<ApiResponse<any>> {
+  return await apiRequest(api.arena.runs.cancel(runId), {
+    method: 'POST',
+  });
+}
+
 // ============ Arena Battles ============
 
 export async function saveArenaBattleReal(data: any): Promise<ApiResponse<any>> {

@@ -663,6 +663,12 @@ export const api = {
     },
     lineup: () => '/api/lab/arena/lineup',
     reveal: () => '/api/lab/arena/reveal',
+    runs: {
+      create: () => '/api/lab/arena/runs',
+      byId: (id: string) => `/api/lab/arena/runs/${id}`,
+      cancel: (id: string) => `/api/lab/arena/runs/${id}/cancel`,
+      stream: (id: string) => `/api/lab/arena/runs/${id}/stream`,
+    },
     battles: {
       list: () => '/api/lab/arena/battles',
       byId: (id: string) => `/api/lab/arena/battles/${id}`,

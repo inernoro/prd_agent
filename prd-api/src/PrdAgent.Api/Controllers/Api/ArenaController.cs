@@ -1,7 +1,9 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -18,10 +20,15 @@ namespace PrdAgent.Api.Controllers.Api;
 public sealed class ArenaController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly IRunEventStore _runStore;
+    private readonly IRunQueue _runQueue;
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public ArenaController(MongoDbContext db)
+    public ArenaController(MongoDbContext db, IRunEventStore runStore, IRunQueue runQueue)
     {
         _db = db;
+        _runStore = runStore;
+        _runQueue = runQueue;
     }
 
     private string GetUserId() =>
@@ -355,6 +362,154 @@ public sealed class ArenaController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
+    // ─────────────────────────── Runs (Run/Worker + afterSeq) ───────────────────────────
+
+    /// <summary>
+    /// 创建竞技场 Run：将多模型并行请求交给后台 Worker 执行，前端通过 afterSeq 断线重连。
+    /// </summary>
+    [HttpPost("runs")]
+    public async Task<IActionResult> CreateRun([FromBody] CreateArenaRunRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Prompt))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "prompt 不能为空"));
+        if (request.Slots == null || request.Slots.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "slots 不能为空"));
+
+        var userId = GetUserId();
+        var runId = Guid.NewGuid().ToString("N");
+
+        var meta = new RunMeta
+        {
+            RunId = runId,
+            Kind = RunKinds.Arena,
+            Status = RunStatuses.Queued,
+            CreatedByUserId = userId,
+            CreatedAt = DateTime.UtcNow,
+            LastSeq = 0,
+            CancelRequested = false,
+            InputJson = JsonSerializer.Serialize(new
+            {
+                prompt = request.Prompt.Trim(),
+                groupKey = (request.GroupKey ?? "").Trim(),
+                userId,
+                slots = request.Slots.Select(s => new
+                {
+                    slotId = (s.SlotId ?? "").Trim(),
+                    platformId = (s.PlatformId ?? "").Trim(),
+                    modelId = (s.ModelId ?? "").Trim(),
+                    label = (s.Label ?? "").Trim(),
+                    labelIndex = s.LabelIndex
+                })
+            }, JsonOptions)
+        };
+
+        await _runStore.SetRunAsync(RunKinds.Arena, meta, ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
+        await _runQueue.EnqueueAsync(RunKinds.Arena, runId, CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { runId }));
+    }
+
+    /// <summary>
+    /// 获取 Run 状态
+    /// </summary>
+    [HttpGet("runs/{runId}")]
+    public async Task<IActionResult> GetRun(string runId, CancellationToken ct)
+    {
+        var rid = (runId ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(rid))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
+        var meta = await _runStore.GetRunAsync(RunKinds.Arena, rid, ct);
+        if (meta == null)
+            return NotFound(ApiResponse<object>.Fail("RUN_NOT_FOUND", "run 不存在或已过期"));
+        return Ok(ApiResponse<object>.Ok(meta));
+    }
+
+    /// <summary>
+    /// 取消 Run
+    /// </summary>
+    [HttpPost("runs/{runId}/cancel")]
+    public async Task<IActionResult> CancelRun(string runId, CancellationToken ct)
+    {
+        var rid = (runId ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(rid))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
+        await _runStore.TryMarkCancelRequestedAsync(RunKinds.Arena, rid, ct);
+        return Ok(ApiResponse<object>.Ok(new { runId = rid, cancelRequested = true }));
+    }
+
+    /// <summary>
+    /// 订阅竞技场 Run（SSE）：支持 afterSeq / Last-Event-ID 断线续传。
+    /// </summary>
+    [HttpGet("runs/{runId}/stream")]
+    [Produces("text/event-stream")]
+    public async Task StreamRun(string runId, [FromQuery] long afterSeq = 0, CancellationToken cancellationToken = default)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        var rid = (runId ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(rid))
+        {
+            await Response.WriteAsync("event: error\ndata: {\"errorCode\":\"INVALID_FORMAT\",\"errorMessage\":\"runId 不能为空\"}\n\n", cancellationToken);
+            return;
+        }
+
+        if (afterSeq <= 0)
+        {
+            var last = (Request.Headers["Last-Event-ID"].FirstOrDefault() ?? "").Trim();
+            if (long.TryParse(last, out var parsed) && parsed > 0) afterSeq = parsed;
+        }
+
+        // 1) snapshot
+        var snap = await _runStore.GetSnapshotAsync(RunKinds.Arena, rid, cancellationToken);
+        if (snap != null && snap.Seq > afterSeq)
+        {
+            await Response.WriteAsync($"id: {snap.Seq}\n", cancellationToken);
+            await Response.WriteAsync("event: message\n", cancellationToken);
+            await Response.WriteAsync($"data: {snap.SnapshotJson}\n\n", cancellationToken);
+            await Response.Body.FlushAsync(cancellationToken);
+            afterSeq = snap.Seq;
+        }
+
+        // 2) history + tail
+        var lastKeepAliveAt = DateTime.UtcNow;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 10)
+            {
+                await Response.WriteAsync(": keepalive\n\n", cancellationToken);
+                await Response.Body.FlushAsync(cancellationToken);
+                lastKeepAliveAt = DateTime.UtcNow;
+            }
+
+            var batch = await _runStore.GetEventsAsync(RunKinds.Arena, rid, afterSeq, limit: 200, cancellationToken);
+            if (batch.Count > 0)
+            {
+                foreach (var ev in batch)
+                {
+                    await Response.WriteAsync($"id: {ev.Seq}\n", cancellationToken);
+                    await Response.WriteAsync("event: message\n", cancellationToken);
+                    await Response.WriteAsync($"data: {ev.PayloadJson}\n\n", cancellationToken);
+                    await Response.Body.FlushAsync(cancellationToken);
+                    afterSeq = ev.Seq;
+                    lastKeepAliveAt = DateTime.UtcNow;
+                }
+            }
+            else
+            {
+                // Check if run is terminal — if so, stop the loop
+                var meta = await _runStore.GetRunAsync(RunKinds.Arena, rid, CancellationToken.None);
+                if (meta != null && meta.Status is RunStatuses.Done or RunStatuses.Error or RunStatuses.Cancelled)
+                {
+                    // Run completed + no more events → close SSE
+                    break;
+                }
+                await Task.Delay(350, cancellationToken);
+            }
+        }
+    }
+
     // ─────────────────────────── Battles ───────────────────────────
 
     /// <summary>
@@ -498,4 +653,20 @@ public class CreateArenaBattleResponseItem
     public int? TotalMs { get; set; }
     public string? Status { get; set; }
     public string? ErrorMessage { get; set; }
+}
+
+public class CreateArenaRunRequest
+{
+    public string? Prompt { get; set; }
+    public string? GroupKey { get; set; }
+    public List<CreateArenaRunSlotItem> Slots { get; set; } = new();
+}
+
+public class CreateArenaRunSlotItem
+{
+    public string? SlotId { get; set; }
+    public string? PlatformId { get; set; }
+    public string? ModelId { get; set; }
+    public string? Label { get; set; }
+    public int LabelIndex { get; set; }
 }

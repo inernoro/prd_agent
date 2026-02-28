@@ -9,7 +9,6 @@ import { getAvatarUrlByModelName, getAvatarUrlByPlatformType } from '@/assets/mo
 import {
   getArenaLineup,
   revealArenaSlots,
-  saveArenaBattle,
   listArenaBattles,
   getArenaBattle,
   listArenaGroups,
@@ -19,6 +18,8 @@ import {
   createArenaSlot,
   deleteArenaSlot,
   toggleArenaSlot,
+  createArenaRun,
+  getArenaRun,
   getPlatforms,
 } from '@/services';
 import { api } from '@/services/api';
@@ -126,21 +127,10 @@ function joinUrl(base: string, path: string) {
 }
 
 // ---------------------------------------------------------------------------
-// SSE event routing context
+// Run/Worker session persistence key
 // ---------------------------------------------------------------------------
 
-interface SSEContext {
-  /** modelId → slotId (built from request slots, for matching) */
-  modelToSlotId: Map<string, string>;
-  /** Backend itemId → slotId (built dynamically from modelStart events) */
-  itemIdToSlotMap: Map<string, string>;
-  /** Tracks which slots have been assigned to prevent duplicate-model confusion */
-  assignedSlots: Set<string>;
-  /** Original slots array for sequential fallback */
-  slots: ArenaSlot[];
-  /** Sequential counter for fallback assignment when modelId matching fails */
-  nextUnassignedIdx: number;
-}
+const ARENA_RUN_STORAGE_KEY = 'arena_active_run';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -232,6 +222,8 @@ export function ArenaPage() {
   const [revealLoading, setRevealLoading] = useState(false);
   const [currentPrompt, setCurrentPrompt] = useState('');
   const [revealAnimating, setRevealAnimating] = useState(false);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  void activeRunId; // used via setActiveRunId for run lifecycle tracking
 
   // --- History state ---
   const [history, setHistory] = useState<BattleHistoryItem[]>([]);
@@ -276,6 +268,7 @@ export function ArenaPage() {
   const panelsRef = useRef<ArenaPanel[]>([]);
   const groupDropdownRef = useRef<HTMLDivElement>(null);
   const manageModeRef = useRef(false);
+  const afterSeqRef = useRef<number>(0);
 
   // Keep panelsRef in sync
   useEffect(() => {
@@ -311,6 +304,63 @@ export function ArenaPage() {
     loadLineup();
     loadHistory();
   }, []);
+
+  // --- Page refresh recovery: check for active run and reconnect ---
+  useEffect(() => {
+    const raw = sessionStorage.getItem(ARENA_RUN_STORAGE_KEY);
+    if (!raw) return;
+
+    let session: { runId: string; prompt: string; groupKey: string; slots: Array<{ slotId: string; label: string; labelIndex: number }> };
+    try {
+      session = JSON.parse(raw);
+    } catch {
+      sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
+      return;
+    }
+
+    // Check if run is still active
+    (async () => {
+      try {
+        const res = await getArenaRun(session.runId);
+        if (!res.success || !res.data) {
+          sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
+          return;
+        }
+        const status = res.data.status as string;
+        if (status === 'Done' || status === 'Error' || status === 'Cancelled') {
+          sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
+          return;
+        }
+
+        // Run is still active — restore panels and reconnect
+        const initialPanels: ArenaPanel[] = session.slots.map((s) => ({
+          slotId: s.slotId,
+          label: s.label,
+          labelIndex: s.labelIndex,
+          status: 'waiting' as const,
+          text: '',
+          ttftMs: null,
+          totalMs: null,
+          errorMessage: null,
+          startedAt: null,
+        }));
+        setPanels(initialPanels);
+        panelsRef.current = initialPanels;
+        setCurrentPrompt(session.prompt);
+        setSelectedGroupKey(session.groupKey);
+        setIsStreaming(true);
+        setAllDone(false);
+        setRevealed(false);
+        setRevealedInfos(new Map());
+        setActiveRunId(session.runId);
+
+        // Reconnect from seq 0 (snapshot will fast-forward)
+        subscribeToRunStream(session.runId, 0);
+      } catch {
+        sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
+      }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadLineup() {
     setLineupLoading(true);
@@ -528,62 +578,69 @@ export function ArenaPage() {
     setRevealedInfos(new Map());
     setCurrentPrompt('');
     setActiveBattleId(null);
+    setActiveRunId(null);
     setPrompt('');
+    afterSeqRef.current = 0;
+    sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
     textareaRef.current?.focus();
   }
 
-  // --- SSE event handler ---
-  function handleSSEEvent(sseEvent: string | undefined, data: any, ctx: SSEContext) {
-    const type = data?.type as string;
-    const itemId = data?.itemId as string | undefined;
+  // --- SSE event handler (Run/Worker mode: events come as RunEventRecord with payloadJson) ---
+  function handleRunEvent(payloadJson: string) {
+    let data: any;
+    try {
+      // payloadJson is the RunEventRecord.payloadJson — parse the actual event object
+      data = JSON.parse(payloadJson);
+    } catch {
+      return;
+    }
 
-    // Run-level events (event: run)
-    if (sseEvent === 'run') {
-      if (type === 'runDone') {
-        const final = panelsRef.current;
-        const done = final.length > 0 && final.every((p) => p.status === 'done' || p.status === 'error');
-        setAllDone(done);
-      }
-      if (type === 'error') {
-        toast.error('运行失败', data.errorMessage ?? '');
+    const type = data?.type as string;
+    if (!type) return;
+
+    // Run-level events
+    if (type === 'runStart') return; // nothing to do
+    if (type === 'runDone') {
+      const final = panelsRef.current;
+      const done = final.length > 0 && final.every((p) => p.status === 'done' || p.status === 'error');
+      setAllDone(done);
+      setIsStreaming(false);
+      // Clear persisted run
+      sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
+      setActiveRunId(null);
+      loadHistory();
+      return;
+    }
+    if (type === 'error') {
+      toast.error('运行失败', data.errorMessage ?? '');
+      setIsStreaming(false);
+      sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
+      setActiveRunId(null);
+      return;
+    }
+
+    // Snapshot event (for reconnection recovery)
+    if (type === 'arenaSnapshot') {
+      const snapshotSlots = data.slots as Array<{ slotId: string; label: string; labelIndex: number; content: string }>;
+      if (snapshotSlots) {
+        setPanels((prev) => {
+          const next = prev.map((p) => {
+            const snap = snapshotSlots.find((s) => s.slotId === p.slotId);
+            if (snap && snap.content.length > p.text.length) {
+              return { ...p, text: snap.content, status: p.status === 'waiting' ? 'streaming' : p.status };
+            }
+            return p;
+          });
+          panelsRef.current = next;
+          return next;
+        });
+        if (data.prompt) setCurrentPrompt(data.prompt);
       }
       return;
     }
 
-    // Model-level events — resolve slotId from itemId
-    if (type === 'modelStart' && itemId) {
-      // Strategy 1: Match by modelId
-      const eventModelId = data.modelId as string | undefined;
-      let matched = false;
-      if (eventModelId) {
-        for (const s of ctx.slots) {
-          if (s.modelId === eventModelId && !ctx.assignedSlots.has(s.id)) {
-            ctx.itemIdToSlotMap.set(itemId, s.id);
-            ctx.assignedSlots.add(s.id);
-            matched = true;
-            break;
-          }
-        }
-      }
-      // Strategy 2: Sequential fallback — assign to next unassigned slot
-      if (!matched) {
-        while (ctx.nextUnassignedIdx < ctx.slots.length) {
-          const s = ctx.slots[ctx.nextUnassignedIdx];
-          ctx.nextUnassignedIdx++;
-          if (!ctx.assignedSlots.has(s.id)) {
-            ctx.itemIdToSlotMap.set(itemId, s.id);
-            ctx.assignedSlots.add(s.id);
-            break;
-          }
-        }
-      }
-    }
-
-    // Resolve slotId
-    let slotId: string | undefined;
-    if (itemId) {
-      slotId = ctx.itemIdToSlotMap.get(itemId);
-    }
+    // Model-level events — use slotId directly from ArenaRunWorker
+    const slotId = data.slotId as string | undefined;
     if (!slotId) return;
 
     const updatePanel = (updater: (p: ArenaPanel) => ArenaPanel) => {
@@ -637,7 +694,89 @@ export function ArenaPage() {
     }
   }
 
-  // --- Send question ---
+  // --- Subscribe to arena run SSE stream (supports afterSeq reconnection) ---
+  async function subscribeToRunStream(runId: string, afterSeq: number = 0) {
+    const abortController = new AbortController();
+    abortRef.current = abortController;
+    afterSeqRef.current = afterSeq;
+
+    try {
+      const token = useAuthStore.getState().token;
+      const streamPath = api.arena.runs.stream(runId);
+      const fullUrl = joinUrl(getApiBaseUrl(), `${streamPath}?afterSeq=${afterSeq}`);
+
+      const response = await fetch(fullUrl, {
+        method: 'GET',
+        headers: {
+          Accept: 'text/event-stream',
+          Authorization: `Bearer ${token}`,
+        },
+        signal: abortController.signal,
+      });
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        throw new Error(errText || `HTTP ${response.status} ${response.statusText}`);
+      }
+
+      await readSseStream(
+        response,
+        (evt) => {
+          if (!evt.data) return;
+          // Track sequence for reconnection
+          if (evt.id) {
+            const seq = parseInt(evt.id, 10);
+            if (!isNaN(seq)) afterSeqRef.current = seq;
+          }
+          // The SSE stream wraps events as RunEventRecord — data contains the full record JSON
+          try {
+            const record = JSON.parse(evt.data);
+            // record is { runId, seq, eventName, payloadJson, createdAt }
+            const payloadJson = record.payloadJson ?? evt.data;
+            handleRunEvent(payloadJson);
+          } catch {
+            // Fallback: try treating data as direct payload
+            handleRunEvent(evt.data);
+          }
+        },
+        abortController.signal
+      );
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+      // Connection lost — check if run is still active and auto-reconnect
+      try {
+        const runRes = await getArenaRun(runId);
+        if (runRes.success && runRes.data) {
+          const status = runRes.data.status as string;
+          if (status === 'Running' || status === 'Queued') {
+            // Run still active — reconnect after a short delay
+            setTimeout(() => {
+              if (!abortRef.current?.signal.aborted) {
+                subscribeToRunStream(runId, afterSeqRef.current);
+              }
+            }, 1000);
+            return;
+          }
+          // Run completed while we were disconnected
+          if (status === 'Done') {
+            setAllDone(true);
+            setIsStreaming(false);
+            sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
+            setActiveRunId(null);
+            loadHistory();
+            return;
+          }
+        }
+      } catch {
+        // ignore
+      }
+      toast.error('流式连接中断', e?.message ?? '网络错误');
+    } finally {
+      abortRef.current = null;
+    }
+  }
+
+  // --- Send question (Run/Worker mode) ---
   const handleSend = useCallback(async () => {
     const question = prompt.trim();
     if (!question || isStreaming) return;
@@ -649,21 +788,30 @@ export function ArenaPage() {
     // Assign random labels
     const newLabelMap = assignLabels(slots);
 
-    // Initialize panels
-    const initialPanels: ArenaPanel[] = slots.map((slot) => {
+    // Build slot data for the run
+    const runSlots = slots.map((slot) => {
       const info = newLabelMap.get(slot.id) ?? { label: '助手 ?', index: 0 };
       return {
         slotId: slot.id,
+        platformId: slot.platformId,
+        modelId: slot.modelId,
         label: info.label,
         labelIndex: info.index,
-        status: 'waiting',
-        text: '',
-        ttftMs: null,
-        totalMs: null,
-        errorMessage: null,
-        startedAt: null,
       };
     });
+
+    // Initialize panels
+    const initialPanels: ArenaPanel[] = runSlots.map((s) => ({
+      slotId: s.slotId,
+      label: s.label,
+      labelIndex: s.labelIndex,
+      status: 'waiting' as const,
+      text: '',
+      ttftMs: null,
+      totalMs: null,
+      errorMessage: null,
+      startedAt: null,
+    }));
     setPanels(initialPanels);
     panelsRef.current = initialPanels;
     setCurrentPrompt(question);
@@ -673,70 +821,36 @@ export function ArenaPage() {
     setRevealedInfos(new Map());
     setActiveBattleId(null);
     setPrompt('');
-
-    // SSE routing context
-    const modelToSlotId = new Map<string, string>();
-    slots.forEach((s) => modelToSlotId.set(s.modelId, s.id));
-
-    const sseCtx: SSEContext = {
-      modelToSlotId,
-      itemIdToSlotMap: new Map(),
-      assignedSlots: new Set(),
-      slots,
-      nextUnassignedIdx: 0,
-    };
-
-    const abortController = new AbortController();
-    abortRef.current = abortController;
+    afterSeqRef.current = 0;
 
     try {
-      const token = useAuthStore.getState().token;
-      const sseUrl = api.lab.model.runsStream();
-      const fullUrl = joinUrl(getApiBaseUrl(), sseUrl);
-
-      const response = await fetch(fullUrl, {
-        method: 'POST',
-        headers: {
-          Accept: 'text/event-stream',
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          promptText: question,
-          models: slots.map((s) => ({
-            platformId: s.platformId,
-            modelId: s.modelId,
-            modelName: s.modelId,
-          })),
-          params: { maxConcurrency: 20, repeatN: 1 },
-        }),
-        signal: abortController.signal,
+      // 1) Create Run (server-side) — returns immediately with runId
+      const res = await createArenaRun({
+        prompt: question,
+        groupKey: selectedGroupKey,
+        slots: runSlots,
       });
 
-      if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        throw new Error(errText || `HTTP ${response.status} ${response.statusText}`);
+      if (!res.success || !res.data?.runId) {
+        throw new Error(res.error?.message || '创建 Run 失败');
       }
 
-      // Use the proven readSseStream utility (handles CRLF, keepalive comments, etc.)
-      await readSseStream(
-        response,
-        (evt) => {
-          if (!evt.data) return;
-          if (evt.data === '[DONE]') return;
-          let data: any;
-          try {
-            data = JSON.parse(evt.data);
-          } catch {
-            return;
-          }
-          handleSSEEvent(evt.event, data, sseCtx);
-        },
-        abortController.signal
-      );
+      const runId = res.data.runId as string;
+      setActiveRunId(runId);
+
+      // Persist run session for page refresh recovery
+      sessionStorage.setItem(ARENA_RUN_STORAGE_KEY, JSON.stringify({
+        runId,
+        prompt: question,
+        groupKey: selectedGroupKey,
+        slots: runSlots,
+      }));
+
+      // 2) Subscribe to SSE stream (afterSeq=0 for fresh start)
+      await subscribeToRunStream(runId, 0);
     } catch (e: any) {
       if (e?.name === 'AbortError') return;
-      toast.error('流式请求失败', e?.message ?? '网络错误');
+      toast.error('竞技场请求失败', e?.message ?? '网络错误');
       setPanels((prev) =>
         prev.map((p) =>
           p.status === 'waiting' || p.status === 'streaming'
@@ -744,37 +858,9 @@ export function ArenaPage() {
             : p
         )
       );
-    } finally {
       setIsStreaming(false);
-      abortRef.current = null;
-      const finalPanels = panelsRef.current;
-      const done = finalPanels.length > 0 && finalPanels.every((p) => p.status === 'done' || p.status === 'error');
-      setAllDone(done);
-
-      if (finalPanels.length > 0) {
-        try {
-          const saveRes = await saveArenaBattle({
-            prompt: question,
-            groupKey: selectedGroupKey,
-            responses: finalPanels.map((p) => ({
-              slotId: p.slotId,
-              label: p.label,
-              content: p.text,
-              ttftMs: p.ttftMs,
-              totalMs: p.totalMs,
-              status: p.status === 'error' ? 'error' : 'done',
-              errorMessage: p.errorMessage,
-            })),
-            revealed: false,
-          });
-          if (saveRes.success && saveRes.data?.id) {
-            setActiveBattleId(saveRes.data.id);
-          }
-        } catch {
-          // silent
-        }
-        loadHistory();
-      }
+      sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
+      setActiveRunId(null);
     }
   }, [prompt, isStreaming, slots, selectedGroupKey]);
 
