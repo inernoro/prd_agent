@@ -473,8 +473,9 @@ export function DefectSubmitPanel() {
           onDragOver={handleDragOver}
         >
           <div
-            className="flex-1 min-h-[280px] flex flex-col rounded-xl overflow-hidden transition-all duration-200"
+            className="flex-1 flex flex-col rounded-xl overflow-hidden transition-all duration-200"
             style={{
+              minHeight: attachments.length > 0 ? '500px' : '380px',
               background: 'rgba(0,0,0,0.14)',
               border: focused
                 ? '1px solid rgba(214, 178, 106, 0.55)'
