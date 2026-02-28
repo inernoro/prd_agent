@@ -157,7 +157,7 @@ export function TemplateDialog() {
         <div className="h-full overflow-y-auto -mx-1 px-1">
           {/* Create/Edit Form */}
           {isCreating && (
-            <GlassCard glow className="mb-4">
+            <GlassCard glow animated className="mb-4">
               <div className="space-y-3">
                 <div
                   className="text-[12px] font-medium"
@@ -268,8 +268,8 @@ export function TemplateDialog() {
                       {template.isDefault && (
                         <Star
                           size={12}
-                          fill="rgba(214,178,106,0.9)"
-                          style={{ color: 'rgba(214,178,106,0.9)' }}
+                          fill="rgba(99,102,241,0.9)"
+                          style={{ color: 'rgba(99,102,241,0.9)' }}
                         />
                       )}
                     </div>

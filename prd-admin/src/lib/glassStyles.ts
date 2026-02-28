@@ -130,13 +130,14 @@ export const glassTabContainer: React.CSSProperties = {
 };
 
 /**
- * Toast 通知（保留语义色彩背景，blur 辅助）
+ * Toast 通知（深色底层 + 语义色叠加，确保任意背景下文字可读）
  */
 export const glassToast = (bg: string, borderColor: string): React.CSSProperties => ({
-  background: bg,
+  background: `linear-gradient(${bg}, ${bg}), linear-gradient(rgba(8, 10, 16, 0.82), rgba(8, 10, 16, 0.82))`,
   border: `1px solid ${borderColor}`,
-  backdropFilter: 'blur(12px)',
-  WebkitBackdropFilter: 'blur(12px)',
+  backdropFilter: 'blur(16px)',
+  WebkitBackdropFilter: 'blur(16px)',
+  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.28)',
 });
 
 /**

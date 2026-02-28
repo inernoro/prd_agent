@@ -11,7 +11,7 @@ export default function VisualAgentWorkspaceEditorPage() {
   if (!workspaceId) {
     return (
       <div ref={wrapRef} className="h-full min-h-0 flex flex-col">
-        <GlassCard glow>
+        <GlassCard animated glow>
           <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
             workspaceId 为空。请从 <Link to="/visual-agent">视觉创作 Agent</Link> 选择一个项目进入。
           </div>

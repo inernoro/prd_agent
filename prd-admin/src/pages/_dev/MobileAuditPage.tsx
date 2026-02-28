@@ -64,7 +64,7 @@ export default function MobileAuditPage() {
               fontWeight: 600,
               border: 'none',
               cursor: 'pointer',
-              background: !selectedGroup ? 'rgba(214,178,106,0.9)' : 'rgba(255,255,255,0.08)',
+              background: !selectedGroup ? 'rgba(99,102,241,0.9)' : 'rgba(255,255,255,0.08)',
               color: !selectedGroup ? '#1a1a1a' : 'rgba(255,255,255,0.7)',
             }}
           >
@@ -83,7 +83,7 @@ export default function MobileAuditPage() {
                   fontWeight: 600,
                   border: 'none',
                   cursor: 'pointer',
-                  background: selectedGroup === g ? 'rgba(214,178,106,0.9)' : 'rgba(255,255,255,0.08)',
+                  background: selectedGroup === g ? 'rgba(99,102,241,0.9)' : 'rgba(255,255,255,0.08)',
                   color: selectedGroup === g ? '#1a1a1a' : 'rgba(255,255,255,0.7)',
                 }}
               >
@@ -130,7 +130,7 @@ export default function MobileAuditPage() {
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{
-                    color: 'rgba(214,178,106,0.8)',
+                    color: 'rgba(99,102,241,0.8)',
                     fontSize: 10,
                     textDecoration: 'none',
                   }}

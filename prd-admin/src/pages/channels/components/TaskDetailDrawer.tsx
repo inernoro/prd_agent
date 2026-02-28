@@ -84,11 +84,8 @@ export function TaskDetailDrawer({
       >
         {/* Header */}
         <div
-          className="sticky top-0 z-10 p-4 border-b"
-          style={{
-            background: 'var(--list-item-bg)',
-            borderColor: 'var(--border-subtle)',
-          }}
+          className="sticky top-0 z-10 p-4 border-b surface-inset"
+          style={{ borderColor: 'var(--border-subtle)' }}
         >
           <div className="flex items-center justify-between">
             <div>

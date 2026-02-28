@@ -19,6 +19,22 @@ export type ToolboxView = 'grid' | 'detail' | 'create' | 'edit' | 'running' | 'q
 export type ToolboxCategory = 'all' | 'builtin' | 'custom' | 'favorite';
 export type ToolboxPageTab = 'toolbox' | 'capabilities';
 
+const FAVORITES_STORAGE_KEY = 'toolbox-favorites';
+
+function loadFavoritesFromStorage(): Set<string> {
+  try {
+    const raw = localStorage.getItem(FAVORITES_STORAGE_KEY);
+    if (raw) return new Set(JSON.parse(raw) as string[]);
+  } catch { /* ignore */ }
+  return new Set();
+}
+
+function saveFavoritesToStorage(ids: Set<string>) {
+  try {
+    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify([...ids]));
+  } catch { /* ignore */ }
+}
+
 interface ToolboxState {
   // View state
   view: ToolboxView;
@@ -30,6 +46,9 @@ interface ToolboxState {
   items: ToolboxItem[];
   itemsLoading: boolean;
   selectedItem: ToolboxItem | null;
+
+  // Favorites
+  favoriteIds: Set<string>;
 
   // Built-in agents
   builtinAgents: AgentInfo[];
@@ -52,6 +71,8 @@ interface ToolboxState {
   setPageTab: (tab: ToolboxPageTab) => void;
   setCategory: (category: ToolboxCategory) => void;
   setSearchQuery: (query: string) => void;
+  toggleFavorite: (itemId: string) => void;
+  isFavorite: (itemId: string) => boolean;
   startCreate: () => void;
   startEdit: (item: ToolboxItem) => void;
   setEditingItem: (item: Partial<ToolboxItem>) => void;
@@ -75,6 +96,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     name: 'PRD 分析师',
     description: '智能解读PRD文档，识别需求缺口，回答产品问题',
     icon: 'FileText',
+    emoji: '\u{1F4CB}',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'prd-agent',
@@ -88,6 +110,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     name: '视觉设计师',
     description: '高级视觉创作，支持文生图、图生图、多图组合',
     icon: 'Palette',
+    emoji: '\u{1F3A8}',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'visual-agent',
@@ -101,6 +124,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     name: '文学创作者',
     description: '文学创作与配图，支持写作、润色、生成插图',
     icon: 'PenTool',
+    emoji: '\u270D\uFE0F',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'literary-agent',
@@ -114,11 +138,25 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     name: '缺陷管理员',
     description: '缺陷提交与跟踪，支持信息提取、分类、生成报告',
     icon: 'Bug',
+    emoji: '\u{1F41B}',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'defect-agent',
     routePath: '/defect-agent',
     tags: ['Bug', '缺陷', '测试'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'builtin-arena',
+    name: 'AI 竞技场',
+    description: '多模型盲测对战，匿名PK后揭晓真实身份',
+    icon: 'Swords',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'arena',
+    routePath: '/arena',
+    tags: ['竞技场', '模型对比', '盲测'],
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
@@ -128,6 +166,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     name: '代码审查员',
     description: '代码质量审查，发现潜在问题，提供改进建议',
     icon: 'Code2',
+    emoji: '\u{1F4BB}',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'code-reviewer',
@@ -140,6 +179,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     name: '多语言翻译',
     description: '专业级多语言翻译，支持中英日韩等主流语言',
     icon: 'Languages',
+    emoji: '\u{1F30D}',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'translator',
@@ -152,6 +192,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     name: '内容摘要师',
     description: '长文本智能摘要，快速提取关键信息和要点',
     icon: 'FileSearch',
+    emoji: '\u{1F4DD}',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'summarizer',
@@ -164,6 +205,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     name: '数据分析师',
     description: '数据分析与可视化建议，帮助理解数据洞察',
     icon: 'BarChart3',
+    emoji: '\u{1F4CA}',
     category: 'builtin',
     type: 'builtin',
     agentKey: 'data-analyst',
@@ -183,6 +225,8 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
   items: [],
   itemsLoading: false,
   selectedItem: null,
+
+  favoriteIds: loadFavoritesFromStorage(),
 
   builtinAgents: [],
 
@@ -251,6 +295,23 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
   // Set search query
   setSearchQuery: (query: string) => {
     set({ searchQuery: query });
+  },
+
+  // Toggle favorite
+  toggleFavorite: (itemId: string) => {
+    const next = new Set(get().favoriteIds);
+    if (next.has(itemId)) {
+      next.delete(itemId);
+    } else {
+      next.add(itemId);
+    }
+    saveFavoritesToStorage(next);
+    set({ favoriteIds: next });
+  },
+
+  // Check if item is favorited
+  isFavorite: (itemId: string) => {
+    return get().favoriteIds.has(itemId);
   },
 
   // Start creating a new item (quick wizard)

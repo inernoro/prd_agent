@@ -147,7 +147,7 @@ export default function IdentityMappingsPage() {
         }
       />
 
-      <GlassCard glow className="flex-1 flex flex-col">
+      <GlassCard animated glow className="flex-1 flex flex-col">
         <div className="p-4 border-b flex items-center gap-4" style={{ borderColor: 'var(--nested-block-border)' }}>
           <div className="flex items-center gap-2 flex-1">
             <Search size={16} className="text-muted-foreground" />
@@ -185,7 +185,7 @@ export default function IdentityMappingsPage() {
 
         <div className="flex-1 overflow-auto">
           <table className="w-full">
-            <thead style={{ background: 'var(--list-item-bg)' }}>
+            <thead className="surface-inset">
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium">通道标识</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">通道类型</th>
@@ -199,10 +199,8 @@ export default function IdentityMappingsPage() {
               {mappings.map((mapping) => (
                 <tr
                   key={mapping.id}
-                  className="transition-colors"
+                  className="surface-row transition-colors"
                   style={{ borderTop: '1px solid var(--bg-input)' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--list-item-bg)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                 >
                   <td className="px-4 py-3">
                     <div className="font-mono text-sm">{mapping.channelIdentifier}</div>
@@ -217,7 +215,7 @@ export default function IdentityMappingsPage() {
                     <div className="flex items-center gap-2">
                       <div
                         className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold"
-                        style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}
+                        style={{ background: 'var(--gold-gradient)', color: '#ffffff' }}
                       >
                         {(mapping.userName || mapping.userId).charAt(0).toUpperCase()}
                       </div>

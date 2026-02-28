@@ -173,27 +173,27 @@ export default function ChannelTasksPage() {
       {/* 统计卡片 */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-          <GlassCard className="p-3 text-center">
+          <GlassCard animated className="p-3 text-center">
             <div className="text-2xl font-bold">{stats.total}</div>
             <div className="text-xs text-muted-foreground">总任务</div>
           </GlassCard>
-          <GlassCard className="p-3 text-center">
+          <GlassCard animated className="p-3 text-center">
             <div className="text-2xl font-bold text-yellow-400">{stats.pending}</div>
             <div className="text-xs text-muted-foreground">待处理</div>
           </GlassCard>
-          <GlassCard className="p-3 text-center">
+          <GlassCard animated className="p-3 text-center">
             <div className="text-2xl font-bold text-blue-400">{stats.processing}</div>
             <div className="text-xs text-muted-foreground">处理中</div>
           </GlassCard>
-          <GlassCard className="p-3 text-center">
+          <GlassCard animated className="p-3 text-center">
             <div className="text-2xl font-bold text-green-400">{stats.completed}</div>
             <div className="text-xs text-muted-foreground">已完成</div>
           </GlassCard>
-          <GlassCard className="p-3 text-center">
+          <GlassCard animated className="p-3 text-center">
             <div className="text-2xl font-bold text-red-400">{stats.failed}</div>
             <div className="text-xs text-muted-foreground">失败</div>
           </GlassCard>
-          <GlassCard className="p-3 text-center">
+          <GlassCard animated className="p-3 text-center">
             <div className="text-2xl font-bold">{stats.todayTotal}</div>
             <div className="text-xs text-muted-foreground">今日任务</div>
           </GlassCard>
@@ -201,7 +201,7 @@ export default function ChannelTasksPage() {
       )}
 
       {/* 任务列表 */}
-      <GlassCard glow className="flex-1 flex flex-col">
+      <GlassCard animated glow className="flex-1 flex flex-col">
         <div className="p-4 border-b flex items-center gap-4" style={{ borderColor: 'var(--nested-block-border)' }}>
           <div className="flex items-center gap-2 flex-1">
             <Search size={16} className="text-muted-foreground" />
@@ -245,7 +245,7 @@ export default function ChannelTasksPage() {
 
         <div className="flex-1 overflow-auto">
           <table className="w-full">
-            <thead style={{ background: 'var(--list-item-bg)' }}>
+            <thead className="surface-inset">
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium">任务 ID</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">通道</th>
@@ -261,10 +261,8 @@ export default function ChannelTasksPage() {
               {tasks.map((task) => (
                 <tr
                   key={task.id}
-                  className="transition-colors cursor-pointer"
+                  className="surface-row transition-colors cursor-pointer"
                   style={{ borderTop: '1px solid var(--bg-input)' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--list-item-bg)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   onClick={() => handleViewDetail(task)}
                 >
                   <td className="px-4 py-3">

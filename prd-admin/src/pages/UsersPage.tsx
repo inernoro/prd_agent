@@ -654,7 +654,7 @@ export default function UsersPage() {
         icon={<Users size={16} />}
       />
 
-      <GlassCard glow className="flex-1 min-h-0 flex flex-col">
+      <GlassCard animated glow className="flex-1 min-h-0 flex flex-col">
         <div className={`flex ${isMobile ? 'flex-col gap-2.5' : 'flex-wrap items-center gap-2.5'}`}>
           <div className={`flex items-center gap-2.5 ${isMobile ? 'w-full' : 'min-w-0'}`}>
             <div className={`${isMobile ? 'flex-1 min-w-0' : 'flex-1 min-w-[200px] max-w-[320px]'}`}>
@@ -716,11 +716,7 @@ export default function UsersPage() {
         </div>
 
         <div
-          className="mt-4 flex-1 min-h-0 overflow-auto rounded-[14px] p-4"
-          style={{
-            background: 'var(--list-item-bg)',
-            border: '1px solid var(--bg-card-hover)',
-          }}
+          className="mt-4 flex-1 min-h-0 overflow-auto rounded-[14px] p-4 surface-inset"
         >
           {loading ? (
             <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -739,25 +735,26 @@ export default function UsersPage() {
                   PM: { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)', text: 'rgba(59,130,246,0.95)' },
                   DEV: { bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.25)', text: 'rgba(34,197,94,0.95)' },
                   QA: { bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.25)', text: 'rgba(168,85,247,0.95)' },
-                  ADMIN: { bg: 'rgba(214,178,106,0.12)', border: 'rgba(214,178,106,0.25)', text: 'var(--accent-gold)' },
+                  ADMIN: { bg: 'rgba(99,102,241,0.12)', border: 'rgba(99,102,241,0.25)', text: 'var(--accent-gold)' },
                 };
                 const rc = roleColors[u.role] || roleColors.DEV;
                 return (
                   <div
                     key={u.userId}
-                    className="group relative rounded-[10px] p-2.5 transition-all duration-150"
-                    style={{
-                      background: isBot ? 'rgba(34,197,94,0.03)' : 'var(--list-item-bg)',
-                      border: isBot ? '1px solid rgba(34,197,94,0.15)' : '1px solid var(--nested-block-border)',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.06)' : 'var(--bg-input)';
-                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.25)' : 'var(--border-default)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = isBot ? 'rgba(34,197,94,0.03)' : 'var(--list-item-bg)';
-                      e.currentTarget.style.borderColor = isBot ? 'rgba(34,197,94,0.15)' : 'var(--nested-block-border)';
-                    }}
+                    className={`group relative rounded-[10px] p-2.5 ${isBot ? '' : 'surface-row'}`}
+                    style={isBot ? {
+                      background: 'rgba(34,197,94,0.03)',
+                      border: '1px solid rgba(34,197,94,0.15)',
+                      transition: 'all 0.15s',
+                    } : undefined}
+                    onMouseEnter={isBot ? (e) => {
+                      e.currentTarget.style.background = 'rgba(34,197,94,0.06)';
+                      e.currentTarget.style.borderColor = 'rgba(34,197,94,0.25)';
+                    } : undefined}
+                    onMouseLeave={isBot ? (e) => {
+                      e.currentTarget.style.background = 'rgba(34,197,94,0.03)';
+                      e.currentTarget.style.borderColor = 'rgba(34,197,94,0.15)';
+                    } : undefined}
                   >
                     {/* 操作按钮：悬浮显示 */}
                     <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
@@ -1038,7 +1035,7 @@ export default function UsersPage() {
                                 icon: <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" /></svg>,
                               },
                               ADMIN: {
-                                bg: 'rgba(214,178,106,0.95)',
+                                bg: 'rgba(99,102,241,0.95)',
                                 color: '#000',
                                 icon: <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z" /></svg>,
                               },

@@ -11,6 +11,46 @@ import CitationChip from '../Chat/CitationChip';
 import AsyncIconButton from '../ui/AsyncIconButton';
 import { copyImageFromUrl, copyText, tableElementToMarkdown } from '../../lib/clipboard';
 
+/**
+ * Rehype plugin: strip inline color/background styles from raw HTML elements.
+ *
+ * PRD documents often contain raw HTML from document converters (Word→HTML)
+ * with hardcoded dark-on-light color styles, e.g. `<font style="color:#333">`.
+ * These inline styles override CSS class-based dark mode colors.
+ * This plugin runs AFTER rehype-raw, removing color-related inline styles
+ * so that elements inherit their colors from the prose/dark-mode CSS.
+ */
+function walkHast(node: any) {
+  if (node.type === 'element') {
+    const props = node.properties;
+    if (props) {
+      // Strip <font color="..."> HTML attribute
+      if (node.tagName === 'font' && props.color != null) {
+        delete props.color;
+      }
+      // Strip color/background-color from inline style
+      const style = props.style;
+      if (typeof style === 'string' && style.length > 0) {
+        const cleaned = style
+          .replace(/\b(?:color|background-color)\s*:\s*[^;]+;?/gi, '')
+          .trim();
+        if (cleaned) {
+          props.style = cleaned;
+        } else {
+          delete props.style;
+        }
+      }
+    }
+  }
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) walkHast(child);
+  }
+}
+
+function rehypeStripInlineColors() {
+  return (tree: any) => { walkHast(tree); };
+}
+
 // Citation tokens 缓存（使用 WeakMap 避免内存泄漏）
 const citationTokensCache = new WeakMap<DocCitation[], Array<Set<string>>>();
 
@@ -236,7 +276,7 @@ export default function MarkdownRenderer({ content, className, style, onInternal
     <div className={className} style={style}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={[rehypeRaw]}
+        rehypePlugins={[rehypeRaw, rehypeStripInlineColors]}
         components={{
           ...headingComponents,
           p({ children }: any) {

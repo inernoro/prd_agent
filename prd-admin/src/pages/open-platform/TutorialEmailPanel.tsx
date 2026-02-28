@@ -46,7 +46,7 @@ export default function TutorialEmailPanel({ onActionsReady }: TutorialEmailPane
             onClick={() => setViewMode(t.key)}
             className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition-colors"
             style={{
-              background: viewMode === t.key ? 'var(--bg-elevated)' : 'transparent',
+              background: viewMode === t.key ? 'var(--bg-card, rgba(255, 255, 255, 0.03))' : 'transparent',
               color: viewMode === t.key ? 'var(--text-primary)' : 'var(--text-muted)',
               border: viewMode === t.key ? '1px solid var(--border-default)' : '1px solid transparent',
             }}
@@ -281,7 +281,7 @@ function ComposeView() {
         </div>
 
         {/* Preview content */}
-        <GlassCard className="flex-1 min-h-0 flex flex-col" padding="none" overflow="hidden">
+        <GlassCard animated className="flex-1 min-h-0 flex flex-col" padding="none" overflow="hidden">
           {htmlContent ? (
             showCode ? (
               <textarea
@@ -312,7 +312,7 @@ function ComposeView() {
 
         {/* Send bar (only when content exists) */}
         {htmlContent && (
-          <GlassCard className="flex-shrink-0 p-3">
+          <GlassCard animated className="flex-shrink-0 p-3">
             <div className="flex items-center gap-3">
               <input
                 placeholder="收件邮箱"
@@ -347,7 +347,7 @@ function ComposeView() {
       </div>
 
       {/* Right: Chat Interface */}
-      <GlassCard className="w-96 flex-shrink-0 flex flex-col" padding="none" overflow="hidden">
+      <GlassCard animated className="w-96 flex-shrink-0 flex flex-col" padding="none" overflow="hidden">
         {/* Chat header */}
         <div className="flex items-center justify-between px-4 py-3 flex-shrink-0"
           style={{ borderBottom: '1px solid var(--border-default)' }}>
@@ -375,7 +375,7 @@ function ComposeView() {
             <div className="h-full flex items-center justify-center">
               <div className="text-center space-y-4 px-4">
                 <div className="w-12 h-12 rounded-xl mx-auto flex items-center justify-center"
-                  style={{ background: 'var(--bg-elevated)' }}>
+                  style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
                   <Sparkles size={24} style={{ color: 'var(--color-warning)', opacity: 0.7 }} />
                 </div>
                 <div>
@@ -398,7 +398,7 @@ function ComposeView() {
                       onClick={() => { setInput(hint); textareaRef.current?.focus(); }}
                       className="block w-full text-left px-3 py-2 text-xs rounded-lg transition-colors"
                       style={{
-                        background: 'var(--bg-elevated)',
+                        background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                         color: 'var(--text-secondary)',
                         border: '1px solid var(--border-default)',
                       }}
@@ -426,7 +426,7 @@ function ComposeView() {
                             borderBottomRightRadius: 4,
                           }
                         : {
-                            background: 'var(--bg-elevated)',
+                            background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                             color: 'var(--text-primary)',
                             borderBottomLeftRadius: 4,
                           }
@@ -447,7 +447,7 @@ function ComposeView() {
               {generating && (
                 <div className="flex justify-start">
                   <div className="px-3 py-2 rounded-xl text-sm flex items-center gap-2"
-                    style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)', borderBottomLeftRadius: 4 }}>
+                    style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-muted)', borderBottomLeftRadius: 4 }}>
                     <Loader2 size={14} className="animate-spin" />
                     AI 正在生成邮件...
                   </div>
@@ -558,7 +558,7 @@ function TemplatesView() {
         </div>
       ) : (
         templates.map((tpl) => (
-          <GlassCard key={tpl.id} className="p-4">
+          <GlassCard animated key={tpl.id} className="p-4">
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -676,7 +676,7 @@ function RecordsView() {
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             className="px-2 py-1 text-xs rounded-md"
-            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+            style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
           >
             <option value="">全部状态</option>
             <option value="active">进行中</option>
@@ -703,7 +703,7 @@ function RecordsView() {
       ) : (
         <div className="space-y-2">
           {enrollments.map((enr) => (
-            <GlassCard key={enr.id} className="p-3">
+            <GlassCard animated key={enr.id} className="p-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   {statusIcon(enr.status)}
@@ -736,7 +736,7 @@ function RecordsView() {
                     <button
                       onClick={() => handleUnsubscribe(enr.id)}
                       className="text-xs px-2 py-1 rounded-md"
-                      style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
+                      style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
                     >
                       退订
                     </button>

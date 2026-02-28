@@ -27,6 +27,7 @@ import {
   Crown,
   Sparkles,
   Workflow,
+  Swords,
   Menu,
   ChevronDown,
   type LucideIcon,
@@ -46,7 +47,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
-import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateUserAvatar } from '@/services';
+import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
@@ -74,6 +75,7 @@ const iconMap: Record<string, LucideIcon> = {
   Crown,
   Sparkles,
   Workflow,
+  Swords,
 };
 
 const notificationTone = {
@@ -479,7 +481,7 @@ export default function AppShell() {
                     color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
                   }}
                 >
-                  <span style={{ color: active ? 'var(--accent-gold)' : undefined }}>{it.icon}</span>
+                  <span style={{ color: active ? '#818cf8' : undefined }}>{it.icon}</span>
                   <span className="text-sm">{it.label}</span>
                 </button>
               );
@@ -561,9 +563,9 @@ export default function AppShell() {
             willChange: 'transform',
             ...(useSidebarGlass ? glassSidebar : {
               backgroundColor: 'var(--bg-elevated, #121216)',
-              backgroundImage: 'linear-gradient(135deg, rgba(20,20,24,1) 0%, rgba(14,14,17,1) 100%)',
-              border: '1px solid var(--border-faint, rgba(255, 255, 255, 0.05))',
-              boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(255, 255, 255, 0.02) inset',
+              backgroundImage: 'linear-gradient(180deg, rgba(17,17,22,1) 0%, rgba(12,12,16,1) 100%)',
+              border: '1px solid rgba(99,102,241,0.08)',
+              boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(99,102,241,0.04) inset',
             }),
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
@@ -592,8 +594,8 @@ export default function AppShell() {
                   >
                     {/* 头像 */}
                     <div
-                      className="h-9 w-9 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10 hover:ring-[var(--accent-gold)]/30 transition-colors duration-200"
-                      style={{ boxShadow: '0 0 0 1px rgba(214, 178, 106, 0.1), 0 2px 12px rgba(0, 0, 0, 0.2)' }}
+                      className="h-9 w-9 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10 hover:ring-indigo-400/30 transition-colors duration-200"
+                      style={{ boxShadow: '0 0 0 1px rgba(99, 102, 241, 0.1), 0 2px 12px rgba(0, 0, 0, 0.2)' }}
                     >
                       {(() => {
                         const url = resolveAvatarUrl({
@@ -722,7 +724,7 @@ export default function AppShell() {
                   {notificationCount > 0 && (
                     <span
                       className="ml-auto rounded-full px-2 py-0.5 text-[10px]"
-                      style={{ background: 'rgba(214, 178, 106, 0.18)', color: 'var(--accent-gold)' }}
+                      style={{ background: 'rgba(99, 102, 241, 0.18)', color: 'var(--accent-gold)' }}
                     >
                       {notificationCount}
                     </span>
@@ -836,7 +838,7 @@ export default function AppShell() {
                   >
                     <span
                       className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-110"
-                      style={{ color: active ? 'var(--accent-gold)' : undefined }}
+                      style={{ color: active ? '#818cf8' : undefined }}
                     >
                       {it.icon}
                     </span>
@@ -848,7 +850,7 @@ export default function AppShell() {
                     {active && !collapsed && (
                       <span
                         className="absolute left-0 top-1/2 -translate-y-1/2"
-                        style={{ width: 2, height: 16, background: 'var(--accent-gold)', borderRadius: '0 999px 999px 0' }}
+                        style={{ width: 2, height: 16, background: '#818cf8', borderRadius: '0 999px 999px 0' }}
                       />
                     )}
                   </button>
@@ -876,12 +878,13 @@ export default function AppShell() {
             username={user?.username}
             userType={user?.userType ?? null}
             avatarFileName={user?.avatarFileName ?? null}
+            onUpload={async (file) => uploadMyAvatar({ file })}
             onSave={async (avatarFileName) => {
               if (!user?.userId) return;
-              const res = await updateUserAvatar(user.userId, avatarFileName);
+              const res = await updateMyAvatar(avatarFileName);
               if (!res.success) throw new Error(res.error?.message || '保存失败');
               // 同时更新 avatarFileName 和 avatarUrl，确保左下角头像立即更新
-              patchUser({ 
+              patchUser({
                 avatarFileName: avatarFileName ?? null,
                 avatarUrl: res.data?.avatarUrl ?? null
               });

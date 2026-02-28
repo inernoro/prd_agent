@@ -58,15 +58,16 @@ type PromptItem = {
   role?: 'PM' | 'DEV' | 'QA';
 };
 
-function StreamingDot() {
+function StreamingDots() {
   return (
     <span
-      className="inline-flex items-center align-middle ml-1"
-      style={{ width: '1em', height: '1em', verticalAlign: 'middle' }}
+      className="ai-typing-indicator inline-flex items-center gap-[3px] align-middle ml-1.5"
       aria-label="流式输出中"
       title="流式输出中"
     >
-      <span className="inline-block rounded-full border-2 border-current border-t-transparent animate-spin" style={{ width: '100%', height: '100%' }} />
+      <span className="ai-typing-dot" />
+      <span className="ai-typing-dot" style={{ animationDelay: '160ms' }} />
+      <span className="ai-typing-dot" style={{ animationDelay: '320ms' }} />
     </span>
   );
 }
@@ -995,8 +996,7 @@ export default function AiChatPage() {
           style={{ background: 'rgba(0,0,0,0.5)' }}
         />
         <DialogPrimitive.Content
-          className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[110] w-[400px] max-h-[500px] overflow-auto rounded-[16px] p-4 shadow-xl"
-          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}
+          className="surface-inset fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[110] w-[400px] max-h-[500px] overflow-auto rounded-[16px] p-4 shadow-xl"
         >
           <DialogPrimitive.Title className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>
             选择对话
@@ -1113,7 +1113,7 @@ export default function AiChatPage() {
         ]}
         value={currentRole}
         onChange={(key) => setCurrentRole(key as 'PM' | 'DEV' | 'QA')}
-        accentHue={45}
+        accentHue={240}
         size="sm"
       />
     </div>
@@ -1135,10 +1135,10 @@ export default function AiChatPage() {
       <button
         type="button"
         className="text-[11px] h-[28px] px-2.5 rounded-[9px] transition-colors"
-        style={{ 
-          border: '1px solid var(--border-default)',
-          color: isTestMode ? 'var(--accent-gold)' : 'var(--text-secondary)',
-          background: isTestMode ? 'rgba(214, 178, 106, 0.08)' : 'var(--bg-input)',
+        style={{
+          border: isTestMode ? '1px solid rgba(99, 102, 241, 0.30)' : '1px solid var(--border-default)',
+          color: isTestMode ? '#818CF8' : 'var(--text-secondary)',
+          background: isTestMode ? 'rgba(99, 102, 241, 0.08)' : 'var(--bg-input)',
           cursor: isTestMode ? 'default' : 'pointer',
         }}
         onClick={() => !isTestMode && setDebugMode((v) => !v)}
@@ -1178,7 +1178,7 @@ export default function AiChatPage() {
       </div>
 
       {/* 内容区 */}
-      <GlassCard className="flex-1 min-h-0 flex flex-col" overflow="hidden" padding="none" glow accentHue={210}>
+      <GlassCard animated className="flex-1 min-h-0 flex flex-col ai-chat-card" overflow="hidden" padding="none" glow accentHue={240}>
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 pr-3 space-y-3">
           {messages.length === 0 ? (
             activeSessionId ? (
@@ -1198,8 +1198,8 @@ export default function AiChatPage() {
                 <div
                   className="w-full max-w-[520px] rounded-[20px] p-6 flex flex-col items-center gap-4 transition-colors"
                   style={{
-                    border: `2px dashed ${prdDragOver ? 'var(--accent-gold)' : 'var(--border-subtle)'}`,
-                    background: prdDragOver ? 'rgba(214,178,106,0.08)' : 'var(--list-item-bg)',
+                    border: `2px dashed ${prdDragOver ? '#6366F1' : 'rgba(99, 102, 241, 0.20)'}`,
+                    background: prdDragOver ? 'rgba(99, 102, 241, 0.08)' : 'rgba(30, 41, 59, 0.50)',
                   }}
                   onDragOver={(e) => { e.preventDefault(); setPrdDragOver(true); }}
                   onDragLeave={() => setPrdDragOver(false)}
@@ -1240,8 +1240,8 @@ export default function AiChatPage() {
                   <div
                     className="max-w-[85%] rounded-[14px] px-3.5 py-2.5 relative group"
                     style={{
-                      background: isUser ? 'rgba(214, 178, 106, 0.12)' : 'var(--nested-block-bg)',
-                      border: isUser ? '1px solid rgba(214, 178, 106, 0.30)' : '1px solid var(--border-subtle)',
+                      background: isUser ? 'rgba(99, 102, 241, 0.10)' : 'rgba(30, 41, 59, 0.80)',
+                      border: isUser ? '1px solid rgba(99, 102, 241, 0.25)' : '1px solid rgba(255, 255, 255, 0.06)',
                       color: 'var(--text-primary)',
                       wordBreak: 'break-word',
                     }}
@@ -1254,7 +1254,7 @@ export default function AiChatPage() {
                           style={{
                             border: '1px solid var(--border-subtle)',
                             color: 'var(--text-secondary)',
-                            background: 'var(--list-item-bg)',
+                            background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                           }}
                           title="本轮回答角色"
                         >
@@ -1264,9 +1264,9 @@ export default function AiChatPage() {
                           type="button"
                           className="text-[10px] px-2 py-0.5 rounded-full hover:bg-white/5 transition-colors"
                           style={{
-                            border: '1px solid rgba(214, 178, 106, 0.30)',
-                            color: 'var(--accent-gold)',
-                            background: 'rgba(214, 178, 106, 0.10)',
+                            border: '1px solid rgba(99, 102, 241, 0.30)',
+                            color: '#818CF8',
+                            background: 'rgba(99, 102, 241, 0.10)',
                           }}
                           onClick={() => {
                             const role = (m.viewRole || currentRole) as 'PM' | 'DEV' | 'QA';
@@ -1292,7 +1292,7 @@ export default function AiChatPage() {
                           <button
                             type="button"
                             className="text-[11px] rounded-full px-2 py-1 hover:bg-white/5"
-                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--list-item-bg)' }}
+                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                             onClick={() => {
                               setComposer(m.content || '');
                               setResendTargetMessageId(m.id);
@@ -1328,8 +1328,8 @@ export default function AiChatPage() {
                           .prd-md code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--border-subtle); border: 1px solid var(--border-default); padding: 2px 6px; border-radius: 6px; }
                           .prd-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 12px; padding: 12px; overflow: auto; margin: 12px 0; }
                           .prd-md pre code { background: transparent; border: 0; padding: 0; }
-                          .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(214, 178, 106, 0.40); background: rgba(214, 178, 106, 0.06); color: var(--text-primary); border-radius: 10px; }
-                          .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
+                          .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(99, 102, 241, 0.40); background: rgba(99, 102, 241, 0.06); color: var(--text-primary); border-radius: 10px; }
+                          .prd-md a { color: #818CF8; text-decoration: underline; text-underline-offset: 2px; }
                           .prd-md hr { border: 0; border-top: 1px solid var(--border-default); margin: 16px 0; }
 
                           /* 流式输出“高级感”：高帧率灰度尾巴（未提交部分） */
@@ -1347,9 +1347,9 @@ export default function AiChatPage() {
                           <AssistantMarkdown content={unwrapMarkdownFences(m.content || '')} />
                         ) : null}
                         {isThisStreaming ? (
-                          <div className={`text-[12px] ${(m.content || '').trim() ? 'mt-2' : ''}`} style={{ color: 'var(--text-muted)' }}>
-                            输出中
-                            <StreamingDot />
+                          <div className={`text-[12px] flex items-center gap-1 ${(m.content || '').trim() ? 'mt-2' : ''}`} style={{ color: '#818CF8' }}>
+                            <span style={{ opacity: 0.8 }}>思考中</span>
+                            <StreamingDots />
                           </div>
                         ) : null}
                       </div>
@@ -1375,7 +1375,7 @@ export default function AiChatPage() {
                           <button
                             type="button"
                             className="text-[11px] rounded-full px-2 py-1 hover:bg-white/5"
-                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--list-item-bg)' }}
+                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                             onClick={() => openCitationDrawer(m.citations || [], 0)}
                             title="右侧展开引用内容"
                           >
@@ -1388,7 +1388,7 @@ export default function AiChatPage() {
                               key={`${c.headingId || c.headingTitle || 'c'}-${idx}`}
                               type="button"
                               className="inline-flex items-center rounded-full px-2 py-1 text-[11px] hover:bg-white/5"
-                              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--list-item-bg)' }}
+                              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                               title={c.excerpt || c.headingTitle || c.headingId || ''}
                               onClick={() => openCitationDrawer(m.citations || [], idx)}
                             >
@@ -1420,16 +1420,16 @@ export default function AiChatPage() {
                     className="px-3 py-1.5 rounded-[10px] text-[12px] hover:bg-white/5 transition-all duration-200"
                     style={{
                       border: isSelected
-                        ? '1px solid rgba(214, 178, 106, 0.60)'
+                        ? '1px solid rgba(99, 102, 241, 0.60)'
                         : isHighlighted
-                          ? '1px solid rgba(214, 178, 106, 0.50)'
+                          ? '1px solid rgba(99, 102, 241, 0.50)'
                           : '1px solid var(--border-subtle)',
                       background: isSelected
-                        ? 'rgba(214, 178, 106, 0.16)'
+                        ? 'rgba(99, 102, 241, 0.14)'
                         : isHighlighted
-                          ? 'rgba(214, 178, 106, 0.12)'
+                          ? 'rgba(99, 102, 241, 0.10)'
                           : 'transparent',
-                      color: isSelected || isHighlighted ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                      color: isSelected || isHighlighted ? '#818CF8' : 'var(--text-secondary)',
                     }}
                     onClick={() => {
                       setComposer(p.title);
@@ -1482,10 +1482,10 @@ export default function AiChatPage() {
                       : '输入你的问题…（Enter 发送，Shift+Enter 换行）'
                     : '请先新建会话并上传 PRD'
                 }
-                className="w-full min-w-0 min-h-[40px] resize-none rounded-[12px] px-3.5 py-2.5 text-[13px] outline-none transition-colors"
+                className="w-full min-w-0 min-h-[40px] resize-none rounded-[12px] px-3.5 py-2.5 text-[13px] outline-none transition-all duration-200"
                 style={{
-                  background: 'rgba(0,0,0,0.15)',
-                  border: '1px solid var(--border-subtle)',
+                  background: 'rgba(15, 23, 42, 0.60)',
+                  border: '1px solid rgba(99, 102, 241, 0.15)',
                   color: 'var(--text-primary)',
                 }}
                 rows={1}
@@ -1784,7 +1784,7 @@ export default function AiChatPage() {
                     className="w-full text-left rounded-[14px] px-3 py-2"
                     style={{
                       border: '1px solid var(--border-subtle)',
-                      background: active ? 'var(--bg-input-hover)' : 'var(--list-item-bg)',
+                      background: active ? 'var(--bg-input-hover)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                       color: 'var(--text-primary)',
                     }}
                     onClick={() => setCitationDrawerActiveIndex(idx)}

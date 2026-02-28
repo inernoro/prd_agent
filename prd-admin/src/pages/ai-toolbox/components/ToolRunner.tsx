@@ -53,7 +53,7 @@ export function ToolRunner() {
 
       <div className="flex-1 min-h-0 flex flex-col gap-4">
         {/* Status bar */}
-        <GlassCard className="p-4 flex items-center gap-3">
+        <GlassCard animated className="p-4 flex items-center gap-3">
           {isRunning && (
             <>
               <Loader2 size={20} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
@@ -98,7 +98,7 @@ export function ToolRunner() {
         </GlassCard>
 
         {/* Output */}
-        <GlassCard className="flex-1 min-h-0 p-4 overflow-auto">
+        <GlassCard animated className="flex-1 min-h-0 p-4 overflow-auto">
           {runError ? (
             <div
               className="p-4 rounded-lg"

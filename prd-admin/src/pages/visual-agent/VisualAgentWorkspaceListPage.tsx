@@ -1,8 +1,8 @@
 import { GlassCard } from '@/components/design/GlassCard';
-import { glassPanel, glassToolbar, glassInputArea } from '@/lib/glassStyles';
+import { SizePickerButton } from '@/components/visual-agent/SizePickerPanel';
+import { glassToolbar, glassInputArea } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import {
@@ -34,13 +34,13 @@ import {
   Bug,
 } from 'lucide-react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useAuthStore } from '@/stores/authStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
+import { ParticleVortex } from '@/components/effects/ParticleVortex';
 
 // ============ 夜景背景 Canvas 组件 ============
 function NightSkyBackground() {
@@ -244,7 +244,7 @@ function NightSkyBackground() {
     terrains.push(
       new Terrain({
         mHeight: height / 2 - 100,
-        fillStyle: 'rgba(85, 65, 45, 0.35)',  // 最远层：暖金褐色，较亮
+        fillStyle: 'rgba(45, 50, 85, 0.35)',  // 最远层：冷靛蓝色，较亮
         displacement: 160,
         scrollDelay: 120,
       })
@@ -253,7 +253,7 @@ function NightSkyBackground() {
       new Terrain({
         displacement: 130,
         scrollDelay: 70,
-        fillStyle: 'rgba(55, 42, 28, 0.55)',  // 中间层：深琥珀色
+        fillStyle: 'rgba(30, 35, 60, 0.55)',  // 中间层：深靛蓝色
         mHeight: height / 2 - 40,
       })
     );
@@ -261,7 +261,7 @@ function NightSkyBackground() {
       new Terrain({
         displacement: 100,
         scrollDelay: 35,
-        fillStyle: 'rgba(30, 22, 15, 0.85)',  // 最近层：深褐黑
+        fillStyle: 'rgba(15, 18, 35, 0.85)',  // 最近层：深靛黑
         mHeight: height / 2 + 20,
       })
     );
@@ -270,9 +270,9 @@ function NightSkyBackground() {
       // 背景渐变 - 顶部深邃，底部微暖褐调配合金色山川
       const gradient = ctx!.createLinearGradient(0, 0, 0, height);
       gradient.addColorStop(0, '#080808');      // 顶部：纯黑
-      gradient.addColorStop(0.3, '#0a0908');    // 中上：微暖黑
-      gradient.addColorStop(0.6, '#12100c');    // 中下：暖褐黑
-      gradient.addColorStop(1, '#0d0b08');      // 底部：深褐
+      gradient.addColorStop(0.3, '#08080c');    // 中上：微冷黑
+      gradient.addColorStop(0.6, '#0c0c14');    // 中下：冷靛黑
+      gradient.addColorStop(1, '#08080e');      // 底部：深靛
       ctx!.fillStyle = gradient;
       ctx!.fillRect(0, 0, width, height);
 
@@ -492,35 +492,43 @@ const SCENARIO_TAGS = [
 // ============ Hero 区域 ============
 function HeroSection() {
   return (
-    <div className="text-center py-8">
-      {/* Logo - 独立展示，增加视觉焦点 */}
-      <div className="flex items-center justify-center mb-5">
-        <PrdPetalBreathingLoader size={56} variant="gold" />
+    <div className="relative w-full" style={{ height: 260 }}>
+      {/* 粒子漩涡背景 — trailColor 精确匹配 #0a0a0c，无 CSS opacity 避免矩形覆盖 */}
+      <div
+        className="absolute inset-0"
+        style={{
+          maskImage: 'radial-gradient(ellipse 70% 50% at 50% 50%, black 15%, transparent 85%)',
+          WebkitMaskImage: 'radial-gradient(ellipse 70% 50% at 50% 50%, black 15%, transparent 85%)',
+        }}
+      >
+        <ParticleVortex particleCount={200} mouseFollow trailColor="rgba(10,10,12,0.9)" sizeRange={[1, 3]} hueRange={[230, 280]} />
       </div>
-      {/* 主标题 - 加大字号，建立视觉层级 */}
-      <h1
-        className="text-[42px] font-bold tracking-tight mb-3 visual-agent-title-breath"
-        style={{
-          background: 'linear-gradient(135deg, rgba(255, 250, 240, 1) 0%, rgba(255, 240, 200, 1) 50%, rgba(218, 175, 75, 0.95) 100%)',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-          backgroundClip: 'text',
-          letterSpacing: '-0.02em',
-          animation: 'visualAgentTitleBreath 3s ease-in-out infinite',
-        }}
-      >
-        视觉创作 Agent
-      </h1>
-      {/* 副标题 - 偏暖白色调 */}
-      <p
-        className="text-[15px]"
-        style={{
-          color: 'rgba(255,248,235,0.58)',  // 暖白
-          letterSpacing: '0.01em',
-        }}
-      >
-        AI 驱动的设计助手，让创作更简单
-      </p>
+      {/* 文字层 */}
+      <div className="relative z-10 flex flex-col items-center justify-center h-full text-center">
+        <h1
+          className="text-[42px] font-bold tracking-tight mb-3"
+          style={{
+            background: 'linear-gradient(90deg, #c4b5fd, #818cf8, #6ee7b7, #818cf8, #c4b5fd)',
+            backgroundSize: '200% 100%',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+            letterSpacing: '-0.02em',
+            animation: 'vaHoloFlow 6s ease-in-out infinite',
+          }}
+        >
+          视觉创作 Agent
+        </h1>
+        <p
+          className="text-[15px]"
+          style={{
+            color: 'rgba(199,210,254,0.58)',
+            letterSpacing: '0.01em',
+          }}
+        >
+          AI 驱动的设计助手，让创作更简单
+        </p>
+      </div>
     </div>
   );
 }
@@ -569,28 +577,6 @@ function useTypingPlaceholder() {
   }, [charIndex, isDeleting, textIndex]);
 
   return displayText;
-}
-
-// 从尺寸字符串检测档位
-function detectTierFromSize(size: string): '1k' | '2k' | '4k' {
-  const s = (size || '').trim().toLowerCase();
-  for (const opt of ASPECT_OPTIONS) {
-    if (opt.size4k.toLowerCase() === s) return '4k';
-    if (opt.size2k.toLowerCase() === s) return '2k';
-    if (opt.size1k.toLowerCase() === s) return '1k';
-  }
-  return '1k';
-}
-
-// 从尺寸字符串检测比例
-function detectAspectFromSize(size: string): string {
-  const s = (size || '').trim().toLowerCase();
-  for (const opt of ASPECT_OPTIONS) {
-    if (opt.size1k.toLowerCase() === s || opt.size2k.toLowerCase() === s || opt.size4k.toLowerCase() === s) {
-      return opt.id;
-    }
-  }
-  return '1:1';
 }
 
 // ============ 快捷输入框（深色卡片样式） ============
@@ -661,11 +647,11 @@ function QuickInputBox(props: {
           background: 'rgba(28, 24, 20, 0.82)',
           // 聚焦时边框变亮 - 使用柔和的琥珀金
           border: isFocused
-            ? '1px solid rgba(212, 170, 85, 0.5)'
-            : '1px solid rgba(180, 150, 100, 0.18)',
+            ? '1px solid rgba(99, 102, 241, 0.5)'
+            : '1px solid rgba(99, 102, 241, 0.18)',
           boxShadow: isFocused
-            ? '0 24px 64px rgba(0,0,0,0.5), 0 0 0 3px rgba(212, 170, 85, 0.15), 0 1px 0 rgba(255,240,200,0.08) inset'
-            : '0 24px 64px rgba(0,0,0,0.5), 0 1px 0 rgba(255,240,200,0.05) inset',
+            ? '0 24px 64px rgba(0,0,0,0.5), 0 0 0 3px rgba(99, 102, 241, 0.15), 0 1px 0 rgba(199,210,254,0.08) inset'
+            : '0 24px 64px rgba(0,0,0,0.5), 0 1px 0 rgba(199,210,254,0.05) inset',
         }}
         onClick={handleContainerClick}
       >
@@ -688,7 +674,7 @@ function QuickInputBox(props: {
                   borderRadius: 4,
                   overflow: 'hidden',
                   border: '1px solid rgba(255,255,255,0.22)',
-                  background: 'var(--list-item-bg)',
+                  background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                   color: 'rgba(255,255,255,0.82)',
                 }}
                 title={`参考图：${selectedImage.file.name}`}
@@ -779,186 +765,6 @@ function QuickInputBox(props: {
                 )}
               </button>
 
-              {/* 尺寸选择器（参考 AdvancedVisualAgentTab 样式） */}
-              {onSizeChange && (
-                <>
-                  {/* 档位选择器（1K/2K/4K） */}
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger asChild>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-0.5"
-                        style={{
-                          height: 20,
-                          paddingLeft: 6,
-                          paddingRight: 6,
-                          borderRadius: 4,
-                          overflow: 'hidden',
-                          border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'var(--list-item-bg)',
-                          color: 'rgba(255,255,255,0.82)',
-                        }}
-                        title="选择档位"
-                        aria-label="选择档位"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {(() => {
-                          const tier = detectTierFromSize(size);
-                          return (
-                            <>
-                              <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
-                                {tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K'}
-                              </span>
-                              <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                                ▾
-                              </span>
-                            </>
-                          );
-                        })()}
-                      </button>
-                    </DropdownMenu.Trigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content
-                        side="top"
-                        align="start"
-                        sideOffset={8}
-                        className="rounded-[12px] p-1 min-w-[80px]"
-                        style={{
-                          outline: 'none',
-                          zIndex: 90,
-                          ...glassPanel,
-                        }}
-                      >
-                        {(['1k', '2k', '4k'] as const).map((tier) => {
-                          const currentTier = detectTierFromSize(size);
-                          const isSelected = currentTier === tier;
-                          const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
-                          const currentAspect = detectAspectFromSize(size);
-                          const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
-                          if (!targetOpt) return null;
-
-                          return (
-                            <DropdownMenu.Item
-                              key={tier}
-                              className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
-                              style={{
-                                color: 'rgba(255,255,255,0.9)',
-                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                                borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
-                              }}
-                              onSelect={() => {
-                                const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
-                                onSizeChange(newSize);
-                              }}
-                            >
-                              <span className="font-semibold">{label}</span>
-                            </DropdownMenu.Item>
-                          );
-                        })}
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
-
-                  {/* 比例选择器 */}
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger asChild>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1"
-                        style={{
-                          height: 20,
-                          paddingLeft: 6,
-                          paddingRight: 6,
-                          borderRadius: 4,
-                          overflow: 'hidden',
-                          border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'var(--list-item-bg)',
-                          color: 'rgba(255,255,255,0.82)',
-                        }}
-                        title="选择比例"
-                        aria-label="选择比例"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {(() => {
-                          const currentAspect = detectAspectFromSize(size);
-                          const opt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
-                          const iconW = opt?.iconW ?? 20;
-                          const iconH = opt?.iconH ?? 20;
-                          return (
-                            <>
-                              <span
-                                style={{
-                                  width: iconW,
-                                  height: iconH,
-                                  borderRadius: 2,
-                                  border: '1px solid rgba(255,255,255,0.3)',
-                                  background: 'rgba(255,255,255,0.1)',
-                                  display: 'inline-block',
-                                  flexShrink: 0,
-                                }}
-                              />
-                              <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
-                                {opt?.label || '1:1'}
-                              </span>
-                              <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                                ▾
-                              </span>
-                            </>
-                          );
-                        })()}
-                      </button>
-                    </DropdownMenu.Trigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content
-                        side="top"
-                        align="start"
-                        sideOffset={8}
-                        className="rounded-[12px] p-1 min-w-[120px]"
-                        style={{
-                          outline: 'none',
-                          zIndex: 90,
-                          ...glassPanel,
-                        }}
-                      >
-                        {ASPECT_OPTIONS.map((opt) => {
-                          const currentTier = detectTierFromSize(size);
-                          const currentSize = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
-                          const isSelected = size.toLowerCase() === currentSize.toLowerCase();
-                          return (
-                            <DropdownMenu.Item
-                              key={opt.id}
-                              className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
-                              style={{
-                                color: 'rgba(255,255,255,0.9)',
-                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                                borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
-                              }}
-                              onSelect={() => {
-                                onSizeChange(currentSize);
-                              }}
-                            >
-                              <div className="flex items-center gap-2">
-                                <span
-                                  style={{
-                                    width: opt.iconW,
-                                    height: opt.iconH,
-                                    borderRadius: 2,
-                                    border: '1px solid rgba(255,255,255,0.3)',
-                                    background: 'rgba(255,255,255,0.1)',
-                                    display: 'inline-block',
-                                    flexShrink: 0,
-                                  }}
-                                />
-                                <span className="font-semibold">{opt.label}</span>
-                              </div>
-                            </DropdownMenu.Item>
-                          );
-                        })}
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
-                </>
-              )}
             </div>
           ) : null}
           <textarea
@@ -982,7 +788,7 @@ function QuickInputBox(props: {
           {!value && !selectedImage && (
             <div
               className="absolute top-4 left-5 right-5 pointer-events-none text-[15px] leading-relaxed"
-              style={{ color: 'rgba(255,248,235,0.42)' }}
+              style={{ color: 'rgba(199,210,254,0.42)' }}
             >
               {typingPlaceholder}
               <span className="animate-pulse">|</span>
@@ -991,7 +797,7 @@ function QuickInputBox(props: {
         </div>
         {/* 底部工具栏 - 简化，只保留核心操作 */}
         <div className="flex items-center justify-between px-4 pb-3">
-          {/* 左侧：附件按钮 */}
+          {/* 左侧：附件按钮 + 尺寸配置 */}
           <div className="flex items-center gap-2">
             <input
               ref={fileInputRef}
@@ -1007,15 +813,20 @@ function QuickInputBox(props: {
               disabled={loading}
               className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
-                background: 'rgba(180, 150, 100, 0.1)',
-                color: 'rgba(255, 240, 210, 0.55)',
-                border: '1px solid rgba(180, 150, 100, 0.15)',
+                background: 'rgba(99, 102, 241, 0.1)',
+                color: 'rgba(199, 210, 254, 0.55)',
+                border: '1px solid rgba(99, 102, 241, 0.15)',
               }}
               title="添加图片参考"
             >
               <Image size={14} />
               <span>图片</span>
             </button>
+
+            {/* 尺寸选择器（复用编辑器的面板组件） */}
+            {onSizeChange && (
+              <SizePickerButton size={size} onSizeChange={onSizeChange} />
+            )}
           </div>
           {/* 右侧：Bug 按钮 + 发送按钮 */}
           <div className="flex items-center gap-2">
@@ -1039,11 +850,11 @@ function QuickInputBox(props: {
               className="h-9 px-5 rounded-xl flex items-center gap-2 text-[13px] font-semibold transition-all duration-200"
               style={{
                 background: canSubmit
-                  ? 'linear-gradient(135deg, rgba(218,175,75,0.95) 0%, rgba(195,155,65,0.95) 100%)'
+                  ? 'linear-gradient(135deg, rgba(99,102,241,0.95) 0%, rgba(79,82,221,0.95) 100%)'
                   : 'var(--border-subtle)',
-                color: canSubmit ? 'rgba(15,12,5,0.95)' : 'rgba(255,255,255,0.35)',
+                color: canSubmit ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
                 cursor: canSubmit ? 'pointer' : 'not-allowed',
-                boxShadow: canSubmit ? '0 4px 20px rgba(195,155,65,0.3)' : 'none',
+                boxShadow: canSubmit ? '0 4px 20px rgba(99,102,241,0.3)' : 'none',
               }}
             >
               {loading ? (
@@ -1081,10 +892,10 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
               type="button"
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-all duration-200 hover:scale-[1.02] shrink-0"
               style={{
-                background: 'linear-gradient(135deg, rgba(212,170,85,0.12) 0%, rgba(195,155,65,0.06) 100%)',
-                border: '1px solid rgba(212,170,85,0.35)',
-                color: 'rgba(218,180,95,0.95)',
-                boxShadow: '0 0 24px rgba(195,155,65,0.08)',
+                background: 'linear-gradient(135deg, rgba(99,102,241,0.12) 0%, rgba(79,82,221,0.06) 100%)',
+                border: '1px solid rgba(99,102,241,0.35)',
+                color: 'rgba(165,180,252,0.95)',
+                boxShadow: '0 0 24px rgba(99,102,241,0.08)',
               }}
               onClick={() => {}}
             >
@@ -1102,9 +913,9 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
             onClick={() => onSelect(tag.prompt)}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 hover:bg-white/8 shrink-0"
             style={{
-              background: isActive ? 'rgba(255,250,240,0.1)' : 'transparent',
-              border: isActive ? '1px solid rgba(255,250,240,0.22)' : '1px solid rgba(255,255,255,0.1)',
-              color: isActive ? 'rgba(255,252,245,0.95)' : 'rgba(255,248,235,0.55)',
+              background: isActive ? 'rgba(99,102,241,0.1)' : 'transparent',
+              border: isActive ? '1px solid rgba(99,102,241,0.22)' : '1px solid rgba(255,255,255,0.1)',
+              color: isActive ? 'rgba(255,255,255,0.95)' : 'rgba(199,210,254,0.55)',
             }}
           >
             <Icon size={14} style={{ opacity: isActive ? 1 : 0.65 }} />
@@ -1224,7 +1035,7 @@ function NewProjectCard(props: { onClick: () => void }) {
         className="h-[160px] rounded-xl flex flex-col items-center justify-center gap-2.5 transition-all duration-300 group-hover:scale-[1.02] group-hover:border-white/25"
         style={{
           border: '1.5px dashed rgba(255,255,255,0.2)',
-          background: 'var(--list-item-bg)',
+          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
         }}
       >
         <div
@@ -1309,6 +1120,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   void _fullscreenMode; // 避免 TS6133 警告
   const navigate = useNavigate();
   const { isMobile } = useBreakpoint();
+  const userId = useAuthStore((s) => s.user?.userId ?? '');
 
   // 统一使用 /visual-agent 路径（现在所有模式都是全屏）
   const getEditorPath = (workspaceId: string) => {
@@ -1325,7 +1137,12 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const [inputLoading, setInputLoading] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<{ file: File; previewUrl: string } | null>(null);
-  const [selectedSize, setSelectedSize] = useState<string>('1024x1024');
+  // 默认尺寸：从 localStorage 读取用户偏好，与编辑器共享同一 key
+  const defaultSizeKey = userId ? `prdAdmin.visualAgent.defaultSize.${userId}` : '';
+  const [selectedSize, setSelectedSize] = useState<string>(() => {
+    if (!defaultSizeKey) return '1024x1024';
+    try { return localStorage.getItem(defaultSizeKey) || '1024x1024'; } catch { return '1024x1024'; }
+  });
 
   // 共享对话框状态
   const [shareOpen, setShareOpen] = useState(false);
@@ -1537,6 +1354,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
   const onSelectedSizeChange = (size: string) => {
     setSelectedSize(size);
+    if (defaultSizeKey) { try { localStorage.setItem(defaultSizeKey, size); } catch { /* ignore */ } }
   };
 
   // 新建文件夹（目前作为占位功能，后续可接入后端）
@@ -1669,7 +1487,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       {/* 错误提示 */}
       {error ? (
         <div className="px-5 mt-4">
-          <GlassCard glow>
+          <GlassCard animated glow>
             <div className="text-sm" style={{ color: 'rgba(255,120,120,0.95)' }}>
               {error}
             </div>

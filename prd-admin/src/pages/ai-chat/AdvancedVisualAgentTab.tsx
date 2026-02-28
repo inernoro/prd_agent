@@ -824,9 +824,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [activeTool, setActiveTool] = useState<CanvasTool>(
     typeof window !== 'undefined' && window.innerWidth < 768 ? 'hand' : 'select'
   );
-  // 固定默认参数：用户不需要选择
-  // 输入区已移除“大小/比例”控制按钮：v1 固定用 1K 方形，避免过多配置干扰
-  const imageGenSize = '1024x1024' as const;
   const DEFAULT_ZOOM = 0.5;
 
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -887,6 +884,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [allImageGenModels]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
+  // 默认尺寸：从 localStorage 读取用户偏好，fallback 到 1K 方形
+  const defaultSizeKey = userId ? `prdAdmin.visualAgent.defaultSize.${userId}` : '';
+  const [savedDefaultSize, _setSavedDefaultSize] = useState<string>(() => {
+    if (!defaultSizeKey) return '1024x1024';
+    try { return localStorage.getItem(defaultSizeKey) || '1024x1024'; } catch { return '1024x1024'; }
+  });
+  const setSavedDefaultSize = useCallback((size: string) => {
+    _setSavedDefaultSize(size);
+    if (defaultSizeKey) { try { localStorage.setItem(defaultSizeKey, size); } catch { /* ignore */ } }
+  }, [defaultSizeKey]);
+  const imageGenSize = savedDefaultSize;
   const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
   // 专注模式属于临时态：离开页面必须恢复，避免影响其他页面布局
   useEffect(() => {
@@ -1091,6 +1099,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const composingRef = useRef(false);
   const [composerSize, setComposerSize] = useState<string | null>(null);
   const composerSizeAutoRef = useRef(true);
+  /** 用户手动选择尺寸时调用：同时更新 composerSize + savedDefaultSize（持久化偏好） */
+  const setComposerSizeManual = useCallback((size: string) => {
+    composerSizeAutoRef.current = false;
+    setComposerSize(size);
+    setSavedDefaultSize(size);
+  }, []);
   const inputPanelRef = useRef<HTMLDivElement | null>(null);
   const MIN_TA_HEIGHT = 132; // 默认高度较之前下降约 1/4（177 -> 132）
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -1207,7 +1221,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // 当 sizesByResolution 变化时，如果当前尺寸不在支持列表中，自动选择一个有效尺寸
   useEffect(() => {
     if (allSizeOptions.length === 0) return;
-    const currentSize = composerSize ?? '1024x1024';
+    const currentSize = composerSize ?? imageGenSize;
     const isCurrentValid = allSizeOptions.some((opt) => opt.size?.toLowerCase() === currentSize.toLowerCase());
     if (!isCurrentValid) {
       // 先尝试保持当前比例，切换到支持的分辨率
@@ -4831,7 +4845,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         </div>
       ) : null}
       {/* 单一框架：左右无缝拼接 */}
-      <GlassCard glow className="h-full min-h-0 overflow-hidden p-0!">
+      <GlassCard animated glow className="h-full min-h-0 overflow-hidden p-0!">
         <div className="h-full min-h-0 flex">
           {/* 左侧：画板 */}
           <div className="flex-1 min-w-0 min-h-0">
@@ -6135,7 +6149,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       setQuickSizeOpen(open);
                       // 打开时检查并自动修正不支持的尺寸
                       if (open && allSizeOptions.length > 0) {
-                        const currentSize = composerSize ?? '1024x1024';
+                        const currentSize = composerSize ?? imageGenSize;
                         const isCurrentValid = allSizeOptions.some((opt) => opt.size?.toLowerCase() === currentSize.toLowerCase());
                         if (!isCurrentValid) {
                           const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
@@ -6172,7 +6186,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           onClick={(e) => e.stopPropagation()}
                         >
                           {(() => {
-                            const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                            const size = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                             const tier = detectTierFromSize(size);
                             const aspect = sizeToAspectMap.get(size.toLowerCase()) || detectAspectFromSize(size);
                             // 如果当前分辨率不可用，显示实际会使用的分辨率
@@ -6202,7 +6216,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>分辨率</div>
                           <div className="flex gap-1.5 mb-3">
                             {(() => {
-                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                               const currentTier = detectTierFromSize(currentSize);
                               const availableTiers = (['1k', '2k', '4k'] as const).filter((t) => ratiosByResolution[t].size > 0);
                               // 如果当前分辨率不可用，计算实际应该选中的分辨率
@@ -6224,13 +6238,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
                                       const targetOpt = ratiosByResolution[tier].get(currentAspect);
                                       if (targetOpt) {
-                                        composerSizeAutoRef.current = false;
-                                        setComposerSize(targetOpt.size);
+                                        setComposerSizeManual(targetOpt.size);
                                       } else {
                                         const first = ratiosByResolution[tier].values().next().value;
                                         if (first) {
-                                          composerSizeAutoRef.current = false;
-                                          setComposerSize(first.size);
+                                          setComposerSizeManual(first.size);
                                         }
                                       }
                                     }}
@@ -6245,7 +6257,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>Size</div>
                           <div className="grid grid-cols-4 gap-1.5">
                             {(() => {
-                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                               const currentTier = detectTierFromSize(currentSize);
                               const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
                               // 如果当前分辨率不可用，回退到第一个可用的分辨率
@@ -6275,8 +6287,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
                                     }}
                                     onClick={() => {
-                                      composerSizeAutoRef.current = false;
-                                      setComposerSize(opt.size);
+                                      setComposerSizeManual(opt.size);
                                       setQuickSizeOpen(false);
                                     }}
                                   >
@@ -7497,7 +7508,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     onClick={() => setSizeSelectorOpen((v) => !v)}
                   >
                     {(() => {
-                      const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                      const size = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                       const tier = detectTierFromSize(size);
                       // 优先使用后端返回的 aspectRatio，避免 GCD 计算偏差（如 1344x768 应该是 16:9 而不是 7:4）
                       const aspect = sizeToAspectMap.get(size.toLowerCase()) || detectAspectFromSize(size);
@@ -7530,7 +7541,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>分辨率</div>
                               <div className="flex gap-1.5 mb-3">
                                 {availableTiers.map((tier) => {
-                                  const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                                  const currentSize = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                                   const currentTier = detectTierFromSize(currentSize);
                                   const isSelected = currentTier === tier;
                                   const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
@@ -7549,14 +7560,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                         const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
                                         const targetOpt = ratiosByResolution[tier].get(currentAspect);
                                         if (targetOpt) {
-                                          composerSizeAutoRef.current = false;
-                                          setComposerSize(targetOpt.size);
+                                          setComposerSizeManual(targetOpt.size);
                                         } else {
                                           // 当前比例在目标分辨率不存在，选第一个
                                           const first = ratiosByResolution[tier].values().next().value;
                                           if (first) {
-                                            composerSizeAutoRef.current = false;
-                                            setComposerSize(first.size);
+                                            setComposerSizeManual(first.size);
                                           }
                                         }
                                       }}
@@ -7574,7 +7583,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>Size</div>
                         <div className="grid grid-cols-4 gap-1.5">
                           {(() => {
-                            const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                            const currentSize = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                             const currentTier = detectTierFromSize(currentSize);
                             // 优先使用后端返回的 aspectRatio
                             const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
@@ -7597,8 +7606,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
                                   }}
                                   onClick={() => {
-                                    composerSizeAutoRef.current = false;
-                                    setComposerSize(opt.size);
+                                    setComposerSizeManual(opt.size);
                                     setSizeSelectorOpen(false);
                                   }}
                                 >

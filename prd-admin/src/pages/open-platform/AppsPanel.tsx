@@ -294,9 +294,9 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
 
   return (
     <div className="h-full overflow-hidden p-1">
-      <GlassCard glow className="h-full flex flex-col">
+      <GlassCard animated glow className="h-full flex flex-col">
         {/* ============ 顶部统计栏 ============ */}
-        <div className="p-4 border-b border-white/10 flex-shrink-0" style={{ background: 'var(--list-item-bg)' }}>
+        <div className="p-4 border-b border-white/10 flex-shrink-0" style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <Key size={18} className="text-muted-foreground" />
@@ -404,7 +404,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                   apps.map((app) => (
                     <div
                       key={app.id}
-                      className={`flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-white/[0.03] ${selectedIds.has(app.id) ? 'bg-blue-500/10' : ''}`}
+                      className={`surface-row flex items-center gap-3 p-3 rounded-lg ${selectedIds.has(app.id) ? 'bg-blue-500/10' : ''}`}
                       style={{ border: selectedIds.has(app.id) ? '1px solid rgba(59,130,246,0.3)' : '1px solid var(--nested-block-border)' }}
                     >
                       {/* 选择框 */}
@@ -418,7 +418,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                       {/* 应用图标 */}
                       <div
                         className="w-9 h-9 rounded-lg flex items-center justify-center text-base font-bold flex-shrink-0"
-                        style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}
+                        style={{ background: 'var(--gold-gradient)', color: '#ffffff' }}
                       >
                         {app.appName.charAt(0).toUpperCase()}
                       </div>
@@ -680,7 +680,7 @@ function CreateAppDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
           <div className="p-3 rounded-lg flex items-center gap-3" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)' }}>
             <div
               className="w-10 h-10 rounded-lg flex items-center justify-center text-lg font-bold"
-              style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}
+              style={{ background: 'var(--gold-gradient)', color: '#ffffff' }}
             >
               {appName ? appName.charAt(0).toUpperCase() : 'A'}
             </div>

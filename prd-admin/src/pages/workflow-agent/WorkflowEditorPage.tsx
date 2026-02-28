@@ -129,22 +129,12 @@ function CapsuleSidebar({ capsuleTypes, categories, onAddCapsule }: {
                   <button
                     key={meta.typeKey}
                     onClick={() => !isDisabled && onAddCapsule(meta.typeKey)}
-                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-[8px] transition-colors text-left"
+                    className="surface-row w-full flex items-center gap-2 px-2 py-1.5 rounded-[8px] transition-colors text-left"
                     style={{
                       background: 'rgba(255,255,255,0.03)',
                       border: '1px solid rgba(255,255,255,0.06)',
                       opacity: isDisabled ? 0.4 : 1,
                       cursor: isDisabled ? 'not-allowed' : 'pointer',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (isDisabled) return;
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
-                      e.currentTarget.style.borderColor = `hsla(${meta.accentHue}, 60%, 55%, 0.2)`;
-                    }}
-                    onMouseLeave={(e) => {
-                      if (isDisabled) return;
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
-                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
                     }}
                     title={isDisabled ? disabledReason : meta.description}
                   >
@@ -214,14 +204,12 @@ function CurlImportPanel({ onImport, disabled }: {
       <button
         onClick={() => setOpen(true)}
         disabled={disabled}
-        className="w-full flex items-center justify-center gap-1.5 h-8 rounded-[8px] text-[11px] font-semibold transition-all duration-150 mb-2"
+        className="surface-row w-full flex items-center justify-center gap-1.5 h-8 rounded-[8px] text-[11px] font-semibold transition-all duration-150 mb-2"
         style={{
           background: 'rgba(59,130,246,0.06)',
           border: '1px dashed rgba(59,130,246,0.2)',
           color: 'rgba(59,130,246,0.8)',
         }}
-        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.12)'; }}
-        onMouseLeave={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.06)'; }}
       >
         ⌘ 从浏览器粘贴 cURL
       </button>
@@ -301,14 +289,12 @@ function CurlExportButton({ values }: { values: Record<string, string> }) {
     <button
       onClick={handleExport}
       disabled={!hasUrl}
-      className="w-full flex items-center justify-center gap-1.5 h-7 rounded-[8px] text-[11px] font-medium transition-all duration-150 disabled:opacity-30"
+      className="surface-row w-full flex items-center justify-center gap-1.5 h-7 rounded-[8px] text-[11px] font-medium transition-all duration-150 disabled:opacity-30"
       style={{
         background: copied ? 'rgba(34,197,94,0.08)' : 'rgba(168,85,247,0.06)',
         border: `1px dashed ${copied ? 'rgba(34,197,94,0.25)' : 'rgba(168,85,247,0.2)'}`,
         color: copied ? 'rgba(34,197,94,0.9)' : 'rgba(168,85,247,0.8)',
       }}
-      onMouseEnter={e => { if (!copied) e.currentTarget.style.background = 'rgba(168,85,247,0.12)'; }}
-      onMouseLeave={e => { if (!copied) e.currentTarget.style.background = 'rgba(168,85,247,0.06)'; }}
     >
       {copied ? '✓ 已复制到剪贴板' : '⬆ 导出为 cURL 命令'}
     </button>
@@ -460,10 +446,10 @@ const SECTION_STYLES = {
     title: 'rgba(59,130,246,0.85)',
   },
   config: {
-    bg: 'rgba(214,178,106,0.02)',
-    border: 'rgba(214,178,106,0.12)',
-    headerBg: 'rgba(214,178,106,0.05)',
-    title: 'rgba(214,178,106,0.85)',
+    bg: 'rgba(99,102,241,0.02)',
+    border: 'rgba(99,102,241,0.12)',
+    headerBg: 'rgba(99,102,241,0.05)',
+    title: 'rgba(99,102,241,0.85)',
   },
   output: {
     bg: 'rgba(34,197,94,0.03)',
@@ -577,6 +563,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   return (
     <div>
       <GlassCard
+        animated
         accentHue={accentHue}
         glow={isActive}
         padding="md"
@@ -594,7 +581,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
               status === 'completed'
                 ? { background: 'rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.95)' }
                 : status === 'running'
-                  ? { background: 'rgba(214,178,106,0.18)', color: 'var(--accent-gold)' }
+                  ? { background: 'rgba(99,102,241,0.18)', color: 'var(--accent-gold)' }
                   : status === 'failed'
                     ? { background: 'rgba(239,68,68,0.15)', color: 'rgba(239,68,68,0.9)' }
                     : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }
@@ -673,7 +660,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
             <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
               <div
                 className="h-full rounded-full animate-pulse"
-                style={{ width: '60%', background: 'var(--gold-gradient, linear-gradient(90deg, rgba(214,178,106,0.6), rgba(214,178,106,0.3)))' }}
+                style={{ width: '60%', background: 'var(--gold-gradient, linear-gradient(90deg, rgba(99,102,241,0.6), rgba(99,102,241,0.3)))' }}
               />
             </div>
             <span className="text-[10px]" style={{ color: 'var(--accent-gold)' }}>处理中...</span>
@@ -1399,7 +1386,7 @@ export function WorkflowEditorPage() {
                 if (e.key === 'Escape') { setEditingTitle(false); }
               }}
               className="text-[14px] font-semibold bg-transparent outline-none px-1 rounded-[6px]"
-              style={{ color: 'var(--text-primary)', border: '1px solid rgba(214,178,106,0.3)', minWidth: 120 }}
+              style={{ color: 'var(--text-primary)', border: '1px solid rgba(99,102,241,0.3)', minWidth: 120 }}
             />
           ) : (
             <span
@@ -1502,7 +1489,7 @@ export function WorkflowEditorPage() {
 
             {/* 舱列表 */}
             {workflow.nodes.length === 0 ? (
-              <GlassCard>
+              <GlassCard animated>
                 <div className="flex flex-col items-center py-8 gap-3">
                   <span className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
                     从左侧目录选择舱添加到工作流
@@ -1542,7 +1529,7 @@ export function WorkflowEditorPage() {
 
             {/* 最终产物 */}
             {latestExec && ['completed', 'failed', 'cancelled'].includes(latestExec.status) && latestExec.finalArtifacts.length > 0 && (
-              <GlassCard accentHue={latestExec.status === 'completed' ? 150 : 0} glow={latestExec.status === 'completed'}>
+              <GlassCard animated accentHue={latestExec.status === 'completed' ? 150 : 0} glow={latestExec.status === 'completed'}>
                 <div className="flex items-center gap-2 mb-3">
                   {latestExec.status === 'completed'
                     ? <CheckCircle2 className="w-5 h-5" style={{ color: 'rgba(34,197,94,0.9)' }} />
@@ -1604,7 +1591,7 @@ function VariablesSection({ variables, values, onChange, disabled }: {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <GlassCard>
+    <GlassCard animated>
       <div
         className="flex items-center gap-2 cursor-pointer select-none"
         onClick={() => setCollapsed(!collapsed)}

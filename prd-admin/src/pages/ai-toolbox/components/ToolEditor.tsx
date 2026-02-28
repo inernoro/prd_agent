@@ -45,6 +45,7 @@ import {
   Lock,
   Search,
   Layers,
+  Swords,
   Info,
 } from 'lucide-react';
 
@@ -53,7 +54,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   FileText, Palette, PenTool, Bug, Code2, Languages, FileSearch, BarChart3,
   Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare, Zap,
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
-  GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
+  GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers, Swords,
 };
 
 // 可选的图标列表
@@ -66,7 +67,7 @@ const ICON_HUE_MAP: Record<string, number> = {
   Sparkles: 280, Rocket: 210, MessageSquare: 180, Zap: 45, Brain: 270, Cpu: 200,
   Database: 220, Globe: 180, Image: 330, Music: 300, Video: 0, BookOpen: 140,
   GraduationCap: 220, Briefcase: 30, Heart: 350, Star: 45, Shield: 210, Lock: 200,
-  Search: 180, Layers: 240,
+  Search: 180, Layers: 240, Swords: 30,
 };
 
 // 获取图标组件
@@ -94,12 +95,9 @@ const CONFIG_TABS = [
   { key: 'conversation', label: '对话体验', icon: <MessageSquare size={12} />, hue: 180 },
 ];
 
-// 页面容器样式 - 不透明背景
-const pageContainerStyle: React.CSSProperties = {
-  background: 'var(--bg-elevated)',
-  borderRadius: '16px',
-  border: '1px solid rgba(255, 255, 255, 0.06)',
-};
+// 页面容器样式 — 页面级不使用 surface 类，保持透明让卡片自身表达玻璃质感
+const pageContainerClassName = '';
+const pageContainerStyle: React.CSSProperties = {};
 
 interface FormState {
   name: string;
@@ -587,7 +585,7 @@ export function ToolEditor() {
   );
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-3" style={pageContainerStyle}>
+    <div className={`${pageContainerClassName} h-full min-h-0 flex flex-col gap-3`} style={pageContainerStyle}>
       {/* Header */}
       <div className="px-4 pt-3">
         <TabBar
@@ -674,7 +672,7 @@ export function ToolEditor() {
                       <div
                         className="absolute top-full left-0 mt-2 p-3 rounded-xl border shadow-xl z-10 grid grid-cols-8 gap-1.5 w-[300px]"
                         style={{
-                          background: 'var(--bg-elevated, #1a1f2e)',
+                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                           borderColor: 'rgba(255, 255, 255, 0.1)',
                         }}
                       >
@@ -859,7 +857,7 @@ export function ToolEditor() {
             >
               <button
                 onClick={() => setShowAdvanced(!showAdvanced)}
-                className="w-full px-4 py-3 flex items-center justify-between transition-colors hover:bg-white/[0.02]"
+                className="surface-row w-full px-4 py-3 flex items-center justify-between"
               >
                 <div className="flex items-center gap-2">
                   <div

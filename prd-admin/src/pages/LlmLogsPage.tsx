@@ -151,19 +151,23 @@ function requestTypeToBadge(t: string | null | undefined): { label: string; titl
   if (v === 'update-model' || v === 'update_model' || v === 'models' || v === 'model') {
     return { label: '更新模型', title: '更新模型', tone: 'blue', icon: <RefreshCw size={12} /> };
   }
-  if (v === 'intent') return { label: '意图', title: '意图', tone: 'green', icon: <Sparkles size={12} /> };
-  if (v === 'vision' || v === 'image' || v === 'imagevision') return { label: '识图', title: '识图', tone: 'blue', icon: <ScanEye size={12} /> };
-  if (v === 'generation' || v === 'imagegen' || v === 'image_gen' || v === 'image-generate') return { label: '生图', title: '生图', tone: 'purple', icon: <ImagePlus size={12} /> };
-  if (v === 'reasoning' || v === 'main' || v === 'chat') return { label: '推理', title: '推理', tone: 'gold', icon: <Zap size={12} /> };
-  if (!v || v === 'unknown') return { label: '未知', title: '未知', tone: 'muted', icon: null };
-  return { label: '未知', title: v, tone: 'muted', icon: null };
+  if (v === 'intent') return { label: '意图', title: '意图识别', tone: 'green', icon: <Sparkles size={12} /> };
+  if (v === 'vision' || v === 'image' || v === 'imagevision') return { label: '识图', title: '图片识别', tone: 'blue', icon: <ScanEye size={12} /> };
+  if (v === 'generation' || v === 'imagegen' || v === 'image_gen' || v === 'image-generate') return { label: '生图', title: '图片生成', tone: 'purple', icon: <ImagePlus size={12} /> };
+  if (v === 'reasoning' || v === 'main' || v === 'chat') return { label: '推理', title: '对话推理', tone: 'gold', icon: <Zap size={12} /> };
+  if (v === 'embedding') return { label: '向量', title: '向量嵌入', tone: 'blue', icon: null };
+  if (v === 'rerank') return { label: '重排', title: '重排序', tone: 'green', icon: null };
+  if (v === 'code') return { label: '代码', title: '代码生成', tone: 'gold', icon: null };
+  if (v === 'long-context' || v === 'longcontext') return { label: '长文本', title: '长文本处理', tone: 'blue', icon: null };
+  if (!v || v === 'unknown') return { label: '未知', title: '未记录类型', tone: 'muted', icon: null };
+  return { label: v, title: v, tone: 'muted', icon: null };
 }
 
 function requestTypeChipStyle(tone: RequestTypeTone): React.CSSProperties {
   if (tone === 'green') return { background: 'rgba(34, 197, 94, 0.12)', border: '1px solid rgba(34, 197, 94, 0.28)', color: 'rgba(34, 197, 94, 0.95)' };
   if (tone === 'blue') return { background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.28)', color: 'rgba(59, 130, 246, 0.95)' };
   if (tone === 'purple') return { background: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.28)', color: 'rgba(168, 85, 247, 0.95)' };
-  if (tone === 'gold') return { background: 'rgba(214, 178, 106, 0.18)', border: '1px solid rgba(214, 178, 106, 0.35)', color: 'var(--accent-gold-2)' };
+  if (tone === 'gold') return { background: 'rgba(99, 102, 241, 0.18)', border: '1px solid rgba(99, 102, 241, 0.35)', color: 'var(--accent-gold-2)' };
   return { background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-muted)' };
 }
 
@@ -830,8 +834,8 @@ function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
     <div
       className="mt-2 rounded-[12px] px-3 py-2"
       style={{
-        border: '1px solid rgba(231,206,151,0.18)',
-        background: 'rgba(231,206,151,0.045)',
+        border: '1px solid rgba(165,180,252,0.18)',
+        background: 'rgba(165,180,252,0.045)',
       }}
     >
       <div className={isMobile ? "flex flex-col gap-1.5" : "grid items-center gap-3"} style={isMobile ? undefined : { gridTemplateColumns: '2fr 3fr 1fr' }}>
@@ -855,7 +859,7 @@ function PreviewTickerRow({ it }: { it: LlmRequestLogListItem }) {
           </div>
         </div>
 
-        <div className={`min-w-0 ${isMobile ? 'text-left' : 'text-right'} text-[11px] truncate`} style={{ color: 'rgba(231,206,151,0.75)' }}>
+        <div className={`min-w-0 ${isMobile ? 'text-left' : 'text-right'} text-[11px] truncate`} style={{ color: 'rgba(165,180,252,0.75)' }}>
           {rightText}
         </div>
       </div>
@@ -1323,7 +1327,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
         />
       )}
 
-      <GlassCard glow className="p-4">
+      <GlassCard animated glow className="p-4">
         <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 md:grid-cols-8">
           <SearchableSelect
             value={qModel}
@@ -1410,7 +1414,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
         </div>
       </GlassCard>
 
-      <GlassCard glow className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
+      <GlassCard animated glow className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="divide-y divide-white/10">
           {loading ? (
@@ -1665,7 +1669,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                   {sizes.length ? (
                                     <div
                                       className="mt-2 rounded-[10px] p-2"
-                                      style={{ border: '1px solid var(--border-default)', background: 'var(--list-item-bg)', maxHeight: 220, overflow: 'auto' }}
+                                      style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', maxHeight: 220, overflow: 'auto' }}
                                     >
                                       <div className="flex flex-wrap gap-1.5">
                                         {sizes.map((s, idx) => (
@@ -1767,7 +1771,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无详情</div>
           ) : (
             <div className="h-full min-h-0 grid gap-3 grid-cols-1 md:grid-cols-2 overflow-auto md:overflow-hidden">
-              <GlassCard glow className="p-3 overflow-hidden flex flex-col min-h-0">
+              <GlassCard animated glow className="p-3 overflow-hidden flex flex-col min-h-0">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Request（密钥已隐藏）</div>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -1847,7 +1851,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         className="rounded-[12px] px-2.5 py-1.5 min-w-0"
                         style={{
                           border: '1px solid var(--border-subtle)',
-                          background: 'var(--list-item-bg)',
+                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                           minWidth: 0,
                           ...(ss?.container ?? {}),
                         }}
@@ -1976,19 +1980,19 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                 </div>
               </GlassCard>
 
-              <GlassCard glow className="p-3 overflow-hidden flex flex-col min-h-0">
+              <GlassCard animated glow className="p-3 overflow-hidden flex flex-col min-h-0">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>Response</div>
                   <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                    <div className="flex items-center rounded-[8px] p-0.5" style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}>
+                    <div className="flex items-center rounded-[8px] p-0.5" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
                       <button
                         type="button"
                         onClick={() => setAnswerView('preview')}
                         className="h-7 px-2.5 rounded-[6px] text-[11px] font-semibold"
                         style={{
                           color: answerView === 'preview' ? 'var(--text-primary)' : 'var(--text-muted)',
-                          background: answerView === 'preview' ? 'rgba(231,206,151,0.10)' : 'transparent',
-                          border: answerView === 'preview' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                          background: answerView === 'preview' ? 'rgba(165,180,252,0.10)' : 'transparent',
+                          border: answerView === 'preview' ? '1px solid rgba(165,180,252,0.22)' : '1px solid transparent',
                         }}
                       >
                         预览
@@ -1999,8 +2003,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         className="h-7 px-2.5 rounded-[6px] text-[11px] font-semibold"
                         style={{
                           color: answerView === 'raw' ? 'var(--text-primary)' : 'var(--text-muted)',
-                          background: answerView === 'raw' ? 'rgba(231,206,151,0.10)' : 'transparent',
-                          border: answerView === 'raw' ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                          background: answerView === 'raw' ? 'rgba(165,180,252,0.10)' : 'transparent',
+                          border: answerView === 'raw' ? '1px solid rgba(165,180,252,0.22)' : '1px solid transparent',
                         }}
                       >
                         Raw
@@ -2013,8 +2017,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           title="当内容包含 \\uXXXX 时，可一键转换为真实字符，避免 Raw 难以阅读"
                           style={{
                             color: answerVisibleChars ? 'var(--text-primary)' : 'var(--text-muted)',
-                            background: answerVisibleChars ? 'rgba(231,206,151,0.10)' : 'transparent',
-                            border: answerVisibleChars ? '1px solid rgba(231,206,151,0.22)' : '1px solid transparent',
+                            background: answerVisibleChars ? 'rgba(165,180,252,0.10)' : 'transparent',
+                            border: answerVisibleChars ? '1px solid rgba(165,180,252,0.22)' : '1px solid transparent',
                           }}
                         >
                           可见字符
@@ -2133,7 +2137,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         <div
                           key={it.k}
                           className="rounded-[12px] px-3 py-2 min-w-0 overflow-hidden"
-                          style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)', minWidth: 0 }}
+                          style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', minWidth: 0 }}
                         >
                           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                             {it.k}
@@ -2240,7 +2244,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
 
                       return (
                     <div className="mb-3">
-                      <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}>
+                      <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
                         {/* Prompt */}
                         <div className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)' }}>
                           {(detail?.questionText ?? '').trim() || '（无提示词）'}
@@ -2399,7 +2403,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           .prd-md ul,.prd-md ol { margin: 8px 0; padding-left: 18px; }
                           .prd-md li { margin: 4px 0; }
                           .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 12px 0; }
-                          .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
+                          .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: rgba(165,180,252,0.92); border-radius: 10px; }
                           .prd-md a { color: #E7CE97; text-decoration: underline; }
                           .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
                           .prd-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 12px; overflow: auto; }

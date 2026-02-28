@@ -81,7 +81,7 @@ function StatCard({
 }) {
   const accentColors = {
     default: { bg: 'var(--bg-input)', border: 'var(--nested-block-border)', icon: 'rgba(255,255,255,0.5)', text: 'var(--text-primary)' },
-    gold: { bg: 'rgba(214,178,106,0.06)', border: 'rgba(214,178,106,0.12)', icon: 'var(--accent-gold)', text: 'var(--accent-gold)' },
+    gold: { bg: 'rgba(99,102,241,0.06)', border: 'rgba(99,102,241,0.12)', icon: 'var(--accent-gold)', text: 'var(--accent-gold)' },
     blue: { bg: 'rgba(59,130,246,0.06)', border: 'rgba(59,130,246,0.12)', icon: 'rgba(59,130,246,0.9)', text: 'rgba(59,130,246,0.95)' },
     green: { bg: 'rgba(34,197,94,0.06)', border: 'rgba(34,197,94,0.12)', icon: 'rgba(34,197,94,0.9)', text: 'rgba(34,197,94,0.95)' },
     purple: { bg: 'rgba(168,85,247,0.06)', border: 'rgba(168,85,247,0.12)', icon: 'rgba(168,85,247,0.9)', text: 'rgba(168,85,247,0.95)' },
@@ -307,7 +307,7 @@ function MappingRow({ mapping, onView, onValidate, onDelete, deleting }: { mappi
     if (!mapping.existsInDatabase) return 'rgba(239,68,68,0.15)';
     if (!mapping.hasEntity) return 'rgba(239,68,68,0.1)';
     if (mapping.appOwners.length === 0) return 'rgba(168,85,247,0.1)';
-    return 'var(--list-item-bg)';
+    return 'var(--bg-card, rgba(255, 255, 255, 0.03))';
   };
   const protectedCollections = ['users', 'llmplatforms', 'llmmodels', 'system_roles'];
   const isProtected = protectedCollections.includes(mapping.collectionName.toLowerCase());
@@ -436,7 +436,7 @@ export default function DataManagePage() {
   };
 
   const UserRow = ({ u }: { u: AdminUserPreviewItem }) => (
-    <div className="grid gap-2 rounded-[10px] px-3 py-2.5 transition-colors hover:bg-white/3" style={{ gridTemplateColumns: '1.2fr 1fr 0.6fr 0.6fr 1fr', background: 'var(--list-item-bg)', border: '1px solid var(--bg-card-hover)' }}>
+    <div className="grid gap-2 rounded-[10px] px-3 py-2.5 surface-row" style={{ gridTemplateColumns: '1.2fr 1fr 0.6fr 0.6fr 1fr' }}>
       <div className="min-w-0"><div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{u.username || '-'}</div><div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{u.displayName || '-'}</div></div>
       <div className="min-w-0 text-xs font-mono self-center truncate" style={{ color: 'var(--text-secondary)' }}>{u.userId?.slice(0, 8) || '-'}...</div>
       <div className="text-xs self-center" style={{ color: 'var(--text-secondary)' }}>{u.role}</div>
@@ -456,7 +456,7 @@ export default function DataManagePage() {
       {msg && <div className="rounded-[12px] px-4 py-2.5 text-[13px] flex items-center gap-2.5" style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.08) 0%, rgba(34,197,94,0.04) 100%)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}><Zap size={15} />{msg}</div>}
 
       {/* 上栏：统计 */}
-      <GlassCard variant="gold" glow accentHue={45}>
+      <GlassCard variant="gold" glow animated accentHue={234}>
         <div className="flex items-center justify-between gap-3 mb-4">
           <div><h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>数据统计</h2><p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>系统核心配置与业务数据概览</p></div>
           <div className="flex items-center gap-2">
@@ -473,7 +473,7 @@ export default function DataManagePage() {
       </GlassCard>
 
       {/* 中栏：实体与集合对比 */}
-      <GlassCard glow accentHue={210}>
+      <GlassCard glow animated accentHue={210}>
         <div className="flex items-center justify-between gap-3 mb-4">
           <div><h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>实体与集合对比</h2><p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>MongoDB 集合与 C# 实体类的映射关系</p></div>
           <div className="flex items-center gap-2">
@@ -516,7 +516,7 @@ export default function DataManagePage() {
       </GlassCard>
 
       {/* 下栏：危险操作 */}
-      <GlassCard glow accentHue={0} padding="lg">
+      <GlassCard glow animated accentHue={0} padding="lg">
         <div className="flex items-center gap-2 mb-4"><AlertTriangle size={16} style={{ color: 'rgba(239,68,68,0.75)' }} /><h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>危险操作</h2></div>
         <div className="grid gap-3 md:grid-cols-2">
           <DangerActionCard title="清理非管理员账号" description="删除所有非管理员用户账号及其关联数据，管理员账号将保留。此操作需要预览确认。" buttonText="预览并删除" onAction={openUsersPurge} loading={loading} />

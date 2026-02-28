@@ -66,8 +66,7 @@ export default function MobileProfilePage() {
 
         {/* ── 用户卡片 ── */}
         <div
-          className="flex items-center gap-4 p-5 rounded-2xl mb-6"
-          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+          className="surface-inset flex items-center gap-4 p-5 rounded-2xl mb-6"
         >
           {avatarUrl ? (
             <img src={avatarUrl} className="w-14 h-14 rounded-full object-cover" alt="" />
@@ -94,8 +93,7 @@ export default function MobileProfilePage() {
 
         {/* ── 菜单列表 ── */}
         <div
-          className="rounded-2xl overflow-hidden mb-6"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+          className="surface-inset rounded-2xl overflow-hidden mb-6"
         >
           {menuItems.map((item, i) => {
             const MenuIcon = item.icon;

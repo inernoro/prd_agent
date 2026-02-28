@@ -343,11 +343,7 @@ export function QuickActionConfigPanel({
           {actions.map((action, idx) => (
             <div
               key={action.id}
-              className="flex items-center gap-2 px-3 py-2.5 rounded-[10px] group/row transition-colors hover:bg-white/[0.03]"
-              style={{
-                border: '1px solid rgba(255,255,255,0.08)',
-                background: 'rgba(255,255,255,0.02)',
-              }}
+              className="surface-row flex items-center gap-2 px-3 py-2.5 rounded-[10px] group/row"
             >
               <span
                 className="inline-flex items-center justify-center w-6 h-6 rounded-full shrink-0"

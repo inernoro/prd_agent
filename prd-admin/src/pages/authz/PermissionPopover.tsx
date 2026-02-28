@@ -106,7 +106,7 @@ export function PermissionPopover({
               {roleName} - {menuLabel}
             </div>
             {isBuiltIn && (
-              <div className="text-xs mt-0.5" style={{ color: 'rgba(214, 178, 106, 0.8)' }}>
+              <div className="text-xs mt-0.5" style={{ color: 'rgba(99, 102, 241, 0.8)' }}>
                 内置角色不可修改
               </div>
             )}
@@ -133,7 +133,7 @@ export function PermissionPopover({
                   key={perm.key}
                   className="flex items-start gap-3 p-2 rounded-xl cursor-pointer transition-colors hover:bg-white/4"
                   style={{
-                    background: checkedPerms.has(perm.key) ? 'rgba(214, 178, 106, 0.08)' : 'transparent',
+                    background: checkedPerms.has(perm.key) ? 'rgba(99, 102, 241, 0.08)' : 'transparent',
                     opacity: isBuiltIn ? 0.7 : 1,
                     cursor: isBuiltIn ? 'default' : 'pointer',
                   }}

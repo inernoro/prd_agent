@@ -20,7 +20,7 @@ export function Card({
   children: React.ReactNode;
   variant?: 'default' | 'gold';
 }) {
-  const goldGlow = 'radial-gradient(600px 400px at 50% 0%, rgba(214,178,106,0.15) 0%, transparent 65%)';
+  const goldGlow = 'radial-gradient(600px 400px at 50% 0%, rgba(99,102,241,0.15) 0%, transparent 65%)';
   const defaultSheen = 'linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 50%)';
 
   return (
@@ -35,16 +35,16 @@ export function Card({
         background: `${variant === 'gold' ? goldGlow : defaultSheen}, ${glassPanel.background}`,
         // 方向性边框：顶部/左侧更亮，模拟光照
         borderTop: variant === 'gold'
-          ? '1px solid rgba(214, 178, 106, 0.25)'
+          ? '1px solid rgba(99, 102, 241, 0.25)'
           : '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
         borderLeft: variant === 'gold'
-          ? '1px solid rgba(214, 178, 106, 0.15)'
+          ? '1px solid rgba(99, 102, 241, 0.15)'
           : '1px solid var(--glass-border, rgba(255, 255, 255, 0.08))',
         borderRight: '1px solid var(--border-faint, rgba(255, 255, 255, 0.04))',
         borderBottom: '1px solid var(--border-faint, rgba(255, 255, 255, 0.02))',
         // 投影 + 内发光
         boxShadow: variant === 'gold'
-          ? '0 20px 40px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(214, 178, 106, 0.05) inset, 0 1px 0 rgba(255, 255, 255, 0.05) inset'
+          ? '0 20px 40px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(99, 102, 241, 0.05) inset, 0 1px 0 rgba(255, 255, 255, 0.05) inset'
           : '0 16px 32px -8px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03) inset, 0 1px 0 rgba(255, 255, 255, 0.04) inset',
       }}
     >

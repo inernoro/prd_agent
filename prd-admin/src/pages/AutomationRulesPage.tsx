@@ -426,7 +426,7 @@ export default function AutomationRulesPage() {
   return (
     <div className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden">
       {/* 主从面板 */}
-      <GlassCard glow className="flex-1 min-h-0 overflow-hidden">
+      <GlassCard animated glow className="flex-1 min-h-0 overflow-hidden">
         <div className="grid h-full" style={{ gridTemplateColumns: isMobile ? '1fr' : '280px minmax(0, 1fr)', gridTemplateRows: isMobile ? 'auto minmax(0, 1fr)' : undefined }}>
 
           {/* ── 左侧：规则列表 ── */}
@@ -490,7 +490,7 @@ export default function AutomationRulesPage() {
                     <div
                       key={rule.id}
                       onClick={() => handleSelectRule(rule)}
-                      className="w-full text-left px-3 py-2.5 rounded-[10px] transition-all cursor-pointer"
+                      className={`w-full text-left px-3 py-2.5 rounded-[10px] transition-all cursor-pointer ${!selected ? 'surface-row' : ''}`}
                       style={{
                         background: selected ? 'rgba(59,130,246,0.1)' : 'transparent',
                         border: selected ? '1px solid rgba(59,130,246,0.25)' : '1px solid transparent',
@@ -624,8 +624,7 @@ export default function AutomationRulesPage() {
                     <SectionTitle>执行动作</SectionTitle>
                     <div className="space-y-2">
                       {edit.actions.map((action, idx) => (
-                        <div key={idx} className="p-3 rounded-[12px] space-y-2"
-                          style={{ background: 'var(--list-item-bg)', border: '1px solid var(--border-subtle)' }}>
+                        <div key={idx} className="p-3 rounded-[12px] space-y-2 surface-inset">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-medium flex items-center gap-1.5">
                               {actionTypeIcons[action.type]}
