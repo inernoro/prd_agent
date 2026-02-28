@@ -10,7 +10,7 @@ type LabTab = 'workshop' | 'llm' | 'desktop' | 'showcase';
 
 export default function LabPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = (searchParams.get('tab') ?? 'workshop') as LabTab;
+  const tab = (searchParams.get('tab') ?? 'llm') as LabTab;
 
   const setTab = (next: LabTab) => {
     const sp = new URLSearchParams(searchParams);
@@ -22,8 +22,8 @@ export default function LabPage() {
     <div className="h-full min-h-0 flex flex-col gap-4">
       <TabBar
         items={[
-          { key: 'workshop', label: '试验车间', icon: <FlaskConical size={14} /> },
           { key: 'llm', label: '大模型实验室', icon: <Sparkles size={14} /> },
+          { key: 'workshop', label: '试验车间', icon: <FlaskConical size={14} /> },
           { key: 'desktop', label: '桌面实验室', icon: <Monitor size={14} /> },
           { key: 'showcase', label: '特效展示', icon: <Wand2 size={14} /> },
         ]}
