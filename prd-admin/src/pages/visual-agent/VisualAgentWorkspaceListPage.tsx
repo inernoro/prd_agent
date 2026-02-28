@@ -1,5 +1,6 @@
 import { GlassCard } from '@/components/design/GlassCard';
-import { glassPanel, glassToolbar, glassInputArea } from '@/lib/glassStyles';
+import { SizePickerButton } from '@/components/visual-agent/SizePickerPanel';
+import { glassToolbar, glassInputArea } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
@@ -34,11 +35,10 @@ import {
   Bug,
 } from 'lucide-react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useAuthStore } from '@/stores/authStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
 
@@ -571,28 +571,6 @@ function useTypingPlaceholder() {
   return displayText;
 }
 
-// 从尺寸字符串检测档位
-function detectTierFromSize(size: string): '1k' | '2k' | '4k' {
-  const s = (size || '').trim().toLowerCase();
-  for (const opt of ASPECT_OPTIONS) {
-    if (opt.size4k.toLowerCase() === s) return '4k';
-    if (opt.size2k.toLowerCase() === s) return '2k';
-    if (opt.size1k.toLowerCase() === s) return '1k';
-  }
-  return '1k';
-}
-
-// 从尺寸字符串检测比例
-function detectAspectFromSize(size: string): string {
-  const s = (size || '').trim().toLowerCase();
-  for (const opt of ASPECT_OPTIONS) {
-    if (opt.size1k.toLowerCase() === s || opt.size2k.toLowerCase() === s || opt.size4k.toLowerCase() === s) {
-      return opt.id;
-    }
-  }
-  return '1:1';
-}
-
 // ============ 快捷输入框（深色卡片样式） ============
 function QuickInputBox(props: {
   value: string;
@@ -779,186 +757,6 @@ function QuickInputBox(props: {
                 )}
               </button>
 
-              {/* 尺寸选择器（参考 AdvancedVisualAgentTab 样式） */}
-              {onSizeChange && (
-                <>
-                  {/* 档位选择器（1K/2K/4K） */}
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger asChild>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-0.5"
-                        style={{
-                          height: 20,
-                          paddingLeft: 6,
-                          paddingRight: 6,
-                          borderRadius: 4,
-                          overflow: 'hidden',
-                          border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-                          color: 'rgba(255,255,255,0.82)',
-                        }}
-                        title="选择档位"
-                        aria-label="选择档位"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {(() => {
-                          const tier = detectTierFromSize(size);
-                          return (
-                            <>
-                              <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
-                                {tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K'}
-                              </span>
-                              <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                                ▾
-                              </span>
-                            </>
-                          );
-                        })()}
-                      </button>
-                    </DropdownMenu.Trigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content
-                        side="top"
-                        align="start"
-                        sideOffset={8}
-                        className="rounded-[12px] p-1 min-w-[80px]"
-                        style={{
-                          outline: 'none',
-                          zIndex: 90,
-                          ...glassPanel,
-                        }}
-                      >
-                        {(['1k', '2k', '4k'] as const).map((tier) => {
-                          const currentTier = detectTierFromSize(size);
-                          const isSelected = currentTier === tier;
-                          const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
-                          const currentAspect = detectAspectFromSize(size);
-                          const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
-                          if (!targetOpt) return null;
-
-                          return (
-                            <DropdownMenu.Item
-                              key={tier}
-                              className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
-                              style={{
-                                color: 'rgba(255,255,255,0.9)',
-                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                                borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
-                              }}
-                              onSelect={() => {
-                                const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
-                                onSizeChange(newSize);
-                              }}
-                            >
-                              <span className="font-semibold">{label}</span>
-                            </DropdownMenu.Item>
-                          );
-                        })}
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
-
-                  {/* 比例选择器 */}
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger asChild>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1"
-                        style={{
-                          height: 20,
-                          paddingLeft: 6,
-                          paddingRight: 6,
-                          borderRadius: 4,
-                          overflow: 'hidden',
-                          border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-                          color: 'rgba(255,255,255,0.82)',
-                        }}
-                        title="选择比例"
-                        aria-label="选择比例"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {(() => {
-                          const currentAspect = detectAspectFromSize(size);
-                          const opt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
-                          const iconW = opt?.iconW ?? 20;
-                          const iconH = opt?.iconH ?? 20;
-                          return (
-                            <>
-                              <span
-                                style={{
-                                  width: iconW,
-                                  height: iconH,
-                                  borderRadius: 2,
-                                  border: '1px solid rgba(255,255,255,0.3)',
-                                  background: 'rgba(255,255,255,0.1)',
-                                  display: 'inline-block',
-                                  flexShrink: 0,
-                                }}
-                              />
-                              <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
-                                {opt?.label || '1:1'}
-                              </span>
-                              <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                                ▾
-                              </span>
-                            </>
-                          );
-                        })()}
-                      </button>
-                    </DropdownMenu.Trigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content
-                        side="top"
-                        align="start"
-                        sideOffset={8}
-                        className="rounded-[12px] p-1 min-w-[120px]"
-                        style={{
-                          outline: 'none',
-                          zIndex: 90,
-                          ...glassPanel,
-                        }}
-                      >
-                        {ASPECT_OPTIONS.map((opt) => {
-                          const currentTier = detectTierFromSize(size);
-                          const currentSize = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
-                          const isSelected = size.toLowerCase() === currentSize.toLowerCase();
-                          return (
-                            <DropdownMenu.Item
-                              key={opt.id}
-                              className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
-                              style={{
-                                color: 'rgba(255,255,255,0.9)',
-                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                                borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
-                              }}
-                              onSelect={() => {
-                                onSizeChange(currentSize);
-                              }}
-                            >
-                              <div className="flex items-center gap-2">
-                                <span
-                                  style={{
-                                    width: opt.iconW,
-                                    height: opt.iconH,
-                                    borderRadius: 2,
-                                    border: '1px solid rgba(255,255,255,0.3)',
-                                    background: 'rgba(255,255,255,0.1)',
-                                    display: 'inline-block',
-                                    flexShrink: 0,
-                                  }}
-                                />
-                                <span className="font-semibold">{opt.label}</span>
-                              </div>
-                            </DropdownMenu.Item>
-                          );
-                        })}
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
-                </>
-              )}
             </div>
           ) : null}
           <textarea
@@ -991,7 +789,7 @@ function QuickInputBox(props: {
         </div>
         {/* 底部工具栏 - 简化，只保留核心操作 */}
         <div className="flex items-center justify-between px-4 pb-3">
-          {/* 左侧：附件按钮 */}
+          {/* 左侧：附件按钮 + 尺寸配置 */}
           <div className="flex items-center gap-2">
             <input
               ref={fileInputRef}
@@ -1016,6 +814,11 @@ function QuickInputBox(props: {
               <Image size={14} />
               <span>图片</span>
             </button>
+
+            {/* 尺寸选择器（复用编辑器的面板组件） */}
+            {onSizeChange && (
+              <SizePickerButton size={size} onSizeChange={onSizeChange} />
+            )}
           </div>
           {/* 右侧：Bug 按钮 + 发送按钮 */}
           <div className="flex items-center gap-2">
@@ -1309,6 +1112,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   void _fullscreenMode; // 避免 TS6133 警告
   const navigate = useNavigate();
   const { isMobile } = useBreakpoint();
+  const userId = useAuthStore((s) => s.user?.userId ?? '');
 
   // 统一使用 /visual-agent 路径（现在所有模式都是全屏）
   const getEditorPath = (workspaceId: string) => {
@@ -1325,7 +1129,12 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const [inputLoading, setInputLoading] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<{ file: File; previewUrl: string } | null>(null);
-  const [selectedSize, setSelectedSize] = useState<string>('1024x1024');
+  // 默认尺寸：从 localStorage 读取用户偏好，与编辑器共享同一 key
+  const defaultSizeKey = userId ? `prdAdmin.visualAgent.defaultSize.${userId}` : '';
+  const [selectedSize, setSelectedSize] = useState<string>(() => {
+    if (!defaultSizeKey) return '1024x1024';
+    try { return localStorage.getItem(defaultSizeKey) || '1024x1024'; } catch { return '1024x1024'; }
+  });
 
   // 共享对话框状态
   const [shareOpen, setShareOpen] = useState(false);
@@ -1537,6 +1346,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
   const onSelectedSizeChange = (size: string) => {
     setSelectedSize(size);
+    if (defaultSizeKey) { try { localStorage.setItem(defaultSizeKey, size); } catch { /* ignore */ } }
   };
 
   // 新建文件夹（目前作为占位功能，后续可接入后端）
