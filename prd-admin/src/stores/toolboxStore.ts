@@ -122,6 +122,19 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  {
+    id: 'builtin-arena',
+    name: 'AI 竞技场',
+    description: '多模型盲测对战，匿名PK后揭晓真实身份',
+    icon: 'Swords',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'arena',
+    routePath: '/arena',
+    tags: ['竞技场', '模型对比', '盲测'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
   // ========== 普通版 Agent（统一对话界面）==========
   {
     id: 'builtin-code-reviewer',

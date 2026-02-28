@@ -239,6 +239,7 @@ internal class OpenAIChoice
 internal class OpenAIDelta
 {
     public string? Content { get; set; }
+    public string? ReasoningContent { get; set; }
 }
 
 /// <summary>

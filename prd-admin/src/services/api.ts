@@ -649,6 +649,31 @@ export const api = {
     stats: () => '/api/mobile/stats',
     assets: () => '/api/mobile/assets',
   },
+
+  // ============ Arena 竞技场 ============
+  arena: {
+    groups: {
+      list: () => '/api/lab/arena/groups',
+      byId: (id: string) => `/api/lab/arena/groups/${id}`,
+    },
+    slots: {
+      list: () => '/api/lab/arena/slots',
+      byId: (id: string) => `/api/lab/arena/slots/${id}`,
+      toggle: (id: string) => `/api/lab/arena/slots/${id}/toggle`,
+    },
+    lineup: () => '/api/lab/arena/lineup',
+    reveal: () => '/api/lab/arena/reveal',
+    runs: {
+      create: () => '/api/lab/arena/runs',
+      byId: (id: string) => `/api/lab/arena/runs/${id}`,
+      cancel: (id: string) => `/api/lab/arena/runs/${id}/cancel`,
+      stream: (id: string) => `/api/lab/arena/runs/${id}/stream`,
+    },
+    battles: {
+      list: () => '/api/lab/arena/battles',
+      byId: (id: string) => `/api/lab/arena/battles/${id}`,
+    },
+  },
 } as const;
 
 export default api;

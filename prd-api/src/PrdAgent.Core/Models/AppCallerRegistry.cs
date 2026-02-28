@@ -583,6 +583,38 @@ public static class Admin
     public static class Platforms
     {
         [AppCallerMetadata(
+            "查询可用模型",
+            "查询平台可用模型列表",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Management"
+        )]
+        public const string AvailableModels = "admin.platforms.available-models";
+
+        [AppCallerMetadata(
+            "刷新模型列表",
+            "刷新平台模型列表缓存",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Management"
+        )]
+        public const string RefreshModels = "admin.platforms.refresh-models";
+
+        [AppCallerMetadata(
+            "重分类-拉取模型",
+            "重分类前拉取平台可用模型",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Management"
+        )]
+        public const string ReclassifyFetchModels = "admin.platforms.reclassify.fetch-models";
+
+        [AppCallerMetadata(
+            "拉取平台模型",
+            "通用拉取平台模型列表",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Management"
+        )]
+        public const string FetchModels = "admin.platforms.fetch-models";
+
+        [AppCallerMetadata(
             "模型重分类",
             "使用 AI 对平台可用模型进行分类（严格 JSON 输出）",
             ModelTypes = new[] { ModelTypes.Intent },
