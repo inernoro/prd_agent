@@ -12,10 +12,25 @@ import {
   saveArenaBattle,
   listArenaBattles,
   getArenaBattle,
+  listArenaGroups,
+  createArenaGroup,
+  updateArenaGroup,
+  deleteArenaGroup,
+  createArenaSlot,
+  deleteArenaSlot,
+  toggleArenaSlot,
+  getPlatforms,
 } from '@/services';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
-import { Eye, Send, Plus, Search, MessageSquare, Clock, Loader2, Swords, ChevronDown } from 'lucide-react';
+import { Dialog } from '@/components/ui/Dialog';
+import { ConfirmTip } from '@/components/ui/ConfirmTip';
+import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
+import type { Platform } from '@/types/admin';
+import {
+  Eye, Send, Plus, Search, MessageSquare, Clock, Loader2, Swords, ChevronDown,
+  Edit3, Trash2, Settings, Power,
+} from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,13 +40,27 @@ interface ArenaSlot {
   id: string;
   platformId: string;
   modelId: string;
+  displayName?: string;
+  enabled?: boolean;
 }
 
 interface ArenaGroup {
+  id?: string;
   key: string;
   name: string;
+  description?: string;
+  sortOrder?: number;
   slots: ArenaSlot[];
 }
+
+interface GroupForm {
+  key: string;
+  name: string;
+  description: string;
+  sortOrder: number;
+}
+
+const EMPTY_GROUP_FORM: GroupForm = { key: '', name: '', description: '', sortOrder: 0 };
 
 interface ArenaPanel {
   slotId: string;
@@ -213,6 +242,34 @@ export function ArenaPage() {
   // --- Sidebar ---
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
+  // --- Group management state ---
+  const [manageMode, setManageMode] = useState(false);
+  const [adminGroups, setAdminGroups] = useState<ArenaGroup[]>([]);
+  const [platforms, setPlatforms] = useState<Platform[]>([]);
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [groupForm, setGroupForm] = useState<GroupForm>(EMPTY_GROUP_FORM);
+  const [groupSaving, setGroupSaving] = useState(false);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [modelPickerTargetGroup, setModelPickerTargetGroup] = useState('');
+  const [adminLoading, setAdminLoading] = useState(false);
+
+  const platformMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of platforms) map.set(p.id, p.name);
+    return map;
+  }, [platforms]);
+
+  const existingModelsForPicker = useMemo<SelectedModelItem[]>(() => {
+    const group = adminGroups.find((g) => g.key === modelPickerTargetGroup);
+    if (!group) return [];
+    return group.slots.map((s) => ({
+      platformId: s.platformId,
+      modelId: s.modelId,
+      name: s.displayName || s.modelId,
+    }));
+  }, [adminGroups, modelPickerTargetGroup]);
+
   // --- Refs ---
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -284,6 +341,166 @@ export function ArenaPage() {
       // silent
     } finally {
       setHistoryLoading(false);
+    }
+  }
+
+  // --- Group management functions ---
+  async function loadAdminGroups() {
+    setAdminLoading(true);
+    try {
+      const [groupsRes, platformsRes] = await Promise.all([
+        listArenaGroups(),
+        getPlatforms(),
+      ]);
+      if (groupsRes.success && groupsRes.data?.items) {
+        setAdminGroups(groupsRes.data.items as ArenaGroup[]);
+      }
+      if (platformsRes.success) {
+        setPlatforms((platformsRes.data as Platform[]) ?? []);
+      }
+    } catch {
+      toast.error('加载阵容配置失败');
+    } finally {
+      setAdminLoading(false);
+    }
+  }
+
+  function enterManageMode() {
+    setManageMode(true);
+    loadAdminGroups();
+  }
+
+  function exitManageMode() {
+    setManageMode(false);
+    setGroupDropdownOpen(false);
+    // Reload lineup to pick up changes
+    loadLineup();
+  }
+
+  function openCreateGroup() {
+    setEditingGroupId(null);
+    setGroupForm(EMPTY_GROUP_FORM);
+    setGroupDialogOpen(true);
+  }
+
+  function openEditGroup(group: ArenaGroup) {
+    setEditingGroupId(group.id ?? null);
+    setGroupForm({
+      key: group.key,
+      name: group.name,
+      description: group.description ?? '',
+      sortOrder: group.sortOrder ?? 0,
+    });
+    setGroupDialogOpen(true);
+  }
+
+  async function handleSaveGroup() {
+    if (!groupForm.name.trim()) {
+      toast.warning('请填写分组名称');
+      return;
+    }
+    if (!editingGroupId && !groupForm.key.trim()) {
+      toast.warning('请填写分组 Key');
+      return;
+    }
+    setGroupSaving(true);
+    try {
+      if (editingGroupId) {
+        const res = await updateArenaGroup(editingGroupId, {
+          name: groupForm.name.trim(),
+          description: groupForm.description.trim() || undefined,
+          sortOrder: groupForm.sortOrder,
+        });
+        if (!res.success) throw new Error(res.message || '更新失败');
+        toast.success('分组已更新');
+      } else {
+        const res = await createArenaGroup({
+          key: groupForm.key.trim(),
+          name: groupForm.name.trim(),
+          description: groupForm.description.trim() || undefined,
+          sortOrder: groupForm.sortOrder,
+        });
+        if (!res.success) throw new Error(res.message || '创建失败');
+        toast.success('分组已创建');
+      }
+      setGroupDialogOpen(false);
+      await loadAdminGroups();
+    } catch (err: any) {
+      toast.error(editingGroupId ? '更新分组失败' : '创建分组失败', err?.message);
+    } finally {
+      setGroupSaving(false);
+    }
+  }
+
+  async function handleDeleteGroup(groupId: string) {
+    try {
+      const res = await deleteArenaGroup(groupId);
+      if (!res.success) throw new Error(res.message || '删除失败');
+      toast.success('分组已删除');
+      await loadAdminGroups();
+    } catch (err: any) {
+      toast.error('删除分组失败', err?.message);
+    }
+  }
+
+  function openAddSlots(groupKey: string) {
+    setModelPickerTargetGroup(groupKey);
+    setModelPickerOpen(true);
+  }
+
+  async function handleModelPickerConfirm(models: SelectedModelItem[]) {
+    const group = adminGroups.find((g) => g.key === modelPickerTargetGroup);
+    const existingKeys = new Set(
+      (group?.slots ?? []).map((s) => `${s.platformId}:${s.modelId}`.toLowerCase()),
+    );
+    const newModels = models.filter(
+      (m) => !existingKeys.has(`${m.platformId}:${m.modelId}`.toLowerCase()),
+    );
+    if (newModels.length === 0) {
+      toast.info('没有新模型需要添加');
+      return;
+    }
+    let successCount = 0;
+    for (const m of newModels) {
+      try {
+        const res = await createArenaSlot({
+          displayName: m.name || m.modelName || m.modelId,
+          platformId: m.platformId,
+          modelId: m.modelId,
+          group: modelPickerTargetGroup,
+          enabled: true,
+        });
+        if (res.success) successCount++;
+      } catch {
+        // continue
+      }
+    }
+    if (successCount > 0) {
+      toast.success(`已添加 ${successCount} 个模型`);
+      await loadAdminGroups();
+    } else {
+      toast.error('添加模型失败');
+    }
+  }
+
+  async function handleDeleteSlot(slotId: string) {
+    try {
+      const res = await deleteArenaSlot(slotId);
+      if (!res.success) throw new Error(res.message || '删除失败');
+      toast.success('模型已删除');
+      await loadAdminGroups();
+    } catch (err: any) {
+      toast.error('删除模型失败', err?.message);
+    }
+  }
+
+  async function handleToggleSlot(slotId: string) {
+    try {
+      const res = await toggleArenaSlot(slotId);
+      if (!res.success) throw new Error(res.message || '切换失败');
+      await loadAdminGroups();
+    } catch (err: any) {
+      toast.error('切换状态失败', err?.message);
     }
   }
 
@@ -643,7 +860,7 @@ export function ArenaPage() {
 
   // --- Determine page state ---
   const hasBattle = panels.length > 0 || !!currentPrompt;
-  const canReveal = allDone && !revealed && panels.length > 0 && panels.some((p) => p.status === 'done');
+  const canReveal = allDone && !revealed && !revealAnimating && !revealLoading && panels.length > 0 && panels.some((p) => p.status === 'done');
 
   // --- Sort panels: active/done first (by startedAt), waiting last ---
   const sortedPanels = useMemo(() => {
@@ -780,68 +997,206 @@ export function ArenaPage() {
             </div>
           </div>
 
-          {/* Group Selector */}
-          <div className="relative" ref={groupDropdownRef}>
-            <button
-              onClick={() => setGroupDropdownOpen(!groupDropdownOpen)}
-              disabled={lineupLoading || isStreaming}
-              className={cn(
-                'flex items-center gap-2 h-9 px-3 rounded-[10px] text-[13px] transition-colors',
-                'disabled:opacity-50 disabled:cursor-not-allowed',
-                'hover:bg-white/5'
-              )}
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
-            >
-              {lineupLoading ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <>
-                  <span>{selectedGroup?.name ?? '选择阵容'}</span>
-                  <ChevronDown className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
-                </>
-              )}
-            </button>
-            {groupDropdownOpen && (
-              <div
-                className="absolute right-0 top-full mt-1 z-50 rounded-[12px] py-1 min-w-[180px]"
-                style={{
-                  background: 'var(--bg-elevated, #1a1a1e)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-                }}
+          {/* Group Selector + Manage */}
+          <div className="flex items-center gap-2">
+            <div className="relative" ref={groupDropdownRef}>
+              <button
+                onClick={() => { setGroupDropdownOpen(!groupDropdownOpen); if (!groupDropdownOpen && manageMode) loadAdminGroups(); }}
+                disabled={lineupLoading || isStreaming}
+                className={cn(
+                  'flex items-center gap-2 h-9 px-3 rounded-[10px] text-[13px] transition-colors',
+                  'disabled:opacity-50 disabled:cursor-not-allowed',
+                  'hover:bg-white/5'
+                )}
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
               >
-                {groups.length === 0 ? (
-                  <div className="px-4 py-3 text-[13px] text-center" style={{ color: 'var(--text-muted)' }}>
-                    {lineupError ? '加载失败，点击重试' : '暂无可用阵容'}
-                    <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                      {lineupError ? (
-                        <button className="underline hover:text-white/80" onClick={() => { setGroupDropdownOpen(false); loadLineup(); }}>
-                          重新加载
+                {lineupLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <>
+                    <span>{selectedGroup?.name ?? '选择阵容'}</span>
+                    <ChevronDown className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+                  </>
+                )}
+              </button>
+              {groupDropdownOpen && !manageMode && (
+                <div
+                  className="absolute right-0 top-full mt-1 z-50 rounded-[12px] py-1 min-w-[200px]"
+                  style={{
+                    background: 'var(--bg-elevated, #1a1a1e)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                  }}
+                >
+                  {groups.length === 0 ? (
+                    <div className="px-4 py-3 text-[13px] text-center" style={{ color: 'var(--text-muted)' }}>
+                      {lineupError ? '加载失败，点击重试' : '暂无可用阵容'}
+                      <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                        {lineupError ? (
+                          <button className="underline hover:text-white/80" onClick={() => { setGroupDropdownOpen(false); loadLineup(); }}>
+                            重新加载
+                          </button>
+                        ) : (
+                          <button className="underline hover:text-white/80" onClick={enterManageMode}>
+                            点击配置阵容
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {groups.map((g) => (
+                        <button
+                          key={g.key}
+                          onClick={() => { setSelectedGroupKey(g.key); setGroupDropdownOpen(false); }}
+                          className={cn(
+                            'w-full text-left px-3 py-2 text-[13px] transition-colors',
+                            'hover:bg-white/5',
+                            g.key === selectedGroupKey && 'bg-white/8'
+                          )}
+                          style={{ color: 'var(--text-primary)' }}
+                        >
+                          <div>{g.name}</div>
+                          <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{g.slots.length} 个模型</div>
                         </button>
-                      ) : (
-                        '请先在管理页配置竞技场分组和模型'
-                      )}
+                      ))}
+                      <div className="mx-2 my-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+                      <button
+                        onClick={enterManageMode}
+                        className="w-full text-left px-3 py-2 text-[12px] transition-colors hover:bg-white/5 flex items-center gap-1.5"
+                        style={{ color: 'var(--text-muted)' }}
+                      >
+                        <Settings className="w-3.5 h-3.5" />
+                        管理阵容
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+              {/* --- Manage Mode Panel --- */}
+              {groupDropdownOpen && manageMode && (
+                <div
+                  className="absolute right-0 top-full mt-1 z-50 rounded-[12px] min-w-[360px] max-h-[480px] flex flex-col"
+                  style={{
+                    background: 'var(--bg-elevated, #1a1a1e)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                  }}
+                >
+                  {/* Manage header */}
+                  <div className="flex items-center justify-between px-3 py-2.5 flex-shrink-0">
+                    <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>管理阵容</span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={openCreateGroup}
+                        className="h-7 px-2 rounded-md text-[11px] flex items-center gap-1 hover:bg-white/5 transition-colors"
+                        style={{ color: 'rgba(99,102,241,0.9)' }}
+                      >
+                        <Plus className="w-3 h-3" />
+                        新建分组
+                      </button>
+                      <button
+                        onClick={exitManageMode}
+                        className="h-7 px-2 rounded-md text-[11px] hover:bg-white/5 transition-colors"
+                        style={{ color: 'var(--text-muted)' }}
+                      >
+                        完成
+                      </button>
                     </div>
                   </div>
-                ) : (
-                  groups.map((g) => (
-                    <button
-                      key={g.key}
-                      onClick={() => { setSelectedGroupKey(g.key); setGroupDropdownOpen(false); }}
-                      className={cn(
-                        'w-full text-left px-3 py-2 text-[13px] transition-colors',
-                        'hover:bg-white/5',
-                        g.key === selectedGroupKey && 'bg-white/8'
-                      )}
-                      style={{ color: 'var(--text-primary)' }}
-                    >
-                      <div>{g.name}</div>
-                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{g.slots.length} 个模型</div>
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
+                  {/* Group list */}
+                  <div className="flex-1 overflow-y-auto px-2 pb-2" style={{ minHeight: 0 }}>
+                    {adminLoading ? (
+                      <div className="flex items-center justify-center py-6">
+                        <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--text-muted)' }} />
+                      </div>
+                    ) : adminGroups.length === 0 ? (
+                      <div className="text-center py-6 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                        暂无分组，点击"新建分组"创建
+                      </div>
+                    ) : (
+                      adminGroups.map((ag) => (
+                        <div key={ag.key} className="mb-2 rounded-[10px] overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                          {/* Group row */}
+                          <div className="flex items-center justify-between px-3 py-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{ag.name}</div>
+                              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{ag.slots.length} 个模型</div>
+                            </div>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <button
+                                onClick={() => openAddSlots(ag.key)}
+                                className="p-1.5 rounded-md hover:bg-white/8 transition-colors"
+                                title="添加模型"
+                              >
+                                <Plus className="w-3.5 h-3.5" style={{ color: 'rgba(99,102,241,0.8)' }} />
+                              </button>
+                              <button
+                                onClick={() => openEditGroup(ag)}
+                                className="p-1.5 rounded-md hover:bg-white/8 transition-colors"
+                                title="编辑分组"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+                              </button>
+                              <ConfirmTip
+                                title={`删除分组「${ag.name}」？`}
+                                description="将同时删除该分组下所有模型槽位"
+                                onConfirm={() => handleDeleteGroup(ag.id!)}
+                              >
+                                <button
+                                  className="p-1.5 rounded-md hover:bg-white/8 transition-colors"
+                                  title="删除分组"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" style={{ color: 'rgba(239,68,68,0.7)' }} />
+                                </button>
+                              </ConfirmTip>
+                            </div>
+                          </div>
+                          {/* Slot list */}
+                          {ag.slots.length > 0 && (
+                            <div className="px-2 pb-2">
+                              {ag.slots.map((slot) => (
+                                <div
+                                  key={slot.id}
+                                  className="flex items-center justify-between px-2 py-1.5 rounded-md"
+                                  style={{ opacity: slot.enabled === false ? 0.45 : 1 }}
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
+                                      {slot.displayName || slot.modelId}
+                                    </div>
+                                    <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+                                      {platformMap.get(slot.platformId) || slot.platformId}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                                    <button
+                                      onClick={() => handleToggleSlot(slot.id)}
+                                      className="p-1 rounded hover:bg-white/8 transition-colors"
+                                      title={slot.enabled === false ? '启用' : '禁用'}
+                                    >
+                                      <Power className="w-3 h-3" style={{ color: slot.enabled === false ? 'var(--text-muted)' : '#10b981' }} />
+                                    </button>
+                                    <ConfirmTip
+                                      title={`删除模型「${slot.displayName || slot.modelId}」？`}
+                                      onConfirm={() => handleDeleteSlot(slot.id)}
+                                    >
+                                      <button className="p-1 rounded hover:bg-white/8 transition-colors" title="删除">
+                                        <Trash2 className="w-3 h-3" style={{ color: 'rgba(239,68,68,0.6)' }} />
+                                      </button>
+                                    </ConfirmTip>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1122,7 +1477,7 @@ export function ArenaPage() {
                   'placeholder:text-[color:var(--text-muted)] disabled:opacity-50 disabled:cursor-not-allowed',
                   'px-2 py-1'
                 )}
-                style={{ color: 'var(--text-primary)', minHeight: '56px', maxHeight: '200px' }}
+                style={{ color: 'var(--text-primary)', minHeight: '56px', maxHeight: '200px', border: 'none', boxShadow: 'none' }}
               />
               <div className="flex items-center justify-between mt-2 pt-2">
                 <span className="text-[11px] px-2" style={{ color: 'var(--text-muted)' }}>
@@ -1164,6 +1519,72 @@ export function ArenaPage() {
           </div>
         </div>
       </div>
+
+      {/* ===================== Group Create/Edit Dialog ===================== */}
+      <Dialog
+        open={groupDialogOpen}
+        onOpenChange={setGroupDialogOpen}
+        title={editingGroupId ? '编辑分组' : '新建分组'}
+        content={
+          <div className="space-y-4">
+            {!editingGroupId && (
+              <div>
+                <label className="text-[12px] font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                  分组 Key <span style={{ color: 'rgba(239,68,68,0.8)' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={groupForm.key}
+                  onChange={(e) => setGroupForm((f) => ({ ...f, key: e.target.value }))}
+                  placeholder="如 global-frontier"
+                  className="w-full h-9 px-3 rounded-[8px] text-[13px] bg-transparent outline-none"
+                  style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)' }}
+                />
+              </div>
+            )}
+            <div>
+              <label className="text-[12px] font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                分组名称 <span style={{ color: 'rgba(239,68,68,0.8)' }}>*</span>
+              </label>
+              <input
+                type="text"
+                value={groupForm.name}
+                onChange={(e) => setGroupForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="如 世界顶尖"
+                className="w-full h-9 px-3 rounded-[8px] text-[13px] bg-transparent outline-none"
+                style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)' }}
+              />
+            </div>
+            <div>
+              <label className="text-[12px] font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>描述</label>
+              <input
+                type="text"
+                value={groupForm.description}
+                onChange={(e) => setGroupForm((f) => ({ ...f, description: e.target.value }))}
+                placeholder="可选"
+                className="w-full h-9 px-3 rounded-[8px] text-[13px] bg-transparent outline-none"
+                style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)' }}
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="secondary" size="sm" onClick={() => setGroupDialogOpen(false)}>取消</Button>
+              <Button variant="primary" size="sm" onClick={handleSaveGroup} disabled={groupSaving}>
+                {groupSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                {editingGroupId ? '保存' : '创建'}
+              </Button>
+            </div>
+          </div>
+        }
+      />
+
+      {/* ===================== Model Picker Dialog ===================== */}
+      <ModelPoolPickerDialog
+        open={modelPickerOpen}
+        onOpenChange={setModelPickerOpen}
+        selectedModels={existingModelsForPicker}
+        platforms={platforms}
+        onConfirm={handleModelPickerConfirm}
+      />
     </div>
   );
 }
