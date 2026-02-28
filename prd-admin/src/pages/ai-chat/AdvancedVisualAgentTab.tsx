@@ -6277,10 +6277,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div
                   className="w-[560px] max-w-[82vw] rounded-[12px] p-3"
                   style={{
-                    background: '#2c2c2e',
+                    background: '#353538',
                     backdropFilter: 'none',
                     WebkitBackdropFilter: 'none',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    border: '1px solid rgba(255,255,255,0.10)',
                     boxShadow: '0 12px 48px rgba(0,0,0,0.40)',
                     minHeight: 148,
                   }}
@@ -7486,9 +7486,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               ref={inputPanelRef}
               className="mt-2 rounded-[12px] p-2 relative shrink-0"
               style={{
-                ...glassTooltip,
-                border: directPrompt ? '1px solid var(--border-subtle)' : '1px solid rgba(251,146,60,0.55)',
-                background: directPrompt ? 'rgba(20,20,24,0.72)' : 'rgba(251,146,60,0.06)',
+                border: directPrompt ? '1px solid rgba(255,255,255,0.10)' : '1px solid rgba(251,146,60,0.55)',
+                background: directPrompt ? '#353538' : 'rgba(251,146,60,0.06)',
+                backdropFilter: 'none',
+                WebkitBackdropFilter: 'none',
                 boxShadow: undefined,
               }}
             >
