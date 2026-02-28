@@ -1516,20 +1516,34 @@ export function ArenaPage() {
           }}
         >
           <div className="mx-auto" style={{ maxWidth: '900px' }}>
-            {/* Conic-gradient progress ring wrapper */}
+            {/* Rotating progress ring wrapper */}
             <div
               className="rounded-[18px] p-[2px] transition-all duration-300"
               style={{
                 background: hasActiveProgress
                   ? completedCount === totalCount && !isStreaming
                     ? '#10b981'
-                    : `conic-gradient(from 0deg, #6366f1 ${progressPct * 3.6}deg, rgba(255,255,255,0.06) ${progressPct * 3.6}deg)`
+                    : 'rgba(255,255,255,0.06)'
                   : 'rgba(255,255,255,0.06)',
+                position: 'relative',
+                overflow: 'hidden',
               }}
             >
+              {/* Spinning arc overlay — only visible during streaming */}
+              {hasActiveProgress && !(completedCount === totalCount && !isStreaming) && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: '-50%',
+                    background: `conic-gradient(from 0deg, transparent 0deg, #6366f1 60deg, #818cf8 120deg, transparent 180deg)`,
+                    animation: 'arena-ring-spin 2.5s linear infinite',
+                    borderRadius: 'inherit',
+                  }}
+                />
+              )}
               <div
                 className="rounded-[16px] p-3"
-                style={{ background: 'var(--bg-base, #0d0d0f)' }}
+                style={{ background: 'var(--bg-base, #0d0d0f)', position: 'relative', zIndex: 1 }}
               >
               <textarea
                 ref={textareaRef}

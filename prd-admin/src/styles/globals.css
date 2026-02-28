@@ -1556,6 +1556,12 @@ html[data-perf-mode="performance"] .blur-text span {
 }
 .arena-markdown strong { font-weight: 700; }
 
+/* Arena input ring spin animation */
+@keyframes arena-ring-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* ── AI-Native UI: Chat Page Styles ───────────────────────────────── */
 
 /* Typing indicator: 3-dot pulse */
