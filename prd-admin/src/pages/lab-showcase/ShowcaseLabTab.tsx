@@ -35,6 +35,7 @@ import { SparkleButton } from '@/components/effects/SparkleButton';
 import { GlowingCard } from '@/components/effects/GlowingCard';
 import { NeonButtonGroup } from '@/components/effects/NeonButton';
 import { OrbitLoader } from '@/components/effects/OrbitLoader';
+import { ParticleVortex } from '@/components/effects/ParticleVortex';
 
 // 预设尺寸
 const PRESET_SIZES = [
@@ -260,6 +261,25 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     render: () => (
       <div className="relative w-full h-full">
         <BlackHoleVortex />
+      </div>
+    ),
+  },
+
+  {
+    id: 'particle-vortex',
+    label: '绿色粒子争夺',
+    functionName: 'ParticleVortex',
+    category: 'background',
+    status: 'ready',
+    sourceRef: '加载-绿色粒子争夺.html',
+    params: [
+      { name: 'particleCount', type: 'number', default: '300', description: '粒子数量' },
+      { name: 'mouseFollow', type: 'boolean', default: 'false', description: '鼠标跟随交互' },
+    ],
+    performance: { frameRate: '60fps (RAF)', renderer: 'Canvas' },
+    render: () => (
+      <div className="relative w-full h-full" style={{ background: '#0a0a0c' }}>
+        <ParticleVortex particleCount={300} mouseFollow />
       </div>
     ),
   },

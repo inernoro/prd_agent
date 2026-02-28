@@ -759,22 +759,11 @@ select optgroup {
   .prd-recgrid-canvas { opacity: 0.9; }
 }
 
-/* 视觉创作 Agent 标题呼吸动画 */
-@keyframes visualAgentTitleBreath {
-  0%, 100% {
-    opacity: 1;
-    filter: brightness(1);
-  }
-  50% {
-    opacity: 0.85;
-    filter: brightness(1.15);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .visual-agent-title-breath {
-    animation: none !important;
-  }
+/* ---- Visual Agent Hero: 标题全息渐变 ---- */
+@keyframes vaHoloFlow {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 /* 缺陷提交按钮呼吸动画（侧边栏常驻按钮用） */

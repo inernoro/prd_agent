@@ -3,7 +3,6 @@ import { SizePickerButton } from '@/components/visual-agent/SizePickerPanel';
 import { glassToolbar, glassInputArea } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import {
@@ -41,6 +40,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
+import { ParticleVortex } from '@/components/effects/ParticleVortex';
 
 // ============ 夜景背景 Canvas 组件 ============
 function NightSkyBackground() {
@@ -492,35 +492,43 @@ const SCENARIO_TAGS = [
 // ============ Hero 区域 ============
 function HeroSection() {
   return (
-    <div className="text-center py-8">
-      {/* Logo - 独立展示，增加视觉焦点 */}
-      <div className="flex items-center justify-center mb-5">
-        <PrdPetalBreathingLoader size={56} variant="gold" />
+    <div className="relative w-full" style={{ height: 260 }}>
+      {/* 粒子漩涡背景 — trailColor 精确匹配 #0a0a0c，无 CSS opacity 避免矩形覆盖 */}
+      <div
+        className="absolute inset-0"
+        style={{
+          maskImage: 'radial-gradient(ellipse 70% 50% at 50% 50%, black 15%, transparent 85%)',
+          WebkitMaskImage: 'radial-gradient(ellipse 70% 50% at 50% 50%, black 15%, transparent 85%)',
+        }}
+      >
+        <ParticleVortex particleCount={200} mouseFollow trailColor="rgba(10,10,12,0.9)" sizeRange={[1, 3]} hueRange={[230, 280]} />
       </div>
-      {/* 主标题 - 加大字号，建立视觉层级 */}
-      <h1
-        className="text-[42px] font-bold tracking-tight mb-3 visual-agent-title-breath"
-        style={{
-          background: 'linear-gradient(135deg, rgba(230, 235, 255, 1) 0%, rgba(199, 210, 254, 1) 50%, rgba(99, 102, 241, 0.95) 100%)',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-          backgroundClip: 'text',
-          letterSpacing: '-0.02em',
-          animation: 'visualAgentTitleBreath 3s ease-in-out infinite',
-        }}
-      >
-        视觉创作 Agent
-      </h1>
-      {/* 副标题 - 偏暖白色调 */}
-      <p
-        className="text-[15px]"
-        style={{
-          color: 'rgba(199,210,254,0.58)',  // 暖白
-          letterSpacing: '0.01em',
-        }}
-      >
-        AI 驱动的设计助手，让创作更简单
-      </p>
+      {/* 文字层 */}
+      <div className="relative z-10 flex flex-col items-center justify-center h-full text-center">
+        <h1
+          className="text-[42px] font-bold tracking-tight mb-3"
+          style={{
+            background: 'linear-gradient(90deg, #c4b5fd, #818cf8, #6ee7b7, #818cf8, #c4b5fd)',
+            backgroundSize: '200% 100%',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+            letterSpacing: '-0.02em',
+            animation: 'vaHoloFlow 6s ease-in-out infinite',
+          }}
+        >
+          视觉创作 Agent
+        </h1>
+        <p
+          className="text-[15px]"
+          style={{
+            color: 'rgba(199,210,254,0.58)',
+            letterSpacing: '0.01em',
+          }}
+        >
+          AI 驱动的设计助手，让创作更简单
+        </p>
+      </div>
     </div>
   );
 }
