@@ -19,6 +19,22 @@ export type ToolboxView = 'grid' | 'detail' | 'create' | 'edit' | 'running' | 'q
 export type ToolboxCategory = 'all' | 'builtin' | 'custom' | 'favorite';
 export type ToolboxPageTab = 'toolbox' | 'capabilities';
 
+const FAVORITES_STORAGE_KEY = 'toolbox-favorites';
+
+function loadFavoritesFromStorage(): Set<string> {
+  try {
+    const raw = localStorage.getItem(FAVORITES_STORAGE_KEY);
+    if (raw) return new Set(JSON.parse(raw) as string[]);
+  } catch { /* ignore */ }
+  return new Set();
+}
+
+function saveFavoritesToStorage(ids: Set<string>) {
+  try {
+    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify([...ids]));
+  } catch { /* ignore */ }
+}
+
 interface ToolboxState {
   // View state
   view: ToolboxView;
@@ -30,6 +46,9 @@ interface ToolboxState {
   items: ToolboxItem[];
   itemsLoading: boolean;
   selectedItem: ToolboxItem | null;
+
+  // Favorites
+  favoriteIds: Set<string>;
 
   // Built-in agents
   builtinAgents: AgentInfo[];
@@ -52,6 +71,8 @@ interface ToolboxState {
   setPageTab: (tab: ToolboxPageTab) => void;
   setCategory: (category: ToolboxCategory) => void;
   setSearchQuery: (query: string) => void;
+  toggleFavorite: (itemId: string) => void;
+  isFavorite: (itemId: string) => boolean;
   startCreate: () => void;
   startEdit: (item: ToolboxItem) => void;
   setEditingItem: (item: Partial<ToolboxItem>) => void;
@@ -135,6 +156,19 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  {
+    id: 'builtin-arena',
+    name: 'AI 竞技场',
+    description: '多模型盲测对战，匿名PK后揭晓真实身份',
+    icon: 'Swords',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'arena',
+    routePath: '/arena',
+    tags: ['竞技场', '模型对比', '盲测'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
   // ========== 普通版 Agent（统一对话界面）==========
   {
     id: 'builtin-code-reviewer',
@@ -196,6 +230,8 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
   items: [],
   itemsLoading: false,
   selectedItem: null,
+
+  favoriteIds: loadFavoritesFromStorage(),
 
   builtinAgents: [],
 
@@ -264,6 +300,23 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
   // Set search query
   setSearchQuery: (query: string) => {
     set({ searchQuery: query });
+  },
+
+  // Toggle favorite
+  toggleFavorite: (itemId: string) => {
+    const next = new Set(get().favoriteIds);
+    if (next.has(itemId)) {
+      next.delete(itemId);
+    } else {
+      next.add(itemId);
+    }
+    saveFavoritesToStorage(next);
+    set({ favoriteIds: next });
+  },
+
+  // Check if item is favorited
+  isFavorite: (itemId: string) => {
+    return get().favoriteIds.has(itemId);
   },
 
   // Start creating a new item (quick wizard)

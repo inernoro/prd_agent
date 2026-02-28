@@ -26,6 +26,7 @@ import type {
   GetDefectStatsContract,
   GetDefectUsersContract,
   PolishDefectContract,
+  AnalyzeDefectImageContract,
   ListDeletedDefectsContract,
   RestoreDefectContract,
   PermanentDeleteDefectContract,
@@ -261,6 +262,13 @@ export const getDefectUsersReal: GetDefectUsersContract = async () => {
 
 export const polishDefectReal: PolishDefectContract = async (input) => {
   return await apiRequest<{ content: string }>(api.defectAgent.polish(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const analyzeDefectImageReal: AnalyzeDefectImageContract = async (input) => {
+  return await apiRequest<{ description: string }>(api.defectAgent.analyzeImage(), {
     method: 'POST',
     body: input,
   });

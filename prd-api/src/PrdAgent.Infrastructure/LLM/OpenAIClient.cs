@@ -311,6 +311,23 @@ public class OpenAIClient : ILLMClient
                 if (eventData.Choices?.Length > 0)
                 {
                     var delta = eventData.Choices[0].Delta;
+
+                    // reasoning_content（DeepSeek / QwQ 等模型的思考过程）
+                    if (!string.IsNullOrEmpty(delta?.ReasoningContent))
+                    {
+                        if (logId != null && !firstByteMarked)
+                        {
+                            firstByteMarked = true;
+                            _logWriter?.MarkFirstByte(logId, DateTime.UtcNow);
+                        }
+
+                        yield return new LLMStreamChunk
+                        {
+                            Type = "thinking",
+                            Content = delta.ReasoningContent
+                        };
+                    }
+
                     if (!string.IsNullOrEmpty(delta?.Content))
                     {
                         if (logId != null && !firstByteMarked)

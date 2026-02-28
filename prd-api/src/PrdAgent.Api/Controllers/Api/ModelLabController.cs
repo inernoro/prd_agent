@@ -591,7 +591,41 @@ public class ModelLabController : ControllerBase
             ? "你好，请用一句话简短回复。"
             : effective.PromptText!;
 
-        var messages = new List<LLMMessage> { new() { Role = "user", Content = prompt } };
+        var userMessage = new LLMMessage { Role = "user", Content = prompt };
+
+        // 识图模式：将图片附加到 user message
+        if (effective.ImageBase64List.Count > 0)
+        {
+            userMessage.Attachments = effective.ImageBase64List
+                .Select(b64 =>
+                {
+                    var isDataUri = b64.StartsWith("data:", StringComparison.OrdinalIgnoreCase);
+                    string? mime = null;
+                    string? rawBase64 = null;
+                    if (isDataUri)
+                    {
+                        // 解析 data:image/png;base64,xxxx
+                        var commaIdx = b64.IndexOf(',');
+                        if (commaIdx > 0)
+                        {
+                            var header = b64[..commaIdx]; // data:image/png;base64
+                            rawBase64 = b64[(commaIdx + 1)..];
+                            var semiIdx = header.IndexOf(';');
+                            if (semiIdx > 5) mime = header[5..semiIdx]; // image/png
+                        }
+                    }
+                    return new LLMAttachment
+                    {
+                        Type = "image",
+                        Url = isDataUri ? b64 : $"data:image/png;base64,{b64}",
+                        MimeType = mime ?? "image/png",
+                        Base64Data = rawBase64 ?? (isDataUri ? null : b64)
+                    };
+                })
+                .ToList();
+        }
+
+        var messages = new List<LLMMessage> { userMessage };
 
         var requestType = effective.Suite == ModelLabSuite.Intent ? "intent" : "reasoning";
         var appCallerCode = Admin.ModelLab.Run;
@@ -932,6 +966,12 @@ public class ModelLabController : ControllerBase
 
         models = normalized;
 
+        // 识图模式：过滤空白项，限制数量
+        var imageBase64List = (request.ImageBase64List ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Take(10)
+            .ToList();
+
         return EffectiveRunRequest.Ok(
             experimentId: exp?.Id,
             suite: suite,
@@ -941,7 +981,8 @@ public class ModelLabController : ControllerBase
             systemPromptOverride: fmt is "imagegenplan" or "image_gen_plan" or "image-gen-plan" ? systemPromptOverride : null,
             @params: p,
             enablePromptCache: request.EnablePromptCache,
-            models: models);
+            models: models,
+            imageBase64List: imageBase64List);
     }
 
     private (string? apiUrl, string? apiKey, string? platformType, string? platformId, string? platformName) ResolveApiConfigForModel(LLMModel model, string jwtSecret)
@@ -1034,6 +1075,12 @@ public class RunStreamRequest
 
     /// <summary>可选：直接传完整模型信息</summary>
     public List<ModelLabSelectedModel>? Models { get; set; }
+
+    /// <summary>
+    /// 可选：识图模式下传入的图片 Base64 列表（data URI 或纯 base64）。
+    /// 每张图片将作为 LLMAttachment 附加到 user message 中。
+    /// </summary>
+    public List<string>? ImageBase64List { get; set; }
 }
 
 internal class EffectiveRunRequest
@@ -1051,6 +1098,7 @@ internal class EffectiveRunRequest
     public ModelLabParams Params { get; private set; } = new();
     public bool? EnablePromptCache { get; private set; }
     public List<ModelLabSelectedModel> Models { get; private set; } = new();
+    public List<string> ImageBase64List { get; private set; } = new();
 
     public static EffectiveRunRequest Fail(string code, string message) => new()
     {
@@ -1068,7 +1116,8 @@ internal class EffectiveRunRequest
         string? systemPromptOverride,
         ModelLabParams @params,
         bool? enablePromptCache,
-        List<ModelLabSelectedModel> models) => new()
+        List<ModelLabSelectedModel> models,
+        List<string>? imageBase64List = null) => new()
     {
         Success = true,
         ExperimentId = experimentId,
@@ -1079,7 +1128,8 @@ internal class EffectiveRunRequest
         SystemPromptOverride = systemPromptOverride,
         Params = @params,
         EnablePromptCache = enablePromptCache,
-        Models = models
+        Models = models,
+        ImageBase64List = imageBase64List ?? new()
     };
 }
 

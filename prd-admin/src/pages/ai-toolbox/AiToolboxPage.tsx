@@ -1,7 +1,8 @@
 import { useEffect, useMemo } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
+import { TabBar, type TabBarItem } from '@/components/design/TabBar';
 import { useToolboxStore, type ToolboxCategory, type ToolboxPageTab } from '@/stores/toolboxStore';
-import { Package, Search, Plus, Loader2, Sparkles, Boxes, User, Wrench } from 'lucide-react';
+import { Package, Search, Plus, Loader2, Sparkles, Boxes, User, Wrench, Star } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { ToolCard } from './components/ToolCard';
@@ -11,15 +12,16 @@ import { ToolRunner } from './components/ToolRunner';
 import { BasicCapabilities } from './components/BasicCapabilities';
 import { QuickCreateWizard } from './components/QuickCreateWizard';
 
-const PAGE_TABS: { key: ToolboxPageTab; label: string; icon: React.ReactNode }[] = [
+const PAGE_TABS: TabBarItem[] = [
   { key: 'toolbox', label: 'AI 百宝箱', icon: <Package size={14} /> },
   { key: 'capabilities', label: '基础能力', icon: <Wrench size={14} /> },
 ];
 
-const CATEGORY_OPTIONS: { key: ToolboxCategory; label: string; icon: React.ReactNode }[] = [
-  { key: 'all', label: '全部', icon: <Boxes size={12} /> },
-  { key: 'builtin', label: '内置工具', icon: <Sparkles size={12} /> },
-  { key: 'custom', label: '我创建的', icon: <User size={12} /> },
+const CATEGORY_TABS: TabBarItem[] = [
+  { key: 'all', label: '全部', icon: <Boxes size={14} /> },
+  { key: 'favorite', label: '收藏', icon: <Star size={14} /> },
+  { key: 'builtin', label: '内置工具', icon: <Sparkles size={14} /> },
+  { key: 'custom', label: '我创建的', icon: <User size={14} /> },
 ];
 
 // 页面容器样式 — 页面级不使用 surface 类，保持透明让卡片自身表达玻璃质感
@@ -36,6 +38,7 @@ export default function AiToolboxPage() {
     items,
     itemsLoading,
     selectedItem,
+    favoriteIds,
     setPageTab,
     setCategory,
     setSearchQuery,
@@ -56,6 +59,8 @@ export default function AiToolboxPage() {
       result = result.filter((item) => item.type === 'builtin');
     } else if (category === 'custom') {
       result = result.filter((item) => item.type === 'custom');
+    } else if (category === 'favorite') {
+      result = result.filter((item) => favoriteIds.has(item.id));
     }
 
     // Filter by search
@@ -70,7 +75,7 @@ export default function AiToolboxPage() {
     }
 
     return result;
-  }, [items, category, searchQuery]);
+  }, [items, category, searchQuery, favoriteIds]);
 
   // Render based on current view
   if (view === 'detail' && selectedItem) {
@@ -97,119 +102,64 @@ export default function AiToolboxPage() {
   // Grid view (default)
   return (
     <div className={`${pageContainerClassName} h-full min-h-0 flex flex-col gap-3`} style={pageContainerStyle}>
-      {/* Header */}
+      {/* Header — 使用统一 TabBar */}
       <div className="px-4 pt-3">
-        <div className={`flex ${isMobile ? 'flex-col gap-2.5' : 'items-center justify-between'}`}>
-          {/* Page Tab Switcher */}
-          <div
-            className="flex items-center gap-0.5 p-0.5 rounded-xl"
-            style={{
-              background: 'rgba(255, 255, 255, 0.03)',
-              border: '1px solid rgba(255, 255, 255, 0.06)',
-            }}
-          >
-            {PAGE_TABS.map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setPageTab(tab.key)}
-                className={`${isMobile ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm'} rounded-lg font-medium transition-all duration-200 flex items-center gap-1.5`}
-                style={{
-                  background: pageTab === tab.key
-                    ? 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
-                    : 'transparent',
-                  color: pageTab === tab.key ? 'white' : 'rgba(255, 255, 255, 0.6)',
-                  boxShadow: pageTab === tab.key
-                    ? '0 2px 10px -2px rgba(var(--accent-primary-rgb, 99, 102, 241), 0.4)'
-                    : 'none',
-                }}
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Actions */}
-          <Button variant="primary" size="sm" onClick={startCreate} className={isMobile ? 'self-end' : ''}>
-            <Plus size={13} />
-            创建智能体
-          </Button>
-        </div>
+        <TabBar
+          items={PAGE_TABS}
+          activeKey={pageTab}
+          onChange={(key) => setPageTab(key as ToolboxPageTab)}
+          actions={
+            <Button variant="primary" size="sm" onClick={startCreate}>
+              <Plus size={13} />
+              创建智能体
+            </Button>
+          }
+        />
       </div>
 
-      {/* Filters */}
+      {/* Filters — 使用统一 TabBar */}
       <div className="px-4">
-        <div
-          className={`${isMobile ? 'flex flex-col gap-2' : 'flex items-center gap-3'} px-3 py-2 rounded-xl`}
-          style={{
-            background: 'rgba(255, 255, 255, 0.02)',
-            border: '1px solid rgba(255, 255, 255, 0.05)',
-          }}
-        >
-          {/* Category tabs + Count badge */}
-          <div className="flex items-center gap-2">
-            <div
-              className="flex items-center gap-0.5 p-0.5 rounded-lg"
-              style={{
-                background: 'rgba(255, 255, 255, 0.03)',
-                border: '1px solid rgba(255, 255, 255, 0.04)',
-              }}
-            >
-              {CATEGORY_OPTIONS.map((opt) => (
-                <button
-                  key={opt.key}
-                  onClick={() => setCategory(opt.key)}
-                  className={`${isMobile ? 'px-2 py-1' : 'px-3 py-1.5'} rounded-md text-xs font-medium transition-all duration-200 flex items-center gap-1.5 whitespace-nowrap`}
+        <TabBar
+          items={CATEGORY_TABS}
+          activeKey={category}
+          onChange={(key) => setCategory(key as ToolboxCategory)}
+          actions={
+            <div className="flex items-center gap-2">
+              {/* Count badge */}
+              <div
+                className="px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap shrink-0"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  color: 'rgba(255, 255, 255, 0.6)',
+                  border: '1px solid rgba(255, 255, 255, 0.05)',
+                }}
+              >
+                {filteredItems.length} 个工具
+              </div>
+
+              {/* Search */}
+              <div className="relative">
+                <Search
+                  size={14}
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                  style={{ color: 'rgba(255, 255, 255, 0.4)' }}
+                />
+                <input
+                  type="text"
+                  placeholder={isMobile ? '搜索...' : '搜索工具名称、描述或标签...'}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className={`${isMobile ? 'w-32' : 'w-56'} pl-8 pr-3 py-1.5 rounded-lg text-xs outline-none transition-all duration-200 focus:ring-1 focus:ring-[var(--accent-primary)]/30`}
                   style={{
-                    background: category === opt.key
-                      ? 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
-                      : 'transparent',
-                    color: category === opt.key ? 'white' : 'rgba(255, 255, 255, 0.6)',
-                    boxShadow: category === opt.key
-                      ? '0 2px 8px -2px rgba(var(--accent-primary-rgb, 99, 102, 241), 0.4)'
-                      : 'none',
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid rgba(255, 255, 255, 0.06)',
+                    color: 'rgba(255, 255, 255, 0.9)',
                   }}
-                >
-                  {opt.icon}
-                  {opt.label}
-                </button>
-              ))}
+                />
+              </div>
             </div>
-
-            {/* Count badge */}
-            <div
-              className="px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap shrink-0"
-              style={{
-                background: 'rgba(255, 255, 255, 0.04)',
-                color: 'rgba(255, 255, 255, 0.6)',
-                border: '1px solid rgba(255, 255, 255, 0.05)',
-              }}
-            >
-              {filteredItems.length} 个工具
-            </div>
-          </div>
-
-          {/* Search */}
-          <div className={`${isMobile ? 'w-full' : 'flex-1 max-w-sm'} relative`}>
-            <Search
-              size={14}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-              style={{ color: 'rgba(255, 255, 255, 0.4)' }}
-            />
-            <input
-              type="text"
-              placeholder={isMobile ? '搜索工具...' : '搜索工具名称、描述或标签...'}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 rounded-lg text-xs outline-none transition-all duration-200 focus:ring-1 focus:ring-[var(--accent-primary)]/30"
-              style={{
-                background: 'rgba(255, 255, 255, 0.03)',
-                border: '1px solid rgba(255, 255, 255, 0.06)',
-                color: 'rgba(255, 255, 255, 0.9)',
-              }}
-            />
-          </div>
-        </div>
+          }
+        />
       </div>
 
       {/* Tool Grid */}

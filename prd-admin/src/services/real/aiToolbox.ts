@@ -10,6 +10,8 @@ export interface ToolboxItem {
   name: string;
   description: string;
   icon: string;
+  /** 卡片上显示的 emoji 标识，便于用户快速识别 */
+  emoji?: string;
   category: 'builtin' | 'custom';
   type: 'builtin' | 'custom';
   agentKey?: string;

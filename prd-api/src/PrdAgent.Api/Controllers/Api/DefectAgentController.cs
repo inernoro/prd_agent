@@ -1537,10 +1537,28 @@ public class DefectAgentController : ControllerBase
             // 获取 LLM 客户端（使用注册的 AppCallerCode）
             var client = _gateway.CreateClient(AppCallerRegistry.DefectAgent.Polish.Chat, "chat");
 
+            // 构建用户消息（包含截图分析描述）
+            var userContent = new StringBuilder();
+            userContent.AppendLine("请润色以下缺陷描述：");
+            userContent.AppendLine();
+            userContent.AppendLine(request.Content);
+
+            if (request.ImageDescriptions?.Count > 0)
+            {
+                userContent.AppendLine();
+                userContent.AppendLine("用户还附带了截图，以下是截图的 AI 分析描述：");
+                for (var i = 0; i < request.ImageDescriptions.Count; i++)
+                {
+                    userContent.AppendLine($"{i + 1}. {request.ImageDescriptions[i]}");
+                }
+                userContent.AppendLine();
+                userContent.AppendLine("请结合文字描述和截图分析，输出完整的缺陷报告。");
+            }
+
             // 调用 LLM
             var messages = new List<LLMMessage>
             {
-                new() { Role = "user", Content = $"请润色以下缺陷描述：\n\n{request.Content}" }
+                new() { Role = "user", Content = userContent.ToString() }
             };
 
             var resultBuilder = new StringBuilder();
@@ -1566,6 +1584,83 @@ public class DefectAgentController : ControllerBase
         {
             _logger.LogError(ex, "[{AppKey}] Failed to polish defect", AppKey);
             return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "AI 润色失败，请稍后重试"));
+        }
+    }
+
+    /// <summary>
+    /// VLM 分析截图中的缺陷内容
+    /// </summary>
+    [HttpPost("images/analyze")]
+    public async Task<IActionResult> AnalyzeImage([FromBody] AnalyzeImageRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Base64))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片数据不能为空"));
+
+        // 先检查模型池是否可用，给出明确的配置提示
+        var resolution = await _gateway.ResolveModelAsync(
+            AppCallerRegistry.DefectAgent.AnalyzeImage.Vision, "vision");
+        if (resolution is { Success: false })
+        {
+            _logger.LogWarning("[{AppKey}] VLM 模型池未配置: {Error}", AppKey, resolution.ErrorMessage);
+            return StatusCode(503, ApiResponse<object>.Fail("MODEL_NOT_CONFIGURED",
+                "截图分析功能需要配置 vision 模型池，请在管理后台「模型组管理」中绑定 defect-agent.analyze-image::vision"));
+        }
+
+        try
+        {
+            var systemPrompt = @"你是一个专业的缺陷截图分析助手。请仔细观察这张截图，提取以下信息：
+1. 截图中被标记、圈出、箭头指向的问题区域
+2. 界面上可见的错误信息或异常状态
+3. 用户用红框、箭头、文字等标注的重点内容
+4. 任何与缺陷相关的上下文信息（页面名称、操作步骤等）
+
+请用简洁准确的语言描述截图中展示的缺陷内容（2-5句话）。直接输出描述，不要添加前缀或解释。";
+
+            var client = _gateway.CreateClient(AppCallerRegistry.DefectAgent.AnalyzeImage.Vision, "vision");
+
+            var messages = new List<LLMMessage>
+            {
+                new()
+                {
+                    Role = "user",
+                    Content = "请分析这张截图中的缺陷内容。",
+                    Attachments = new List<LLMAttachment>
+                    {
+                        new()
+                        {
+                            Type = "image",
+                            Base64Data = request.Base64,
+                            MimeType = request.MimeType,
+                        }
+                    }
+                }
+            };
+
+            // 服务器权威性设计：VLM 调用使用 CancellationToken.None
+            // 客户端断开不应中断正在进行的模型推理
+            var resultBuilder = new StringBuilder();
+            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, CancellationToken.None))
+            {
+                if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    resultBuilder.Append(chunk.Content);
+                }
+                else if (chunk.Type == "error")
+                {
+                    _logger.LogWarning("[{AppKey}] Image analyze error: {Error}", AppKey, chunk.ErrorMessage);
+                    return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, chunk.ErrorMessage ?? "图片分析失败"));
+                }
+            }
+
+            var description = resultBuilder.ToString().Trim();
+            _logger.LogInformation("[{AppKey}] Image analyzed successfully", AppKey);
+
+            return Ok(ApiResponse<object>.Ok(new { description }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[{AppKey}] Failed to analyze image", AppKey);
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "图片分析失败，请稍后重试"));
         }
     }
 
@@ -1821,6 +1916,14 @@ public class PolishDefectRequest
 {
     public string Content { get; set; } = string.Empty;
     public string? TemplateId { get; set; }
+    /// <summary>VLM 预解析的截图描述列表</summary>
+    public List<string>? ImageDescriptions { get; set; }
+}
+
+public class AnalyzeImageRequest
+{
+    public string Base64 { get; set; } = string.Empty;
+    public string MimeType { get; set; } = "image/png";
 }
 
 public class AssignDefectRequest

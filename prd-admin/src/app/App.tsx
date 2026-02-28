@@ -18,6 +18,7 @@ import { VideoAgentPage } from '@/pages/video-agent';
 import { WorkflowListPage, WorkflowEditorPage, WorkflowCanvasPage } from '@/pages/workflow-agent';
 import { MarketplacePage } from '@/pages/marketplace';
 import { AiToolboxPage } from '@/pages/ai-toolbox';
+import { ArenaPage } from '@/pages/arena/ArenaPage';
 import { LandingPage } from '@/pages/home';
 import OpenPlatformTabsPage from '@/pages/OpenPlatformTabsPage';
 import AutomationRulesPage from '@/pages/AutomationRulesPage';
@@ -257,6 +258,7 @@ export default function App() {
 
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
+        <Route path="arena" element={<RequirePermission perm="access"><ArenaPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
         <Route path="executive" element={<RequirePermission perm="access"><ExecutivePage /></RequirePermission>} />

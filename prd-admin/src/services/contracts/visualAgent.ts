@@ -84,6 +84,8 @@ export type VisualAgentWorkspace = {
   articleWorkflow?: ArticleIllustrationWorkflow | null;
   /** 文件夹名称（用于分组显示） */
   folderName?: string | null;
+  /** 风格统一提示词（设置后生图时自动拼接） */
+  stylePrompt?: string | null;
 };
 
 export type VisualAgentViewport = {
@@ -114,6 +116,7 @@ export type UpdateVisualAgentWorkspaceContract = (input: {
   scenarioType?: string;
   folderName?: string | null;
   selectedPromptId?: string | null;
+  stylePrompt?: string | null;
   idempotencyKey?: string;
 }) => Promise<ApiResponse<{ workspace: VisualAgentWorkspace }>>;
 export type DeleteVisualAgentWorkspaceContract = (input: { id: string; idempotencyKey?: string }) => Promise<ApiResponse<{ deleted: boolean }>>;

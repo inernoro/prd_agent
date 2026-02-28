@@ -759,22 +759,11 @@ select optgroup {
   .prd-recgrid-canvas { opacity: 0.9; }
 }
 
-/* 视觉创作 Agent 标题呼吸动画 */
-@keyframes visualAgentTitleBreath {
-  0%, 100% {
-    opacity: 1;
-    filter: brightness(1);
-  }
-  50% {
-    opacity: 0.85;
-    filter: brightness(1.15);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .visual-agent-title-breath {
-    animation: none !important;
-  }
+/* ---- Visual Agent Hero: 标题全息渐变 ---- */
+@keyframes vaHoloFlow {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 /* 缺陷提交按钮呼吸动画（侧边栏常驻按钮用） */
@@ -1481,6 +1470,85 @@ html[data-perf-mode="performance"] .blur-text span {
   .workflow-canvas .react-flow__edge.animated path {
     animation: none !important;
   }
+}
+
+/* ========================================
+   Arena Markdown — 竞技场面板内 Markdown 渲染
+   ======================================== */
+
+.arena-markdown p { margin: 0.5em 0; }
+.arena-markdown p:first-child { margin-top: 0; }
+.arena-markdown p:last-child { margin-bottom: 0; }
+.arena-markdown h1, .arena-markdown h2, .arena-markdown h3,
+.arena-markdown h4, .arena-markdown h5, .arena-markdown h6 {
+  font-weight: 700;
+  margin: 1em 0 0.5em;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+.arena-markdown h1 { font-size: 1.3em; }
+.arena-markdown h2 { font-size: 1.15em; }
+.arena-markdown h3 { font-size: 1.05em; }
+.arena-markdown ul, .arena-markdown ol { margin: 0.5em 0; padding-left: 1.5em; }
+.arena-markdown li { margin: 0.25em 0; }
+.arena-markdown code {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.88em;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.arena-markdown pre {
+  margin: 0.75em 0;
+  padding: 0.75em 1em;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.06);
+  overflow-x: auto;
+}
+.arena-markdown pre code {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 0.85em;
+}
+.arena-markdown blockquote {
+  margin: 0.5em 0;
+  padding: 0.5em 1em;
+  border-left: 3px solid rgba(255,255,255,0.15);
+  color: var(--text-muted);
+}
+.arena-markdown table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  width: 100%;
+}
+.arena-markdown th, .arena-markdown td {
+  padding: 0.4em 0.75em;
+  border: 1px solid rgba(255,255,255,0.08);
+  text-align: left;
+}
+.arena-markdown th {
+  background: rgba(255,255,255,0.04);
+  font-weight: 600;
+}
+.arena-markdown hr {
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  margin: 1em 0;
+}
+.arena-markdown a {
+  color: rgba(99, 102, 241, 0.9);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.arena-markdown strong { font-weight: 700; }
+
+/* Arena input ring spin animation */
+@keyframes arena-ring-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* ── AI-Native UI: Chat Page Styles ───────────────────────────────── */
