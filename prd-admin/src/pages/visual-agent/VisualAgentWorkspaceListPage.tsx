@@ -508,7 +508,7 @@ function HeroSection() {
         <h1
           className="text-[42px] font-bold tracking-tight mb-3"
           style={{
-            background: 'linear-gradient(90deg, #c4b5fd, #818cf8, #6ee7b7, #818cf8, #c4b5fd)',
+            background: 'linear-gradient(90deg, #e2e8f0, #6ee7b7, #a7f3d0, #6ee7b7, #e2e8f0)',
             backgroundSize: '200% 100%',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
