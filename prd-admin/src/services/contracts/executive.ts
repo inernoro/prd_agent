@@ -44,6 +44,8 @@ export type ExecutiveAgentStat = {
   users: number;
   tokens: number;
   avgDurationMs: number;
+  llmCalls: number;
+  apiCalls: number;
 };
 
 export type ExecutiveModelStat = {

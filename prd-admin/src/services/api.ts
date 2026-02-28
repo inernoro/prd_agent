@@ -263,6 +263,12 @@ export const api = {
     leaderboard: () => '/api/executive/leaderboard',
   },
 
+  // ============ Profile 自服务 ============
+  profile: {
+    avatarUpload: () => '/api/profile/avatar/upload',
+    avatar: () => '/api/profile/avatar',
+  },
+
   // ============ Dashboard 仪表盘 ============
   dashboard: {
     notifications: {
@@ -441,6 +447,7 @@ export const api = {
     stats: () => '/api/defect-agent/stats',
     users: () => '/api/defect-agent/users',
     polish: () => '/api/defect-agent/defects/polish',
+    analyzeImage: () => '/api/defect-agent/images/analyze',
     logs: {
       preview: () => '/api/defect-agent/logs/preview',
     },
@@ -683,6 +690,31 @@ export const api = {
     feed: () => '/api/mobile/feed',
     stats: () => '/api/mobile/stats',
     assets: () => '/api/mobile/assets',
+  },
+
+  // ============ Arena 竞技场 ============
+  arena: {
+    groups: {
+      list: () => '/api/lab/arena/groups',
+      byId: (id: string) => `/api/lab/arena/groups/${id}`,
+    },
+    slots: {
+      list: () => '/api/lab/arena/slots',
+      byId: (id: string) => `/api/lab/arena/slots/${id}`,
+      toggle: (id: string) => `/api/lab/arena/slots/${id}/toggle`,
+    },
+    lineup: () => '/api/lab/arena/lineup',
+    reveal: () => '/api/lab/arena/reveal',
+    runs: {
+      create: () => '/api/lab/arena/runs',
+      byId: (id: string) => `/api/lab/arena/runs/${id}`,
+      cancel: (id: string) => `/api/lab/arena/runs/${id}/cancel`,
+      stream: (id: string) => `/api/lab/arena/runs/${id}/stream`,
+    },
+    battles: {
+      list: () => '/api/lab/arena/battles',
+      byId: (id: string) => `/api/lab/arena/battles/${id}`,
+    },
   },
 } as const;
 

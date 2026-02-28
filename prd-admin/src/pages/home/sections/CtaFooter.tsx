@@ -1,4 +1,5 @@
 import { cn } from '@/lib/cn';
+import BlurText from '@/components/reactbits/BlurText';
 
 interface CtaFooterProps {
   className?: string;
@@ -14,7 +15,7 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
 
       {/* Decorative glow orbs */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full opacity-20 blur-[100px]"
-        style={{ background: 'radial-gradient(circle, rgba(214, 178, 106, 0.6) 0%, transparent 70%)' }}
+        style={{ background: 'radial-gradient(circle, rgba(99, 102, 241, 0.6) 0%, transparent 70%)' }}
       />
       <div className="absolute top-0 right-0 w-80 h-80 rounded-full opacity-10 blur-[80px]"
         style={{ background: 'radial-gradient(circle, rgba(139, 92, 246, 0.8) 0%, transparent 70%)' }}
@@ -40,7 +41,7 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
         {[...Array(12)].map((_, i) => (
           <div
             key={i}
-            className="absolute w-1 h-1 bg-amber-400/60 rounded-full animate-pulse"
+            className="absolute w-1 h-1 bg-indigo-400/60 rounded-full animate-pulse"
             style={{
               left: `${10 + (i * 7) % 80}%`,
               top: `${15 + (i * 11) % 70}%`,
@@ -54,12 +55,12 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
       {/* Content */}
       <div className="relative z-10 max-w-5xl mx-auto px-6 text-center">
         {/* Badge */}
-        <div className="inline-flex items-center gap-2 px-4 py-2 mb-8 rounded-full border border-amber-500/20 bg-amber-500/10 backdrop-blur-sm">
+        <div className="inline-flex items-center gap-2 px-4 py-2 mb-8 rounded-full border border-indigo-500/20 bg-indigo-500/10 backdrop-blur-sm">
           <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500" />
           </span>
-          <span className="text-sm text-amber-400/90">限时免费体验中</span>
+          <span className="text-sm text-indigo-400/90">限时免费体验中</span>
         </div>
 
         {/* Headline */}
@@ -69,7 +70,7 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
           <span
             className="relative inline-block"
             style={{
-              background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+              background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
               backgroundClip: 'text',
@@ -80,24 +81,29 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
             <svg className="absolute -bottom-2 left-0 w-full" viewBox="0 0 200 8" fill="none">
               <path
                 d="M2 6C50 2 150 2 198 6"
-                stroke="url(#goldGradient)"
+                stroke="url(#indigoGradient)"
                 strokeWidth="3"
                 strokeLinecap="round"
               />
               <defs>
-                <linearGradient id="goldGradient" x1="0" y1="0" x2="200" y2="0" gradientUnits="userSpaceOnUse">
-                  <stop offset="0%" stopColor="#f4e2b8" />
-                  <stop offset="50%" stopColor="#d6b26a" />
-                  <stop offset="100%" stopColor="#f2d59b" />
+                <linearGradient id="indigoGradient" x1="0" y1="0" x2="200" y2="0" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stopColor="#c7d2fe" />
+                  <stop offset="50%" stopColor="#6366f1" />
+                  <stop offset="100%" stopColor="#a5b4fc" />
                 </linearGradient>
               </defs>
             </svg>
           </span>
         </h2>
 
-        <p className="text-lg sm:text-xl text-white/50 max-w-2xl mx-auto mb-10">
-          立即注册，免费体验智能 Agent 平台的强大能力
-        </p>
+        <BlurText
+          text="立即注册，免费体验智能 Agent 平台的强大能力"
+          delay={30}
+          animateBy="letters"
+          direction="bottom"
+          className="justify-center text-lg sm:text-xl text-white/50 max-w-2xl mx-auto mb-10"
+          stepDuration={0.3}
+        />
 
         {/* Quick stats */}
         <div className="flex items-center justify-center gap-8 sm:gap-12 mb-10">
@@ -119,9 +125,9 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
             onClick={onGetStarted}
             className="group relative px-10 py-4 rounded-xl font-semibold text-lg transition-all duration-300 hover:scale-105 active:scale-95"
             style={{
-              background: 'linear-gradient(135deg, #f4e2b8 0%, #d6b26a 45%, #f2d59b 100%)',
+              background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
               color: '#0b0b0d',
-              boxShadow: '0 0 60px rgba(214, 178, 106, 0.4), 0 8px 32px rgba(0,0,0,0.4)',
+              boxShadow: '0 0 60px rgba(99, 102, 241, 0.4), 0 8px 32px rgba(0,0,0,0.4)',
             }}
           >
             <span className="relative z-10 flex items-center gap-2">

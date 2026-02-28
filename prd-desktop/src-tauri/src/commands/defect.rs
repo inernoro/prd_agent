@@ -106,7 +106,9 @@ pub async fn submit_defect(id: String) -> Result<ApiResponse<serde_json::Value>,
 #[command]
 pub async fn get_defect(id: String) -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
-    client.get(&format!("/api/defect-agent/defects/{}", id)).await
+    client
+        .get(&format!("/api/defect-agent/defects/{}", id))
+        .await
 }
 
 /// 获取缺陷消息列表（支持 afterSeq 增量拉取）
@@ -132,7 +134,10 @@ pub async fn send_defect_message(
     let client = ApiClient::new();
     let request = SendDefectMessageRequest { content };
     client
-        .post(&format!("/api/defect-agent/defects/{}/messages", id), &request)
+        .post(
+            &format!("/api/defect-agent/defects/{}/messages", id),
+            &request,
+        )
         .await
 }
 
@@ -155,7 +160,10 @@ pub async fn resolve_defect(
     let client = ApiClient::new();
     let request = ResolveDefectRequest { resolution };
     client
-        .post(&format!("/api/defect-agent/defects/{}/resolve", id), &request)
+        .post(
+            &format!("/api/defect-agent/defects/{}/resolve", id),
+            &request,
+        )
         .await
 }
 
@@ -168,7 +176,10 @@ pub async fn reject_defect(
     let client = ApiClient::new();
     let request = RejectDefectRequest { reason };
     client
-        .post(&format!("/api/defect-agent/defects/{}/reject", id), &request)
+        .post(
+            &format!("/api/defect-agent/defects/{}/reject", id),
+            &request,
+        )
         .await
 }
 

@@ -3,6 +3,8 @@ import { Dialog } from '@/components/ui/Dialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import { Button } from '@/components/design/Button';
 import { uploadUserAvatar } from '@/services';
+import type { ApiResponse } from '@/types/api';
+import type { AdminUserAvatarUploadResponse } from '@/services/contracts/userAvatarUpload';
 
 export function AvatarEditDialog(props: {
   open: boolean;
@@ -14,6 +16,8 @@ export function AvatarEditDialog(props: {
   userType?: string | null;
   avatarFileName?: string | null;
   onSave: (avatarFileName: string | null) => Promise<void>;
+  /** 自定义上传函数（用于自服务场景，绕过 users.write 权限） */
+  onUpload?: (file: File) => Promise<ApiResponse<AdminUserAvatarUploadResponse>>;
 }) {
   const [avatarFileName, setAvatarFileName] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -40,14 +44,16 @@ export function AvatarEditDialog(props: {
 
   const onChooseFile = async (file: File | null | undefined) => {
     if (!file) return;
-    if (!props.userId) {
+    if (!props.onUpload && !props.userId) {
       setError('缺少 userId，无法上传头像');
       return;
     }
     setUploading(true);
     setError(null);
     try {
-      const res = await uploadUserAvatar({ userId: props.userId, file });
+      const res = props.onUpload
+        ? await props.onUpload(file)
+        : await uploadUserAvatar({ userId: props.userId!, file });
       if (!res.success) throw new Error(res.error?.message || '上传失败');
       const fn = String(res.data?.avatarFileName || '').trim();
       if (fn) {
@@ -107,7 +113,7 @@ export function AvatarEditDialog(props: {
               <Button
                 variant="secondary"
                 size="sm"
-                disabled={uploading || !props.userId}
+                disabled={uploading || (!props.onUpload && !props.userId)}
                 onClick={() => fileInputRef.current?.click()}
               >
                 {uploading ? '上传中...' : '上传图片'}

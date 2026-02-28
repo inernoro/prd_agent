@@ -19,6 +19,7 @@ export interface DefectTemplate {
   id: string;
   name: string;
   description?: string;
+  exampleContent?: string;
   requiredFields: DefectTemplateField[];
   aiSystemPrompt?: string;
   isDefault: boolean;
@@ -216,7 +217,8 @@ export type ListDefectTemplatesContract = () => Promise<ApiResponse<{ items: Def
 export type CreateDefectTemplateContract = (input: {
   name: string;
   description?: string;
-  requiredFields: DefectTemplateField[];
+  exampleContent?: string;
+  requiredFields?: DefectTemplateField[];
   aiSystemPrompt?: string;
   isDefault?: boolean;
 }) => Promise<ApiResponse<{ template: DefectTemplate }>>;
@@ -225,6 +227,7 @@ export type UpdateDefectTemplateContract = (input: {
   id: string;
   name?: string;
   description?: string;
+  exampleContent?: string;
   requiredFields?: DefectTemplateField[];
   aiSystemPrompt?: string;
   isDefault?: boolean;
@@ -310,7 +313,13 @@ export type DeleteDefectAttachmentContract = (input: {
 export type PolishDefectContract = (input: {
   content: string;
   templateId?: string;
+  imageDescriptions?: string[];
 }) => Promise<ApiResponse<{ content: string }>>;
+
+export type AnalyzeDefectImageContract = (input: {
+  base64: string;
+  mimeType: string;
+}) => Promise<ApiResponse<{ description: string }>>;
 
 export type GetDefectStatsContract = () => Promise<ApiResponse<DefectStats>>;
 

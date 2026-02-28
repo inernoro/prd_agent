@@ -51,9 +51,10 @@ import {
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import type { SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2 } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2, ArrowLeft } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -96,7 +97,7 @@ const PRD_MD_STYLE = `
   .prd-md ul,.prd-md ol { margin: 10px 0; padding-left: 18px; }
   .prd-md li { margin: 6px 0; }
   .prd-md hr { border: 0; border-top: 1px solid var(--border-default); margin: 14px 0; }
-  .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(231,206,151,0.35); background: rgba(231,206,151,0.06); color: rgba(231,206,151,0.92); border-radius: 10px; }
+  .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: rgba(165,180,252,0.92); border-radius: 10px; }
   .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
   .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 6px; border-radius: 8px; }
   .prd-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 14px; padding: 12px; overflow: auto; }
@@ -190,7 +191,7 @@ const PRD_MD_STYLE = `
 
   /* 文章内图片显示尺寸控制 */
   .prd-md img[data-marker-idx] {
-    max-width: var(--img-display-size, 100%) !important;
+    max-width: var(--img-display-size, 50%) !important;
     transition: max-width 0.3s ease;
     display: block;
     margin-left: auto;
@@ -275,6 +276,7 @@ const panelCardStyle: React.CSSProperties = {
 
 const PanelCard = ({ className, children }: { className?: string; children: React.ReactNode }) => (
   <GlassCard
+    animated
     variant="subtle"
     padding="sm"
     className={cn('rounded-[16px]', className)}
@@ -285,6 +287,7 @@ const PanelCard = ({ className, children }: { className?: string; children: Reac
 );
 
 export default function ArticleIllustrationEditorPage({ workspaceId }: { workspaceId: string }) {
+  const navigate = useNavigate();
   const { isMobile } = useBreakpoint();
   const [mobileTab, setMobileTab] = useState<'article' | 'markers'>('article');
   const [articleContent, setArticleContent] = useState('');
@@ -372,7 +375,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
   const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
   const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
-  const [imageDisplaySize, setImageDisplaySize] = useState(100); // 文章内图片显示尺寸百分比
+  const [imageDisplaySize, setImageDisplaySize] = useState(50); // 文章内图片显示尺寸百分比
   const [rawMarkerOutput, setRawMarkerOutput] = useState(''); // Anchor 模式下 LLM 原始输出（用于视觉反馈）
 
   // 当新 marker 卡片出现时，触发入场发光动画
@@ -412,7 +415,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   
   // 提示词模板管理（只有用户模板）
   const [userPrompts, setUserPrompts] = useState<PromptTemplate[]>([]);
-  const [selectedPrompt, setSelectedPrompt] = useState<PromptTemplate | null>(null);
+  const [selectedPrompt, setSelectedPromptRaw] = useState<PromptTemplate | null>(null);
+  // 从 workspace 加载的 selectedPromptId（用于 loadLiteraryPrompts 后恢复选中状态）
+  const pendingSelectedPromptIdRef = useRef<string | null>(null);
+
+  // 选择/取消提示词时同步持久化到后端
+  const setSelectedPrompt = useCallback((prompt: PromptTemplate | null) => {
+    setSelectedPromptRaw(prompt);
+    // 异步持久化，不阻塞 UI
+    void updateVisualAgentWorkspace({
+      id: workspaceId,
+      selectedPromptId: prompt?.id ?? '',
+    }).catch((err) => console.error('Failed to persist selectedPromptId:', err));
+  }, [workspaceId]);
 
   // 所有提示词（只有用户模板）
   const allPrompts = userPrompts;
@@ -723,6 +738,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           }
         }
         
+        // 记录 workspace 中的 selectedPromptId，加载提示词后恢复选中状态
+        pendingSelectedPromptIdRef.current = ws.selectedPromptId || null;
         // 加载文学创作提示词（从后端）
         await loadLiteraryPrompts();
       }
@@ -784,8 +801,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
         prompts.sort((a, b) => a.id.localeCompare(b.id));
         setUserPrompts(prompts);
-        // 不再自动选中第一个提示词：未选择时使用系统推断风格
-        // 仅当用户已通过 AI 提取或手动选择了提示词时才保留选中状态
+        // 从 workspace 恢复选中的提示词（仅首次加载时）
+        const pendingId = pendingSelectedPromptIdRef.current;
+        if (pendingId) {
+          const matched = prompts.find(p => p.id === pendingId);
+          if (matched) setSelectedPromptRaw(matched);
+          pendingSelectedPromptIdRef.current = null;
+        }
       }
     } catch (error) {
       console.error('Failed to load literary prompts:', error);
@@ -877,8 +899,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     // 检查文件类型
     const fileName = file.name.toLowerCase();
-    if (!fileName.endsWith('.md') && !fileName.endsWith('.txt')) {
-      toast.warning('仅支持 .md 和 .txt 格式的文件');
+    if (!fileName.endsWith('.md') && !fileName.endsWith('.mdc') && !fileName.endsWith('.txt')) {
+      toast.warning('仅支持 .md、.mdc、.txt 格式的文件');
       return;
     }
 
@@ -2022,10 +2044,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       )}
       {/* 左侧：文章编辑器 */}
       <div className={cn("flex-1 min-w-0 flex flex-col gap-4", isMobile && mobileTab !== 'article' && "hidden")}>
-        <GlassCard glow className="flex-1 min-h-0 flex flex-col">
+        <GlassCard animated glow className="flex-1 min-h-0 flex flex-col">
           {/* 精简头部：标题 + 模型信息 */}
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => navigate(-1)}
+                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+                title="返回"
+              >
+                <ArrowLeft size={16} />
+              </button>
               <div className="flex items-center gap-2">
                 <FileText size={16} style={{ color: 'var(--text-primary)' }} />
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -2147,7 +2178,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".md,.txt"
+                  accept=".md,.mdc,.txt"
                   onChange={handleFileUpload}
                   className="hidden"
                 />
@@ -2173,7 +2204,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".md,.txt"
+                  accept=".md,.mdc,.txt"
                   onChange={handleFileUpload}
                   className="hidden"
                 />
@@ -2669,10 +2700,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 return (
                   <div
                   key={it.markerIndex}
-                  className="p-2.5 rounded"
+                  className="surface-inset p-2.5 rounded"
                   style={{
-                    background: 'var(--bg-elevated)',
-                    border: '1px solid var(--border-subtle)',
                     position: 'relative',
                   }}
                 >
@@ -3251,6 +3280,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       const isPromptSelected = selectedPrompt?.id === prompt.id;
                       return (
                       <GlassCard
+                        animated
                         glow
                         key={prompt.id}
                         className="p-0 overflow-hidden"
@@ -3293,7 +3323,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               className="overflow-auto border rounded-[6px]"
                               style={{
                                 borderColor: 'var(--border-subtle)',
-                                background: 'var(--list-item-bg)',
+                                background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                 height: '100px',
                               }}
                             >
@@ -3464,6 +3494,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <div className="grid grid-cols-1 gap-3">
                     {referenceImageConfigs.map((config) => (
                       <GlassCard
+                        animated
                         key={config.id}
                         className="p-0 overflow-hidden"
                         style={config.isActive ? {
@@ -3492,7 +3523,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 className="overflow-auto border rounded-[6px] p-2"
                                 style={{
                                   borderColor: 'var(--border-subtle)',
-                                  background: 'var(--list-item-bg)',
+                                  background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                 }}
                               >
                                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -3503,7 +3534,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               <div
                                 className="flex items-center justify-center overflow-hidden rounded-[6px]"
                                 style={{
-                                  background: 'var(--list-item-bg)',
+                                  background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                   border: '1px solid var(--border-subtle)',
                                   cursor: config.imageUrl ? 'zoom-in' : 'default',
                                 }}
@@ -3893,7 +3924,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <div
                     className="flex-1 rounded-lg overflow-hidden relative group cursor-pointer"
                     style={{
-                      background: editingRefConfig.imageUrl ? 'transparent' : 'var(--list-item-bg)',
+                      background: editingRefConfig.imageUrl ? 'transparent' : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                       border: editingRefConfig.imageUrl ? 'none' : '1px dashed var(--border-subtle)',
                       minHeight: '200px',
                     }}

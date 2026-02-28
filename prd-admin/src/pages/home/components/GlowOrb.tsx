@@ -2,14 +2,14 @@ import { cn } from '@/lib/cn';
 
 interface GlowOrbProps {
   className?: string;
-  color?: 'gold' | 'purple' | 'blue' | 'green';
+  color?: 'indigo' | 'purple' | 'blue' | 'green';
   size?: 'sm' | 'md' | 'lg' | 'xl';
   blur?: 'soft' | 'medium' | 'hard';
   animate?: boolean;
 }
 
 const colorMap = {
-  gold: 'bg-gradient-radial from-amber-400/30 via-amber-500/10 to-transparent',
+  indigo: 'bg-gradient-radial from-indigo-400/30 via-indigo-500/10 to-transparent',
   purple: 'bg-gradient-radial from-purple-500/30 via-purple-600/10 to-transparent',
   blue: 'bg-gradient-radial from-blue-500/30 via-blue-600/10 to-transparent',
   green: 'bg-gradient-radial from-emerald-400/30 via-emerald-500/10 to-transparent',
@@ -30,7 +30,7 @@ const blurMap = {
 
 export function GlowOrb({
   className,
-  color = 'gold',
+  color = 'indigo',
   size = 'lg',
   blur = 'hard',
   animate = true,
@@ -46,8 +46,8 @@ export function GlowOrb({
         className
       )}
       style={{
-        background: color === 'gold'
-          ? 'radial-gradient(circle, rgba(214, 178, 106, 0.4) 0%, rgba(214, 178, 106, 0.1) 40%, transparent 70%)'
+        background: color === 'indigo'
+          ? 'radial-gradient(circle, rgba(99, 102, 241, 0.4) 0%, rgba(99, 102, 241, 0.1) 40%, transparent 70%)'
           : color === 'purple'
           ? 'radial-gradient(circle, rgba(139, 92, 246, 0.4) 0%, rgba(139, 92, 246, 0.1) 40%, transparent 70%)'
           : color === 'blue'

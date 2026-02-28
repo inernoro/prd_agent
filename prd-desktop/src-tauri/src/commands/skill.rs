@@ -148,26 +148,40 @@ pub async fn execute_skill(
         context_scope_override: None,
         output_mode_override: None,
     };
-    client.post(&format!("/api/prd-agent/skills/{}/execute", skill_key), &request).await
+    client
+        .post(
+            &format!("/api/prd-agent/skills/{}/execute", skill_key),
+            &request,
+        )
+        .await
 }
 
 /// 创建个人技能
 #[command]
-pub async fn create_skill(request: CreateSkillRequest) -> Result<ApiResponse<CreateSkillResponse>, String> {
+pub async fn create_skill(
+    request: CreateSkillRequest,
+) -> Result<ApiResponse<CreateSkillResponse>, String> {
     let client = ApiClient::new();
     client.post("/api/prd-agent/skills", &request).await
 }
 
 /// 更新个人技能
 #[command]
-pub async fn update_skill(skill_key: String, request: CreateSkillRequest) -> Result<ApiResponse<serde_json::Value>, String> {
+pub async fn update_skill(
+    skill_key: String,
+    request: CreateSkillRequest,
+) -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
-    client.put(&format!("/api/prd-agent/skills/{}", skill_key), &request).await
+    client
+        .put(&format!("/api/prd-agent/skills/{}", skill_key), &request)
+        .await
 }
 
 /// 删除个人技能
 #[command]
 pub async fn delete_skill(skill_key: String) -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
-    client.delete(&format!("/api/prd-agent/skills/{}", skill_key)).await
+    client
+        .delete(&format!("/api/prd-agent/skills/{}", skill_key))
+        .await
 }

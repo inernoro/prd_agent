@@ -133,7 +133,7 @@ function NavOrderSettings() {
 
       {/* 导航顺序设置 */}
       <div className="flex-1 min-h-0 flex flex-col max-w-lg">
-        <GlassCard glow accentHue={210} className="h-full flex flex-col overflow-hidden">
+        <GlassCard animated glow accentHue={210} className="h-full flex flex-col overflow-hidden">
           <div className="flex items-center justify-between gap-3 mb-4 shrink-0">
             <div>
               <h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>
@@ -179,14 +179,14 @@ function NavOrderSettings() {
                       className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-grab active:cursor-grabbing"
                       style={{
                         background: isDragging
-                          ? 'rgba(214,178,106,0.15)'
+                          ? 'rgba(99,102,241,0.15)'
                           : isDropTarget
-                            ? 'rgba(214,178,106,0.08)'
+                            ? 'rgba(99,102,241,0.08)'
                             : 'var(--nested-block-bg)',
                         border: isDragging
-                          ? '2px solid rgba(214,178,106,0.5)'
+                          ? '2px solid rgba(99,102,241,0.5)'
                           : isDropTarget
-                            ? '2px dashed rgba(214,178,106,0.5)'
+                            ? '2px dashed rgba(99,102,241,0.5)'
                             : '1px solid var(--nested-block-border)',
                         opacity: isDragging ? 0.6 : 1,
                       }}

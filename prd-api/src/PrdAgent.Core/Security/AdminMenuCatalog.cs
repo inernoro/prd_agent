@@ -49,6 +49,9 @@ public static class AdminMenuCatalog
         // 自动化
         new("automations", "/automations", "自动化", null, "Zap", 125),
 
+        // AI 竞技场（用户侧盲评对战）
+        new("arena", "/arena", "AI 竞技场", null, "Swords", 135),
+
         // 实验室
         new("lab", "/lab", "实验室", null, "FlaskConical", 140),
     };
@@ -70,8 +73,8 @@ public static class AdminMenuCatalog
 
         foreach (var menu in All)
         {
-            // AI 百宝箱 / 系统设置：只需要基础访问权限
-            if (menu.AppKey is "ai-toolbox" or "settings")
+            // AI 百宝箱 / 系统设置 / AI 竞技场：只需要基础访问权限
+            if (menu.AppKey is "ai-toolbox" or "settings" or "arena")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
                 {

@@ -896,7 +896,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       {/* 固定三栏布局：左侧320px，右侧分上下两栏（上栏60px固定，下栏占满） */}
       <div className="grid gap-4 flex-1 min-h-0 lg:grid-cols-[320px_1fr]">
         {/* 左侧：应用列表 */}
-        <GlassCard glow className="flex flex-col min-h-0 p-0 overflow-hidden">
+        <GlassCard animated glow className="flex flex-col min-h-0 p-0 overflow-hidden">
           <div className="p-4 border-b border-white/10">
             <div className="flex items-center gap-2">
               <div className="w-[140px] shrink-0">
@@ -962,7 +962,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                           setSelectedAppId(firstItem.id);
                         }
                       }}
-                      className="px-3 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors"
+                      className="surface-row px-3 py-3 cursor-pointer"
                       style={isSelected ? { background: 'var(--bg-input-hover)' } : undefined}
                     >
                       <div className="flex items-center gap-3">
@@ -1002,7 +1002,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         {/* 右侧：固定上下两栏布局（上栏60px，下栏占满剩余空间） */}
         <div className="grid grid-rows-[60px_1fr] gap-4 min-h-0">
           {/* 上栏：应用信息卡片（固定60px高度） */}
-          <GlassCard glow className="p-4 overflow-hidden">
+          <GlassCard animated glow className="p-4 overflow-hidden">
             {isLoading ? (
               <div className="h-full flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
                 <Loader2 size={20} className="animate-spin mr-2" />
@@ -1050,21 +1050,21 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
           {/* 下栏：功能列表（占满剩余空间） */}
           {isLoading ? (
-            <GlassCard glow className="flex items-center justify-center overflow-hidden">
+            <GlassCard animated glow className="flex items-center justify-center overflow-hidden">
               <div className="text-center" style={{ color: 'var(--text-muted)' }}>
                 <Loader2 size={48} className="mx-auto mb-4 opacity-40 animate-spin" />
                 <div className="text-sm">加载中...</div>
               </div>
             </GlassCard>
           ) : !selectedAppGroup ? (
-            <GlassCard glow className="flex items-center justify-center overflow-hidden">
+            <GlassCard animated glow className="flex items-center justify-center overflow-hidden">
               <div className="text-center" style={{ color: 'var(--text-muted)' }}>
                 <Activity size={48} className="mx-auto mb-4 opacity-40" />
                 <div className="text-sm">请选择一个应用</div>
               </div>
             </GlassCard>
           ) : (
-            <GlassCard glow className="min-h-0 overflow-auto p-0">
+            <GlassCard animated glow className="min-h-0 overflow-auto p-0">
                 {selectedAppFeatures.length === 0 ? (
                   <div className="flex-1 flex items-center justify-center py-12">
                     <div className="text-center" style={{ color: 'var(--text-muted)' }}>
@@ -1258,12 +1258,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                               {/* 实际使用的模型 */}
                                               <div
                                                 className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors"
-                                                style={{ background: isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--list-item-bg)' }}
+                                                style={{ background: isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                                                 onMouseEnter={(e) => {
                                                   e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.1)' : 'var(--bg-input-hover)';
                                                 }}
                                                 onMouseLeave={(e) => {
-                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--list-item-bg)';
+                                                  e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))';
                                                 }}
                                                 title={isFallback ? `降级回退：${resolvedModel.fallbackReason || ''}` : resolvedModel.source === 'legacy' ? '使用传统配置的单模型' : resolvedModel.modelGroupName ? `使用默认模型池：${resolvedModel.modelGroupName}` : '使用默认模型池'}
                                               >
@@ -2169,7 +2169,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
                 <div
                   className="rounded-[12px] p-3 min-h-[200px] max-h-[400px] overflow-auto"
-                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--list-item-bg)' }}
+                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
                 >
                   {filteredGroups.length === 0 ? (
                     <div className="py-12 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>

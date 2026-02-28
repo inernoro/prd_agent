@@ -42,7 +42,8 @@
       "Bash(__NEW_LINE_a145bd1eef0104b0__ echo \"\")",
       "Bash(xxd:*)",
       "Bash(echo:*)",
-      "Bash(fi)"
+      "Bash(fi)",
+      "Bash(pnpm install:*)"
     ]
   }
 }

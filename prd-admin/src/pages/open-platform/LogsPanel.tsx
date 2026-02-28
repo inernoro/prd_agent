@@ -85,9 +85,9 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
 
   return (
     <div className="h-full overflow-auto p-1">
-      <GlassCard glow className="min-h-full">
+      <GlassCard animated glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'var(--list-item-bg)' }}>
+        <div className="p-4 border-b border-white/10" style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <FileText size={18} className="text-muted-foreground" />
@@ -137,7 +137,7 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
                 logs.map((log) => (
                   <div
                     key={log.id}
-                    className="p-4 rounded-lg transition-colors hover:bg-white/[0.03] cursor-pointer"
+                    className="surface-row p-4 rounded-lg cursor-pointer"
                     style={{
                       background: isSuccess(log.statusCode) ? 'rgba(34,197,94,0.04)' : 'rgba(239,68,68,0.04)',
                       border: `1px solid ${isSuccess(log.statusCode) ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}`,

@@ -267,11 +267,9 @@ function ArtifactCard({ artifact, isExpanded, onToggle }: {
       }}
     >
       <div
-        className={`flex items-center gap-2 px-3 py-2 ${hasInline ? 'cursor-pointer' : ''}`}
+        className={`flex items-center gap-2 px-3 py-2 ${hasInline ? 'surface-row cursor-pointer' : ''}`}
         onClick={hasInline ? onToggle : undefined}
         style={hasInline ? { transition: 'background 0.15s' } : undefined}
-        onMouseEnter={(e) => hasInline && (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
-        onMouseLeave={(e) => hasInline && (e.currentTarget.style.background = 'transparent')}
       >
         <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
         <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
@@ -286,11 +284,9 @@ function ArtifactCard({ artifact, isExpanded, onToggle }: {
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="p-1 rounded-[6px] flex-shrink-0 transition-colors"
+            className="surface-row p-1 rounded-[6px] flex-shrink-0 transition-colors"
             title="下载文件"
             style={{ color: 'var(--accent-gold)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(214,178,106,0.12)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           >
             <Download className="w-3 h-3" />
           </a>
@@ -337,6 +333,7 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
   return (
     <div>
       <GlassCard
+        animated
         accentHue={meta.accentHue}
         glow={isActive}
         padding="md"
@@ -350,7 +347,7 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
               status === 'completed'
                 ? { background: 'rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.95)' }
                 : status === 'running'
-                  ? { background: 'rgba(214,178,106,0.18)', color: 'var(--accent-gold)' }
+                  ? { background: 'rgba(99,102,241,0.18)', color: 'var(--accent-gold)' }
                   : status === 'failed'
                     ? { background: 'rgba(239,68,68,0.15)', color: 'rgba(239,68,68,0.9)' }
                     : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }
@@ -423,7 +420,7 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
             <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
               <div
                 className="h-full rounded-full animate-pulse"
-                style={{ width: '60%', background: 'var(--gold-gradient, linear-gradient(90deg, rgba(214,178,106,0.6), rgba(214,178,106,0.3)))' }}
+                style={{ width: '60%', background: 'var(--gold-gradient, linear-gradient(90deg, rgba(99,102,241,0.6), rgba(99,102,241,0.3)))' }}
               />
             </div>
             <span className="text-[10px]" style={{ color: 'var(--accent-gold)' }}>处理中...</span>
@@ -598,7 +595,7 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
                   const Icon = getIconForCapsule(meta.icon);
                   const emoji = getEmojiForCapsule(meta.typeKey);
                   return (
-                    <GlassCard key={meta.typeKey} accentHue={meta.accentHue} padding="sm">
+                    <GlassCard key={meta.typeKey} animated accentHue={meta.accentHue} padding="sm">
                       <div className="flex items-start gap-3">
                         <div
                           className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
@@ -623,14 +620,12 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
                             <button
                               onClick={() => handleTestRun(meta.typeKey)}
                               disabled={testingType === meta.typeKey}
-                              className="mt-2 inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-[6px] font-medium transition-all"
+                              className="surface-row mt-2 inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-[6px] font-medium transition-all"
                               style={{
                                 background: `hsla(${meta.accentHue}, 60%, 55%, 0.08)`,
                                 color: `hsla(${meta.accentHue}, 60%, 65%, 0.9)`,
                                 border: `1px solid hsla(${meta.accentHue}, 60%, 55%, 0.15)`,
                               }}
-                              onMouseEnter={(e) => (e.currentTarget.style.background = `hsla(${meta.accentHue}, 60%, 55%, 0.16)`)}
-                              onMouseLeave={(e) => (e.currentTarget.style.background = `hsla(${meta.accentHue}, 60%, 55%, 0.08)`)}
                             >
                               {testingType === meta.typeKey
                                 ? <><Loader2 className="w-3 h-3 animate-spin" />测试中...</>
@@ -653,7 +648,7 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
 
         {/* 测试结果：执行结果 */}
         {testResult && (
-          <GlassCard accentHue={testResult.status === 'completed' ? 150 : 0} padding="sm">
+          <GlassCard animated accentHue={testResult.status === 'completed' ? 150 : 0} padding="sm">
             <div className="flex items-center gap-2 mb-2">
               <FlaskConical className="w-4 h-4" style={{ color: testResult.status === 'completed' ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)' }} />
               <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -699,7 +694,7 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
           </GlassCard>
         )}
         {testError && (
-          <GlassCard accentHue={0} padding="sm">
+          <GlassCard animated accentHue={0} padding="sm">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4" style={{ color: 'rgba(239,68,68,0.9)' }} />
               <span className="text-[12px]" style={{ color: 'rgba(239,68,68,0.9)' }}>测试失败: {testError}</span>
@@ -1093,7 +1088,7 @@ export function WorkflowAgentPage() {
         {!pageLoading && (
           <>
             {/* ──── 数据源配置 ──── */}
-            <GlassCard>
+            <GlassCard animated>
               <h2 className="text-[14px] font-semibold flex items-center gap-2 mb-4" style={{ color: 'var(--text-primary)' }}>
                 <Settings2 className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
                 数据源配置
@@ -1123,7 +1118,7 @@ export function WorkflowAgentPage() {
             <div className="flex items-center gap-3">
               {isRunning ? (
                 <>
-                  <GlassCard padding="none" className="flex-1" accentHue={40} glow>
+                  <GlassCard animated padding="none" className="flex-1" accentHue={234} glow>
                     <div className="flex items-center gap-3 px-4 py-3">
                       <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" style={{ color: 'var(--accent-gold)' }} />
                       <span className="text-[12px] font-medium" style={{ color: 'var(--accent-gold)' }}>
@@ -1183,6 +1178,7 @@ export function WorkflowAgentPage() {
             {/* ──── 执行完成总结 ──── */}
             {isTerminal && latestExec && (
               <GlassCard
+                animated
                 accentHue={latestExec.status === 'completed' ? 150 : 0}
                 glow={latestExec.status === 'completed'}
               >
@@ -1255,18 +1251,10 @@ export function WorkflowAgentPage() {
                           setSelectedExecution(run);
                           setViewMode('execution-detail');
                         }}
-                        className="flex items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer transition-all"
+                        className="surface-row flex items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer transition-all"
                         style={{
                           background: 'var(--list-item-bg, rgba(255,255,255,0.03))',
                           border: '1px solid rgba(255,255,255,0.06)',
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = 'var(--list-item-hover-bg, rgba(255,255,255,0.06))';
-                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = 'var(--list-item-bg, rgba(255,255,255,0.03))';
-                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
                         }}
                       >
                         {si && <Badge variant={si.variant} size="sm">{si.label}</Badge>}

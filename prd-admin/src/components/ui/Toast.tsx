@@ -13,23 +13,23 @@ const icons = {
 
 const colors = {
   success: {
-    bg: 'rgba(34, 197, 94, 0.1)',
-    border: 'rgba(34, 197, 94, 0.3)',
+    bg: 'rgba(34, 197, 94, 0.18)',
+    border: 'rgba(34, 197, 94, 0.38)',
     icon: '#22c55e',
   },
   error: {
-    bg: 'rgba(239, 68, 68, 0.1)',
-    border: 'rgba(239, 68, 68, 0.3)',
+    bg: 'rgba(239, 68, 68, 0.18)',
+    border: 'rgba(239, 68, 68, 0.38)',
     icon: '#ef4444',
   },
   info: {
-    bg: 'rgba(59, 130, 246, 0.1)',
-    border: 'rgba(59, 130, 246, 0.3)',
+    bg: 'rgba(59, 130, 246, 0.18)',
+    border: 'rgba(59, 130, 246, 0.38)',
     icon: '#3b82f6',
   },
   warning: {
-    bg: 'rgba(251, 146, 60, 0.1)',
-    border: 'rgba(251, 146, 60, 0.3)',
+    bg: 'rgba(251, 146, 60, 0.18)',
+    border: 'rgba(251, 146, 60, 0.38)',
     icon: '#fb923c',
   },
 };

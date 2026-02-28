@@ -262,7 +262,7 @@ export default function OpenPlatformPage() {
         }
       />
 
-      <GlassCard glow className="mt-6">
+      <GlassCard animated glow className="mt-6">
         <div className="p-4 border-b" style={{ borderColor: 'var(--nested-block-border)' }}>
           <input
             type="text"
@@ -280,7 +280,7 @@ export default function OpenPlatformPage() {
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[700px]">
-            <thead style={{ background: 'var(--list-item-bg)' }}>
+            <thead className="surface-inset">
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium">应用名称</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">绑定信息</th>
@@ -292,7 +292,7 @@ export default function OpenPlatformPage() {
             </thead>
             <tbody>
               {apps.map((app) => (
-                <tr key={app.id} className="transition-colors" style={{ borderTop: '1px solid var(--bg-input)' }} onMouseEnter={(e) => e.currentTarget.style.background = 'var(--list-item-bg)'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                <tr key={app.id} className="surface-row transition-colors" style={{ borderTop: '1px solid var(--bg-input)' }}>
                   <td className="px-4 py-3">
                     <div className="font-medium">{app.appName}</div>
                     {app.description && <div className="text-sm text-muted-foreground">{app.description}</div>}
@@ -300,7 +300,7 @@ export default function OpenPlatformPage() {
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-2">
                       <div className="flex items-center gap-2 px-2 py-1 rounded-lg text-sm" style={{ background: 'var(--bg-card-hover)', border: '1px solid var(--border-default)' }}>
-                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-semibold" style={{ background: 'var(--gold-gradient)', color: '#1a1206' }}>
+                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-semibold" style={{ background: 'var(--gold-gradient)', color: '#ffffff' }}>
                           {app.boundUserName.charAt(0).toUpperCase()}
                         </div>
                         <span className="font-medium">{app.boundUserName}</span>
@@ -1098,7 +1098,7 @@ function LogsDialog({
 
           {/* 筛选面板 */}
           {showFilters && (
-            <div className="p-4 rounded-lg" style={{ background: 'var(--list-item-bg)', border: '1px solid var(--nested-block-border)' }}>
+            <div className="p-4 rounded-lg surface-inset">
               <div className="flex items-center gap-2 mb-3">
                 <Filter size={14} style={{ color: 'var(--accent-gold)' }} />
                 <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>筛选条件</span>
@@ -1158,7 +1158,7 @@ function LogsDialog({
           )}
           <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
             <table className="w-full text-sm">
-              <thead className="sticky top-0" style={{ background: 'var(--list-item-bg)' }}>
+              <thead className="sticky top-0 surface-inset">
                 <tr>
                   <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>时间</th>
                   <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: 'var(--text-muted)' }}>应用</th>
@@ -1171,12 +1171,10 @@ function LogsDialog({
               </thead>
               <tbody>
                 {logs.map((log) => (
-                  <tr 
-                    key={log.id} 
-                    className="transition-colors cursor-pointer"
+                  <tr
+                    key={log.id}
+                    className="surface-row transition-colors cursor-pointer"
                     style={{ borderTop: '1px solid var(--bg-input)' }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = 'var(--list-item-bg)'}
-                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                     onClick={() => handleViewDetail(log)}
                   >
                     <td className="px-3 py-2.5">

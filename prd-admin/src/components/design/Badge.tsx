@@ -29,8 +29,8 @@ export function Badge({
           }
         : variant === 'featured'
           ? {
-              background: 'rgba(214, 178, 106, 0.18)',
-              border: '1px solid rgba(214, 178, 106, 0.35)',
+              background: 'rgba(99, 102, 241, 0.18)',
+              border: '1px solid rgba(99, 102, 241, 0.35)',
               color: 'var(--accent-gold-2)',
             }
           : variant === 'success'

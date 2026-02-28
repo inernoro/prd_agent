@@ -39,14 +39,14 @@ export function PermissionCell({
     switch (status) {
       case 'full':
         return {
-          color: isHighlighted ? 'rgba(214, 178, 106, 0.95)' : 'rgba(214, 178, 106, 0.8)',
-          bg: 'rgba(214, 178, 106, 0.12)',
+          color: isHighlighted ? 'rgba(99, 102, 241, 0.95)' : 'rgba(99, 102, 241, 0.8)',
+          bg: 'rgba(99, 102, 241, 0.12)',
           label: '完全访问',
         };
       case 'partial':
         return {
-          color: isHighlighted ? 'rgba(214, 178, 106, 0.8)' : 'rgba(214, 178, 106, 0.55)',
-          bg: 'rgba(214, 178, 106, 0.06)',
+          color: isHighlighted ? 'rgba(99, 102, 241, 0.8)' : 'rgba(99, 102, 241, 0.55)',
+          bg: 'rgba(99, 102, 241, 0.06)',
           label: '部分访问',
         };
       case 'none':
@@ -72,9 +72,9 @@ export function PermissionCell({
     if (isEditing) {
       return {
         ...baseStyle,
-        background: 'rgba(214, 178, 106, 0.32)',
-        border: '1.5px solid rgba(214, 178, 106, 0.65)',
-        boxShadow: '0 8px 32px rgba(214, 178, 106, 0.4), 0 0 0 4px rgba(214, 178, 106, 0.1)',
+        background: 'rgba(99, 102, 241, 0.32)',
+        border: '1.5px solid rgba(99, 102, 241, 0.65)',
+        boxShadow: '0 8px 32px rgba(99, 102, 241, 0.4), 0 0 0 4px rgba(99, 102, 241, 0.1)',
         transform: 'scale(1.35)',
       };
     }
@@ -82,9 +82,9 @@ export function PermissionCell({
     if (isRowHovered && canInteract) {
       return {
         ...baseStyle,
-        background: 'rgba(214, 178, 106, 0.1)',
-        border: '1px solid rgba(214, 178, 106, 0.3)',
-        boxShadow: '0 4px 16px rgba(214, 178, 106, 0.15)',
+        background: 'rgba(99, 102, 241, 0.1)',
+        border: '1px solid rgba(99, 102, 241, 0.3)',
+        boxShadow: '0 4px 16px rgba(99, 102, 241, 0.15)',
         transform: 'scale(1.18)',
       };
     }
@@ -107,7 +107,7 @@ export function PermissionCell({
       className={`
         w-[34px] h-[34px] rounded-[10px] flex items-center justify-center mx-auto
         transition-all duration-250 ease-out
-        ${canInteract ? 'hover:!scale-[1.45] hover:!bg-[rgba(214,178,106,0.28)] hover:!border-[rgba(214,178,106,0.55)] hover:!shadow-[0_6px_24px_rgba(214,178,106,0.4)] active:!scale-[1.25]' : ''}
+        ${canInteract ? 'hover:!scale-[1.45] hover:!bg-[rgba(99,102,241,0.28)] hover:!border-[rgba(99,102,241,0.55)] hover:!shadow-[0_6px_24px_rgba(99,102,241,0.4)] active:!scale-[1.25]' : ''}
       `}
       style={getButtonStyle()}
     >

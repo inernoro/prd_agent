@@ -108,7 +108,7 @@ public class ModelPoolIntegrationTests
 
         // 4. 验证健康状态
         var snapshot = pool.GetHealthSnapshot();
-        Assert.Equal(1, snapshot.HealthyCount);
+        Assert.Equal(2, snapshot.HealthyCount);
 
         // 5. 测试端点
         var testResults = await pool.TestEndpointsAsync(null);

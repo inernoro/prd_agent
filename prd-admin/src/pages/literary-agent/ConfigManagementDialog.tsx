@@ -418,7 +418,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
             <div className="flex-1 min-h-0 overflow-auto pr-1">
               <div className="grid grid-cols-1 gap-3">
                 {myPrompts.map((prompt) => (
-                  <GlassCard glow key={prompt.id} className="p-0 overflow-hidden">
+                  <GlassCard animated glow key={prompt.id} className="p-0 overflow-hidden">
                     <div className="group relative flex flex-col h-full">
                       {/* 标题区 */}
                       <div className="p-2 pb-1 flex-shrink-0">
@@ -457,7 +457,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                       <div className="px-2 pb-1 flex-1 min-h-0 overflow-hidden">
                         <div
                           className="h-full overflow-auto border rounded-[6px]"
-                          style={{ borderColor: 'var(--border-subtle)', background: 'var(--list-item-bg)', minHeight: '80px', maxHeight: '120px' }}
+                          style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', minHeight: '80px', maxHeight: '120px' }}
                         >
                           <style>{`
                             .modal-prompt-md { font-size: 11px; line-height: 1.5; color: var(--text-secondary); padding: 8px; }
@@ -523,7 +523,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
           return res.success && res.data ? res.data.items : [];
         },
         renderMarketplaceCard: (prompt: MarketplaceLiteraryPrompt, ctx: MarketplaceCardContext) => (
-          <GlassCard key={prompt.id} className="p-0 overflow-hidden">
+          <GlassCard animated key={prompt.id} className="p-0 overflow-hidden">
             <div className="flex flex-col">
               <div className="p-2 pb-1">
                 <div className="flex items-start justify-between gap-2">
@@ -543,7 +543,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
               <div className="px-2 pb-1">
                 <div
                   className="overflow-hidden border rounded-[6px] p-2"
-                  style={{ borderColor: 'var(--border-subtle)', background: 'var(--list-item-bg)', maxHeight: '80px' }}
+                  style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', maxHeight: '80px' }}
                 >
                   <div className="text-[11px] line-clamp-3" style={{ color: 'var(--text-muted)' }}>
                     {prompt.content || '（内容为空）'}
@@ -605,7 +605,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
             <div className="flex-1 min-h-0 overflow-auto pr-1">
               <div className="grid grid-cols-1 gap-3">
                 {myReferenceImages.map((config) => (
-                  <GlassCard key={config.id} className="p-0 overflow-hidden">
+                  <GlassCard animated key={config.id} className="p-0 overflow-hidden">
                     <div className="flex flex-col">
                       {/* 标题栏 */}
                       <div className="p-2 pb-1 flex-shrink-0">
@@ -631,7 +631,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                         <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 80px' }}>
                           <div
                             className="overflow-auto border rounded-[6px] p-2"
-                            style={{ borderColor: 'var(--border-subtle)', background: 'var(--list-item-bg)', minHeight: '60px', maxHeight: '80px' }}
+                            style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', minHeight: '60px', maxHeight: '80px' }}
                           >
                             <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                               {config.prompt || '（无提示词）'}
@@ -642,7 +642,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                             style={{
                               background: config.imageUrl
                                 ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                                : 'var(--list-item-bg)',
+                                : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                               border: config.imageUrl ? 'none' : '1px solid var(--border-subtle)',
                               minHeight: '60px',
                               maxHeight: '80px',
@@ -704,7 +704,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
           return res.success && res.data ? res.data.items : [];
         },
         renderMarketplaceCard: (config: MarketplaceReferenceImageConfig, ctx: MarketplaceCardContext) => (
-          <GlassCard key={config.id} className="p-0 overflow-hidden">
+          <GlassCard animated key={config.id} className="p-0 overflow-hidden">
             <div className="flex flex-col">
               <div className="p-2 pb-1">
                 <div className="flex items-start justify-between gap-2">
@@ -727,7 +727,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                   style={{
                     background: config.imageUrl
                       ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                      : 'var(--list-item-bg)',
+                      : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                     height: '80px',
                   }}
                 >

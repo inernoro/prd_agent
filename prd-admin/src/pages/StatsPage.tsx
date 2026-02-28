@@ -83,7 +83,7 @@ export default function StatsPage() {
           data: trend.map((t) => t.count),
           smooth: true,
           showSymbol: false,
-          lineStyle: { width: 2, color: 'rgba(214,178,106,0.95)' },
+          lineStyle: { width: 2, color: 'rgba(99,102,241,0.95)' },
           areaStyle: {
             color: {
               type: 'linear',
@@ -92,8 +92,8 @@ export default function StatsPage() {
               x2: 0,
               y2: 1,
               colorStops: [
-                { offset: 0, color: 'rgba(214,178,106,0.22)' },
-                { offset: 1, color: 'rgba(214,178,106,0.02)' },
+                { offset: 0, color: 'rgba(99,102,241,0.22)' },
+                { offset: 1, color: 'rgba(99,102,241,0.02)' },
               ],
             },
           },
@@ -158,19 +158,18 @@ export default function StatsPage() {
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <KpiCard title="总输入Token" value={token?.totalInput ?? 0} loading={loading} accent="green" suffix="tokens" />
-        <KpiCard title="总输出Token" value={token?.totalOutput ?? 0} loading={loading} suffix="tokens" />
-        <KpiCard title="总Token消耗" value={token?.totalTokens ?? 0} loading={loading} suffix="tokens" />
+        <KpiCard title="总输入Token" value={token?.totalInput ?? 0} loading={loading} accent="green" suffix="tokens" animated />
+        <KpiCard title="总输出Token" value={token?.totalOutput ?? 0} loading={loading} suffix="tokens" animated />
+        <KpiCard title="总Token消耗" value={token?.totalTokens ?? 0} loading={loading} suffix="tokens" animated />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <GlassCard glow className="lg:col-span-2">
+        <GlassCard glow animated className="lg:col-span-2">
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
             消息趋势（近{days}天）
           </div>
           <div
-            className="mt-3 rounded-[14px] overflow-hidden"
-            style={{ background: 'var(--list-item-bg)', border: '1px solid var(--border-subtle)' }}
+            className="mt-3 rounded-[14px] overflow-hidden surface-inset"
           >
             {loading ? (
               <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
@@ -188,13 +187,12 @@ export default function StatsPage() {
           </div>
         </GlassCard>
 
-        <GlassCard glow>
+        <GlassCard glow animated>
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
             内容缺失统计（共{gapStats?.total ?? 0}条）
           </div>
           <div
-            className="mt-3 rounded-[14px] overflow-hidden"
-            style={{ background: 'var(--list-item-bg)', border: '1px solid var(--border-subtle)' }}
+            className="mt-3 rounded-[14px] overflow-hidden surface-inset"
           >
             {loading ? (
               <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
@@ -213,7 +211,7 @@ export default function StatsPage() {
         </GlassCard>
       </div>
 
-      <GlassCard glow>
+      <GlassCard glow animated>
         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
           活跃群组 TOP 10
         </div>

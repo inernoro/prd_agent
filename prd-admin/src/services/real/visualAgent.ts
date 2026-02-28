@@ -140,6 +140,8 @@ export const updateVisualAgentWorkspaceReal: UpdateVisualAgentWorkspaceContract 
       articleContent: input.articleContent,
       scenarioType: input.scenarioType,
       folderName: input.folderName,
+      selectedPromptId: input.selectedPromptId,
+      stylePrompt: input.stylePrompt,
     },
   });
 };

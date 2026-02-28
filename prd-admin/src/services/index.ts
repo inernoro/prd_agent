@@ -207,6 +207,7 @@ import type {
   MoveDefectToFolderContract,
   BatchMoveDefectsContract,
   PreviewApiLogsContract,
+  AnalyzeDefectImageContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IAutomationsService } from '@/services/contracts/automations';
@@ -391,6 +392,7 @@ import {
 } from '@/services/real/desktopAssets';
 import { uploadNoHeadAvatar as uploadNoHeadAvatarReal } from '@/services/real/avatarAssets';
 import { uploadUserAvatar as uploadUserAvatarReal } from '@/services/real/userAvatarUpload';
+import { uploadMyAvatar as uploadMyAvatarReal, updateMyAvatar as updateMyAvatarReal } from '@/services/real/profile';
 import { getDesktopBrandingSettings as getDesktopBrandingSettingsReal, updateDesktopBrandingSettings as updateDesktopBrandingSettingsReal } from '@/services/real/desktopBranding';
 import {
   listLiteraryPromptsReal,
@@ -451,6 +453,7 @@ import {
   getDefectStatsReal,
   getDefectUsersReal,
   polishDefectReal,
+  analyzeDefectImageReal,
   listDeletedDefectsReal,
   restoreDefectReal,
   permanentDeleteDefectReal,
@@ -738,6 +741,8 @@ export const getDesktopAssetsMatrix = withAuth(getDesktopAssetsMatrixReal);
 
 export const uploadNoHeadAvatar: UploadNoHeadAvatarContract = withAuth(uploadNoHeadAvatarReal);
 export const uploadUserAvatar: UploadUserAvatarContract = withAuth(uploadUserAvatarReal);
+export const uploadMyAvatar = withAuth(uploadMyAvatarReal);
+export const updateMyAvatar = withAuth(updateMyAvatarReal);
 
 export const getDesktopBrandingSettings: GetDesktopBrandingSettingsContract = withAuth(getDesktopBrandingSettingsReal);
 export const updateDesktopBrandingSettings: UpdateDesktopBrandingSettingsContract = withAuth(updateDesktopBrandingSettingsReal);
@@ -844,6 +849,7 @@ export const deleteDefectAttachment: DeleteDefectAttachmentContract = withAuth(d
 export const getDefectStats: GetDefectStatsContract = withAuth(getDefectStatsReal);
 export const getDefectUsers: GetDefectUsersContract = withAuth(getDefectUsersReal);
 export const polishDefect: PolishDefectContract = withAuth(polishDefectReal);
+export const analyzeDefectImage: AnalyzeDefectImageContract = withAuth(analyzeDefectImageReal);
 export const listDeletedDefects: ListDeletedDefectsContract = withAuth(listDeletedDefectsReal);
 export const restoreDefect: RestoreDefectContract = withAuth(restoreDefectReal);
 export const permanentDeleteDefect: PermanentDeleteDefectContract = withAuth(permanentDeleteDefectReal);
@@ -905,6 +911,45 @@ export const deleteComment: DeleteCommentContract = withAuth(deleteCommentReal);
 export const getPlanComparison: GetPlanComparisonContract = withAuth(getPlanComparisonReal);
 export const generateTeamSummary: GenerateTeamSummaryContract = withAuth(generateTeamSummaryReal);
 export const getTeamSummary: GetTeamSummaryContract = withAuth(getTeamSummaryReal);
+
+// Arena 竞技场
+import {
+  listArenaGroupsReal,
+  createArenaGroupReal,
+  updateArenaGroupReal,
+  deleteArenaGroupReal,
+  listArenaSlotsReal,
+  createArenaSlotReal,
+  updateArenaSlotReal,
+  deleteArenaSlotReal,
+  toggleArenaSlotReal,
+  getArenaLineupReal,
+  revealArenaSlotsReal,
+  createArenaRunReal,
+  getArenaRunReal,
+  cancelArenaRunReal,
+  saveArenaBattleReal,
+  listArenaBattlesReal,
+  getArenaBattleReal,
+} from '@/services/real/arena';
+
+export const listArenaGroups = withAuth(listArenaGroupsReal);
+export const createArenaGroup = withAuth(createArenaGroupReal);
+export const updateArenaGroup = withAuth(updateArenaGroupReal);
+export const deleteArenaGroup = withAuth(deleteArenaGroupReal);
+export const listArenaSlots = withAuth(listArenaSlotsReal);
+export const createArenaSlot = withAuth(createArenaSlotReal);
+export const updateArenaSlot = withAuth(updateArenaSlotReal);
+export const deleteArenaSlot = withAuth(deleteArenaSlotReal);
+export const toggleArenaSlot = withAuth(toggleArenaSlotReal);
+export const getArenaLineup = withAuth(getArenaLineupReal);
+export const revealArenaSlots = withAuth(revealArenaSlotsReal);
+export const createArenaRun = withAuth(createArenaRunReal);
+export const getArenaRun = withAuth(getArenaRunReal);
+export const cancelArenaRun = withAuth(cancelArenaRunReal);
+export const saveArenaBattle = withAuth(saveArenaBattleReal);
+export const listArenaBattles = withAuth(listArenaBattlesReal);
+export const getArenaBattle = withAuth(getArenaBattleReal);
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
 export const automationsService: IAutomationsService = new AutomationsService();

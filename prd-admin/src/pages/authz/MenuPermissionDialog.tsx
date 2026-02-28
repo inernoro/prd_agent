@@ -25,7 +25,7 @@ export function MenuPermissionDialog({ open, onOpenChange, menuAppKey }: MenuPer
     read: { bg: 'rgba(34, 197, 94, 0.15)', text: 'rgba(134, 239, 172, 0.9)' },
     write: { bg: 'rgba(249, 115, 22, 0.15)', text: 'rgba(253, 186, 116, 0.9)' },
     manage: { bg: 'rgba(168, 85, 247, 0.15)', text: 'rgba(216, 180, 254, 0.9)' },
-    use: { bg: 'rgba(214, 178, 106, 0.15)', text: 'rgba(214, 178, 106, 0.9)' },
+    use: { bg: 'rgba(99, 102, 241, 0.15)', text: 'rgba(99, 102, 241, 0.9)' },
     super: { bg: 'rgba(239, 68, 68, 0.15)', text: 'rgba(252, 165, 165, 0.9)' },
   };
 

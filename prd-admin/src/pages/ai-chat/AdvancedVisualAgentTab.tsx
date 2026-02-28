@@ -1,3 +1,4 @@
+import JSZip from 'jszip';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { glassPanel, glassTooltip, glassInputArea, glassPopoverCompact } from '@/lib/glassStyles';
@@ -35,6 +36,7 @@ import {
   refreshVisualAgentWorkspaceCover,
   saveVisualAgentWorkspaceCanvas,
   updateVisualAgentPreferences,
+  updateVisualAgentWorkspace,
   uploadVisualAgentWorkspaceAsset,
 } from '@/services';
 import type { ModelGroupForApp } from '@/types/modelGroup';
@@ -87,6 +89,7 @@ import {
   Maximize2,
   MessageSquare,
   MousePointer2,
+  Palette,
   Plus,
   Send,
   Settings,
@@ -759,6 +762,180 @@ async function exportImageAs(src: string, filename: string, format: 'jpg' | 'png
 }
 
 
+function filenameSafe(s: string) {
+  return String(s || '')
+    .trim()
+    .replaceAll('/', '-')
+    .replaceAll('\\', '-')
+    .replaceAll(':', '-')
+    .replaceAll('*', '-')
+    .replaceAll('?', '-')
+    .replaceAll('"', '-')
+    .replaceAll('<', '-')
+    .replaceAll('>', '-')
+    .replaceAll('|', '-')
+    .slice(0, 80);
+}
+
+function base64ToUint8Array(b64: string) {
+  const clean = (b64 || '').trim();
+  const comma = clean.indexOf(',');
+  const data = clean.startsWith('data:') && comma >= 0 ? clean.slice(comma + 1) : clean;
+  const binStr = atob(data);
+  const len = binStr.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = binStr.charCodeAt(i);
+  return bytes;
+}
+
+async function downloadAllAsZip(items: { src: string; filename: string }[], zipName: string) {
+  const zip = new JSZip();
+  let okCount = 0;
+  const nameCounts: Record<string, number> = {};
+
+  const dedupeFilename = (finalName: string) => {
+    const key = finalName.toLowerCase();
+    const prev = nameCounts[key] ?? 0;
+    nameCounts[key] = prev + 1;
+    if (prev === 0) return finalName;
+    const dot = finalName.lastIndexOf('.');
+    const base = dot > 0 ? finalName.slice(0, dot) : finalName;
+    const ext = dot > 0 ? finalName.slice(dot) : '';
+    return `${base}_${prev + 1}${ext}`;
+  };
+
+  for (const it of items) {
+    const src = (it.src || '').trim();
+    const name = filenameSafe(it.filename) || 'image';
+    const finalName0 = name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') ? name : `${name}.png`;
+    const finalName = dedupeFilename(finalName0);
+    if (!src) continue;
+
+    try {
+      if (src.startsWith('data:') || /^[A-Za-z0-9+/=]+$/.test(src)) {
+        const bytes = base64ToUint8Array(src);
+        zip.file(finalName, bytes);
+        okCount++;
+        continue;
+      }
+
+      const res = await fetch(src, { mode: 'cors' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      zip.file(finalName, blob);
+      okCount++;
+    } catch {
+      // ignore failed file
+    }
+  }
+
+  if (okCount === 0) {
+    toast.warning('没有可下载的图片（可能被跨域限制）');
+    return;
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (filenameSafe(zipName) || 'images') + '.zip';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function exportAllAsZip(items: { src: string; filename: string }[], zipName: string, format: 'png' | 'jpg' | 'svg') {
+  const zip = new JSZip();
+  let okCount = 0;
+  const nameCounts: Record<string, number> = {};
+
+  const dedupeFilename = (finalName: string) => {
+    const key = finalName.toLowerCase();
+    const prev = nameCounts[key] ?? 0;
+    nameCounts[key] = prev + 1;
+    if (prev === 0) return finalName;
+    const dot = finalName.lastIndexOf('.');
+    const base = dot > 0 ? finalName.slice(0, dot) : finalName;
+    const ext = dot > 0 ? finalName.slice(dot) : '';
+    return `${base}_${prev + 1}${ext}`;
+  };
+
+  for (const it of items) {
+    const src = (it.src || '').trim();
+    if (!src) continue;
+    const name = filenameSafe(it.filename) || 'image';
+
+    try {
+      const response = await fetch(src, { mode: 'cors' });
+      if (!response.ok) throw new Error('Fetch failed');
+      const srcBlob = await response.blob();
+
+      if (format === 'svg') {
+        const dataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(srcBlob);
+        });
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = reject;
+          img.src = dataUrl;
+        });
+        const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="${img.naturalWidth}" height="${img.naturalHeight}"><image href="${dataUrl}" width="${img.naturalWidth}" height="${img.naturalHeight}"/></svg>`;
+        zip.file(dedupeFilename(`${name}.svg`), svgContent);
+        okCount++;
+      } else {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        const loaded = await new Promise<HTMLImageElement>((resolve, reject) => {
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = URL.createObjectURL(srcBlob);
+        });
+        const cvs = document.createElement('canvas');
+        cvs.width = loaded.naturalWidth;
+        cvs.height = loaded.naturalHeight;
+        const ctx = cvs.getContext('2d')!;
+        if (format === 'jpg') {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, cvs.width, cvs.height);
+        }
+        ctx.drawImage(loaded, 0, 0);
+        URL.revokeObjectURL(img.src);
+        const mime = format === 'jpg' ? 'image/jpeg' : 'image/png';
+        const ext = format === 'jpg' ? 'jpg' : 'png';
+        const exported = await new Promise<Blob>((resolve, reject) =>
+          cvs.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), mime, format === 'jpg' ? 0.92 : undefined)
+        );
+        zip.file(dedupeFilename(`${name}.${ext}`), exported);
+        okCount++;
+      }
+    } catch {
+      // ignore failed file
+    }
+  }
+
+  if (okCount === 0) {
+    toast.warning('没有可导出的图片（可能被跨域限制）');
+    return;
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (filenameSafe(zipName) || 'images') + `.${format}.zip`;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // 从尺寸字符串检测档位
 function detectTierFromSize(size: string): '1k' | '2k' | '4k' {
   const s = (size || '').trim().toLowerCase();
@@ -824,9 +1001,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [activeTool, setActiveTool] = useState<CanvasTool>(
     typeof window !== 'undefined' && window.innerWidth < 768 ? 'hand' : 'select'
   );
-  // 固定默认参数：用户不需要选择
-  // 输入区已移除“大小/比例”控制按钮：v1 固定用 1K 方形，避免过多配置干扰
-  const imageGenSize = '1024x1024' as const;
   const DEFAULT_ZOOM = 0.5;
 
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -887,6 +1061,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [allImageGenModels]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
+  // 默认尺寸：从 localStorage 读取用户偏好，fallback 到 1K 方形
+  const defaultSizeKey = userId ? `prdAdmin.visualAgent.defaultSize.${userId}` : '';
+  const [savedDefaultSize, _setSavedDefaultSize] = useState<string>(() => {
+    if (!defaultSizeKey) return '1024x1024';
+    try { return localStorage.getItem(defaultSizeKey) || '1024x1024'; } catch { return '1024x1024'; }
+  });
+  const setSavedDefaultSize = useCallback((size: string) => {
+    _setSavedDefaultSize(size);
+    if (defaultSizeKey) { try { localStorage.setItem(defaultSizeKey, size); } catch { /* ignore */ } }
+  }, [defaultSizeKey]);
+  const imageGenSize = savedDefaultSize;
   const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
   // 专注模式属于临时态：离开页面必须恢复，避免影响其他页面布局
   useEffect(() => {
@@ -928,6 +1113,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const watermarkPanelRef = useRef<WatermarkSettingsPanelHandle | null>(null);
   const configDialogRef = useRef<ConfigDialogHandle | null>(null);
   const enabledImageModels = useMemo(() => allImageGenModels.filter((m) => m.enabled), [allImageGenModels]);
+
+  // 风格统一
+  const [stylePrompt, setStylePrompt] = useState('');
+  const [stylePopoverOpen, setStylePopoverOpen] = useState(false);
+  const [stylePromptDraft, setStylePromptDraft] = useState('');
+  const stylePromptActive = stylePrompt.trim().length > 0;
 
   // ── 快捷操作 (Quick Actions) ──
   const [diyQuickActions, setDiyQuickActions] = useState<QuickActionConfig[]>([]);
@@ -1091,6 +1282,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const composingRef = useRef(false);
   const [composerSize, setComposerSize] = useState<string | null>(null);
   const composerSizeAutoRef = useRef(true);
+  /** 用户手动选择尺寸时调用：同时更新 composerSize + savedDefaultSize（持久化偏好） */
+  const setComposerSizeManual = useCallback((size: string) => {
+    composerSizeAutoRef.current = false;
+    setComposerSize(size);
+    setSavedDefaultSize(size);
+  }, []);
   const inputPanelRef = useRef<HTMLDivElement | null>(null);
   const MIN_TA_HEIGHT = 132; // 默认高度较之前下降约 1/4（177 -> 132）
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -1207,7 +1404,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // 当 sizesByResolution 变化时，如果当前尺寸不在支持列表中，自动选择一个有效尺寸
   useEffect(() => {
     if (allSizeOptions.length === 0) return;
-    const currentSize = composerSize ?? '1024x1024';
+    const currentSize = composerSize ?? imageGenSize;
     const isCurrentValid = allSizeOptions.some((opt) => opt.size?.toLowerCase() === currentSize.toLowerCase());
     if (!isCurrentValid) {
       // 先尝试保持当前比例，切换到支持的分辨率
@@ -2160,6 +2357,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (cancelled) return;
       setWorkspace(detail.data.workspace);
       setHasMoreMessages(!!detail.data.hasMoreMessages);
+      // 从 workspace 恢复风格统一提示词
+      if (detail.data.workspace.stylePrompt) {
+        setStylePrompt(detail.data.workspace.stylePrompt);
+        setStylePromptDraft(detail.data.workspace.stylePrompt);
+      }
 
       // 服务器下发视口（缩放/相机）：首次进入也要回放，否则会永远停在 DEFAULT_ZOOM=0.5
       const vp = detail.data.viewport;
@@ -4831,7 +5033,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         </div>
       ) : null}
       {/* 单一框架：左右无缝拼接 */}
-      <GlassCard glow className="h-full min-h-0 overflow-hidden p-0!">
+      <GlassCard animated glow className="h-full min-h-0 overflow-hidden p-0!">
         <div className="h-full min-h-0 flex">
           {/* 左侧：画板 */}
           <div className="flex-1 min-w-0 min-h-0">
@@ -6135,7 +6337,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       setQuickSizeOpen(open);
                       // 打开时检查并自动修正不支持的尺寸
                       if (open && allSizeOptions.length > 0) {
-                        const currentSize = composerSize ?? '1024x1024';
+                        const currentSize = composerSize ?? imageGenSize;
                         const isCurrentValid = allSizeOptions.some((opt) => opt.size?.toLowerCase() === currentSize.toLowerCase());
                         if (!isCurrentValid) {
                           const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
@@ -6172,7 +6374,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           onClick={(e) => e.stopPropagation()}
                         >
                           {(() => {
-                            const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                            const size = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                             const tier = detectTierFromSize(size);
                             const aspect = sizeToAspectMap.get(size.toLowerCase()) || detectAspectFromSize(size);
                             // 如果当前分辨率不可用，显示实际会使用的分辨率
@@ -6202,7 +6404,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>分辨率</div>
                           <div className="flex gap-1.5 mb-3">
                             {(() => {
-                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                               const currentTier = detectTierFromSize(currentSize);
                               const availableTiers = (['1k', '2k', '4k'] as const).filter((t) => ratiosByResolution[t].size > 0);
                               // 如果当前分辨率不可用，计算实际应该选中的分辨率
@@ -6224,13 +6426,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
                                       const targetOpt = ratiosByResolution[tier].get(currentAspect);
                                       if (targetOpt) {
-                                        composerSizeAutoRef.current = false;
-                                        setComposerSize(targetOpt.size);
+                                        setComposerSizeManual(targetOpt.size);
                                       } else {
                                         const first = ratiosByResolution[tier].values().next().value;
                                         if (first) {
-                                          composerSizeAutoRef.current = false;
-                                          setComposerSize(first.size);
+                                          setComposerSizeManual(first.size);
                                         }
                                       }
                                     }}
@@ -6245,7 +6445,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>Size</div>
                           <div className="grid grid-cols-4 gap-1.5">
                             {(() => {
-                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                              const currentSize = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                               const currentTier = detectTierFromSize(currentSize);
                               const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
                               // 如果当前分辨率不可用，回退到第一个可用的分辨率
@@ -6275,8 +6475,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
                                     }}
                                     onClick={() => {
-                                      composerSizeAutoRef.current = false;
-                                      setComposerSize(opt.size);
+                                      setComposerSizeManual(opt.size);
                                       setQuickSizeOpen(false);
                                     }}
                                   >
@@ -7497,7 +7696,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     onClick={() => setSizeSelectorOpen((v) => !v)}
                   >
                     {(() => {
-                      const size = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                      const size = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                       const tier = detectTierFromSize(size);
                       // 优先使用后端返回的 aspectRatio，避免 GCD 计算偏差（如 1344x768 应该是 16:9 而不是 7:4）
                       const aspect = sizeToAspectMap.get(size.toLowerCase()) || detectAspectFromSize(size);
@@ -7530,7 +7729,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>分辨率</div>
                               <div className="flex gap-1.5 mb-3">
                                 {availableTiers.map((tier) => {
-                                  const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                                  const currentSize = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                                   const currentTier = detectTierFromSize(currentSize);
                                   const isSelected = currentTier === tier;
                                   const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
@@ -7549,14 +7748,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                         const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
                                         const targetOpt = ratiosByResolution[tier].get(currentAspect);
                                         if (targetOpt) {
-                                          composerSizeAutoRef.current = false;
-                                          setComposerSize(targetOpt.size);
+                                          setComposerSizeManual(targetOpt.size);
                                         } else {
                                           // 当前比例在目标分辨率不存在，选第一个
                                           const first = ratiosByResolution[tier].values().next().value;
                                           if (first) {
-                                            composerSizeAutoRef.current = false;
-                                            setComposerSize(first.size);
+                                            setComposerSizeManual(first.size);
                                           }
                                         }
                                       }}
@@ -7574,7 +7771,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>Size</div>
                         <div className="grid grid-cols-4 gap-1.5">
                           {(() => {
-                            const currentSize = composerSize ?? autoSizeForSelectedImage ?? '1024x1024';
+                            const currentSize = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                             const currentTier = detectTierFromSize(currentSize);
                             // 优先使用后端返回的 aspectRatio
                             const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
@@ -7597,8 +7794,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
                                   }}
                                   onClick={() => {
-                                    composerSizeAutoRef.current = false;
-                                    setComposerSize(opt.size);
+                                    setComposerSizeManual(opt.size);
                                     setSizeSelectorOpen(false);
                                   }}
                                 >
@@ -7744,6 +7940,142 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
 
+                  {/* 风格统一按钮 */}
+                  <Popover.Root open={stylePopoverOpen} onOpenChange={setStylePopoverOpen}>
+                    <Popover.Trigger asChild>
+                      <button
+                        type="button"
+                        className="h-7 w-7 rounded-full inline-flex items-center justify-center"
+                        style={{
+                          border: stylePromptActive ? '1px solid rgba(168, 85, 247, 0.45)' : '1px solid rgba(255,255,255,0.10)',
+                          background: stylePromptActive ? 'rgba(168, 85, 247, 0.14)' : 'rgba(255,255,255,0.04)',
+                          color: stylePromptActive ? 'rgba(192, 132, 252, 0.95)' : 'var(--text-secondary)',
+                        }}
+                        aria-label="风格统一"
+                        title={stylePromptActive ? `风格统一: ${stylePrompt}` : '风格统一（为所有生图自动添加统一风格描述）'}
+                        onClick={() => {
+                          setStylePromptDraft(stylePrompt);
+                          setStylePopoverOpen(true);
+                        }}
+                      >
+                        <Palette size={14} />
+                      </button>
+                    </Popover.Trigger>
+                    <Popover.Portal>
+                      <Popover.Content
+                        side="top"
+                        align="end"
+                        sideOffset={8}
+                        className="z-50 rounded-[14px] p-3"
+                        style={{
+                          ...glassPopoverCompact,
+                          width: 300,
+                          background: 'rgba(32, 32, 36, 0.96)',
+                          border: '1px solid rgba(255, 255, 255, 0.18)',
+                          boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.08) inset',
+                        }}
+                        onOpenAutoFocus={(e) => e.preventDefault()}
+                      >
+                        <div className="text-[12px] font-semibold mb-2" style={{ color: 'rgba(255,255,255,0.75)' }}>
+                          风格统一
+                        </div>
+                        <div className="text-[10px] mb-2" style={{ color: 'rgba(255,255,255,0.40)' }}>
+                          设置后，本工作区所有生图请求将自动附加风格描述
+                        </div>
+
+                        {/* 快捷预设 */}
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {[
+                            { label: '水彩', value: '水彩画风格，柔和的色彩渐变，纸质纹理' },
+                            { label: '赛博朋克', value: '赛博朋克风格，霓虹灯光，暗色调，未来科技感' },
+                            { label: '扁平插画', value: '现代扁平插画风格，简洁几何形状，明快配色' },
+                            { label: '油画', value: '古典油画风格，浓郁笔触，丰富层次感' },
+                            { label: '极简', value: '极简主义风格，大量留白，克制的色彩' },
+                            { label: '日式动漫', value: '日式动漫风格，精致线条，鲜艳色彩' },
+                          ].map((preset) => (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              className="h-5 px-2 rounded-full text-[10px] font-medium transition-colors hover:bg-white/10"
+                              style={{
+                                border: stylePromptDraft === preset.value ? '1px solid rgba(168, 85, 247, 0.5)' : '1px solid rgba(255,255,255,0.12)',
+                                background: stylePromptDraft === preset.value ? 'rgba(168, 85, 247, 0.15)' : 'rgba(255,255,255,0.04)',
+                                color: stylePromptDraft === preset.value ? 'rgba(192, 132, 252, 0.95)' : 'rgba(255,255,255,0.60)',
+                              }}
+                              onClick={() => setStylePromptDraft(preset.value)}
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        <textarea
+                          className="w-full rounded-[8px] px-2.5 py-2 text-[12px] resize-none outline-none"
+                          style={{
+                            background: 'rgba(0,0,0,0.24)',
+                            border: '1px solid rgba(255,255,255,0.12)',
+                            color: 'var(--text-primary)',
+                            minHeight: 60,
+                            maxHeight: 120,
+                          }}
+                          placeholder="如：水彩风格、暖色调、柔和光影..."
+                          value={stylePromptDraft}
+                          onChange={(e) => setStylePromptDraft(e.target.value)}
+                          maxLength={500}
+                        />
+
+                        <div className="mt-2 flex items-center justify-between">
+                          <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.30)' }}>
+                            {stylePromptDraft.trim().length}/500
+                          </span>
+                          <div className="flex gap-1.5">
+                            {stylePromptActive ? (
+                              <button
+                                type="button"
+                                className="h-6 px-2.5 rounded-full text-[11px] font-medium transition-colors hover:bg-white/10"
+                                style={{
+                                  border: '1px solid rgba(239, 68, 68, 0.35)',
+                                  background: 'rgba(239, 68, 68, 0.10)',
+                                  color: 'rgba(248, 113, 113, 0.95)',
+                                }}
+                                onClick={() => {
+                                  setStylePrompt('');
+                                  setStylePromptDraft('');
+                                  setStylePopoverOpen(false);
+                                  if (workspaceId) {
+                                    void updateVisualAgentWorkspace({ id: workspaceId, stylePrompt: '' });
+                                  }
+                                }}
+                              >
+                                清除
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="h-6 px-3 rounded-full text-[11px] font-semibold transition-colors"
+                              style={{
+                                background: stylePromptDraft.trim() ? 'rgba(168, 85, 247, 0.85)' : 'rgba(255,255,255,0.08)',
+                                border: stylePromptDraft.trim() ? '1px solid rgba(168, 85, 247, 0.65)' : '1px solid rgba(255,255,255,0.12)',
+                                color: stylePromptDraft.trim() ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255,255,255,0.35)',
+                              }}
+                              disabled={!stylePromptDraft.trim()}
+                              onClick={() => {
+                                const val = stylePromptDraft.trim();
+                                setStylePrompt(val);
+                                setStylePopoverOpen(false);
+                                if (workspaceId) {
+                                  void updateVisualAgentWorkspace({ id: workspaceId, stylePrompt: val });
+                                }
+                              }}
+                            >
+                              应用
+                            </button>
+                          </div>
+                        </div>
+                      </Popover.Content>
+                    </Popover.Portal>
+                  </Popover.Root>
+
                   {/* 设置按钮 */}
                   <button
                     type="button"
@@ -7834,12 +8166,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
               onClick={() => {
-                void downloadImage(imgContextMenu.src, imgContextMenu.prompt || 'image');
+                const multiSelected = selectedKeys.length > 1;
+                if (multiSelected) {
+                  const items = canvas
+                    .filter((it) => selectedKeys.includes(it.key) && it.src)
+                    .map((it, idx) => ({ src: it.src, filename: it.prompt || `image_${idx + 1}` }));
+                  void downloadAllAsZip(items, `visual-agent_${Date.now()}`);
+                } else {
+                  void downloadImage(imgContextMenu.src, imgContextMenu.prompt || 'image');
+                }
                 setImgContextMenu((p) => ({ ...p, open: false }));
               }}
             >
               <Download size={16} />
-              下载图片
+              {selectedKeys.length > 1 ? `下载 ${selectedKeys.length} 张图片` : '下载图片'}
             </button>
             {imgContextMenu.src ? (
               <button
@@ -7860,12 +8200,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
               onClick={() => {
-                void copyToClipboard(imgContextMenu.prompt || '');
+                if (selectedKeys.length > 1) {
+                  const prompts = canvas
+                    .filter((it) => selectedKeys.includes(it.key) && it.prompt)
+                    .map((it) => it.prompt);
+                  void copyToClipboard(prompts.join('\n'));
+                } else {
+                  void copyToClipboard(imgContextMenu.prompt || '');
+                }
                 setImgContextMenu((p) => ({ ...p, open: false }));
               }}
             >
               <Copy size={16} />
-              复制提示词
+              {selectedKeys.length > 1 ? `复制 ${selectedKeys.length} 条提示词` : '复制提示词'}
             </button>
             {imgContextMenu.src ? (
               <button
@@ -7909,7 +8256,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
                       style={{ color: 'rgba(255,255,255,0.88)' }}
                       onClick={() => {
-                        void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'png');
+                        if (selectedKeys.length > 1) {
+                          const items = canvas
+                            .filter((it) => selectedKeys.includes(it.key) && it.src)
+                            .map((it, idx) => ({ src: it.src, filename: it.prompt || `image_${idx + 1}` }));
+                          void exportAllAsZip(items, `visual-agent_${Date.now()}`, 'png');
+                        } else {
+                          void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'png');
+                        }
                         setImgContextMenu((p) => ({ ...p, open: false }));
                       }}
                     >
@@ -7921,7 +8275,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
                       style={{ color: 'rgba(255,255,255,0.88)' }}
                       onClick={() => {
-                        void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'jpg');
+                        if (selectedKeys.length > 1) {
+                          const items = canvas
+                            .filter((it) => selectedKeys.includes(it.key) && it.src)
+                            .map((it, idx) => ({ src: it.src, filename: it.prompt || `image_${idx + 1}` }));
+                          void exportAllAsZip(items, `visual-agent_${Date.now()}`, 'jpg');
+                        } else {
+                          void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'jpg');
+                        }
                         setImgContextMenu((p) => ({ ...p, open: false }));
                       }}
                     >
@@ -7933,7 +8294,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
                       style={{ color: 'rgba(255,255,255,0.88)' }}
                       onClick={() => {
-                        void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'svg');
+                        if (selectedKeys.length > 1) {
+                          const items = canvas
+                            .filter((it) => selectedKeys.includes(it.key) && it.src)
+                            .map((it, idx) => ({ src: it.src, filename: it.prompt || `image_${idx + 1}` }));
+                          void exportAllAsZip(items, `visual-agent_${Date.now()}`, 'svg');
+                        } else {
+                          void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'svg');
+                        }
                         setImgContextMenu((p) => ({ ...p, open: false }));
                       }}
                     >

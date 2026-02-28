@@ -431,6 +431,7 @@ export async function updateLiteraryAgentWorkspaceReal(input: {
   folderName?: string | null;
   memberUserIds?: string[];
   coverAssetId?: string;
+  selectedPromptId?: string | null;
   idempotencyKey?: string;
 }) {
   const headers: Record<string, string> = {};
@@ -448,6 +449,7 @@ export async function updateLiteraryAgentWorkspaceReal(input: {
         folderName: input.folderName,
         memberUserIds: input.memberUserIds,
         coverAssetId: input.coverAssetId,
+        selectedPromptId: input.selectedPromptId,
       },
     }
   );

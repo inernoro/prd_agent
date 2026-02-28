@@ -178,6 +178,7 @@ public class DefectAgentController : ControllerBase
             Id = Guid.NewGuid().ToString("N"),
             Name = request.Name.Trim(),
             Description = request.Description?.Trim(),
+            ExampleContent = request.ExampleContent?.Trim(),
             RequiredFields = request.RequiredFields ?? CreateDefaultFields(),
             AiSystemPrompt = request.AiSystemPrompt?.Trim(),
             IsDefault = request.IsDefault,
@@ -212,6 +213,8 @@ public class DefectAgentController : ControllerBase
             template.Name = request.Name.Trim();
         if (request.Description != null)
             template.Description = request.Description.Trim();
+        if (request.ExampleContent != null)
+            template.ExampleContent = request.ExampleContent.Trim();
         if (request.RequiredFields != null)
             template.RequiredFields = request.RequiredFields;
         if (request.AiSystemPrompt != null)
@@ -1269,6 +1272,32 @@ public class DefectAgentController : ControllerBase
             Id = "built-in-default",
             Name = "默认模板",
             Description = "系统内置的默认缺陷提交模板",
+            ExampleContent = @"登录页面输入正确密码后提示「账号或密码错误」
+
+问题描述：
+在登录页面输入已注册的账号和正确密码，点击登录后页面提示「账号或密码错误」，无法正常登录系统。
+
+复现步骤：
+1. 打开登录页面 https://app.example.com/login
+2. 输入账号：testuser@example.com
+3. 输入密码：（已确认密码正确，在其他设备可以登录）
+4. 点击「登录」按钮
+
+期望结果：
+成功登录并跳转到首页
+
+实际结果：
+页面弹出红色提示「账号或密码错误」，停留在登录页面
+
+环境信息：
+- 浏览器：Chrome 120.0.6099.130
+- 操作系统：macOS 14.2
+- 网络：公司内网
+
+补充说明：
+- 同一账号在 Safari 浏览器可以正常登录
+- 清除 Chrome 缓存后问题依然存在
+- 控制台显示 POST /api/auth/login 返回 401",
             RequiredFields = CreateDefaultFields(),
             AiSystemPrompt = @"你是一个缺陷报告审核助手。用户会用自然语言描述遇到的问题。
 
@@ -1479,6 +1508,16 @@ public class DefectAgentController : ControllerBase
                 systemPrompt.AppendLine($"参考模板: {template.Name}");
                 if (!string.IsNullOrWhiteSpace(template.Description))
                     systemPrompt.AppendLine($"模板说明: {template.Description}");
+                if (!string.IsNullOrWhiteSpace(template.ExampleContent))
+                {
+                    systemPrompt.AppendLine();
+                    systemPrompt.AppendLine("以下是一个高质量缺陷报告的示范，请参考它的结构、详细程度和表达方式来润色用户的内容：");
+                    systemPrompt.AppendLine("--- 示范开始 ---");
+                    systemPrompt.AppendLine(template.ExampleContent);
+                    systemPrompt.AppendLine("--- 示范结束 ---");
+                    systemPrompt.AppendLine();
+                    systemPrompt.AppendLine("请按照示范的结构和详细程度来组织用户的缺陷描述，补充缺失的部分（如复现步骤、环境信息等），但保持用户原始内容的核心含义不变。");
+                }
                 if (template.RequiredFields?.Count > 0)
                 {
                     systemPrompt.AppendLine("必填字段:");
@@ -1498,10 +1537,28 @@ public class DefectAgentController : ControllerBase
             // 获取 LLM 客户端（使用注册的 AppCallerCode）
             var client = _gateway.CreateClient(AppCallerRegistry.DefectAgent.Polish.Chat, "chat");
 
+            // 构建用户消息（包含截图分析描述）
+            var userContent = new StringBuilder();
+            userContent.AppendLine("请润色以下缺陷描述：");
+            userContent.AppendLine();
+            userContent.AppendLine(request.Content);
+
+            if (request.ImageDescriptions?.Count > 0)
+            {
+                userContent.AppendLine();
+                userContent.AppendLine("用户还附带了截图，以下是截图的 AI 分析描述：");
+                for (var i = 0; i < request.ImageDescriptions.Count; i++)
+                {
+                    userContent.AppendLine($"{i + 1}. {request.ImageDescriptions[i]}");
+                }
+                userContent.AppendLine();
+                userContent.AppendLine("请结合文字描述和截图分析，输出完整的缺陷报告。");
+            }
+
             // 调用 LLM
             var messages = new List<LLMMessage>
             {
-                new() { Role = "user", Content = $"请润色以下缺陷描述：\n\n{request.Content}" }
+                new() { Role = "user", Content = userContent.ToString() }
             };
 
             var resultBuilder = new StringBuilder();
@@ -1527,6 +1584,83 @@ public class DefectAgentController : ControllerBase
         {
             _logger.LogError(ex, "[{AppKey}] Failed to polish defect", AppKey);
             return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "AI 润色失败，请稍后重试"));
+        }
+    }
+
+    /// <summary>
+    /// VLM 分析截图中的缺陷内容
+    /// </summary>
+    [HttpPost("images/analyze")]
+    public async Task<IActionResult> AnalyzeImage([FromBody] AnalyzeImageRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Base64))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片数据不能为空"));
+
+        // 先检查模型池是否可用，给出明确的配置提示
+        var resolution = await _gateway.ResolveModelAsync(
+            AppCallerRegistry.DefectAgent.AnalyzeImage.Vision, "vision");
+        if (resolution is { Success: false })
+        {
+            _logger.LogWarning("[{AppKey}] VLM 模型池未配置: {Error}", AppKey, resolution.ErrorMessage);
+            return StatusCode(503, ApiResponse<object>.Fail("MODEL_NOT_CONFIGURED",
+                "截图分析功能需要配置 vision 模型池，请在管理后台「模型组管理」中绑定 defect-agent.analyze-image::vision"));
+        }
+
+        try
+        {
+            var systemPrompt = @"你是一个专业的缺陷截图分析助手。请仔细观察这张截图，提取以下信息：
+1. 截图中被标记、圈出、箭头指向的问题区域
+2. 界面上可见的错误信息或异常状态
+3. 用户用红框、箭头、文字等标注的重点内容
+4. 任何与缺陷相关的上下文信息（页面名称、操作步骤等）
+
+请用简洁准确的语言描述截图中展示的缺陷内容（2-5句话）。直接输出描述，不要添加前缀或解释。";
+
+            var client = _gateway.CreateClient(AppCallerRegistry.DefectAgent.AnalyzeImage.Vision, "vision");
+
+            var messages = new List<LLMMessage>
+            {
+                new()
+                {
+                    Role = "user",
+                    Content = "请分析这张截图中的缺陷内容。",
+                    Attachments = new List<LLMAttachment>
+                    {
+                        new()
+                        {
+                            Type = "image",
+                            Base64Data = request.Base64,
+                            MimeType = request.MimeType,
+                        }
+                    }
+                }
+            };
+
+            // 服务器权威性设计：VLM 调用使用 CancellationToken.None
+            // 客户端断开不应中断正在进行的模型推理
+            var resultBuilder = new StringBuilder();
+            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, CancellationToken.None))
+            {
+                if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    resultBuilder.Append(chunk.Content);
+                }
+                else if (chunk.Type == "error")
+                {
+                    _logger.LogWarning("[{AppKey}] Image analyze error: {Error}", AppKey, chunk.ErrorMessage);
+                    return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, chunk.ErrorMessage ?? "图片分析失败"));
+                }
+            }
+
+            var description = resultBuilder.ToString().Trim();
+            _logger.LogInformation("[{AppKey}] Image analyzed successfully", AppKey);
+
+            return Ok(ApiResponse<object>.Ok(new { description }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[{AppKey}] Failed to analyze image", AppKey);
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "图片分析失败，请稍后重试"));
         }
     }
 
@@ -1744,6 +1878,7 @@ public class CreateTemplateRequest
 {
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
+    public string? ExampleContent { get; set; }
     public List<DefectTemplateField>? RequiredFields { get; set; }
     public string? AiSystemPrompt { get; set; }
     public bool IsDefault { get; set; }
@@ -1753,6 +1888,7 @@ public class UpdateTemplateRequest
 {
     public string? Name { get; set; }
     public string? Description { get; set; }
+    public string? ExampleContent { get; set; }
     public List<DefectTemplateField>? RequiredFields { get; set; }
     public string? AiSystemPrompt { get; set; }
     public bool? IsDefault { get; set; }
@@ -1780,6 +1916,14 @@ public class PolishDefectRequest
 {
     public string Content { get; set; } = string.Empty;
     public string? TemplateId { get; set; }
+    /// <summary>VLM 预解析的截图描述列表</summary>
+    public List<string>? ImageDescriptions { get; set; }
+}
+
+public class AnalyzeImageRequest
+{
+    public string Base64 { get; set; } = string.Empty;
+    public string MimeType { get; set; } = "image/png";
 }
 
 public class AssignDefectRequest

@@ -106,7 +106,9 @@ pub fn run() {
                 .item(&check_update_item)
                 .build()?;
 
-            let menu = MenuBuilder::new(app).items(&[&edit_submenu, &help_submenu]).build()?;
+            let menu = MenuBuilder::new(app)
+                .items(&[&edit_submenu, &help_submenu])
+                .build()?;
 
             app.set_menu(menu)?;
 

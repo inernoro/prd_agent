@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/cn';
+import { SectionHeader } from '@/components/design/SectionHeader';
 
 // SVG Icons for features
 const Icons = {
@@ -634,7 +635,7 @@ export function parseGlowColor(glowColor: string): [number, number, number] {
   if (match) {
     return [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])];
   }
-  return [214, 178, 106]; // default gold
+  return [99, 102, 241]; // default indigo
 }
 
 interface AgentShowcaseProps {
@@ -674,18 +675,11 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
 
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">
-        {/* Section header */}
-        <div className="text-center mb-16">
-          <div className="inline-flex items-center gap-2 px-4 py-2 mb-6 rounded-full border border-white/10 bg-white/[0.03]">
-            <span className="text-sm text-white/50">六大核心产品</span>
-          </div>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-white/90 mb-4">
-            为不同场景量身定制
-          </h2>
-          <p className="text-lg text-white/40 max-w-2xl mx-auto">
-            覆盖创作、设计、需求、质量、开发全流程的 AI 助手矩阵
-          </p>
-        </div>
+        <SectionHeader
+          badge="六大核心产品"
+          title="为不同场景量身定制"
+          subtitle="覆盖创作、设计、需求、质量、开发全流程的 AI 助手矩阵"
+        />
 
         {/* Agent tabs */}
         <div className="flex justify-center gap-2 mb-12 flex-wrap">
@@ -731,7 +725,7 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
               {activeAgent.features.map((feature, i) => (
                 <div
                   key={i}
-                  className="p-4 rounded-xl bg-white/[0.03] border border-white/10 hover:bg-white/[0.05] hover:border-white/20 transition-all duration-300"
+                  className="surface-interactive p-4 rounded-xl"
                 >
                   <div className={cn('inline-flex p-2 rounded-lg mb-2 bg-gradient-to-br', activeAgent.gradient)}>
                     {Icons[feature.icon]}

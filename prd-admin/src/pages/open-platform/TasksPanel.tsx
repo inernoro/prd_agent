@@ -129,9 +129,9 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
 
   return (
     <div className="h-full overflow-auto p-1">
-      <GlassCard glow className="min-h-full">
+      <GlassCard animated glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'var(--list-item-bg)' }}>
+        <div className="p-4 border-b border-white/10" style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <ListTodo size={18} className="text-muted-foreground" />
@@ -153,7 +153,7 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
               <div className="grid grid-cols-5 gap-3">
                 <div
                   className="p-3 rounded-lg text-center"
-                  style={{ background: 'var(--list-item-bg)', border: '1px solid var(--nested-block-border)' }}
+                  style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--nested-block-border)' }}
                 >
                   <div className="text-2xl font-bold">{stats.todayTotal}</div>
                   <div className="text-xs text-muted-foreground mt-1">今日任务</div>
@@ -233,7 +233,7 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
                 tasks.map((task) => (
                   <div
                     key={task.id}
-                    className="p-4 rounded-lg transition-colors hover:bg-white/[0.03] cursor-pointer"
+                    className="surface-row p-4 rounded-lg cursor-pointer"
                     style={{
                       background: statusBgColors[task.status] || 'transparent',
                       border: `1px solid ${statusBorderColors[task.status] || 'var(--nested-block-border)'}`,

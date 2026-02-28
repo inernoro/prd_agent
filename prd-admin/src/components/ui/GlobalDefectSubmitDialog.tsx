@@ -1,6 +1,7 @@
 /**
  * GlobalDefectSubmitDialog - 全局缺陷提交对话框
  * 支持全局快捷键 Command+B (Mac) / Control+B (Windows)
+ * 支持截图自动 VLM 分析（异步后台完成，不阻塞用户输入）
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -11,6 +12,7 @@ import {
   submitDefect,
   addDefectAttachment,
   polishDefect,
+  analyzeDefectImage,
   listDefectTemplates,
   getDefectUsers,
   previewApiLogs,
@@ -29,6 +31,9 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  Check,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 
@@ -36,6 +41,15 @@ const STORAGE_KEY_TEMPLATE = 'defect-agent-last-template';
 const STORAGE_KEY_ASSIGNEE = 'defect-agent-last-assignee';
 
 type DefectSeverityValue = (typeof DefectSeverity)[keyof typeof DefectSeverity];
+
+/** 带分析状态的附件 */
+interface AnalyzedAttachment {
+  file: File;
+  /** VLM 分析状态：idle=非图片无需分析, analyzing=分析中, done=完成, error=失败 */
+  status: 'idle' | 'analyzing' | 'done' | 'error';
+  /** VLM 提取的缺陷描述 */
+  description?: string;
+}
 
 /**
  * 从内容中提取标题
@@ -51,6 +65,21 @@ function extractTitleFromContent(content: string): string {
     }
   }
   return '';
+}
+
+/** 将 File 转为 base64 字符串（不含 data: 前缀） */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      // 去掉 "data:image/png;base64," 前缀
+      const base64 = result.split(',')[1] || '';
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 export function GlobalDefectSubmitDialog() {
@@ -79,9 +108,12 @@ export function GlobalDefectSubmitDialog() {
   });
   const [content, setContent] = useState('');
   const [severity, setSeverity] = useState<DefectSeverityValue>(DefectSeverity.Trivial);
-  const [attachments, setAttachments] = useState<File[]>([]);
+  const [attachments, setAttachments] = useState<AnalyzedAttachment[]>([]);
   const [polishing, setPolishing] = useState(false);
   const [focused, setFocused] = useState(false);
+  // 当前悬浮预览的附件索引
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const [showExample, setShowExample] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -183,25 +215,99 @@ export function GlobalDefectSubmitDialog() {
     }
   }, [showDialog]);
 
+  /**
+   * 添加文件并对图片自动触发 VLM 分析
+   * 异步后台完成，不阻塞用户
+   */
+  const addFiles = useCallback((files: File[]) => {
+    const newItems: AnalyzedAttachment[] = files.map((file) => ({
+      file,
+      status: file.type.startsWith('image/') ? 'analyzing' as const : 'idle' as const,
+    }));
+
+    setAttachments((prev) => {
+      const updated = [...prev, ...newItems];
+      return updated;
+    });
+
+    // 对每张图片异步调用 VLM 分析
+    for (const item of newItems) {
+      if (item.status !== 'analyzing') continue;
+
+      (async () => {
+        try {
+          const base64 = await fileToBase64(item.file);
+          const res = await analyzeDefectImage({
+            base64,
+            mimeType: item.file.type || 'image/png',
+          });
+
+          if (res.success && res.data?.description) {
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.file === item.file
+                  ? { ...a, status: 'done', description: res.data!.description }
+                  : a
+              )
+            );
+          } else {
+            const errCode = res.error?.code || '';
+            const errMsg = res.error?.message || '图片分析失败';
+            const isNotConfigured = errCode === 'MODEL_NOT_CONFIGURED';
+            console.warn('[defect-image-analyze] failed:', errCode, errMsg);
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.file === item.file
+                  ? {
+                      ...a,
+                      status: isNotConfigured ? 'idle' as const : 'error',
+                      description: isNotConfigured ? undefined : errMsg,
+                    }
+                  : a
+              )
+            );
+            // 模型未配置时只提示一次，不反复弹错
+            if (isNotConfigured) {
+              console.info('[defect-image-analyze] VLM 模型池未配置，跳过图片分析');
+            }
+          }
+        } catch (e) {
+          console.warn('[defect-image-analyze] error:', e);
+          setAttachments((prev) =>
+            prev.map((a) =>
+              a.file === item.file
+                ? { ...a, status: 'error', description: String(e) }
+                : a
+            )
+          );
+        }
+      })();
+    }
+  }, []);
+
   // Handle paste for images
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const pastedFiles: File[] = [];
     const items = e.clipboardData.items;
     for (const item of items) {
       if (item.type.startsWith('image/')) {
         const file = item.getAsFile();
-        if (file) {
-          setAttachments((prev) => [...prev, file]);
-        }
+        if (file) pastedFiles.push(file);
       }
     }
-  }, []);
+    if (pastedFiles.length > 0) {
+      // 阻止浏览器默认粘贴行为，否则会把截图占位文字插入 textarea
+      e.preventDefault();
+      addFiles(pastedFiles);
+    }
+  }, [addFiles]);
 
   // Handle drag and drop
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files);
-    setAttachments((prev) => [...prev, ...files]);
-  }, []);
+    if (files.length > 0) addFiles(files);
+  }, [addFiles]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -211,18 +317,19 @@ export function GlobalDefectSubmitDialog() {
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(e.target.files || []);
-      setAttachments((prev) => [...prev, ...files]);
+      if (files.length > 0) addFiles(files);
       e.target.value = '';
     },
-    []
+    [addFiles]
   );
 
   // Remove attachment
   const removeAttachment = useCallback((index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
+    setPreviewIndex(null);
   }, []);
 
-  // AI Polish
+  // AI Polish - 收集已解析的图片描述一并传给润色 API
   const handlePolish = async () => {
     if (!content.trim()) {
       toast.warning('请先输入问题描述');
@@ -230,9 +337,15 @@ export function GlobalDefectSubmitDialog() {
     }
     setPolishing(true);
     try {
+      // 收集已解析完成的图片描述
+      const imageDescriptions = attachments
+        .filter((a) => a.status === 'done' && a.description)
+        .map((a) => a.description!);
+
       const res = await polishDefect({
         content: content.trim(),
         templateId: selectedTemplateId || undefined,
+        imageDescriptions: imageDescriptions.length > 0 ? imageDescriptions : undefined,
       });
       if (res.success && res.data?.content) {
         setContent(res.data.content);
@@ -279,8 +392,8 @@ export function GlobalDefectSubmitDialog() {
       const defect = createRes.data.defect;
 
       // Upload attachments
-      for (const file of attachments) {
-        await addDefectAttachment({ id: defect.id, file });
+      for (const item of attachments) {
+        await addDefectAttachment({ id: defect.id, file: item.file });
       }
 
       // Submit defect
@@ -292,6 +405,7 @@ export function GlobalDefectSubmitDialog() {
           setContent('');
           setAttachments([]);
           setSeverity(DefectSeverity.Trivial);
+          setPreviewIndex(null);
           closeDialog();
         }, 1500);
         return true;
@@ -314,6 +428,9 @@ export function GlobalDefectSubmitDialog() {
     { value: DefectSeverity.Minor, label: '一般' },
     { value: DefectSeverity.Trivial, label: '轻微' },
   ];
+
+  // 当前预览的附件
+  const previewItem = previewIndex !== null ? attachments[previewIndex] : null;
 
   if (!showDialog) return null;
 
@@ -428,18 +545,49 @@ export function GlobalDefectSubmitDialog() {
             </div>
           </div>
 
-          {/* Template Hint */}
-          {selectedTemplate && selectedTemplate.description && (
-            <div
-              className="px-3 py-2 rounded-lg text-[11px]"
-              style={{
-                background: 'rgba(100,200,255,0.08)',
-                color: 'var(--text-secondary)',
-                border: '1px solid rgba(100,200,255,0.15)',
-              }}
-            >
-              <span style={{ color: 'rgba(100,200,255,0.8)' }}>模板提示：</span>
-              {selectedTemplate.description}
+          {/* Template Hint + Example */}
+          {selectedTemplate && (selectedTemplate.description || selectedTemplate.exampleContent) && (
+            <div className="space-y-2">
+              {selectedTemplate.description && (
+                <div
+                  className="px-3 py-2 rounded-lg text-[11px]"
+                  style={{
+                    background: 'rgba(100,200,255,0.08)',
+                    color: 'var(--text-secondary)',
+                    border: '1px solid rgba(100,200,255,0.15)',
+                  }}
+                >
+                  <span style={{ color: 'rgba(100,200,255,0.8)' }}>模板提示：</span>
+                  {selectedTemplate.description}
+                </div>
+              )}
+              {selectedTemplate.exampleContent && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowExample(!showExample)}
+                    className="flex items-center gap-1.5 text-[11px] transition-colors hover:opacity-80"
+                    style={{ color: 'rgba(214,178,106,0.85)' }}
+                  >
+                    {showExample ? <EyeOff size={12} /> : <Eye size={12} />}
+                    {showExample ? '收起示范' : '查看示范 — 看看理想的缺陷报告长什么样'}
+                  </button>
+                  {showExample && (
+                    <div
+                      className="mt-1.5 px-3 py-2.5 rounded-lg text-[12px] whitespace-pre-wrap leading-relaxed"
+                      style={{
+                        background: 'rgba(214,178,106,0.06)',
+                        border: '1px solid rgba(214,178,106,0.15)',
+                        color: 'var(--text-secondary)',
+                        maxHeight: '200px',
+                        overflowY: 'auto',
+                      }}
+                    >
+                      {selectedTemplate.exampleContent}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -451,14 +599,15 @@ export function GlobalDefectSubmitDialog() {
           onDragOver={handleDragOver}
         >
           <div
-            className="flex-1 min-h-[180px] flex flex-col rounded-xl overflow-hidden transition-all duration-200"
+            className="flex-1 flex flex-col rounded-xl overflow-hidden transition-all duration-200"
             style={{
+              minHeight: attachments.length > 0 ? '500px' : '380px',
               background: 'rgba(0,0,0,0.14)',
-              border: focused 
-                ? '1px solid rgba(214, 178, 106, 0.55)' 
+              border: focused
+                ? '1px solid rgba(214, 178, 106, 0.55)'
                 : '1px solid rgba(255,255,255,0.08)',
-              boxShadow: focused 
-                ? '0 0 0 2px rgba(214, 178, 106, 0.15)' 
+              boxShadow: focused
+                ? '0 0 0 2px rgba(214, 178, 106, 0.15)'
                 : 'none',
             }}
           >
@@ -481,51 +630,144 @@ export function GlobalDefectSubmitDialog() {
             {/* Attachments Preview */}
             {attachments.length > 0 && (
               <div
-                className="px-4 py-3 border-t flex flex-wrap gap-2"
+                className="px-4 py-3 border-t"
                 style={{ borderColor: 'rgba(255,255,255,0.08)' }}
               >
-                {attachments.map((file, index) => (
+                <div className="flex flex-wrap gap-2">
+                  {attachments.map((item, index) => (
+                    <div
+                      key={index}
+                      className="group relative"
+                    >
+                      {item.file.type.startsWith('image/') ? (
+                        <div
+                          className="w-16 h-16 rounded-lg overflow-hidden relative cursor-pointer"
+                          style={{
+                            background: 'rgba(255,255,255,0.06)',
+                            border: item.status === 'done'
+                              ? '1px solid rgba(100, 255, 150, 0.3)'
+                              : item.status === 'error'
+                                ? '1px solid rgba(255, 120, 120, 0.3)'
+                                : '1px solid rgba(255,255,255,0.1)',
+                          }}
+                          onClick={() => setPreviewIndex(previewIndex === index ? null : index)}
+                        >
+                          <img
+                            src={URL.createObjectURL(item.file)}
+                            alt={item.file.name}
+                            className="w-full h-full object-cover"
+                          />
+                          {/* 分析状态角标 */}
+                          {item.status === 'analyzing' && (
+                            <div
+                              className="absolute bottom-0 left-0 right-0 flex items-center justify-center gap-1 py-0.5"
+                              style={{ background: 'rgba(0,0,0,0.7)' }}
+                            >
+                              <Loader2 size={8} className="animate-spin" style={{ color: 'rgba(100, 200, 255, 0.9)' }} />
+                              <span className="text-[8px]" style={{ color: 'rgba(100, 200, 255, 0.9)' }}>解析中</span>
+                            </div>
+                          )}
+                          {item.status === 'done' && (
+                            <div
+                              className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full flex items-center justify-center"
+                              style={{ background: 'rgba(34, 197, 94, 0.9)' }}
+                            >
+                              <Check size={8} style={{ color: '#fff' }} />
+                            </div>
+                          )}
+                          {item.status === 'error' && (
+                            <div
+                              className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full flex items-center justify-center"
+                              style={{ background: 'rgba(255, 120, 120, 0.9)' }}
+                            >
+                              <AlertTriangle size={8} style={{ color: '#fff' }} />
+                            </div>
+                          )}
+                          {/* 预览按钮 - done 状态 hover 时显示 */}
+                          {item.status === 'done' && (
+                            <div
+                              className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                              style={{ background: 'rgba(0,0,0,0.4)' }}
+                            >
+                              <Eye size={14} style={{ color: '#fff' }} />
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div
+                          className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px]"
+                          style={{
+                            background: 'rgba(255,255,255,0.06)',
+                            color: 'var(--text-secondary)',
+                          }}
+                        >
+                          <FileText size={12} />
+                          <span className="max-w-[80px] truncate">{item.file.name}</span>
+                        </div>
+                      )}
+                      <button
+                        onClick={() => removeAttachment(index)}
+                        className="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        style={{
+                          background: 'rgba(255,80,80,0.9)',
+                        }}
+                      >
+                        <X size={10} style={{ color: '#fff' }} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* 图片分析预览面板 */}
+                {previewItem && previewItem.status === 'done' && previewItem.description && (
                   <div
-                    key={index}
-                    className="group relative"
+                    className="mt-2 px-3 py-2 rounded-lg text-[11px] leading-relaxed"
+                    style={{
+                      background: 'rgba(34, 197, 94, 0.08)',
+                      border: '1px solid rgba(34, 197, 94, 0.2)',
+                      color: 'var(--text-secondary)',
+                    }}
                   >
-                    {file.type.startsWith('image/') ? (
-                      <div
-                        className="w-16 h-16 rounded-lg overflow-hidden"
-                        style={{
-                          background: 'rgba(255,255,255,0.06)',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                        }}
-                      >
-                        <img
-                          src={URL.createObjectURL(file)}
-                          alt={file.name}
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    ) : (
-                      <div
-                        className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px]"
-                        style={{
-                          background: 'rgba(255,255,255,0.06)',
-                          color: 'var(--text-secondary)',
-                        }}
-                      >
-                        <FileText size={12} />
-                        <span className="max-w-[80px] truncate">{file.name}</span>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Eye size={10} style={{ color: 'rgba(34, 197, 94, 0.8)' }} />
+                      <span style={{ color: 'rgba(34, 197, 94, 0.9)', fontWeight: 500 }}>AI 识别结果</span>
+                    </div>
+                    {previewItem.description}
+                  </div>
+                )}
+                {previewItem && previewItem.status === 'analyzing' && (
+                  <div
+                    className="mt-2 px-3 py-2 rounded-lg text-[11px] flex items-center gap-1.5"
+                    style={{
+                      background: 'rgba(100, 200, 255, 0.08)',
+                      border: '1px solid rgba(100, 200, 255, 0.15)',
+                      color: 'var(--text-muted)',
+                    }}
+                  >
+                    <Loader2 size={10} className="animate-spin" style={{ color: 'rgba(100, 200, 255, 0.8)' }} />
+                    正在分析截图内容...
+                  </div>
+                )}
+                {previewItem && previewItem.status === 'error' && (
+                  <div
+                    className="mt-2 px-3 py-2 rounded-lg text-[11px]"
+                    style={{
+                      background: 'rgba(255, 120, 120, 0.08)',
+                      border: '1px solid rgba(255, 120, 120, 0.15)',
+                      color: 'var(--text-muted)',
+                    }}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <AlertTriangle size={10} style={{ color: 'rgba(255, 120, 120, 0.8)', flexShrink: 0 }} />
+                      图片分析失败，不影响缺陷提交
+                    </div>
+                    {previewItem.description && (
+                      <div className="mt-1 pl-4 text-[10px]" style={{ color: 'rgba(255, 120, 120, 0.7)' }}>
+                        {previewItem.description}
                       </div>
                     )}
-                    <button
-                      onClick={() => removeAttachment(index)}
-                      className="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                      style={{
-                        background: 'rgba(255,80,80,0.9)',
-                      }}
-                    >
-                      <X size={10} style={{ color: '#fff' }} />
-                    </button>
                   </div>
-                ))}
+                )}
               </div>
             )}
 
@@ -684,8 +926,8 @@ export function GlobalDefectSubmitDialog() {
                         onClick={() => setSeverity(opt.value)}
                         className="px-2 py-1 rounded-[7px] text-[11px] font-medium transition-colors"
                         style={{
-                          background: active ? 'rgba(214, 178, 106, 0.18)' : 'rgba(255,255,255,0.06)',
-                          border: active ? '1px solid rgba(214, 178, 106, 0.35)' : '1px solid rgba(255,255,255,0.08)',
+                          background: active ? 'rgba(99, 102, 241, 0.18)' : 'rgba(255,255,255,0.06)',
+                          border: active ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(255,255,255,0.08)',
                           color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                         }}
                       >
