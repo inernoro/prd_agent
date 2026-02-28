@@ -10,7 +10,6 @@ import {
   Sparkles,
   Settings,
   FileText,
-  Trash2,
   RefreshCw,
   Download,
   DownloadCloud,
