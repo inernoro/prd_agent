@@ -3301,76 +3301,88 @@ export default function LlmLabTab() {
 
             {mainMode === 'vision' ? (
               <>
-                {/* 识图模式：图片上传 + 提示词 */}
-                <div className="mt-3 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  上传图片
+                {/* 识图模式：左侧上传图片 + 右侧提示词（并排） */}
+                <div className={cn('grid grid-cols-1 lg:grid-cols-2 gap-3', 'mt-3')}>
+                  <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    上传图片
+                  </div>
+                  <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    识图提示词
+                  </div>
                 </div>
-                <div className="mt-2">
-                  <input
-                    ref={visionFileInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => handleVisionImageUpload(e.target.files)}
-                  />
-                  <div className="flex flex-wrap gap-2 items-start">
-                    {visionImages.map((img) => (
-                      <div
-                        key={img.id}
-                        className="relative group rounded-[12px] overflow-hidden"
-                        style={{ width: 80, height: 80, border: '1px solid var(--border-default)', background: 'var(--bg-input)' }}
-                      >
-                        <img src={img.preview} alt={img.name} className="w-full h-full object-cover" />
+                <div className={cn('grid grid-cols-1 lg:grid-cols-2 gap-3', 'mt-2')}>
+                  <div>
+                    <input
+                      ref={visionFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => handleVisionImageUpload(e.target.files)}
+                    />
+                    <div
+                      className="rounded-[14px] p-2.5 min-h-[140px] flex flex-wrap gap-2 items-start content-start"
+                      style={{
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--border-default)',
+                      }}
+                    >
+                      {visionImages.map((img) => (
+                        <div
+                          key={img.id}
+                          className="relative group rounded-[10px] overflow-hidden"
+                          style={{ width: 64, height: 64, border: '1px solid var(--border-default)', background: 'var(--bg-input)' }}
+                        >
+                          <img src={img.preview} alt={img.name} className="w-full h-full object-cover" />
+                          <button
+                            type="button"
+                            className="absolute top-0.5 right-0.5 h-4 w-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                            style={{ background: 'rgba(0,0,0,0.6)' }}
+                            onClick={() => removeVisionImage(img.id)}
+                            title="移除"
+                          >
+                            <X size={10} style={{ color: '#fff' }} />
+                          </button>
+                        </div>
+                      ))}
+                      {visionImages.length < 10 && (
                         <button
                           type="button"
-                          className="absolute top-1 right-1 h-5 w-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                          style={{ background: 'rgba(0,0,0,0.6)' }}
-                          onClick={() => removeVisionImage(img.id)}
-                          title="移除"
+                          className="rounded-[10px] flex flex-col items-center justify-center gap-1 transition-colors hover:bg-white/6"
+                          style={{
+                            width: 64,
+                            height: 64,
+                            border: '2px dashed var(--border-default)',
+                            color: 'var(--text-muted)',
+                          }}
+                          onClick={() => visionFileInputRef.current?.click()}
+                          title="点击上传图片"
                         >
-                          <X size={12} style={{ color: '#fff' }} />
+                          <Upload size={16} />
+                          <span className="text-[10px]">上传</span>
                         </button>
+                      )}
+                    </div>
+                    {visionImages.length > 0 && (
+                      <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        已上传 {visionImages.length}/10 张
                       </div>
-                    ))}
-                    {visionImages.length < 10 && (
-                      <button
-                        type="button"
-                        className="rounded-[12px] flex flex-col items-center justify-center gap-1 transition-colors hover:bg-white/6"
-                        style={{
-                          width: 80,
-                          height: 80,
-                          border: '2px dashed var(--border-default)',
-                          color: 'var(--text-muted)',
-                        }}
-                        onClick={() => visionFileInputRef.current?.click()}
-                        title="点击上传图片"
-                      >
-                        <Upload size={18} />
-                        <span className="text-[10px]">上传</span>
-                      </button>
                     )}
                   </div>
-                  {visionImages.length > 0 && (
-                    <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      已上传 {visionImages.length}/10 张
-                    </div>
-                  )}
+                  <div>
+                    <textarea
+                      value={promptText}
+                      onChange={(e) => setPromptText(e.target.value)}
+                      className="h-[140px] w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
+                      style={{
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--border-default)',
+                        color: 'var(--text-primary)',
+                      }}
+                      placeholder="输入识图提示词（如：请描述这张图片的内容）"
+                    />
+                  </div>
                 </div>
-                <div className="mt-3 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  识图提示词
-                </div>
-                <textarea
-                  value={promptText}
-                  onChange={(e) => setPromptText(e.target.value)}
-                  className="mt-2 h-24 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-default)',
-                    color: 'var(--text-primary)',
-                  }}
-                  placeholder="输入识图提示词（如：请描述这张图片的内容）"
-                />
               </>
             ) : shouldShowImageGenPlanPromptSplit ? (
               <>
