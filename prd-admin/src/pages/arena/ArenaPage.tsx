@@ -1098,7 +1098,7 @@ export function ArenaPage() {
         >
           <div className="mx-auto" style={{ maxWidth: '900px' }}>
             <div
-              className="rounded-[16px] p-3"
+              className="rounded-[16px] p-3 transition-colors duration-150 focus-within:ring-1 focus-within:ring-[rgba(99,102,241,0.5)]"
               style={{ background: 'rgba(255,255,255,0.03)' }}
             >
               <textarea
@@ -1118,7 +1118,7 @@ export function ArenaPage() {
                 disabled={isStreaming || slots.length === 0}
                 rows={2}
                 className={cn(
-                  'w-full bg-transparent border-none outline-none resize-none text-[14px] leading-relaxed',
+                  'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14px] leading-relaxed',
                   'placeholder:text-[color:var(--text-muted)] disabled:opacity-50 disabled:cursor-not-allowed',
                   'px-2 py-1'
                 )}
