@@ -1,5 +1,6 @@
 import { ASPECT_OPTIONS, detectTierFromSize, detectAspectFromSize } from '@/lib/imageAspectOptions';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 type SizePickerPanelProps = {
   /** 当前尺寸字符串，如 "1024x1024" */
@@ -97,21 +98,32 @@ export function SizePickerPanel({ size, onSizeChange, width = 260 }: SizePickerP
 
 /**
  * 尺寸选择按钮 + 弹出面板，用于底部工具栏等场景。
- * 集成了 popover 定位和点击外部关闭逻辑。
+ * 使用 Portal 渲染到 body，避免被父级 overflow:hidden 裁剪。
  */
 export function SizePickerButton({ size, onSizeChange }: { size: string; onSizeChange: (s: string) => void }) {
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
 
+  // 计算面板位置（按钮上方）
+  useLayoutEffect(() => {
+    if (!open || !btnRef.current) return;
+    const rect = btnRef.current.getBoundingClientRect();
+    setPos({ top: rect.top - 8, left: rect.left });
+  }, [open]);
+
+  // 点击外部关闭
   useEffect(() => {
     if (!open) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+    const handler = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t)) return;
+      if (panelRef.current?.contains(t)) return;
+      setOpen(false);
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
   const tier = detectTierFromSize(size) ?? '1k';
@@ -119,8 +131,9 @@ export function SizePickerButton({ size, onSizeChange }: { size: string; onSizeC
   const tierLabel = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
 
   return (
-    <div ref={containerRef} className="relative">
+    <>
       <button
+        ref={btnRef}
         type="button"
         className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover:bg-white/8"
         style={{
@@ -137,8 +150,17 @@ export function SizePickerButton({ size, onSizeChange }: { size: string; onSizeC
         <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{tierLabel} · {aspect}</span>
         <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.45)' }}>▾</span>
       </button>
-      {open && (
-        <div className="absolute bottom-full left-0 mb-2 z-50">
+      {open && createPortal(
+        <div
+          ref={panelRef}
+          style={{
+            position: 'fixed',
+            top: pos.top,
+            left: pos.left,
+            transform: 'translateY(-100%)',
+            zIndex: 9999,
+          }}
+        >
           <SizePickerPanel
             size={size}
             onSizeChange={(s) => {
@@ -146,8 +168,9 @@ export function SizePickerButton({ size, onSizeChange }: { size: string; onSizeC
               setOpen(false);
             }}
           />
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }
