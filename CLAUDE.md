@@ -166,7 +166,7 @@ public class MyService
 
 ### 日志记录字段
 
-Gateway 自动记录以下信息到 `llm_request_logs`：
+Gateway 自动记录以下信息到 `llmrequestlogs`：
 
 | 字段 | 说明 |
 |------|------|
@@ -387,27 +387,45 @@ prd_agent/
 | **K8s 部署** | ❌ NOT_IMPL | 仅 docker-compose，无 K8s manifests |
 | **告警通知 (邮件/Webhook)** | ❌ NOT_IMPL | 仅 AdminNotification 面板内通知 |
 
-### MongoDB 集合清单 (56 个)
+### MongoDB 集合清单 (87 个)
 
-核心业务：`users`, `groups`, `group_members`, `sessions`, `messages`, `parsed_prds`, `attachments`, `contentgaps`, `prdcomments`
+核心业务：`users`, `groups`, `groupmembers`, `documents`, `sessions`, `messages`, `group_message_counters`, `contentgaps`, `attachments`, `prdcomments`, `share_links`
 
-LLM/AI：`llm_platforms`, `llm_models`, `llm_request_logs`, `model_groups`, `model_scheduler_config`, `model_test_stubs`, `llm_app_callers`
+LLM/AI：`llmconfigs`, `llmplatforms`, `llmmodels`, `llmrequestlogs`, `model_groups`, `model_scheduler_config`, `model_test_stubs`, `llm_app_callers`, `model_exchanges`
 
-VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_master_workspace_assets`, `image_master_sessions`, `image_master_messages`, `image_master_canvas_objects`
+Model Lab：`model_lab_experiments`, `model_lab_runs`, `model_lab_run_items`, `model_lab_model_sets`, `model_lab_groups`
+
+Arena：`arena_groups`, `arena_slots`, `arena_battles`
+
+VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_assets`, `image_master_sessions`, `image_master_messages`, `image_master_canvases`, `image_gen_size_caps`, `image_gen_runs`, `image_gen_run_items`, `image_gen_run_events`, `upload_artifacts`
 
 水印：`watermark_configs`, `watermark_font_assets`
 
-权限/角色：`system_roles`, `admin_notifications`
+权限/角色：`system_roles`, `admin_notifications`, `invitecodes`
 
 桌面资产：`desktop_asset_skins`, `desktop_asset_keys`, `desktop_assets`
 
-提示词/技能：`prompt_stages`, `literary_prompts`, `skill_settings`
+提示词/技能：`promptstages`, `systemprompts`, `literary_prompts`, `skill_settings`, `skills`, `admin_prompt_overrides`, `literary_agent_configs`, `reference_image_configs`
 
 开放平台：`openplatformapps`, `openplatformrequestlogs`
 
-缺陷管理：`defect_templates`, `defect_reports`, `defect_messages`
+缺陷管理：`defect_templates`, `defect_reports`, `defect_messages`, `defect_folders`
 
-其他：`api_request_logs`, `user_preferences`
+海鲜市场：`marketplace_fork_logs`
+
+渠道 (Channel)：`channel_whitelist`, `channel_identity_mappings`, `channel_tasks`, `channel_request_logs`, `channel_settings`
+
+工作流：`workflows`, `workflow_executions`, `workflow_schedules`, `workflow_secrets`
+
+工具箱：`toolbox_runs`, `toolbox_items`
+
+邮件：`email_classifications`, `email_workflows`
+
+教程邮件：`tutorial_email_sequences`, `tutorial_email_templates`, `tutorial_email_assets`, `tutorial_email_enrollments`
+
+应用路由：`registered_apps`, `routing_rules`
+
+其他：`apirequestlogs`, `user_preferences`, `appsettings`, `automation_rules`, `admin_idempotency`, `todo_items`, `webhook_delivery_logs`
 
 ### 已废弃概念 (勿再引用)
 
