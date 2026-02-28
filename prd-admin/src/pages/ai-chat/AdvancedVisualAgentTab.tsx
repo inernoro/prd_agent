@@ -5013,7 +5013,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [selectedGenerator]);
 
   return (
-    <div ref={containerRef} className="h-full min-h-0">
+    <div ref={containerRef} className="h-full min-h-0" style={{ background: '#1e1e1e' }}>
       {uploadToast ? (
         <div
           className="fixed left-1/2 z-9999"
@@ -5041,7 +5041,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         </div>
       ) : null}
       {/* 单一框架：左右无缝拼接 */}
-      <GlassCard animated glow className="h-full min-h-0 overflow-hidden p-0!">
+      <GlassCard animated glow className="h-full min-h-0 overflow-hidden p-0!" style={{ border: 'none', boxShadow: 'none', background: 'transparent' }}>
         <div className="h-full min-h-0 flex">
           {/* 左侧：画板 */}
           <div className="flex-1 min-w-0 min-h-0">
