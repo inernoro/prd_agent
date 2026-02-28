@@ -8,9 +8,11 @@ import { toast } from '@/lib/toast';
 import {
   createVisualAgentWorkspace,
   deleteVisualAgentWorkspace,
+  getUserPreferences,
   getUsers,
   listVisualAgentWorkspaces,
   refreshVisualAgentWorkspaceCover,
+  updateVisualAgentPreferences,
   updateVisualAgentWorkspace,
   uploadVisualAgentWorkspaceAsset,
 } from '@/services';
@@ -34,6 +36,7 @@ import {
   Bug,
 } from 'lucide-react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useAuthStore } from '@/stores/authStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -779,186 +782,6 @@ function QuickInputBox(props: {
                 )}
               </button>
 
-              {/* 尺寸选择器（参考 AdvancedVisualAgentTab 样式） */}
-              {onSizeChange && (
-                <>
-                  {/* 档位选择器（1K/2K/4K） */}
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger asChild>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-0.5"
-                        style={{
-                          height: 20,
-                          paddingLeft: 6,
-                          paddingRight: 6,
-                          borderRadius: 4,
-                          overflow: 'hidden',
-                          border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-                          color: 'rgba(255,255,255,0.82)',
-                        }}
-                        title="选择档位"
-                        aria-label="选择档位"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {(() => {
-                          const tier = detectTierFromSize(size);
-                          return (
-                            <>
-                              <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
-                                {tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K'}
-                              </span>
-                              <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                                ▾
-                              </span>
-                            </>
-                          );
-                        })()}
-                      </button>
-                    </DropdownMenu.Trigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content
-                        side="top"
-                        align="start"
-                        sideOffset={8}
-                        className="rounded-[12px] p-1 min-w-[80px]"
-                        style={{
-                          outline: 'none',
-                          zIndex: 90,
-                          ...glassPanel,
-                        }}
-                      >
-                        {(['1k', '2k', '4k'] as const).map((tier) => {
-                          const currentTier = detectTierFromSize(size);
-                          const isSelected = currentTier === tier;
-                          const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
-                          const currentAspect = detectAspectFromSize(size);
-                          const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
-                          if (!targetOpt) return null;
-
-                          return (
-                            <DropdownMenu.Item
-                              key={tier}
-                              className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
-                              style={{
-                                color: 'rgba(255,255,255,0.9)',
-                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                                borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
-                              }}
-                              onSelect={() => {
-                                const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
-                                onSizeChange(newSize);
-                              }}
-                            >
-                              <span className="font-semibold">{label}</span>
-                            </DropdownMenu.Item>
-                          );
-                        })}
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
-
-                  {/* 比例选择器 */}
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger asChild>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1"
-                        style={{
-                          height: 20,
-                          paddingLeft: 6,
-                          paddingRight: 6,
-                          borderRadius: 4,
-                          overflow: 'hidden',
-                          border: '1px solid rgba(255,255,255,0.22)',
-                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-                          color: 'rgba(255,255,255,0.82)',
-                        }}
-                        title="选择比例"
-                        aria-label="选择比例"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {(() => {
-                          const currentAspect = detectAspectFromSize(size);
-                          const opt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
-                          const iconW = opt?.iconW ?? 20;
-                          const iconH = opt?.iconH ?? 20;
-                          return (
-                            <>
-                              <span
-                                style={{
-                                  width: iconW,
-                                  height: iconH,
-                                  borderRadius: 2,
-                                  border: '1px solid rgba(255,255,255,0.3)',
-                                  background: 'rgba(255,255,255,0.1)',
-                                  display: 'inline-block',
-                                  flexShrink: 0,
-                                }}
-                              />
-                              <span style={{ fontSize: 10, lineHeight: '18px', fontWeight: 600 }}>
-                                {opt?.label || '1:1'}
-                              </span>
-                              <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                                ▾
-                              </span>
-                            </>
-                          );
-                        })()}
-                      </button>
-                    </DropdownMenu.Trigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content
-                        side="top"
-                        align="start"
-                        sideOffset={8}
-                        className="rounded-[12px] p-1 min-w-[120px]"
-                        style={{
-                          outline: 'none',
-                          zIndex: 90,
-                          ...glassPanel,
-                        }}
-                      >
-                        {ASPECT_OPTIONS.map((opt) => {
-                          const currentTier = detectTierFromSize(size);
-                          const currentSize = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
-                          const isSelected = size.toLowerCase() === currentSize.toLowerCase();
-                          return (
-                            <DropdownMenu.Item
-                              key={opt.id}
-                              className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
-                              style={{
-                                color: 'rgba(255,255,255,0.9)',
-                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                                borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
-                              }}
-                              onSelect={() => {
-                                onSizeChange(currentSize);
-                              }}
-                            >
-                              <div className="flex items-center gap-2">
-                                <span
-                                  style={{
-                                    width: opt.iconW,
-                                    height: opt.iconH,
-                                    borderRadius: 2,
-                                    border: '1px solid rgba(255,255,255,0.3)',
-                                    background: 'rgba(255,255,255,0.1)',
-                                    display: 'inline-block',
-                                    flexShrink: 0,
-                                  }}
-                                />
-                                <span className="font-semibold">{opt.label}</span>
-                              </div>
-                            </DropdownMenu.Item>
-                          );
-                        })}
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
-                </>
-              )}
             </div>
           ) : null}
           <textarea
@@ -991,7 +814,7 @@ function QuickInputBox(props: {
         </div>
         {/* 底部工具栏 - 简化，只保留核心操作 */}
         <div className="flex items-center justify-between px-4 pb-3">
-          {/* 左侧：附件按钮 */}
+          {/* 左侧：附件按钮 + 尺寸配置 */}
           <div className="flex items-center gap-2">
             <input
               ref={fileInputRef}
@@ -1016,6 +839,161 @@ function QuickInputBox(props: {
               <Image size={14} />
               <span>图片</span>
             </button>
+
+            {/* 分辨率档位选择器（1K/2K/4K） */}
+            {onSizeChange && (
+              <>
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover:bg-white/8"
+                      style={{
+                        background: 'rgba(99, 102, 241, 0.1)',
+                        color: 'rgba(199, 210, 254, 0.55)',
+                        border: '1px solid rgba(99, 102, 241, 0.15)',
+                      }}
+                      title="选择分辨率"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {(() => {
+                        const tier = detectTierFromSize(size);
+                        return (
+                          <>
+                            <span style={{ fontWeight: 600 }}>
+                              {tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K'}
+                            </span>
+                            <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.45)' }}>▾</span>
+                          </>
+                        );
+                      })()}
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      side="top"
+                      align="start"
+                      sideOffset={8}
+                      className="rounded-[12px] p-1 min-w-[80px]"
+                      style={{ outline: 'none', zIndex: 90, ...glassPanel }}
+                    >
+                      {(['1k', '2k', '4k'] as const).map((tier) => {
+                        const currentTier = detectTierFromSize(size);
+                        const isSelected = currentTier === tier;
+                        const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
+                        const currentAspect = detectAspectFromSize(size);
+                        const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
+                        if (!targetOpt) return null;
+                        return (
+                          <DropdownMenu.Item
+                            key={tier}
+                            className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
+                            style={{
+                              color: 'rgba(255,255,255,0.9)',
+                              background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                              borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
+                            }}
+                            onSelect={() => {
+                              const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
+                              onSizeChange(newSize);
+                            }}
+                          >
+                            <span className="font-semibold">{label}</span>
+                          </DropdownMenu.Item>
+                        );
+                      })}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+
+                {/* 比例选择器 */}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover:bg-white/8"
+                      style={{
+                        background: 'rgba(99, 102, 241, 0.1)',
+                        color: 'rgba(199, 210, 254, 0.55)',
+                        border: '1px solid rgba(99, 102, 241, 0.15)',
+                      }}
+                      title="选择尺寸比例"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {(() => {
+                        const currentAspect = detectAspectFromSize(size);
+                        const opt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
+                        const iconW = opt ? Math.round(opt.iconW * 0.7) : 14;
+                        const iconH = opt ? Math.round(opt.iconH * 0.7) : 14;
+                        return (
+                          <>
+                            <span
+                              style={{
+                                width: iconW,
+                                height: iconH,
+                                borderRadius: 2,
+                                border: '1px solid rgba(255,255,255,0.3)',
+                                background: 'rgba(255,255,255,0.1)',
+                                display: 'inline-block',
+                                flexShrink: 0,
+                              }}
+                            />
+                            <span style={{ fontWeight: 600 }}>
+                              {opt?.label || '1:1'}
+                            </span>
+                            <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.45)' }}>▾</span>
+                          </>
+                        );
+                      })()}
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      side="top"
+                      align="start"
+                      sideOffset={8}
+                      className="rounded-[12px] p-1 min-w-[120px]"
+                      style={{ outline: 'none', zIndex: 90, ...glassPanel }}
+                    >
+                      {ASPECT_OPTIONS.map((opt) => {
+                        const currentTier = detectTierFromSize(size);
+                        const currentSize = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
+                        const isSelected = size.toLowerCase() === currentSize.toLowerCase();
+                        return (
+                          <DropdownMenu.Item
+                            key={opt.id}
+                            className="flex items-center justify-between gap-2 rounded-[8px] px-2 py-1.5 text-sm cursor-pointer outline-none"
+                            style={{
+                              color: 'rgba(255,255,255,0.9)',
+                              background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                              borderLeft: isSelected ? '2px solid rgb(99, 102, 241)' : '2px solid transparent',
+                            }}
+                            onSelect={() => {
+                              onSizeChange(currentSize);
+                            }}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span
+                                style={{
+                                  width: opt.iconW,
+                                  height: opt.iconH,
+                                  borderRadius: 2,
+                                  border: '1px solid rgba(255,255,255,0.3)',
+                                  background: 'rgba(255,255,255,0.1)',
+                                  display: 'inline-block',
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <span className="font-semibold">{opt.label}</span>
+                            </div>
+                          </DropdownMenu.Item>
+                        );
+                      })}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+              </>
+            )}
           </div>
           {/* 右侧：Bug 按钮 + 发送按钮 */}
           <div className="flex items-center gap-2">
@@ -1309,6 +1287,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   void _fullscreenMode; // 避免 TS6133 警告
   const navigate = useNavigate();
   const { isMobile } = useBreakpoint();
+  const userId = useAuthStore((s) => s.user?.userId ?? '');
 
   // 统一使用 /visual-agent 路径（现在所有模式都是全屏）
   const getEditorPath = (workspaceId: string) => {
@@ -1326,6 +1305,42 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<{ file: File; previewUrl: string } | null>(null);
   const [selectedSize, setSelectedSize] = useState<string>('1024x1024');
+  const [prefReady, setPrefReady] = useState(false);
+  const sizeSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 加载用户保存的默认尺寸偏好
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await getUserPreferences();
+        if (cancelled) return;
+        if (res.success && res.data.visualAgentPreferences?.defaultSize) {
+          setSelectedSize(res.data.visualAgentPreferences.defaultSize);
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (!cancelled) setPrefReady(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  // 用户更改尺寸时，防抖保存到后端偏好
+  useEffect(() => {
+    if (!userId || !prefReady) return;
+    if (sizeSaveRef.current) clearTimeout(sizeSaveRef.current);
+    sizeSaveRef.current = setTimeout(() => {
+      void getUserPreferences().then((res) => {
+        if (!res.success) return;
+        const existing = res.data.visualAgentPreferences ?? { modelAuto: true };
+        void updateVisualAgentPreferences({ ...existing, defaultSize: selectedSize }).catch(() => {});
+      }).catch(() => {});
+    }, 800);
+    return () => { if (sizeSaveRef.current) clearTimeout(sizeSaveRef.current); };
+  }, [selectedSize, userId, prefReady]);
 
   // 共享对话框状态
   const [shareOpen, setShareOpen] = useState(false);

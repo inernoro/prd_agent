@@ -824,9 +824,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [activeTool, setActiveTool] = useState<CanvasTool>(
     typeof window !== 'undefined' && window.innerWidth < 768 ? 'hand' : 'select'
   );
-  // 固定默认参数：用户不需要选择
-  // 输入区已移除“大小/比例”控制按钮：v1 固定用 1K 方形，避免过多配置干扰
-  const imageGenSize = '1024x1024' as const;
+  // 默认尺寸：优先使用用户保存的偏好，fallback 到 1K 方形
+  const [savedDefaultSize, setSavedDefaultSize] = useState<string>('1024x1024');
+  const imageGenSize = savedDefaultSize;
   const DEFAULT_ZOOM = 0.5;
 
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -1267,6 +1267,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       prev.map((x) => (x.key === k ? { ...x, x: newX, y: newY, w: newW, h: newH } : x))
     );
   }, [composerSize, selectedKeys, canvas]);
+
+  // 用户手动选择尺寸时，同步更新 savedDefaultSize 以触发偏好保存
+  useEffect(() => {
+    if (!composerSize) return;
+    if (composerSizeAutoRef.current) return;
+    if (!modelPrefReady) return;
+    setSavedDefaultSize(composerSize);
+  }, [composerSize, modelPrefReady]);
 
   // 注：已删除老代码的 selectedImagesForComposer 显示区域
   // TwoPhaseRichComposer 内部自己管理 chip 显示，不需要外部 padding
@@ -2056,6 +2064,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           if (Array.isArray(prefs.quickActions)) {
             setDiyQuickActions(prefs.quickActions);
           }
+          // 加载用户保存的默认尺寸
+          if (prefs.defaultSize) {
+            setSavedDefaultSize(prefs.defaultSize);
+          }
           diyQuickActionsReadyRef.current = true;
         }
       } catch {
@@ -2084,6 +2096,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         modelAuto: modelPrefAuto,
         modelId: modelPrefModelId || undefined,
         quickActions: diyQuickActions,
+        defaultSize: savedDefaultSize || undefined,
       }).catch(() => {
         // 静默失败，不影响用户操作
       });
@@ -2093,7 +2106,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         clearTimeout(modelPrefSaveRef.current);
       }
     };
-  }, [modelPrefAuto, modelPrefModelId, modelPrefReady, userId, diyQuickActions]);
+  }, [modelPrefAuto, modelPrefModelId, modelPrefReady, userId, diyQuickActions, savedDefaultSize]);
 
   // 读取直连模式（仅在有 userId 时）
   useEffect(() => {

@@ -38,6 +38,8 @@ export type VisualAgentPreferences = {
   directPrompt?: boolean;
   /** 用户自定义快捷指令（最多 10 个） */
   quickActions?: QuickActionConfig[];
+  /** 默认生成尺寸（如 "1024x1024"），用户选择后持久化，下次自动恢复 */
+  defaultSize?: string;
 };
 
 export type UserPreferences = {
