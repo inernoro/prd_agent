@@ -87,6 +87,9 @@ public class ImageMasterWorkspace
 
     /// <summary>文件夹名称（用于分组显示，相同名称的 workspace 归为一组）</summary>
     public string? FolderName { get; set; }
+
+    /// <summary>风格统一提示词：若设置，生图时自动拼接到用户 prompt 后面，确保 workspace 内风格一致</summary>
+    public string? StylePrompt { get; set; }
 }
 
 

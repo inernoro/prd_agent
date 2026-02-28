@@ -36,6 +36,7 @@ import {
   refreshVisualAgentWorkspaceCover,
   saveVisualAgentWorkspaceCanvas,
   updateVisualAgentPreferences,
+  updateVisualAgentWorkspace,
   uploadVisualAgentWorkspaceAsset,
 } from '@/services';
 import type { ModelGroupForApp } from '@/types/modelGroup';
@@ -88,6 +89,7 @@ import {
   Maximize2,
   MessageSquare,
   MousePointer2,
+  Palette,
   Plus,
   Send,
   Settings,
@@ -1111,6 +1113,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const watermarkPanelRef = useRef<WatermarkSettingsPanelHandle | null>(null);
   const configDialogRef = useRef<ConfigDialogHandle | null>(null);
   const enabledImageModels = useMemo(() => allImageGenModels.filter((m) => m.enabled), [allImageGenModels]);
+
+  // 风格统一
+  const [stylePrompt, setStylePrompt] = useState('');
+  const [stylePopoverOpen, setStylePopoverOpen] = useState(false);
+  const [stylePromptDraft, setStylePromptDraft] = useState('');
+  const stylePromptActive = stylePrompt.trim().length > 0;
 
   // ── 快捷操作 (Quick Actions) ──
   const [diyQuickActions, setDiyQuickActions] = useState<QuickActionConfig[]>([]);
@@ -2349,6 +2357,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (cancelled) return;
       setWorkspace(detail.data.workspace);
       setHasMoreMessages(!!detail.data.hasMoreMessages);
+      // 从 workspace 恢复风格统一提示词
+      if (detail.data.workspace.stylePrompt) {
+        setStylePrompt(detail.data.workspace.stylePrompt);
+        setStylePromptDraft(detail.data.workspace.stylePrompt);
+      }
 
       // 服务器下发视口（缩放/相机）：首次进入也要回放，否则会永远停在 DEFAULT_ZOOM=0.5
       const vp = detail.data.viewport;
@@ -7926,6 +7939,142 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                               </DropdownMenu.Content>
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
+
+                  {/* 风格统一按钮 */}
+                  <Popover.Root open={stylePopoverOpen} onOpenChange={setStylePopoverOpen}>
+                    <Popover.Trigger asChild>
+                      <button
+                        type="button"
+                        className="h-7 w-7 rounded-full inline-flex items-center justify-center"
+                        style={{
+                          border: stylePromptActive ? '1px solid rgba(168, 85, 247, 0.45)' : '1px solid rgba(255,255,255,0.10)',
+                          background: stylePromptActive ? 'rgba(168, 85, 247, 0.14)' : 'rgba(255,255,255,0.04)',
+                          color: stylePromptActive ? 'rgba(192, 132, 252, 0.95)' : 'var(--text-secondary)',
+                        }}
+                        aria-label="风格统一"
+                        title={stylePromptActive ? `风格统一: ${stylePrompt}` : '风格统一（为所有生图自动添加统一风格描述）'}
+                        onClick={() => {
+                          setStylePromptDraft(stylePrompt);
+                          setStylePopoverOpen(true);
+                        }}
+                      >
+                        <Palette size={14} />
+                      </button>
+                    </Popover.Trigger>
+                    <Popover.Portal>
+                      <Popover.Content
+                        side="top"
+                        align="end"
+                        sideOffset={8}
+                        className="z-50 rounded-[14px] p-3"
+                        style={{
+                          ...glassPopoverCompact,
+                          width: 300,
+                          background: 'rgba(32, 32, 36, 0.96)',
+                          border: '1px solid rgba(255, 255, 255, 0.18)',
+                          boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.08) inset',
+                        }}
+                        onOpenAutoFocus={(e) => e.preventDefault()}
+                      >
+                        <div className="text-[12px] font-semibold mb-2" style={{ color: 'rgba(255,255,255,0.75)' }}>
+                          风格统一
+                        </div>
+                        <div className="text-[10px] mb-2" style={{ color: 'rgba(255,255,255,0.40)' }}>
+                          设置后，本工作区所有生图请求将自动附加风格描述
+                        </div>
+
+                        {/* 快捷预设 */}
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {[
+                            { label: '水彩', value: '水彩画风格，柔和的色彩渐变，纸质纹理' },
+                            { label: '赛博朋克', value: '赛博朋克风格，霓虹灯光，暗色调，未来科技感' },
+                            { label: '扁平插画', value: '现代扁平插画风格，简洁几何形状，明快配色' },
+                            { label: '油画', value: '古典油画风格，浓郁笔触，丰富层次感' },
+                            { label: '极简', value: '极简主义风格，大量留白，克制的色彩' },
+                            { label: '日式动漫', value: '日式动漫风格，精致线条，鲜艳色彩' },
+                          ].map((preset) => (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              className="h-5 px-2 rounded-full text-[10px] font-medium transition-colors hover:bg-white/10"
+                              style={{
+                                border: stylePromptDraft === preset.value ? '1px solid rgba(168, 85, 247, 0.5)' : '1px solid rgba(255,255,255,0.12)',
+                                background: stylePromptDraft === preset.value ? 'rgba(168, 85, 247, 0.15)' : 'rgba(255,255,255,0.04)',
+                                color: stylePromptDraft === preset.value ? 'rgba(192, 132, 252, 0.95)' : 'rgba(255,255,255,0.60)',
+                              }}
+                              onClick={() => setStylePromptDraft(preset.value)}
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        <textarea
+                          className="w-full rounded-[8px] px-2.5 py-2 text-[12px] resize-none outline-none"
+                          style={{
+                            background: 'rgba(0,0,0,0.24)',
+                            border: '1px solid rgba(255,255,255,0.12)',
+                            color: 'var(--text-primary)',
+                            minHeight: 60,
+                            maxHeight: 120,
+                          }}
+                          placeholder="如：水彩风格、暖色调、柔和光影..."
+                          value={stylePromptDraft}
+                          onChange={(e) => setStylePromptDraft(e.target.value)}
+                          maxLength={500}
+                        />
+
+                        <div className="mt-2 flex items-center justify-between">
+                          <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.30)' }}>
+                            {stylePromptDraft.trim().length}/500
+                          </span>
+                          <div className="flex gap-1.5">
+                            {stylePromptActive ? (
+                              <button
+                                type="button"
+                                className="h-6 px-2.5 rounded-full text-[11px] font-medium transition-colors hover:bg-white/10"
+                                style={{
+                                  border: '1px solid rgba(239, 68, 68, 0.35)',
+                                  background: 'rgba(239, 68, 68, 0.10)',
+                                  color: 'rgba(248, 113, 113, 0.95)',
+                                }}
+                                onClick={() => {
+                                  setStylePrompt('');
+                                  setStylePromptDraft('');
+                                  setStylePopoverOpen(false);
+                                  if (workspaceId) {
+                                    void updateVisualAgentWorkspace({ id: workspaceId, stylePrompt: '' });
+                                  }
+                                }}
+                              >
+                                清除
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="h-6 px-3 rounded-full text-[11px] font-semibold transition-colors"
+                              style={{
+                                background: stylePromptDraft.trim() ? 'rgba(168, 85, 247, 0.85)' : 'rgba(255,255,255,0.08)',
+                                border: stylePromptDraft.trim() ? '1px solid rgba(168, 85, 247, 0.65)' : '1px solid rgba(255,255,255,0.12)',
+                                color: stylePromptDraft.trim() ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255,255,255,0.35)',
+                              }}
+                              disabled={!stylePromptDraft.trim()}
+                              onClick={() => {
+                                const val = stylePromptDraft.trim();
+                                setStylePrompt(val);
+                                setStylePopoverOpen(false);
+                                if (workspaceId) {
+                                  void updateVisualAgentWorkspace({ id: workspaceId, stylePrompt: val });
+                                }
+                              }}
+                            >
+                              应用
+                            </button>
+                          </div>
+                        </div>
+                      </Popover.Content>
+                    </Popover.Portal>
+                  </Popover.Root>
 
                   {/* 设置按钮 */}
                   <button
