@@ -3,7 +3,7 @@ import {
   Crown, Users, Bot, DollarSign, Link2, TrendingUp,
   MessageSquare, Image, Bug, Zap, Activity,
   BarChart3, RefreshCw, Loader2,
-  ArrowUpDown, ChevronUp, ChevronDown,
+  ArrowUpDown, ChevronUp, ChevronDown, Info,
   Cpu, Sparkles,
 } from 'lucide-react';
 import { TabBar } from '@/components/design/TabBar';
@@ -29,6 +29,7 @@ import type {
 } from '@/services/contracts/executive';
 import type { EChartsOption } from 'echarts';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { Tooltip } from '@/components/ui/Tooltip';
 
 // ─── AI-Native Color Palette ─────────────────────────────────────────
 
@@ -201,12 +202,13 @@ function SectionTitle({ children, accent }: { children: React.ReactNode; accent?
   );
 }
 
-function StatRow({ label, value, sub, icon: Icon, accent }: { label: string; value: string | number; sub?: string; icon?: any; accent?: string }) {
+function StatRow({ label, value, sub, icon: Icon, accent, info }: { label: string; value: string | number; sub?: string; icon?: any; accent?: string; info?: string }) {
   return (
     <div className="flex items-center justify-between py-2.5 group/row" style={{ borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
       <div className="flex items-center gap-2.5">
         {Icon && <Icon size={14} style={{ color: accent || 'var(--text-muted)' }} />}
         <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{label}</span>
+        {info && <InfoTip tip={info} />}
       </div>
       <div className="text-right">
         <span className="text-sm font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>{typeof value === 'number' ? value.toLocaleString() : value}</span>
@@ -251,6 +253,14 @@ function EmptyHint({ text }: { text: string }) {
   );
 }
 
+function InfoTip({ tip }: { tip: string }) {
+  return (
+    <Tooltip content={tip} side="top">
+      <Info size={12} style={{ color: 'var(--text-muted)', opacity: 0.6, flexShrink: 0 }} />
+    </Tooltip>
+  );
+}
+
 const ROLE_COLORS: Record<string, string> = {
   PM: AI.blue, DEV: AI.emerald, QA: AI.rose, ADMIN: AI.amber,
 };
@@ -274,12 +284,12 @@ function OverviewTab({ overview, trends, agents, loading }: {
     <div className="space-y-5">
       {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KpiCard title="总用户数" value={overview.totalUsers} accent="indigo" icon={<Users size={13} />} animated />
-        <KpiCard title="活跃用户" value={overview.activeUsers} accent="indigo" icon={<Activity size={13} />} trend={activeTrend.direction} trendLabel={`${activeTrend.label} vs 上期`} animated />
-        <KpiCard title="对话消息" value={overview.periodMessages} accent="indigo" icon={<MessageSquare size={13} />} trend={msgTrend.direction} trendLabel={`${msgTrend.label} vs 上期`} animated />
-        <KpiCard title="Token 消耗" value={formatTokens(overview.periodTokens)} accent="purple" icon={<Zap size={13} />} trend={tokenTrend.direction} trendLabel={`${tokenTrend.label} vs 上期`} animated />
-        <KpiCard title="LLM 调用" value={overview.llmCalls} accent="default" icon={<Cpu size={13} />} animated />
-        <KpiCard title="缺陷解决率" value={`${overview.defectResolutionRate}%`} accent="default" icon={<Bug size={13} />} animated />
+        <KpiCard title="总用户数" value={overview.totalUsers} accent="blue" icon={<Users size={13} />} animated info="系统注册的全部用户数（含非活跃）" />
+        <KpiCard title="活跃用户" value={overview.activeUsers} accent="green" icon={<Activity size={13} />} trend={activeTrend.direction} trendLabel={`${activeTrend.label} vs 上期`} animated info="所选时间范围内有登录记录的用户数（基于 LastActiveAt）" />
+        <KpiCard title="对话消息" value={overview.periodMessages} accent="gold" icon={<MessageSquare size={13} />} trend={msgTrend.direction} trendLabel={`${msgTrend.label} vs 上期`} animated info="PRD 对话 + 缺陷消息 + 视觉创作消息三个来源合计" />
+        <KpiCard title="Token 消耗" value={formatTokens(overview.periodTokens)} accent="purple" icon={<Zap size={13} />} trend={tokenTrend.direction} trendLabel={`${tokenTrend.label} vs 上期`} animated info="PRD 对话中 Assistant 回复的 Input + Output Token 总和" />
+        <KpiCard title="LLM 调用" value={overview.llmCalls} accent="blue" icon={<Cpu size={13} />} animated info="所有 Agent 通过 LLM Gateway 发起的大模型请求总次数" />
+        <KpiCard title="缺陷解决率" value={`${overview.defectResolutionRate}%`} accent="gold" icon={<Bug size={13} />} animated info="已解决或已关闭的缺陷数 ÷ 缺陷总数（全时间段）" />
       </div>
 
       {/* Charts Row */}
@@ -309,12 +319,12 @@ function OverviewTab({ overview, trends, agents, loading }: {
         <GlassCard glow animated accentHue={188}>
           <SectionTitle accent={AI.cyan}>业务统计</SectionTitle>
           <div className="space-y-0.5">
-            <StatRow icon={Users} label="总用户数" value={overview.totalUsers} accent={AI.blue} />
-            <StatRow icon={Users} label="活跃用户" value={overview.activeUsers} accent={AI.emerald} />
-            <StatRow icon={MessageSquare} label="对话消息数" value={overview.periodMessages} accent={AI.indigo} />
-            <StatRow icon={Bug} label="缺陷总数" value={overview.totalDefects} accent={AI.rose} />
-            <StatRow icon={Bug} label="已解决缺陷" value={overview.resolvedDefects} accent={AI.emerald} />
-            <StatRow icon={Image} label="图片生成" value={overview.periodImages} sub="张" accent={AI.purple} />
+            <StatRow icon={Users} label="总用户数" value={overview.totalUsers} accent={AI.blue} info="系统注册的全部用户数（含非活跃）" />
+            <StatRow icon={Users} label="活跃用户" value={overview.activeUsers} accent={AI.emerald} info="所选时间范围内有登录活动的用户数" />
+            <StatRow icon={MessageSquare} label="对话消息数" value={overview.periodMessages} accent={AI.indigo} info="PRD 对话 + 缺陷消息 + 视觉创作消息三个来源合计" />
+            <StatRow icon={Bug} label="缺陷总数" value={overview.totalDefects} accent={AI.rose} info="全部时间段内提交的缺陷报告总数" />
+            <StatRow icon={Bug} label="已解决缺陷" value={overview.resolvedDefects} accent={AI.emerald} info="状态为「已解决」或「已关闭」的缺陷数" />
+            <StatRow icon={Image} label="图片生成" value={overview.periodImages} sub="张" accent={AI.purple} info="所选时间范围内的图片生成任务数" />
           </div>
         </GlassCard>
       </div>
@@ -346,12 +356,13 @@ type ScoredUser = {
   totalScore: number; dimScores: Record<string, number>; normalizedScores: Record<string, number>;
 };
 
+/** Normalize each dimension to 0-100 and compute equal-weighted composite score */
 function computeScores(data: ExecutiveLeaderboard): ScoredUser[] {
   const { users, dimensions } = data;
-  const activeDims = dimensions.filter(d => Object.values(d.values).some(v => v > 0));
 
+  // Find max per dimension for normalization (all dimensions, including zero-only ones)
   const dimMax: Record<string, number> = {};
-  for (const dim of activeDims) {
+  for (const dim of dimensions) {
     dimMax[dim.key] = Math.max(1, ...Object.values(dim.values));
   }
 
@@ -360,7 +371,7 @@ function computeScores(data: ExecutiveLeaderboard): ScoredUser[] {
     const normalizedScores: Record<string, number> = {};
     let totalScore = 0;
 
-    for (const dim of activeDims) {
+    for (const dim of dimensions) {
       const raw = dim.values[u.userId] ?? 0;
       dimScores[dim.key] = raw;
       const normalized = (raw / dimMax[dim.key]) * 100;
@@ -391,9 +402,9 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
   const data = leaderboard;
   if (!data || data.users.length === 0) return <EmptyHint text="暂无团队成员数据" />;
 
-  const { dimensions } = data;
-  const activeDims = dimensions.filter(d => Object.values(d.values).some(v => v > 0));
+  const { dimensions: allDims } = data;
   const scored = computeScores(data);
+  const weightPct = allDims.length > 0 ? (100 / allDims.length).toFixed(1) : '0';
 
   const tableSorted = [...scored].sort((a, b) => {
     let va: number, vb: number;
@@ -453,7 +464,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
       <GlassCard glow animated accentHue={234}>
         <SectionTitle accent={AI.indigo}>综合排行榜</SectionTitle>
         <div className="overflow-x-auto">
-          <table className="w-full text-[12px]">
+          <table className="w-full text-[12px]" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
             <thead>
               <tr style={{ borderBottom: `1px solid rgba(99,102,241,0.12)` }}>
                 <th className="text-left py-2.5 pr-2 font-medium w-8" style={{ color: 'var(--text-muted)' }}>#</th>
@@ -465,7 +476,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                 >
                   <span className="inline-flex items-center gap-1">综合分 <SortIcon col="total" /></span>
                 </th>
-                {activeDims.map(dim => {
+                {allDims.map(dim => {
                   const meta = DIMENSION_META[dim.key];
                   return (
                     <th
@@ -475,6 +486,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                       onClick={() => toggleSort(dim.key)}
                     >
                       <span className="inline-flex items-center gap-1">{meta?.short ?? dim.name} <SortIcon col={dim.key} /></span>
+                      <div className="text-[9px] font-normal" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>权重 {weightPct}%</div>
                     </th>
                   );
                 })}
@@ -495,14 +507,14 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                       background: isTop3 ? 'rgba(99,102,241,0.04)' : undefined,
                     }}
                   >
-                    <td className="py-2.5 pr-2">
+                    <td className="py-2.5 pr-2" style={{ background: isTop3 ? 'rgba(214,178,106,0.04)' : undefined, borderRadius: isTop3 ? '8px 0 0 8px' : undefined }}>
                       {isTop3 ? (
                         <span className="text-[14px]">{medals[idx]}</span>
                       ) : (
                         <span className="text-[11px] font-bold tabular-nums" style={{ color: 'var(--text-muted)' }}>{idx + 1}</span>
                       )}
                     </td>
-                    <td className="py-2.5 pr-4">
+                    <td className="py-2.5 pr-4" style={{ background: isTop3 ? 'rgba(214,178,106,0.04)' : undefined }}>
                       <div className="flex items-center gap-2">
                         {user.avatarFileName ? (
                           <img src={resolveAvatarUrl({ avatarFileName: user.avatarFileName })} className="w-6 h-6 rounded-full object-cover ring-1 ring-white/5" alt="" />
@@ -518,7 +530,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                         </div>
                       </div>
                     </td>
-                    <td className="py-2.5 px-2 text-right">
+                    <td className="py-2.5 px-2 text-right" style={{ background: isTop3 ? 'rgba(214,178,106,0.04)' : undefined }}>
                       <div className="flex items-center justify-end gap-2">
                         <div className="w-16 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(148,163,184,0.08)' }}>
                           <div className="h-full rounded-full" style={{
@@ -532,20 +544,21 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                         </span>
                       </div>
                     </td>
-                    {activeDims.map(dim => {
+                    {allDims.map((dim, dimIdx) => {
                       const raw = user.dimScores[dim.key] ?? 0;
                       const meta = DIMENSION_META[dim.key];
                       const dimMax = Math.max(1, ...Object.values(dim.values));
                       const pct = (raw / dimMax) * 100;
+                      const isLastCol = dimIdx === allDims.length - 1;
 
                       return (
-                        <td key={dim.key} className="py-2.5 px-2 text-right">
+                        <td key={dim.key} className="py-2.5 px-2 text-right" style={{ background: isTop3 ? 'rgba(214,178,106,0.04)' : undefined, borderRadius: isTop3 && isLastCol ? '0 8px 8px 0' : undefined }}>
                           <div className="flex items-center justify-end gap-1.5">
                             <div className="w-10 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(148,163,184,0.08)' }}>
                               <div className="h-full rounded-full" style={{ width: `${pct}%`, background: meta?.barColor ?? 'rgba(148,163,184,0.4)' }} />
                             </div>
                             <span className="tabular-nums text-[11px] w-8 text-right" style={{ color: raw > 0 ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
-                              {raw > 0 ? raw.toLocaleString() : '-'}
+                              {raw.toLocaleString()}
                             </span>
                           </div>
                         </td>
@@ -561,7 +574,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
 
       {/* Per-dimension Leaderboard Cards */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        {activeDims.map(dim => {
+        {allDims.map(dim => {
           const meta = DIMENSION_META[dim.key] ?? { icon: Bot, color: AI.slate, barColor: 'rgba(148,163,184,0.35)', short: dim.name };
           const DimIcon = meta.icon;
           const sortedEntries = scored
@@ -582,40 +595,46 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                   {sortedEntries.length} 人参与 · 总计 {total.toLocaleString()}
                 </span>
               </div>
-              <div className="space-y-1">
-                {sortedEntries.map((u, idx) => {
-                  const mc = idx < 3 ? MEDAL_STYLES[idx] : null;
-                  const roleColor = ROLE_COLORS[u.role] ?? AI.slate;
-                  const pct = (u.val / maxVal) * 100;
-                  return (
-                    <div key={u.userId} className="flex items-center gap-2 py-0.5">
-                      <span className="w-5 text-center flex-shrink-0">
-                        {mc ? <span className="text-[12px]">{mc.medal}</span> : <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>{idx + 1}</span>}
-                      </span>
-                      {u.avatarFileName ? (
-                        <img src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-5 h-5 rounded-full object-cover flex-shrink-0" alt="" />
-                      ) : (
-                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold flex-shrink-0"
-                          style={{ background: `${roleColor}22`, color: roleColor }}>{u.displayName[0]}</div>
-                      )}
-                      <div className="w-12 flex-shrink-0">
-                        <div className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{u.displayName}</div>
-                        <div className="text-[8px] font-medium" style={{ color: roleColor }}>{u.role}</div>
+              {sortedEntries.length === 0 ? (
+                <div className="flex items-center justify-center py-6 rounded-lg" style={{ background: 'var(--bg-input)', opacity: 0.6 }}>
+                  <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>本周期暂无数据</span>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {sortedEntries.map((u, idx) => {
+                    const mc = idx < 3 ? MEDAL_STYLES[idx] : null;
+                    const roleColor = ROLE_COLORS[u.role] ?? AI.slate;
+                    const pct = (u.val / maxVal) * 100;
+                    return (
+                      <div key={u.userId} className="flex items-center gap-2 py-0.5">
+                        <span className="w-5 text-center flex-shrink-0">
+                          {mc ? <span className="text-[12px]">{mc.medal}</span> : <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>{idx + 1}</span>}
+                        </span>
+                        {u.avatarFileName ? (
+                          <img src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-5 h-5 rounded-full object-cover flex-shrink-0" alt="" />
+                        ) : (
+                          <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold flex-shrink-0"
+                            style={{ background: `${roleColor}22`, color: roleColor }}>{u.displayName[0]}</div>
+                        )}
+                        <div className="w-12 flex-shrink-0">
+                          <div className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{u.displayName}</div>
+                          <div className="text-[8px] font-medium" style={{ color: roleColor }}>{u.role}</div>
+                        </div>
+                        <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'rgba(148,163,184,0.08)' }}>
+                          <div className="h-full rounded-full transition-all" style={{
+                            width: `${pct}%`,
+                            background: meta.barColor,
+                            boxShadow: `0 0 6px ${meta.barColor}`,
+                          }} />
+                        </div>
+                        <span className="text-[11px] font-bold tabular-nums w-10 text-right flex-shrink-0" style={{ color: meta.color }}>
+                          {u.val.toLocaleString()}
+                        </span>
                       </div>
-                      <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'rgba(148,163,184,0.08)' }}>
-                        <div className="h-full rounded-full transition-all" style={{
-                          width: `${pct}%`,
-                          background: meta.barColor,
-                          boxShadow: `0 0 6px ${meta.barColor}`,
-                        }} />
-                      </div>
-                      <span className="text-[11px] font-bold tabular-nums w-10 text-right flex-shrink-0" style={{ color: meta.color }}>
-                        {u.val.toLocaleString()}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </GlassCard>
           );
         })}
@@ -662,13 +681,17 @@ function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]
                 </div>
                 <div className="space-y-2">
                   <div className="flex justify-between text-[11px]">
-                    <span style={{ color: 'var(--text-muted)' }}>使用人数</span>
+                    <span className="flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                      使用人数
+                      <InfoTip tip="在所选时间范围内使用过该 Agent 的独立用户数（综合 API 调用与 LLM 调用）" />
+                    </span>
                     <span className="font-semibold" style={{ color }}>{agent.users}/{totalUsers} 人</span>
                   </div>
                   <ProgressBar value={agent.users} max={totalUsers} color={color} />
-                  <StatRow label="调用次数" value={agent.calls} accent={color} />
-                  <StatRow label="Token 消耗" value={formatTokens(agent.tokens)} accent={color} />
-                  <StatRow label="平均响应" value={`${(agent.avgDurationMs / 1000).toFixed(1)}s`} accent={color} />
+                  <StatRow label="业务操作" value={agent.apiCalls ?? 0} accent={color} info="该 Agent 在所选时间范围内的写操作次数（POST/PUT/DELETE），反映实际业务使用量" />
+                  <StatRow label="LLM 调用" value={agent.llmCalls ?? 0} accent={color} info="该 Agent 触发的大模型请求次数（基于 llm_request_logs）" />
+                  <StatRow label="Token 消耗" value={formatTokens(agent.tokens)} accent={color} info="该 Agent 所有 LLM 请求的输入 + 输出 Token 总和" />
+                  <StatRow label="平均响应" value={`${(agent.avgDurationMs / 1000).toFixed(1)}s`} accent={color} info="该 Agent 所有已完成 LLM 请求的平均耗时（不含未完成请求）" />
                 </div>
               </div>
             </GlassCard>
@@ -683,10 +706,21 @@ function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]
             <thead>
               <tr style={{ borderBottom: '1px solid rgba(99,102,241,0.12)' }}>
                 <th className="text-left py-2 pr-4 font-medium" style={{ color: 'var(--text-muted)' }}>Agent</th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>调用次数</th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>用户数</th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>Token</th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>平均响应</th>
+                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">总调用 <InfoTip tip="业务操作 + LLM 调用合计" /></span>
+                </th>
+                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">业务操作 <InfoTip tip="POST/PUT/DELETE 请求数" /></span>
+                </th>
+                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">LLM <InfoTip tip="大模型调用次数" /></span>
+                </th>
+                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">用户数 <InfoTip tip="去重后的独立用户数" /></span>
+                </th>
+                <th className="text-right py-2 px-3 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">Token <InfoTip tip="输入 + 输出 Token 总和" /></span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -701,9 +735,10 @@ function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]
                       </div>
                     </td>
                     <td className="py-2.5 px-3 text-right tabular-nums font-medium" style={{ color: 'var(--text-primary)' }}>{a.calls.toLocaleString()}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>{(a.apiCalls ?? 0).toLocaleString()}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>{(a.llmCalls ?? 0).toLocaleString()}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>{a.users}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>{formatTokens(a.tokens)}</td>
-                    <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: AI.cyan }}>{(a.avgDurationMs / 1000).toFixed(1)}s</td>
                   </tr>
                 );
               })}
@@ -727,10 +762,10 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard title="总调用次数" value={totalCalls} accent="indigo" icon={<Cpu size={13} />} animated />
-        <KpiCard title="总 Token" value={formatTokens(totalTokens)} accent="indigo" icon={<Zap size={13} />} animated />
-        <KpiCard title="模型种类" value={models.length} accent="default" icon={<Bot size={13} />} animated />
-        <KpiCard title="平均响应" value={models.length > 0 ? `${(models.reduce((s, m) => s + m.avgDurationMs, 0) / models.length / 1000).toFixed(1)}s` : '-'} accent="default" icon={<Activity size={13} />} animated />
+        <KpiCard title="总调用次数" value={totalCalls} accent="gold" icon={<Cpu size={13} />} animated info="所有模型的 LLM Gateway 请求总次数" />
+        <KpiCard title="总 Token" value={formatTokens(totalTokens)} accent="purple" icon={<Zap size={13} />} animated info="所有模型的 Input + Output Token 合计" />
+        <KpiCard title="模型种类" value={models.length} accent="blue" icon={<Bot size={13} />} animated info="在所选时间范围内被调用过的不同模型数" />
+        <KpiCard title="平均响应" value={models.length > 0 ? `${(models.reduce((s, m) => s + m.avgDurationMs, 0) / models.length / 1000).toFixed(1)}s` : '-'} accent="green" icon={<Activity size={13} />} animated info="各模型平均响应时间的均值（排除未完成请求）" />
       </div>
 
       <GlassCard glow animated accentHue={234}>
@@ -744,11 +779,21 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
           <table className="w-full text-[12px]">
             <thead>
               <tr style={{ borderBottom: '1px solid rgba(99,102,241,0.12)' }}>
-                <th className="text-left py-2 font-medium" style={{ color: 'var(--text-muted)' }}>模型</th>
-                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>调用</th>
-                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>输入 Token</th>
-                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>输出 Token</th>
-                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>平均响应</th>
+                <th className="text-left py-2 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1">模型 <InfoTip tip="LLM Gateway 中实际使用的模型名称" /></span>
+                </th>
+                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">调用 <InfoTip tip="该模型在所选时间范围内被调用的总次数" /></span>
+                </th>
+                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">输入 Token <InfoTip tip="发送给该模型的 Prompt Token 总量" /></span>
+                </th>
+                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">输出 Token <InfoTip tip="该模型生成的 Completion Token 总量" /></span>
+                </th>
+                <th className="text-right py-2 font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <span className="inline-flex items-center gap-1 justify-end">平均响应 <InfoTip tip="该模型所有已完成请求的平均耗时（排除未完成请求）" /></span>
+                </th>
               </tr>
             </thead>
             <tbody>

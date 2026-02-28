@@ -391,6 +391,7 @@ import {
 } from '@/services/real/desktopAssets';
 import { uploadNoHeadAvatar as uploadNoHeadAvatarReal } from '@/services/real/avatarAssets';
 import { uploadUserAvatar as uploadUserAvatarReal } from '@/services/real/userAvatarUpload';
+import { uploadMyAvatar as uploadMyAvatarReal, updateMyAvatar as updateMyAvatarReal } from '@/services/real/profile';
 import { getDesktopBrandingSettings as getDesktopBrandingSettingsReal, updateDesktopBrandingSettings as updateDesktopBrandingSettingsReal } from '@/services/real/desktopBranding';
 import {
   listLiteraryPromptsReal,
@@ -650,6 +651,8 @@ export const getDesktopAssetsMatrix = withAuth(getDesktopAssetsMatrixReal);
 
 export const uploadNoHeadAvatar: UploadNoHeadAvatarContract = withAuth(uploadNoHeadAvatarReal);
 export const uploadUserAvatar: UploadUserAvatarContract = withAuth(uploadUserAvatarReal);
+export const uploadMyAvatar = withAuth(uploadMyAvatarReal);
+export const updateMyAvatar = withAuth(updateMyAvatarReal);
 
 export const getDesktopBrandingSettings: GetDesktopBrandingSettingsContract = withAuth(getDesktopBrandingSettingsReal);
 export const updateDesktopBrandingSettings: UpdateDesktopBrandingSettingsContract = withAuth(updateDesktopBrandingSettingsReal);

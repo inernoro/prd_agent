@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useCallback, useRef, type DragEvent, type ClipboardEvent } from 'react';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Button } from '@/components/design/Button';
 import { glassPanel } from '@/lib/glassStyles';
 import { useDefectStore } from '@/stores/defectStore';
@@ -378,38 +379,38 @@ export function DefectDetailPanel() {
   };
 
   return (
-    <>
-      {/* 遮罩层 */}
-      <div
-        className="fixed inset-0 z-[200]"
-        style={{ background: 'rgba(0, 0, 0, 0.5)' }}
-        onClick={handleClose}
-      />
+    <DialogPrimitive.Root open={!!defect} onOpenChange={(open) => { if (!open) handleClose(); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay
+          className="fixed inset-0 z-100"
+          style={{ background: 'rgba(0, 0, 0, 0.5)' }}
+        />
 
-      {/* 弹窗内容 - 液态玻璃样式 */}
-      <div
-        className={
-          isMobile
-            ? 'fixed inset-0 z-[201] overflow-hidden flex flex-col'
-            : 'fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[201] overflow-hidden rounded-2xl flex'
-        }
-        style={{
-          ...(isMobile
-            ? { width: '100vw', height: '100vh' }
-            : {
-                width: showChat ? '900px' : '600px',
-                height: showChat ? '620px' : '520px',
-                minHeight: showChat ? '620px' : '520px',
-                maxWidth: '95vw',
-                maxHeight: '85vh',
-              }),
-          ...glassPanel,
-          boxShadow: isMobile
-            ? 'none'
-            : '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
+        {/* 弹窗内容 - 液态玻璃样式 */}
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          className={
+            isMobile
+              ? 'fixed inset-0 z-110 overflow-hidden flex flex-col'
+              : 'fixed top-1/2 left-1/2 z-110 overflow-hidden rounded-2xl flex prd-dialog-content'
+          }
+          style={{
+            ...(isMobile
+              ? { width: '100vw', height: '100vh' }
+              : {
+                  width: showChat ? '900px' : '600px',
+                  height: showChat ? '620px' : '520px',
+                  minHeight: showChat ? '620px' : '520px',
+                  maxWidth: '95vw',
+                  maxHeight: '85vh',
+                }),
+            ...glassPanel,
+            boxShadow: isMobile
+              ? 'none'
+              : '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+          }}
+        >
+        <DialogPrimitive.Title className="sr-only">缺陷详情</DialogPrimitive.Title>
         {/* 左侧：缺陷信息 */}
         <div className={`flex flex-col ${showChat ? (isMobile ? 'w-full' : 'w-[55%]') : 'w-full'}`}>
           {/* Header - 固定高度 52px */}
@@ -1121,9 +1122,9 @@ export function DefectDetailPanel() {
             </div>
           </div>
         )}
-      </div>
+      </DialogPrimitive.Content>
 
-      {/* Image Lightbox */}
+      {/* Image Lightbox - 独立 Portal 保证在最顶层 */}
       {lightboxImage && (
         <div
           className="fixed inset-0 z-[300] flex items-center justify-center p-8"
@@ -1145,6 +1146,7 @@ export function DefectDetailPanel() {
           />
         </div>
       )}
-    </>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }

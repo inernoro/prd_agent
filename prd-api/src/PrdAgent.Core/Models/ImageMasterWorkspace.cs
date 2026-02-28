@@ -65,6 +65,9 @@ public class ImageMasterWorkspace
     /// <summary>场景类型：image-gen(原图片生成) | article-illustration(文章配图) | other(其他)</summary>
     public string ScenarioType { get; set; } = "image-gen";
 
+    /// <summary>文章配图场景专用：用户选择的系统提示词 ID（持久化，刷新后可恢复）</summary>
+    public string? SelectedPromptId { get; set; }
+
     /// <summary>文章配图场景专用：原始文章内容(Markdown)</summary>
     public string? ArticleContent { get; set; }
 

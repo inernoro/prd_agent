@@ -1,3 +1,5 @@
+import { Info } from 'lucide-react';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { GlassCard } from '@/components/design/GlassCard';
 import CountUp from '@/components/reactbits/CountUp';
 
@@ -24,6 +26,7 @@ export function KpiCard({
   trendLabel,
   animated = false,
   icon,
+  info,
 }: {
   title: string;
   value: number | string;
@@ -34,6 +37,7 @@ export function KpiCard({
   trendLabel?: string;
   animated?: boolean;
   icon?: React.ReactNode;
+  info?: string;
 }) {
   const display = typeof value === 'number' ? value.toLocaleString() : value;
   const colors = accentColors[accent];
@@ -70,6 +74,11 @@ export function KpiCard({
             <div className="text-[11px] font-medium tracking-wider" style={{ color: 'var(--text-muted)' }}>
               {title}
             </div>
+            {info && (
+              <Tooltip content={info} side="top">
+                <Info size={11} style={{ color: 'var(--text-muted)', opacity: 0.5, flexShrink: 0 }} />
+              </Tooltip>
+            )}
           </div>
           {/* Pulse indicator */}
           <div className="relative shrink-0 mt-0.5">

@@ -9,6 +9,7 @@ import { ToolDetail } from './components/ToolDetail';
 import { ToolEditor } from './components/ToolEditor';
 import { ToolRunner } from './components/ToolRunner';
 import { BasicCapabilities } from './components/BasicCapabilities';
+import { QuickCreateWizard } from './components/QuickCreateWizard';
 
 const PAGE_TABS: { key: ToolboxPageTab; label: string; icon: React.ReactNode }[] = [
   { key: 'toolbox', label: 'AI 百宝箱', icon: <Package size={14} /> },
@@ -74,6 +75,10 @@ export default function AiToolboxPage() {
   // Render based on current view
   if (view === 'detail' && selectedItem) {
     return <ToolDetail />;
+  }
+
+  if (view === 'quick-create') {
+    return <QuickCreateWizard />;
   }
 
   if (view === 'create' || view === 'edit') {

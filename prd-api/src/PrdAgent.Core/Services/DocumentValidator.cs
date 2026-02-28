@@ -31,11 +31,11 @@ public static class DocumentValidator
                 $"文档大小超出限制（最大10MB，当前{sizeInBytes / 1024 / 1024:F1}MB）");
         }
 
-        // 格式验证 - 检查是否为Markdown格式
-        if (!IsValidMarkdown(content))
+        // 格式验证 - 检查是否为有效的文本格式（Markdown / MDC / 纯文本）
+        if (!IsValidTextContent(content))
         {
-            return DocumentValidationResult.Fail("INVALID_FORMAT", 
-                "文档格式不正确，请上传Markdown格式的PRD文档");
+            return DocumentValidationResult.Fail("INVALID_FORMAT",
+                "文档格式不正确，请上传 Markdown、MDC 或纯文本格式的文档");
         }
 
         // Token估算
@@ -50,40 +50,41 @@ public static class DocumentValidator
     }
 
     /// <summary>
-    /// 检查是否为有效的Markdown格式
+    /// 检查是否为有效的文本内容（Markdown / MDC / 纯文本）
     /// </summary>
-    private static bool IsValidMarkdown(string content)
+    private static bool IsValidTextContent(string content)
     {
-        // Markdown特征检测
-        var markdownPatterns = new[]
-        {
-            @"^#{1,6}\s+.+",      // 标题
-            @"^\*\s+.+",          // 无序列表
-            @"^\d+\.\s+.+",       // 有序列表
-            @"\*\*.+\*\*",        // 粗体
-            @"`.+`",              // 行内代码
-            @"^\s*```",           // 代码块
-            @"^\s*>\s+.+",        // 引用
-            @"\[.+\]\(.+\)",      // 链接
-            @"^\s*[-*]{3,}\s*$",  // 分隔线
-            @"^\|.+\|"            // 表格
-        };
+        // 去除 MDC/Markdown 的 YAML frontmatter 后再检测
+        var body = StripYamlFrontmatter(content);
 
-        var lines = content.Split('\n');
-        int markdownFeatures = 0;
+        // 纯文本只要有可读字符即可
+        if (body.Trim().Length < 2)
+            return false;
 
-        foreach (var pattern in markdownPatterns)
-        {
-            var regex = new Regex(pattern, RegexOptions.Multiline);
-            if (regex.IsMatch(content))
-            {
-                markdownFeatures++;
-            }
-        }
+        return true;
+    }
 
-        // 至少有2个Markdown特征，或者包含至少一个标题
-        var hasTitle = Regex.IsMatch(content, @"^#{1,6}\s+.+", RegexOptions.Multiline);
-        return hasTitle || markdownFeatures >= 2;
+    /// <summary>
+    /// 去除 YAML frontmatter（--- ... --- 包裹的头部元数据），常见于 .mdc 文件
+    /// </summary>
+    public static string StripYamlFrontmatter(string content)
+    {
+        if (!content.StartsWith("---"))
+            return content;
+
+        // 查找第二个 --- 标记（frontmatter 的结束）
+        var endIndex = content.IndexOf("\n---", 3, StringComparison.Ordinal);
+        if (endIndex < 0)
+            return content;
+
+        // 跳过结束标记行
+        var afterFrontmatter = endIndex + 4; // "\n---".Length
+        if (afterFrontmatter < content.Length && content[afterFrontmatter] == '\n')
+            afterFrontmatter++;
+        if (afterFrontmatter < content.Length && content[afterFrontmatter] == '\r')
+            afterFrontmatter++;
+
+        return afterFrontmatter >= content.Length ? string.Empty : content[afterFrontmatter..];
     }
 
     /// <summary>

@@ -38,6 +38,7 @@ export function TemplateDialog() {
   // Form state
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [exampleContent, setExampleContent] = useState('');
   const [isDefault, setIsDefault] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -52,6 +53,7 @@ export function TemplateDialog() {
     setIsCreating(true);
     setName('');
     setDescription('');
+    setExampleContent('');
     setIsDefault(false);
   };
 
@@ -60,6 +62,7 @@ export function TemplateDialog() {
     setIsCreating(true);
     setName(template.name);
     setDescription(template.description || '');
+    setExampleContent(template.exampleContent || '');
     setIsDefault(template.isDefault);
   };
 
@@ -68,6 +71,7 @@ export function TemplateDialog() {
     setIsCreating(false);
     setName('');
     setDescription('');
+    setExampleContent('');
     setIsDefault(false);
   };
 
@@ -84,6 +88,7 @@ export function TemplateDialog() {
           id: editingTemplate.id,
           name: name.trim(),
           description: description.trim() || undefined,
+          exampleContent: exampleContent.trim() || undefined,
           isDefault,
         });
         if (res.success && res.data) {
@@ -97,7 +102,7 @@ export function TemplateDialog() {
         const res = await createDefectTemplate({
           name: name.trim(),
           description: description.trim() || undefined,
-          requiredFields: [],
+          exampleContent: exampleContent.trim() || undefined,
           isDefault,
         });
         if (res.success && res.data) {
@@ -138,7 +143,7 @@ export function TemplateDialog() {
       open
       onOpenChange={(open) => { if (!open) setShowTemplateDialog(false); }}
       title="我的模板"
-      maxWidth={480}
+      maxWidth={560}
       titleAction={
         !isCreating ? (
           <Button variant="secondary" size="sm" onClick={startCreate}>
@@ -147,7 +152,7 @@ export function TemplateDialog() {
           </Button>
         ) : undefined
       }
-      contentStyle={{ maxHeight: 'min(70vh, 520px)' }}
+      contentStyle={{ maxHeight: 'min(80vh, 640px)' }}
       content={
         <div className="h-full overflow-y-auto -mx-1 px-1">
           {/* Create/Edit Form */}
@@ -184,6 +189,27 @@ export function TemplateDialog() {
                     color: 'var(--text-primary)',
                   }}
                 />
+                <div>
+                  <div
+                    className="text-[11px] mb-1.5"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    示范内容 — 写一个理想的缺陷报告作为示范，用户提交时会看到它作为参考，AI 润色时也会参照它的结构
+                  </div>
+                  <textarea
+                    value={exampleContent}
+                    onChange={(e) => setExampleContent(e.target.value)}
+                    placeholder={'例如：\n\n登录页面输入正确密码后提示「账号或密码错误」\n\n问题描述：\n在登录页面输入已注册的账号和正确密码，点击登录后页面提示「账号或密码错误」...\n\n复现步骤：\n1. 打开登录页面\n2. 输入账号和密码\n3. 点击登录按钮\n\n期望结果：\n成功登录\n\n实际结果：\n提示错误'}
+                    rows={8}
+                    className="w-full px-3 py-2 rounded-lg text-[13px] outline-none resize-y"
+                    style={{
+                      background: 'var(--bg-input-hover)',
+                      border: '1px solid var(--border-default)',
+                      color: 'var(--text-primary)',
+                      minHeight: '120px',
+                    }}
+                  />
+                </div>
                 <label className="flex items-center gap-2 text-[12px]">
                   <input
                     type="checkbox"

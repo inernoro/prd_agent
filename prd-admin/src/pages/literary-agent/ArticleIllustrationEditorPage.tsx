@@ -51,9 +51,10 @@ import {
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import type { SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2 } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2, ArrowLeft } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -190,7 +191,7 @@ const PRD_MD_STYLE = `
 
   /* 文章内图片显示尺寸控制 */
   .prd-md img[data-marker-idx] {
-    max-width: var(--img-display-size, 100%) !important;
+    max-width: var(--img-display-size, 50%) !important;
     transition: max-width 0.3s ease;
     display: block;
     margin-left: auto;
@@ -286,6 +287,7 @@ const PanelCard = ({ className, children }: { className?: string; children: Reac
 );
 
 export default function ArticleIllustrationEditorPage({ workspaceId }: { workspaceId: string }) {
+  const navigate = useNavigate();
   const { isMobile } = useBreakpoint();
   const [mobileTab, setMobileTab] = useState<'article' | 'markers'>('article');
   const [articleContent, setArticleContent] = useState('');
@@ -373,7 +375,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
   const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
   const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
-  const [imageDisplaySize, setImageDisplaySize] = useState(100); // 文章内图片显示尺寸百分比
+  const [imageDisplaySize, setImageDisplaySize] = useState(50); // 文章内图片显示尺寸百分比
   const [rawMarkerOutput, setRawMarkerOutput] = useState(''); // Anchor 模式下 LLM 原始输出（用于视觉反馈）
 
   // 当新 marker 卡片出现时，触发入场发光动画
@@ -413,7 +415,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   
   // 提示词模板管理（只有用户模板）
   const [userPrompts, setUserPrompts] = useState<PromptTemplate[]>([]);
-  const [selectedPrompt, setSelectedPrompt] = useState<PromptTemplate | null>(null);
+  const [selectedPrompt, setSelectedPromptRaw] = useState<PromptTemplate | null>(null);
+  // 从 workspace 加载的 selectedPromptId（用于 loadLiteraryPrompts 后恢复选中状态）
+  const pendingSelectedPromptIdRef = useRef<string | null>(null);
+
+  // 选择/取消提示词时同步持久化到后端
+  const setSelectedPrompt = useCallback((prompt: PromptTemplate | null) => {
+    setSelectedPromptRaw(prompt);
+    // 异步持久化，不阻塞 UI
+    void updateVisualAgentWorkspace({
+      id: workspaceId,
+      selectedPromptId: prompt?.id ?? '',
+    }).catch((err) => console.error('Failed to persist selectedPromptId:', err));
+  }, [workspaceId]);
 
   // 所有提示词（只有用户模板）
   const allPrompts = userPrompts;
@@ -724,6 +738,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           }
         }
         
+        // 记录 workspace 中的 selectedPromptId，加载提示词后恢复选中状态
+        pendingSelectedPromptIdRef.current = ws.selectedPromptId || null;
         // 加载文学创作提示词（从后端）
         await loadLiteraryPrompts();
       }
@@ -785,8 +801,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
         prompts.sort((a, b) => a.id.localeCompare(b.id));
         setUserPrompts(prompts);
-        // 不再自动选中第一个提示词：未选择时使用系统推断风格
-        // 仅当用户已通过 AI 提取或手动选择了提示词时才保留选中状态
+        // 从 workspace 恢复选中的提示词（仅首次加载时）
+        const pendingId = pendingSelectedPromptIdRef.current;
+        if (pendingId) {
+          const matched = prompts.find(p => p.id === pendingId);
+          if (matched) setSelectedPromptRaw(matched);
+          pendingSelectedPromptIdRef.current = null;
+        }
       }
     } catch (error) {
       console.error('Failed to load literary prompts:', error);
@@ -878,8 +899,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     // 检查文件类型
     const fileName = file.name.toLowerCase();
-    if (!fileName.endsWith('.md') && !fileName.endsWith('.txt')) {
-      toast.warning('仅支持 .md 和 .txt 格式的文件');
+    if (!fileName.endsWith('.md') && !fileName.endsWith('.mdc') && !fileName.endsWith('.txt')) {
+      toast.warning('仅支持 .md、.mdc、.txt 格式的文件');
       return;
     }
 
@@ -2027,6 +2048,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           {/* 精简头部：标题 + 模型信息 */}
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => navigate(-1)}
+                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+                title="返回"
+              >
+                <ArrowLeft size={16} />
+              </button>
               <div className="flex items-center gap-2">
                 <FileText size={16} style={{ color: 'var(--text-primary)' }} />
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -2148,7 +2178,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".md,.txt"
+                  accept=".md,.mdc,.txt"
                   onChange={handleFileUpload}
                   className="hidden"
                 />
@@ -2174,7 +2204,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".md,.txt"
+                  accept=".md,.mdc,.txt"
                   onChange={handleFileUpload}
                   className="hidden"
                 />
