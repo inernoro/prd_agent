@@ -6337,9 +6337,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       outline: 'none',
                       boxShadow: 'none',
                       color: 'var(--text-primary, rgba(255,255,255,0.92))',
-                      fontSize: 16,
+                      fontSize: 14,
                       fontWeight: 500,
-                      lineHeight: '22px',
+                      lineHeight: '20px',
                     }}
                   />
 
