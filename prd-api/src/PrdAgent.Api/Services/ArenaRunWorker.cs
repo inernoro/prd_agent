@@ -377,6 +377,23 @@ public sealed class ArenaRunWorker : BackgroundService
             {
                 if (ct.IsCancellationRequested) break;
 
+                // thinking / reasoning tokens (DeepSeek, QwQ, etc.)
+                if (chunk.Type == "thinking" && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    if (!sawFirstDelta)
+                    {
+                        sawFirstDelta = true;
+                        var ttftMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                        await _runStore.AppendEventAsync(RunKinds.Arena, runId, "model",
+                            new { type = "firstToken", slotId = slot.SlotId, ttftMs },
+                            ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
+                    }
+
+                    await _runStore.AppendEventAsync(RunKinds.Arena, runId, "model",
+                        new { type = "thinking", slotId = slot.SlotId, content = chunk.Content },
+                        ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
+                }
+
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {
                     if (!sawFirstDelta)
@@ -410,7 +427,7 @@ public sealed class ArenaRunWorker : BackgroundService
         {
             // cancel requested
             await _runStore.AppendEventAsync(RunKinds.Arena, runId, "model",
-                new { type = "modelError", slotId = slot.SlotId, errorCode = "CANCELLED", errorMessage = "已取消" },
+                new { type = "modelError", slotId = slot.SlotId, errorCode = "CANCELLED", errorMessage = "请求已被取消" },
                 ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
             return;
         }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/design/Button';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { toast } from '@/lib/toast';
@@ -29,7 +30,7 @@ import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
 import type { Platform } from '@/types/admin';
 import {
-  Eye, Send, Plus, Search, MessageSquare, Clock, Loader2, Swords, ChevronDown,
+  Eye, Send, Plus, Search, MessageSquare, Clock, Loader2, Swords, ChevronDown, ChevronRight, Brain,
   Edit3, Trash2, Settings, Power,
 } from 'lucide-react';
 
@@ -69,6 +70,7 @@ interface ArenaPanel {
   labelIndex: number;
   status: 'waiting' | 'streaming' | 'done' | 'error';
   text: string;
+  thinking: string;
   ttftMs: number | null;
   totalMs: number | null;
   errorMessage: string | null;
@@ -203,6 +205,54 @@ function truncate(text: string, max: number): string {
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// ThinkingBlock — collapsible reasoning/thinking display
+// ---------------------------------------------------------------------------
+
+function ThinkingBlock({ thinking, color, streaming }: { thinking: string; color: string; streaming?: boolean }) {
+  const [expanded, setExpanded] = React.useState(false);
+  // Auto-expand while streaming thinking (no text yet), collapse once text starts
+  const isActive = streaming && thinking.length > 0;
+
+  return (
+    <div className="mb-3">
+      <button
+        className="flex items-center gap-1.5 text-[12px] py-1 px-1 rounded hover:bg-white/5 transition-colors"
+        style={{ color: 'var(--text-muted)' }}
+        onClick={() => setExpanded(!expanded)}
+      >
+        {expanded || isActive ? (
+          <ChevronDown className="w-3 h-3" />
+        ) : (
+          <ChevronRight className="w-3 h-3" />
+        )}
+        <Brain className="w-3 h-3" style={{ color }} />
+        <span>{isActive ? '思考中...' : '思考过程'}</span>
+        {isActive && (
+          <span
+            className="inline-block w-[2px] h-[10px] ml-0.5 animate-pulse"
+            style={{ background: color, verticalAlign: 'text-bottom' }}
+          />
+        )}
+      </button>
+      {(expanded || isActive) && (
+        <div
+          className="mt-1 px-3 py-2 rounded-lg text-[12px] leading-[1.6] max-h-[200px] overflow-y-auto"
+          style={{
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid rgba(255,255,255,0.06)',
+            color: 'var(--text-muted)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}
+        >
+          {thinking}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function ArenaPage() {
   // --- Lineup state ---
@@ -656,6 +706,15 @@ export function ArenaPage() {
         updatePanel((p) => ({ ...p, status: 'streaming', startedAt: p.startedAt ?? Date.now() }));
         break;
 
+      case 'thinking':
+        updatePanel((p) => ({
+          ...p,
+          status: 'streaming',
+          thinking: p.thinking + (data.content ?? ''),
+          startedAt: p.startedAt ?? Date.now(),
+        }));
+        break;
+
       case 'delta':
         updatePanel((p) => ({
           ...p,
@@ -681,13 +740,11 @@ export function ArenaPage() {
         break;
 
       case 'modelError': {
-        const code = String(data.errorCode ?? '').trim();
         const msg = String(data.errorMessage ?? '').trim() || '模型响应异常';
-        const em = code ? `[${code}] ${msg}` : msg;
         updatePanel((p) => ({
           ...p,
           status: 'error',
-          errorMessage: em,
+          errorMessage: msg,
         }));
         break;
       }
@@ -807,6 +864,7 @@ export function ArenaPage() {
       labelIndex: s.labelIndex,
       status: 'waiting' as const,
       text: '',
+      thinking: '',
       ttftMs: null,
       totalMs: null,
       errorMessage: null,
@@ -959,8 +1017,8 @@ export function ArenaPage() {
   const sortedPanels = useMemo(() => {
     return [...panels].sort((a, b) => {
       // Panels with content (text or error) come first
-      const aHasContent = a.text.length > 0 || a.status === 'error';
-      const bHasContent = b.text.length > 0 || b.status === 'error';
+      const aHasContent = a.text.length > 0 || a.thinking.length > 0 || a.status === 'error';
+      const bHasContent = b.text.length > 0 || b.thinking.length > 0 || b.status === 'error';
       if (aHasContent !== bHasContent) return aHasContent ? -1 : 1;
       // Among those with content, sort by startedAt (earliest first = responded first)
       const aT = a.startedAt ?? Infinity;
@@ -1461,6 +1519,9 @@ export function ArenaPage() {
                           </div>
                         ) : panel.status === 'error' ? (
                           <div className="py-4">
+                            {panel.thinking && (
+                              <ThinkingBlock thinking={panel.thinking} color={labelColor} />
+                            )}
                             <div
                               className="text-[13px] px-3 py-2 rounded-lg"
                               style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
@@ -1469,14 +1530,21 @@ export function ArenaPage() {
                             </div>
                           </div>
                         ) : (
-                          <div className="arena-markdown text-[14px] leading-[1.75] break-words" style={{ color: 'var(--text-primary)' }}>
-                            <ReactMarkdown>{panel.text}</ReactMarkdown>
-                            {panel.status === 'streaming' && (
-                              <span
-                                className="inline-block w-[2px] h-[14px] ml-0.5 animate-pulse"
-                                style={{ background: labelColor, verticalAlign: 'text-bottom' }}
-                              />
+                          <div>
+                            {/* Thinking block — collapsible */}
+                            {panel.thinking && (
+                              <ThinkingBlock thinking={panel.thinking} color={labelColor} streaming={panel.status === 'streaming' && !panel.text} />
                             )}
+                            {/* Main content */}
+                            <div className="arena-markdown text-[14px] leading-[1.75] break-words" style={{ color: 'var(--text-primary)' }}>
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{panel.text}</ReactMarkdown>
+                              {panel.status === 'streaming' && (
+                                <span
+                                  className="inline-block w-[2px] h-[14px] ml-0.5 animate-pulse"
+                                  style={{ background: labelColor, verticalAlign: 'text-bottom' }}
+                                />
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>
