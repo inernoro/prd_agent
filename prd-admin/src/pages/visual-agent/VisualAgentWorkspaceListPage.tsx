@@ -501,14 +501,14 @@ function HeroSection() {
           WebkitMaskImage: 'radial-gradient(ellipse 70% 50% at 50% 50%, black 15%, transparent 85%)',
         }}
       >
-        <ParticleVortex particleCount={200} mouseFollow trailColor="rgba(10,10,12,0.9)" sizeRange={[1, 3]} />
+        <ParticleVortex particleCount={200} mouseFollow trailColor="rgba(10,10,12,0.9)" sizeRange={[1, 3]} hueRange={[230, 280]} />
       </div>
       {/* 文字层 */}
       <div className="relative z-10 flex flex-col items-center justify-center h-full text-center">
         <h1
           className="text-[42px] font-bold tracking-tight mb-3"
           style={{
-            background: 'linear-gradient(90deg, #e2e8f0, #6ee7b7, #a7f3d0, #6ee7b7, #e2e8f0)',
+            background: 'linear-gradient(90deg, #c4b5fd, #818cf8, #6ee7b7, #818cf8, #c4b5fd)',
             backgroundSize: '200% 100%',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
