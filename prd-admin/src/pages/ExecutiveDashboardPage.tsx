@@ -98,7 +98,8 @@ function makeAgentPieOption(agents: ExecutiveAgentStat[]): EChartsOption {
   const agentColors: Record<string, string> = {
     'prd-agent': AI.blue, 'defect-agent': AI.rose,
     'visual-agent': AI.purple, 'literary-agent': AI.emerald,
-    'ai-toolbox': AI.amber, 'chat': AI.slate,
+    'ai-toolbox': AI.amber, 'open-platform': AI.indigo,
+    'admin': 'rgba(120,113,108,0.6)', 'chat': AI.slate,
   };
   return {
     backgroundColor: 'transparent',

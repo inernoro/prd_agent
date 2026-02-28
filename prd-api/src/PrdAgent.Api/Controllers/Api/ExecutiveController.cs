@@ -226,10 +226,22 @@ public class ExecutiveController : ControllerBase
         };
 
         // AppCallerCode 前缀归一化：将 LLM 日志中的 appCallerCode 前缀映射到标准 appKey
-        // 例如 "open-platform-agent.proxy::chat" 提取前缀为 "open-platform-agent"，需归一化为 "open-platform"
-        var appKeyAliases = new Dictionary<string, string>
+        // AppCallerCode 格式为 "{prefix}.{feature}::{modelType}"，提取第一个 . 之前的部分作为 key
+        // 但很多 prefix 与标准 appKey 不一致，需要归一化
+        var appKeyAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            { "open-platform-agent", "open-platform" },
+            { "prd-agent-desktop", "prd-agent" },   // 桌面客户端 → PRD Agent
+            { "prd-agent-web", "prd-agent" },        // Web 管理端 → PRD Agent
+            { "open-platform-agent", "open-platform" }, // 开放平台代理
+            { "workflow-agent", "ai-toolbox" },       // 工作流代理归入 AI 百宝箱
+            { "tutorial-email", "ai-toolbox" },       // 教程邮件归入 AI 百宝箱
+        };
+
+        // 已知的合法 Agent appKey（用于过滤脏数据）
+        var knownAgentKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "prd-agent", "visual-agent", "literary-agent", "defect-agent",
+            "ai-toolbox", "open-platform",
         };
 
         // ── 1. LLM 调用统计 (llm_request_logs) ──
@@ -251,7 +263,10 @@ public class ExecutiveController : ControllerBase
                 var rp = l.RequestPurpose ?? "";
                 var dotIndex = rp.IndexOf('.');
                 var key = dotIndex > 0 ? rp[..dotIndex] : rp;
-                return appKeyAliases.TryGetValue(key, out var normalized) ? normalized : key;
+                // 归一化别名
+                if (appKeyAliases.TryGetValue(key, out var normalized)) key = normalized;
+                // 非已知 Agent 的统一归入 "admin"（管理操作）
+                return knownAgentKeys.Contains(key) ? key : "admin";
             })
             .Where(g => !string.IsNullOrEmpty(g.Key))
             .ToDictionary(g => g.Key, g =>
@@ -554,6 +569,7 @@ public class ExecutiveController : ControllerBase
         "defect-agent" => "缺陷管理 Agent",
         "ai-toolbox" => "AI 百宝箱",
         "open-platform" => "开放平台",
+        "admin" => "管理操作",
         "chat" => "对话",
         _ => appKey,
     };
