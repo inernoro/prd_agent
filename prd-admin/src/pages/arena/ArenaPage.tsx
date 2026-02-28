@@ -651,9 +651,10 @@ export function ArenaPage() {
     // Run-level events
     if (type === 'runStart') return; // nothing to do
     if (type === 'runDone') {
-      const final = panelsRef.current;
-      const done = final.length > 0 && final.every((p) => p.status === 'done' || p.status === 'error');
-      setAllDone(done);
+      // Backend only emits runDone after Task.WhenAll — all models are guaranteed done/error.
+      // Directly set allDone=true to avoid React 18 batching race where panelsRef.current
+      // hasn't been updated yet by preceding modelDone setPanels updaters.
+      setAllDone(true);
       setIsStreaming(false);
       // Clear persisted run
       sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
@@ -1028,6 +1029,13 @@ export function ArenaPage() {
       return 0;
     });
   }, [panels]);
+
+  // --- Safety net: detect all panels done even if runDone event was missed ---
+  useEffect(() => {
+    if (!allDone && !isStreaming && panels.length > 0 && panels.every((p) => p.status === 'done' || p.status === 'error')) {
+      setAllDone(true);
+    }
+  }, [panels, isStreaming, allDone]);
 
   // --- Progress calculation ---
   const completedCount = panels.filter((p) => p.status === 'done' || p.status === 'error').length;
