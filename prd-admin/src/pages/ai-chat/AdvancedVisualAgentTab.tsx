@@ -5053,7 +5053,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             style={{
               backgroundColor: '#1e1e1e',
               backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.12) 1px, transparent 1px)',
-              backgroundSize: '24px 24px',
+              backgroundSize: '48px 48px',
               backgroundPosition: '0px 0px',
               cursor: panning ? 'grabbing' : effectiveTool === 'hand' ? 'grab' : 'default',
               userSelect: 'none',
