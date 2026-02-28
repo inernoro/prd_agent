@@ -1046,14 +1046,8 @@ export function ArenaPage() {
           background: 'var(--bg-base, #0d0d0f)',
         }}
       >
-        {/* Sidebar Title */}
-        <div className="p-3 pb-1 flex-shrink-0 flex items-center gap-2">
-          <Swords className="w-5 h-5" style={{ color: 'var(--text-primary)' }} />
-          <h1 className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>AI 竞技场</h1>
-        </div>
-
         {/* New Battle Button */}
-        <div className="px-3 pb-2 flex-shrink-0">
+        <div className="p-3 flex-shrink-0">
           <Button variant="primary" size="md" className="w-full" onClick={handleNewBattle}>
             <Plus className="w-4 h-4" />
             新建对战
@@ -1147,6 +1141,10 @@ export function ArenaPage() {
             >
               <Swords className="w-4 h-4" style={{ color: 'var(--text-primary)' }} />
             </button>
+            <div className="flex items-center gap-2">
+              <Swords className="w-5 h-5" style={{ color: 'var(--text-primary)' }} />
+              <h1 className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>AI 竞技场</h1>
+            </div>
           </div>
 
           {/* Group Selector + Manage */}

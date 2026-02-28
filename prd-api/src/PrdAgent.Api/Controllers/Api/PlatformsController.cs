@@ -301,7 +301,7 @@ public class PlatformsController : ControllerBase
         }
 
         // 从API或预设获取模型列表
-        var models = await GetModelsForPlatform(platform, "admin.platforms.available-models");
+        var models = await GetModelsForPlatform(platform, Admin.Platforms.AvailableModels);
         
         // 缓存结果
         if (models.Count > 0)
@@ -329,7 +329,7 @@ public class PlatformsController : ControllerBase
         await _cache.RemoveAsync(cacheKey);
 
         // 从API或预设获取模型列表
-        var models = await GetModelsForPlatform(platform, "admin.platforms.refresh-models");
+        var models = await GetModelsForPlatform(platform, Admin.Platforms.RefreshModels);
         
         // 缓存结果
         if (models.Count > 0)
@@ -366,7 +366,7 @@ public class PlatformsController : ControllerBase
         }
 
         // 1) 拉取平台可用模型列表（全量）
-        var available = await GetModelsForPlatform(platform, "admin.platforms.reclassify.fetch-models");
+        var available = await GetModelsForPlatform(platform, Admin.Platforms.ReclassifyFetchModels);
         if (available.Count == 0)
         {
             var payloadEmpty = new
@@ -697,7 +697,7 @@ public class PlatformsController : ControllerBase
             UserPromptChars: null,
             StartedAt: startedAt,
             RequestType: "update-model",
-            RequestPurpose: string.IsNullOrWhiteSpace(requestPurpose) ? "admin.platforms.fetch-models" : requestPurpose.Trim(),
+            RequestPurpose: string.IsNullOrWhiteSpace(requestPurpose) ? Admin.Platforms.FetchModels : requestPurpose.Trim(),
             PlatformId: platform.Id,
             PlatformName: platform.Name);
 

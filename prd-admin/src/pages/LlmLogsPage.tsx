@@ -151,12 +151,16 @@ function requestTypeToBadge(t: string | null | undefined): { label: string; titl
   if (v === 'update-model' || v === 'update_model' || v === 'models' || v === 'model') {
     return { label: '更新模型', title: '更新模型', tone: 'blue', icon: <RefreshCw size={12} /> };
   }
-  if (v === 'intent') return { label: '意图', title: '意图', tone: 'green', icon: <Sparkles size={12} /> };
-  if (v === 'vision' || v === 'image' || v === 'imagevision') return { label: '识图', title: '识图', tone: 'blue', icon: <ScanEye size={12} /> };
-  if (v === 'generation' || v === 'imagegen' || v === 'image_gen' || v === 'image-generate') return { label: '生图', title: '生图', tone: 'purple', icon: <ImagePlus size={12} /> };
-  if (v === 'reasoning' || v === 'main' || v === 'chat') return { label: '推理', title: '推理', tone: 'gold', icon: <Zap size={12} /> };
-  if (!v || v === 'unknown') return { label: '未知', title: '未知', tone: 'muted', icon: null };
-  return { label: '未知', title: v, tone: 'muted', icon: null };
+  if (v === 'intent') return { label: '意图', title: '意图识别', tone: 'green', icon: <Sparkles size={12} /> };
+  if (v === 'vision' || v === 'image' || v === 'imagevision') return { label: '识图', title: '图片识别', tone: 'blue', icon: <ScanEye size={12} /> };
+  if (v === 'generation' || v === 'imagegen' || v === 'image_gen' || v === 'image-generate') return { label: '生图', title: '图片生成', tone: 'purple', icon: <ImagePlus size={12} /> };
+  if (v === 'reasoning' || v === 'main' || v === 'chat') return { label: '推理', title: '对话推理', tone: 'gold', icon: <Zap size={12} /> };
+  if (v === 'embedding') return { label: '向量', title: '向量嵌入', tone: 'blue', icon: null };
+  if (v === 'rerank') return { label: '重排', title: '重排序', tone: 'green', icon: null };
+  if (v === 'code') return { label: '代码', title: '代码生成', tone: 'gold', icon: null };
+  if (v === 'long-context' || v === 'longcontext') return { label: '长文本', title: '长文本处理', tone: 'blue', icon: null };
+  if (!v || v === 'unknown') return { label: '未知', title: '未记录类型', tone: 'muted', icon: null };
+  return { label: v, title: v, tone: 'muted', icon: null };
 }
 
 function requestTypeChipStyle(tone: RequestTypeTone): React.CSSProperties {
