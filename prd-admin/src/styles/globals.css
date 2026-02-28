@@ -759,82 +759,11 @@ select optgroup {
   .prd-recgrid-canvas { opacity: 0.9; }
 }
 
-/* ---- Visual Agent Hero: Prism Diamond ---- */
-
-/* 3D 透视容器 */
-.va-prism-scene {
-  perspective: 600px;
-  width: 56px;
-  height: 56px;
-}
-
-/* 呼吸脉冲层 */
-.va-prism-pulse {
-  width: 100%;
-  height: 100%;
-  animation: vaPrismPulse 3.5s ease-in-out infinite;
-  will-change: transform, opacity;
-}
-
-/* 钻石本体 */
-.va-prism {
-  width: 40px;
-  height: 40px;
-  margin: 8px auto 0;
-  transform: rotate(45deg);
-  border-radius: 6px;
-  background: linear-gradient(135deg, #a78bfa 0%, #6ee7b7 50%, #60a5fa 100%);
-  box-shadow:
-    0 0 20px rgba(139, 92, 246, 0.45),
-    0 0 40px rgba(110, 231, 183, 0.15),
-    inset 0 0 12px rgba(255, 255, 255, 0.12);
-  animation: vaPrismFlip 6s ease-in-out infinite;
-  will-change: transform;
-}
-
-/* 钻石表面高光 */
-.va-prism::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.25) 0%,
-    transparent 50%,
-    rgba(255, 255, 255, 0.08) 100%
-  );
-}
-
-/* 3D 翻转（保持 45deg 菱形 + Y 轴旋转） */
-@keyframes vaPrismFlip {
-  0%   { transform: rotate(45deg) rotateY(0deg); }
-  50%  { transform: rotate(45deg) rotateY(180deg); }
-  100% { transform: rotate(45deg) rotateY(360deg); }
-}
-
-/* 呼吸缩放 */
-@keyframes vaPrismPulse {
-  0%, 100% { transform: scale(0.92); opacity: 0.82; }
-  50%      { transform: scale(1.06); opacity: 1; }
-}
-
-/* 标题全息流动渐变 */
+/* ---- Visual Agent Hero: 标题全息渐变 ---- */
 @keyframes vaHoloFlow {
   0%   { background-position: 0% 50%; }
   50%  { background-position: 100% 50%; }
   100% { background-position: 0% 50%; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .va-prism-pulse,
-  .va-prism {
-    animation: none !important;
-    will-change: auto;
-  }
-  .va-prism {
-    opacity: 0.9;
-  }
 }
 
 /* 缺陷提交按钮呼吸动画（侧边栏常驻按钮用） */

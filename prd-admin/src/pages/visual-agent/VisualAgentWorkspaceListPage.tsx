@@ -40,6 +40,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
+import { ParticleVortex } from '@/components/effects/ParticleVortex';
 
 // ============ 夜景背景 Canvas 组件 ============
 function NightSkyBackground() {
@@ -491,13 +492,11 @@ const SCENARIO_TAGS = [
 // ============ Hero 区域 ============
 function HeroSection() {
   return (
-    <div className="text-center py-8">
-      {/* Prism Diamond 棱镜钻石 */}
-      <div className="flex items-center justify-center mb-5">
-        <div className="va-prism-scene">
-          <div className="va-prism-pulse">
-            <div className="va-prism" />
-          </div>
+    <div className="text-center py-8 relative">
+      {/* 绿色粒子争夺 — 此页面开启鼠标跟随 */}
+      <div className="flex items-center justify-center mb-3">
+        <div className="rounded-full overflow-hidden" style={{ width: 120, height: 120 }}>
+          <ParticleVortex particleCount={200} mouseFollow />
         </div>
       </div>
       {/* 主标题 - 全息流动渐变 */}
