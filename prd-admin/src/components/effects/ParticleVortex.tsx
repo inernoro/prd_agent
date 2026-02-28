@@ -12,6 +12,8 @@ interface ParticleVortexProps {
   mouseFollow?: boolean;
   /** 拖尾填充色，需与宿主背景匹配以消除矩形边框，默认 'rgba(20,20,20,0.8)' */
   trailColor?: string;
+  /** 粒子尺寸范围 [min, max]，默认 [2, 8] */
+  sizeRange?: [number, number];
   /** 额外 className */
   className?: string;
 }
@@ -80,13 +82,13 @@ interface Particle {
   alpha: number;
 }
 
-function createParticle(origin: [number, number]): Particle {
+function createParticle(origin: [number, number], sizeRange: [number, number]): Particle {
   const direction = rand(TAU);
   const speed = randIn(20, 40);
   const p: Particle = {
     life: 0,
     ttl: randIn(100, 300),
-    size: randIn(2, 8),
+    size: randIn(sizeRange[0], sizeRange[1]),
     hue: randIn(80, 150),
     position: [origin[0] + rand(200) * cos(direction), origin[1] + rand(200) * sin(direction)],
     velocity: [cos(direction) * speed, sin(direction) * speed],
@@ -95,12 +97,12 @@ function createParticle(origin: [number, number]): Particle {
   return p;
 }
 
-function resetParticle(p: Particle, origin: [number, number]) {
+function resetParticle(p: Particle, origin: [number, number], sizeRange: [number, number]) {
   const direction = rand(TAU);
   const speed = randIn(20, 40);
   p.life = 0;
   p.ttl = randIn(100, 300);
-  p.size = randIn(2, 8);
+  p.size = randIn(sizeRange[0], sizeRange[1]);
   p.hue = randIn(80, 150);
   p.position[0] = origin[0] + rand(200) * cos(direction);
   p.position[1] = origin[1] + rand(200) * sin(direction);
@@ -112,6 +114,7 @@ export function ParticleVortex({
   particleCount = 300,
   mouseFollow = false,
   trailColor = 'rgba(20,20,20,0.8)',
+  sizeRange = [2, 8],
   className,
 }: ParticleVortexProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -168,7 +171,7 @@ export function ParticleVortex({
     function initParticles() {
       particles.length = 0;
       for (let i = 0; i < particleCount; i++) {
-        particles.push(createParticle(origin));
+        particles.push(createParticle(origin, sizeRange));
       }
     }
 
@@ -205,7 +208,7 @@ export function ParticleVortex({
         p.velocity[1] = lerp(vy, isHover ? sin(mDir) * 30 : 0, isHover ? 0.1 : 0.01);
 
         const outOfBounds = px > w + p.size || px < -p.size || py > h + p.size || py < -p.size;
-        if (outOfBounds || p.life++ > p.ttl) resetParticle(p, origin);
+        if (outOfBounds || p.life++ > p.ttl) resetParticle(p, origin, sizeRange);
       }
 
       // 多层旋转 blur 叠加
@@ -253,7 +256,7 @@ export function ParticleVortex({
       el.removeEventListener('mouseout', handleMouseOut);
       ro.disconnect();
     };
-  }, [particleCount, handleMouseMove, handleMouseOut]);
+  }, [particleCount, sizeRange, handleMouseMove, handleMouseOut]);
 
   return (
     <canvas

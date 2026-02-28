@@ -493,16 +493,15 @@ const SCENARIO_TAGS = [
 function HeroSection() {
   return (
     <div className="relative w-full" style={{ height: 260 }}>
-      {/* 粒子漩涡背景 — trailColor 匹配页面 #0a0a0c，径向渐隐消除边框 */}
+      {/* 粒子漩涡背景 — trailColor 精确匹配 #0a0a0c，无 CSS opacity 避免矩形覆盖 */}
       <div
         className="absolute inset-0"
         style={{
-          opacity: 0.55,
-          maskImage: 'radial-gradient(ellipse 60% 80% at 50% 50%, black 20%, transparent 100%)',
-          WebkitMaskImage: 'radial-gradient(ellipse 60% 80% at 50% 50%, black 20%, transparent 100%)',
+          maskImage: 'radial-gradient(ellipse 70% 50% at 50% 50%, black 15%, transparent 85%)',
+          WebkitMaskImage: 'radial-gradient(ellipse 70% 50% at 50% 50%, black 15%, transparent 85%)',
         }}
       >
-        <ParticleVortex particleCount={200} mouseFollow trailColor="rgba(10,10,12,0.85)" />
+        <ParticleVortex particleCount={200} mouseFollow trailColor="rgba(10,10,12,0.9)" sizeRange={[1, 3]} />
       </div>
       {/* 文字层 */}
       <div className="relative z-10 flex flex-col items-center justify-center h-full text-center">
