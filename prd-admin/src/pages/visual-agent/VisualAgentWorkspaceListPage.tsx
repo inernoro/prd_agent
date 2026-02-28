@@ -2,7 +2,6 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { glassPanel, glassToolbar, glassInputArea } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import {
@@ -493,29 +492,32 @@ const SCENARIO_TAGS = [
 function HeroSection() {
   return (
     <div className="text-center py-8">
-      {/* Logo - 独立展示，增加视觉焦点 */}
+      {/* Aurora Prism 流体变形球 */}
       <div className="flex items-center justify-center mb-5">
-        <PrdPetalBreathingLoader size={56} variant="gold" />
+        <div className="va-hero-orb-pulse">
+          <div className="va-hero-orb" />
+        </div>
       </div>
-      {/* 主标题 - 加大字号，建立视觉层级 */}
+      {/* 主标题 - 全息流动渐变 */}
       <h1
-        className="text-[42px] font-bold tracking-tight mb-3 visual-agent-title-breath"
+        className="text-[42px] font-bold tracking-tight mb-3"
         style={{
-          background: 'linear-gradient(135deg, rgba(230, 235, 255, 1) 0%, rgba(199, 210, 254, 1) 50%, rgba(99, 102, 241, 0.95) 100%)',
+          background: 'linear-gradient(90deg, #c4b5fd, #818cf8, #6ee7b7, #fcd34d, #f9a8d4, #c4b5fd)',
+          backgroundSize: '200% 100%',
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
           backgroundClip: 'text',
           letterSpacing: '-0.02em',
-          animation: 'visualAgentTitleBreath 3s ease-in-out infinite',
+          animation: 'vaHoloFlow 6s ease-in-out infinite',
         }}
       >
         视觉创作 Agent
       </h1>
-      {/* 副标题 - 偏暖白色调 */}
+      {/* 副标题 */}
       <p
         className="text-[15px]"
         style={{
-          color: 'rgba(199,210,254,0.58)',  // 暖白
+          color: 'rgba(199,210,254,0.58)',
           letterSpacing: '0.01em',
         }}
       >
