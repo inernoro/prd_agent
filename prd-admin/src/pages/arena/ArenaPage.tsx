@@ -1475,7 +1475,7 @@ export function ArenaPage() {
                 className={cn(
                   'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14px] leading-relaxed',
                   'placeholder:text-[color:var(--text-muted)] disabled:opacity-50 disabled:cursor-not-allowed',
-                  'px-2 py-1'
+                  'px-2 py-1 no-focus-ring'
                 )}
                 style={{ color: 'var(--text-primary)', minHeight: '56px', maxHeight: '200px', border: 'none', boxShadow: 'none' }}
               />
