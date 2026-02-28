@@ -183,6 +183,12 @@ export const VideoAgentPage: React.FC = () => {
   }, [selectedRunId, loadDetail]);
 
   // ─── SSE / Polling ───
+
+  // 是否有需要轮询的分镜（Generating 或 imageStatus=running）
+  const needsScenePolling = selectedRun?.status === 'Editing' && selectedRun.scenes.some(
+    (s) => s.status === 'Generating' || s.imageStatus === 'running'
+  );
+
   useEffect(() => {
     if (!selectedRunId || !selectedRun) return;
     const status = selectedRun.status;
@@ -247,23 +253,19 @@ export const VideoAgentPage: React.FC = () => {
       return () => { abortController.abort(); };
     }
 
-    if (status === 'Editing') {
-      const hasGenerating = selectedRun.scenes.some((s) => s.status === 'Generating');
-      const hasRendering = selectedRun.scenes.some((s) => s.imageStatus === 'running');
-      if (hasGenerating || hasRendering) {
-        pollingRef.current = setInterval(async () => {
-          if (selectedRunId) {
-            try {
-              const res = await getVideoGenRunReal(selectedRunId);
-              if (res.success) setSelectedRun(res.data);
-            } catch { /* ignore */ }
-          }
-        }, 2000);
-        return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
-      }
+    if (needsScenePolling) {
+      pollingRef.current = setInterval(async () => {
+        if (selectedRunId) {
+          try {
+            const res = await getVideoGenRunReal(selectedRunId);
+            if (res.success) setSelectedRun(res.data);
+          } catch { /* ignore */ }
+        }
+      }, 2000);
+      return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRunId, selectedRun?.status, token, loadRuns, loadDetail]);
+  }, [selectedRunId, selectedRun?.status, needsScenePolling, token, loadRuns, loadDetail]);
 
   // ─── File upload handler ───
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

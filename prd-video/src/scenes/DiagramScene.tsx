@@ -1,6 +1,7 @@
 import React from "react";
 import { useCurrentFrame, useVideoConfig, interpolate } from "remotion";
 import { Background } from "../components/Background";
+import { FloatingShapes } from "../components/FloatingShapes";
 import { GlassCard } from "../components/GlassCard";
 import { COLORS } from "../utils/colors";
 import { springIn } from "../utils/animations";
@@ -10,7 +11,6 @@ export const DiagramScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
 
-  // 从旁白中提取关键点
   const points = scene.narration
     .split(/[。；\n]/)
     .map((s) => s.trim())
@@ -22,6 +22,12 @@ export const DiagramScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
     [1, 0],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
+
+  // 中心连接线动画
+  const connectionProgress = interpolate(frame, [30, 70], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
 
   return (
     <div
@@ -35,7 +41,8 @@ export const DiagramScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
         opacity: fadeOut,
       }}
     >
-      <Background accentColor={COLORS.neon.pink} />
+      <Background accentColor={COLORS.neon.pink} variant="radial" />
+      <FloatingShapes accentColor={COLORS.neon.pink} seed={505} intensity="medium" />
 
       <div
         style={{
@@ -60,15 +67,40 @@ export const DiagramScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
           {scene.topic}
         </div>
 
-        {/* 卡片网格 */}
+        {/* 卡片网格 + 连接线 */}
         <div
           style={{
             display: "flex",
             flexWrap: "wrap",
             gap: 20,
             justifyContent: "center",
+            position: "relative",
           }}
         >
+          {/* 中心连接装饰（用 SVG 画虚线连接） */}
+          {points.length > 1 && (
+            <svg
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                pointerEvents: "none",
+                opacity: connectionProgress * 0.3,
+              }}
+            >
+              <line
+                x1="25%"
+                y1="50%"
+                x2="75%"
+                y2="50%"
+                stroke={COLORS.neon.pink}
+                strokeWidth={1}
+                strokeDasharray="6 4"
+              />
+            </svg>
+          )}
+
           {points.map((point, i) => (
             <GlassCard
               key={i}
@@ -77,21 +109,23 @@ export const DiagramScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
               width={points.length <= 3 ? "100%" : "45%"}
               padding={24}
             >
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
+                {/* 编号图标 */}
                 <div
                   style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 6,
-                    background: `${COLORS.neon.pink}20`,
-                    border: `1px solid ${COLORS.neon.pink}40`,
+                    width: 36,
+                    height: 36,
+                    borderRadius: 10,
+                    background: `${COLORS.neon.pink}18`,
+                    border: `1.5px solid ${COLORS.neon.pink}35`,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    fontSize: 14,
+                    fontSize: 16,
                     fontWeight: 700,
                     color: COLORS.neon.pink,
                     flexShrink: 0,
+                    boxShadow: `0 0 12px ${COLORS.neon.pink}15`,
                   }}
                 >
                   {i + 1}

@@ -1,6 +1,7 @@
 import React from "react";
 import { useCurrentFrame, useVideoConfig, interpolate } from "remotion";
 import { Background } from "../components/Background";
+import { FloatingShapes } from "../components/FloatingShapes";
 import { NeonTitle } from "../components/NeonTitle";
 import { COLORS } from "../utils/colors";
 import { springIn } from "../utils/animations";
@@ -11,10 +12,14 @@ export const OutroScene: React.FC<{ scene: SceneData; videoTitle: string }> = ({
   videoTitle,
 }) => {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
+  const { fps } = useVideoConfig();
 
   const subtitleProgress = springIn(frame, fps, 20);
   const lineWidth = interpolate(frame, [10, 50], [0, 300], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const bottomLineWidth = interpolate(frame, [40, 70], [0, 200], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
@@ -31,7 +36,8 @@ export const OutroScene: React.FC<{ scene: SceneData; videoTitle: string }> = ({
         justifyContent: "center",
       }}
     >
-      <Background accentColor={COLORS.neon.purple} />
+      <Background accentColor={COLORS.neon.purple} variant="radial" />
+      <FloatingShapes accentColor={COLORS.neon.purple} seed={707} intensity="high" />
 
       <div
         style={{
@@ -41,7 +47,7 @@ export const OutroScene: React.FC<{ scene: SceneData; videoTitle: string }> = ({
           padding: "0 120px",
         }}
       >
-        {/* 装饰线 */}
+        {/* 顶部装饰线 */}
         <div
           style={{
             width: lineWidth,
@@ -66,12 +72,22 @@ export const OutroScene: React.FC<{ scene: SceneData; videoTitle: string }> = ({
           {scene.narration}
         </div>
 
+        {/* 底部装饰线 */}
+        <div
+          style={{
+            width: bottomLineWidth,
+            height: 1,
+            background: `linear-gradient(90deg, transparent, ${COLORS.neon.purple}60, transparent)`,
+            margin: "32px auto 0",
+          }}
+        />
+
         <div
           style={{
             opacity: Math.min(springIn(frame, fps, 40), 1),
             fontSize: 18,
             color: COLORS.text.muted,
-            marginTop: 40,
+            marginTop: 24,
           }}
         >
           {videoTitle}

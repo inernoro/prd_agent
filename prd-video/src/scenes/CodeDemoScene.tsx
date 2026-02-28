@@ -1,6 +1,7 @@
 import React from "react";
 import { useCurrentFrame, useVideoConfig, interpolate } from "remotion";
 import { Background } from "../components/Background";
+import { FloatingShapes } from "../components/FloatingShapes";
 import { CodeBlock } from "../components/CodeBlock";
 import { COLORS } from "../utils/colors";
 import { springIn } from "../utils/animations";
@@ -22,6 +23,10 @@ export const CodeDemoScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
     ? scene.visualDescription.replace(/```\w*\n?/g, "").replace(/```/g, "").trim()
     : scene.narration;
 
+  // 旁白文字（如果代码来自 visualDescription，则显示 narration 作为说明）
+  const showNarration = scene.visualDescription.includes("```");
+  const narrationProgress = springIn(frame, fps, 50);
+
   return (
     <div
       style={{
@@ -34,7 +39,8 @@ export const CodeDemoScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
         opacity: fadeOut,
       }}
     >
-      <Background accentColor={COLORS.neon.cyan} showGrid={false} />
+      <Background accentColor={COLORS.neon.cyan} showGrid={false} variant="diagonal" />
+      <FloatingShapes accentColor={COLORS.neon.cyan} seed={303} intensity="low" />
 
       <div
         style={{
@@ -45,20 +51,58 @@ export const CodeDemoScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
           width: "100%",
         }}
       >
-        <div
-          style={{
-            opacity: Math.min(springIn(frame, fps, 5), 1),
-            fontSize: 36,
-            fontWeight: 700,
-            color: COLORS.text.primary,
-            marginBottom: 32,
-            textShadow: `0 0 20px ${COLORS.neon.cyan}30`,
-          }}
-        >
-          {scene.topic}
+        {/* 标题行：图标 + 标题 */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
+          {/* 代码图标 */}
+          <div
+            style={{
+              opacity: Math.min(springIn(frame, fps, 3), 1),
+              width: 40,
+              height: 40,
+              borderRadius: 8,
+              background: `${COLORS.neon.cyan}15`,
+              border: `1px solid ${COLORS.neon.cyan}30`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 18,
+              color: COLORS.neon.cyan,
+            }}
+          >
+            {"</>"}
+          </div>
+          <div
+            style={{
+              opacity: Math.min(springIn(frame, fps, 5), 1),
+              fontSize: 36,
+              fontWeight: 700,
+              color: COLORS.text.primary,
+              textShadow: `0 0 20px ${COLORS.neon.cyan}30`,
+            }}
+          >
+            {scene.topic}
+          </div>
         </div>
 
         <CodeBlock code={codeContent} delay={10} charsPerSecond={25} />
+
+        {/* 底部旁白说明 */}
+        {showNarration && (
+          <div
+            style={{
+              opacity: Math.min(narrationProgress, 1) * 0.8,
+              transform: `translateY(${(1 - narrationProgress) * 10}px)`,
+              marginTop: 20,
+              fontSize: 18,
+              color: COLORS.text.secondary,
+              lineHeight: 1.5,
+              paddingLeft: 16,
+              borderLeft: `2px solid ${COLORS.neon.cyan}40`,
+            }}
+          >
+            {scene.narration}
+          </div>
+        )}
       </div>
     </div>
   );

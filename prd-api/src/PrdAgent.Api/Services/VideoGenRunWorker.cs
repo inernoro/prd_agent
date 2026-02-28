@@ -110,6 +110,31 @@ public class VideoGenRunWorker : BackgroundService
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "VideoGenRunWorker 分镜预览渲染失败: runId={RunId}", previewPending.Id);
+                        // 兜底：将所有仍处于 running 的分镜标记为 error，避免前端永远卡在"渲染中"
+                        try
+                        {
+                            var changed = false;
+                            foreach (var s in previewPending.Scenes)
+                            {
+                                if (s.ImageStatus == "running")
+                                {
+                                    s.ImageStatus = "error";
+                                    s.ImageUrl = null;
+                                    changed = true;
+                                }
+                            }
+                            if (changed)
+                            {
+                                await _db.VideoGenRuns.UpdateOneAsync(
+                                    x => x.Id == previewPending.Id,
+                                    Builders<VideoGenRun>.Update.Set(x => x.Scenes, previewPending.Scenes),
+                                    cancellationToken: CancellationToken.None);
+                            }
+                        }
+                        catch (Exception innerEx)
+                        {
+                            _logger.LogError(innerEx, "VideoGenRunWorker 标记分镜失败状态异常: runId={RunId}", previewPending.Id);
+                        }
                     }
                     continue;
                 }
