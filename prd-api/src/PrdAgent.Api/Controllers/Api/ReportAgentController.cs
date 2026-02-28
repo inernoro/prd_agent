@@ -634,8 +634,8 @@ public class ReportAgentController : ControllerBase
         if (report.UserId != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能编辑自己的周报"));
 
-        if (report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.Returned)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "只有草稿或已退回状态的周报可以编辑"));
+        if (report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.Returned && report.Status != WeeklyReportStatus.Overdue)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "只有草稿、已退回或逾期状态的周报可以编辑"));
 
         if (req.Sections == null)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "周报内容不能为空"));

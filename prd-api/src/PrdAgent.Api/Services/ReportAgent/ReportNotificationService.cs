@@ -98,6 +98,11 @@ public class ReportNotificationService
     /// <summary>周报被退回（通知员工）</summary>
     public async Task NotifyReportReturnedAsync(WeeklyReport report, string returnerName)
     {
+        // 清除旧的"已提交"通知，以便重新提交时能再次通知负责人
+        await _db.AdminNotifications.DeleteOneAsync(
+            n => n.Key == $"report-agent:submitted:{report.Id}",
+            cancellationToken: CancellationToken.None);
+
         await UpsertNotificationAsync(
             key: $"report-agent:returned:{report.Id}",
             targetUserId: report.UserId,
