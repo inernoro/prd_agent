@@ -1,3 +1,4 @@
+import JSZip from 'jszip';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { glassPanel, glassTooltip, glassInputArea, glassPopoverCompact } from '@/lib/glassStyles';
@@ -758,6 +759,180 @@ async function exportImageAs(src: string, filename: string, format: 'jpg' | 'png
   }
 }
 
+
+function filenameSafe(s: string) {
+  return String(s || '')
+    .trim()
+    .replaceAll('/', '-')
+    .replaceAll('\\', '-')
+    .replaceAll(':', '-')
+    .replaceAll('*', '-')
+    .replaceAll('?', '-')
+    .replaceAll('"', '-')
+    .replaceAll('<', '-')
+    .replaceAll('>', '-')
+    .replaceAll('|', '-')
+    .slice(0, 80);
+}
+
+function base64ToUint8Array(b64: string) {
+  const clean = (b64 || '').trim();
+  const comma = clean.indexOf(',');
+  const data = clean.startsWith('data:') && comma >= 0 ? clean.slice(comma + 1) : clean;
+  const binStr = atob(data);
+  const len = binStr.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = binStr.charCodeAt(i);
+  return bytes;
+}
+
+async function downloadAllAsZip(items: { src: string; filename: string }[], zipName: string) {
+  const zip = new JSZip();
+  let okCount = 0;
+  const nameCounts: Record<string, number> = {};
+
+  const dedupeFilename = (finalName: string) => {
+    const key = finalName.toLowerCase();
+    const prev = nameCounts[key] ?? 0;
+    nameCounts[key] = prev + 1;
+    if (prev === 0) return finalName;
+    const dot = finalName.lastIndexOf('.');
+    const base = dot > 0 ? finalName.slice(0, dot) : finalName;
+    const ext = dot > 0 ? finalName.slice(dot) : '';
+    return `${base}_${prev + 1}${ext}`;
+  };
+
+  for (const it of items) {
+    const src = (it.src || '').trim();
+    const name = filenameSafe(it.filename) || 'image';
+    const finalName0 = name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') ? name : `${name}.png`;
+    const finalName = dedupeFilename(finalName0);
+    if (!src) continue;
+
+    try {
+      if (src.startsWith('data:') || /^[A-Za-z0-9+/=]+$/.test(src)) {
+        const bytes = base64ToUint8Array(src);
+        zip.file(finalName, bytes);
+        okCount++;
+        continue;
+      }
+
+      const res = await fetch(src, { mode: 'cors' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      zip.file(finalName, blob);
+      okCount++;
+    } catch {
+      // ignore failed file
+    }
+  }
+
+  if (okCount === 0) {
+    toast.warning('没有可下载的图片（可能被跨域限制）');
+    return;
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (filenameSafe(zipName) || 'images') + '.zip';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function exportAllAsZip(items: { src: string; filename: string }[], zipName: string, format: 'png' | 'jpg' | 'svg') {
+  const zip = new JSZip();
+  let okCount = 0;
+  const nameCounts: Record<string, number> = {};
+
+  const dedupeFilename = (finalName: string) => {
+    const key = finalName.toLowerCase();
+    const prev = nameCounts[key] ?? 0;
+    nameCounts[key] = prev + 1;
+    if (prev === 0) return finalName;
+    const dot = finalName.lastIndexOf('.');
+    const base = dot > 0 ? finalName.slice(0, dot) : finalName;
+    const ext = dot > 0 ? finalName.slice(dot) : '';
+    return `${base}_${prev + 1}${ext}`;
+  };
+
+  for (const it of items) {
+    const src = (it.src || '').trim();
+    if (!src) continue;
+    const name = filenameSafe(it.filename) || 'image';
+
+    try {
+      const response = await fetch(src, { mode: 'cors' });
+      if (!response.ok) throw new Error('Fetch failed');
+      const srcBlob = await response.blob();
+
+      if (format === 'svg') {
+        const dataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(srcBlob);
+        });
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = reject;
+          img.src = dataUrl;
+        });
+        const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="${img.naturalWidth}" height="${img.naturalHeight}"><image href="${dataUrl}" width="${img.naturalWidth}" height="${img.naturalHeight}"/></svg>`;
+        zip.file(dedupeFilename(`${name}.svg`), svgContent);
+        okCount++;
+      } else {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        const loaded = await new Promise<HTMLImageElement>((resolve, reject) => {
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = URL.createObjectURL(srcBlob);
+        });
+        const cvs = document.createElement('canvas');
+        cvs.width = loaded.naturalWidth;
+        cvs.height = loaded.naturalHeight;
+        const ctx = cvs.getContext('2d')!;
+        if (format === 'jpg') {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, cvs.width, cvs.height);
+        }
+        ctx.drawImage(loaded, 0, 0);
+        URL.revokeObjectURL(img.src);
+        const mime = format === 'jpg' ? 'image/jpeg' : 'image/png';
+        const ext = format === 'jpg' ? 'jpg' : 'png';
+        const exported = await new Promise<Blob>((resolve, reject) =>
+          cvs.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), mime, format === 'jpg' ? 0.92 : undefined)
+        );
+        zip.file(dedupeFilename(`${name}.${ext}`), exported);
+        okCount++;
+      }
+    } catch {
+      // ignore failed file
+    }
+  }
+
+  if (okCount === 0) {
+    toast.warning('没有可导出的图片（可能被跨域限制）');
+    return;
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (filenameSafe(zipName) || 'images') + `.${format}.zip`;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 // 从尺寸字符串检测档位
 function detectTierFromSize(size: string): '1k' | '2k' | '4k' {
@@ -7842,12 +8017,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
               onClick={() => {
-                void downloadImage(imgContextMenu.src, imgContextMenu.prompt || 'image');
+                const multiSelected = selectedKeys.length > 1;
+                if (multiSelected) {
+                  const items = canvas
+                    .filter((it) => selectedKeys.includes(it.key) && it.src)
+                    .map((it, idx) => ({ src: it.src, filename: it.prompt || `image_${idx + 1}` }));
+                  void downloadAllAsZip(items, `visual-agent_${Date.now()}`);
+                } else {
+                  void downloadImage(imgContextMenu.src, imgContextMenu.prompt || 'image');
+                }
                 setImgContextMenu((p) => ({ ...p, open: false }));
               }}
             >
               <Download size={16} />
-              下载图片
+              {selectedKeys.length > 1 ? `下载 ${selectedKeys.length} 张图片` : '下载图片'}
             </button>
             {imgContextMenu.src ? (
               <button
@@ -7868,12 +8051,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
               onClick={() => {
-                void copyToClipboard(imgContextMenu.prompt || '');
+                if (selectedKeys.length > 1) {
+                  const prompts = canvas
+                    .filter((it) => selectedKeys.includes(it.key) && it.prompt)
+                    .map((it) => it.prompt);
+                  void copyToClipboard(prompts.join('\n'));
+                } else {
+                  void copyToClipboard(imgContextMenu.prompt || '');
+                }
                 setImgContextMenu((p) => ({ ...p, open: false }));
               }}
             >
               <Copy size={16} />
-              复制提示词
+              {selectedKeys.length > 1 ? `复制 ${selectedKeys.length} 条提示词` : '复制提示词'}
             </button>
             {imgContextMenu.src ? (
               <button
@@ -7917,7 +8107,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
                       style={{ color: 'rgba(255,255,255,0.88)' }}
                       onClick={() => {
-                        void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'png');
+                        if (selectedKeys.length > 1) {
+                          const items = canvas
+                            .filter((it) => selectedKeys.includes(it.key) && it.src)
+                            .map((it, idx) => ({ src: it.src, filename: it.prompt || `image_${idx + 1}` }));
+                          void exportAllAsZip(items, `visual-agent_${Date.now()}`, 'png');
+                        } else {
+                          void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'png');
+                        }
                         setImgContextMenu((p) => ({ ...p, open: false }));
                       }}
                     >
@@ -7929,7 +8126,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
                       style={{ color: 'rgba(255,255,255,0.88)' }}
                       onClick={() => {
-                        void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'jpg');
+                        if (selectedKeys.length > 1) {
+                          const items = canvas
+                            .filter((it) => selectedKeys.includes(it.key) && it.src)
+                            .map((it, idx) => ({ src: it.src, filename: it.prompt || `image_${idx + 1}` }));
+                          void exportAllAsZip(items, `visual-agent_${Date.now()}`, 'jpg');
+                        } else {
+                          void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'jpg');
+                        }
                         setImgContextMenu((p) => ({ ...p, open: false }));
                       }}
                     >
@@ -7941,7 +8145,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
                       style={{ color: 'rgba(255,255,255,0.88)' }}
                       onClick={() => {
-                        void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'svg');
+                        if (selectedKeys.length > 1) {
+                          const items = canvas
+                            .filter((it) => selectedKeys.includes(it.key) && it.src)
+                            .map((it, idx) => ({ src: it.src, filename: it.prompt || `image_${idx + 1}` }));
+                          void exportAllAsZip(items, `visual-agent_${Date.now()}`, 'svg');
+                        } else {
+                          void exportImageAs(imgContextMenu.src, imgContextMenu.prompt || 'image', 'svg');
+                        }
                         setImgContextMenu((p) => ({ ...p, open: false }));
                       }}
                     >
