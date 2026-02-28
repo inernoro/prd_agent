@@ -139,15 +139,24 @@ export function DefectSubmitPanel() {
               )
             );
           } else {
+            const errCode = res.error?.code || '';
             const errMsg = res.error?.message || '图片分析失败';
-            console.warn('[defect-image-analyze] failed:', errMsg);
+            const isNotConfigured = errCode === 'MODEL_NOT_CONFIGURED';
+            console.warn('[defect-image-analyze] failed:', errCode, errMsg);
             setAttachments((prev) =>
               prev.map((a) =>
                 a.file === item.file
-                  ? { ...a, status: 'error', description: errMsg }
+                  ? {
+                      ...a,
+                      status: isNotConfigured ? 'idle' as const : 'error',
+                      description: isNotConfigured ? undefined : errMsg,
+                    }
                   : a
               )
             );
+            if (isNotConfigured) {
+              console.info('[defect-image-analyze] VLM 模型池未配置，跳过图片分析');
+            }
           }
         } catch (e) {
           console.warn('[defect-image-analyze] error:', e);

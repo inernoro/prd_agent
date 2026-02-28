@@ -1591,10 +1591,20 @@ public class DefectAgentController : ControllerBase
     /// VLM 分析截图中的缺陷内容
     /// </summary>
     [HttpPost("images/analyze")]
-    public async Task<IActionResult> AnalyzeImage([FromBody] AnalyzeImageRequest request, CancellationToken ct)
+    public async Task<IActionResult> AnalyzeImage([FromBody] AnalyzeImageRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Base64))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片数据不能为空"));
+
+        // 先检查模型池是否可用，给出明确的配置提示
+        var resolution = await _gateway.ResolveModelAsync(
+            AppCallerRegistry.DefectAgent.AnalyzeImage.Vision, "vision");
+        if (resolution is { Success: false })
+        {
+            _logger.LogWarning("[{AppKey}] VLM 模型池未配置: {Error}", AppKey, resolution.ErrorMessage);
+            return StatusCode(503, ApiResponse<object>.Fail("MODEL_NOT_CONFIGURED",
+                "截图分析功能需要配置 vision 模型池，请在管理后台「模型组管理」中绑定 defect-agent.analyze-image::vision"));
+        }
 
         try
         {
@@ -1626,8 +1636,10 @@ public class DefectAgentController : ControllerBase
                 }
             };
 
+            // 服务器权威性设计：VLM 调用使用 CancellationToken.None
+            // 客户端断开不应中断正在进行的模型推理
             var resultBuilder = new StringBuilder();
-            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, ct))
+            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, CancellationToken.None))
             {
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {
