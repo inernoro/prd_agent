@@ -492,38 +492,37 @@ const SCENARIO_TAGS = [
 // ============ Hero 区域 ============
 function HeroSection() {
   return (
-    <div className="text-center py-8 relative">
-      {/* 绿色粒子争夺 — 此页面开启鼠标跟随 */}
-      <div className="flex items-center justify-center mb-3">
-        <div className="rounded-full overflow-hidden" style={{ width: 120, height: 120 }}>
-          <ParticleVortex particleCount={200} mouseFollow />
-        </div>
+    <div className="relative" style={{ height: 280 }}>
+      {/* 粒子漩涡 — 作为大背景铺满 Hero 区域 */}
+      <div className="absolute inset-0">
+        <ParticleVortex particleCount={300} mouseFollow />
       </div>
-      {/* 主标题 - 全息流动渐变 */}
-      <h1
-        className="text-[42px] font-bold tracking-tight mb-3"
-        style={{
-          background: 'linear-gradient(90deg, #c4b5fd, #818cf8, #6ee7b7, #818cf8, #c4b5fd)',
-          backgroundSize: '200% 100%',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-          backgroundClip: 'text',
-          letterSpacing: '-0.02em',
-          animation: 'vaHoloFlow 6s ease-in-out infinite',
-        }}
-      >
-        视觉创作 Agent
-      </h1>
-      {/* 副标题 */}
-      <p
-        className="text-[15px]"
-        style={{
-          color: 'rgba(199,210,254,0.58)',
-          letterSpacing: '0.01em',
-        }}
-      >
-        AI 驱动的设计助手，让创作更简单
-      </p>
+      {/* 文字层叠在粒子上方 */}
+      <div className="relative z-10 flex flex-col items-center justify-center h-full text-center pt-4">
+        <h1
+          className="text-[42px] font-bold tracking-tight mb-3"
+          style={{
+            background: 'linear-gradient(90deg, #c4b5fd, #818cf8, #6ee7b7, #818cf8, #c4b5fd)',
+            backgroundSize: '200% 100%',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+            letterSpacing: '-0.02em',
+            animation: 'vaHoloFlow 6s ease-in-out infinite',
+          }}
+        >
+          视觉创作 Agent
+        </h1>
+        <p
+          className="text-[15px]"
+          style={{
+            color: 'rgba(199,210,254,0.58)',
+            letterSpacing: '0.01em',
+          }}
+        >
+          AI 驱动的设计助手，让创作更简单
+        </p>
+      </div>
     </div>
   );
 }
