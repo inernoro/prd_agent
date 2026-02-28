@@ -355,6 +355,12 @@ public class ImageMasterController : ControllerBase
             var pid = request.SelectedPromptId.Trim();
             update = update.Set(x => x.SelectedPromptId, string.IsNullOrEmpty(pid) ? null : pid);
         }
+        if (request?.StylePrompt != null)
+        {
+            var sp = request.StylePrompt.Trim();
+            if (sp.Length > 500) sp = sp[..500];
+            update = update.Set(x => x.StylePrompt, string.IsNullOrEmpty(sp) ? null : sp);
+        }
 
         // 文章配图场景：若更新了 articleContent，触发"提交型修改"逻辑（version++、清后续、清旧配图）
         var articleContentChanged = !string.IsNullOrWhiteSpace(request?.ArticleContent) 
@@ -1333,6 +1339,14 @@ public class ImageMasterController : ControllerBase
 
             var prompt = (request?.Prompt ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(prompt)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空"));
+
+            // 风格统一：若 workspace 设置了 StylePrompt，自动拼接到用户 prompt 后面
+            var stylePrompt = (ws.StylePrompt ?? string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(stylePrompt))
+            {
+                prompt = $"{prompt}\n\n风格要求：{stylePrompt}";
+                _logger.LogInformation("[CreateWorkspaceImageGenRun] StylePrompt applied: {StylePrompt}", stylePrompt);
+            }
 
             var targetKey = (request?.TargetKey ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(targetKey)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "targetKey 不能为空"));
@@ -2864,6 +2878,8 @@ public class UpdateWorkspaceRequest
     public string? FolderName { get; set; }
     /// <summary>文章配图场景：用户选择的系统提示词 ID（传 "" 空字符串表示清除选择）</summary>
     public string? SelectedPromptId { get; set; }
+    /// <summary>风格统一提示词（传 "" 空字符串表示清除）</summary>
+    public string? StylePrompt { get; set; }
 }
 
 public class GenerateWorkspaceTitleRequest
