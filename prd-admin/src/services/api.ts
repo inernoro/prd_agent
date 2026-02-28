@@ -447,6 +447,7 @@ export const api = {
     stats: () => '/api/defect-agent/stats',
     users: () => '/api/defect-agent/users',
     polish: () => '/api/defect-agent/defects/polish',
+    analyzeImage: () => '/api/defect-agent/images/analyze',
     logs: {
       preview: () => '/api/defect-agent/logs/preview',
     },

@@ -32,6 +32,8 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:5000',
         changeOrigin: true,
+        // VLM 图片分析等长时间请求需要足够的超时时间（默认太短会导致代理层提前断开）
+        timeout: 180_000,
         // 禁用代理缓冲，确保 SSE 流式响应能立即传递到浏览器
         configure: (proxy, _options) => {
           proxy.on('proxyReq', (proxyReq, req, _res) => {

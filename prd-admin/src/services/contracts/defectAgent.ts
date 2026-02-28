@@ -313,7 +313,13 @@ export type DeleteDefectAttachmentContract = (input: {
 export type PolishDefectContract = (input: {
   content: string;
   templateId?: string;
+  imageDescriptions?: string[];
 }) => Promise<ApiResponse<{ content: string }>>;
+
+export type AnalyzeDefectImageContract = (input: {
+  base64: string;
+  mimeType: string;
+}) => Promise<ApiResponse<{ description: string }>>;
 
 export type GetDefectStatsContract = () => Promise<ApiResponse<DefectStats>>;
 
