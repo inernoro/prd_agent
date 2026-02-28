@@ -81,6 +81,8 @@ export type RunModelLabStreamInput = {
   enablePromptCache?: boolean;
   modelIds?: string[];
   models?: ModelLabSelectedModel[];
+  /** 识图模式：图片 base64 列表（data URI 或纯 base64） */
+  imageBase64List?: string[];
 };
 
 export type RunModelLabStreamEvent = { event?: string; data?: string };

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronDown, Clock3, Copy, Download, Expand, ImagePlus, Layers, Maximize2, Plus, Save, ScanEye, Sparkles, Star, Tag, TimerOff, Trash2, XCircle, Zap } from 'lucide-react';
+import { Check, ChevronDown, Clock3, Copy, Download, Expand, Eye, ImagePlus, Layers, Maximize2, Plus, Save, ScanEye, Sparkles, Star, Tag, TimerOff, Trash2, Upload, X, XCircle, Zap } from 'lucide-react';
 import JSZip from 'jszip';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
@@ -76,7 +76,7 @@ type ViewRunItem = {
 
 type SortBy = 'ttft' | 'total' | 'imagePlanItemsDesc';
 
-type MainMode = 'infer' | 'image';
+type MainMode = 'infer' | 'image' | 'vision';
 type ImageSubMode = 'single' | 'batch' | 'fullSize';
 
 type ImageViewItem = {
@@ -145,6 +145,10 @@ type LlmLabCacheV1 = {
   planResult: ImageGenPlanResponse | null;
   batchError: string | null;
   batchItems: CachedImageItem[];
+
+  /** 识图模式结果 */
+  visionRunError: string | null;
+  visionRunItems: ViewRunItem[];
 };
 
 type AspectOption = {
@@ -914,6 +918,15 @@ export default function LlmLabTab() {
   const [runItems, setRunItems] = useState<Record<string, ViewRunItem>>({});
   const [runError, setRunError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // 识图模式状态
+  const [visionImages, setVisionImages] = useState<{ id: string; base64: string; name: string; preview: string }[]>([]);
+  const [visionRunning, setVisionRunning] = useState(false);
+  const [visionRunItems, setVisionRunItems] = useState<Record<string, ViewRunItem>>({});
+  const [visionRunError, setVisionRunError] = useState<string | null>(null);
+  const [visionSortBy, setVisionSortBy] = useState<SortBy>('ttft');
+  const visionAbortRef = useRef<AbortController | null>(null);
+  const visionFileInputRef = useRef<HTMLInputElement | null>(null);
   const didMountForBackdropBusyRef = useRef(false);
   const suiteCycleRef = useRef<Record<LabMode, number>>({} as Record<LabMode, number>);
   const [sortBy, setSortBy] = useState<SortBy>('ttft');
@@ -1053,7 +1066,7 @@ export default function LlmLabTab() {
       }
 
       if (typeof data.activeExperimentId === 'string') setActiveExperimentId(data.activeExperimentId);
-      if (data.mainMode === 'infer' || data.mainMode === 'image') setMainMode(data.mainMode);
+      if (data.mainMode === 'infer' || data.mainMode === 'image' || data.mainMode === 'vision') setMainMode(data.mainMode);
       if (typeof data.mode === 'string') setMode(normalizeSavedMode(data.mode));
       setSuite(normalizeSavedSuite((data as any).suite));
       if (data.sortBy === 'ttft' || data.sortBy === 'total' || data.sortBy === 'imagePlanItemsDesc') setSortBy(data.sortBy);
@@ -1069,6 +1082,10 @@ export default function LlmLabTab() {
 
       if (typeof data.runError === 'string' || data.runError === null) setRunError(data.runError ?? null);
       if (Array.isArray(data.runItems)) setRunItems(Object.fromEntries(data.runItems.map((x) => [x.itemId, x])));
+
+      // 识图结果恢复
+      if (typeof (data as any).visionRunError === 'string' || (data as any).visionRunError === null) setVisionRunError((data as any).visionRunError ?? null);
+      if (Array.isArray((data as any).visionRunItems)) setVisionRunItems(Object.fromEntries(((data as any).visionRunItems as ViewRunItem[]).map((x) => [x.itemId, x])));
 
       if (typeof data.imageError === 'string' || data.imageError === null) setImageError(data.imageError ?? null);
       if (typeof data.singleGroupId === 'string') setSingleGroupId(data.singleGroupId);
@@ -1145,6 +1162,9 @@ export default function LlmLabTab() {
           planResult: planResult ?? null,
           batchError: batchError ?? null,
           batchItems: Object.values(batchItems ?? {}).map(stripImage),
+
+          visionRunError: visionRunError ?? null,
+          visionRunItems: Object.values(visionRunItems ?? {}),
         };
 
         localStorage.setItem(labCacheKey, JSON.stringify(cache));
@@ -1178,6 +1198,8 @@ export default function LlmLabTab() {
     singleSelected,
     sortBy,
     suite,
+    visionRunError,
+    visionRunItems,
   ]);
 
   // 将生成的图片内容写入 IndexedDB（避免刷新后丢失；并与 userId 隔离）
@@ -1506,6 +1528,12 @@ export default function LlmLabTab() {
     setRunning(false);
   };
 
+  const stopVisionRun = () => {
+    visionAbortRef.current?.abort();
+    visionAbortRef.current = null;
+    setVisionRunning(false);
+  };
+
   const stopBatchRun = (opts?: { forRestart?: boolean }) => {
     if (!opts?.forRestart) batchStopRequestedRef.current = true;
     batchAbortRef.current?.abort();
@@ -1558,15 +1586,21 @@ export default function LlmLabTab() {
 
   const DEFAULT_IMAGE_PROMPT = '生成一张 Hello Kitty 的图片，卡通风格，纯色背景，高清。';
 
+  const DEFAULT_VISION_PROMPT = '请描述这张图片的内容。';
+
   const onMainModeChange = (m: MainMode) => {
     // 切换模式时，尽量停止正在进行的流式任务，避免 UI 混乱
     if (m !== 'infer' && running) stopRun();
     if (m !== 'image' && batchRunning) stopBatchRun();
+    if (m !== 'vision' && visionRunning) stopVisionRun();
     setMainMode(m);
 
     // 生图给一个默认示例 prompt（仅在空文本时）
     if (m === 'image') {
       setPromptText((cur) => (cur && cur.trim() ? cur : DEFAULT_IMAGE_PROMPT));
+    }
+    if (m === 'vision') {
+      setPromptText((cur) => (cur && cur.trim() ? cur : DEFAULT_VISION_PROMPT));
     }
   };
 
@@ -2136,6 +2170,189 @@ export default function LlmLabTab() {
       setRunning(false);
     }
   };
+
+  // ==================== 识图模式 ====================
+
+  const handleVisionImageUpload = (files: FileList | null) => {
+    if (!files) return;
+    const maxFiles = 10;
+    const existingCount = visionImages.length;
+    const remaining = maxFiles - existingCount;
+    if (remaining <= 0) {
+      toast.warning(`最多上传 ${maxFiles} 张图片`);
+      return;
+    }
+    const toProcess = Array.from(files).slice(0, remaining);
+    for (const file of toProcess) {
+      if (!file.type.startsWith('image/')) continue;
+      if (file.size > 20 * 1024 * 1024) {
+        toast.warning(`${file.name} 超过 20MB，已跳过`);
+        continue;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result as string;
+        setVisionImages((prev) => [
+          ...prev,
+          { id: `${Date.now()}_${Math.random().toString(16).slice(2)}`, base64, name: file.name, preview: base64 },
+        ]);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeVisionImage = (id: string) => {
+    setVisionImages((prev) => prev.filter((img) => img.id !== id));
+  };
+
+  const startVisionRun = async () => {
+    if (!activeExperimentId) {
+      toast.warning('请先选择实验');
+      return;
+    }
+    if (selectedModels.length === 0) {
+      toast.warning('请先加入至少 1 个模型');
+      return;
+    }
+    if (visionImages.length === 0) {
+      toast.warning('请先上传至少 1 张图片');
+      return;
+    }
+
+    const enabledModels = (selectedModels ?? []).filter((m) => !disabledModelKeys[modelKeyOfSelected(m)]);
+    if (enabledModels.length === 0) {
+      toast.warning('当前已将所有模型临时禁用，请先恢复至少 1 个');
+      return;
+    }
+
+    setVisionRunError(null);
+    setVisionRunItems({});
+    stopVisionRun();
+    setVisionRunning(true);
+    const ac = new AbortController();
+    visionAbortRef.current = ac;
+
+    await saveExperiment();
+
+    const res = await runModelLabStream({
+      input: {
+        experimentId: activeExperimentId,
+        suite,
+        models: enabledModels,
+        promptText: (promptText ?? '').trim() || DEFAULT_VISION_PROMPT,
+        params,
+        imageBase64List: visionImages.map((img) => img.base64),
+      },
+      signal: ac.signal,
+      onEvent: (evt) => {
+        if (!evt.data) return;
+        try {
+          const obj = JSON.parse(evt.data);
+          if (evt.event === 'run') {
+            if (obj.type === 'error') {
+              const code = String(obj.errorCode ?? '').trim();
+              const msg = String(obj.errorMessage ?? '').trim() || '运行失败';
+              setVisionRunError(code ? `[${code}] ${msg}` : msg);
+              setVisionRunning(false);
+            }
+            if (obj.type === 'runDone') {
+              setVisionRunning(false);
+            }
+          }
+          if (evt.event === 'model') {
+            if (obj.type === 'modelStart') {
+              const configModelId = resolveConfigModelId(obj.modelId, obj.modelName);
+              const item: ViewRunItem = {
+                itemId: obj.itemId,
+                modelId: obj.modelId,
+                displayName: obj.displayName || obj.modelName || obj.modelId,
+                modelName: obj.modelName || '',
+                configModelId: configModelId || undefined,
+                status: 'running',
+                queueMs: typeof obj.queueMs === 'number' ? Number(obj.queueMs) : undefined,
+                preview: '',
+                rawText: '',
+                rawTruncated: false,
+              };
+              setVisionRunItems((p) => ({ ...p, [item.itemId]: item }));
+            }
+            if (obj.type === 'delta' && typeof obj.content === 'string') {
+              setVisionRunItems((p) => {
+                const cur = p[obj.itemId];
+                if (!cur) return p;
+                const nextPreview = (cur.preview + obj.content).slice(0, 512);
+                const raw = String(cur.rawText ?? '');
+                const canAppend = raw.length < MAX_RUN_RAW_CHARS;
+                const nextRaw = canAppend ? (raw + obj.content).slice(0, MAX_RUN_RAW_CHARS) : raw;
+                const truncated = (cur.rawTruncated ?? false) || (raw.length + obj.content.length > MAX_RUN_RAW_CHARS);
+                return { ...p, [obj.itemId]: { ...cur, preview: nextPreview, rawText: nextRaw, rawTruncated: truncated } };
+              });
+            }
+            if (obj.type === 'firstToken') {
+              setVisionRunItems((p) => {
+                const cur = p[obj.itemId];
+                if (!cur) return p;
+                return { ...p, [obj.itemId]: { ...cur, ttftMs: Number(obj.ttftMs) } };
+              });
+            }
+            if (obj.type === 'modelDone') {
+              setVisionRunItems((p) => {
+                const cur = p[obj.itemId];
+                if (!cur) return p;
+                const nextPreview = typeof obj.preview === 'string' ? obj.preview : cur.preview;
+                const shouldFillRaw = !String(cur.rawText ?? '').trim() && typeof obj.preview === 'string' && obj.preview.trim().length > 0;
+                return {
+                  ...p,
+                  [obj.itemId]: {
+                    ...cur,
+                    status: 'done',
+                    ttftMs: obj.ttftMs ?? cur.ttftMs,
+                    totalMs: obj.totalMs ?? cur.totalMs,
+                    preview: nextPreview,
+                    rawText: shouldFillRaw ? String(obj.preview) : cur.rawText,
+                  },
+                };
+              });
+            }
+            if (obj.type === 'modelError') {
+              setVisionRunItems((p) => {
+                const cur = p[obj.itemId];
+                if (!cur) return p;
+                const code = String(obj.errorCode ?? '').trim();
+                const msg = String(obj.errorMessage ?? '').trim() || '失败';
+                const em = code ? `[${code}] ${msg}` : msg;
+                return { ...p, [obj.itemId]: { ...cur, status: 'error', errorMessage: em } };
+              });
+            }
+          }
+        } catch {
+          // ignore
+        }
+      },
+    });
+
+    if (!res.success) {
+      setVisionRunError(res.error?.message || '运行失败');
+      setVisionRunning(false);
+    }
+  };
+
+  const visionItemsList = useMemo(() => Object.values(visionRunItems), [visionRunItems]);
+  const visionSortedItems = useMemo(() => {
+    const list = [...visionItemsList];
+    return list.sort((a, b) => {
+      const aTtft = a.ttftMs ?? Number.POSITIVE_INFINITY;
+      const bTtft = b.ttftMs ?? Number.POSITIVE_INFINITY;
+      const aTotal = a.totalMs ?? Number.POSITIVE_INFINITY;
+      const bTotal = b.totalMs ?? Number.POSITIVE_INFINITY;
+      if (visionSortBy === 'total') {
+        if (aTotal !== bTotal) return aTotal - bTotal;
+        return aTtft - bTtft;
+      }
+      if (aTtft !== bTtft) return aTtft - bTtft;
+      return aTotal - bTotal;
+    });
+  }, [visionItemsList, visionSortBy]);
 
   const itemsList = useMemo(() => Object.values(runItems), [runItems]);
   const sortedItems = useMemo(() => {
@@ -2774,6 +2991,7 @@ export default function LlmLabTab() {
                   options={[
                     { key: 'infer', label: '推理' },
                     { key: 'image', label: '生图' },
+                    { key: 'vision', label: '识图' },
                   ]}
                   value={mainMode}
                   onChange={(key) => onMainModeChange(key as MainMode)}
@@ -2793,6 +3011,11 @@ export default function LlmLabTab() {
                     onChange={(key) => onModeClick(key as LabMode)}
                     accentHue={234}
                   />
+                ) : mainMode === 'vision' ? (
+                  <div className="inline-flex items-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    <Eye size={14} />
+                    上传图片，对比各模型的识图速度与准确性
+                  </div>
                 ) : (
                   <div className="inline-flex items-center gap-2 w-max">
                     <GlassSwitch
@@ -2940,6 +3163,18 @@ export default function LlmLabTab() {
                   onCancel={stopRun}
                   disabled={!canRun || !activeExperimentId}
                 />
+              ) : mainMode === 'vision' ? (
+                <SuccessConfettiButton
+                  title="一键开始识图"
+                  size="md"
+                  readyText="一键开始识图"
+                  loadingText="识图中"
+                  showLoadingText
+                  successText="OK"
+                  onAction={startVisionRun}
+                  onCancel={stopVisionRun}
+                  disabled={!activeExperimentId || visionImages.length === 0 || selectedModels.length === 0}
+                />
               ) : imageSubMode === 'single' ? (
                 <>
                   <Button variant="primary" size="md" onClick={startGenerateImage} disabled={imageRunning}>
@@ -2997,7 +3232,9 @@ export default function LlmLabTab() {
           <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
             {mainMode === 'infer'
               ? `当前：推理 · 类型：${mode === 'intent' ? '意图' : mode === 'imageGenPlan' ? '生图意图' : mode}`
-              : `当前：生图 · ${imageSubMode === 'single' ? '单张' : imageSubMode === 'batch' ? '批量' : '全尺寸'}${imageSubMode === 'single' ? ` · 比例：${imgSize}` : ''}`}
+              : mainMode === 'vision'
+                ? `当前：识图 · 已上传 ${visionImages.length} 张图片 · 已选 ${selectedModels.filter((m) => !disabledModelKeys[modelKeyOfSelected(m)]).length} 个模型`
+                : `当前：生图 · ${imageSubMode === 'single' ? '单张' : imageSubMode === 'batch' ? '批量' : '全尺寸'}${imageSubMode === 'single' ? ` · 比例：${imgSize}` : ''}`}
           </div>
 
           {/* Row 3: 按钮一排 -> 标题一排 -> 文本框一排 */}
@@ -3062,7 +3299,80 @@ export default function LlmLabTab() {
               </div>
             ) : null}
 
-            {shouldShowImageGenPlanPromptSplit ? (
+            {mainMode === 'vision' ? (
+              <>
+                {/* 识图模式：图片上传 + 提示词 */}
+                <div className="mt-3 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  上传图片
+                </div>
+                <div className="mt-2">
+                  <input
+                    ref={visionFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => handleVisionImageUpload(e.target.files)}
+                  />
+                  <div className="flex flex-wrap gap-2 items-start">
+                    {visionImages.map((img) => (
+                      <div
+                        key={img.id}
+                        className="relative group rounded-[12px] overflow-hidden"
+                        style={{ width: 80, height: 80, border: '1px solid var(--border-default)', background: 'var(--bg-input)' }}
+                      >
+                        <img src={img.preview} alt={img.name} className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          className="absolute top-1 right-1 h-5 w-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                          style={{ background: 'rgba(0,0,0,0.6)' }}
+                          onClick={() => removeVisionImage(img.id)}
+                          title="移除"
+                        >
+                          <X size={12} style={{ color: '#fff' }} />
+                        </button>
+                      </div>
+                    ))}
+                    {visionImages.length < 10 && (
+                      <button
+                        type="button"
+                        className="rounded-[12px] flex flex-col items-center justify-center gap-1 transition-colors hover:bg-white/6"
+                        style={{
+                          width: 80,
+                          height: 80,
+                          border: '2px dashed var(--border-default)',
+                          color: 'var(--text-muted)',
+                        }}
+                        onClick={() => visionFileInputRef.current?.click()}
+                        title="点击上传图片"
+                      >
+                        <Upload size={18} />
+                        <span className="text-[10px]">上传</span>
+                      </button>
+                    )}
+                  </div>
+                  {visionImages.length > 0 && (
+                    <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      已上传 {visionImages.length}/10 张
+                    </div>
+                  )}
+                </div>
+                <div className="mt-3 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  识图提示词
+                </div>
+                <textarea
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  className="mt-2 h-24 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
+                  style={{
+                    background: 'var(--bg-input)',
+                    border: '1px solid var(--border-default)',
+                    color: 'var(--text-primary)',
+                  }}
+                  placeholder="输入识图提示词（如：请描述这张图片的内容）"
+                />
+              </>
+            ) : shouldShowImageGenPlanPromptSplit ? (
               <>
                 {/* 3.2 标题一排（分别位于各自文本框上方；不要把文字堆在一起） */}
                 <div className={cn('grid grid-cols-1 lg:grid-cols-2 gap-3', 'mt-3')}>
@@ -3559,6 +3869,160 @@ export default function LlmLabTab() {
                         </div>
                       );
                     })()}
+                    {it.errorMessage ? (
+                      <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                        {it.errorMessage}
+                      </div>
+                    ) : null}
+                    <div className="mt-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+                          输出预览
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
+                            style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
+                            onClick={() => {
+                              const text = it.rawText || it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
+                              void copyToClipboard(text);
+                            }}
+                            aria-label="复制输出"
+                            title="复制输出"
+                          >
+                            <Copy size={12} />
+                            复制
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
+                            style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
+                            onClick={() => {
+                              const text = it.rawText || it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
+                              setPreviewDialog({ open: true, title: it.displayName || '输出预览', text });
+                            }}
+                            aria-label="展开查看完整输出"
+                            title="展开查看完整输出"
+                          >
+                            <Expand size={12} />
+                            展开
+                          </button>
+                        </div>
+                      </div>
+                      <div
+                        className="mt-1 rounded-[12px] px-2.5 py-2 min-w-0"
+                        style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+                      >
+                        <InlineMarquee
+                          text={it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）')}
+                          title={it.preview || ''}
+                          className="text-xs font-semibold"
+                          style={{ color: 'var(--text-primary)' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          </>
+          ) : mainMode === 'vision' ? (
+            <>
+          <div className="flex items-center justify-between shrink-0">
+            <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
+              {`识图结果（按 ${visionSortBy === 'ttft' ? '首字延迟 TTFT' : '总时长'} 优先排序）`}
+            </div>
+            <div className="flex items-center gap-2">
+              <GlassSwitch
+                options={[
+                  { key: 'ttft', label: '首字延迟', icon: <Zap size={14} /> },
+                  { key: 'total', label: '总时长', icon: <Clock3 size={14} /> },
+                ]}
+                value={visionSortBy}
+                onChange={(key) => setVisionSortBy(key as SortBy)}
+                accentHue={234}
+              />
+              {visionRunning ? <Badge variant="subtle">识图中</Badge> : <Badge variant="subtle">就绪</Badge>}
+            </div>
+          </div>
+
+          {visionRunError ? (
+            <div
+              className="mt-2 rounded-[12px] px-3 py-2 text-xs flex items-start gap-2 min-w-0"
+              style={{
+                background: 'rgba(239,68,68,0.06)',
+                border: '1px solid rgba(239,68,68,0.18)',
+                color: 'rgba(239,68,68,0.95)',
+              }}
+            >
+              <XCircle size={14} className="shrink-0 mt-[1px]" />
+              <div className="min-w-0 break-words" style={{ wordBreak: 'break-word' }}>
+                {visionRunError}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1 pb-6">
+            {visionSortedItems.length === 0 ? (
+              <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center px-6">
+                <div
+                  className="h-12 w-12 rounded-full flex items-center justify-center"
+                  style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-subtle)' }}
+                >
+                  <Eye size={22} style={{ color: 'var(--text-muted)' }} />
+                </div>
+                <div className="mt-3 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  这里将实时展示识图对比结果
+                </div>
+                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  上传图片后点击"一键开始识图"，会按模型展示 TTFT、总耗时与输出预览
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {visionSortedItems.map((it) => (
+                  <div
+                    key={it.itemId}
+                    className="rounded-[14px] p-3"
+                    style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+                  >
+                    <div className="flex items-center justify-between gap-3 min-w-0">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {(() => {
+                            const pid = getPlatformIdForRunItem((it.modelName || '').trim(), String(it.modelId ?? '').trim());
+                            const label = pid ? platformNameById.get(pid) || pid : null;
+                            if (!label) return null;
+                            return <PlatformLabel name={label} />;
+                          })()}
+                          <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            {String(it.modelId ?? '').trim() || String(it.modelName ?? '').trim() || '-'}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="shrink-0 flex items-center justify-end gap-2">
+                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          TTFT {typeof it.ttftMs === 'number' ? `${it.ttftMs}ms` : '-'}
+                          {typeof it.queueMs === 'number' ? `（排队 ${it.queueMs}ms）` : ''}
+                          · 总耗时 {typeof it.totalMs === 'number' ? `${it.totalMs}ms` : '-'}
+                        </div>
+                        <div
+                          className="text-xs"
+                          style={{
+                            color:
+                              it.status === 'error'
+                                ? 'rgba(239,68,68,0.95)'
+                                : it.status === 'done'
+                                  ? 'rgba(34,197,94,0.95)'
+                                  : 'var(--text-muted)',
+                          }}
+                        >
+                          {it.status === 'running' ? '进行中' : it.status === 'done' ? '完成' : '失败'}
+                        </div>
+                      </div>
+                    </div>
                     {it.errorMessage ? (
                       <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
                         {it.errorMessage}
