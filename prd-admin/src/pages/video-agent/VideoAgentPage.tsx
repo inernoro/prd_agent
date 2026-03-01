@@ -269,6 +269,50 @@ export const VideoAgentPage: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRunId, selectedRun?.status, needsScenePolling, token, loadRuns, loadDetail]);
 
+  // ─── Background polling: detect when runs finish scripting ───
+  const prevRunStatusRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    // 有正在进行中的任务才启动轮询
+    const hasActiveRuns = runs.some((r) => ACTIVE_STATUSES.includes(r.status));
+    if (!hasActiveRuns) return;
+
+    const timer = setInterval(async () => {
+      try {
+        const res = await listVideoGenRunsReal({ limit: 20 });
+        if (!res.success) return;
+        const latest = res.data.items;
+        setRuns(latest);
+
+        // 检查是否有 run 从活跃状态变成了 Editing（分镜生成完成）
+        for (const run of latest) {
+          const prev = prevRunStatusRef.current[run.id];
+          if (prev && ACTIVE_STATUSES.includes(prev) && run.status === 'Editing') {
+            toast.success('分镜就绪', `${run.articleTitle || '任务'} 的分镜已生成，点击查看`);
+            // 自动选中该 run
+            setSelectedRunId(run.id);
+          }
+        }
+
+        // 更新状态快照
+        const snapshot: Record<string, string> = {};
+        for (const r of latest) snapshot[r.id] = r.status;
+        prevRunStatusRef.current = snapshot;
+      } catch { /* ignore */ }
+    }, 3000);
+
+    return () => clearInterval(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runs.map((r) => `${r.id}:${r.status}`).join(',')]);
+
+  // 同步 prevRunStatusRef（无活跃任务时也保持快照最新，避免恢复轮询后误报）
+  useEffect(() => {
+    const hasActiveRuns = runs.some((r) => ACTIVE_STATUSES.includes(r.status));
+    if (hasActiveRuns) return; // 轮询中由 interval 回调维护
+    const snapshot: Record<string, string> = {};
+    for (const r of runs) snapshot[r.id] = r.status;
+    prevRunStatusRef.current = snapshot;
+  }, [runs]);
+
   // ─── File upload handler ───
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -303,9 +347,9 @@ export const VideoAgentPage: React.FC = () => {
         styleDescription: styleDescription || undefined,
       });
       if (res.success) {
-        setPhase(1); // 切到预览阶段（SSE 接管后 phase 会自动到 2）
-        setSelectedRunId(res.data.runId);
+        toast.success('已提交', '分镜脚本正在后台生成，完成后会通知你');
         await loadRuns();
+        // 不锁定到该 run，保持输入状态，用户可以继续操作
       } else {
         toast.error('创建失败', (res as { message?: string }).message || '服务器返回失败');
       }
@@ -581,7 +625,7 @@ export const VideoAgentPage: React.FC = () => {
                   />
                 </div>
               ) : isActive && selectedRun?.scenes.length === 0 ? (
-                /* Scripting progress */
+                /* Scripting progress — 用户手动点击了进行中任务时才会看到 */
                 <div className="h-full flex flex-col items-center justify-center gap-4">
                   <Loader2 size={36} className="animate-spin" style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
                   <div className="text-center">
@@ -592,10 +636,15 @@ export const VideoAgentPage: React.FC = () => {
                       {selectedRun?.currentPhase === 'scripting' ? `进度 ${selectedRun.phaseProgress}%` : '准备中'}
                     </div>
                   </div>
-                  <Button variant="secondary" onClick={handleCancel}>
-                    <X size={14} />
-                    取消
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button variant="secondary" onClick={handleNewTask}>
+                      返回
+                    </Button>
+                    <Button variant="secondary" onClick={handleCancel}>
+                      <X size={14} />
+                      取消任务
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 /* Article preview (markdown render) */
@@ -626,9 +675,14 @@ export const VideoAgentPage: React.FC = () => {
                       }}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                          {run.articleTitle || `任务 ${run.id.slice(0, 8)}`}
-                        </span>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {ACTIVE_STATUSES.includes(run.status) && (
+                            <Loader2 size={12} className="animate-spin flex-shrink-0" style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
+                          )}
+                          <span className="font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                            {run.articleTitle || `任务 ${run.id.slice(0, 8)}`}
+                          </span>
+                        </div>
                         <RunStatusBadge status={run.status} />
                       </div>
                       <div className="mt-0.5 flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
