@@ -142,8 +142,8 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
         name: '数据统计',
         nodeType: 'data-aggregator',
         config: {
-          groupByFields: 'Bug.severity,Bug.status,Bug.current_owner,Bug.module',
-          dateField: 'Bug.created',
+          groupByFields: 'status,severity,priority,reporter',
+          dateField: 'created',
           dateGroupBy: 'week',
           topN: '15',
         },

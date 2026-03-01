@@ -438,8 +438,8 @@ public static class CapsuleTypeRegistry
         AccentHue = 120,
         ConfigSchema = new()
         {
-            new() { Key = "groupByFields", Label = "分组统计字段", FieldType = "text", Required = false, DefaultValue = "severity,status,current_owner,module", HelpTip = "逗号分隔的字段名，将按每个字段进行分组计数。留空则自动检测高频字段" },
-            new() { Key = "dateField", Label = "日期字段", FieldType = "text", Required = false, DefaultValue = "created", HelpTip = "用于时间趋势统计的日期字段名" },
+            new() { Key = "groupByFields", Label = "分组统计字段", FieldType = "text", Required = false, DefaultValue = "status,severity,priority,reporter", HelpTip = "逗号分隔的字段名，将按每个字段进行分组计数。支持嵌套路径如 Bug.status。留空则自动检测高频字段" },
+            new() { Key = "dateField", Label = "日期字段", FieldType = "text", Required = false, DefaultValue = "created", HelpTip = "用于时间趋势统计的日期字段名，支持嵌套路径如 Bug.created" },
             new() { Key = "dateGroupBy", Label = "时间粒度", FieldType = "select", Required = false, DefaultValue = "week", Options = new() {
                 new() { Value = "day", Label = "按天" },
                 new() { Value = "week", Label = "按周" },

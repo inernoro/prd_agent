@@ -950,8 +950,10 @@ public static class CapsuleExecutor
             foreach (var item in allItems)
             {
                 var val = ExtractFieldValue(item, field);
+                if (val == null)
+                    { missing++; continue; } // 字段不存在
                 if (string.IsNullOrWhiteSpace(val))
-                    { missing++; continue; }
+                    val = "(未设置)"; // 字段存在但值为空
                 counts[val] = counts.TryGetValue(val, out var c) ? c + 1 : 1;
             }
 
