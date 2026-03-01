@@ -165,6 +165,7 @@ public sealed class WorkflowRunWorker : BackgroundService
                 nodeName = nodeExec.NodeName,
                 nodeType = nodeExec.NodeType,
                 attemptCount = nodeExec.AttemptCount,
+                inputArtifactCount = CollectInputArtifacts(nodeId, execution.EdgeSnapshot, artifactStore).Count,
             });
 
             // 执行舱逻辑
@@ -190,6 +191,15 @@ public sealed class WorkflowRunWorker : BackgroundService
                     nodeType = nodeExec.NodeType,
                     durationMs = nodeExec.DurationMs,
                     artifactCount = result.Artifacts.Count,
+                    logs = CapsuleExecutor.TruncateLogs(result.Logs, 4096),
+                    artifacts = result.Artifacts.Select(a => new
+                    {
+                        a.Name,
+                        a.MimeType,
+                        a.SizeBytes,
+                        a.SlotId,
+                        preview = a.InlineContent?.Length > 300 ? a.InlineContent[..300] + "..." : a.InlineContent,
+                    }),
                 });
             }
             catch (Exception ex)
@@ -226,6 +236,7 @@ public sealed class WorkflowRunWorker : BackgroundService
                     nodeType = nodeExec.NodeType,
                     errorMessage = ex.Message,
                     durationMs = nodeExec.DurationMs,
+                    logs = CapsuleExecutor.TruncateLogs($"[ERROR] {ex.Message}\n{ex.StackTrace}", 4096),
                 });
             }
 

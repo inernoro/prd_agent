@@ -28,9 +28,15 @@ public class GatewayResponse
     public int StatusCode { get; init; }
 
     /// <summary>
-    /// 响应内容（非流式）
+    /// 提取后的消息文本内容（非流式）
+    /// 从 choices[0].message.content (OpenAI) 或 content[0].text (Claude) 中提取
     /// </summary>
     public string? Content { get; init; }
+
+    /// <summary>
+    /// 原始 HTTP 响应体（完整 JSON，仅调试/日志用）
+    /// </summary>
+    public string? RawResponseBody { get; init; }
 
     /// <summary>
     /// 响应内容（JSON 解析后）

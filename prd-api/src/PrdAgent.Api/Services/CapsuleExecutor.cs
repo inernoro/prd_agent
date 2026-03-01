@@ -364,12 +364,33 @@ public static class CapsuleExecutor
             }
         };
 
+        var llmLogs = new StringBuilder();
+        llmLogs.AppendLine($"[LLM 分析器] 节点: {node.Name}");
+        llmLogs.AppendLine($"  AppCallerCode: {request.AppCallerCode}");
+        llmLogs.AppendLine($"  SystemPrompt: {(systemPrompt.Length > 80 ? systemPrompt[..80] + "..." : systemPrompt)}");
+        llmLogs.AppendLine($"  UserPrompt: {(userContent.Length > 120 ? userContent[..120] + "..." : userContent)}");
+        llmLogs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个, 总 {inputArtifacts.Sum(a => a.SizeBytes)} bytes");
+        llmLogs.AppendLine($"  Temperature: {temperature}");
+        llmLogs.AppendLine("  --- 调用 LLM Gateway ---");
+
         var response = await gateway.SendAsync(request, CancellationToken.None);
         var content = response.Content ?? "";
-        var logs = $"LLM model={response.Resolution?.ActualModel}\nTokens: input={response.TokenUsage?.InputTokens} output={response.TokenUsage?.OutputTokens}\n";
+
+        var model = response.Resolution?.ActualModel ?? "(unknown)";
+        var inputTokens = response.TokenUsage?.InputTokens ?? 0;
+        var outputTokens = response.TokenUsage?.OutputTokens ?? 0;
+
+        llmLogs.AppendLine($"  Model: {model}");
+        llmLogs.AppendLine($"  Tokens: input={inputTokens} output={outputTokens}");
+        llmLogs.AppendLine($"  ResolutionType: {response.Resolution?.ResolutionType}");
+        llmLogs.AppendLine($"  Response: {content.Length} chars");
+        if (string.IsNullOrWhiteSpace(content))
+            llmLogs.AppendLine("  ⚠️ 警告: LLM 返回内容为空，可能是模型调度失败或配额不足");
+        else
+            llmLogs.AppendLine($"  Preview: {(content.Length > 200 ? content[..200] + "..." : content)}");
 
         var artifact = MakeTextArtifact(node, "llm-output", "分析结果", content);
-        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs);
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, llmLogs.ToString());
     }
 
     public static CapsuleResult ExecuteScriptStub(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
@@ -1068,19 +1089,46 @@ public static class CapsuleExecutor
             }
         };
 
+        var reportLogs = new StringBuilder();
+        reportLogs.AppendLine($"[报告生成器] 节点: {node.Name}");
+        reportLogs.AppendLine($"  Format: {format}");
+        reportLogs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个");
+        reportLogs.AppendLine($"  InputText: {inputText.Length} chars");
+        reportLogs.AppendLine($"  ReportTemplate: {(reportTemplate.Length > 100 ? reportTemplate[..100] + "..." : reportTemplate)}");
+        reportLogs.AppendLine("  --- 调用 LLM Gateway ---");
+
         var response = await gateway.SendAsync(request, CancellationToken.None);
         var content = response.Content ?? "";
 
+        reportLogs.AppendLine($"  Model: {response.Resolution?.ActualModel ?? "(unknown)"}");
+        reportLogs.AppendLine($"  Tokens: input={response.TokenUsage?.InputTokens ?? 0} output={response.TokenUsage?.OutputTokens ?? 0}");
+        reportLogs.AppendLine($"  Output: {content.Length} chars ({format})");
+        if (string.IsNullOrWhiteSpace(content))
+            reportLogs.AppendLine("  ⚠️ 警告: 报告内容为空，可能是 LLM 调度失败");
+        else
+            reportLogs.AppendLine($"  Preview: {(content.Length > 200 ? content[..200] + "..." : content)}");
+
         var mimeType = format == "html" ? "text/html" : "text/markdown";
         var artifact = MakeTextArtifact(node, "report", "报告", content, mimeType);
-        return new CapsuleResult(new List<ExecutionArtifact> { artifact },
-            $"Report generated: {format}, {content.Length} chars, model={response.Resolution?.ActualModel}");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, reportLogs.ToString());
     }
 
     public static CapsuleResult ExecuteFileExporter(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
     {
-        var format = GetConfigString(node, "format") ?? "json";
+        var format = GetConfigString(node, "format") ?? GetConfigString(node, "fileFormat") ?? "json";
         var fileName = GetConfigString(node, "file_name") ?? GetConfigString(node, "fileName") ?? $"export.{format}";
+
+        // 替换日期占位符
+        var now = DateTime.Now;
+        fileName = fileName
+            .Replace("{{date}}", now.ToString("yyyy-MM-dd"))
+            .Replace("{date}", now.ToString("yyyy-MM-dd"))
+            .Replace("{{datetime}}", now.ToString("yyyy-MM-dd_HHmmss"))
+            .Replace("{datetime}", now.ToString("yyyy-MM-dd_HHmmss"));
+
+        // 确保文件有扩展名
+        if (!fileName.Contains('.'))
+            fileName = $"{fileName}.{format}";
 
         var content = string.Join("\n", inputArtifacts
             .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
@@ -1095,17 +1143,27 @@ public static class CapsuleExecutor
             _ => "application/json",
         };
 
+        var exportLogs = new StringBuilder();
+        exportLogs.AppendLine($"[文件导出器] 节点: {node.Name}");
+        exportLogs.AppendLine($"  FileName: {fileName}");
+        exportLogs.AppendLine($"  Format: {format} (MIME: {mimeType})");
+        exportLogs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个");
+        exportLogs.AppendLine($"  Content: {content.Length} chars, {Encoding.UTF8.GetByteCount(content)} bytes");
+        if (content.Length > 0)
+            exportLogs.AppendLine($"  Preview: {(content.Length > 200 ? content[..200] + "..." : content)}");
+        else
+            exportLogs.AppendLine("  ⚠️ 警告: 导出内容为空");
+
         var artifact = new ExecutionArtifact
         {
             Name = fileName,
             MimeType = mimeType,
             SlotId = node.OutputSlots.FirstOrDefault()?.SlotId ?? "export-file",
             InlineContent = content,
-            SizeBytes = System.Text.Encoding.UTF8.GetByteCount(content),
+            SizeBytes = Encoding.UTF8.GetByteCount(content),
         };
 
-        return new CapsuleResult(new List<ExecutionArtifact> { artifact },
-            $"File exported: {fileName} ({format}), {artifact.SizeBytes} bytes");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, exportLogs.ToString());
     }
 
     public static async Task<CapsuleResult> ExecuteWebhookSenderAsync(

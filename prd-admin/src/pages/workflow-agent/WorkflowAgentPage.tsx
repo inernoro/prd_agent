@@ -3,7 +3,7 @@ import {
   Play, History, Loader2, CheckCircle2, AlertCircle,
   ArrowDown, Download, ChevronDown, ChevronRight, FileText,
   ExternalLink, Settings2, XCircle, RefreshCw, HelpCircle, Zap,
-  FlaskConical, Box, PenLine,
+  FlaskConical, Box, PenLine, Eye,
 } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import {
@@ -31,6 +31,7 @@ import {
   getCapsuleType,
   getIconForCapsule, getEmojiForCapsule, getCategoryEmoji,
 } from './capsuleRegistry';
+import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 
 // ═══════════════════════════════════════════════════════════════
 // 流水线步骤元数据（使用舱注册表）
@@ -252,12 +253,36 @@ const EXEC_STATUS_MAP: Record<string, { label: string; variant: 'success' | 'dan
 // 产物预览
 // ═══════════════════════════════════════════════════════════════
 
-function ArtifactCard({ artifact, isExpanded, onToggle }: {
+function ArtifactCard({ artifact, isExpanded, onToggle, onPreview }: {
   artifact: ExecutionArtifact;
   isExpanded: boolean;
   onToggle: () => void;
+  onPreview?: () => void;
 }) {
   const hasInline = !!artifact.inlineContent;
+  const hasContent = hasInline || !!artifact.cosUrl;
+
+  function handleDownload(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (artifact.cosUrl) {
+      window.open(artifact.cosUrl, '_blank');
+      return;
+    }
+    if (!artifact.inlineContent) return;
+    const ext = artifact.mimeType === 'text/markdown' ? '.md'
+      : artifact.mimeType === 'text/html' ? '.html'
+      : artifact.mimeType === 'application/json' ? '.json'
+      : artifact.mimeType === 'text/csv' ? '.csv' : '.txt';
+    const fileName = artifact.name.includes('.') ? artifact.name : `${artifact.name}${ext}`;
+    const blob = new Blob([artifact.inlineContent], { type: artifact.mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div
       className="rounded-[10px] overflow-hidden"
@@ -267,9 +292,9 @@ function ArtifactCard({ artifact, isExpanded, onToggle }: {
       }}
     >
       <div
-        className={`flex items-center gap-2 px-3 py-2 ${hasInline ? 'surface-row cursor-pointer' : ''}`}
+        className="flex items-center gap-2 px-3 py-2 surface-row cursor-pointer"
         onClick={hasInline ? onToggle : undefined}
-        style={hasInline ? { transition: 'background 0.15s' } : undefined}
+        style={{ transition: 'background 0.15s' }}
       >
         <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
         <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
@@ -278,18 +303,27 @@ function ArtifactCard({ artifact, isExpanded, onToggle }: {
         <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
           {formatBytes(artifact.sizeBytes)}
         </span>
-        {artifact.cosUrl && (
-          <a
-            href={artifact.cosUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
+        {/* Preview button */}
+        {hasContent && onPreview && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onPreview(); }}
             className="surface-row p-1 rounded-[6px] flex-shrink-0 transition-colors"
-            title="下载文件"
+            title="预览"
+            style={{ color: 'var(--accent-gold)' }}
+          >
+            <Eye className="w-3 h-3" />
+          </button>
+        )}
+        {/* Download button (always visible for any artifact with content) */}
+        {hasContent && (
+          <button
+            onClick={handleDownload}
+            className="surface-row p-1 rounded-[6px] flex-shrink-0 transition-colors"
+            title="下载"
             style={{ color: 'var(--accent-gold)' }}
           >
             <Download className="w-3 h-3" />
-          </a>
+          </button>
         )}
         {hasInline && (
           isExpanded
@@ -319,12 +353,13 @@ function ArtifactCard({ artifact, isExpanded, onToggle }: {
 // 步骤卡片
 // ═══════════════════════════════════════════════════════════════
 
-function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact, isLast }: {
+function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact, onPreviewArtifact, isLast }: {
   meta: StepMeta;
   nodeExec?: NodeExecution;
   output?: { logs: string; artifacts: ExecutionArtifact[] };
   expandedArtifacts: Set<string>;
   onToggleArtifact: (id: string) => void;
+  onPreviewArtifact: (art: ExecutionArtifact) => void;
   isLast: boolean;
 }) {
   const status = nodeExec?.status || 'idle';
@@ -438,6 +473,7 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
                     artifact={art}
                     isExpanded={expandedArtifacts.has(art.artifactId)}
                     onToggle={() => onToggleArtifact(art.artifactId)}
+                    onPreview={() => onPreviewArtifact(art)}
                   />
                 ))}
               </div>
@@ -731,6 +767,7 @@ export function WorkflowAgentPage() {
   const [expandedArtifacts, setExpandedArtifacts] = useState<Set<string>>(new Set());
   const [showCatalog, setShowCatalog] = useState(false);
   const [showCanvas, setShowCanvas] = useState(false);
+  const [previewArtifact, setPreviewArtifact] = useState<ExecutionArtifact | null>(null);
 
   // SSE 流式订阅
   const sseAbortRef = useRef<AbortController | null>(null);
@@ -1169,6 +1206,7 @@ export function WorkflowAgentPage() {
                     output={nodeOutputs[meta.nodeId]}
                     expandedArtifacts={expandedArtifacts}
                     onToggleArtifact={toggleArtifact}
+                    onPreviewArtifact={(art) => setPreviewArtifact(art)}
                     isLast={idx === STEPS.length - 1}
                   />
                 ))}
@@ -1214,6 +1252,7 @@ export function WorkflowAgentPage() {
                         artifact={art}
                         isExpanded={expandedArtifacts.has(art.artifactId)}
                         onToggle={() => toggleArtifact(art.artifactId)}
+                        onPreview={() => setPreviewArtifact(art)}
                       />
                     ))}
                   </div>
@@ -1277,6 +1316,14 @@ export function WorkflowAgentPage() {
           </>
         )}
       </div>
+
+      {/* 产物预览模态窗 */}
+      {previewArtifact && (
+        <ArtifactPreviewModal
+          artifact={previewArtifact}
+          onClose={() => setPreviewArtifact(null)}
+        />
+      )}
     </div>
   );
 }
