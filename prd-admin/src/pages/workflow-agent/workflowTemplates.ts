@@ -76,11 +76,19 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
       required: true,
     },
     {
-      key: 'authToken',
-      label: 'API 凭证 (Base64)',
+      key: 'apiUser',
+      label: 'API 账号',
+      type: 'text',
+      placeholder: 'your_api_user',
+      helpTip: '在 TAPD「公司管理 → API 应用」中创建的 API 账号',
+      required: true,
+    },
+    {
+      key: 'apiPassword',
+      label: 'API 密码',
       type: 'password',
-      placeholder: 'dXNlcjpwYXNzd29yZA==',
-      helpTip: '在 TAPD「公司管理 → API」创建，格式为 Base64(api_user:api_password)',
+      placeholder: '',
+      helpTip: '对应 API 账号的密码，系统会自动进行 Base64 编码',
       required: true,
     },
     {
@@ -108,6 +116,11 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
   build: (inputs) => {
     _edgeIdx = 0;
 
+    // 自动将 apiUser:apiPassword 编码为 Base64
+    const authToken = inputs.apiUser && inputs.apiPassword
+      ? btoa(`${inputs.apiUser}:${inputs.apiPassword}`)
+      : '';
+
     const nodes: WorkflowNode[] = [
       {
         nodeId: 'n-trigger',
@@ -125,7 +138,7 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
         config: {
           apiUrl: 'https://api.tapd.cn',
           workspaceId: inputs.workspaceId || '',
-          authToken: inputs.authToken || '',
+          authToken,
           dataType: inputs.dataType || 'bugs',
           dateRange: inputs.dateRange || '',
         },
