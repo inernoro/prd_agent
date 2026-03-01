@@ -670,7 +670,7 @@ public static class Admin
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Management"
         )]
-        public const string AvailableModels = "admin.platforms.available-models";
+        public const string AvailableModels = "admin.platforms.available-models::chat";
 
         [AppCallerMetadata(
             "刷新模型列表",
@@ -678,7 +678,7 @@ public static class Admin
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Management"
         )]
-        public const string RefreshModels = "admin.platforms.refresh-models";
+        public const string RefreshModels = "admin.platforms.refresh-models::chat";
 
         [AppCallerMetadata(
             "重分类-拉取模型",
@@ -686,7 +686,7 @@ public static class Admin
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Management"
         )]
-        public const string ReclassifyFetchModels = "admin.platforms.reclassify.fetch-models";
+        public const string ReclassifyFetchModels = "admin.platforms.reclassify.fetch-models::chat";
 
         [AppCallerMetadata(
             "拉取平台模型",
@@ -694,7 +694,7 @@ public static class Admin
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Management"
         )]
-        public const string FetchModels = "admin.platforms.fetch-models";
+        public const string FetchModels = "admin.platforms.fetch-models::chat";
 
         [AppCallerMetadata(
             "模型重分类",

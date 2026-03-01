@@ -1,6 +1,6 @@
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
-import { ok, type ApiResponse } from '@/types/api';
+import { type ApiResponse } from '@/types/api';
 
 // ============ Arena Groups ============
 

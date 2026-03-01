@@ -4,7 +4,6 @@
  */
 import { ArrowLeft } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { glassFloatingButton } from '@/lib/glassStyles';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import { GlobalDefectSubmitDialog } from '@/components/ui/GlobalDefectSubmitDialog';
 import VisualAgentWorkspaceListPage from './VisualAgentWorkspaceListPage';

@@ -389,6 +389,7 @@ export function ArenaPage() {
           labelIndex: s.labelIndex,
           status: 'waiting' as const,
           text: '',
+          thinking: '',
           ttftMs: null,
           totalMs: null,
           errorMessage: null,
@@ -518,7 +519,7 @@ export function ArenaPage() {
           description: groupForm.description.trim() || undefined,
           sortOrder: groupForm.sortOrder,
         });
-        if (!res.success) throw new Error(res.message || '更新失败');
+        if (!res.success) throw new Error(res.error?.message || '更新失败');
         toast.success('分组已更新');
       } else {
         const res = await createArenaGroup({
@@ -527,7 +528,7 @@ export function ArenaPage() {
           description: groupForm.description.trim() || undefined,
           sortOrder: groupForm.sortOrder,
         });
-        if (!res.success) throw new Error(res.message || '创建失败');
+        if (!res.success) throw new Error(res.error?.message || '创建失败');
         toast.success('分组已创建');
       }
       setGroupDialogOpen(false);
@@ -542,7 +543,7 @@ export function ArenaPage() {
   async function handleDeleteGroup(groupId: string) {
     try {
       const res = await deleteArenaGroup(groupId);
-      if (!res.success) throw new Error(res.message || '删除失败');
+      if (!res.success) throw new Error(res.error?.message || '删除失败');
       toast.success('分组已删除');
       await loadAdminGroups();
     } catch (err: any) {
@@ -593,7 +594,7 @@ export function ArenaPage() {
   async function handleDeleteSlot(slotId: string) {
     try {
       const res = await deleteArenaSlot(slotId);
-      if (!res.success) throw new Error(res.message || '删除失败');
+      if (!res.success) throw new Error(res.error?.message || '删除失败');
       toast.success('模型已删除');
       await loadAdminGroups();
     } catch (err: any) {
@@ -604,7 +605,7 @@ export function ArenaPage() {
   async function handleToggleSlot(slotId: string) {
     try {
       const res = await toggleArenaSlot(slotId);
-      if (!res.success) throw new Error(res.message || '切换失败');
+      if (!res.success) throw new Error(res.error?.message || '切换失败');
       await loadAdminGroups();
     } catch (err: any) {
       toast.error('切换状态失败', err?.message);
@@ -1079,7 +1080,7 @@ export function ArenaPage() {
           labelIndex: idx,
           status: r.status === 'error' ? 'error' : 'done',
           text: r.content || '',
-          thinking: r.thinking || '',
+          thinking: (r as any).thinking || '',
           ttftMs: r.ttftMs,
           totalMs: r.totalMs,
           errorMessage: r.errorMessage,
@@ -1159,7 +1160,6 @@ export function ArenaPage() {
   // --- Progress calculation ---
   const completedCount = panels.filter((p) => p.status === 'done' || p.status === 'error').length;
   const totalCount = panels.length;
-  const progressPct = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
   const hasActiveProgress = hasBattle && totalCount > 0 && (isStreaming || completedCount > 0);
 
   return (
