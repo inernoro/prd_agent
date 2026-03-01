@@ -585,28 +585,20 @@ public static class CapsuleExecutor
             var searchData = new JsonObject();
             var filterData = new JsonArray();
 
-            // 如果有日期范围，添加筛选条件（月份格式如 "2026-03"）
+            // 如果有日期范围（月份格式如 "2026-03"），添加创建时间筛选
             if (!string.IsNullOrWhiteSpace(dateRange))
             {
-                // 计算月份的起止日期
-                var startDate = dateRange + "-01";
-                string endDate;
-                if (DateTime.TryParse(startDate, out var dt))
-                    endDate = dt.AddMonths(1).AddDays(-1).ToString("yyyy-MM-dd");
-                else
-                    endDate = dateRange + "-31";
-
                 filterData.Add(new JsonObject
                 {
                     ["entity"] = dataType == "bugs" ? "bug" : dataType.TrimEnd('s'),
                     ["fieldDisplayName"] = "创建时间",
                     ["fieldSubEntityType"] = "",
                     ["fieldIsSystem"] = "1",
-                    ["fieldOption"] = "between",
+                    ["fieldOption"] = "like",
                     ["fieldSystemName"] = "created",
-                    ["fieldType"] = "date",
+                    ["fieldType"] = "text",
                     ["selectOption"] = new JsonArray(),
-                    ["value"] = $"{startDate},{endDate}",
+                    ["value"] = dateRange,
                     ["id"] = "1",
                 });
             }
@@ -734,9 +726,7 @@ public static class CapsuleExecutor
         logs.AppendLine($"Done: {allItems.Count} total items collected across {page - 1} pages");
 
         if (allItems.Count == 0)
-            throw new InvalidOperationException(
-                $"TAPD 采集到 0 条数据（workspace={workspaceId}, dataType={dataType}, dateRange={dateRange}）。" +
-                "请检查：1) Cookie 是否有效 2) 工作空间 ID 是否正确 3) 时间范围内是否有数据");
+            logs.AppendLine($"[WARN] 采集到 0 条数据（workspace={workspaceId}, dateRange={dateRange}），下游节点将处理空数据集");
 
         var resultJson = allItems.ToJsonString();
         var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
