@@ -1,3 +1,4 @@
+using MongoDB.Bson.Serialization.Attributes;
 using PrdAgent.Core.Attributes;
 
 namespace PrdAgent.Core.Models;
@@ -6,6 +7,7 @@ namespace PrdAgent.Core.Models;
 /// 用户偏好设置（每个用户一条记录，userId 作为主键）
 /// </summary>
 [AppOwnership(AppNames.System, AppNames.SystemDisplay, IsPrimary = true)]
+[BsonIgnoreExtraElements]
 public class UserPreferences
 {
     /// <summary>用户 ID（作为 MongoDB _id）</summary>
@@ -34,6 +36,7 @@ public class UserPreferences
 /// <summary>
 /// 主题/皮肤配置
 /// </summary>
+[BsonIgnoreExtraElements]
 public class ThemeConfig
 {
     /// <summary>版本号，用于数据迁移</summary>
@@ -58,6 +61,7 @@ public class ThemeConfig
 /// <summary>
 /// 视觉代理偏好设置
 /// </summary>
+[BsonIgnoreExtraElements]
 public class VisualAgentPreferences
 {
     /// <summary>是否自动选择模型（true 时使用后端默认模型）</summary>

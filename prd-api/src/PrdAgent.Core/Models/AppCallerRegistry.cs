@@ -547,6 +547,36 @@ public static class WorkflowAgent
 }
 
 /// <summary>
+/// Video Agent 文章转视频
+/// </summary>
+public static class VideoAgent
+{
+    public const string AppName = "Video Agent";
+
+    public static class Script
+    {
+        [AppCallerMetadata(
+            "视频脚本生成",
+            "将文章内容拆分为视频镜头脚本",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Video"
+        )]
+        public const string Chat = "video-agent.script::chat";
+    }
+
+    public static class Image
+    {
+        [AppCallerMetadata(
+            "视频场景-文生图",
+            "根据分镜画面描述生成预览图",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Video"
+        )]
+        public const string Text2Img = "video-agent.image.text2img::generation";
+    }
+}
+
+/// <summary>
 /// Report Agent 周报管理
 /// </summary>
 public static class ReportAgent

@@ -63,6 +63,12 @@ export const menuList: MenuDef[] = [
     permissions: ['literary-agent.use'],
   },
   {
+    appKey: 'video-agent',
+    label: '视频 Agent',
+    icon: 'Video',
+    permissions: ['video-agent.use'],
+  },
+  {
     appKey: 'assets',
     label: '资源管理',
     icon: 'Image',
@@ -171,6 +177,7 @@ export const allPermissions: PermissionDef[] = [
   { key: 'prd-agent.use', label: '米多智能体平台', description: '智能解读与问答', category: 'use' },
   { key: 'visual-agent.use', label: '视觉创作 Agent', description: '高级视觉创作工作区', category: 'use' },
   { key: 'literary-agent.use', label: '文学创作 Agent', description: '文章配图智能生成', category: 'use' },
+  { key: 'video-agent.use', label: '视频 Agent', description: '文章转视频教程生成', category: 'use' },
 
   // 总裁面板
   { key: 'executive.read', label: '总裁面板 - 读', description: '查看总裁面板和周报', category: 'read' },
