@@ -210,192 +210,186 @@ public class WorkflowAgentController : ControllerBase
         var dscMatch = System.Text.RegularExpressions.Regex.Match(cookieStr, @"dsc-token=([^;\s]+)");
         if (dscMatch.Success) dscToken = dscMatch.Groups[1].Value;
 
-        // 收集调试 curl 命令
+        // 收集调试信息：每个 API 调用的 URL、方法、状态、响应摘要
+        var apiResults = new List<object>();
         var debugCurls = new List<object>();
-        const string ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
 
-        // 1. 尝试获取用户信息
+        // 构造完整 Chrome 请求头（匹配真实浏览器，避免 TAPD 反爬）
+        void AddChromeHeaders(HttpRequestMessage req, string referer = "https://www.tapd.cn/")
+        {
+            req.Headers.Add("Cookie", cookieStr);
+            req.Headers.Add("Accept", "application/json, text/plain, */*");
+            req.Headers.Add("Accept-Language", "zh-CN,zh;q=0.9");
+            req.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36");
+            req.Headers.Add("sec-ch-ua", "\"Not:A-Brand\";v=\"99\", \"Google Chrome\";v=\"145\", \"Chromium\";v=\"145\"");
+            req.Headers.Add("sec-ch-ua-mobile", "?0");
+            req.Headers.Add("sec-ch-ua-platform", "\"Windows\"");
+            req.Headers.Add("Sec-Fetch-Dest", "empty");
+            req.Headers.Add("Sec-Fetch-Mode", "cors");
+            req.Headers.Add("Sec-Fetch-Site", "same-origin");
+            req.Headers.Add("DNT", "1");
+            req.Headers.Add("Referer", referer);
+        }
+
+        string Snippet(string body, int maxLen = 300) =>
+            body.Length <= maxLen ? body : body[..maxLen] + "...(truncated)";
+
+        // ── 1. 获取用户信息 ──────────────────────────────────
         string? userName = null;
         string? userId = null;
         string? userInfoError = null;
-        try
         {
-            var userUrl = "https://www.tapd.cn/api/basic/info/get_user_info";
-            var userReq = new HttpRequestMessage(HttpMethod.Get, userUrl);
-            userReq.Headers.Add("Cookie", cookieStr);
-            userReq.Headers.Add("Accept", "application/json");
-            userReq.Headers.Add("User-Agent", ua);
-
-            debugCurls.Add(new
+            var url = "https://www.tapd.cn/api/basic/info/get_user_info";
+            try
             {
-                name = "获取用户信息",
-                curl = $"curl -s '{userUrl}' -H 'Accept: application/json' -H 'User-Agent: {ua}' -H 'Cookie: {cookieStr}'",
-            });
+                var req = new HttpRequestMessage(HttpMethod.Get, url);
+                AddChromeHeaders(req);
+                debugCurls.Add(new { name = "获取用户信息", curl = BuildCurl("GET", url, cookieStr, null) });
 
-            var userResp = await client.SendAsync(userReq, ct);
-            var userBody = await userResp.Content.ReadAsStringAsync(ct);
+                var resp = await client.SendAsync(req, ct);
+                var body = await resp.Content.ReadAsStringAsync(ct);
 
-            if (!userResp.IsSuccessStatusCode)
-            {
-                userInfoError = $"HTTP {(int)userResp.StatusCode}";
-            }
-            else
-            {
-                var trimmedBody = userBody.TrimStart();
-                if (trimmedBody.Length == 0 || (trimmedBody[0] != '{' && trimmedBody[0] != '['))
+                apiResults.Add(new { api = url, method = "GET", status = (int)resp.StatusCode, response = Snippet(body) });
+
+                if (resp.IsSuccessStatusCode && IsJson(body))
                 {
-                    userInfoError = "返回了非 JSON 响应";
-                }
-                else
-                {
-                    using var userDoc = JsonDocument.Parse(userBody);
-                    if (userDoc.RootElement.TryGetProperty("data", out var userData) &&
-                        userData.ValueKind == JsonValueKind.Object)
+                    using var doc = JsonDocument.Parse(body);
+                    if (doc.RootElement.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Object)
                     {
-                        if (userData.TryGetProperty("nick", out var nick)) userName = nick.GetString();
-                        if (userData.TryGetProperty("user_id", out var uid)) userId = uid.GetString();
+                        if (d.TryGetProperty("nick", out var nick)) userName = nick.GetString();
+                        if (d.TryGetProperty("user_id", out var uid)) userId = uid.GetString();
                     }
                     else
                     {
-                        // data 为 null 或不存在 — 用户信息不可用，但不代表 Cookie 无效
-                        userInfoError = "用户信息接口 data 为空";
-                        _logger.LogWarning("TAPD cookie validation - get_user_info data is null/missing, will try workspace API");
+                        userInfoError = $"data={d.ValueKind}";
                     }
                 }
+                else
+                {
+                    userInfoError = $"HTTP {(int)resp.StatusCode}";
+                }
+            }
+            catch (Exception ex)
+            {
+                userInfoError = ex.Message;
+                apiResults.Add(new { api = url, method = "GET", status = 0, response = ex.Message });
             }
         }
-        catch (Exception ex)
-        {
-            userInfoError = ex.Message;
-            _logger.LogWarning(ex, "TAPD cookie validation - user info request failed");
-        }
 
-        // 2. 尝试获取工作空间列表
+        // ── 2. 获取工作空间列表 ──────────────────────────────
         var workspaces = new List<object>();
         string? workspaceError = null;
-        try
         {
-            var wsUrl = "https://www.tapd.cn/api/aggregation/workspaces";
-            var wsReq = new HttpRequestMessage(HttpMethod.Get, wsUrl);
-            wsReq.Headers.Add("Cookie", cookieStr);
-            wsReq.Headers.Add("Accept", "application/json");
-            wsReq.Headers.Add("User-Agent", ua);
-
-            debugCurls.Add(new
+            var url = "https://www.tapd.cn/api/aggregation/workspaces";
+            try
             {
-                name = "获取工作空间列表",
-                curl = $"curl -s '{wsUrl}' -H 'Accept: application/json' -H 'User-Agent: {ua}' -H 'Cookie: {cookieStr}'",
-            });
+                var req = new HttpRequestMessage(HttpMethod.Get, url);
+                AddChromeHeaders(req);
+                debugCurls.Add(new { name = "获取工作空间列表", curl = BuildCurl("GET", url, cookieStr, null) });
 
-            var wsResp = await client.SendAsync(wsReq, ct);
-            if (wsResp.IsSuccessStatusCode)
-            {
-                var wsBody = await wsResp.Content.ReadAsStringAsync(ct);
-                var trimmedWs = wsBody.TrimStart();
-                if (trimmedWs.Length > 0 && (trimmedWs[0] == '{' || trimmedWs[0] == '['))
+                var resp = await client.SendAsync(req, ct);
+                var body = await resp.Content.ReadAsStringAsync(ct);
+
+                apiResults.Add(new { api = url, method = "GET", status = (int)resp.StatusCode, response = Snippet(body) });
+
+                if (resp.IsSuccessStatusCode && IsJson(body))
                 {
-                    using var wsDoc = JsonDocument.Parse(wsBody);
-                    if (wsDoc.RootElement.TryGetProperty("data", out var wsData) &&
-                        wsData.ValueKind == JsonValueKind.Array)
+                    using var doc = JsonDocument.Parse(body);
+                    if (doc.RootElement.TryGetProperty("data", out var wsData) && wsData.ValueKind == JsonValueKind.Array)
                     {
                         foreach (var ws in wsData.EnumerateArray())
                         {
                             var wsId = ws.TryGetProperty("workspace_id", out var wid) ? wid.GetString() : null;
                             var wsName = ws.TryGetProperty("name", out var wn) ? wn.GetString() : null;
-                            if (wsId != null)
-                                workspaces.Add(new { id = wsId, name = wsName ?? wsId });
+                            if (wsId != null) workspaces.Add(new { id = wsId, name = wsName ?? wsId });
                         }
                     }
                 }
+                else
+                {
+                    workspaceError = $"HTTP {(int)resp.StatusCode}";
+                }
             }
-            else
+            catch (Exception ex)
             {
-                workspaceError = $"HTTP {(int)wsResp.StatusCode}";
+                workspaceError = ex.Message;
+                apiResults.Add(new { api = url, method = "GET", status = 0, response = ex.Message });
             }
-        }
-        catch (Exception ex)
-        {
-            workspaceError = ex.Message;
-            _logger.LogWarning(ex, "TAPD cookie validation - workspace list request failed");
         }
 
-        // 3. 如果指定了 workspaceId，尝试获取基础统计
+        // ── 3. 搜索缺陷（如果指定了 workspaceId）──────────────
         int? bugCount = null;
         if (!string.IsNullOrWhiteSpace(request.WorkspaceId))
         {
+            var url = "https://www.tapd.cn/api/search_filter/search_filter/search";
             try
             {
-                var searchData = new JsonObject();
-                searchData["workspace_ids"] = request.WorkspaceId;
-                searchData["search_data"] = System.Text.Json.JsonSerializer.Serialize(new { data = new object[0], optionType = "AND", needInit = "1" });
-                searchData["obj_type"] = "bug";
-                searchData["search_type"] = "advanced";
-                searchData["page"] = 1;
-                searchData["perpage"] = "1";
-                searchData["block_size"] = 50;
-                searchData["parallel_token"] = "";
-                searchData["order_field"] = "created";
-                searchData["order_value"] = "desc";
-                searchData["show_fields"] = new JsonArray();
-                searchData["extra_fields"] = new JsonArray();
-                searchData["display_mode"] = "list";
-                searchData["version"] = "1.1.0";
-                searchData["only_gen_token"] = 0;
-                searchData["exclude_workspace_configs"] = new JsonArray();
-                searchData["from_pro_dashboard"] = 1;
+                var searchData = new JsonObject
+                {
+                    ["workspace_ids"] = request.WorkspaceId,
+                    ["search_data"] = System.Text.Json.JsonSerializer.Serialize(new { data = new object[0], optionType = "AND", needInit = "1" }),
+                    ["obj_type"] = "bug",
+                    ["search_type"] = "advanced",
+                    ["page"] = 1,
+                    ["perpage"] = "1",
+                    ["block_size"] = 50,
+                    ["parallel_token"] = "",
+                    ["order_field"] = "created",
+                    ["order_value"] = "desc",
+                    ["show_fields"] = new JsonArray(),
+                    ["extra_fields"] = new JsonArray(),
+                    ["display_mode"] = "list",
+                    ["version"] = "1.1.0",
+                    ["only_gen_token"] = 0,
+                    ["exclude_workspace_configs"] = new JsonArray(),
+                    ["from_pro_dashboard"] = 1,
+                };
                 if (!string.IsNullOrWhiteSpace(dscToken))
                     searchData["dsc_token"] = dscToken;
 
-                var searchUrl = "https://www.tapd.cn/api/search_filter/search_filter/search";
-                var countReq = new HttpRequestMessage(HttpMethod.Post, searchUrl);
-                countReq.Headers.Add("Cookie", cookieStr);
-                countReq.Headers.Add("Accept", "application/json");
-                countReq.Headers.Add("Origin", "https://www.tapd.cn");
-                countReq.Headers.Add("Referer", $"https://www.tapd.cn/tapd_fe/{request.WorkspaceId}/bug/list");
-                countReq.Headers.Add("User-Agent", ua);
-                var searchBody = searchData.ToJsonString();
-                countReq.Content = new StringContent(searchBody, System.Text.Encoding.UTF8, "application/json");
+                var postBody = searchData.ToJsonString();
 
-                debugCurls.Add(new
-                {
-                    name = "搜索缺陷（统计总数）",
-                    curl = $"curl -s -X POST '{searchUrl}' -H 'Accept: application/json' -H 'Content-Type: application/json' -H 'Origin: https://www.tapd.cn' -H 'Referer: https://www.tapd.cn/tapd_fe/{request.WorkspaceId}/bug/list' -H 'User-Agent: {ua}' -H 'Cookie: {cookieStr}' -d '{searchBody}'",
-                });
+                var req = new HttpRequestMessage(HttpMethod.Post, url);
+                AddChromeHeaders(req, $"https://www.tapd.cn/tapd_fe/{request.WorkspaceId}/bug/list");
+                req.Headers.Add("Origin", "https://www.tapd.cn");
+                req.Content = new StringContent(postBody, System.Text.Encoding.UTF8, "application/json");
 
-                var countResp = await client.SendAsync(countReq, ct);
-                if (countResp.IsSuccessStatusCode)
+                debugCurls.Add(new { name = "搜索缺陷（统计总数）", curl = BuildCurl("POST", url, cookieStr, postBody, request.WorkspaceId) });
+
+                var resp = await client.SendAsync(req, ct);
+                var body = await resp.Content.ReadAsStringAsync(ct);
+
+                apiResults.Add(new { api = url, method = "POST", status = (int)resp.StatusCode, response = Snippet(body) });
+
+                if (resp.IsSuccessStatusCode && IsJson(body))
                 {
-                    var countBody = await countResp.Content.ReadAsStringAsync(ct);
-                    var trimmedCount = countBody.TrimStart();
-                    if (trimmedCount.Length > 0 && (trimmedCount[0] == '{' || trimmedCount[0] == '['))
+                    using var doc = JsonDocument.Parse(body);
+                    if (doc.RootElement.TryGetProperty("data", out var d) &&
+                        d.ValueKind == JsonValueKind.Object &&
+                        d.TryGetProperty("total_count", out var tc))
                     {
-                        using var countDoc = JsonDocument.Parse(countBody);
-                        if (countDoc.RootElement.TryGetProperty("data", out var d) &&
-                            d.ValueKind == JsonValueKind.Object &&
-                            d.TryGetProperty("total_count", out var tc))
-                        {
-                            if (tc.ValueKind == JsonValueKind.Number)
-                                bugCount = tc.GetInt32();
-                            else if (tc.ValueKind == JsonValueKind.String && int.TryParse(tc.GetString(), out var n))
-                                bugCount = n;
-                        }
+                        if (tc.ValueKind == JsonValueKind.Number)
+                            bugCount = tc.GetInt32();
+                        else if (tc.ValueKind == JsonValueKind.String && int.TryParse(tc.GetString(), out var n))
+                            bugCount = n;
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "TAPD cookie validation - bug count request failed");
+                apiResults.Add(new { api = url, method = "POST", status = 0, response = ex.Message });
             }
         }
 
-        // 判断有效性：用户信息 或 工作空间列表任一成功即视为有效
-        var isValid = userName != null || workspaces.Count > 0;
-        if (!isValid && userInfoError != null)
+        // 判断有效性：用户信息 或 工作空间列表 或 搜索 API 任一成功即有效
+        var isValid = userName != null || workspaces.Count > 0 || bugCount > 0;
+        if (!isValid)
         {
             return Ok(ApiResponse<object>.Ok(new
             {
                 valid = false,
-                error = $"Cookie 验证失败：用户信息（{userInfoError}），工作空间（{workspaceError ?? "无数据"}）",
+                error = $"Cookie 验证失败：用户信息（{userInfoError ?? "无数据"}），工作空间（{workspaceError ?? "无数据"}），搜索API（{(bugCount.HasValue ? $"{bugCount}条" : "未调用或失败")}）",
+                apiResults,
                 debugCurls,
             }));
         }
@@ -408,8 +402,40 @@ public class WorkflowAgentController : ControllerBase
             hasDscToken = !string.IsNullOrWhiteSpace(dscToken),
             workspaces,
             bugCount,
+            apiResults,
             debugCurls,
         }));
+
+        // ── 工具方法 ──────────────────────────────────────────
+        static bool IsJson(string s) { var t = s.TrimStart(); return t.Length > 0 && (t[0] == '{' || t[0] == '['); }
+
+        static string BuildCurl(string method, string url, string cookie, string? body, string? wsId = null)
+        {
+            var parts = new System.Text.StringBuilder();
+            parts.Append($"curl -s");
+            if (method == "POST") parts.Append(" -X POST");
+            parts.Append($" '{url}'");
+            parts.Append($" \\\n  -H 'Accept: application/json, text/plain, */*'");
+            parts.Append($" \\\n  -H 'Accept-Language: zh-CN,zh;q=0.9'");
+            parts.Append($" \\\n  -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'");
+            parts.Append($" \\\n  -H 'sec-ch-ua: \"Not:A-Brand\";v=\"99\", \"Google Chrome\";v=\"145\", \"Chromium\";v=\"145\"'");
+            parts.Append($" \\\n  -H 'sec-ch-ua-mobile: ?0'");
+            parts.Append($" \\\n  -H 'sec-ch-ua-platform: \"Windows\"'");
+            parts.Append($" \\\n  -H 'Sec-Fetch-Dest: empty'");
+            parts.Append($" \\\n  -H 'Sec-Fetch-Mode: cors'");
+            parts.Append($" \\\n  -H 'Sec-Fetch-Site: same-origin'");
+            parts.Append($" \\\n  -H 'DNT: 1'");
+            if (method == "POST")
+            {
+                parts.Append($" \\\n  -H 'Origin: https://www.tapd.cn'");
+                parts.Append($" \\\n  -H 'Content-Type: application/json'");
+                parts.Append($" \\\n  -H 'Referer: https://www.tapd.cn/tapd_fe/{wsId}/bug/list'");
+            }
+            parts.Append($" \\\n  -H 'Cookie: {cookie}'");
+            if (body != null)
+                parts.Append($" \\\n  -d '{body}'");
+            return parts.ToString();
+        }
     }
 
     public class ValidateTapdCookieRequest

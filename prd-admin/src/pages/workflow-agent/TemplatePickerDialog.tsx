@@ -290,6 +290,7 @@ function FieldInput({
 }) {
   const [validating, setValidating] = useState(false);
   const [curlCopied, setCurlCopied] = useState(false);
+  const [showApiDetails, setShowApiDetails] = useState(false);
   const [validation, setValidation] = useState<{
     valid: boolean;
     userName?: string;
@@ -297,6 +298,7 @@ function FieldInput({
     bugCount?: number;
     error?: string;
     debugCurls?: { name: string; curl: string }[];
+    apiResults?: { api: string; method: string; status: number; response: string }[];
   } | null>(null);
 
   const inputStyle: React.CSSProperties = {
@@ -363,7 +365,7 @@ function FieldInput({
           />
           {isCookieField && (
             <div className="mt-2 space-y-2">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
                   onClick={handleValidateCookie}
                   disabled={validating || !value.trim()}
@@ -400,11 +402,24 @@ function FieldInput({
                     {curlCopied ? '已复制' : '复制 cURL'}
                   </button>
                 )}
+                {validation?.apiResults && validation.apiResults.length > 0 && (
+                  <button
+                    onClick={() => setShowApiDetails(prev => !prev)}
+                    className="flex items-center gap-1 h-7 px-2.5 rounded-[6px] text-[11px] font-medium transition-colors"
+                    style={{
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      color: 'var(--text-muted)',
+                    }}
+                  >
+                    {showApiDetails ? '收起详情' : '查看 API 调用详情'}
+                  </button>
+                )}
               </div>
 
               {validation && (
                 <div
-                  className="rounded-[8px] p-2.5 text-[11px] space-y-1"
+                  className="rounded-[8px] p-2.5 text-[11px] space-y-2"
                   style={{
                     background: validation.valid ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)',
                     border: `1px solid ${validation.valid ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}`,
@@ -416,6 +431,38 @@ function FieldInput({
                       {validation.valid ? `Cookie 有效 — ${validation.userName || '已认证'}` : `Cookie 无效 — ${validation.error || '认证失败'}`}
                     </span>
                   </div>
+
+                  {/* API 调用详情 */}
+                  {showApiDetails && validation.apiResults && validation.apiResults.length > 0 && (
+                    <div className="space-y-1.5 pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div className="font-medium" style={{ color: 'var(--text-muted)' }}>后端请求了以下接口：</div>
+                      {validation.apiResults.map((r, i) => (
+                        <div key={i} className="rounded-[6px] p-2" style={{ background: 'rgba(0,0,0,0.2)' }}>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span
+                              className="px-1 py-0.5 rounded text-[9px] font-bold"
+                              style={{
+                                background: r.status >= 200 && r.status < 300 ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)',
+                                color: r.status >= 200 && r.status < 300 ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)',
+                              }}
+                            >
+                              {r.method} {r.status || 'ERR'}
+                            </span>
+                            <span className="font-mono text-[10px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                              {r.api}
+                            </span>
+                          </div>
+                          <pre
+                            className="text-[10px] font-mono whitespace-pre-wrap break-all max-h-[80px] overflow-y-auto"
+                            style={{ color: 'var(--text-muted)' }}
+                          >
+                            {r.response}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {validation.valid && validation.workspaces && validation.workspaces.length > 0 && (
                     <div style={{ color: 'var(--text-muted)' }}>
                       <span>检测到 {validation.workspaces.length} 个工作空间：</span>
@@ -437,7 +484,7 @@ function FieldInput({
                       </div>
                     </div>
                   )}
-                  {validation.valid && validation.bugCount !== undefined && (
+                  {validation.valid && validation.bugCount != null && (
                     <div style={{ color: 'var(--text-muted)' }}>
                       当前工作空间缺陷数：{validation.bugCount}
                     </div>

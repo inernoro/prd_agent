@@ -585,20 +585,28 @@ public static class CapsuleExecutor
             var searchData = new JsonObject();
             var filterData = new JsonArray();
 
-            // 如果有日期范围，添加筛选条件
+            // 如果有日期范围，添加筛选条件（月份格式如 "2026-03"）
             if (!string.IsNullOrWhiteSpace(dateRange))
             {
+                // 计算月份的起止日期
+                var startDate = dateRange + "-01";
+                string endDate;
+                if (DateTime.TryParse(startDate, out var dt))
+                    endDate = dt.AddMonths(1).AddDays(-1).ToString("yyyy-MM-dd");
+                else
+                    endDate = dateRange + "-31";
+
                 filterData.Add(new JsonObject
                 {
                     ["entity"] = dataType == "bugs" ? "bug" : dataType.TrimEnd('s'),
                     ["fieldDisplayName"] = "创建时间",
                     ["fieldSubEntityType"] = "",
                     ["fieldIsSystem"] = "1",
-                    ["fieldOption"] = "like",
+                    ["fieldOption"] = "between",
                     ["fieldSystemName"] = "created",
-                    ["fieldType"] = "text",
+                    ["fieldType"] = "date",
                     ["selectOption"] = new JsonArray(),
-                    ["value"] = dateRange,
+                    ["value"] = $"{startDate},{endDate}",
                     ["id"] = "1",
                 });
             }
@@ -631,9 +639,17 @@ public static class CapsuleExecutor
             var request = new HttpRequestMessage(HttpMethod.Post, searchUrl);
             request.Headers.Add("Cookie", cookieStr);
             request.Headers.Add("Accept", "application/json, text/plain, */*");
+            request.Headers.Add("Accept-Language", "zh-CN,zh;q=0.9");
             request.Headers.Add("Origin", "https://www.tapd.cn");
             request.Headers.Add("Referer", $"https://www.tapd.cn/tapd_fe/{workspaceId}/bug/list");
-            request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+            request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36");
+            request.Headers.Add("sec-ch-ua", "\"Not:A-Brand\";v=\"99\", \"Google Chrome\";v=\"145\", \"Chromium\";v=\"145\"");
+            request.Headers.Add("sec-ch-ua-mobile", "?0");
+            request.Headers.Add("sec-ch-ua-platform", "\"Windows\"");
+            request.Headers.Add("Sec-Fetch-Dest", "empty");
+            request.Headers.Add("Sec-Fetch-Mode", "cors");
+            request.Headers.Add("Sec-Fetch-Site", "same-origin");
+            request.Headers.Add("DNT", "1");
             request.Content = new StringContent(searchData.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
 
             var response = await client.SendAsync(request, CancellationToken.None);
@@ -716,6 +732,11 @@ public static class CapsuleExecutor
         }
 
         logs.AppendLine($"Done: {allItems.Count} total items collected across {page - 1} pages");
+
+        if (allItems.Count == 0)
+            throw new InvalidOperationException(
+                $"TAPD 采集到 0 条数据（workspace={workspaceId}, dataType={dataType}, dateRange={dateRange}）。" +
+                "请检查：1) Cookie 是否有效 2) 工作空间 ID 是否正确 3) 时间范围内是否有数据");
 
         var resultJson = allItems.ToJsonString();
         var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
