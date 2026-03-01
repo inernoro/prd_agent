@@ -1581,3 +1581,34 @@ html[data-perf-mode="performance"] .blur-text span {
 @media (prefers-reduced-motion: reduce) {
   .ai-typing-dot { animation: none; opacity: 0.6; }
 }
+
+/* ─── Capsule running border animation ─── */
+@keyframes capsule-border-spin {
+  0% { --capsule-border-angle: 0deg; }
+  100% { --capsule-border-angle: 360deg; }
+}
+
+@property --capsule-border-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.capsule-running-border {
+  position: relative;
+  border-radius: 14px;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--capsule-border-angle),
+    rgba(99, 102, 241, 0.8),
+    rgba(168, 85, 247, 0.6),
+    rgba(34, 197, 94, 0.5),
+    rgba(250, 204, 21, 0.6),
+    rgba(99, 102, 241, 0.8)
+  );
+  animation: capsule-border-spin 2.5s linear infinite;
+}
+
+.capsule-running-border > * {
+  border-radius: 12px;
+}

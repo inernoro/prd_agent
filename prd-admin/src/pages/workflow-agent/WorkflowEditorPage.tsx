@@ -4,7 +4,7 @@ import {
   Play, Loader2, CheckCircle2, AlertCircle,
   Download, FileText, ArrowLeft, Save, Plus,
   ChevronDown, ChevronRight, Settings2, XCircle,
-  Zap, FlaskConical, Trash2, Wand2, Terminal,
+  Zap, FlaskConical, Trash2, Wand2, Terminal, Eye,
 } from 'lucide-react';
 import {
   getWorkflow, updateWorkflow, executeWorkflow, getExecution,
@@ -26,6 +26,7 @@ import {
 import { parseCurl, toCurl, headersToJson, prettyBody, type ParsedCurl } from './parseCurl';
 import { HttpConfigPanel } from './HttpConfigPanel';
 import { WorkflowChatPanel } from './WorkflowChatPanel';
+import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import type { WorkflowChatGenerated } from '@/services/contracts/workflowAgent';
 
 // ═══════════════════════════════════════════════════════════════
@@ -482,7 +483,7 @@ function SectionBox({ title, type, children }: {
 
 // ──── 右侧舱卡片 ────
 
-function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, isCurrentExec }: {
+function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact }: {
   node: WorkflowNode;
   index: number;
   nodeExec?: NodeExecution;
@@ -497,7 +498,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   testRunResult?: import('@/services/contracts/workflowAgent').CapsuleTestRunResult | null;
   isTestRunning?: boolean;
   formatWarnings?: { nodeId: string; message: string }[];
-  isCurrentExec?: boolean;
+  onPreviewArtifact?: (art: ExecutionArtifact) => void;
 }) {
   const typeDef = getCapsuleType(node.nodeType);
   const status = nodeExec?.status || 'idle';
@@ -541,8 +542,8 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   const isHttpType = node.nodeType === 'http-request' || node.nodeType === 'smart-http';
 
   // 统一结果：合并测试结果和执行结果为同一面板
-  // 仅显示「本次会话」触发的执行结果，不显示历史执行的陈旧结果
-  const currentExecOutput = (nodeOutput && nodeExec && isCurrentExec && (status === 'completed' || status === 'failed'))
+  // 只要有执行记录即显示（含刷新后从 API 加载的历史执行结果）
+  const currentExecOutput = (nodeOutput && nodeExec && (status === 'completed' || status === 'failed'))
     ? {
         status: status === 'completed' ? 'completed' as const : 'failed' as const,
         durationMs: nodeExec.durationMs ?? 0,
@@ -563,13 +564,13 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   const resultSource: 'test' | 'exec' | null = testRunResult ? 'test' : currentExecOutput ? 'exec' : null;
 
   return (
-    <div>
+    <div className={isActive ? 'capsule-running-border' : ''}>
       <GlassCard
         animated
         accentHue={accentHue}
         glow={isActive}
         padding="md"
-        className={isActive ? 'ring-1 ring-white/10' : ''}
+        className=""
       >
         {/* 头部：点击展开/折叠 */}
         <div
@@ -803,6 +804,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                   source={resultSource!}
                   expandedArtifacts={expandedArtifacts}
                   toggleArtifact={toggleArtifact}
+                  onPreviewArtifact={onPreviewArtifact}
                 />
               </SectionBox>
             )}
@@ -815,7 +817,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
 
 // ──── 统一结果面板（测试结果 + 执行结果 合并为单窗口） ────
 
-function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact }: {
+function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact, onPreviewArtifact }: {
   result: {
     status: string;
     durationMs?: number;
@@ -826,6 +828,7 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact 
   source: 'test' | 'exec';
   expandedArtifacts: Set<string>;
   toggleArtifact: (id: string) => void;
+  onPreviewArtifact?: (art: ExecutionArtifact) => void;
 }) {
   const isOk = result.status === 'completed';
   const label = source === 'test' ? '单舱测试结果' : '执行结果';
@@ -912,6 +915,20 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact 
                       <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                         {formatBytes(art.sizeBytes)}
                       </span>
+                      {/* 预览按钮 */}
+                      {(art.inlineContent || art.cosUrl) && onPreviewArtifact && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onPreviewArtifact(art as ExecutionArtifact);
+                          }}
+                          className="p-1 rounded-[6px] flex-shrink-0 transition-colors"
+                          title="预览"
+                          style={{ color: 'var(--accent-gold)' }}
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                       {/* 下载按钮 */}
                       {art.cosUrl && (
                         <a
@@ -1053,9 +1070,6 @@ export function WorkflowEditorPage() {
   // 变量
   const [vars, setVars] = useState<Record<string, string>>({});
 
-  // 当前会话触发的执行 ID（区分「本次操作」vs「历史执行」）
-  const [currentSessionExecId, setCurrentSessionExecId] = useState<string | null>(null);
-
   // 右侧面板模式: 'chat' | 'log'
   const [rightPanel, setRightPanel] = useState<'chat' | 'log' | null>(null);
 
@@ -1070,6 +1084,9 @@ export function WorkflowEditorPage() {
   }
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const logIdRef = useRef(0);
+
+  // 产物预览弹窗
+  const [previewArtifact, setPreviewArtifact] = useState<ExecutionArtifact | null>(null);
   // 记录上次轮询已知的节点状态，用于生成增量日志
   const prevNodeStatusRef = useRef<Record<string, string>>({});
 
@@ -1313,7 +1330,6 @@ export function WorkflowEditorPage() {
       if (res.success && res.data) {
         const exec = res.data.execution;
         setLatestExec(exec);
-        setCurrentSessionExecId(exec.id);
         addLog('info', `工作流已入队，共 ${exec.nodeExecutions.length} 个节点`);
         startPolling(exec.id);
       } else {
@@ -1614,7 +1630,7 @@ export function WorkflowEditorPage() {
                         testRunResult={testRunResult?.nodeId === node.nodeId ? testRunResult.result : null}
                         isTestRunning={testRunning === node.nodeId}
                         formatWarnings={warnings}
-                        isCurrentExec={!!currentSessionExecId && latestExec?.id === currentSessionExecId}
+                        onPreviewArtifact={setPreviewArtifact}
                       />
                     );
                   });
@@ -1651,6 +1667,18 @@ export function WorkflowEditorPage() {
                       <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                         {formatBytes(art.sizeBytes)}
                       </span>
+                      {/* 预览 */}
+                      {(art.inlineContent || art.cosUrl) && (
+                        <button
+                          onClick={() => setPreviewArtifact(art)}
+                          className="p-1 rounded-[6px] transition-colors"
+                          title="预览"
+                          style={{ color: 'var(--accent-gold)' }}
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                      )}
+                      {/* 下载 */}
                       {art.cosUrl && (
                         <a
                           href={art.cosUrl}
@@ -1658,10 +1686,28 @@ export function WorkflowEditorPage() {
                           rel="noopener noreferrer"
                           className="p-1 rounded-[6px] transition-colors"
                           title="下载"
-                          style={{ color: 'var(--accent-gold)' }}
+                          style={{ color: 'var(--text-muted)' }}
                         >
                           <Download className="w-4 h-4" />
                         </a>
+                      )}
+                      {!art.cosUrl && art.inlineContent && (
+                        <button
+                          onClick={() => {
+                            const blob = new Blob([art.inlineContent!], { type: art.mimeType || 'text/plain' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = art.name || 'output';
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="p-1 rounded-[6px] transition-colors"
+                          title="下载"
+                          style={{ color: 'var(--text-muted)' }}
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
                       )}
                     </div>
                   ))}
@@ -1687,6 +1733,14 @@ export function WorkflowEditorPage() {
           />
         )}
       </div>
+
+      {/* 产物预览弹窗 */}
+      {previewArtifact && (
+        <ArtifactPreviewModal
+          artifact={previewArtifact}
+          onClose={() => setPreviewArtifact(null)}
+        />
+      )}
     </div>
   );
 }

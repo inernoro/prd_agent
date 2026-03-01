@@ -389,6 +389,15 @@ public static class CapsuleExecutor
         else
             llmLogs.AppendLine($"  Preview: {(content.Length > 200 ? content[..200] + "..." : content)}");
 
+        // 若 LLM 返回空内容，使用输入数据的摘要作为回退，避免产出完全空的产物
+        if (string.IsNullOrWhiteSpace(content) && inputArtifacts.Count > 0)
+        {
+            llmLogs.AppendLine("  ⚠️ LLM 返回空内容，使用输入数据直通作为回退");
+            content = string.Join("\n---\n", inputArtifacts
+                .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
+                .Select(a => a.InlineContent!));
+        }
+
         var artifact = MakeTextArtifact(node, "llm-output", "分析结果", content);
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, llmLogs.ToString());
     }
@@ -1201,20 +1210,38 @@ public static class CapsuleExecutor
     {
         var db = sp.GetRequiredService<PrdAgent.Infrastructure.Database.MongoDbContext>();
         var title = ReplaceVariables(GetConfigString(node, "title") ?? node.Name, variables);
-        var message = ReplaceVariables(GetConfigString(node, "message") ?? "", variables);
+        // 优先读 "content" (schema 定义的 key)，兼容旧的 "message"
+        var message = ReplaceVariables(
+            GetConfigString(node, "content") ?? GetConfigString(node, "message") ?? "", variables);
+        var level = GetConfigString(node, "level") ?? "info";
 
         if (string.IsNullOrWhiteSpace(message) && inputArtifacts.Count > 0)
         {
-            message = string.Join("\n", inputArtifacts
-                .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
-                .Select(a => a.InlineContent?[..Math.Min(a.InlineContent.Length, 500)]));
+            // 从输入产物中生成人类可读的摘要，而非原始 JSON
+            var summaryParts = new List<string>();
+            foreach (var a in inputArtifacts.Where(a => !string.IsNullOrWhiteSpace(a.InlineContent)))
+            {
+                var content = a.InlineContent!;
+                // 如果内容看起来像 JSON，提取摘要信息
+                if (content.TrimStart().StartsWith("{") || content.TrimStart().StartsWith("["))
+                {
+                    summaryParts.Add($"[{a.Name}] 数据已生成 ({a.SizeBytes} bytes)");
+                }
+                else
+                {
+                    // 纯文本/Markdown 取前 200 字符
+                    var preview = content.Length > 200 ? content[..200] + "..." : content;
+                    summaryParts.Add($"[{a.Name}] {preview}");
+                }
+            }
+            message = string.Join("\n", summaryParts);
         }
 
         var notification = new AdminNotification
         {
             Title = title,
             Message = message,
-            Level = "info",
+            Level = level,
             Source = "workflow-agent",
         };
         await db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
@@ -1248,7 +1275,14 @@ public static class CapsuleExecutor
     {
         if (node.Config.TryGetValue(key, out var val) && val != null)
         {
-            var s = val.ToString()?.Trim();
+            string? s;
+            // Handle System.Text.Json.JsonElement (from API deserialization)
+            if (val is JsonElement je)
+                s = je.ValueKind == JsonValueKind.String ? je.GetString() : je.GetRawText();
+            else
+                s = val.ToString();
+
+            s = s?.Trim();
             return string.IsNullOrWhiteSpace(s) ? null : s;
         }
         return null;
