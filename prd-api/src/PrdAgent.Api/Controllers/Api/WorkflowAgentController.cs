@@ -231,6 +231,19 @@ public class WorkflowAgentController : ControllerBase
             }
 
             var userBody = await userResp.Content.ReadAsStringAsync(ct);
+
+            // TAPD 可能返回 HTML（登录页/重定向），检测非 JSON 响应
+            var trimmedBody = userBody.TrimStart();
+            if (trimmedBody.Length == 0 || (trimmedBody[0] != '{' && trimmedBody[0] != '['))
+            {
+                _logger.LogWarning("TAPD cookie validation - got non-JSON response (first char: '{FirstChar}')", trimmedBody.Length > 0 ? trimmedBody[0] : '?');
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    valid = false,
+                    error = "Cookie 无效或已过期（TAPD 返回了非 JSON 响应，可能需要重新登录）",
+                }));
+            }
+
             using var userDoc = JsonDocument.Parse(userBody);
             if (userDoc.RootElement.TryGetProperty("data", out var userData))
             {

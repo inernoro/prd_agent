@@ -645,13 +645,25 @@ public static class CapsuleExecutor
                 break;
             }
 
+            // 检测非 JSON 响应（TAPD 可能返回 HTML 登录页）
+            var trimmedBody = body.TrimStart();
+            if (trimmedBody.Length == 0 || (trimmedBody[0] != '{' && trimmedBody[0] != '['))
+            {
+                logs.AppendLine($"Page {page}: TAPD 返回非 JSON 响应（可能 Cookie 已过期需重新登录）");
+                logs.AppendLine($"Response preview: {body[..Math.Min(200, body.Length)]}");
+                throw new InvalidOperationException("TAPD Cookie 可能已过期，请重新从浏览器复制 Cookie。TAPD 返回了非 JSON 响应（HTML 页面）。");
+            }
+
             // 解析响应
             try
             {
                 using var doc = JsonDocument.Parse(body);
                 var root = doc.RootElement;
 
-                if (root.TryGetProperty("data", out var dataEl) && dataEl.TryGetProperty("list", out var listEl))
+                // 先检查 data 字段是否存在且为对象（TAPD 错误时 data 可能是 string）
+                if (root.TryGetProperty("data", out var dataEl) &&
+                    dataEl.ValueKind == JsonValueKind.Object &&
+                    dataEl.TryGetProperty("list", out var listEl))
                 {
                     var items = listEl.EnumerateArray().ToList();
                     if (items.Count == 0)
@@ -679,10 +691,16 @@ public static class CapsuleExecutor
                 }
                 else
                 {
-                    // 可能 Cookie 过期或格式错误
-                    var info = root.TryGetProperty("info", out var infoEl) ? infoEl.GetString() : "unknown";
-                    logs.AppendLine($"Page {page}: unexpected response - {info}");
+                    // 可能 Cookie 过期、data 为 string 错误消息、或格式异常
+                    var info = root.TryGetProperty("info", out var infoEl) && infoEl.ValueKind == JsonValueKind.String
+                        ? infoEl.GetString() : null;
+                    var dataStr = root.TryGetProperty("data", out var dEl) && dEl.ValueKind == JsonValueKind.String
+                        ? dEl.GetString() : null;
+                    var errorMsg = info ?? dataStr ?? "unknown";
+                    logs.AppendLine($"Page {page}: unexpected response - {errorMsg}");
                     logs.AppendLine($"Response preview: {body[..Math.Min(500, body.Length)]}");
+                    if (page == 1)
+                        throw new InvalidOperationException($"TAPD 请求失败: {errorMsg}。请检查 Cookie 是否有效、工作空间 ID 是否正确。");
                     break;
                 }
             }
