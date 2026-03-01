@@ -66,6 +66,62 @@ function getDefaultMonth() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+/** 通用产物操作按钮：预览 + 下载 */
+function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
+  artifact: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string };
+  onPreview?: (art: ExecutionArtifact) => void;
+  size?: 'sm' | 'md';
+}) {
+  const iconSize = size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4';
+  const padding = size === 'sm' ? 'p-1' : 'p-1.5';
+  return (
+    <>
+      {(artifact.inlineContent || artifact.cosUrl) && onPreview && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onPreview(artifact as ExecutionArtifact); }}
+          className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
+          title="预览"
+          style={{ color: 'var(--accent-gold)' }}
+        >
+          <Eye className={iconSize} />
+        </button>
+      )}
+      {artifact.cosUrl && (
+        <a
+          href={artifact.cosUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
+          title="下载"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <Download className={iconSize} />
+        </a>
+      )}
+      {!artifact.cosUrl && artifact.inlineContent && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            const blob = new Blob([artifact.inlineContent!], { type: artifact.mimeType || 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = artifact.name || 'output';
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+          className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
+          title="下载"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <Download className={iconSize} />
+        </button>
+      )}
+    </>
+  );
+}
+
 // ──── 小组件 ────
 
 function StepStatusBadge({ status, durationMs }: { status: string; durationMs?: number }) {
@@ -915,54 +971,7 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact,
                       <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                         {formatBytes(art.sizeBytes)}
                       </span>
-                      {/* 预览按钮 */}
-                      {(art.inlineContent || art.cosUrl) && onPreviewArtifact && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onPreviewArtifact(art as ExecutionArtifact);
-                          }}
-                          className="p-1 rounded-[6px] flex-shrink-0 transition-colors"
-                          title="预览"
-                          style={{ color: 'var(--accent-gold)' }}
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                      {/* 下载按钮 */}
-                      {art.cosUrl && (
-                        <a
-                          href={art.cosUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="p-1 rounded-[6px] flex-shrink-0 transition-colors"
-                          title="下载文件"
-                          style={{ color: 'var(--accent-gold)' }}
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                        </a>
-                      )}
-                      {/* 内联内容下载 (无 cosUrl 时) */}
-                      {!art.cosUrl && art.inlineContent && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const blob = new Blob([art.inlineContent!], { type: art.mimeType || 'text/plain' });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = art.name || 'output';
-                            a.click();
-                            URL.revokeObjectURL(url);
-                          }}
-                          className="p-1 rounded-[6px] flex-shrink-0 transition-colors"
-                          title="下载"
-                          style={{ color: 'var(--text-muted)' }}
-                        >
-                          <Download className="w-3 h-3" />
-                        </button>
-                      )}
+                      <ArtifactActionButtons artifact={art} onPreview={onPreviewArtifact} />
                       {art.inlineContent && (
                         isExpanded
                           ? <ChevronDown className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
@@ -1215,12 +1224,48 @@ export function WorkflowEditorPage() {
     try {
       const res = await getNodeLogs({ executionId: execId, nodeId });
       if (res.success && res.data) {
+        const logs = res.data!.logs || '';
+        const artifacts = res.data!.artifacts || [];
         setNodeOutputs((prev) => ({
           ...prev,
-          [nodeId]: { logs: res.data!.logs || '', artifacts: res.data!.artifacts || [] },
+          [nodeId]: { logs, artifacts },
         }));
+        // 将后端详细日志注入到右侧日志面板
+        injectBackendLogs(nodeId, logs, artifacts);
       }
     } catch { /* ignore */ }
+  }
+
+  /** 将后端舱执行详细日志注入到右侧日志面板 */
+  function injectBackendLogs(nodeId: string, logs: string, artifacts: ExecutionArtifact[]) {
+    if (!logs && artifacts.length === 0) return;
+    const nodeName = workflow?.nodes.find(n => n.nodeId === nodeId)?.name
+      || latestExec?.nodeExecutions.find(n => n.nodeId === nodeId)?.nodeName
+      || nodeId;
+    // 解析后端日志中的关键信息
+    if (logs) {
+      const lines = logs.split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('[') && trimmed.endsWith(']')) continue;
+        // 关键信息行
+        if (trimmed.startsWith('Model:') || trimmed.startsWith('Tokens:') ||
+            trimmed.startsWith('InputArtifacts:') || trimmed.startsWith('InputText:') ||
+            trimmed.startsWith('Response:') || trimmed.startsWith('Output:') ||
+            trimmed.startsWith('Content:') || trimmed.startsWith('FileName:') ||
+            trimmed.startsWith('Format:') || trimmed.startsWith('Preview:') ||
+            trimmed.startsWith('ResolutionType:') || trimmed.startsWith('AppCallerCode:') ||
+            trimmed.includes('⚠️')) {
+          const level = trimmed.includes('⚠️') ? 'warn' as const : 'info' as const;
+          addLog(level, trimmed, { nodeId, nodeName });
+        }
+      }
+    }
+    // 产物摘要
+    if (artifacts.length > 0) {
+      const summary = artifacts.map(a => `${a.name} (${formatBytes(a.sizeBytes)})`).join(', ');
+      addLog('info', `产物: ${summary}`, { nodeId, nodeName });
+    }
   }
 
   function fetchAllNodeOutputs(exec: WorkflowExecution) {
@@ -1667,48 +1712,7 @@ export function WorkflowEditorPage() {
                       <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                         {formatBytes(art.sizeBytes)}
                       </span>
-                      {/* 预览 */}
-                      {(art.inlineContent || art.cosUrl) && (
-                        <button
-                          onClick={() => setPreviewArtifact(art)}
-                          className="p-1 rounded-[6px] transition-colors"
-                          title="预览"
-                          style={{ color: 'var(--accent-gold)' }}
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                      )}
-                      {/* 下载 */}
-                      {art.cosUrl && (
-                        <a
-                          href={art.cosUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="p-1 rounded-[6px] transition-colors"
-                          title="下载"
-                          style={{ color: 'var(--text-muted)' }}
-                        >
-                          <Download className="w-4 h-4" />
-                        </a>
-                      )}
-                      {!art.cosUrl && art.inlineContent && (
-                        <button
-                          onClick={() => {
-                            const blob = new Blob([art.inlineContent!], { type: art.mimeType || 'text/plain' });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = art.name || 'output';
-                            a.click();
-                            URL.revokeObjectURL(url);
-                          }}
-                          className="p-1 rounded-[6px] transition-colors"
-                          title="下载"
-                          style={{ color: 'var(--text-muted)' }}
-                        >
-                          <Download className="w-4 h-4" />
-                        </button>
-                      )}
+                      <ArtifactActionButtons artifact={art} onPreview={setPreviewArtifact} size="md" />
                     </div>
                   ))}
                 </div>

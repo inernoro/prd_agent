@@ -153,11 +153,18 @@ public class LocalAssetStorage : IAssetStorage
             "image/jpeg" or "image/jpg" => "jpg",
             "image/webp" => "webp",
             "image/gif" => "gif",
+            "image/svg+xml" => "svg",
             "font/ttf" or "application/x-font-ttf" or "application/font-sfnt" => "ttf",
             "font/otf" or "application/x-font-opentype" => "otf",
             "font/woff" or "application/font-woff" => "woff",
             "font/woff2" or "application/font-woff2" => "woff2",
             "text/plain" => "txt",
+            "text/markdown" => "md",
+            "text/html" => "html",
+            "text/csv" => "csv",
+            "application/json" => "json",
+            "application/pdf" => "pdf",
+            "application/xml" or "text/xml" => "xml",
             _ => "png"
         };
     }

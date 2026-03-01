@@ -1102,6 +1102,8 @@ public static class CapsuleExecutor
         reportLogs.AppendLine($"[报告生成器] 节点: {node.Name}");
         reportLogs.AppendLine($"  Format: {format}");
         reportLogs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个");
+        foreach (var ia in inputArtifacts)
+            reportLogs.AppendLine($"    - [{ia.Name}] SlotId={ia.SlotId} InlineContent={ia.InlineContent?.Length ?? 0} chars, SizeBytes={ia.SizeBytes}");
         reportLogs.AppendLine($"  InputText: {inputText.Length} chars");
         reportLogs.AppendLine($"  ReportTemplate: {(reportTemplate.Length > 100 ? reportTemplate[..100] + "..." : reportTemplate)}");
         reportLogs.AppendLine("  --- 调用 LLM Gateway ---");
@@ -1157,6 +1159,8 @@ public static class CapsuleExecutor
         exportLogs.AppendLine($"  FileName: {fileName}");
         exportLogs.AppendLine($"  Format: {format} (MIME: {mimeType})");
         exportLogs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个");
+        foreach (var ia in inputArtifacts)
+            exportLogs.AppendLine($"    - [{ia.Name}] SlotId={ia.SlotId} InlineContent={ia.InlineContent?.Length ?? 0} chars, SizeBytes={ia.SizeBytes}, CosUrl={ia.CosUrl ?? "(null)"}");
         exportLogs.AppendLine($"  Content: {content.Length} chars, {Encoding.UTF8.GetByteCount(content)} bytes");
         if (content.Length > 0)
             exportLogs.AppendLine($"  Preview: {(content.Length > 200 ? content[..200] + "..." : content)}");

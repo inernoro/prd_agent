@@ -188,6 +188,16 @@ public sealed class WorkflowRunWorker : BackgroundService
 
                 artifactStore[nodeId] = result.Artifacts;
 
+                // 日志记录每个产物的数据流信息，方便排查链路问题
+                foreach (var art in result.Artifacts)
+                {
+                    _logger.LogInformation(
+                        "Artifact stored: node={NodeId} name={Name} slotId={SlotId} inlineLen={InlineLen} sizeBytes={Size} cosUrl={CosUrl}",
+                        nodeId, art.Name, art.SlotId,
+                        art.InlineContent?.Length ?? 0, art.SizeBytes,
+                        art.CosUrl ?? "(none)");
+                }
+
                 await EmitEventAsync(executionId, "node-completed", new
                 {
                     nodeId,
