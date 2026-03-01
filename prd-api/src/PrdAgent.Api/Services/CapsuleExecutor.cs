@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Models;
 
@@ -43,6 +44,7 @@ public static class CapsuleExecutor
             CapsuleTypes.DataExtractor => ExecuteDataExtractor(node, inputArtifacts),
             CapsuleTypes.DataMerger => ExecuteDataMerger(node, inputArtifacts),
             CapsuleTypes.FormatConverter => ExecuteFormatConverter(node, inputArtifacts),
+            CapsuleTypes.DataAggregator => ExecuteDataAggregator(node, inputArtifacts),
 
             // ── 流程控制类 ──
             CapsuleTypes.Delay => await ExecuteDelayAsync(node, inputArtifacts),
@@ -304,6 +306,81 @@ public static class CapsuleExecutor
         return new CapsuleResult(new List<ExecutionArtifact> { dataArtifact, metaArtifact }, logs);
     }
 
+    /// <summary>
+    /// 估算 Token 数（粗略：每 3 字节约 1 token，中英文混合场景）。
+    /// 这是一个保守估计，用于避免超出模型上下文限制。
+    /// </summary>
+    private static int EstimateTokens(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        return Encoding.UTF8.GetByteCount(text) / 3;
+    }
+
+    /// <summary>
+    /// Token 感知截断：如果输入文本超出 Token 预算，智能截断。
+    /// 对 JSON 数组数据，按条目截断而非粗暴截断字符串。
+    /// </summary>
+    private static (string truncated, int originalTokens, bool wasTruncated) TruncateToTokenBudget(
+        string text, int tokenBudget, StringBuilder logs)
+    {
+        var estimatedTokens = EstimateTokens(text);
+        if (estimatedTokens <= tokenBudget)
+            return (text, estimatedTokens, false);
+
+        logs.AppendLine($"  ⚠️ 输入数据过大: 估算 {estimatedTokens} tokens，超出预算 {tokenBudget} tokens，将智能截断");
+
+        // 尝试 JSON 数组截断：保留前 N 条 + 统计摘要
+        var trimmed = text.TrimStart();
+        if (trimmed.StartsWith("["))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(text);
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    var totalItems = doc.RootElement.GetArrayLength();
+                    var items = new List<string>();
+                    var currentTokens = 200; // 预留给包裹和摘要
+                    var includedCount = 0;
+
+                    foreach (var elem in doc.RootElement.EnumerateArray())
+                    {
+                        var itemJson = elem.GetRawText();
+                        var itemTokens = EstimateTokens(itemJson);
+                        if (currentTokens + itemTokens > tokenBudget) break;
+                        items.Add(itemJson);
+                        currentTokens += itemTokens;
+                        includedCount++;
+                    }
+
+                    var truncatedJson = $"[{string.Join(",", items)}]";
+                    var summary = $"\n\n/* 注意: 原始数据共 {totalItems} 条，因 Token 限制仅包含前 {includedCount} 条。请基于现有数据进行分析。 */";
+                    logs.AppendLine($"  JSON 数组截断: {totalItems} 条 → {includedCount} 条 (约 {currentTokens} tokens)");
+
+                    return (truncatedJson + summary, currentTokens, true);
+                }
+            }
+            catch { /* 不是有效 JSON，使用文本截断 */ }
+        }
+
+        // 文本截断：按字节预算截取
+        var targetBytes = tokenBudget * 3;
+        var bytes = Encoding.UTF8.GetBytes(text);
+        if (targetBytes >= bytes.Length)
+            return (text, estimatedTokens, false);
+
+        // 安全截断（避免截断 UTF-8 多字节字符）
+        var truncatedText = Encoding.UTF8.GetString(bytes, 0, Math.Min(targetBytes, bytes.Length));
+        // 找到最后一个完整字符的位置
+        if (truncatedText.Length > 0 && char.IsHighSurrogate(truncatedText[^1]))
+            truncatedText = truncatedText[..^1];
+
+        truncatedText += $"\n\n/* 注意: 原始文本共 {text.Length} 字符，因 Token 限制已截断至约 {truncatedText.Length} 字符。 */";
+        logs.AppendLine($"  文本截断: {text.Length} chars → {truncatedText.Length} chars");
+
+        return (truncatedText, tokenBudget, true);
+    }
+
     public static async Task<CapsuleResult> ExecuteLlmAnalyzerAsync(
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables, List<ExecutionArtifact> inputArtifacts)
     {
@@ -314,15 +391,36 @@ public static class CapsuleExecutor
         var systemPrompt = ReplaceVariables(GetConfigString(node, "systemPrompt") ?? "", variables);
         var userPromptTemplate = ReplaceVariables(GetConfigString(node, "userPromptTemplate") ?? "", variables);
         var temperature = double.TryParse(GetConfigString(node, "temperature"), out var t) ? t : 0.3;
+        // Token 预算：为系统提示词和输出预留空间，默认限制输入在 80K tokens 以内
+        var maxInputTokens = int.TryParse(GetConfigString(node, "maxInputTokens"), out var mit) ? mit : 80000;
+
+        var llmLogs = new StringBuilder();
+        llmLogs.AppendLine($"[LLM 分析器] 节点: {node.Name}");
+        llmLogs.AppendLine($"  AppCallerCode: {PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.LlmAnalyzer.Chat}");
 
         // 将输入产物内容拼接为 inputText
         var inputText = "";
+        var inputMimeType = "text/plain";
         if (inputArtifacts.Count > 0)
         {
             inputText = string.Join("\n---\n", inputArtifacts
                 .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
                 .Select(a => $"[{a.Name}]\n{a.InlineContent}"));
+            // 保留首个非空输入的 mimeType（用于回退场景）
+            inputMimeType = inputArtifacts.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.InlineContent))?.MimeType ?? "text/plain";
         }
+
+        llmLogs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个, 总 {inputArtifacts.Sum(a => a.SizeBytes)} bytes");
+        llmLogs.AppendLine($"  原始 InputText: {inputText.Length} chars (估算 {EstimateTokens(inputText)} tokens)");
+
+        // Token 感知截断：避免超出模型上下文限制
+        var systemTokens = EstimateTokens(systemPrompt);
+        var templateTokens = EstimateTokens(userPromptTemplate);
+        var dataTokenBudget = maxInputTokens - systemTokens - templateTokens - 500; // 500 tokens 预留
+        if (dataTokenBudget < 1000) dataTokenBudget = 1000;
+
+        var (truncatedInput, actualTokens, wasTruncated) = TruncateToTokenBudget(inputText, dataTokenBudget, llmLogs);
+        if (wasTruncated) inputText = truncatedInput;
 
         // 替换 userPromptTemplate 中的 {{input}} 占位符
         var userContent = userPromptTemplate;
@@ -363,12 +461,53 @@ public static class CapsuleExecutor
             }
         };
 
+        llmLogs.AppendLine($"  SystemPrompt ({systemPrompt.Length} chars): {(systemPrompt.Length > 300 ? systemPrompt[..300] + "..." : systemPrompt)}");
+        llmLogs.AppendLine($"  UserPrompt ({userContent.Length} chars): {(userContent.Length > 500 ? userContent[..500] + "..." : userContent)}");
+        llmLogs.AppendLine($"  总估算 Tokens: system={systemTokens} + user={EstimateTokens(userContent)} = {systemTokens + EstimateTokens(userContent)}");
+        llmLogs.AppendLine($"  Temperature: {temperature}");
+        llmLogs.AppendLine("  --- 调用 LLM Gateway ---");
+
         var response = await gateway.SendAsync(request, CancellationToken.None);
         var content = response.Content ?? "";
-        var logs = $"LLM model={response.Resolution?.ActualModel}\nTokens: input={response.TokenUsage?.InputTokens} output={response.TokenUsage?.OutputTokens}\n";
 
-        var artifact = MakeTextArtifact(node, "llm-output", "分析结果", content);
-        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs);
+        var model = response.Resolution?.ActualModel ?? "(unknown)";
+        var inputTokens = response.TokenUsage?.InputTokens ?? 0;
+        var outputTokens = response.TokenUsage?.OutputTokens ?? 0;
+
+        llmLogs.AppendLine($"  Model: {model}");
+        llmLogs.AppendLine($"  Tokens: input={inputTokens} output={outputTokens}");
+        llmLogs.AppendLine($"  ResolutionType: {response.Resolution?.ResolutionType}");
+
+        // 记录 Gateway 错误信息
+        if (!string.IsNullOrWhiteSpace(response.ErrorCode) || !string.IsNullOrWhiteSpace(response.ErrorMessage))
+        {
+            llmLogs.AppendLine($"  ❌ Gateway 错误: [{response.ErrorCode}] {response.ErrorMessage}");
+            llmLogs.AppendLine($"  HTTP Status: {response.StatusCode}");
+        }
+
+        llmLogs.AppendLine($"  LLM 响应 ({content.Length} chars): {(content.Length > 500 ? content[..500] + "..." : content)}");
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            var reason = !string.IsNullOrWhiteSpace(response.ErrorMessage)
+                ? $"Gateway 错误: {response.ErrorMessage}"
+                : "可能是模型调度失败或配额不足";
+            llmLogs.AppendLine($"  ⚠️ 警告: LLM 返回内容为空 ({reason})");
+        }
+
+        // 若 LLM 返回空内容，使用输入数据作为回退
+        if (string.IsNullOrWhiteSpace(content) && inputArtifacts.Count > 0)
+        {
+            llmLogs.AppendLine("  ⚠️ LLM 返回空内容，使用输入数据直通作为回退");
+            content = string.Join("\n---\n", inputArtifacts
+                .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
+                .Select(a => a.InlineContent!));
+        }
+
+        // 回退时保留输入数据的 mimeType
+        var artifactMime = !string.IsNullOrWhiteSpace(response.Content) ? "text/plain" : inputMimeType;
+        var artifact = MakeTextArtifact(node, "llm-output", "分析结果", content, artifactMime);
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, llmLogs.ToString());
     }
 
     public static CapsuleResult ExecuteScriptStub(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
@@ -392,43 +531,534 @@ public static class CapsuleExecutor
     public static async Task<CapsuleResult> ExecuteTapdCollectorAsync(
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables)
     {
-        var baseUrl = ReplaceVariables(
-            GetConfigString(node, "api_url") ?? GetConfigString(node, "apiUrl") ?? "", variables);
-        var authToken = ReplaceVariables(
-            GetConfigString(node, "auth_token") ?? GetConfigString(node, "authToken")
-            ?? GetConfigString(node, "apiToken") ?? "", variables);
-        var dataType = GetConfigString(node, "data_type") ?? GetConfigString(node, "dataType") ?? "bugs";
+        var authMode = GetConfigString(node, "authMode") ?? GetConfigString(node, "auth_mode") ?? "cookie";
         var workspaceId = GetConfigString(node, "workspaceId") ?? GetConfigString(node, "workspace_id") ?? "";
+        var dataType = GetConfigString(node, "data_type") ?? GetConfigString(node, "dataType") ?? "bugs";
         var dateRange = GetConfigString(node, "dateRange") ?? GetConfigString(node, "date_range") ?? "";
 
-        // 如果未直接提供完整 URL，则从 baseUrl + workspaceId + dataType 自动构造
-        if (string.IsNullOrWhiteSpace(baseUrl))
-            baseUrl = "https://api.tapd.cn";
-
-        var url = baseUrl.TrimEnd('/');
-        if (!url.Contains('?') && !string.IsNullOrWhiteSpace(workspaceId))
-        {
-            // 构造 TAPD Open API URL: https://api.tapd.cn/{dataType}?workspace_id={id}
-            url = $"{url}/{dataType}?workspace_id={workspaceId}";
-            if (!string.IsNullOrWhiteSpace(dateRange))
-                url += $"&created=>={dateRange}-01&created=<={dateRange}-31";
-        }
-
-        if (string.IsNullOrWhiteSpace(workspaceId) && !url.Contains("workspace_id"))
+        if (string.IsNullOrWhiteSpace(workspaceId))
             throw new InvalidOperationException("TAPD 工作空间 ID 未配置");
 
         var factory = sp.GetRequiredService<IHttpClientFactory>();
+
+        if (authMode == "cookie")
+            return await ExecuteTapdCookieModeAsync(factory, node, variables, workspaceId, dataType, dateRange);
+        else
+            return await ExecuteTapdBasicAuthModeAsync(factory, node, variables, workspaceId, dataType, dateRange);
+    }
+
+    /// <summary>Cookie 模式：使用浏览器 Cookie 调用 TAPD 内部 Web API，支持分页</summary>
+    private static async Task<CapsuleResult> ExecuteTapdCookieModeAsync(
+        IHttpClientFactory factory, WorkflowNode node, Dictionary<string, string> variables,
+        string workspaceId, string dataType, string dateRange)
+    {
+        // ── 兜底：如果用户提供了自定义 cURL，直接执行它 ──
+        var customCurl = GetConfigString(node, "customCurl") ?? "";
+        if (!string.IsNullOrWhiteSpace(customCurl))
+            return await ExecuteCustomCurlAsync(factory, node, customCurl, dataType);
+
+        var cookieStr = ReplaceVariables(
+            GetConfigString(node, "cookie") ?? "", variables);
+        var dscToken = GetConfigString(node, "dscToken") ?? GetConfigString(node, "dsc_token") ?? "";
+        var maxPages = int.TryParse(GetConfigString(node, "maxPages") ?? GetConfigString(node, "max_pages"), out var mp) ? Math.Clamp(mp, 1, 200) : 50;
+
+        if (string.IsNullOrWhiteSpace(cookieStr))
+            throw new InvalidOperationException("Cookie 未配置。请在浏览器登录 TAPD 后，从 DevTools 复制 Cookie 粘贴到此处");
+
+        // 如果 dscToken 为空，尝试从 cookie 中提取
+        if (string.IsNullOrWhiteSpace(dscToken))
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(cookieStr, @"dsc-token=([^;\s]+)");
+            if (match.Success) dscToken = match.Groups[1].Value;
+        }
+
+        var logs = new System.Text.StringBuilder();
+        var allItems = new JsonArray();
+        var page = 1;
+        var totalCount = 0;
+
+        logs.AppendLine($"TAPD Cookie mode: workspace={workspaceId} dataType={dataType} dateRange={dateRange}");
+
+        while (page <= maxPages)
+        {
+            using var client = factory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(30);
+
+            // 构造 TAPD 内部搜索 API 请求
+            var searchUrl = "https://www.tapd.cn/api/search_filter/search_filter/search";
+
+            var searchData = new JsonObject();
+            var filterData = new JsonArray();
+
+            // 如果有日期范围（月份格式如 "2026-03"），添加创建时间筛选
+            if (!string.IsNullOrWhiteSpace(dateRange))
+            {
+                filterData.Add(new JsonObject
+                {
+                    ["entity"] = dataType == "bugs" ? "bug" : dataType.TrimEnd('s'),
+                    ["fieldDisplayName"] = "创建时间",
+                    ["fieldSubEntityType"] = "",
+                    ["fieldIsSystem"] = "1",
+                    ["fieldOption"] = "like",
+                    ["fieldSystemName"] = "created",
+                    ["fieldType"] = "text",
+                    ["selectOption"] = new JsonArray(),
+                    ["value"] = dateRange,
+                    ["id"] = "1",
+                });
+            }
+
+            searchData["workspace_ids"] = workspaceId;
+            searchData["search_data"] = JsonSerializer.Serialize(new
+            {
+                data = filterData,
+                optionType = "AND",
+                needInit = "1",
+            });
+            searchData["obj_type"] = dataType == "bugs" ? "bug" : dataType.TrimEnd('s');
+            searchData["search_type"] = "advanced";
+            searchData["page"] = page;
+            searchData["perpage"] = "20";
+            searchData["block_size"] = 50;
+            searchData["parallel_token"] = "";
+            searchData["order_field"] = "created";
+            searchData["order_value"] = "desc";
+            searchData["show_fields"] = new JsonArray();
+            searchData["extra_fields"] = new JsonArray();
+            searchData["display_mode"] = "list";
+            searchData["version"] = "1.1.0";
+            searchData["only_gen_token"] = 0;
+            searchData["exclude_workspace_configs"] = new JsonArray();
+            searchData["from_pro_dashboard"] = 1;
+            if (!string.IsNullOrWhiteSpace(dscToken))
+                searchData["dsc_token"] = dscToken;
+
+            var request = new HttpRequestMessage(HttpMethod.Post, searchUrl);
+            request.Headers.Add("Cookie", cookieStr);
+            request.Headers.Add("Accept", "application/json, text/plain, */*");
+            request.Headers.Add("Accept-Language", "zh-CN,zh;q=0.9");
+            request.Headers.Add("Origin", "https://www.tapd.cn");
+            request.Headers.Add("Referer", $"https://www.tapd.cn/tapd_fe/{workspaceId}/bug/list");
+            request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36");
+            request.Headers.Add("sec-ch-ua", "\"Not:A-Brand\";v=\"99\", \"Google Chrome\";v=\"145\", \"Chromium\";v=\"145\"");
+            request.Headers.Add("sec-ch-ua-mobile", "?0");
+            request.Headers.Add("sec-ch-ua-platform", "\"Windows\"");
+            request.Headers.Add("Sec-Fetch-Dest", "empty");
+            request.Headers.Add("Sec-Fetch-Mode", "cors");
+            request.Headers.Add("Sec-Fetch-Site", "same-origin");
+            request.Headers.Add("DNT", "1");
+            request.Content = new StringContent(searchData.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+
+            var response = await client.SendAsync(request, CancellationToken.None);
+            var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                logs.AppendLine($"Page {page}: HTTP {(int)response.StatusCode} - request failed");
+                break;
+            }
+
+            // 检测非 JSON 响应（TAPD 可能返回 HTML 登录页）
+            var trimmedBody = body.TrimStart();
+            if (trimmedBody.Length == 0 || (trimmedBody[0] != '{' && trimmedBody[0] != '['))
+            {
+                logs.AppendLine($"Page {page}: TAPD 返回非 JSON 响应（可能 Cookie 已过期需重新登录）");
+                logs.AppendLine($"Response preview: {body[..Math.Min(200, body.Length)]}");
+                throw new InvalidOperationException("TAPD Cookie 可能已过期，请重新从浏览器复制 Cookie。TAPD 返回了非 JSON 响应（HTML 页面）。");
+            }
+
+            // 解析响应
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+
+                // 先检查 data 字段是否存在且为对象（TAPD 错误时 data 可能是 string）
+                if (root.TryGetProperty("data", out var dataEl) &&
+                    dataEl.ValueKind == JsonValueKind.Object &&
+                    dataEl.TryGetProperty("list", out var listEl))
+                {
+                    var items = listEl.EnumerateArray().ToList();
+                    if (items.Count == 0)
+                    {
+                        logs.AppendLine($"Page {page}: empty list, stopping");
+                        break;
+                    }
+
+                    foreach (var item in items)
+                        allItems.Add(JsonNode.Parse(item.GetRawText())!);
+
+                    if (page == 1 && dataEl.TryGetProperty("total_count", out var totalEl))
+                    {
+                        var totalStr = totalEl.ValueKind == JsonValueKind.Number
+                            ? totalEl.GetInt32().ToString()
+                            : totalEl.GetString() ?? "0";
+                        totalCount = int.TryParse(totalStr, out var tc) ? tc : 0;
+                        logs.AppendLine($"Total count: {totalCount}");
+                    }
+
+                    logs.AppendLine($"Page {page}: got {items.Count} items (cumulative: {allItems.Count})");
+
+                    if (allItems.Count >= totalCount && totalCount > 0)
+                        break;
+                }
+                else
+                {
+                    // 可能 Cookie 过期、data 为 string 错误消息、或格式异常
+                    var info = root.TryGetProperty("info", out var infoEl) && infoEl.ValueKind == JsonValueKind.String
+                        ? infoEl.GetString() : null;
+                    var dataStr = root.TryGetProperty("data", out var dEl) && dEl.ValueKind == JsonValueKind.String
+                        ? dEl.GetString() : null;
+                    var errorMsg = info ?? dataStr ?? "unknown";
+                    logs.AppendLine($"Page {page}: unexpected response - {errorMsg}");
+                    logs.AppendLine($"Response preview: {body[..Math.Min(500, body.Length)]}");
+                    if (page == 1)
+                        throw new InvalidOperationException($"TAPD 请求失败: {errorMsg}。请检查 Cookie 是否有效、工作空间 ID 是否正确。");
+                    break;
+                }
+            }
+            catch (JsonException ex)
+            {
+                logs.AppendLine($"Page {page}: JSON parse error - {ex.Message}");
+                break;
+            }
+
+            page++;
+            if (page <= maxPages)
+                await Task.Delay(500, CancellationToken.None); // 避免请求过快
+        }
+
+        logs.AppendLine($"Done: {allItems.Count} total items collected across {page - 1} pages");
+
+        if (allItems.Count == 0)
+            throw new InvalidOperationException(
+                $"采集到 0 条数据。工作空间={workspaceId}，时间范围={dateRange}（留空可获取全部数据）");
+
+        var resultJson = allItems.ToJsonString();
+        var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+    }
+
+    /// <summary>自定义 cURL 兜底模式：解析用户粘贴的 cURL 命令并直接执行，支持自动分页</summary>
+    private static async Task<CapsuleResult> ExecuteCustomCurlAsync(
+        IHttpClientFactory factory, WorkflowNode node, string curlCommand, string dataType)
+    {
+        var logs = new StringBuilder();
+        logs.AppendLine("Custom cURL mode: parsing user-provided curl command");
+
+        // 解析 cURL
+        var parsed = ParseCurlCommand(curlCommand);
+        if (string.IsNullOrWhiteSpace(parsed.Url))
+            throw new InvalidOperationException("无法从 cURL 命令中解析出 URL。请检查格式是否正确。");
+
+        logs.AppendLine($"URL: {parsed.Url}");
+        logs.AppendLine($"Method: {parsed.Method}");
+        logs.AppendLine($"Headers: {parsed.Headers.Count} 个");
+        logs.AppendLine($"Body: {(string.IsNullOrEmpty(parsed.Body) ? "(无)" : $"{parsed.Body.Length} chars")}");
+
+        var allItems = new JsonArray();
+        var page = 1;
+        var maxPages = 50;
+        var totalCount = 0;
+
+        while (page <= maxPages)
+        {
+            using var client = factory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(30);
+
+            var request = new HttpRequestMessage(
+                parsed.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) ? HttpMethod.Post :
+                parsed.Method.Equals("PUT", StringComparison.OrdinalIgnoreCase) ? HttpMethod.Put :
+                parsed.Method.Equals("DELETE", StringComparison.OrdinalIgnoreCase) ? HttpMethod.Delete :
+                HttpMethod.Get,
+                parsed.Url);
+
+            // 添加解析出的请求头
+            foreach (var (key, value) in parsed.Headers)
+            {
+                // Content-Type 需要通过 Content 设置，跳过
+                if (key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) continue;
+                try { request.Headers.TryAddWithoutValidation(key, value); }
+                catch { /* 忽略无法添加的头 */ }
+            }
+
+            // 设置请求体（如果有），支持分页替换
+            if (!string.IsNullOrEmpty(parsed.Body))
+            {
+                var bodyToSend = parsed.Body;
+                // 尝试修改 body 中的 page 参数以支持分页
+                if (page > 1)
+                {
+                    try
+                    {
+                        var bodyNode = JsonNode.Parse(bodyToSend);
+                        if (bodyNode is JsonObject bodyObj && bodyObj.ContainsKey("page"))
+                        {
+                            bodyObj["page"] = page;
+                            bodyToSend = bodyObj.ToJsonString();
+                        }
+                    }
+                    catch { /* body 非 JSON 或没有 page 字段，保持原样 */ }
+                }
+
+                var contentType = parsed.Headers
+                    .FirstOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)).Value
+                    ?? "application/json";
+                request.Content = new StringContent(bodyToSend, Encoding.UTF8, contentType);
+            }
+
+            var response = await client.SendAsync(request, CancellationToken.None);
+            var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
+
+            logs.AppendLine($"Page {page}: HTTP {(int)response.StatusCode}");
+
+            if (!response.IsSuccessStatusCode)
+            {
+                logs.AppendLine($"Page {page}: request failed - {body[..Math.Min(300, body.Length)]}");
+                if (page == 1)
+                    throw new InvalidOperationException($"自定义 cURL 请求失败: HTTP {(int)response.StatusCode}。响应: {body[..Math.Min(500, body.Length)]}");
+                break;
+            }
+
+            // 检测非 JSON 响应
+            var trimmedBody = body.TrimStart();
+            if (trimmedBody.Length == 0 || (trimmedBody[0] != '{' && trimmedBody[0] != '['))
+            {
+                logs.AppendLine($"Page {page}: 非 JSON 响应（可能 Cookie 已过期）");
+                if (page == 1)
+                    throw new InvalidOperationException("cURL 请求返回了非 JSON 响应，可能 Cookie 已过期。请重新从浏览器复制最新的 cURL 命令。");
+                break;
+            }
+
+            // 解析响应 — 兼容多种 TAPD 响应格式
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+
+                if (root.TryGetProperty("data", out var dataEl) &&
+                    dataEl.ValueKind == JsonValueKind.Object &&
+                    dataEl.TryGetProperty("list", out var listEl) &&
+                    listEl.ValueKind == JsonValueKind.Array)
+                {
+                    var items = listEl.EnumerateArray().ToList();
+                    if (items.Count == 0)
+                    {
+                        logs.AppendLine($"Page {page}: empty list, stopping");
+                        break;
+                    }
+
+                    foreach (var item in items)
+                        allItems.Add(JsonNode.Parse(item.GetRawText())!);
+
+                    if (page == 1 && dataEl.TryGetProperty("total_count", out var totalEl))
+                    {
+                        var totalStr = totalEl.ValueKind == JsonValueKind.Number
+                            ? totalEl.GetInt32().ToString()
+                            : totalEl.GetString() ?? "0";
+                        totalCount = int.TryParse(totalStr, out var tc) ? tc : 0;
+                        logs.AppendLine($"Total count: {totalCount}");
+                    }
+
+                    logs.AppendLine($"Page {page}: got {items.Count} items (cumulative: {allItems.Count})");
+
+                    if (allItems.Count >= totalCount && totalCount > 0)
+                        break;
+
+                    // 如果 body 里没有 page 字段，无法分页，直接结束
+                    if (!string.IsNullOrEmpty(parsed.Body))
+                    {
+                        try
+                        {
+                            var bodyCheck = JsonNode.Parse(parsed.Body);
+                            if (bodyCheck is not JsonObject obj || !obj.ContainsKey("page"))
+                            {
+                                logs.AppendLine("Body 中无 page 字段，无法自动分页，仅返回首页数据");
+                                break;
+                            }
+                        }
+                        catch { break; }
+                    }
+                    else
+                    {
+                        logs.AppendLine("无请求体，无法自动分页");
+                        break;
+                    }
+                }
+                else
+                {
+                    // 非标准格式 — 对于首页尝试返回整个响应
+                    if (page == 1)
+                    {
+                        logs.AppendLine("Response is not standard TAPD format (no data.list), returning raw response");
+                        var rawArtifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", body, "application/json");
+                        return new CapsuleResult(new List<ExecutionArtifact> { rawArtifact }, logs.ToString());
+                    }
+                    break;
+                }
+            }
+            catch (JsonException ex)
+            {
+                logs.AppendLine($"Page {page}: JSON parse error - {ex.Message}");
+                break;
+            }
+
+            page++;
+            if (page <= maxPages)
+                await Task.Delay(500, CancellationToken.None);
+        }
+
+        logs.AppendLine($"Done: {allItems.Count} total items collected across {page - 1} pages");
+
+        if (allItems.Count == 0)
+            throw new InvalidOperationException("自定义 cURL 采集到 0 条数据。请检查 cURL 命令是否有效、Cookie 是否过期。");
+
+        var resultJson = allItems.ToJsonString();
+        var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+    }
+
+    /// <summary>解析 cURL 命令，提取 URL、Method、Headers、Body</summary>
+    private static (string Url, string Method, List<KeyValuePair<string, string>> Headers, string? Body) ParseCurlCommand(string curl)
+    {
+        var url = "";
+        var method = "GET";
+        var headers = new List<KeyValuePair<string, string>>();
+        string? body = null;
+
+        // 移除换行续行符
+        curl = curl.Replace("\\\n", " ").Replace("\\\r\n", " ").Replace("\r\n", " ").Replace("\n", " ").Trim();
+
+        // 去掉开头的 curl
+        if (curl.StartsWith("curl ", StringComparison.OrdinalIgnoreCase))
+            curl = curl[5..].TrimStart();
+
+        var tokens = TokenizeCurl(curl);
+
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+
+            if (token is "-X" or "--request")
+            {
+                if (i + 1 < tokens.Count) method = tokens[++i].ToUpperInvariant();
+            }
+            else if (token is "-H" or "--header")
+            {
+                if (i + 1 < tokens.Count)
+                {
+                    var headerStr = tokens[++i];
+                    var colonIdx = headerStr.IndexOf(':');
+                    if (colonIdx > 0)
+                    {
+                        var key = headerStr[..colonIdx].Trim();
+                        var value = headerStr[(colonIdx + 1)..].Trim();
+                        headers.Add(new KeyValuePair<string, string>(key, value));
+                    }
+                }
+            }
+            else if (token is "-d" or "--data" or "--data-raw" or "--data-binary" or "--data-urlencode")
+            {
+                if (i + 1 < tokens.Count)
+                {
+                    body = tokens[++i];
+                    if (method == "GET") method = "POST"; // curl 默认 -d 时用 POST
+                }
+            }
+            else if (token is "--compressed" or "--insecure" or "-k" or "-s" or "--silent" or "-v" or "--verbose" or "-L" or "--location")
+            {
+                // 忽略这些标志
+            }
+            else if (!token.StartsWith('-') && string.IsNullOrEmpty(url))
+            {
+                // 第一个非标志参数是 URL
+                url = token;
+            }
+        }
+
+        return (url, method, headers, body);
+    }
+
+    /// <summary>将 cURL 命令字符串分词（处理单引号、双引号、转义）</summary>
+    private static List<string> TokenizeCurl(string input)
+    {
+        var tokens = new List<string>();
+        var current = new StringBuilder();
+        var inSingleQuote = false;
+        var inDoubleQuote = false;
+        var escape = false;
+
+        for (var i = 0; i < input.Length; i++)
+        {
+            var c = input[i];
+
+            if (escape)
+            {
+                current.Append(c);
+                escape = false;
+                continue;
+            }
+
+            if (c == '\\' && !inSingleQuote)
+            {
+                escape = true;
+                continue;
+            }
+
+            if (c == '\'' && !inDoubleQuote)
+            {
+                inSingleQuote = !inSingleQuote;
+                continue;
+            }
+
+            if (c == '"' && !inSingleQuote)
+            {
+                inDoubleQuote = !inDoubleQuote;
+                continue;
+            }
+
+            if (c == ' ' && !inSingleQuote && !inDoubleQuote)
+            {
+                if (current.Length > 0)
+                {
+                    tokens.Add(current.ToString());
+                    current.Clear();
+                }
+                continue;
+            }
+
+            current.Append(c);
+        }
+
+        if (current.Length > 0)
+            tokens.Add(current.ToString());
+
+        return tokens;
+    }
+
+    /// <summary>Basic Auth 模式：使用 TAPD Open API</summary>
+    private static async Task<CapsuleResult> ExecuteTapdBasicAuthModeAsync(
+        IHttpClientFactory factory, WorkflowNode node, Dictionary<string, string> variables,
+        string workspaceId, string dataType, string dateRange)
+    {
+        var authToken = ReplaceVariables(
+            GetConfigString(node, "auth_token") ?? GetConfigString(node, "authToken")
+            ?? GetConfigString(node, "apiToken") ?? "", variables);
+
+        var url = $"https://api.tapd.cn/{dataType}?workspace_id={workspaceId}";
+        if (!string.IsNullOrWhiteSpace(dateRange))
+            url += $"&created=>={dateRange}-01&created=<={dateRange}-31";
+
         using var client = factory.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(30);
 
-        // TAPD Open API 使用 Basic Auth (Base64 of api_user:api_password)
         if (!string.IsNullOrWhiteSpace(authToken))
             client.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", authToken);
 
         var response = await client.GetAsync(url, CancellationToken.None);
         var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
-        var logs = $"TAPD {dataType} collect: {url}\nStatus: {(int)response.StatusCode}\nBody length: {body.Length}\n";
+        var logs = $"TAPD BasicAuth mode: {url}\nStatus: {(int)response.StatusCode}\nBody length: {body.Length}\n";
 
         var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", body, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs);
@@ -572,6 +1202,244 @@ public static class CapsuleExecutor
             "<=" => left <= right,
             _ => false,
         };
+    }
+
+    // ── 数据统计 ──────────────────────────────────────────────
+
+    /// <summary>
+    /// 数据统计舱：对 JSON 数组数据进行分组计数、分布统计、时间趋势分析。
+    /// 输出紧凑的统计摘要 JSON（通常 &lt; 5KB），供后续 LLM 分析趋势而非处理原始数据。
+    /// </summary>
+    public static CapsuleResult ExecuteDataAggregator(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
+    {
+        var groupByStr = GetConfigString(node, "groupByFields") ?? "severity,status,current_owner,module";
+        var dateField = GetConfigString(node, "dateField") ?? "created";
+        var dateGroupBy = GetConfigString(node, "dateGroupBy") ?? "week";
+        var topN = int.TryParse(GetConfigString(node, "topN"), out var n) ? Math.Clamp(n, 1, 100) : 10;
+
+        var groupByFields = groupByStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var logs = new StringBuilder();
+        logs.AppendLine($"[数据统计器] 节点: {node.Name}");
+        logs.AppendLine($"  分组字段: {string.Join(", ", groupByFields)}");
+        logs.AppendLine($"  日期字段: {dateField}, 粒度: {dateGroupBy}, Top N: {topN}");
+
+        // 收集所有输入数据为 JSON 数组
+        var allItems = new List<JsonElement>();
+        foreach (var art in inputArtifacts)
+        {
+            if (string.IsNullOrWhiteSpace(art.InlineContent)) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(art.InlineContent);
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in doc.RootElement.EnumerateArray())
+                        allItems.Add(item.Clone());
+                }
+                else
+                {
+                    allItems.Add(doc.RootElement.Clone());
+                }
+            }
+            catch { logs.AppendLine($"  ⚠️ 跳过无法解析的输入: {art.Name}"); }
+        }
+
+        logs.AppendLine($"  总记录数: {allItems.Count}");
+
+        if (allItems.Count == 0)
+        {
+            var emptyResult = JsonSerializer.Serialize(new { totalCount = 0, message = "无数据" });
+            var emptyArt = MakeTextArtifact(node, "agg-out", "统计摘要", emptyResult, "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { emptyArt }, logs.ToString());
+        }
+
+        // ── 1. 按字段分组统计 ──
+        var distributions = new Dictionary<string, object>();
+        foreach (var field in groupByFields)
+        {
+            var counts = new Dictionary<string, int>();
+            var missing = 0;
+
+            foreach (var item in allItems)
+            {
+                var val = ExtractFieldValue(item, field);
+                if (val == null)
+                    { missing++; continue; } // 字段不存在
+                if (string.IsNullOrWhiteSpace(val))
+                    val = "(未设置)"; // 字段存在但值为空
+                counts[val] = counts.TryGetValue(val, out var c) ? c + 1 : 1;
+            }
+
+            // 排序取 Top N，其余归入「其他」
+            var sorted = counts.OrderByDescending(kv => kv.Value).ToList();
+            var topItems = sorted.Take(topN).ToList();
+            var otherCount = sorted.Skip(topN).Sum(kv => kv.Value);
+
+            var groups = topItems.Select(kv => new { name = kv.Key, count = kv.Value, percent = Math.Round(100.0 * kv.Value / allItems.Count, 1) }).ToList();
+            if (otherCount > 0)
+                groups.Add(new { name = "其他", count = otherCount, percent = Math.Round(100.0 * otherCount / allItems.Count, 1) });
+
+            distributions[field] = new
+            {
+                total = allItems.Count - missing,
+                missing,
+                groups,
+            };
+
+            logs.AppendLine($"  {field}: {counts.Count} 个分组, top={topItems.FirstOrDefault().Key ?? "N/A"}({topItems.FirstOrDefault().Value}), missing={missing}");
+        }
+
+        // ── 2. 时间趋势统计 ──
+        var timeline = new Dictionary<string, int>();
+        var dateParseErrors = 0;
+        foreach (var item in allItems)
+        {
+            var dateStr = ExtractFieldValue(item, dateField);
+            if (string.IsNullOrWhiteSpace(dateStr)) continue;
+
+            if (TryParseFlexibleDate(dateStr, out var dt))
+            {
+                var key = dateGroupBy switch
+                {
+                    "day" => dt.ToString("yyyy-MM-dd"),
+                    "month" => dt.ToString("yyyy-MM"),
+                    _ => GetIsoWeek(dt), // week
+                };
+                timeline[key] = timeline.TryGetValue(key, out var tc) ? tc + 1 : 1;
+            }
+            else
+            {
+                dateParseErrors++;
+            }
+        }
+
+        var sortedTimeline = timeline.OrderBy(kv => kv.Key)
+            .Select(kv => new { period = kv.Key, count = kv.Value })
+            .ToList();
+
+        logs.AppendLine($"  时间趋势: {sortedTimeline.Count} 个时段, 解析失败: {dateParseErrors}");
+
+        // ── 3. 交叉统计（严重程度 × 状态） ──
+        object? crossTab = null;
+        if (groupByFields.Length >= 2)
+        {
+            var f1 = groupByFields[0]; // e.g. severity
+            var f2 = groupByFields[1]; // e.g. status
+            var cross = new Dictionary<string, Dictionary<string, int>>();
+            foreach (var item in allItems)
+            {
+                var v1 = ExtractFieldValue(item, f1) ?? "(空)";
+                var v2 = ExtractFieldValue(item, f2) ?? "(空)";
+                if (!cross.ContainsKey(v1)) cross[v1] = new Dictionary<string, int>();
+                cross[v1][v2] = cross[v1].TryGetValue(v2, out var xc) ? xc + 1 : 1;
+            }
+            crossTab = new { dimensions = $"{f1} × {f2}", data = cross };
+            logs.AppendLine($"  交叉统计: {f1} × {f2}, {cross.Count} 行");
+        }
+
+        // ── 4. 自动检测的数值字段摘要 ──
+        var numericSummaries = new Dictionary<string, object>();
+        // 尝试对首条数据中的疑似数值字段求统计
+        if (allItems.Count > 0 && allItems[0].ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in allItems[0].EnumerateObject())
+            {
+                if (prop.Value.ValueKind is JsonValueKind.Number)
+                {
+                    var values = allItems
+                        .Select(i => i.TryGetProperty(prop.Name, out var v) && v.TryGetDouble(out var d) ? d : (double?)null)
+                        .Where(v => v.HasValue)
+                        .Select(v => v!.Value)
+                        .ToList();
+
+                    if (values.Count > 0)
+                    {
+                        numericSummaries[prop.Name] = new
+                        {
+                            count = values.Count,
+                            sum = Math.Round(values.Sum(), 2),
+                            avg = Math.Round(values.Average(), 2),
+                            min = values.Min(),
+                            max = values.Max(),
+                        };
+                    }
+                }
+            }
+        }
+
+        // ── 组装最终输出 ──
+        var result = new Dictionary<string, object>
+        {
+            ["_summary"] = new
+            {
+                totalRecords = allItems.Count,
+                analyzedFields = groupByFields,
+                dateField,
+                dateGroupBy,
+                generatedAt = DateTime.UtcNow.ToString("O"),
+            },
+            ["distributions"] = distributions,
+            ["timeline"] = sortedTimeline,
+        };
+
+        if (crossTab != null)
+            result["crossTab"] = crossTab;
+        if (numericSummaries.Count > 0)
+            result["numericSummaries"] = numericSummaries;
+
+        var outputJson = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+        logs.AppendLine($"  输出统计摘要: {outputJson.Length} chars ({Encoding.UTF8.GetByteCount(outputJson)} bytes)");
+
+        var artifact = MakeTextArtifact(node, "agg-out", "统计摘要", outputJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+    }
+
+    /// <summary>从 JSON 元素中提取字段值（支持嵌套路径如 "Bug.severity"）</summary>
+    private static string? ExtractFieldValue(JsonElement item, string fieldPath)
+    {
+        var current = item;
+        foreach (var part in fieldPath.Split('.'))
+        {
+            if (current.ValueKind == JsonValueKind.Object && current.TryGetProperty(part, out var child))
+                current = child;
+            else
+                return null;
+        }
+        return current.ValueKind switch
+        {
+            JsonValueKind.String => current.GetString(),
+            JsonValueKind.Number => current.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            JsonValueKind.Null => null,
+            _ => current.GetRawText(),
+        };
+    }
+
+    /// <summary>灵活日期解析：支持 ISO 8601、常见日期格式、纯日期等</summary>
+    private static bool TryParseFlexibleDate(string dateStr, out DateTime result)
+    {
+        // 常见格式
+        var formats = new[]
+        {
+            "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm:ssZ", "yyyy-MM-dd'T'HH:mm:ss.fffZ",
+            "yyyy-MM-dd", "yyyy/MM/dd", "yyyy/MM/dd HH:mm:ss",
+            "MM/dd/yyyy", "dd/MM/yyyy",
+        };
+        return DateTime.TryParseExact(dateStr, formats,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AllowWhiteSpaces, out result)
+            || DateTime.TryParse(dateStr, out result);
+    }
+
+    /// <summary>返回 ISO 周格式 "2026-W09"</summary>
+    private static string GetIsoWeek(DateTime dt)
+    {
+        var cal = System.Globalization.CultureInfo.InvariantCulture.Calendar;
+        var week = cal.GetWeekOfYear(dt, System.Globalization.CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
+        return $"{dt.Year}-W{week:D2}";
     }
 
     // ── 格式转换 ──────────────────────────────────────────────
@@ -882,10 +1750,28 @@ public static class CapsuleExecutor
 
         var reportTemplate = ReplaceVariables(GetConfigString(node, "reportTemplate") ?? "", variables);
         var format = GetConfigString(node, "format") ?? "markdown";
+        var maxInputTokens = int.TryParse(GetConfigString(node, "maxInputTokens"), out var mit) ? mit : 80000;
+
+        var reportLogs = new StringBuilder();
+        reportLogs.AppendLine($"[报告生成器] 节点: {node.Name}");
+        reportLogs.AppendLine($"  Format: {format}");
+        reportLogs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个");
+        foreach (var ia in inputArtifacts)
+            reportLogs.AppendLine($"    - [{ia.Name}] SlotId={ia.SlotId} InlineContent={ia.InlineContent?.Length ?? 0} chars, SizeBytes={ia.SizeBytes}");
 
         var inputText = string.Join("\n---\n", inputArtifacts
             .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
             .Select(a => $"[{a.Name}]\n{a.InlineContent}"));
+
+        reportLogs.AppendLine($"  原始 InputText: {inputText.Length} chars (估算 {EstimateTokens(inputText)} tokens)");
+
+        // Token 感知截断
+        var templateTokens = EstimateTokens(reportTemplate);
+        var dataTokenBudget = maxInputTokens - templateTokens - 500;
+        if (dataTokenBudget < 1000) dataTokenBudget = 1000;
+
+        var (truncatedInput, _, wasTruncated) = TruncateToTokenBudget(inputText, dataTokenBudget, reportLogs);
+        if (wasTruncated) inputText = truncatedInput;
 
         var prompt = string.IsNullOrWhiteSpace(reportTemplate)
             ? $"请根据以下数据生成{format}格式的报告：\n\n{inputText}"
@@ -908,19 +1794,55 @@ public static class CapsuleExecutor
             }
         };
 
+        reportLogs.AppendLine($"  ReportTemplate ({reportTemplate.Length} chars): {(reportTemplate.Length > 300 ? reportTemplate[..300] + "..." : reportTemplate)}");
+        reportLogs.AppendLine($"  Prompt 总长: {prompt.Length} chars (估算 {EstimateTokens(prompt)} tokens)");
+        reportLogs.AppendLine("  --- 调用 LLM Gateway ---");
+
         var response = await gateway.SendAsync(request, CancellationToken.None);
         var content = response.Content ?? "";
 
+        reportLogs.AppendLine($"  Model: {response.Resolution?.ActualModel ?? "(unknown)"}");
+        reportLogs.AppendLine($"  Tokens: input={response.TokenUsage?.InputTokens ?? 0} output={response.TokenUsage?.OutputTokens ?? 0}");
+        reportLogs.AppendLine($"  ResolutionType: {response.Resolution?.ResolutionType}");
+
+        // 记录 Gateway 错误信息
+        if (!string.IsNullOrWhiteSpace(response.ErrorCode) || !string.IsNullOrWhiteSpace(response.ErrorMessage))
+        {
+            reportLogs.AppendLine($"  ❌ Gateway 错误: [{response.ErrorCode}] {response.ErrorMessage}");
+            reportLogs.AppendLine($"  HTTP Status: {response.StatusCode}");
+        }
+
+        reportLogs.AppendLine($"  LLM 响应 ({content.Length} chars): {(content.Length > 500 ? content[..500] + "..." : content)}");
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            var reason = !string.IsNullOrWhiteSpace(response.ErrorMessage)
+                ? $"Gateway 错误: {response.ErrorMessage}"
+                : "可能是 LLM 调度失败";
+            reportLogs.AppendLine($"  ⚠️ 警告: 报告内容为空 ({reason})");
+        }
+
         var mimeType = format == "html" ? "text/html" : "text/markdown";
         var artifact = MakeTextArtifact(node, "report", "报告", content, mimeType);
-        return new CapsuleResult(new List<ExecutionArtifact> { artifact },
-            $"Report generated: {format}, {content.Length} chars, model={response.Resolution?.ActualModel}");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, reportLogs.ToString());
     }
 
     public static CapsuleResult ExecuteFileExporter(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
     {
-        var format = GetConfigString(node, "format") ?? "json";
+        var format = GetConfigString(node, "format") ?? GetConfigString(node, "fileFormat") ?? "json";
         var fileName = GetConfigString(node, "file_name") ?? GetConfigString(node, "fileName") ?? $"export.{format}";
+
+        // 替换日期占位符
+        var now = DateTime.Now;
+        fileName = fileName
+            .Replace("{{date}}", now.ToString("yyyy-MM-dd"))
+            .Replace("{date}", now.ToString("yyyy-MM-dd"))
+            .Replace("{{datetime}}", now.ToString("yyyy-MM-dd_HHmmss"))
+            .Replace("{datetime}", now.ToString("yyyy-MM-dd_HHmmss"));
+
+        // 确保文件有扩展名
+        if (!fileName.Contains('.'))
+            fileName = $"{fileName}.{format}";
 
         var content = string.Join("\n", inputArtifacts
             .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
@@ -935,17 +1857,29 @@ public static class CapsuleExecutor
             _ => "application/json",
         };
 
+        var exportLogs = new StringBuilder();
+        exportLogs.AppendLine($"[文件导出器] 节点: {node.Name}");
+        exportLogs.AppendLine($"  FileName: {fileName}");
+        exportLogs.AppendLine($"  Format: {format} (MIME: {mimeType})");
+        exportLogs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个");
+        foreach (var ia in inputArtifacts)
+            exportLogs.AppendLine($"    - [{ia.Name}] SlotId={ia.SlotId} InlineContent={ia.InlineContent?.Length ?? 0} chars, SizeBytes={ia.SizeBytes}, CosUrl={ia.CosUrl ?? "(null)"}");
+        exportLogs.AppendLine($"  Content: {content.Length} chars, {Encoding.UTF8.GetByteCount(content)} bytes");
+        if (content.Length > 0)
+            exportLogs.AppendLine($"  Preview: {(content.Length > 200 ? content[..200] + "..." : content)}");
+        else
+            exportLogs.AppendLine("  ⚠️ 警告: 导出内容为空");
+
         var artifact = new ExecutionArtifact
         {
             Name = fileName,
             MimeType = mimeType,
             SlotId = node.OutputSlots.FirstOrDefault()?.SlotId ?? "export-file",
             InlineContent = content,
-            SizeBytes = System.Text.Encoding.UTF8.GetByteCount(content),
+            SizeBytes = Encoding.UTF8.GetByteCount(content),
         };
 
-        return new CapsuleResult(new List<ExecutionArtifact> { artifact },
-            $"File exported: {fileName} ({format}), {artifact.SizeBytes} bytes");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, exportLogs.ToString());
     }
 
     public static async Task<CapsuleResult> ExecuteWebhookSenderAsync(
@@ -983,20 +1917,38 @@ public static class CapsuleExecutor
     {
         var db = sp.GetRequiredService<PrdAgent.Infrastructure.Database.MongoDbContext>();
         var title = ReplaceVariables(GetConfigString(node, "title") ?? node.Name, variables);
-        var message = ReplaceVariables(GetConfigString(node, "message") ?? "", variables);
+        // 优先读 "content" (schema 定义的 key)，兼容旧的 "message"
+        var message = ReplaceVariables(
+            GetConfigString(node, "content") ?? GetConfigString(node, "message") ?? "", variables);
+        var level = GetConfigString(node, "level") ?? "info";
 
         if (string.IsNullOrWhiteSpace(message) && inputArtifacts.Count > 0)
         {
-            message = string.Join("\n", inputArtifacts
-                .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
-                .Select(a => a.InlineContent?[..Math.Min(a.InlineContent.Length, 500)]));
+            // 从输入产物中生成人类可读的摘要，而非原始 JSON
+            var summaryParts = new List<string>();
+            foreach (var a in inputArtifacts.Where(a => !string.IsNullOrWhiteSpace(a.InlineContent)))
+            {
+                var content = a.InlineContent!;
+                // 如果内容看起来像 JSON，提取摘要信息
+                if (content.TrimStart().StartsWith("{") || content.TrimStart().StartsWith("["))
+                {
+                    summaryParts.Add($"[{a.Name}] 数据已生成 ({a.SizeBytes} bytes)");
+                }
+                else
+                {
+                    // 纯文本/Markdown 取前 200 字符
+                    var preview = content.Length > 200 ? content[..200] + "..." : content;
+                    summaryParts.Add($"[{a.Name}] {preview}");
+                }
+            }
+            message = string.Join("\n", summaryParts);
         }
 
         var notification = new AdminNotification
         {
             Title = title,
             Message = message,
-            Level = "info",
+            Level = level,
             Source = "workflow-agent",
         };
         await db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
@@ -1012,7 +1964,10 @@ public static class CapsuleExecutor
 
     public static ExecutionArtifact MakeTextArtifact(WorkflowNode node, string slotSuffix, string name, string content, string mimeType = "text/plain")
     {
-        var slotId = node.OutputSlots.FirstOrDefault()?.SlotId ?? slotSuffix;
+        // 优先匹配 slotSuffix 对应的 OutputSlot，支持多输出节点
+        var slotId = node.OutputSlots.FirstOrDefault(s => s.SlotId == slotSuffix)?.SlotId
+                  ?? node.OutputSlots.FirstOrDefault()?.SlotId
+                  ?? slotSuffix;
         return new ExecutionArtifact
         {
             Name = name,
@@ -1027,7 +1982,14 @@ public static class CapsuleExecutor
     {
         if (node.Config.TryGetValue(key, out var val) && val != null)
         {
-            var s = val.ToString()?.Trim();
+            string? s;
+            // Handle System.Text.Json.JsonElement (from API deserialization)
+            if (val is JsonElement je)
+                s = je.ValueKind == JsonValueKind.String ? je.GetString() : je.GetRawText();
+            else
+                s = val.ToString();
+
+            s = s?.Trim();
             return string.IsNullOrWhiteSpace(s) ? null : s;
         }
         return null;

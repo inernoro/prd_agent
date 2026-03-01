@@ -416,6 +416,7 @@ public static class CapsuleTypes
     public const string DataExtractor = "data-extractor";
     public const string DataMerger = "data-merger";
     public const string FormatConverter = "format-converter";
+    public const string DataAggregator = "data-aggregator";
 
     // 流程控制类
     public const string Delay = "delay";
@@ -437,7 +438,7 @@ public static class CapsuleTypes
         // 触发类
         Timer, WebhookReceiver, ManualTrigger, FileUpload,
         // 处理类
-        TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter,
+        TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter, DataAggregator,
         // 流程控制类
         Delay, Condition,
         // 输出类
@@ -457,4 +458,44 @@ public static class WorkflowTriggerTypes
     public const string Cron = "cron";
     public const string Webhook = "webhook";
     public const string Event = "event";
+}
+
+// ─────────────────────────────────────────────────────────────
+// WorkflowChatMessage 工作流对话消息
+// ─────────────────────────────────────────────────────────────
+
+public class WorkflowChatMessage
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>关联的工作流 ID（新建场景可为空）</summary>
+    public string? WorkflowId { get; set; }
+
+    /// <summary>"user" | "assistant"</summary>
+    public string Role { get; set; } = "user";
+
+    /// <summary>消息内容（Markdown）</summary>
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>assistant 消息附带的工作流 JSON（已解析为结构化数据）</summary>
+    public WorkflowChatGenerated? Generated { get; set; }
+
+    public string UserId { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public long Seq { get; set; }
+}
+
+/// <summary>
+/// AI 生成的工作流配置（嵌入在 assistant 消息中）
+/// </summary>
+public class WorkflowChatGenerated
+{
+    public string? Name { get; set; }
+    public string? Description { get; set; }
+    public List<WorkflowNode>? Nodes { get; set; }
+    public List<WorkflowEdge>? Edges { get; set; }
+    public List<WorkflowVariable>? Variables { get; set; }
+
+    /// <summary>是否为新建工作流（vs 修改现有工作流）</summary>
+    public bool IsNew { get; set; }
 }

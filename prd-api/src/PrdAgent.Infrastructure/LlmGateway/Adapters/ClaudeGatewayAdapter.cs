@@ -263,4 +263,44 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
             Source = "response_body"
         };
     }
+
+    public string? ParseMessageContent(string responseBody)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+
+            // Claude Messages API format: content[0].text
+            if (doc.RootElement.TryGetProperty("content", out var content) &&
+                content.ValueKind == JsonValueKind.Array &&
+                content.GetArrayLength() > 0)
+            {
+                var firstBlock = content[0];
+                if (firstBlock.TryGetProperty("text", out var text) &&
+                    text.ValueKind == JsonValueKind.String)
+                {
+                    return text.GetString();
+                }
+            }
+
+            // Fallback: OpenAI-compatible format (some Claude proxies)
+            if (doc.RootElement.TryGetProperty("choices", out var choices) &&
+                choices.ValueKind == JsonValueKind.Array &&
+                choices.GetArrayLength() > 0)
+            {
+                var firstChoice = choices[0];
+                if (firstChoice.TryGetProperty("message", out var message) &&
+                    message.TryGetProperty("content", out var msgContent) &&
+                    msgContent.ValueKind == JsonValueKind.String)
+                {
+                    return msgContent.GetString();
+                }
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+        return null;
+    }
 }

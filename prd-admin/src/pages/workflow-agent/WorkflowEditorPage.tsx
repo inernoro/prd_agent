@@ -4,7 +4,7 @@ import {
   Play, Loader2, CheckCircle2, AlertCircle,
   Download, FileText, ArrowLeft, Save, Plus,
   ChevronDown, ChevronRight, Settings2, XCircle,
-  Zap, FlaskConical, Trash2,
+  Zap, FlaskConical, Trash2, Wand2, Terminal, Eye, Copy, Check,
 } from 'lucide-react';
 import {
   getWorkflow, updateWorkflow, executeWorkflow, getExecution,
@@ -25,19 +25,22 @@ import {
 } from './capsuleRegistry';
 import { parseCurl, toCurl, headersToJson, prettyBody, type ParsedCurl } from './parseCurl';
 import { HttpConfigPanel } from './HttpConfigPanel';
+import { WorkflowChatPanel } from './WorkflowChatPanel';
+import { ArtifactPreviewModal } from './ArtifactPreviewModal';
+import type { WorkflowChatGenerated } from '@/services/contracts/workflowAgent';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流直接编辑页
 //
 // 布局：
-//   ┌────────────────────────────────────────────────┐
-//   │ TabBar (工作流名称 + 操作按钮)                 │
-//   ├──────────┬─────────────────────────────────────┤
-//   │ 左侧     │ 右侧                               │
-//   │ 舱目录   │ 已添加的舱列表 (从上至下)           │
-//   │ (可选择  │ 点击展开配置/调试/结果面板          │
-//   │  添加)   │                                     │
-//   └──────────┴─────────────────────────────────────┘
+//   ┌──────────────────────────────────────────────────────────┐
+//   │ TabBar (工作流名称 + 操作按钮 + AI助手开关)              │
+//   ├──────────┬──────────────────────────┬────────────────────┤
+//   │ 左侧     │ 中间                     │ 右侧 (可选)       │
+//   │ 舱目录   │ 已添加的舱列表           │ AI 聊天面板       │
+//   │ (可选择  │ 点击展开配置/调试/结果   │ (WorkflowChat-    │
+//   │  添加)   │                          │  Panel)           │
+//   └──────────┴──────────────────────────┴────────────────────┘
 // ═══════════════════════════════════════════════════════════════
 
 // ──── 状态映射 ────
@@ -61,6 +64,62 @@ function formatBytes(bytes: number): string {
 function getDefaultMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** 通用产物操作按钮：预览 + 下载 */
+function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
+  artifact: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string };
+  onPreview?: (art: ExecutionArtifact) => void;
+  size?: 'sm' | 'md';
+}) {
+  const iconSize = size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4';
+  const padding = size === 'sm' ? 'p-1' : 'p-1.5';
+  return (
+    <>
+      {(artifact.inlineContent || artifact.cosUrl) && onPreview && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onPreview(artifact as ExecutionArtifact); }}
+          className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
+          title="预览"
+          style={{ color: 'var(--accent-gold)' }}
+        >
+          <Eye className={iconSize} />
+        </button>
+      )}
+      {artifact.cosUrl && (
+        <a
+          href={artifact.cosUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
+          title="下载"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <Download className={iconSize} />
+        </a>
+      )}
+      {!artifact.cosUrl && artifact.inlineContent && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            const blob = new Blob([artifact.inlineContent!], { type: artifact.mimeType || 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = artifact.name || 'output';
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+          className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
+          title="下载"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <Download className={iconSize} />
+        </button>
+      )}
+    </>
+  );
 }
 
 // ──── 小组件 ────
@@ -480,7 +539,7 @@ function SectionBox({ title, type, children }: {
 
 // ──── 右侧舱卡片 ────
 
-function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, isCurrentExec }: {
+function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact }: {
   node: WorkflowNode;
   index: number;
   nodeExec?: NodeExecution;
@@ -495,7 +554,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   testRunResult?: import('@/services/contracts/workflowAgent').CapsuleTestRunResult | null;
   isTestRunning?: boolean;
   formatWarnings?: { nodeId: string; message: string }[];
-  isCurrentExec?: boolean;
+  onPreviewArtifact?: (art: ExecutionArtifact) => void;
 }) {
   const typeDef = getCapsuleType(node.nodeType);
   const status = nodeExec?.status || 'idle';
@@ -503,6 +562,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   const accentHue = typeDef?.accentHue ?? capsuleMeta?.accentHue ?? 210;
   const CIcon = typeDef?.Icon;
   const emoji = typeDef?.emoji ?? '📦';
+  const [curlCopied, setCurlCopied] = useState(false);
 
   // 配置值直接从 node.config 读取（由父组件管理状态）
   const configValues: Record<string, string> = {};
@@ -539,8 +599,8 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   const isHttpType = node.nodeType === 'http-request' || node.nodeType === 'smart-http';
 
   // 统一结果：合并测试结果和执行结果为同一面板
-  // 仅显示「本次会话」触发的执行结果，不显示历史执行的陈旧结果
-  const currentExecOutput = (nodeOutput && nodeExec && isCurrentExec && (status === 'completed' || status === 'failed'))
+  // 只要有执行记录即显示（含刷新后从 API 加载的历史执行结果）
+  const currentExecOutput = (nodeOutput && nodeExec && (status === 'completed' || status === 'failed'))
     ? {
         status: status === 'completed' ? 'completed' as const : 'failed' as const,
         durationMs: nodeExec.durationMs ?? 0,
@@ -561,14 +621,20 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   const resultSource: 'test' | 'exec' | null = testRunResult ? 'test' : currentExecOutput ? 'exec' : null;
 
   return (
-    <div>
+    <div className={isActive ? 'capsule-running-border' : ''}>
       <GlassCard
         animated
-        accentHue={accentHue}
         glow={isActive}
-        padding="md"
-        className={isActive ? 'ring-1 ring-white/10' : ''}
+        padding="none"
+        className=""
       >
+        <div className="flex">
+          {/* 左侧色条 */}
+          <div
+            className="w-[3px] flex-shrink-0 rounded-l-[12px]"
+            style={{ background: `hsla(${accentHue}, 55%, 55%, ${status === 'completed' ? 0.5 : 0.25})` }}
+          />
+          <div className="flex-1 min-w-0 p-4">
         {/* 头部：点击展开/折叠 */}
         <div
           className="flex items-center gap-3 cursor-pointer select-none"
@@ -767,7 +833,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
             )}
 
             {/* ──── 操作栏 ──── */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {capsuleMeta?.testable && (
                 <Button
                   size="xs"
@@ -780,6 +846,67 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                 >
                   {isTestRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />}
                   {isTestRunning ? '执行中...' : '▶ 单舱测试'}
+                </Button>
+              )}
+              {node.nodeType === 'tapd-collector' && (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const c = node.config || {};
+                    const cookie = String(c.cookie ?? '');
+                    const wsId = String(c.workspaceId ?? c.workspace_id ?? '');
+                    const dataType = String(c.dataType ?? c.data_type ?? 'bugs');
+                    const dateRange = String(c.dateRange ?? c.date_range ?? '');
+                    const dscTokenMatch = cookie.match(/dsc-token=([^;\s]+)/);
+                    const dscToken = dscTokenMatch ? dscTokenMatch[1] : '';
+                    const objType = dataType === 'bugs' ? 'bug' : dataType.replace(/s$/, '');
+
+                    const filterData: unknown[] = [];
+                    if (dateRange) {
+                      filterData.push({
+                        entity: objType, fieldDisplayName: '创建时间', fieldSubEntityType: '',
+                        fieldIsSystem: '1', fieldOption: 'like', fieldSystemName: 'created',
+                        fieldType: 'text', selectOption: [], value: dateRange, id: '1',
+                      });
+                    }
+                    const body = JSON.stringify({
+                      workspace_ids: wsId,
+                      search_data: JSON.stringify({ data: filterData, optionType: 'AND', needInit: '1' }),
+                      obj_type: objType, search_type: 'advanced', page: 1, perpage: '20',
+                      block_size: 50, parallel_token: '', order_field: 'created', order_value: 'desc',
+                      show_fields: [], extra_fields: [], display_mode: 'list', version: '1.1.0',
+                      only_gen_token: 0, exclude_workspace_configs: [], from_pro_dashboard: 1,
+                      ...(dscToken ? { dsc_token: dscToken } : {}),
+                    });
+
+                    const curl = [
+                      `curl -s -X POST 'https://www.tapd.cn/api/search_filter/search_filter/search'`,
+                      `  -H 'Accept: application/json, text/plain, */*'`,
+                      `  -H 'Accept-Language: zh-CN,zh;q=0.9'`,
+                      `  -H 'Content-Type: application/json'`,
+                      `  -H 'Origin: https://www.tapd.cn'`,
+                      `  -H 'Referer: https://www.tapd.cn/tapd_fe/${wsId}/bug/list'`,
+                      `  -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'`,
+                      `  -H 'sec-ch-ua: "Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"'`,
+                      `  -H 'sec-ch-ua-mobile: ?0'`,
+                      `  -H 'sec-ch-ua-platform: "Windows"'`,
+                      `  -H 'Sec-Fetch-Dest: empty'`,
+                      `  -H 'Sec-Fetch-Mode: cors'`,
+                      `  -H 'Sec-Fetch-Site: same-origin'`,
+                      `  -H 'DNT: 1'`,
+                      `  -H 'Cookie: ${cookie}'`,
+                      `  -d '${body}'`,
+                    ].join(' \\\n');
+
+                    navigator.clipboard.writeText(curl);
+                    setCurlCopied(true);
+                    setTimeout(() => setCurlCopied(false), 2000);
+                  }}
+                >
+                  {curlCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {curlCopied ? '已复制' : '复制 cURL'}
                 </Button>
               )}
               <Button
@@ -801,11 +928,14 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                   source={resultSource!}
                   expandedArtifacts={expandedArtifacts}
                   toggleArtifact={toggleArtifact}
+                  onPreviewArtifact={onPreviewArtifact}
                 />
               </SectionBox>
             )}
           </div>
         )}
+          </div>{/* end flex-1 content */}
+        </div>{/* end flex row */}
       </GlassCard>
     </div>
   );
@@ -813,7 +943,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
 
 // ──── 统一结果面板（测试结果 + 执行结果 合并为单窗口） ────
 
-function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact }: {
+function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact, onPreviewArtifact }: {
   result: {
     status: string;
     durationMs?: number;
@@ -824,6 +954,7 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact 
   source: 'test' | 'exec';
   expandedArtifacts: Set<string>;
   toggleArtifact: (id: string) => void;
+  onPreviewArtifact?: (art: ExecutionArtifact) => void;
 }) {
   const isOk = result.status === 'completed';
   const label = source === 'test' ? '单舱测试结果' : '执行结果';
@@ -910,40 +1041,7 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact 
                       <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                         {formatBytes(art.sizeBytes)}
                       </span>
-                      {/* 下载按钮 */}
-                      {art.cosUrl && (
-                        <a
-                          href={art.cosUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="p-1 rounded-[6px] flex-shrink-0 transition-colors"
-                          title="下载文件"
-                          style={{ color: 'var(--accent-gold)' }}
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                        </a>
-                      )}
-                      {/* 内联内容下载 (无 cosUrl 时) */}
-                      {!art.cosUrl && art.inlineContent && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const blob = new Blob([art.inlineContent!], { type: art.mimeType || 'text/plain' });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = art.name || 'output';
-                            a.click();
-                            URL.revokeObjectURL(url);
-                          }}
-                          className="p-1 rounded-[6px] flex-shrink-0 transition-colors"
-                          title="下载"
-                          style={{ color: 'var(--text-muted)' }}
-                        >
-                          <Download className="w-3 h-3" />
-                        </button>
-                      )}
+                      <ArtifactActionButtons artifact={art} onPreview={onPreviewArtifact} />
                       {art.inlineContent && (
                         isExpanded
                           ? <ChevronDown className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
@@ -1051,8 +1149,35 @@ export function WorkflowEditorPage() {
   // 变量
   const [vars, setVars] = useState<Record<string, string>>({});
 
-  // 当前会话触发的执行 ID（区分「本次操作」vs「历史执行」）
-  const [currentSessionExecId, setCurrentSessionExecId] = useState<string | null>(null);
+  // 右侧面板模式: 'chat' | 'log'
+  const [rightPanel, setRightPanel] = useState<'chat' | 'log' | null>(null);
+
+  // 实时日志
+  interface LogEntry {
+    id: string;
+    ts: string;
+    level: 'info' | 'success' | 'error' | 'warn';
+    nodeId?: string;
+    nodeName?: string;
+    message: string;
+  }
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const logIdRef = useRef(0);
+
+  // 产物预览弹窗
+  const [previewArtifact, setPreviewArtifact] = useState<ExecutionArtifact | null>(null);
+  // 记录上次轮询已知的节点状态，用于生成增量日志
+  const prevNodeStatusRef = useRef<Record<string, string>>({});
+
+  function addLog(level: LogEntry['level'], message: string, opts?: { nodeId?: string; nodeName?: string }) {
+    setLogEntries(prev => [...prev, {
+      id: `log-${logIdRef.current++}`,
+      ts: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+      level,
+      message,
+      ...opts,
+    }]);
+  }
 
   // 轮询
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1121,7 +1246,22 @@ export function WorkflowEditorPage() {
           const exec = res.data.execution;
           setLatestExec(exec);
 
+          // 生成增量日志
           for (const ne of exec.nodeExecutions) {
+            const prev = prevNodeStatusRef.current[ne.nodeId];
+            if (ne.status !== prev) {
+              prevNodeStatusRef.current[ne.nodeId] = ne.status;
+              if (ne.status === 'running' && prev !== 'running') {
+                addLog('info', '开始执行', { nodeId: ne.nodeId, nodeName: ne.nodeName });
+              } else if (ne.status === 'completed' && prev !== 'completed') {
+                addLog('success', `完成${ne.durationMs ? ` (${(ne.durationMs / 1000).toFixed(1)}s)` : ''}`, { nodeId: ne.nodeId, nodeName: ne.nodeName });
+              } else if (ne.status === 'failed') {
+                addLog('error', `失败: ${ne.errorMessage || '未知错误'}`, { nodeId: ne.nodeId, nodeName: ne.nodeName });
+              } else if (ne.status === 'skipped') {
+                addLog('warn', '已跳过', { nodeId: ne.nodeId, nodeName: ne.nodeName });
+              }
+            }
+
             if (['completed', 'failed'].includes(ne.status) && !fetchedNodesRef.current.has(ne.nodeId)) {
               fetchedNodesRef.current.add(ne.nodeId);
               fetchNodeOutput(exec.id, ne.nodeId);
@@ -1129,6 +1269,13 @@ export function WorkflowEditorPage() {
           }
 
           if (['completed', 'failed', 'cancelled'].includes(exec.status)) {
+            if (exec.status === 'completed') {
+              addLog('success', `工作流执行完成${exec.completedAt && exec.startedAt ? ` · 总耗时 ${((new Date(exec.completedAt).getTime() - new Date(exec.startedAt).getTime()) / 1000).toFixed(1)}s` : ''}`);
+            } else if (exec.status === 'failed') {
+              addLog('error', `工作流执行失败: ${exec.errorMessage || '未知错误'}`);
+            } else {
+              addLog('warn', '工作流已取消');
+            }
             stopPolling();
           }
         }
@@ -1147,12 +1294,51 @@ export function WorkflowEditorPage() {
     try {
       const res = await getNodeLogs({ executionId: execId, nodeId });
       if (res.success && res.data) {
+        const logs = res.data!.logs || '';
+        const artifacts = res.data!.artifacts || [];
         setNodeOutputs((prev) => ({
           ...prev,
-          [nodeId]: { logs: res.data!.logs || '', artifacts: res.data!.artifacts || [] },
+          [nodeId]: { logs, artifacts },
         }));
+        // 将后端详细日志注入到右侧日志面板
+        injectBackendLogs(nodeId, logs, artifacts);
       }
     } catch { /* ignore */ }
+  }
+
+  /** 将后端舱执行详细日志注入到右侧日志面板 */
+  function injectBackendLogs(nodeId: string, logs: string, artifacts: ExecutionArtifact[]) {
+    if (!logs && artifacts.length === 0) return;
+    const nodeName = workflow?.nodes.find(n => n.nodeId === nodeId)?.name
+      || latestExec?.nodeExecutions.find(n => n.nodeId === nodeId)?.nodeName
+      || nodeId;
+    // 解析后端日志：几乎所有非空行都注入（除了标题行 [xxx]）
+    if (logs) {
+      const lines = logs.split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        // 跳过标题行（如 "[LLM 分析器] 节点: xxx"）
+        if (trimmed.startsWith('[') && trimmed.includes(']') && trimmed.includes('节点:')) continue;
+        // 跳过分隔线
+        if (trimmed === '--- 调用 LLM Gateway ---') {
+          addLog('info', '调用 LLM Gateway...', { nodeId, nodeName });
+          continue;
+        }
+        // 错误行
+        const level = (trimmed.includes('⚠️') || trimmed.includes('警告'))
+          ? 'warn' as const
+          : trimmed.includes('❌')
+            ? 'error' as const
+            : 'info' as const;
+        addLog(level, trimmed, { nodeId, nodeName });
+      }
+    }
+    // 产物摘要
+    if (artifacts.length > 0) {
+      const summary = artifacts.map(a => `${a.name} (${formatBytes(a.sizeBytes)})`).join(', ');
+      addLog('info', `产物: ${summary}`, { nodeId, nodeName });
+    }
   }
 
   function fetchAllNodeOutputs(exec: WorkflowExecution) {
@@ -1252,13 +1438,17 @@ export function WorkflowEditorPage() {
     setIsExecuting(true);
     setNodeOutputs({});
     fetchedNodesRef.current.clear();
+    prevNodeStatusRef.current = {};
+    setLogEntries([]);
+    addLog('info', '提交执行请求...');
+    setRightPanel('log');  // 自动打开日志面板
 
     try {
       const res = await executeWorkflow({ id: workflow.id, variables: vars });
       if (res.success && res.data) {
         const exec = res.data.execution;
         setLatestExec(exec);
-        setCurrentSessionExecId(exec.id);
+        addLog('info', `工作流已入队，共 ${exec.nodeExecutions.length} 个节点`);
         startPolling(exec.id);
       } else {
         alert('执行失败: ' + (res.error?.message || '未知错误'));
@@ -1331,6 +1521,29 @@ export function WorkflowEditorPage() {
     } finally {
       setTestRunning(null);
     }
+  }
+
+  // ── AI 聊天面板回调 ──
+
+  function handleApplyWorkflow(generated: WorkflowChatGenerated, newWorkflowId?: string) {
+    if (newWorkflowId && newWorkflowId !== workflowId) {
+      // 新建的工作流 — 跳转到对应的编辑页
+      navigate(`/workflow-agent/${newWorkflowId}`);
+      return;
+    }
+    // 修改现有工作流 — 更新节点/边/变量
+    setWorkflow((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        name: generated.name ?? prev.name,
+        description: generated.description ?? prev.description,
+        nodes: generated.nodes ?? prev.nodes,
+        edges: generated.edges ?? prev.edges,
+        variables: generated.variables ?? prev.variables,
+      };
+    });
+    setDirty(true);
   }
 
   // ── UI helpers ──
@@ -1434,6 +1647,22 @@ export function WorkflowEditorPage() {
               {dirty ? '保存*' : '已保存'}
             </Button>
             <Button
+              variant={rightPanel === 'log' ? 'primary' : 'secondary'}
+              size="xs"
+              onClick={() => setRightPanel(p => p === 'log' ? null : 'log')}
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              日志{logEntries.length > 0 ? ` (${logEntries.length})` : ''}
+            </Button>
+            <Button
+              variant={rightPanel === 'chat' ? 'primary' : 'secondary'}
+              size="xs"
+              onClick={() => setRightPanel(p => p === 'chat' ? null : 'chat')}
+            >
+              <Wand2 className="w-3.5 h-3.5" />
+              AI 助手
+            </Button>
+            <Button
               variant="ghost"
               size="xs"
               onClick={() => navigate('/workflow-agent')}
@@ -1462,7 +1691,7 @@ export function WorkflowEditorPage() {
           />
         </div>
 
-        {/* 右侧：已添加的舱列表 + 变量配置 */}
+        {/* 中间：已添加的舱列表 + 变量配置 */}
         <div className="flex-1 overflow-y-auto">
           <div className="px-5 py-4 space-y-4 max-w-3xl">
             {/* 变量配置区 (折叠) */}
@@ -1519,7 +1748,7 @@ export function WorkflowEditorPage() {
                         testRunResult={testRunResult?.nodeId === node.nodeId ? testRunResult.result : null}
                         isTestRunning={testRunning === node.nodeId}
                         formatWarnings={warnings}
-                        isCurrentExec={!!currentSessionExecId && latestExec?.id === currentSessionExecId}
+                        onPreviewArtifact={setPreviewArtifact}
                       />
                     );
                   });
@@ -1556,18 +1785,7 @@ export function WorkflowEditorPage() {
                       <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                         {formatBytes(art.sizeBytes)}
                       </span>
-                      {art.cosUrl && (
-                        <a
-                          href={art.cosUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="p-1 rounded-[6px] transition-colors"
-                          title="下载"
-                          style={{ color: 'var(--accent-gold)' }}
-                        >
-                          <Download className="w-4 h-4" />
-                        </a>
-                      )}
+                      <ArtifactActionButtons artifact={art} onPreview={setPreviewArtifact} size="md" />
                     </div>
                   ))}
                 </div>
@@ -1575,6 +1793,158 @@ export function WorkflowEditorPage() {
             )}
           </div>
         </div>
+
+        {/* 右侧面板：日志 or AI 聊天 */}
+        {rightPanel === 'log' && (
+          <ExecutionLogPanel
+            entries={logEntries}
+            onClear={() => setLogEntries([])}
+            onClose={() => setRightPanel(null)}
+          />
+        )}
+        {rightPanel === 'chat' && (
+          <WorkflowChatPanel
+            workflowId={workflowId}
+            onApplyWorkflow={handleApplyWorkflow}
+            onClose={() => setRightPanel(null)}
+          />
+        )}
+      </div>
+
+      {/* 产物预览弹窗 */}
+      {previewArtifact && (
+        <ArtifactPreviewModal
+          artifact={previewArtifact}
+          onClose={() => setPreviewArtifact(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ──── 执行日志面板 ────
+
+const LOG_LEVEL_COLORS: Record<string, string> = {
+  info: 'rgba(99,102,241,0.9)',
+  success: 'rgba(34,197,94,0.9)',
+  error: 'rgba(239,68,68,0.9)',
+  warn: 'rgba(234,179,8,0.9)',
+};
+
+function ExecutionLogPanel({ entries, onClear, onClose }: {
+  entries: { id: string; ts: string; level: string; nodeId?: string; nodeName?: string; message: string }[];
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  useEffect(() => {
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [entries, autoScroll]);
+
+  function handleScroll() {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    setAutoScroll(scrollHeight - scrollTop - clientHeight < 40);
+  }
+
+  return (
+    <div
+      className="flex flex-col h-full"
+      style={{
+        width: 340,
+        flexShrink: 0,
+        borderLeft: '1px solid rgba(255,255,255,0.08)',
+        background: 'rgba(0,0,0,0.2)',
+      }}
+    >
+      {/* Header */}
+      <div
+        className="flex items-center gap-2 px-3 py-2.5 flex-shrink-0"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+      >
+        <Terminal className="w-3.5 h-3.5" style={{ color: 'rgba(99,102,241,0.8)' }} />
+        <span className="text-[12px] font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
+          执行日志
+        </span>
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          {entries.length} 条
+        </span>
+        {entries.length > 0 && (
+          <button
+            onClick={onClear}
+            className="p-1 rounded-[6px] transition-colors"
+            style={{ color: 'var(--text-muted)' }}
+            title="清空日志"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        )}
+        <button
+          onClick={onClose}
+          className="p-1 rounded-[6px] transition-colors"
+          style={{ color: 'var(--text-muted)' }}
+          title="关闭"
+        >
+          <XCircle className="w-3 h-3" />
+        </button>
+      </div>
+
+      {/* Log entries */}
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5"
+        onScroll={handleScroll}
+        style={{ fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}
+      >
+        {entries.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full gap-2 opacity-40">
+            <Terminal className="w-6 h-6" />
+            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              执行工作流后日志将在此显示
+            </span>
+          </div>
+        )}
+
+        {entries.map((entry) => (
+          <div
+            key={entry.id}
+            className="flex items-start gap-1.5 px-2 py-1 rounded-[6px] transition-colors"
+            style={{ background: entry.level === 'error' ? 'rgba(239,68,68,0.04)' : 'transparent' }}
+          >
+            {/* Level dot */}
+            <span
+              className="w-1.5 h-1.5 rounded-full flex-shrink-0 mt-[5px]"
+              style={{ background: LOG_LEVEL_COLORS[entry.level] || LOG_LEVEL_COLORS.info }}
+            />
+            {/* Content */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                  {entry.ts}
+                </span>
+                {entry.nodeName && (
+                  <span
+                    className="text-[9px] px-1.5 py-0 rounded-[4px] font-medium"
+                    style={{
+                      background: 'rgba(99,102,241,0.1)',
+                      color: 'rgba(99,102,241,0.8)',
+                      border: '1px solid rgba(99,102,241,0.15)',
+                    }}
+                  >
+                    {entry.nodeName}
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                {entry.message}
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

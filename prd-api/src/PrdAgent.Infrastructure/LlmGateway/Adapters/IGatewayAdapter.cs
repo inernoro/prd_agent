@@ -48,4 +48,13 @@ public interface IGatewayAdapter
     /// <param name="responseBody">响应体 JSON</param>
     /// <returns>Token 使用量</returns>
     GatewayTokenUsage? ParseTokenUsage(string responseBody);
+
+    /// <summary>
+    /// 从非流式响应体中提取消息文本内容
+    /// OpenAI: choices[0].message.content
+    /// Claude: content[0].text
+    /// </summary>
+    /// <param name="responseBody">响应体 JSON</param>
+    /// <returns>提取的文本内容，失败返回 null（回退到原始 JSON）</returns>
+    string? ParseMessageContent(string responseBody);
 }

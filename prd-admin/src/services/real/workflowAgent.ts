@@ -1,5 +1,6 @@
 import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
+import { useAuthStore } from '@/stores/authStore';
 import type {
   ListWorkflowsContract,
   CreateWorkflowContract,
@@ -18,8 +19,12 @@ import type {
   ListCapsuleTypesContract,
   GetCapsuleTypeContract,
   TestRunCapsuleContract,
+  GetChatHistoryContract,
+  ChatWorkflowContract,
+  AnalyzeExecutionContract,
   Workflow,
   WorkflowExecution,
+  WorkflowChatMessage,
   ShareLink,
   ExecutionArtifact,
   CapsuleTypeMeta,
@@ -176,4 +181,65 @@ export const testRunCapsuleReal: TestRunCapsuleContract = async (input) => {
     api.workflowAgent.capsules.testRun(),
     { method: 'POST', body: input }
   );
+};
+
+// ========== TAPD Cookie Validation ==========
+
+export async function validateTapdCookie(input: { cookie: string; workspaceId?: string }) {
+  return await apiRequest<{
+    valid: boolean;
+    error?: string;
+    userName?: string;
+    userId?: string;
+    hasDscToken?: boolean;
+    workspaces?: { id: string; name: string }[];
+    bugCount?: number;
+  }>(
+    api.workflowAgent.tapd.validateCookie(),
+    { method: 'POST', body: input }
+  );
+}
+
+// ========== Chat Assistant (SSE) ==========
+
+export const getChatHistoryReal: GetChatHistoryContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.afterSeq !== undefined) qs.set('afterSeq', String(input.afterSeq));
+  const query = qs.toString();
+  return await apiRequest<{ messages: WorkflowChatMessage[] }>(
+    api.workflowAgent.chat.history(input.workflowId) + (query ? `?${query}` : ''),
+    { method: 'GET' }
+  );
+};
+
+/** Returns raw Response for SSE streaming */
+export const chatWorkflowReal: ChatWorkflowContract = async (input) => {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
+  const token = useAuthStore.getState().token;
+  const res = await fetch(`${baseUrl}${api.workflowAgent.chat.fromChat()}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(input),
+  });
+  return res;
+};
+
+/** Returns raw Response for SSE streaming */
+export const analyzeExecutionReal: AnalyzeExecutionContract = async (input) => {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
+  const token = useAuthStore.getState().token;
+  const res = await fetch(`${baseUrl}${api.workflowAgent.chat.analyze(input.executionId)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ instruction: input.instruction }),
+  });
+  return res;
 };

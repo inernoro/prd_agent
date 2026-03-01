@@ -26,6 +26,7 @@ public class DatabaseInitializer
         await EnsureAdminUserAsync();
         await EnsureInitialInviteCodeAsync();
         await EnsureSystemRolesAsync();
+        await EnsureWorkflowSkillAsync();
     }
 
     private async Task EnsureAdminUserAsync()
@@ -122,5 +123,76 @@ public class DatabaseInitializer
 
             await _db.SystemRoles.InsertOneAsync(role);
         }
+    }
+
+    private async Task EnsureWorkflowSkillAsync()
+    {
+        const string skillKey = "workflow-from-code";
+        var existing = await _db.Skills
+            .Find(s => s.SkillKey == skillKey)
+            .FirstOrDefaultAsync();
+
+        if (existing != null)
+            return;
+
+        var skill = new Skill
+        {
+            Id = await _idGenerator.GenerateIdAsync("config"),
+            SkillKey = skillKey,
+            Title = "代码转工作流",
+            Description = "将 Python/JS 代码片段或 GitHub URL 转换为自动化工作流。支持 HTTP 请求、数据提取、格式转换等舱类型的自动识别和映射。",
+            Icon = "🔄",
+            Category = "workflow",
+            Tags = new List<string> { "工作流", "代码转换", "自动化" },
+            Visibility = SkillVisibility.System,
+            IsBuiltIn = true,
+            IsEnabled = true,
+            Order = 10,
+            Input = new SkillInputConfig
+            {
+                ContextScope = "none",
+                AcceptsUserInput = true,
+                UserInputPlaceholder = "粘贴 Python/JS 代码，或输入 GitHub URL，或描述你想要的工作流",
+                AcceptsAttachments = false,
+                Parameters = new List<SkillParameter>
+                {
+                    new()
+                    {
+                        Key = "codeUrl",
+                        Label = "代码仓库 URL（可选）",
+                        Type = "text",
+                        Required = false,
+                    },
+                },
+            },
+            Execution = new SkillExecutionConfig
+            {
+                PromptTemplate = @"请将以下内容转换为工作流配置：
+
+{{userInput}}
+
+{{#if codeUrl}}
+代码仓库：{{codeUrl}}
+{{/if}}
+
+请分析代码中的：
+1. HTTP 请求（URL、Method、Headers、Body）→ 映射为 http-request 或 smart-http 舱
+2. 数据处理逻辑 → 映射为 data-extractor / data-merger / format-converter 舱
+3. 文件操作 → 映射为 file-exporter 舱
+4. Cookie/Token → 提取为工作流变量
+
+返回完整的工作流 JSON 配置。",
+                SystemPromptOverride = null,
+                AppCallerCode = "workflow-agent.chat-assistant::chat",
+                ModelType = "chat",
+            },
+            Output = new SkillOutputConfig
+            {
+                Mode = "chat",
+                EchoToChat = true,
+            },
+        };
+
+        await _db.Skills.InsertOneAsync(skill);
     }
 }

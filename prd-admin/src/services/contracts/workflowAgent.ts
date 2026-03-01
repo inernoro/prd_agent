@@ -375,3 +375,45 @@ export type TestRunCapsuleContract = (input: {
 }) => Promise<ApiResponse<{
   result: CapsuleTestRunResult;
 }>>;
+
+// ─────────────────────────────────────────────
+// AI 对话助手 Models & Contracts
+// ─────────────────────────────────────────────
+
+export interface WorkflowChatMessage {
+  id: string;
+  workflowId?: string;
+  role: 'user' | 'assistant';
+  content: string;
+  generated?: WorkflowChatGenerated;
+  userId: string;
+  createdAt: string;
+  seq: number;
+}
+
+export interface WorkflowChatGenerated {
+  name?: string;
+  description?: string;
+  nodes?: WorkflowNode[];
+  edges?: WorkflowEdge[];
+  variables?: WorkflowVariable[];
+  isNew?: boolean;
+}
+
+export type GetChatHistoryContract = (input: {
+  workflowId: string;
+  afterSeq?: number;
+}) => Promise<ApiResponse<{ messages: WorkflowChatMessage[] }>>;
+
+export type AnalyzeExecutionContract = (input: {
+  executionId: string;
+  instruction?: string;
+}) => Promise<Response>;
+
+/** SSE streaming — returns raw Response for readSseStream */
+export type ChatWorkflowContract = (input: {
+  workflowId?: string;
+  instruction: string;
+  codeSnippet?: string;
+  codeUrl?: string;
+}) => Promise<Response>;

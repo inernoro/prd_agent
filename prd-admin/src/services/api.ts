@@ -683,6 +683,14 @@ export const api = {
       typeByKey: (typeKey: string) => `/api/workflow-agent/capsule-types/${typeKey}`,
       testRun: () => '/api/workflow-agent/capsules/test-run',
     },
+    tapd: {
+      validateCookie: () => '/api/workflow-agent/tapd/validate-cookie',
+    },
+    chat: {
+      fromChat: () => '/api/workflow-agent/workflows/from-chat',
+      history: (workflowId: string) => `/api/workflow-agent/workflows/${workflowId}/chat-history`,
+      analyze: (executionId: string) => `/api/workflow-agent/executions/${executionId}/analyze`,
+    },
   },
 
   // ============ Video Agent 视频创作 ============

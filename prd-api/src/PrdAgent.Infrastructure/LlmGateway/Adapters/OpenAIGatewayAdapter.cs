@@ -186,4 +186,30 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
         }
         return null;
     }
+
+    public string? ParseMessageContent(string responseBody)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            // OpenAI format: choices[0].message.content
+            if (doc.RootElement.TryGetProperty("choices", out var choices) &&
+                choices.ValueKind == JsonValueKind.Array &&
+                choices.GetArrayLength() > 0)
+            {
+                var firstChoice = choices[0];
+                if (firstChoice.TryGetProperty("message", out var message) &&
+                    message.TryGetProperty("content", out var content) &&
+                    content.ValueKind == JsonValueKind.String)
+                {
+                    return content.GetString();
+                }
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+        return null;
+    }
 }

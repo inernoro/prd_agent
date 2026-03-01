@@ -166,22 +166,31 @@ public static class CapsuleTypeRegistry
     {
         TypeKey = CapsuleTypes.TapdCollector,
         Name = "TAPD 数据采集",
-        Description = "通过 TAPD Open API 拉取 Bug、Story 等项目数据",
+        Description = "通过 Cookie 或 Open API 拉取 Bug、Story 等项目数据",
         Icon = "database",
         Category = CapsuleCategory.Processor,
         AccentHue = 30,
         ConfigSchema = new()
         {
-            new() { Key = "apiUrl", Label = "TAPD API 地址", FieldType = "text", Required = false, Placeholder = "https://api.tapd.cn", DefaultValue = "https://api.tapd.cn", HelpTip = "TAPD Open API 地址，一般不需要修改。留空或使用默认值即可" },
-            new() { Key = "workspaceId", Label = "工作空间 ID", FieldType = "text", Required = true, Placeholder = "20000001", HelpTip = "TAPD 项目首页地址栏中的数字 ID" },
-            new() { Key = "authToken", Label = "API 访问凭证", FieldType = "password", Required = true, Placeholder = "dXNlcjpwYXNzd29yZA==", HelpTip = "在 TAPD「公司管理 → API」中创建，格式为 Base64(api_user:api_password)" },
+            new() { Key = "authMode", Label = "认证方式", FieldType = "select", Required = true, DefaultValue = "cookie", Options = new() {
+                new() { Value = "cookie", Label = "Cookie (浏览器登录)" },
+                new() { Value = "basic", Label = "Open API (Basic Auth)" },
+            }, HelpTip = "Cookie 方式：从浏览器复制 Cookie，数据更全。Open API：需在公司管理中申请 API 账号" },
+            new() { Key = "workspaceId", Label = "工作空间 ID", FieldType = "text", Required = true, Placeholder = "50116108", HelpTip = "TAPD 项目 URL 中的数字 ID，如 tapd.cn/50116108" },
+            new() { Key = "cookie", Label = "Cookie 字符串", FieldType = "password", Required = false, Placeholder = "tapdsession=xxx; t_u=xxx; ...", HelpTip = "浏览器登录 TAPD → F12 → Network → 任意请求 → Headers → Cookie，复制整段粘贴。认证方式选 Cookie 时必填" },
+            new() { Key = "dscToken", Label = "dsc-token", FieldType = "text", Required = false, Placeholder = "xgoJSmV1VxqW6fLm", HelpTip = "从 Cookie 中的 dsc-token 值，或从请求中获取。Cookie 模式必填" },
+            new() { Key = "authToken", Label = "API 访问凭证", FieldType = "password", Required = false, Placeholder = "dXNlcjpwYXNzd29yZA==", HelpTip = "Open API 模式使用。Base64(api_user:api_password)" },
             new() { Key = "dataType", Label = "数据类型", FieldType = "select", Required = true, DefaultValue = "bugs", Options = new() {
                 new() { Value = "bugs", Label = "缺陷 (Bugs)" },
                 new() { Value = "stories", Label = "需求 (Stories)" },
                 new() { Value = "tasks", Label = "任务 (Tasks)" },
                 new() { Value = "iterations", Label = "迭代 (Iterations)" },
             }},
-            new() { Key = "dateRange", Label = "时间范围", FieldType = "text", Required = false, Placeholder = "2026-01", HelpTip = "留空取全部，填月份(YYYY-MM)按月筛选" },
+            new() { Key = "dateRange", Label = "时间范围", FieldType = "text", Required = false, Placeholder = "2026-01", HelpTip = "留空取全部，填月份 (YYYY-MM) 按月筛选" },
+            new() { Key = "maxPages", Label = "最大页数", FieldType = "number", Required = false, DefaultValue = "50", HelpTip = "防止无限翻页，每页 20 条" },
+            new() { Key = "customCurl", Label = "自定义 cURL（兜底）", FieldType = "textarea", Required = false,
+                Placeholder = "curl 'https://www.tapd.cn/api/...' -H 'Cookie: ...' --data-raw '{...}'",
+                HelpTip = "从浏览器 / Postman 复制可用的 cURL 命令粘贴到这里。填写后将直接执行此请求，不再自动构造请求。支持自动分页" },
         },
         DefaultInputSlots = new()
         {
@@ -422,6 +431,35 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta DataAggregator = new()
+    {
+        TypeKey = CapsuleTypes.DataAggregator,
+        Name = "数据统计",
+        Description = "对 JSON 数组数据进行分组统计（计数、分布、占比），输出结构化摘要供 LLM 分析趋势",
+        Icon = "bar-chart",
+        Category = CapsuleCategory.Processor,
+        AccentHue = 120,
+        ConfigSchema = new()
+        {
+            new() { Key = "groupByFields", Label = "分组统计字段", FieldType = "text", Required = false, DefaultValue = "status,severity,priority,reporter", HelpTip = "逗号分隔的字段名，将按每个字段进行分组计数。支持嵌套路径如 Bug.status。留空则自动检测高频字段" },
+            new() { Key = "dateField", Label = "日期字段", FieldType = "text", Required = false, DefaultValue = "created", HelpTip = "用于时间趋势统计的日期字段名，支持嵌套路径如 Bug.created" },
+            new() { Key = "dateGroupBy", Label = "时间粒度", FieldType = "select", Required = false, DefaultValue = "week", Options = new() {
+                new() { Value = "day", Label = "按天" },
+                new() { Value = "week", Label = "按周" },
+                new() { Value = "month", Label = "按月" },
+            }},
+            new() { Key = "topN", Label = "Top N", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "每个维度保留前 N 个分组（其余归入「其他」）" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "agg-in", Name = "data", DataType = "json", Required = true, Description = "待统计的 JSON 数组数据" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "agg-out", Name = "statistics", DataType = "json", Required = true, Description = "统计摘要（分组计数、分布、趋势）" },
+        },
+    };
+
     // ──────────── 流程控制类 ────────────
 
     public static readonly CapsuleTypeMeta Delay = new()
@@ -599,7 +637,7 @@ public static class CapsuleTypeRegistry
         // 触发类
         Timer, WebhookReceiver, ManualTrigger, FileUpload,
         // 处理类
-        TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter,
+        TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter, DataAggregator,
         // 流程控制类
         Delay, Condition,
         // 输出类

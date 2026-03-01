@@ -1110,6 +1110,7 @@ import type {
   ListCapsuleTypesContract,
   GetCapsuleTypeContract,
   TestRunCapsuleContract,
+  GetChatHistoryContract,
 } from '@/services/contracts/workflowAgent';
 import {
   listWorkflowsReal,
@@ -1129,6 +1130,9 @@ import {
   listCapsuleTypesReal,
   getCapsuleTypeReal,
   testRunCapsuleReal,
+  getChatHistoryReal,
+  chatWorkflowReal,
+  analyzeExecutionReal,
 } from '@/services/real/workflowAgent';
 
 export const listWorkflows: ListWorkflowsContract = withAuth(listWorkflowsReal);
@@ -1148,6 +1152,10 @@ export const revokeShare: RevokeShareContract = withAuth(revokeShareReal);
 export const listCapsuleTypes: ListCapsuleTypesContract = withAuth(listCapsuleTypesReal);
 export const getCapsuleType: GetCapsuleTypeContract = withAuth(getCapsuleTypeReal);
 export const testRunCapsule: TestRunCapsuleContract = withAuth(testRunCapsuleReal);
+export const getChatHistory: GetChatHistoryContract = withAuth(getChatHistoryReal);
+export { chatWorkflowReal as chatWorkflow } from '@/services/real/workflowAgent';
+export { analyzeExecutionReal as analyzeExecution } from '@/services/real/workflowAgent';
+export { validateTapdCookie } from '@/services/real/workflowAgent';
 
 // 数据迁移服务
 import type {

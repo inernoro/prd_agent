@@ -153,11 +153,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 return GatewayResponse.Fail("LLM_ERROR", errorMsg, (int)response.StatusCode);
             }
 
+            // 从原始响应中提取消息文本内容
+            var messageContent = adapter.ParseMessageContent(responseBody);
+
             return new GatewayResponse
             {
                 Success = true,
                 StatusCode = (int)response.StatusCode,
-                Content = responseBody,
+                Content = messageContent ?? responseBody,
+                RawResponseBody = responseBody,
                 Resolution = gatewayResolution,
                 TokenUsage = tokenUsage,
                 DurationMs = durationMs,

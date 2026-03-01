@@ -3,7 +3,7 @@ import {
   Play, History, Loader2, CheckCircle2, AlertCircle,
   ArrowDown, Download, ChevronDown, ChevronRight, FileText,
   ExternalLink, Settings2, XCircle, RefreshCw, HelpCircle, Zap,
-  FlaskConical, Box, PenLine,
+  FlaskConical, Box, PenLine, Eye, Terminal, Trash2,
 } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import {
@@ -31,6 +31,7 @@ import {
   getCapsuleType,
   getIconForCapsule, getEmojiForCapsule, getCategoryEmoji,
 } from './capsuleRegistry';
+import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 
 // ═══════════════════════════════════════════════════════════════
 // 流水线步骤元数据（使用舱注册表）
@@ -249,15 +250,175 @@ const EXEC_STATUS_MAP: Record<string, { label: string; variant: 'success' | 'dan
 };
 
 // ═══════════════════════════════════════════════════════════════
+// 实时日志类型 + 面板
+// ═══════════════════════════════════════════════════════════════
+
+interface LogEntry {
+  id: string;
+  ts: string;
+  level: 'info' | 'success' | 'error' | 'warn';
+  nodeId?: string;
+  nodeName?: string;
+  message: string;
+  detail?: string;
+}
+
+const LOG_LEVEL_COLORS: Record<string, string> = {
+  info: 'rgba(99,102,241,0.9)',
+  success: 'rgba(34,197,94,0.9)',
+  error: 'rgba(239,68,68,0.9)',
+  warn: 'rgba(234,179,8,0.9)',
+};
+
+function ExecutionLogPanel({ entries, onClear }: { entries: LogEntry[]; onClear: () => void }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  useEffect(() => {
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [entries, autoScroll]);
+
+  function handleScroll() {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    setAutoScroll(scrollHeight - scrollTop - clientHeight < 40);
+  }
+
+  return (
+    <div
+      className="flex flex-col h-full"
+      style={{
+        width: 360,
+        flexShrink: 0,
+        borderLeft: '1px solid rgba(255,255,255,0.08)',
+        background: 'rgba(0,0,0,0.2)',
+      }}
+    >
+      {/* Header */}
+      <div
+        className="flex items-center gap-2 px-3 py-2.5 flex-shrink-0"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+      >
+        <Terminal className="w-3.5 h-3.5" style={{ color: 'rgba(99,102,241,0.8)' }} />
+        <span className="text-[12px] font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
+          实时日志
+        </span>
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          {entries.length} 条
+        </span>
+        {entries.length > 0 && (
+          <button
+            onClick={onClear}
+            className="p-1 rounded-[6px] transition-colors"
+            style={{ color: 'var(--text-muted)' }}
+            title="清空日志"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+
+      {/* Log entries */}
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5"
+        onScroll={handleScroll}
+        style={{ fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}
+      >
+        {entries.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full gap-2 opacity-40">
+            <Terminal className="w-6 h-6" />
+            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              执行工作流后日志将在此显示
+            </span>
+          </div>
+        )}
+
+        {entries.map((entry) => (
+          <div
+            key={entry.id}
+            className="flex items-start gap-1.5 px-2 py-1 rounded-[6px] transition-colors"
+            style={{ background: entry.level === 'error' ? 'rgba(239,68,68,0.04)' : 'transparent' }}
+          >
+            {/* Level dot */}
+            <span
+              className="w-1.5 h-1.5 rounded-full flex-shrink-0 mt-[5px]"
+              style={{ background: LOG_LEVEL_COLORS[entry.level] }}
+            />
+            {/* Content */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                  {entry.ts}
+                </span>
+                {entry.nodeName && (
+                  <span
+                    className="text-[9px] px-1.5 py-0 rounded-[4px] font-medium"
+                    style={{
+                      background: 'rgba(99,102,241,0.1)',
+                      color: 'rgba(99,102,241,0.8)',
+                      border: '1px solid rgba(99,102,241,0.15)',
+                    }}
+                  >
+                    {entry.nodeName}
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                {entry.message}
+              </div>
+              {entry.detail && (
+                <pre
+                  className="text-[9px] mt-0.5 leading-relaxed whitespace-pre-wrap break-all max-h-20 overflow-auto"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  {entry.detail}
+                </pre>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 产物预览
 // ═══════════════════════════════════════════════════════════════
 
-function ArtifactCard({ artifact, isExpanded, onToggle }: {
+function ArtifactCard({ artifact, isExpanded, onToggle, onPreview }: {
   artifact: ExecutionArtifact;
   isExpanded: boolean;
   onToggle: () => void;
+  onPreview?: () => void;
 }) {
   const hasInline = !!artifact.inlineContent;
+  const hasContent = hasInline || !!artifact.cosUrl;
+
+  function handleDownload(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (artifact.cosUrl) {
+      window.open(artifact.cosUrl, '_blank');
+      return;
+    }
+    if (!artifact.inlineContent) return;
+    const ext = artifact.mimeType === 'text/markdown' ? '.md'
+      : artifact.mimeType === 'text/html' ? '.html'
+      : artifact.mimeType === 'application/json' ? '.json'
+      : artifact.mimeType === 'text/csv' ? '.csv' : '.txt';
+    const fileName = artifact.name.includes('.') ? artifact.name : `${artifact.name}${ext}`;
+    const blob = new Blob([artifact.inlineContent], { type: artifact.mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div
       className="rounded-[10px] overflow-hidden"
@@ -267,9 +428,9 @@ function ArtifactCard({ artifact, isExpanded, onToggle }: {
       }}
     >
       <div
-        className={`flex items-center gap-2 px-3 py-2 ${hasInline ? 'surface-row cursor-pointer' : ''}`}
+        className="flex items-center gap-2 px-3 py-2 surface-row cursor-pointer"
         onClick={hasInline ? onToggle : undefined}
-        style={hasInline ? { transition: 'background 0.15s' } : undefined}
+        style={{ transition: 'background 0.15s' }}
       >
         <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
         <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
@@ -278,18 +439,27 @@ function ArtifactCard({ artifact, isExpanded, onToggle }: {
         <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
           {formatBytes(artifact.sizeBytes)}
         </span>
-        {artifact.cosUrl && (
-          <a
-            href={artifact.cosUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
+        {/* Preview button */}
+        {hasContent && onPreview && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onPreview(); }}
             className="surface-row p-1 rounded-[6px] flex-shrink-0 transition-colors"
-            title="下载文件"
+            title="预览"
+            style={{ color: 'var(--accent-gold)' }}
+          >
+            <Eye className="w-3 h-3" />
+          </button>
+        )}
+        {/* Download button (always visible for any artifact with content) */}
+        {hasContent && (
+          <button
+            onClick={handleDownload}
+            className="surface-row p-1 rounded-[6px] flex-shrink-0 transition-colors"
+            title="下载"
             style={{ color: 'var(--accent-gold)' }}
           >
             <Download className="w-3 h-3" />
-          </a>
+          </button>
         )}
         {hasInline && (
           isExpanded
@@ -319,12 +489,13 @@ function ArtifactCard({ artifact, isExpanded, onToggle }: {
 // 步骤卡片
 // ═══════════════════════════════════════════════════════════════
 
-function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact, isLast }: {
+function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact, onPreviewArtifact, isLast }: {
   meta: StepMeta;
   nodeExec?: NodeExecution;
   output?: { logs: string; artifacts: ExecutionArtifact[] };
   expandedArtifacts: Set<string>;
   onToggleArtifact: (id: string) => void;
+  onPreviewArtifact: (art: ExecutionArtifact) => void;
   isLast: boolean;
 }) {
   const status = nodeExec?.status || 'idle';
@@ -438,6 +609,7 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
                     artifact={art}
                     isExpanded={expandedArtifacts.has(art.artifactId)}
                     onToggle={() => onToggleArtifact(art.artifactId)}
+                    onPreview={() => onPreviewArtifact(art)}
                   />
                 ))}
               </div>
@@ -731,6 +903,22 @@ export function WorkflowAgentPage() {
   const [expandedArtifacts, setExpandedArtifacts] = useState<Set<string>>(new Set());
   const [showCatalog, setShowCatalog] = useState(false);
   const [showCanvas, setShowCanvas] = useState(false);
+  const [previewArtifact, setPreviewArtifact] = useState<ExecutionArtifact | null>(null);
+
+  // 实时日志
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const logIdRef = useRef(0);
+
+  function addLog(level: LogEntry['level'], message: string, opts?: { nodeId?: string; nodeName?: string; detail?: string }) {
+    const entry: LogEntry = {
+      id: `log-${logIdRef.current++}`,
+      ts: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+      level,
+      message,
+      ...opts,
+    };
+    setLogEntries(prev => [...prev, entry]);
+  }
 
   // SSE 流式订阅
   const sseAbortRef = useRef<AbortController | null>(null);
@@ -823,10 +1011,12 @@ export function WorkflowAgentPage() {
   }
 
   function handleSseEvent(eventName: string, payload: Record<string, unknown>, execId: string) {
+    const nodeName = (payload.nodeName as string) || (payload.nodeId as string) || '';
+    const nodeId = (payload.nodeId as string) || '';
+
     if (eventName === 'node-started') {
       setLatestExec(prev => {
         if (!prev) return prev;
-        const nodeId = payload.nodeId as string;
         return {
           ...prev,
           status: 'running',
@@ -835,15 +1025,18 @@ export function WorkflowAgentPage() {
           ),
         };
       });
+      const inputCount = payload.inputArtifactCount as number | undefined;
+      addLog('info', `开始执行${inputCount ? ` (${inputCount} 个输入产物)` : ''}`, { nodeId, nodeName });
     } else if (eventName === 'node-completed') {
-      const nodeId = payload.nodeId as string;
+      const durationMs = payload.durationMs as number;
+      const artifactCount = payload.artifactCount as number | undefined;
       setLatestExec(prev => {
         if (!prev) return prev;
         return {
           ...prev,
           nodeExecutions: prev.nodeExecutions.map(ne =>
             ne.nodeId === nodeId
-              ? { ...ne, status: 'completed', durationMs: payload.durationMs as number, completedAt: new Date().toISOString() }
+              ? { ...ne, status: 'completed', durationMs, completedAt: new Date().toISOString() }
               : ne
           ),
         };
@@ -852,15 +1045,26 @@ export function WorkflowAgentPage() {
         fetchedNodesRef.current.add(nodeId);
         fetchNodeOutput(execId, nodeId);
       }
+      addLog('success', `完成 (${(durationMs / 1000).toFixed(1)}s)${artifactCount ? ` · ${artifactCount} 个产物` : ''}`, { nodeId, nodeName });
+
+      // 显示 SSE 中携带的日志摘要
+      const logs = payload.logs as string | undefined;
+      if (logs) {
+        const lines = logs.split('\n').filter(Boolean).slice(0, 8);
+        for (const line of lines) {
+          addLog('info', line, { nodeId, nodeName });
+        }
+      }
     } else if (eventName === 'node-failed') {
-      const nodeId = payload.nodeId as string;
+      const errorMsg = payload.errorMessage as string;
+      const durationMs = payload.durationMs as number;
       setLatestExec(prev => {
         if (!prev) return prev;
         return {
           ...prev,
           nodeExecutions: prev.nodeExecutions.map(ne =>
             ne.nodeId === nodeId
-              ? { ...ne, status: 'failed', errorMessage: payload.errorMessage as string, durationMs: payload.durationMs as number, completedAt: new Date().toISOString() }
+              ? { ...ne, status: 'failed', errorMessage: errorMsg, durationMs, completedAt: new Date().toISOString() }
               : ne
           ),
         };
@@ -868,6 +1072,15 @@ export function WorkflowAgentPage() {
       if (!fetchedNodesRef.current.has(nodeId)) {
         fetchedNodesRef.current.add(nodeId);
         fetchNodeOutput(execId, nodeId);
+      }
+      addLog('error', `失败 (${(durationMs / 1000).toFixed(1)}s): ${errorMsg || '未知错误'}`, { nodeId, nodeName });
+
+      const logs = payload.logs as string | undefined;
+      if (logs) {
+        const lines = logs.split('\n').filter(Boolean).slice(0, 5);
+        for (const line of lines) {
+          addLog('warn', line, { nodeId, nodeName });
+        }
       }
     } else if (eventName === 'execution-completed') {
       const status = payload.status as string;
@@ -875,7 +1088,11 @@ export function WorkflowAgentPage() {
         if (!prev) return prev;
         return { ...prev, status, completedAt: new Date().toISOString(), errorMessage: (payload.errorMessage as string) || undefined };
       });
-      // 获取最终完整状态
+      const totalMs = payload.durationMs as number | undefined;
+      addLog(
+        status === 'completed' ? 'success' : status === 'failed' ? 'error' : 'warn',
+        `执行${status === 'completed' ? '完成' : status === 'failed' ? '失败' : '已取消'}${totalMs ? ` · 总耗时 ${(totalMs / 1000).toFixed(1)}s` : ''}`,
+      );
       handleRefresh();
       stopSse();
     }
@@ -945,7 +1162,9 @@ export function WorkflowAgentPage() {
     setIsExecuting(true);
     setNodeOutputs({});
     setExpandedArtifacts(new Set());
+    setLogEntries([]);
     fetchedNodesRef.current.clear();
+    addLog('info', '开始执行工作流...');
 
     try {
       let wf = tapdWorkflow;
@@ -1019,7 +1238,7 @@ export function WorkflowAgentPage() {
   // ═══ 渲染 ═══
 
   return (
-    <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
+    <div className="h-full min-h-0 flex flex-col">
       {/* ──── 标题栏 ──── */}
       <TabBar
         title="数据自动化流水线"
@@ -1071,7 +1290,10 @@ export function WorkflowAgentPage() {
         }
       />
 
-      <div className="px-5 pb-6 space-y-5 max-w-3xl mx-auto w-full">
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+      {/* ──── 左侧主内容 ──── */}
+      <div className="flex-1 overflow-y-auto">
+      <div className="px-5 pb-6 pt-5 space-y-5 max-w-3xl mx-auto w-full">
         {/* ──── 描述 ──── */}
         <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
           一键执行 → 实时观察每个节点状态 → 条件分支自动路由 → 查看最终产出
@@ -1169,6 +1391,7 @@ export function WorkflowAgentPage() {
                     output={nodeOutputs[meta.nodeId]}
                     expandedArtifacts={expandedArtifacts}
                     onToggleArtifact={toggleArtifact}
+                    onPreviewArtifact={(art) => setPreviewArtifact(art)}
                     isLast={idx === STEPS.length - 1}
                   />
                 ))}
@@ -1214,6 +1437,7 @@ export function WorkflowAgentPage() {
                         artifact={art}
                         isExpanded={expandedArtifacts.has(art.artifactId)}
                         onToggle={() => toggleArtifact(art.artifactId)}
+                        onPreview={() => setPreviewArtifact(art)}
                       />
                     ))}
                   </div>
@@ -1277,6 +1501,19 @@ export function WorkflowAgentPage() {
           </>
         )}
       </div>
+      </div>
+
+      {/* ──── 右侧日志面板 ──── */}
+      <ExecutionLogPanel entries={logEntries} onClear={() => setLogEntries([])} />
+      </div>
+
+      {/* 产物预览模态窗 */}
+      {previewArtifact && (
+        <ArtifactPreviewModal
+          artifact={previewArtifact}
+          onClose={() => setPreviewArtifact(null)}
+        />
+      )}
     </div>
   );
 }
