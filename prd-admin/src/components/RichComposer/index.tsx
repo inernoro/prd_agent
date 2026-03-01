@@ -298,8 +298,8 @@ function EditorInner({
               padding: 0,
               background: 'transparent',
               color: 'var(--text-primary, rgba(255,255,255,0.9))',
-              fontSize: 12,
-              lineHeight: '1.125rem',
+              fontSize: 14,
+              lineHeight: '20px',
               ...style,
             }}
           />
@@ -313,8 +313,8 @@ function EditorInner({
               right: 0,
               pointerEvents: 'none',
               color: 'var(--text-muted, rgba(255,255,255,0.4))',
-              fontSize: 12,
-              lineHeight: '1.125rem',
+              fontSize: 14,
+              lineHeight: '20px',
               userSelect: 'none',
             }}
           >

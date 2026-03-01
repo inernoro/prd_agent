@@ -53,6 +53,9 @@ public static class IntentTypes
     /// <summary>缺陷提交、Bug 报告、问题追踪</summary>
     public const string Defect = "defect";
 
+    /// <summary>周报管理、团队汇总、工作日志</summary>
+    public const string Report = "report";
+
     /// <summary>需要多个能力组合</summary>
     public const string Composite = "composite";
 
@@ -132,12 +135,22 @@ public static class AgentRegistry
         SupportedActions = new() { "extract_defect", "classify", "generate_report" }
     };
 
+    public static readonly AgentDefinition ReportAgent = new()
+    {
+        AgentKey = "report-agent",
+        DisplayName = "周报管理员",
+        Description = "周报创建、提交、审阅，支持AI生成、团队汇总、计划比对",
+        SupportedIntents = new() { IntentTypes.Report },
+        SupportedActions = new() { "create_report", "generate_report", "team_summary", "review" }
+    };
+
     public static readonly List<AgentDefinition> All = new()
     {
         PrdAgent,
         VisualAgent,
         LiteraryAgent,
-        DefectAgent
+        DefectAgent,
+        ReportAgent
     };
 
     /// <summary>

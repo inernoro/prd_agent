@@ -1568,6 +1568,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       ui.style.setProperty('--zoom', String(z));
       ui.style.setProperty('--invZoom', String(1 / Math.max(0.0001, z)));
     }
+    // 同步画布背景网格（点阵随 pan/zoom 运动）
+    const stageEl = stageRef.current;
+    if (stageEl) {
+      const gridBase = 48;
+      const sz = gridBase * z;
+      stageEl.style.backgroundSize = `${sz}px ${sz}px`;
+      stageEl.style.backgroundPosition = `${cam.x % sz}px ${cam.y % sz}px`;
+    }
     // 同步更新快捷输入框位置（避免 React 状态延迟导致不跟手）
     const quickPanel = quickPanelRef.current;
     const gen = selectedGeneratorRef.current;
@@ -5005,7 +5013,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [selectedGenerator]);
 
   return (
-    <div ref={containerRef} className="h-full min-h-0">
+    <div ref={containerRef} className="h-full min-h-0" style={{ background: '#1e1e1e' }}>
       {uploadToast ? (
         <div
           className="fixed left-1/2 z-9999"
@@ -5033,7 +5041,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         </div>
       ) : null}
       {/* 单一框架：左右无缝拼接 */}
-      <GlassCard animated glow className="h-full min-h-0 overflow-hidden p-0!">
+      <GlassCard animated glow className="h-full min-h-0 overflow-hidden p-0!" style={{ border: 'none', boxShadow: 'none', background: 'transparent' }}>
         <div className="h-full min-h-0 flex">
           {/* 左侧：画板 */}
           <div className="flex-1 min-w-0 min-h-0">
@@ -5043,7 +5051,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             ref={stageRef}
             className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:outline-none! focus-visible:shadow-none!"
             style={{
-              background: 'rgba(0,0,0,0.10)',
+              backgroundColor: '#1e1e1e',
+              backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.12) 1px, transparent 1px)',
+              backgroundSize: '48px 48px',
+              backgroundPosition: '0px 0px',
               cursor: panning ? 'grabbing' : effectiveTool === 'hand' ? 'grab' : 'default',
               userSelect: 'none',
               WebkitUserSelect: 'none',
@@ -6266,10 +6277,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div
                   className="w-[560px] max-w-[82vw] rounded-[12px] p-3"
                   style={{
-                    ...glassInputArea,
-                    background: 'rgba(0,0,0,0.14)',
-                    border: '1px solid var(--border-subtle, rgba(255,255,255,0.12))',
-                    boxShadow: '0 24px 90px rgba(0,0,0,0.45)',
+                    background: '#353538',
+                    backdropFilter: 'none',
+                    WebkitBackdropFilter: 'none',
+                    border: '1px solid rgba(255,255,255,0.10)',
+                    boxShadow: '0 12px 48px rgba(0,0,0,0.40)',
                     minHeight: 148,
                   }}
                 >
@@ -6641,10 +6653,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div
               className="h-9 rounded-[999px] px-1.5 inline-flex items-center gap-1 whitespace-nowrap"
               style={{
-                ...glassTooltip,
-                border: '1px solid rgba(255,255,255,0.12)',
-                background: 'rgba(0,0,0,0.25)',
-                boxShadow: '0 18px 60px rgba(0,0,0,0.50)',
+                background: '#2c2c2e',
+                backdropFilter: 'none',
+                WebkitBackdropFilter: 'none',
+                border: '1px solid rgba(255,255,255,0.08)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
                 color: 'var(--text-secondary)',
               }}
             >
@@ -6722,8 +6735,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div
               className="rounded-full p-1.5 flex flex-col gap-1.5 bg-transparent"
               style={{
-                ...glassPanel,
-                boxShadow: '0 18px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+                background: '#2c2c2e',
+                backdropFilter: 'none',
+                WebkitBackdropFilter: 'none',
+                border: '1px solid rgba(255,255,255,0.08)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.35), 0 0 0 1px rgba(255, 255, 255, 0.04) inset',
               }}
             >
               {/* 工具（hover 弹出：Select / Hand / Mark[禁用]） */}
@@ -7254,10 +7270,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div
               className="absolute left-1/2 -translate-x-1/2 bottom-3 z-40 inline-flex items-center gap-1 px-1.5 rounded-full h-12"
               style={{
-                ...glassTooltip,
-                border: '1px solid rgba(255,255,255,0.14)',
-                background: 'rgba(0,0,0,0.45)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+                background: '#2c2c2e',
+                backdropFilter: 'none',
+                WebkitBackdropFilter: 'none',
+                border: '1px solid rgba(255,255,255,0.08)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
               }}
             >
               {/* 手型工具 — 拖拽画布 */}
@@ -7344,12 +7361,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div
               className={`flex flex-col h-full ${isMobile ? 'p-3' : 'p-2.5 rounded-[14px]'}`}
               style={{
-                ...glassPanel,
                 background: isMobile
-                  ? 'linear-gradient(180deg, rgba(18, 18, 22, 0.96) 0%, rgba(14, 14, 18, 0.98) 100%)'
-                  : 'linear-gradient(180deg, var(--glass-bg-start, rgba(30, 30, 35, 0.85)) 0%, var(--glass-bg-end, rgba(25, 25, 30, 0.80)) 100%)',
-                border: isMobile ? 'none' : '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
-                boxShadow: isMobile ? 'none' : '0 12px 40px rgba(0,0,0,0.50), 0 0 0 1px rgba(255, 255, 255, 0.05) inset',
+                  ? 'linear-gradient(180deg, #252528 0%, #222225 100%)'
+                  : 'linear-gradient(180deg, #2c2c2e 0%, #282828 100%)',
+                backdropFilter: 'none',
+                WebkitBackdropFilter: 'none',
+                border: isMobile ? 'none' : '1px solid rgba(255, 255, 255, 0.08)',
+                boxShadow: isMobile ? 'none' : '0 8px 32px rgba(0,0,0,0.35), 0 0 0 1px rgba(255, 255, 255, 0.04) inset',
                 borderRadius: isMobile ? 0 : 14,
               }}
             >
@@ -7468,9 +7486,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               ref={inputPanelRef}
               className="mt-2 rounded-[12px] p-2 relative shrink-0"
               style={{
-                ...glassTooltip,
-                border: directPrompt ? '1px solid var(--border-subtle)' : '1px solid rgba(251,146,60,0.55)',
-                background: directPrompt ? 'rgba(20,20,24,0.72)' : 'rgba(251,146,60,0.06)',
+                border: directPrompt ? '1px solid rgba(255,255,255,0.10)' : '1px solid rgba(251,146,60,0.55)',
+                background: directPrompt ? '#353538' : 'rgba(251,146,60,0.06)',
+                backdropFilter: 'none',
+                WebkitBackdropFilter: 'none',
                 boxShadow: undefined,
               }}
             >

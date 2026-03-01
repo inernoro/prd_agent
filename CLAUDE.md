@@ -34,6 +34,7 @@
    | PRD Agent | `prd-agent` | PRD 智能解读与问答 |
    | 缺陷管理 Agent | `defect-agent` | 缺陷提交与跟踪 |
    | 视频 Agent | `video-agent` | 文章转视频教程生成 |
+   | 周报管理 Agent | `report-agent` | 周报创建、提交、审阅管理 |
 
 4. **为什么这样设计**
    - 权限控制：未来可以基于 Controller 做细粒度权限管理
@@ -385,6 +386,7 @@ prd_agent/
 | 缺陷管理 Agent | ✅ DONE | DefectAgentController, DefectAgentTests (25 tests) |
 | 视频 Agent | ✅ DONE | VideoAgentController, VideoGenRunWorker, prd-video/ (Remotion) |
 | 配置市场 (海鲜市场) | ✅ DONE | CONFIG_TYPE_REGISTRY, MarketplaceCard, IForkable, ForkService |
+| 周报管理 Agent | ✅ Phase 1-3 DONE | ReportAgentController, ReportAgentPage (6 tabs)，详见 `doc/plan.report-agent-impl.md` |
 | **附件上传** | ✅ DONE | AttachmentsController + Rust upload_attachment + Desktop UI (图片选择/预览/上传) |
 | **技能系统** | ✅ DONE | SkillSettings 模型 + SkillsController + Desktop SkillPanel/SkillManagerModal (服务端公共技能 + 客户端本地自定义技能) |
 | **知识库** | ⚠️ PARTIAL | KnowledgeBasePage UI 占位，"资料文件"标注开发中 |
@@ -392,7 +394,7 @@ prd_agent/
 | **K8s 部署** | ❌ NOT_IMPL | 仅 docker-compose，无 K8s manifests |
 | **告警通知 (邮件/Webhook)** | ❌ NOT_IMPL | 仅 AdminNotification 面板内通知 |
 
-### MongoDB 集合清单 (87 个)
+### MongoDB 集合清单 (96 个)
 
 核心业务：`users`, `groups`, `groupmembers`, `documents`, `sessions`, `messages`, `group_message_counters`, `contentgaps`, `attachments`, `prdcomments`, `share_links`
 
@@ -417,6 +419,8 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_asse
 缺陷管理：`defect_templates`, `defect_reports`, `defect_messages`, `defect_folders`
 
 视频 Agent：`video_gen_runs`
+
+周报管理：`report_teams`, `report_team_members`, `report_templates`, `report_weekly_reports`, `report_daily_logs`, `report_data_sources`, `report_commits`, `report_comments`, `report_team_summaries`
 
 海鲜市场：`marketplace_fork_logs`
 

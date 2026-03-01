@@ -486,6 +486,94 @@ import {
   getMobileStatsReal,
   getMobileAssetsReal,
 } from '@/services/real/mobile';
+import type {
+  ListReportTeamsContract,
+  GetReportTeamContract,
+  CreateReportTeamContract,
+  UpdateReportTeamContract,
+  DeleteReportTeamContract,
+  AddReportTeamMemberContract,
+  RemoveReportTeamMemberContract,
+  UpdateReportTeamMemberContract,
+  ListReportUsersContract,
+  ListReportTemplatesContract,
+  GetReportTemplateContract,
+  CreateReportTemplateContract,
+  UpdateReportTemplateContract,
+  DeleteReportTemplateContract,
+  ListWeeklyReportsContract,
+  GetWeeklyReportContract,
+  CreateWeeklyReportContract,
+  UpdateWeeklyReportContract,
+  DeleteWeeklyReportContract,
+  SubmitWeeklyReportContract,
+  ReviewWeeklyReportContract,
+  ReturnWeeklyReportContract,
+  GetTeamDashboardContract,
+  SaveDailyLogContract,
+  ListDailyLogsContract,
+  GetDailyLogContract,
+  DeleteDailyLogContract,
+  ListDataSourcesContract,
+  CreateDataSourceContract,
+  UpdateDataSourceContract,
+  DeleteDataSourceContract,
+  TestDataSourceContract,
+  SyncDataSourceContract,
+  ListDataSourceCommitsContract,
+  GenerateReportContract,
+  GetCollectedActivityContract,
+  ListCommentsContract,
+  CreateCommentContract,
+  DeleteCommentContract,
+  GetPlanComparisonContract,
+  GenerateTeamSummaryContract,
+  GetTeamSummaryContract,
+} from '@/services/contracts/reportAgent';
+import {
+  listReportTeamsReal,
+  getReportTeamReal,
+  createReportTeamReal,
+  updateReportTeamReal,
+  deleteReportTeamReal,
+  addReportTeamMemberReal,
+  removeReportTeamMemberReal,
+  updateReportTeamMemberReal,
+  listReportUsersReal,
+  listReportTemplatesReal,
+  getReportTemplateReal,
+  createReportTemplateReal,
+  updateReportTemplateReal,
+  deleteReportTemplateReal,
+  listWeeklyReportsReal,
+  getWeeklyReportReal,
+  createWeeklyReportReal,
+  updateWeeklyReportReal,
+  deleteWeeklyReportReal,
+  submitWeeklyReportReal,
+  reviewWeeklyReportReal,
+  returnWeeklyReportReal,
+  getTeamDashboardReal,
+  saveDailyLogReal,
+  listDailyLogsReal,
+  getDailyLogReal,
+  deleteDailyLogReal,
+  listDataSourcesReal,
+  createDataSourceReal,
+  updateDataSourceReal,
+  deleteDataSourceReal,
+  testDataSourceReal,
+  syncDataSourceReal,
+  listDataSourceCommitsReal,
+  generateReportReal,
+  getCollectedActivityReal,
+  listCommentsReal,
+  createCommentReal,
+  deleteCommentReal,
+  getPlanComparisonReal,
+  generateTeamSummaryReal,
+  getTeamSummaryReal,
+} from '@/services/real/reportAgent';
 
 function withAuth<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<ApiResponse<TResult>>
@@ -777,6 +865,52 @@ export const previewApiLogs: PreviewApiLogsContract = withAuth(previewApiLogsRea
 export const getMobileFeed: GetMobileFeedContract = withAuth(getMobileFeedReal);
 export const getMobileStats: GetMobileStatsContract = withAuth(getMobileStatsReal);
 export const getMobileAssets: GetMobileAssetsContract = withAuth(getMobileAssetsReal);
+
+// ─── Report Agent 周报管理 ───
+export const listReportTeams: ListReportTeamsContract = withAuth(listReportTeamsReal);
+export const getReportTeam: GetReportTeamContract = withAuth(getReportTeamReal);
+export const createReportTeam: CreateReportTeamContract = withAuth(createReportTeamReal);
+export const updateReportTeam: UpdateReportTeamContract = withAuth(updateReportTeamReal);
+export const deleteReportTeam: DeleteReportTeamContract = withAuth(deleteReportTeamReal);
+export const addReportTeamMember: AddReportTeamMemberContract = withAuth(addReportTeamMemberReal);
+export const removeReportTeamMember: RemoveReportTeamMemberContract = withAuth(removeReportTeamMemberReal);
+export const updateReportTeamMember: UpdateReportTeamMemberContract = withAuth(updateReportTeamMemberReal);
+export const listReportUsers: ListReportUsersContract = withAuth(listReportUsersReal);
+export const listReportTemplates: ListReportTemplatesContract = withAuth(listReportTemplatesReal);
+export const getReportTemplate: GetReportTemplateContract = withAuth(getReportTemplateReal);
+export const createReportTemplate: CreateReportTemplateContract = withAuth(createReportTemplateReal);
+export const updateReportTemplate: UpdateReportTemplateContract = withAuth(updateReportTemplateReal);
+export const deleteReportTemplate: DeleteReportTemplateContract = withAuth(deleteReportTemplateReal);
+export const listWeeklyReports: ListWeeklyReportsContract = withAuth(listWeeklyReportsReal);
+export const getWeeklyReport: GetWeeklyReportContract = withAuth(getWeeklyReportReal);
+export const createWeeklyReport: CreateWeeklyReportContract = withAuth(createWeeklyReportReal);
+export const updateWeeklyReport: UpdateWeeklyReportContract = withAuth(updateWeeklyReportReal);
+export const deleteWeeklyReport: DeleteWeeklyReportContract = withAuth(deleteWeeklyReportReal);
+export const submitWeeklyReport: SubmitWeeklyReportContract = withAuth(submitWeeklyReportReal);
+export const reviewWeeklyReport: ReviewWeeklyReportContract = withAuth(reviewWeeklyReportReal);
+export const returnWeeklyReport: ReturnWeeklyReportContract = withAuth(returnWeeklyReportReal);
+export const getTeamDashboard: GetTeamDashboardContract = withAuth(getTeamDashboardReal);
+// Report Agent Phase 2: Daily Logs + Data Sources + AI Generation
+export const saveDailyLog: SaveDailyLogContract = withAuth(saveDailyLogReal);
+export const listDailyLogs: ListDailyLogsContract = withAuth(listDailyLogsReal);
+export const getDailyLog: GetDailyLogContract = withAuth(getDailyLogReal);
+export const deleteDailyLog: DeleteDailyLogContract = withAuth(deleteDailyLogReal);
+export const listDataSources: ListDataSourcesContract = withAuth(listDataSourcesReal);
+export const createDataSource: CreateDataSourceContract = withAuth(createDataSourceReal);
+export const updateDataSource: UpdateDataSourceContract = withAuth(updateDataSourceReal);
+export const deleteDataSource: DeleteDataSourceContract = withAuth(deleteDataSourceReal);
+export const testDataSource: TestDataSourceContract = withAuth(testDataSourceReal);
+export const syncDataSource: SyncDataSourceContract = withAuth(syncDataSourceReal);
+export const listDataSourceCommits: ListDataSourceCommitsContract = withAuth(listDataSourceCommitsReal);
+export const generateReport: GenerateReportContract = withAuth(generateReportReal);
+export const getCollectedActivity: GetCollectedActivityContract = withAuth(getCollectedActivityReal);
+// Report Agent Phase 3: Comments + Plan Comparison + Team Summary
+export const listComments: ListCommentsContract = withAuth(listCommentsReal);
+export const createComment: CreateCommentContract = withAuth(createCommentReal);
+export const deleteComment: DeleteCommentContract = withAuth(deleteCommentReal);
+export const getPlanComparison: GetPlanComparisonContract = withAuth(getPlanComparisonReal);
+export const generateTeamSummary: GenerateTeamSummaryContract = withAuth(generateTeamSummaryReal);
+export const getTeamSummary: GetTeamSummaryContract = withAuth(getTeamSummaryReal);
 
 // Arena 竞技场
 import {

@@ -244,7 +244,7 @@ function ImageChipComponent({
       {/* 标签 */}
       <span
         style={{
-          fontSize: 11,
+          fontSize: 13,
           fontWeight: 500,
           color: `rgba(255,255,255,${textOpacity})`,
           whiteSpace: 'nowrap',
