@@ -1570,7 +1570,7 @@ export function ArenaPage() {
                 return (
                   <div
                     key={panel.slotId}
-                    className="flex-shrink-0 flex flex-col min-w-0"
+                    className="flex-shrink-0 flex flex-col overflow-hidden"
                     style={{ width: 'calc(33.333% - 8px)', minWidth: '320px' }}
                   >
                     <div
@@ -1662,7 +1662,7 @@ export function ArenaPage() {
                               <ThinkingBlock thinking={panel.thinking} color={labelColor} />
                             )}
                             <div
-                              className="text-[13px] px-3 py-2 rounded-lg"
+                              className="text-[13px] px-3 py-2 rounded-lg break-all"
                               style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
                             >
                               {panel.errorMessage ?? '响应异常'}
