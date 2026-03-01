@@ -34,17 +34,17 @@ import { Tooltip } from '@/components/ui/Tooltip';
 // Linear / Vercel inspired: flat, controlled, monochrome primary
 
 const D = {
-  bgCard:        '#121826',
-  border:        'rgba(255,255,255,0.06)',
+  bgCard:        'var(--bg-card)',
+  border:        'var(--border-subtle)',
   primary:       '#5B8CFF',
   success:       '#22C55E',
   warning:       '#F59E0B',
   danger:        '#EF4444',
-  text1:         'rgba(255,255,255,0.92)',
-  text2:         'rgba(255,255,255,0.55)',
-  text3:         'rgba(255,255,255,0.35)',
+  text1:         'var(--text-primary)',
+  text2:         'var(--text-secondary)',
+  text3:         'var(--text-muted)',
   chartGrid:     'rgba(255,255,255,0.05)',
-  chartText:     'rgba(255,255,255,0.4)',
+  chartText:     'var(--text-muted)',
   tooltipBg:     'rgba(15,23,42,0.95)',
   tooltipBorder: 'rgba(91,140,255,0.15)',
 } as const;
@@ -916,8 +916,8 @@ function IntegrationsTab() {
 // ─── Main Page ──────────────────────────────────────────────────────
 
 const TABS = [
-  { key: 'overview', label: '全局概览', mobileLabel: '全局', icon: <TrendingUp size={14} /> },
   { key: 'team', label: '团队洞察', mobileLabel: '团队', icon: <Users size={14} /> },
+  { key: 'overview', label: '全局概览', mobileLabel: '全局', icon: <TrendingUp size={14} /> },
   { key: 'agents', label: 'Agent 使用', mobileLabel: 'Agent', icon: <Bot size={14} /> },
   { key: 'cost', label: '成本中心', mobileLabel: '成本', icon: <DollarSign size={14} /> },
   { key: 'integrations', label: '外部协作', mobileLabel: '协作', icon: <Link2 size={14} /> },
@@ -931,7 +931,7 @@ const DAYS_OPTIONS = [
 
 export default function ExecutiveDashboardPage() {
   const { isMobile } = useBreakpoint();
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('team');
   const [days, setDays] = useState(7);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
