@@ -1570,7 +1570,7 @@ export function ArenaPage() {
                 return (
                   <div
                     key={panel.slotId}
-                    className="flex-shrink-0 flex flex-col"
+                    className="flex-shrink-0 flex flex-col min-w-0"
                     style={{ width: 'calc(33.333% - 8px)', minWidth: '320px' }}
                   >
                     <div
