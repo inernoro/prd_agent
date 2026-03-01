@@ -4,7 +4,7 @@ import {
   Play, Loader2, CheckCircle2, AlertCircle,
   Download, FileText, ArrowLeft, Save, Plus,
   ChevronDown, ChevronRight, Settings2, XCircle,
-  Zap, FlaskConical, Trash2, Wand2, Terminal, Eye,
+  Zap, FlaskConical, Trash2, Wand2, Terminal, Eye, Copy, Check,
 } from 'lucide-react';
 import {
   getWorkflow, updateWorkflow, executeWorkflow, getExecution,
@@ -562,6 +562,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   const accentHue = typeDef?.accentHue ?? capsuleMeta?.accentHue ?? 210;
   const CIcon = typeDef?.Icon;
   const emoji = typeDef?.emoji ?? '📦';
+  const [curlCopied, setCurlCopied] = useState(false);
 
   // 配置值直接从 node.config 读取（由父组件管理状态）
   const configValues: Record<string, string> = {};
@@ -826,7 +827,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
             )}
 
             {/* ──── 操作栏 ──── */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {capsuleMeta?.testable && (
                 <Button
                   size="xs"
@@ -839,6 +840,67 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                 >
                   {isTestRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />}
                   {isTestRunning ? '执行中...' : '▶ 单舱测试'}
+                </Button>
+              )}
+              {node.nodeType === 'tapd-collector' && (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const c = node.config || {};
+                    const cookie = String(c.cookie ?? '');
+                    const wsId = String(c.workspaceId ?? c.workspace_id ?? '');
+                    const dataType = String(c.dataType ?? c.data_type ?? 'bugs');
+                    const dateRange = String(c.dateRange ?? c.date_range ?? '');
+                    const dscTokenMatch = cookie.match(/dsc-token=([^;\s]+)/);
+                    const dscToken = dscTokenMatch ? dscTokenMatch[1] : '';
+                    const objType = dataType === 'bugs' ? 'bug' : dataType.replace(/s$/, '');
+
+                    const filterData: unknown[] = [];
+                    if (dateRange) {
+                      filterData.push({
+                        entity: objType, fieldDisplayName: '创建时间', fieldSubEntityType: '',
+                        fieldIsSystem: '1', fieldOption: 'like', fieldSystemName: 'created',
+                        fieldType: 'text', selectOption: [], value: dateRange, id: '1',
+                      });
+                    }
+                    const body = JSON.stringify({
+                      workspace_ids: wsId,
+                      search_data: JSON.stringify({ data: filterData, optionType: 'AND', needInit: '1' }),
+                      obj_type: objType, search_type: 'advanced', page: 1, perpage: '20',
+                      block_size: 50, parallel_token: '', order_field: 'created', order_value: 'desc',
+                      show_fields: [], extra_fields: [], display_mode: 'list', version: '1.1.0',
+                      only_gen_token: 0, exclude_workspace_configs: [], from_pro_dashboard: 1,
+                      ...(dscToken ? { dsc_token: dscToken } : {}),
+                    });
+
+                    const curl = [
+                      `curl -s -X POST 'https://www.tapd.cn/api/search_filter/search_filter/search'`,
+                      `  -H 'Accept: application/json, text/plain, */*'`,
+                      `  -H 'Accept-Language: zh-CN,zh;q=0.9'`,
+                      `  -H 'Content-Type: application/json'`,
+                      `  -H 'Origin: https://www.tapd.cn'`,
+                      `  -H 'Referer: https://www.tapd.cn/tapd_fe/${wsId}/bug/list'`,
+                      `  -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'`,
+                      `  -H 'sec-ch-ua: "Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"'`,
+                      `  -H 'sec-ch-ua-mobile: ?0'`,
+                      `  -H 'sec-ch-ua-platform: "Windows"'`,
+                      `  -H 'Sec-Fetch-Dest: empty'`,
+                      `  -H 'Sec-Fetch-Mode: cors'`,
+                      `  -H 'Sec-Fetch-Site: same-origin'`,
+                      `  -H 'DNT: 1'`,
+                      `  -H 'Cookie: ${cookie}'`,
+                      `  -d '${body}'`,
+                    ].join(' \\\n');
+
+                    navigator.clipboard.writeText(curl);
+                    setCurlCopied(true);
+                    setTimeout(() => setCurlCopied(false), 2000);
+                  }}
+                >
+                  {curlCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {curlCopied ? '已复制' : '复制 cURL'}
                 </Button>
               )}
               <Button
