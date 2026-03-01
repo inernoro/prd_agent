@@ -319,6 +319,7 @@ public class WorkflowAgentController : ControllerBase
 
         // ── 3. 搜索缺陷（如果指定了 workspaceId）──────────────
         int? bugCount = null;
+        var searchApiOk = false;
         if (!string.IsNullOrWhiteSpace(request.WorkspaceId))
         {
             var url = "https://www.tapd.cn/api/search_filter/search_filter/search";
@@ -365,13 +366,18 @@ public class WorkflowAgentController : ControllerBase
                 {
                     using var doc = JsonDocument.Parse(body);
                     if (doc.RootElement.TryGetProperty("data", out var d) &&
-                        d.ValueKind == JsonValueKind.Object &&
-                        d.TryGetProperty("total_count", out var tc))
+                        d.ValueKind == JsonValueKind.Object)
                     {
-                        if (tc.ValueKind == JsonValueKind.Number)
-                            bugCount = tc.GetInt32();
-                        else if (tc.ValueKind == JsonValueKind.String && int.TryParse(tc.GetString(), out var n))
-                            bugCount = n;
+                        // data 是 Object 说明 API 调用成功（Cookie 有效）
+                        searchApiOk = true;
+
+                        if (d.TryGetProperty("total_count", out var tc))
+                        {
+                            if (tc.ValueKind == JsonValueKind.Number)
+                                bugCount = tc.GetInt32();
+                            else if (tc.ValueKind == JsonValueKind.String && int.TryParse(tc.GetString(), out var n))
+                                bugCount = n;
+                        }
                     }
                 }
             }
@@ -382,7 +388,7 @@ public class WorkflowAgentController : ControllerBase
         }
 
         // 判断有效性：用户信息 或 工作空间列表 或 搜索 API 任一成功即有效
-        var isValid = userName != null || workspaces.Count > 0 || bugCount > 0;
+        var isValid = userName != null || workspaces.Count > 0 || searchApiOk;
         if (!isValid)
         {
             return Ok(ApiResponse<object>.Ok(new
