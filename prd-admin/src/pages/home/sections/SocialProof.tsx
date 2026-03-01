@@ -1,6 +1,7 @@
 import { cn } from '@/lib/cn';
 import { CountUp } from '@/components/reactbits';
 import { SectionHeader } from '@/components/design/SectionHeader';
+import { HERO_GRADIENT_TEXT } from './HeroSection';
 
 interface Stat {
   value: number;
@@ -71,8 +72,8 @@ interface SocialProofProps {
 export function SocialProof({ className }: SocialProofProps) {
   return (
     <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
-      {/* Semi-transparent overlay to let global background show through */}
-      <div className="absolute inset-0 bg-[#050508]/40" />
+      {/* Semi-transparent overlay — reduced for vibrancy */}
+      <div className="absolute inset-0 bg-[#030306]/30" />
 
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">
@@ -87,7 +88,7 @@ export function SocialProof({ className }: SocialProofProps) {
           {stats.map((stat, idx) => (
             <div
               key={idx}
-              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 lg:p-8 text-center hover:border-white/20 transition-all duration-500"
+              className="group relative overflow-hidden rounded-3xl border border-white/[0.12] bg-white/[0.05] backdrop-blur-xl p-6 lg:p-8 text-center hover:border-white/25 transition-all duration-500"
             >
               {/* Glow on hover */}
               <div
@@ -107,14 +108,7 @@ export function SocialProof({ className }: SocialProofProps) {
 
               <div className="relative z-10">
                 <div className="text-4xl sm:text-5xl lg:text-6xl font-bold mb-2">
-                  <span
-                    style={{
-                      background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
-                      WebkitBackgroundClip: 'text',
-                      WebkitTextFillColor: 'transparent',
-                      backgroundClip: 'text',
-                    }}
-                  >
+                  <span style={HERO_GRADIENT_TEXT}>
                     <CountUp
                       to={stat.value}
                       duration={2.5}
@@ -124,7 +118,7 @@ export function SocialProof({ className }: SocialProofProps) {
                     />
                   </span>
                 </div>
-                <div className="text-sm lg:text-base font-medium text-white/60">
+                <div className="text-sm lg:text-base font-medium text-white/70">
                   {stat.label}
                 </div>
               </div>
@@ -144,7 +138,7 @@ export function SocialProof({ className }: SocialProofProps) {
           {testimonials.map((testimonial, idx) => (
             <div
               key={idx}
-              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-6 lg:p-8 hover:border-white/20 transition-all duration-500"
+              className="group relative overflow-hidden rounded-3xl border border-white/[0.12] bg-white/[0.05] backdrop-blur-xl p-6 lg:p-8 hover:border-white/25 transition-all duration-500"
             >
               {/* Quote mark */}
               <div className="absolute top-6 right-6 text-6xl font-serif text-white/5 leading-none">
@@ -153,7 +147,7 @@ export function SocialProof({ className }: SocialProofProps) {
 
               {/* Content */}
               <div className="relative z-10">
-                <p className="text-white/60 leading-relaxed mb-6 text-sm lg:text-base">
+                <p className="text-white/70 leading-relaxed mb-6 text-sm lg:text-base">
                   "{testimonial.content}"
                 </p>
 
@@ -162,17 +156,17 @@ export function SocialProof({ className }: SocialProofProps) {
                   <div
                     className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
                     style={{
-                      background: 'linear-gradient(135deg, #6366f1 0%, #a5b4fc 100%)',
-                      color: '#0b0b0d',
+                      background: 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 100%)',
+                      color: '#ffffff',
                     }}
                   >
                     {testimonial.author[0]}
                   </div>
                   <div>
-                    <div className="text-sm font-medium text-white/80">
+                    <div className="text-sm font-medium text-white/90">
                       {testimonial.author}
                     </div>
-                    <div className="text-xs text-white/40">
+                    <div className="text-xs text-white/55">
                       {testimonial.role} · {testimonial.company}
                     </div>
                   </div>
@@ -185,13 +179,13 @@ export function SocialProof({ className }: SocialProofProps) {
         {/* Trust badges */}
         <div className="mt-16 pt-16 border-t border-white/10">
           <div className="text-center mb-8">
-            <p className="text-sm text-white/40">受到以下企业信赖</p>
+            <p className="text-sm text-white/50">受到以下企业信赖</p>
           </div>
-          <div className="flex items-center justify-center gap-8 lg:gap-16 flex-wrap opacity-40">
+          <div className="flex items-center justify-center gap-8 lg:gap-16 flex-wrap opacity-50">
             {['企业 A', '企业 B', '企业 C', '企业 D', '企业 E'].map((company) => (
               <div
                 key={company}
-                className="text-lg font-semibold text-white/60"
+                className="text-lg font-semibold text-white/70"
               >
                 {company}
               </div>

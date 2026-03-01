@@ -670,8 +670,8 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
 
   return (
     <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
-      {/* Semi-transparent overlay for content readability */}
-      <div className="absolute inset-0 pointer-events-none bg-[#050508]/50" />
+      {/* Semi-transparent overlay — reduced for vibrancy */}
+      <div className="absolute inset-0 pointer-events-none bg-[#030306]/35" />
 
       {/* Content */}
       <div className="relative z-10 max-w-7xl mx-auto px-6">
@@ -690,8 +690,8 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
               className={cn(
                 'px-4 py-2 rounded-full text-sm font-medium transition-all duration-300',
                 index === activeIndex
-                  ? 'bg-white/10 text-white border border-white/20'
-                  : 'text-white/50 hover:text-white/70 hover:bg-white/5'
+                  ? 'bg-white/15 text-white border border-white/25 shadow-lg shadow-white/5'
+                  : 'text-white/55 hover:text-white/80 hover:bg-white/8'
               )}
             >
               {agent.name}
@@ -712,11 +712,11 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
               {activeAgent.subtitle}
             </div>
 
-            <h3 className="text-3xl sm:text-4xl font-bold text-white/90 mb-4">
+            <h3 className="text-3xl sm:text-4xl font-bold text-white mb-4">
               {activeAgent.name}
             </h3>
 
-            <p className="text-white/50 mb-8 leading-relaxed">
+            <p className="text-white/65 mb-8 leading-relaxed">
               {activeAgent.description}
             </p>
 
@@ -730,8 +730,8 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
                   <div className={cn('inline-flex p-2 rounded-lg mb-2 bg-gradient-to-br', activeAgent.gradient)}>
                     {Icons[feature.icon]}
                   </div>
-                  <div className="text-sm font-medium text-white/80 mb-1">{feature.title}</div>
-                  <div className="text-xs text-white/40">{feature.desc}</div>
+                  <div className="text-sm font-medium text-white/90 mb-1">{feature.title}</div>
+                  <div className="text-xs text-white/55">{feature.desc}</div>
                 </div>
               ))}
             </div>
@@ -753,7 +753,7 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
           {/* Right: Mockup */}
           <div className="order-1 lg:order-2 lg:pr-4">
             <div
-              className="relative aspect-[4/3] rounded-2xl overflow-hidden border border-white/10"
+              className="relative aspect-[4/3] rounded-2xl overflow-hidden border border-white/15"
               style={{
                 boxShadow: `0 0 60px ${activeAgent.glowColor}, 0 25px 50px -12px rgba(0,0,0,0.5)`,
               }}
@@ -791,7 +791,7 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
               onClick={() => setActiveIndex(index)}
               className={cn(
                 'h-1.5 rounded-full transition-all duration-500',
-                index === activeIndex ? 'w-8 bg-white/60' : 'w-1.5 bg-white/20 hover:bg-white/30'
+                index === activeIndex ? 'w-8 bg-white/70' : 'w-1.5 bg-white/25 hover:bg-white/40'
               )}
             />
           ))}
