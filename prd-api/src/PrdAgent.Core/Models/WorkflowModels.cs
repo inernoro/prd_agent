@@ -416,6 +416,7 @@ public static class CapsuleTypes
     public const string DataExtractor = "data-extractor";
     public const string DataMerger = "data-merger";
     public const string FormatConverter = "format-converter";
+    public const string DataAggregator = "data-aggregator";
 
     // 流程控制类
     public const string Delay = "delay";
@@ -437,7 +438,7 @@ public static class CapsuleTypes
         // 触发类
         Timer, WebhookReceiver, ManualTrigger, FileUpload,
         // 处理类
-        TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter,
+        TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter, DataAggregator,
         // 流程控制类
         Delay, Condition,
         // 输出类

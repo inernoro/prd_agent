@@ -45,7 +45,7 @@ function edge(src: string, srcSlot: string, tgt: string, tgtSlot: string): Workf
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 模板 1: TAPD 缺陷数据采集 → LLM 分析 → 报告导出
+// 模板 1: TAPD 缺陷数据采集 → 数据统计 → LLM 趋势分析 → 报告导出
 // ═══════════════════════════════════════════════════════════════
 //
 // 拓扑图：
@@ -53,7 +53,9 @@ function edge(src: string, srcSlot: string, tgt: string, tgtSlot: string): Workf
 //     ↓
 //   🐛 TAPD 数据采集
 //     ↓
-//   🧠 LLM 分析
+//   📊 数据统计（分组计数、分布、趋势）
+//     ↓
+//   🧠 LLM 趋势分析（仅分析统计摘要）
 //     ↓
 //   📝 报告生成
 //     ↓      ↓
@@ -63,7 +65,7 @@ function edge(src: string, srcSlot: string, tgt: string, tgtSlot: string): Workf
 const tapdBugCollectionTemplate: WorkflowTemplate = {
   id: 'tapd-bug-collection',
   name: 'TAPD 缺陷采集与分析',
-  description: '从 TAPD 拉取缺陷数据 → AI 智能分析 → 生成质量报告 → 文件导出 + 站内通知',
+  description: '从 TAPD 拉取缺陷数据 → 统计分析 → AI 趋势解读 → 生成质量报告 → 文件导出 + 站内通知',
   icon: '🐛',
   tags: ['tapd', 'quality', 'report'],
   requiredInputs: [
@@ -133,33 +135,47 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
         },
         inputSlots: [{ slotId: 'tapd-in', name: 'trigger', dataType: 'json', required: false }],
         outputSlots: [{ slotId: 'tapd-out', name: 'data', dataType: 'json', required: true }],
-        position: { x: 450, y: 300 },
+        position: { x: 400, y: 300 },
+      },
+      {
+        nodeId: 'n-stats',
+        name: '数据统计',
+        nodeType: 'data-aggregator',
+        config: {
+          groupByFields: 'Bug.severity,Bug.status,Bug.current_owner,Bug.module',
+          dateField: 'Bug.created',
+          dateGroupBy: 'week',
+          topN: '15',
+        },
+        inputSlots: [{ slotId: 'agg-in', name: 'data', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'agg-out', name: 'statistics', dataType: 'json', required: true }],
+        position: { x: 700, y: 300 },
       },
       {
         nodeId: 'n-llm',
-        name: 'AI 质量分析',
+        name: 'AI 趋势分析',
         nodeType: 'llm-analyzer',
         config: {
-          systemPrompt: '你是一个软件质量分析专家。请对输入的缺陷数据进行深入分析，包括：缺陷分布、严重程度统计、趋势判断、责任人负载等维度。请用中文回答，输出结构化的 JSON 格式。',
-          userPromptTemplate: '请分析以下 TAPD 缺陷数据，给出质量分析报告：\n\n{{input}}',
+          systemPrompt: '你是一个软件质量分析专家。你会收到已经过统计计算的缺陷数据摘要（包含分组分布、时间趋势、交叉统计等），请基于这些统计数据进行深入的趋势分析和洞察。\n\n你的任务是：\n1. 发现数据中的关键模式和异常\n2. 分析质量趋势（是在改善还是恶化）\n3. 识别高风险领域（哪个模块/负责人问题最多）\n4. 提出有针对性的改进建议\n\n请用中文回答，输出结构化的 JSON 格式，包含 summary（概览）、trends（趋势分析）、risks（风险点）、recommendations（建议）四个部分。',
+          userPromptTemplate: '以下是缺陷数据的统计摘要，请进行趋势分析和质量洞察：\n\n{{input}}',
           outputFormat: 'json',
-          temperature: '0.2',
+          temperature: '0.3',
         },
         inputSlots: [{ slotId: 'llm-in', name: 'input', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'llm-out', name: 'result', dataType: 'json', required: true }],
-        position: { x: 800, y: 300 },
+        position: { x: 1000, y: 300 },
       },
       {
         nodeId: 'n-report',
         name: '质量报告生成',
         nodeType: 'report-generator',
         config: {
-          reportTemplate: '将以下缺陷分析数据整理为月度质量报告，包含：\n1. 数据概览（总数、新增、关闭、遗留）\n2. 严重程度分布（P0~P4）\n3. 模块/责任人维度统计\n4. 逾期率与及时处理率\n5. 趋势分析与改进建议',
+          reportTemplate: '将以下缺陷趋势分析数据整理为月度质量报告，包含：\n1. 数据概览（总缺陷数、各严重程度分布）\n2. 质量趋势（按周/月的变化趋势）\n3. 模块/责任人维度热力分析\n4. 风险预警与高危领域\n5. 改进建议与行动项',
           format: 'markdown',
         },
         inputSlots: [{ slotId: 'report-in', name: 'data', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'report-out', name: 'report', dataType: 'text', required: true }],
-        position: { x: 1150, y: 300 },
+        position: { x: 1300, y: 300 },
       },
       {
         nodeId: 'n-export',
@@ -171,7 +187,7 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
         },
         inputSlots: [{ slotId: 'export-in', name: 'data', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'export-out', name: 'file', dataType: 'binary', required: true }],
-        position: { x: 1500, y: 180 },
+        position: { x: 1600, y: 180 },
       },
       {
         nodeId: 'n-notify',
@@ -184,13 +200,14 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
         },
         inputSlots: [{ slotId: 'notify-in', name: 'data', dataType: 'json', required: false }],
         outputSlots: [{ slotId: 'notify-out', name: 'result', dataType: 'json', required: true }],
-        position: { x: 1500, y: 420 },
+        position: { x: 1600, y: 420 },
       },
     ];
 
     const edges: WorkflowEdge[] = [
       edge('n-trigger', 'manual-out', 'n-tapd', 'tapd-in'),
-      edge('n-tapd', 'tapd-out', 'n-llm', 'llm-in'),
+      edge('n-tapd', 'tapd-out', 'n-stats', 'agg-in'),
+      edge('n-stats', 'agg-out', 'n-llm', 'llm-in'),
       edge('n-llm', 'llm-out', 'n-report', 'report-in'),
       edge('n-report', 'report-out', 'n-export', 'export-in'),
       edge('n-report', 'report-out', 'n-notify', 'notify-in'),

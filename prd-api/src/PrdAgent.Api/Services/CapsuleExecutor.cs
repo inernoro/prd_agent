@@ -44,6 +44,7 @@ public static class CapsuleExecutor
             CapsuleTypes.DataExtractor => ExecuteDataExtractor(node, inputArtifacts),
             CapsuleTypes.DataMerger => ExecuteDataMerger(node, inputArtifacts),
             CapsuleTypes.FormatConverter => ExecuteFormatConverter(node, inputArtifacts),
+            CapsuleTypes.DataAggregator => ExecuteDataAggregator(node, inputArtifacts),
 
             // ── 流程控制类 ──
             CapsuleTypes.Delay => await ExecuteDelayAsync(node, inputArtifacts),
@@ -869,6 +870,242 @@ public static class CapsuleExecutor
             "<=" => left <= right,
             _ => false,
         };
+    }
+
+    // ── 数据统计 ──────────────────────────────────────────────
+
+    /// <summary>
+    /// 数据统计舱：对 JSON 数组数据进行分组计数、分布统计、时间趋势分析。
+    /// 输出紧凑的统计摘要 JSON（通常 &lt; 5KB），供后续 LLM 分析趋势而非处理原始数据。
+    /// </summary>
+    public static CapsuleResult ExecuteDataAggregator(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
+    {
+        var groupByStr = GetConfigString(node, "groupByFields") ?? "severity,status,current_owner,module";
+        var dateField = GetConfigString(node, "dateField") ?? "created";
+        var dateGroupBy = GetConfigString(node, "dateGroupBy") ?? "week";
+        var topN = int.TryParse(GetConfigString(node, "topN"), out var n) ? Math.Clamp(n, 1, 100) : 10;
+
+        var groupByFields = groupByStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var logs = new StringBuilder();
+        logs.AppendLine($"[数据统计器] 节点: {node.Name}");
+        logs.AppendLine($"  分组字段: {string.Join(", ", groupByFields)}");
+        logs.AppendLine($"  日期字段: {dateField}, 粒度: {dateGroupBy}, Top N: {topN}");
+
+        // 收集所有输入数据为 JSON 数组
+        var allItems = new List<JsonElement>();
+        foreach (var art in inputArtifacts)
+        {
+            if (string.IsNullOrWhiteSpace(art.InlineContent)) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(art.InlineContent);
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in doc.RootElement.EnumerateArray())
+                        allItems.Add(item.Clone());
+                }
+                else
+                {
+                    allItems.Add(doc.RootElement.Clone());
+                }
+            }
+            catch { logs.AppendLine($"  ⚠️ 跳过无法解析的输入: {art.Name}"); }
+        }
+
+        logs.AppendLine($"  总记录数: {allItems.Count}");
+
+        if (allItems.Count == 0)
+        {
+            var emptyResult = JsonSerializer.Serialize(new { totalCount = 0, message = "无数据" });
+            var emptyArt = MakeTextArtifact(node, "agg-out", "统计摘要", emptyResult, "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { emptyArt }, logs.ToString());
+        }
+
+        // ── 1. 按字段分组统计 ──
+        var distributions = new Dictionary<string, object>();
+        foreach (var field in groupByFields)
+        {
+            var counts = new Dictionary<string, int>();
+            var missing = 0;
+
+            foreach (var item in allItems)
+            {
+                var val = ExtractFieldValue(item, field);
+                if (string.IsNullOrWhiteSpace(val))
+                    { missing++; continue; }
+                counts[val] = counts.TryGetValue(val, out var c) ? c + 1 : 1;
+            }
+
+            // 排序取 Top N，其余归入「其他」
+            var sorted = counts.OrderByDescending(kv => kv.Value).ToList();
+            var topItems = sorted.Take(topN).ToList();
+            var otherCount = sorted.Skip(topN).Sum(kv => kv.Value);
+
+            var groups = topItems.Select(kv => new { name = kv.Key, count = kv.Value, percent = Math.Round(100.0 * kv.Value / allItems.Count, 1) }).ToList();
+            if (otherCount > 0)
+                groups.Add(new { name = "其他", count = otherCount, percent = Math.Round(100.0 * otherCount / allItems.Count, 1) });
+
+            distributions[field] = new
+            {
+                total = allItems.Count - missing,
+                missing,
+                groups,
+            };
+
+            logs.AppendLine($"  {field}: {counts.Count} 个分组, top={topItems.FirstOrDefault().Key ?? "N/A"}({topItems.FirstOrDefault().Value}), missing={missing}");
+        }
+
+        // ── 2. 时间趋势统计 ──
+        var timeline = new Dictionary<string, int>();
+        var dateParseErrors = 0;
+        foreach (var item in allItems)
+        {
+            var dateStr = ExtractFieldValue(item, dateField);
+            if (string.IsNullOrWhiteSpace(dateStr)) continue;
+
+            if (TryParseFlexibleDate(dateStr, out var dt))
+            {
+                var key = dateGroupBy switch
+                {
+                    "day" => dt.ToString("yyyy-MM-dd"),
+                    "month" => dt.ToString("yyyy-MM"),
+                    _ => GetIsoWeek(dt), // week
+                };
+                timeline[key] = timeline.TryGetValue(key, out var tc) ? tc + 1 : 1;
+            }
+            else
+            {
+                dateParseErrors++;
+            }
+        }
+
+        var sortedTimeline = timeline.OrderBy(kv => kv.Key)
+            .Select(kv => new { period = kv.Key, count = kv.Value })
+            .ToList();
+
+        logs.AppendLine($"  时间趋势: {sortedTimeline.Count} 个时段, 解析失败: {dateParseErrors}");
+
+        // ── 3. 交叉统计（严重程度 × 状态） ──
+        object? crossTab = null;
+        if (groupByFields.Length >= 2)
+        {
+            var f1 = groupByFields[0]; // e.g. severity
+            var f2 = groupByFields[1]; // e.g. status
+            var cross = new Dictionary<string, Dictionary<string, int>>();
+            foreach (var item in allItems)
+            {
+                var v1 = ExtractFieldValue(item, f1) ?? "(空)";
+                var v2 = ExtractFieldValue(item, f2) ?? "(空)";
+                if (!cross.ContainsKey(v1)) cross[v1] = new Dictionary<string, int>();
+                cross[v1][v2] = cross[v1].TryGetValue(v2, out var xc) ? xc + 1 : 1;
+            }
+            crossTab = new { dimensions = $"{f1} × {f2}", data = cross };
+            logs.AppendLine($"  交叉统计: {f1} × {f2}, {cross.Count} 行");
+        }
+
+        // ── 4. 自动检测的数值字段摘要 ──
+        var numericSummaries = new Dictionary<string, object>();
+        // 尝试对首条数据中的疑似数值字段求统计
+        if (allItems.Count > 0 && allItems[0].ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in allItems[0].EnumerateObject())
+            {
+                if (prop.Value.ValueKind is JsonValueKind.Number)
+                {
+                    var values = allItems
+                        .Select(i => i.TryGetProperty(prop.Name, out var v) && v.TryGetDouble(out var d) ? d : (double?)null)
+                        .Where(v => v.HasValue)
+                        .Select(v => v!.Value)
+                        .ToList();
+
+                    if (values.Count > 0)
+                    {
+                        numericSummaries[prop.Name] = new
+                        {
+                            count = values.Count,
+                            sum = Math.Round(values.Sum(), 2),
+                            avg = Math.Round(values.Average(), 2),
+                            min = values.Min(),
+                            max = values.Max(),
+                        };
+                    }
+                }
+            }
+        }
+
+        // ── 组装最终输出 ──
+        var result = new Dictionary<string, object>
+        {
+            ["_summary"] = new
+            {
+                totalRecords = allItems.Count,
+                analyzedFields = groupByFields,
+                dateField,
+                dateGroupBy,
+                generatedAt = DateTime.UtcNow.ToString("O"),
+            },
+            ["distributions"] = distributions,
+            ["timeline"] = sortedTimeline,
+        };
+
+        if (crossTab != null)
+            result["crossTab"] = crossTab;
+        if (numericSummaries.Count > 0)
+            result["numericSummaries"] = numericSummaries;
+
+        var outputJson = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+        logs.AppendLine($"  输出统计摘要: {outputJson.Length} chars ({Encoding.UTF8.GetByteCount(outputJson)} bytes)");
+
+        var artifact = MakeTextArtifact(node, "agg-out", "统计摘要", outputJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+    }
+
+    /// <summary>从 JSON 元素中提取字段值（支持嵌套路径如 "Bug.severity"）</summary>
+    private static string? ExtractFieldValue(JsonElement item, string fieldPath)
+    {
+        var current = item;
+        foreach (var part in fieldPath.Split('.'))
+        {
+            if (current.ValueKind == JsonValueKind.Object && current.TryGetProperty(part, out var child))
+                current = child;
+            else
+                return null;
+        }
+        return current.ValueKind switch
+        {
+            JsonValueKind.String => current.GetString(),
+            JsonValueKind.Number => current.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            JsonValueKind.Null => null,
+            _ => current.GetRawText(),
+        };
+    }
+
+    /// <summary>灵活日期解析：支持 ISO 8601、常见日期格式、纯日期等</summary>
+    private static bool TryParseFlexibleDate(string dateStr, out DateTime result)
+    {
+        // 常见格式
+        var formats = new[]
+        {
+            "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm:ssZ", "yyyy-MM-dd'T'HH:mm:ss.fffZ",
+            "yyyy-MM-dd", "yyyy/MM/dd", "yyyy/MM/dd HH:mm:ss",
+            "MM/dd/yyyy", "dd/MM/yyyy",
+        };
+        return DateTime.TryParseExact(dateStr, formats,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AllowWhiteSpaces, out result)
+            || DateTime.TryParse(dateStr, out result);
+    }
+
+    /// <summary>返回 ISO 周格式 "2026-W09"</summary>
+    private static string GetIsoWeek(DateTime dt)
+    {
+        var cal = System.Globalization.CultureInfo.InvariantCulture.Calendar;
+        var week = cal.GetWeekOfYear(dt, System.Globalization.CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
+        return $"{dt.Year}-W{week:D2}";
     }
 
     // ── 格式转换 ──────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import {
   Timer, Webhook, Hand, Upload,
-  Database, Globe, Brain, Code2, Filter, Merge, Repeat,
+  Database, Globe, Brain, Code2, Filter, Merge, Repeat, BarChart3,
   Clock, GitBranch,
   FileText, Download, Send, Bell, Box,
 } from 'lucide-react';
@@ -175,6 +175,16 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     accentHue: 45,
     testable: true,
   },
+  'data-aggregator': {
+    typeKey: 'data-aggregator',
+    name: '数据统计',
+    description: '对数据进行分组统计，输出结构化摘要',
+    Icon: BarChart3,
+    emoji: '📊',
+    category: 'processor',
+    accentHue: 120,
+    testable: true,
+  },
 
   // ──────── 流程控制类 ────────
   'delay': {
@@ -299,6 +309,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   'download': Download,
   'send': Send,
   'bell': Bell,
+  'bar-chart': BarChart3,
 };
 
 const EMOJI_MAP: Record<string, string> = {
@@ -314,6 +325,7 @@ const EMOJI_MAP: Record<string, string> = {
   'data-extractor': '🔍',
   'data-merger': '🔀',
   'format-converter': '🔄',
+  'data-aggregator': '📊',
   'delay': '⏳',
   'condition': '🔀',
   'report-generator': '📝',

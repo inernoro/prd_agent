@@ -428,6 +428,35 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta DataAggregator = new()
+    {
+        TypeKey = CapsuleTypes.DataAggregator,
+        Name = "数据统计",
+        Description = "对 JSON 数组数据进行分组统计（计数、分布、占比），输出结构化摘要供 LLM 分析趋势",
+        Icon = "bar-chart",
+        Category = CapsuleCategory.Processor,
+        AccentHue = 120,
+        ConfigSchema = new()
+        {
+            new() { Key = "groupByFields", Label = "分组统计字段", FieldType = "text", Required = false, DefaultValue = "severity,status,current_owner,module", HelpTip = "逗号分隔的字段名，将按每个字段进行分组计数。留空则自动检测高频字段" },
+            new() { Key = "dateField", Label = "日期字段", FieldType = "text", Required = false, DefaultValue = "created", HelpTip = "用于时间趋势统计的日期字段名" },
+            new() { Key = "dateGroupBy", Label = "时间粒度", FieldType = "select", Required = false, DefaultValue = "week", Options = new() {
+                new() { Value = "day", Label = "按天" },
+                new() { Value = "week", Label = "按周" },
+                new() { Value = "month", Label = "按月" },
+            }},
+            new() { Key = "topN", Label = "Top N", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "每个维度保留前 N 个分组（其余归入「其他」）" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "agg-in", Name = "data", DataType = "json", Required = true, Description = "待统计的 JSON 数组数据" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "agg-out", Name = "statistics", DataType = "json", Required = true, Description = "统计摘要（分组计数、分布、趋势）" },
+        },
+    };
+
     // ──────────── 流程控制类 ────────────
 
     public static readonly CapsuleTypeMeta Delay = new()
@@ -605,7 +634,7 @@ public static class CapsuleTypeRegistry
         // 触发类
         Timer, WebhookReceiver, ManualTrigger, FileUpload,
         // 处理类
-        TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter,
+        TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter, DataAggregator,
         // 流程控制类
         Delay, Condition,
         // 输出类
