@@ -618,6 +618,10 @@ public static class CapsuleTypeRegistry
                 new() { Value = "warning", Label = "警告" },
                 new() { Value = "error", Label = "错误" },
             }},
+            new() { Key = "attachFromInput", Label = "附件来源", FieldType = "select", Required = false, DefaultValue = "none", HelpTip = "从上游产物中提取附件链接", Options = new() {
+                new() { Value = "none", Label = "无附件" },
+                new() { Value = "cos", Label = "上游产物 COS 链接" },
+            }},
         },
         DefaultInputSlots = new()
         {

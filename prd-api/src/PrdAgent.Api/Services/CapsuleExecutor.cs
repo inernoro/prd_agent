@@ -461,8 +461,10 @@ public static class CapsuleExecutor
             }
         };
 
-        llmLogs.AppendLine($"  SystemPrompt ({systemPrompt.Length} chars): {(systemPrompt.Length > 300 ? systemPrompt[..300] + "..." : systemPrompt)}");
-        llmLogs.AppendLine($"  UserPrompt ({userContent.Length} chars): {(userContent.Length > 500 ? userContent[..500] + "..." : userContent)}");
+        llmLogs.AppendLine($"  SystemPrompt ({systemPrompt.Length} chars):");
+        llmLogs.AppendLine(systemPrompt);
+        llmLogs.AppendLine($"  UserPrompt ({userContent.Length} chars):");
+        llmLogs.AppendLine(userContent);
         llmLogs.AppendLine($"  总估算 Tokens: system={systemTokens} + user={EstimateTokens(userContent)} = {systemTokens + EstimateTokens(userContent)}");
         llmLogs.AppendLine($"  Temperature: {temperature}");
         llmLogs.AppendLine("  --- 调用 LLM Gateway ---");
@@ -485,7 +487,8 @@ public static class CapsuleExecutor
             llmLogs.AppendLine($"  HTTP Status: {response.StatusCode}");
         }
 
-        llmLogs.AppendLine($"  LLM 响应 ({content.Length} chars): {(content.Length > 500 ? content[..500] + "..." : content)}");
+        llmLogs.AppendLine($"  LLM 响应 ({content.Length} chars):");
+        llmLogs.AppendLine(content);
 
         if (string.IsNullOrWhiteSpace(content))
         {
@@ -1794,7 +1797,8 @@ public static class CapsuleExecutor
             }
         };
 
-        reportLogs.AppendLine($"  ReportTemplate ({reportTemplate.Length} chars): {(reportTemplate.Length > 300 ? reportTemplate[..300] + "..." : reportTemplate)}");
+        reportLogs.AppendLine($"  ReportTemplate ({reportTemplate.Length} chars):");
+        reportLogs.AppendLine(reportTemplate);
         reportLogs.AppendLine($"  Prompt 总长: {prompt.Length} chars (估算 {EstimateTokens(prompt)} tokens)");
         reportLogs.AppendLine("  --- 调用 LLM Gateway ---");
 
@@ -1812,7 +1816,8 @@ public static class CapsuleExecutor
             reportLogs.AppendLine($"  HTTP Status: {response.StatusCode}");
         }
 
-        reportLogs.AppendLine($"  LLM 响应 ({content.Length} chars): {(content.Length > 500 ? content[..500] + "..." : content)}");
+        reportLogs.AppendLine($"  LLM 响应 ({content.Length} chars):");
+        reportLogs.AppendLine(content);
 
         if (string.IsNullOrWhiteSpace(content))
         {
@@ -1944,12 +1949,31 @@ public static class CapsuleExecutor
             message = string.Join("\n", summaryParts);
         }
 
+        // 收集附件：从上游产物的 COS URL 中提取
+        List<NotificationAttachment>? attachments = null;
+        var attachMode = GetConfigString(node, "attachFromInput") ?? "none";
+        if (attachMode == "cos" && inputArtifacts.Count > 0)
+        {
+            attachments = inputArtifacts
+                .Where(a => !string.IsNullOrWhiteSpace(a.CosUrl))
+                .Select(a => new NotificationAttachment
+                {
+                    Name = a.Name,
+                    Url = a.CosUrl!,
+                    SizeBytes = a.SizeBytes,
+                    MimeType = a.MimeType,
+                })
+                .ToList();
+            if (attachments.Count == 0) attachments = null;
+        }
+
         var notification = new AdminNotification
         {
             Title = title,
             Message = message,
             Level = level,
             Source = "workflow-agent",
+            Attachments = attachments,
         };
         await db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
 

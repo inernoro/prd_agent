@@ -10,6 +10,8 @@ import {
   Zap,
   MessagesSquare,
   Sparkles,
+  Download,
+  Paperclip,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
@@ -204,6 +206,29 @@ export default function MobileHomePage() {
                     {n.message && (
                       <div className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>
                         {n.message}
+                      </div>
+                    )}
+                    {n.attachments && n.attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        {n.attachments.map((att, idx) => (
+                          <a
+                            key={idx}
+                            href={att.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] transition-colors"
+                            style={{
+                              background: 'var(--surface-elevated)',
+                              color: 'var(--text-secondary)',
+                              border: '1px solid var(--border-default)',
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Paperclip size={10} />
+                            <span className="truncate max-w-[120px]">{att.name}</span>
+                            <Download size={10} className="shrink-0 opacity-60" />
+                          </a>
+                        ))}
                       </div>
                     )}
                   </div>

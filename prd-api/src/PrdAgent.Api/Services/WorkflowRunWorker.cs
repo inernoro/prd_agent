@@ -183,6 +183,13 @@ public sealed class WorkflowRunWorker : BackgroundService
                 nodeExec.OutputArtifacts = result.Artifacts;
                 nodeExec.Logs = CapsuleExecutor.TruncateLogs(result.Logs);
 
+                // 完整日志上传 COS（超过 10KB 时）
+                if (System.Text.Encoding.UTF8.GetByteCount(result.Logs) > 10240)
+                {
+                    nodeExec.LogsCosUrl = await UploadFullLogsToCosAsync(
+                        scope.ServiceProvider, executionId, nodeId, result.Logs);
+                }
+
                 // COS 持久化：上传产物到云存储
                 await UploadArtifactsToCosAsync(scope.ServiceProvider, executionId, nodeId, result.Artifacts);
 
@@ -552,6 +559,35 @@ public sealed class WorkflowRunWorker : BackgroundService
                     artifact.Name, nodeId, executionId);
                 // COS 上传失败不影响执行流程，产物仍可通过 InlineContent 查看
             }
+        }
+    }
+
+    /// <summary>
+    /// 将完整执行日志上传到 COS，返回公开访问 URL。
+    /// 上传失败时返回 null，不影响执行流程。
+    /// </summary>
+    private async Task<string?> UploadFullLogsToCosAsync(
+        IServiceProvider sp, string executionId, string nodeId, string fullLogs)
+    {
+        try
+        {
+            var storage = sp.GetService<IAssetStorage>();
+            if (storage == null) return null;
+
+            var bytes = System.Text.Encoding.UTF8.GetBytes(fullLogs);
+            var stored = await storage.SaveAsync(bytes, "text/plain", CancellationToken.None,
+                domain: "workflow-agent", type: "log");
+
+            _logger.LogDebug("Full logs uploaded to COS: execId={ExecId} nodeId={NodeId} -> {Url} ({Size} bytes)",
+                executionId, nodeId, stored.Url, stored.SizeBytes);
+
+            return stored.Url;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to upload full logs to COS: nodeId={NodeId} execId={ExecId}",
+                nodeId, executionId);
+            return null;
         }
     }
 }

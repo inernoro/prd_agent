@@ -125,6 +125,7 @@ export const getNodeLogsReal: GetNodeLogsContract = async (input) => {
     nodeName: string;
     status: string;
     logs?: string;
+    logsCosUrl?: string;
     errorMessage?: string;
     artifacts: ExecutionArtifact[];
   }>(

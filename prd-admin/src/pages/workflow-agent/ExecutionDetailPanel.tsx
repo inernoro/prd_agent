@@ -3,7 +3,7 @@ import {
   ArrowLeft, RefreshCw, RotateCcw, Share2, XCircle,
   CheckCircle2, Clock, AlertCircle, Loader2, MinusCircle,
   FileText, Download, ChevronDown, ChevronRight, Eye,
-  ScrollText, LayoutList, Terminal,
+  ScrollText, LayoutList, Terminal, ExternalLink,
 } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import { getExecution, getNodeLogs, resumeFromNode, cancelExecution, createShareLink } from '@/services';
@@ -28,6 +28,8 @@ interface LogEntry {
   nodeType?: string;
   message: string;
   detail?: string;
+  /** 完整日志 COS 地址（当日志被截断时可用） */
+  logsCosUrl?: string;
 }
 
 const nodeStatusIcons: Record<string, React.ReactNode> = {
@@ -243,6 +245,7 @@ export function ExecutionDetailPanel() {
               nodeType: ne.nodeType,
               message: `完成 (${ne.durationMs ? (ne.durationMs / 1000).toFixed(1) + 's' : '-'})，产出 ${res.data.artifacts?.length || 0} 个产物`,
               detail: res.data.logs || undefined,
+              logsCosUrl: res.data.logsCosUrl,
             });
           } else if (ne.status === 'failed') {
             entries.push({
@@ -254,6 +257,7 @@ export function ExecutionDetailPanel() {
               nodeType: ne.nodeType,
               message: `失败: ${ne.errorMessage || '未知错误'}`,
               detail: res.data.logs || undefined,
+              logsCosUrl: res.data.logsCosUrl,
             });
           } else if (ne.status === 'skipped') {
             entries.push({
@@ -673,13 +677,26 @@ function LogLine({ entry }: { entry: LogEntry }) {
         {/* Expandable detail */}
         {entry.detail && (
           <>
-            <button
-              onClick={() => setExpanded(!expanded)}
-              className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-              {expanded ? '收起详情' : '展开详情'}
-            </button>
+            <div className="mt-1 flex items-center gap-2">
+              <button
+                onClick={() => setExpanded(!expanded)}
+                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                {expanded ? '收起详情' : '展开详情'}
+              </button>
+              {entry.logsCosUrl && (
+                <a
+                  href={entry.logsCosUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  查看完整日志
+                </a>
+              )}
+            </div>
             {expanded && (
               <pre
                 className="mt-1.5 text-[10px] rounded-md p-2.5 max-h-48 overflow-auto whitespace-pre-wrap leading-relaxed"
