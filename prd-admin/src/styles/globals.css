@@ -1551,6 +1551,17 @@ html[data-perf-mode="performance"] .blur-text span {
   to { transform: rotate(360deg); }
 }
 
+/* Arena panel completion pulse — green glow to draw attention */
+@keyframes arena-done-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); border-color: rgba(16, 185, 129, 0); }
+  15% { box-shadow: 0 0 16px 3px rgba(16, 185, 129, 0.35); border-color: rgba(16, 185, 129, 0.5); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); border-color: rgba(16, 185, 129, 0); }
+}
+.arena-panel-done-pulse {
+  animation: arena-done-pulse 3s ease-out forwards;
+  border: 1px solid rgba(16, 185, 129, 0.5);
+}
+
 /* ── AI-Native UI: Chat Page Styles ───────────────────────────────── */
 
 /* Typing indicator: 3-dot pulse */
