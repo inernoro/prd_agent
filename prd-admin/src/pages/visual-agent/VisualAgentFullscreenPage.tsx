@@ -45,16 +45,18 @@ export default function VisualAgentFullscreenPage() {
         onClick={onBack}
         className="fixed top-5 left-5 z-50 flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200"
         style={{
-          ...glassFloatingButton,
+          background: '#2c2c2e',
+          border: '1px solid rgba(255,255,255,0.08)',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
           color: 'var(--text-primary)',
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = 'rgba(18, 18, 22, 0.95)';
-          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+          e.currentTarget.style.background = '#363638';
+          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)';
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = 'rgba(18, 18, 22, 0.8)';
-          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+          e.currentTarget.style.background = '#2c2c2e';
+          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
         }}
       >
         <ArrowLeft size={18} />
