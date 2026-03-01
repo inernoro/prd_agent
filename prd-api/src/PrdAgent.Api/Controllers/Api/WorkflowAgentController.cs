@@ -827,6 +827,11 @@ public class WorkflowAgentController : ControllerBase
     // AI 对话助手：自然语言创建/修改工作流
     // ─────────────────────────────────────────────────────────
 
+    private static readonly JsonSerializerOptions SseJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
     /// <summary>
     /// 工作流对话助手（SSE）：根据用户指令或代码片段创建/修改工作流配置。
     /// 新建场景自动应用，修改场景返回 workflow_generated 事件等用户确认。
@@ -942,7 +947,7 @@ public class WorkflowAgentController : ControllerBase
 
                 try
                 {
-                    var payload = JsonSerializer.Serialize(new { type = "delta", content = chunk.Content });
+                    var payload = JsonSerializer.Serialize(new { type = "delta", content = chunk.Content }, SseJsonOptions);
                     await Response.WriteAsync($"event: message\ndata: {payload}\n\n");
                     await Response.Body.FlushAsync();
                 }
@@ -955,7 +960,7 @@ public class WorkflowAgentController : ControllerBase
             _logger.LogError(ex, "[{AppKey}] Chat LLM error", AppKey);
             try
             {
-                var errPayload = JsonSerializer.Serialize(new { type = "error", content = $"AI 服务异常: {ex.Message}" });
+                var errPayload = JsonSerializer.Serialize(new { type = "error", content = $"AI 服务异常: {ex.Message}" }, SseJsonOptions);
                 await Response.WriteAsync($"event: message\ndata: {errPayload}\n\n");
                 await Response.Body.FlushAsync();
             }
@@ -1004,7 +1009,7 @@ public class WorkflowAgentController : ControllerBase
                             workflow.Id, workflow.Name, workflow.Description,
                             workflow.Nodes, workflow.Edges, workflow.Variables,
                         }
-                    });
+                    }, SseJsonOptions);
                     await Response.WriteAsync($"event: message\ndata: {autoApplyPayload}\n\n");
                     await Response.Body.FlushAsync();
                 }
@@ -1026,7 +1031,7 @@ public class WorkflowAgentController : ControllerBase
                             generated.Name, generated.Description,
                             generated.Nodes, generated.Edges, generated.Variables,
                         }
-                    });
+                    }, SseJsonOptions);
                     await Response.WriteAsync($"event: message\ndata: {confirmPayload}\n\n");
                     await Response.Body.FlushAsync();
                 }
@@ -1049,7 +1054,7 @@ public class WorkflowAgentController : ControllerBase
         // 8. 结束
         try
         {
-            var donePayload = JsonSerializer.Serialize(new { type = "done" });
+            var donePayload = JsonSerializer.Serialize(new { type = "done" }, SseJsonOptions);
             await Response.WriteAsync($"event: message\ndata: {donePayload}\n\n");
             await Response.Body.FlushAsync();
         }
@@ -1344,7 +1349,7 @@ public class WorkflowAgentController : ControllerBase
 
     private async Task WriteSseEvent(string eventName, object data)
     {
-        var json = JsonSerializer.Serialize(data);
+        var json = JsonSerializer.Serialize(data, SseJsonOptions);
         await Response.WriteAsync($"event: {eventName}\ndata: {json}\n\n");
         await Response.Body.FlushAsync();
     }
