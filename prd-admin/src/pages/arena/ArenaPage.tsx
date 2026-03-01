@@ -1005,6 +1005,37 @@ export function ArenaPage() {
 
   // --- Copy panel text to clipboard ---
   const [copiedSlotId, setCopiedSlotId] = useState<string | null>(null);
+
+  // --- Track panels that just completed (for attention pulse) ---
+  const [justCompletedIds, setJustCompletedIds] = useState<Set<string>>(new Set());
+  const prevPanelStatusRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    const prevMap = prevPanelStatusRef.current;
+    const newlyDone: string[] = [];
+    const anyStillStreaming = panels.some((p) => p.status === 'streaming' || p.status === 'waiting');
+    for (const p of panels) {
+      const prev = prevMap.get(p.slotId);
+      if (prev && prev !== 'done' && prev !== 'error' && (p.status === 'done' || p.status === 'error') && anyStillStreaming) {
+        newlyDone.push(p.slotId);
+      }
+      prevMap.set(p.slotId, p.status);
+    }
+    if (newlyDone.length > 0) {
+      setJustCompletedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of newlyDone) next.add(id);
+        return next;
+      });
+      // Clear after animation
+      setTimeout(() => {
+        setJustCompletedIds((prev) => {
+          const next = new Set(prev);
+          for (const id of newlyDone) next.delete(id);
+          return next;
+        });
+      }, 1500);
+    }
+  }, [panels]);
   function handleCopyPanel(panel: ArenaPanel) {
     navigator.clipboard.writeText(panel.text).then(() => {
       setCopiedSlotId(panel.slotId);
@@ -1534,6 +1565,7 @@ export function ArenaPage() {
                   ? (getAvatarUrlByModelName(info.displayName) ?? getAvatarUrlByPlatformType(info.platformName))
                   : null;
                 const isSvg = avatarUrl ? /\.svg(\?|#|$)/i.test(avatarUrl) : false;
+                const justCompleted = justCompletedIds.has(panel.slotId);
 
                 return (
                   <div
@@ -1543,8 +1575,9 @@ export function ArenaPage() {
                   >
                     <div
                       className={cn(
-                        'flex flex-col h-full rounded-[14px] transition-transform duration-500',
-                        revealAnimating && 'scale-[0.98]'
+                        'flex flex-col h-full rounded-[14px] transition-all duration-500',
+                        revealAnimating && 'scale-[0.98]',
+                        justCompleted && 'arena-panel-done-pulse'
                       )}
                       style={{
                         background: 'rgba(255,255,255,0.03)',
